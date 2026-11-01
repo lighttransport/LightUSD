@@ -4,6 +4,7 @@
 // LightUSD Next - Composition Implementation
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
+#include "../layer/int64-listop.hh"
 #include "composition.hh"
 #include "composition-internal.hh"
 #include "../layer/array-edit.hh"
@@ -246,6 +247,8 @@ void Compositor::ResolveArrayEditsInLayer(Layer& layer) {
   for (size_t i = 0; i < n; ++i) {
     PrimSpec* p = layer.prim_mutable(static_cast<uint32_t>(i));
     if (!p) continue;
+    if (!static_cast<const PrimSpec*>(p)->meta().unknownFields().empty())
+      ResolveInt64ListOpFields(&p->meta().unknownFields());
     std::string apply_err;
     if (!ResolveArrayEditsOnPrim(p, &apply_err)) {
       AddError(apply_err, p->path().str(), "", ArcType::Local);

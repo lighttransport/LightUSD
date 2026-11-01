@@ -3,6 +3,7 @@
 //
 // LightUSD Next - PrimSpec Implementation
 
+#include "int64-listop.hh"
 #include "prim-spec.hh"
 #include "../prim/identifier.hh"
 #include "../../safe-arithmetic.hh"
@@ -42,7 +43,7 @@ struct PrimSpec::ColdData {
 namespace {
 
 // Property metadata that holds only interpolation / elementSize -- 5M of the
-// 5M composed property metadata on full-LOD Caldera, at 688 bytes each -- is
+// 5M composed property metadata on full-LOD benchmark scene, at 688 bytes each -- is
 // interned: one immutable PropMeta per distinct value, shared by every
 // property that carries it. A shared entry is copied on any mutable access, so
 // callers see an ordinary PropMeta either way.
@@ -188,6 +189,7 @@ PrimSpec PrimSpec::Clone() const {
   c.type_id_ = type_id_;
   c.specifier_ = specifier_;
   c.path_ = path_;
+  c.asset_anchor_id_ = asset_anchor_id_;
 
   // Deep copy properties (slots carry value-storage indices + flags).
   c.props_ = props_;
@@ -743,6 +745,13 @@ bool PrimSpec::has_relationship_data() const {
                         !cold_data_->rel_opinion_stacks.empty());
 }
 
+size_t PrimSpec::extra_property_spec_bound() const {
+  size_t n = time_samples_ ? time_samples_->property_count() : 0;
+  if (has_relationship_data())
+    n += cold().relationships.size() + relationship_edits().size();
+  return n;
+}
+
 std::vector<std::string> PrimSpec::relationship_names() const {
   std::vector<std::string> names;
   names.reserve(cold().relationships.size() + relationship_edits().size());
@@ -1099,6 +1108,7 @@ size_t PrimSpec::memory_usage() const {
     for (const DecodedExtensionField& field : fields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
+      if (field.int64_list_op) add(Int64ListOpsMemoryUsage(*field.int64_list_op));
       add_value(field.value);
     }
   };
@@ -1662,6 +1672,7 @@ void PrimSpec::set_specifier(PrimSpecifier spec) { specifier_ = spec; }
 const Path& PrimSpec::path() const { return path_; }
 void PrimSpec::set_path(const Path& path) { path_ = path; }
 void PrimSpec::set_path(Path&& path) { path_ = std::move(path); }
+Path PrimSpec::take_path() { return std::move(path_); }
 uint32_t PrimSpec::asset_anchor_id() const { return asset_anchor_id_; }
 void PrimSpec::set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
 PropSlot* PrimSpec::property_mutable(PropNameId name_id) {

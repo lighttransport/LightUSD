@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <atomic>
 #include <memory>
 #include <map>
 #include <unordered_map>
@@ -47,6 +48,7 @@ struct TypeNameId {
 /// at runtime, so concurrent readers need protection like PropNameTable).
 class TypeNameTable : public detail::StringInternTable<TypeNameId, UINT16_MAX> {
 public:
+  TypeNameTable();
   TypeNameId intern(const std::string& name);
   const std::string& get(TypeNameId id) const;
   TypeNameId find(const std::string& name) const;
@@ -74,6 +76,21 @@ public:
   TypeNameId id_GeomSubset;
 
   void register_common_types();
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+private:
+  // Lock-free reads. The parallel opinion fill and writer look type names up
+  // per prim and per property from every thread, and the shared lock's cache
+  // line alone was a third of the fill. A name's slot in `by_id_` (the deque
+  // element never moves) and in the open-addressed `slots_` index (id + 1;
+  // twice the id space, so it never fills or rehashes) are published under the
+  // exclusive lock right after the insert, before the new id is returned.
+  static constexpr size_t kSlots = size_t(1) << 17;
+  std::unique_ptr<std::atomic<const std::string*>[]> by_id_;
+  std::unique_ptr<std::atomic<uint32_t>[]> slots_;
+  static void Publish(void* self);
+  TypeNameId find_published(const std::string& name) const;
+#endif
 };
 
 TypeNameTable& GetTypeNameTable();
@@ -126,6 +143,8 @@ public:
   const Path& path() const;
   void set_path(const Path& path);
   void set_path(Path&& path);
+  // Moves the path out (the prim is left with an empty path).
+  Path take_path();
 
   /// Directory this prim's RELATIVE asset paths anchor to, as an id interned in
   /// asset-anchor.hh (0 = none -> the consumer falls back to the stage's base
@@ -360,6 +379,9 @@ public:
   /// relationship(...) lookup misses) -- lets the compose merge skip the
   /// string-keyed relationship checks for the ordinary attribute-only prim.
   bool has_relationship_data() const;
+  /// Upper bound of the property specs a writer emits beyond the property
+  /// slots (relationships and time-sampled properties), without allocating.
+  size_t extra_property_spec_bound() const;
 
   // ============================================================
   // Attribute connections / declared type names (USDC fidelity)

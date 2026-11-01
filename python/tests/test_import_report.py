@@ -172,7 +172,7 @@ def test_unsupported_included_xml_and_depth_are_checked(tmp_path):
     root.write_bytes(b'<mujoco><include file="included.xml"/><worldbody><body name="base"/></worldbody></mujoco>')
     stage = lightusd.import_mjcf(root, unsupported_policy="preserve")
     data = json.loads(stage.custom_layer_data["lightusdImportUnsupported"])
-    assert len(data) == 1 and data[0]["source"] == str(included)
+    assert len(data) == 1 and data[0]["source"] == included.as_posix()
     with pytest.raises(lightusd.UsdError, match="Unsupported"):
         lightusd.import_mjcf(root, unsupported_policy="error")
     # A permissive policy must still enforce include/XML depth limits.

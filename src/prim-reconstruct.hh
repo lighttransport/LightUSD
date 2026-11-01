@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "core/prim-spec.hh"  // PrimSpec, PropertyMap, ReferenceList, Specifier (transitively: property, composition-types, prim-enums)
+#include "prim-reconstruct-common.hh"  // ParsePropertyTable
 #include "core/xform-op.hh"   // XformOp
 
 namespace lightusd {
@@ -61,7 +62,7 @@ struct PrimReconstructOptions
 ///
 bool ReconstructXformOpsFromProperties(
       const Specifier &spec,
-      std::set<std::string> &table, /* inout */
+      ParsePropertyTable &table, /* inout */
       PropertyMap &properties,
       std::vector<XformOp> *xformOps,
       std::string *err);

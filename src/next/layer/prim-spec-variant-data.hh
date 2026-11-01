@@ -12,6 +12,7 @@
 struct PrimVariantData;
 struct PrimVariantSetData;
 class Layer;  // for PrimVariantData::content (variant subtree)
+struct Int64ListOpStack;
 
 /// Generic decodable extension field retained from USDC. Unregistered fields
 /// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
@@ -21,6 +22,8 @@ struct DecodedExtensionField {
   Value value;
   bool unregistered = false;
   std::string unregistered_source;
+  // Optional structured metadata; ordinary fields do not allocate a list-op.
+  std::shared_ptr<const Int64ListOpStack> int64_list_op = nullptr;
 };
 
 /// One attribute authored inside a variant option. Carries the property flags

@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+#version 450
+#extension GL_EXT_control_flow_attributes : enable
+#define PREVIEW_LOOP [[dont_unroll]]
+// glslang 16.2 allocates unbounded memory for the `precise` declarations in
+// traceRay()/visibility(): the empty-main shader alone exceeds 14 GiB and 18 s
+// before being killed, while the same source without `precise` needs ~33 MiB
+// and 0.2 s. The kernel's compensated summation already provides the intended
+// accuracy, so the GLSL build keeps the qualifier empty. Re-test this before
+// restoring it; see doc/large-scene.md "preview shader compiler budget".
+#define PREVIEW_PRECISE
+layout(local_size_x=64) in;
+layout(constant_id=0) const uint previewMode=0u;
+layout(constant_id=1) const uint previewMedium=0u;
+layout(constant_id=2) const uint previewMultiple=0u;
+#define PREVIEW_MODE previewMode
+#define PREVIEW_MEDIUM previewMedium
+#define PREVIEW_MULTIPLE previewMultiple
+layout(push_constant) uniform Dispatch { uint base; } dispatchRange;
+layout(set=0,binding=0,std430) readonly buffer In { uint inData[]; };
+layout(set=0,binding=1,std430) writeonly buffer Out { float outData[]; };
+#define atan2(y,x) atan(y,x)
+#define FN
+#define DATA_ARG
+#define DATA_PASS
+#define WORK_ARGS
+#define BITS uintBitsToFloat
+#extension GL_GOOGLE_include_directive : require
+#include "scene-preview-kernel.inc"
+void main(){work(gl_GlobalInvocationID.x+dispatchRange.base);}

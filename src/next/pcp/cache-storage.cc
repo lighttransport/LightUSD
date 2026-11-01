@@ -72,7 +72,7 @@ auto Cache::Impl::Specs(uint32_t stack_idx,
     // Not memoized. Before walking every layer, let the per-stack path filter
     // answer the common "this stack authors nothing at this site" case with one
     // bit probe. FindSpecs() alone accounts for 10.7-14.1 s of ExpandArcs on a
-    // full-LOD Caldera district, 85.6% of it negative.
+    // full-LOD benchmark scene district, 85.6% of it negative.
     if (stack_idx >= path_filter_by_stack_.size())
       path_filter_by_stack_.resize(stack_idx + 1);
     PathHashFilter &filter = path_filter_by_stack_[stack_idx];
@@ -358,7 +358,7 @@ auto Cache::Impl::ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const -> 
   }
 
 // After source warming, most composition sources are inert: their site has no
-// spec anywhere in their layer stack (full-LOD Caldera: 90M of 104M sources,
+// spec anywhere in their layer stack (full-LOD benchmark scene: 90M of 104M sources,
 // ~23 GB of Src vectors and site strings, held until the opinion fill
 // compacts them). An inert source contributes no opinions, child names,
 // activation or instanceability, and -- a layer cannot hold a spec below a
@@ -852,50 +852,80 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
     // here is one no taken Src references -- the same order as when this ran
     // after the whole drain) and before the remap below, which primes each
     // remapped Src's spec memo from the (now complete) main cache.
-    for (size_t ws = 0; ws < w.spec_cache_by_stack_.size(); ++ws) {
-      const StackSpecCache &wcache = w.spec_cache_by_stack_[ws];
-      if (wcache.entry_count() == 0) continue;
-      if (ws >= w.layer_stacks.size()) continue;
-      uint32_t ms = 0;
-      if (ws < seed_stack_count) {
-        ms = static_cast<uint32_t>(ws);
-      } else {
-        if (ws - seed_stack_count >= stack_remap.size()) continue;
-        if (stack_remap[ws - seed_stack_count] == UINT32_MAX) {
-          stack_remap[ws - seed_stack_count] = AdoptStack(w.layer_stacks[ws]);
+    // Resolve each worker stack's target stack serially (adoption mutates the
+    // main tables), then insert the entries per target stack in parallel: they
+    // are disjoint caches, so the pass is embarrassingly parallel and is the
+    // second largest serial piece of the merge (~1.2 s of 6 s on full45).
+    {
+      std::vector<std::pair<uint32_t, uint32_t>> pairs;  // (worker, main)
+      uint32_t max_ms = 0;
+      for (size_t ws = 0; ws < w.spec_cache_by_stack_.size(); ++ws) {
+        const StackSpecCache &wcache = w.spec_cache_by_stack_[ws];
+        if (wcache.entry_count() == 0) continue;
+        if (ws >= w.layer_stacks.size()) continue;
+        uint32_t ms = 0;
+        if (ws < seed_stack_count) {
+          ms = static_cast<uint32_t>(ws);
+        } else {
+          if (ws - seed_stack_count >= stack_remap.size()) continue;
+          if (stack_remap[ws - seed_stack_count] == UINT32_MAX) {
+            stack_remap[ws - seed_stack_count] = AdoptStack(w.layer_stacks[ws]);
+          }
+          ms = stack_remap[ws - seed_stack_count];
         }
-        ms = stack_remap[ws - seed_stack_count];
+        if (ms >= max_ms) max_ms = ms + 1;
+        pairs.emplace_back(static_cast<uint32_t>(ws), ms);
       }
-      if (ms >= spec_cache_by_stack_.size())
-        spec_cache_by_stack_.resize(ms + 1);
-      StackSpecCache &mcache = spec_cache_by_stack_[ms];
-      const LayerStack &wst = w.layer_stacks[ws];
-      const LayerStack &mst = layer_stacks[ms];
-      const auto &wkeys = wcache.keys();
-      const auto &wvals = wcache.vals();
-      for (size_t i = 0; i < wkeys.size(); ++i) {
-        const std::string &site = wkeys[i];
-        const std::vector<SpecRef> &refs = wvals[i];
-        const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
-        if (mcache.find(site, h)) continue;
-        std::vector<SpecRef> remapped;
-        remapped.reserve(refs.size());
-        for (const SpecRef &sr : refs) {
-          SpecRef r = sr;
-          if (r.layer_identifier) {
-            const ptrdiff_t idx =
-                r.layer_identifier - wst.layer_identifiers.data();
-            if (idx >= 0 &&
-                idx < static_cast<ptrdiff_t>(wst.layer_identifiers.size()) &&
-                idx < static_cast<ptrdiff_t>(mst.layer_identifiers.size())) {
-              r.layer_identifier = &mst.layer_identifiers[idx];
-            } else {
-              r.layer_identifier = nullptr;
+      if (max_ms > spec_cache_by_stack_.size())
+        spec_cache_by_stack_.resize(max_ms);
+      if (!pairs.empty()) {
+        std::atomic<size_t> next_pair{0};
+        auto adopt_pair = [&]() {
+          for (;;) {
+            const size_t i = next_pair.fetch_add(1);
+            if (i >= pairs.size()) return;
+            const size_t ws = pairs[i].first;
+            StackSpecCache &mcache = spec_cache_by_stack_[pairs[i].second];
+            const StackSpecCache &wcache = w.spec_cache_by_stack_[ws];
+            const LayerStack &wst = w.layer_stacks[ws];
+            const LayerStack &mst = layer_stacks[pairs[i].second];
+            const auto &wkeys = wcache.keys();
+            const auto &wvals = wcache.vals();
+            for (size_t k = 0; k < wkeys.size(); ++k) {
+              const std::string &site = wkeys[k];
+              const std::vector<SpecRef> &refs = wvals[k];
+              const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
+              if (mcache.find(site, h)) continue;
+              std::vector<SpecRef> remapped;
+              remapped.reserve(refs.size());
+              for (const SpecRef &sr : refs) {
+                SpecRef r = sr;
+                if (r.layer_identifier) {
+                  const ptrdiff_t idx =
+                      r.layer_identifier - wst.layer_identifiers.data();
+                  if (idx >= 0 &&
+                      idx < static_cast<ptrdiff_t>(wst.layer_identifiers.size()) &&
+                      idx < static_cast<ptrdiff_t>(mst.layer_identifiers.size())) {
+                    r.layer_identifier = &mst.layer_identifiers[idx];
+                  } else {
+                    r.layer_identifier = nullptr;
+                  }
+                }
+                remapped.push_back(std::move(r));
+              }
+              mcache.insert(site, h, std::move(remapped));
             }
           }
-          remapped.push_back(std::move(r));
+        };
+        if (T == 1 || pairs.size() == 1) {
+          adopt_pair();
+        } else {
+          std::vector<std::thread> adopters;
+          adopters.reserve(T - 1);
+          for (size_t t = 1; t < T; ++t) adopters.emplace_back(adopt_pair);
+          adopt_pair();
+          for (std::thread &th : adopters) th.join();
         }
-        mcache.insert(site, h, std::move(remapped));
       }
     }
     parallel([&](size_t, size_t lo, size_t hi) {
@@ -959,6 +989,48 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
         }
       }
     });
+    // Allocate address-stable values in the original order, then populate the
+    // index in parallel. The prescan established that all taken keys are
+    // distinct and absent. No lookup runs until every insertion has joined.
+#if defined(__GNUC__) || defined(__clang__)
+    if (T > 1 && sources_cache.occupied_ == sources_cache.count_ &&
+        sources_cache.vals_.size() + ne <= UINT32_MAX) {
+      std::vector<uint32_t> indices(ne, UINT32_MAX);
+      size_t added = 0;
+      for (size_t e = 0; e < ne; ++e) {
+        if (!take[e]) continue;
+        indices[e] = static_cast<uint32_t>(sources_cache.vals_.size());
+        sources_cache.keys_.emplace_back(w.sources_cache.take_key(ent[e]));
+        sources_cache.vals_.emplace_back(std::move(w.sources_cache.vals_[ent[e]]));
+        sources_cache.live_.push_back(SrcCache::kLive);
+        ++added;
+      }
+      const size_t mask = sources_cache.slots_.size() - 1;
+      parallel([&](size_t, size_t lo, size_t hi) {
+        for (size_t e = lo; e < hi; ++e) {
+          if (indices[e] == UINT32_MAX) continue;
+          size_t i = static_cast<size_t>(ent_hash[e]) & mask;
+          for (;;) {
+            auto &slot = sources_cache.slots_[i];
+            uint8_t empty = 0;
+            // State 3 reserves the slot; only the owning thread writes its
+            // payload, and no cache reader runs during this phase.
+            if (__atomic_compare_exchange_n(&slot.state, &empty, 3, false,
+                                            __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+              slot.hash = ent_hash[e];
+              slot.idx = indices[e];
+              __atomic_store_n(&slot.state, 1, __ATOMIC_RELAXED);
+              break;
+            }
+            i = (i + 1) & mask;
+          }
+        }
+      });
+      sources_cache.count_ += added;
+      sources_cache.occupied_ += added;
+      return;
+    }
+#endif
     for (size_t e = 0; e < ne; ++e) {
       if (!take[e]) continue;
       for (size_t a = e + 1; a < ne && a <= e + 8; ++a) {
@@ -972,7 +1044,6 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
           w.sources_cache.take_key(ent[e]), ent_hash[e], &created);
       slot = std::move(w.sources_cache.vals_[ent[e]]);
     }
-
   }
 
 #endif
@@ -1066,7 +1137,7 @@ auto cache_detail::SrcCache::clear() -> void {  // full free (drops the path-str
     std::vector<uint8_t>().swap(live_);
     count_ = 0;
     occupied_ = 0;
-  }
+}
 
 auto cache_detail::SrcCache::take_values() -> std::deque<std::vector<Src>> {
     std::deque<std::vector<Src>> values;
@@ -1087,15 +1158,37 @@ auto cache_detail::SrcCache::own_key(size_t index) -> void {
   }
 
 auto cache_detail::SrcCache::borrow_site_keys() -> size_t {
-    size_t borrowed = 0;
-    for (size_t i = 0; i < live_.size(); ++i) {
-      if (live_[i] != kLive || vals_[i].empty() ||
-          keys_[i] != vals_[i].front().site) continue;
-      std::string().swap(keys_[i]);
-      live_[i] = kLive | kSiteKey;
-      ++borrowed;
+    // Entries are independent (key compare + free per index): a 10 M-entry
+    // cache splits across threads.
+    auto range = [this](size_t lo, size_t hi) {
+      size_t borrowed = 0;
+      for (size_t i = lo; i < hi; ++i) {
+        if (live_[i] != kLive || vals_[i].empty() ||
+            keys_[i] != vals_[i].front().site) continue;
+        std::string().swap(keys_[i]);
+        live_[i] = kLive | kSiteKey;
+        ++borrowed;
+      }
+      return borrowed;
+    };
+    const size_t n = live_.size();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const size_t T = n >= 262144 ? std::min<size_t>(hw, 16) : 1;
+    if (T > 1) {
+      std::vector<size_t> counts(T, 0);
+      std::vector<std::thread> pool;
+      pool.reserve(T - 1);
+      for (size_t t = 1; t < T; ++t)
+        pool.emplace_back([&, t] { counts[t] = range(n * t / T, n * (t + 1) / T); });
+      counts[0] = range(0, n / T);
+      for (std::thread &th : pool) th.join();
+      size_t total = 0;
+      for (size_t c : counts) total += c;
+      return total;
     }
-    return borrowed;
+#endif
+    return range(0, n);
   }
 
 auto cache_detail::SrcCache::find(const std::string &k) -> std::vector<Src> * {

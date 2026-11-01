@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "camera_nav.hh"
+#include "light3d/camera-nav.hh"
 
 #include <algorithm>
 #include <cmath>
 
-namespace lusdview {
+namespace light3d {
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
@@ -324,4 +324,4 @@ void OrbitCamera::setOrbit(const light3d::Vec3& target, float yawRad, float pitc
   distance_ = std::max(dist, 1e-3f);
 }
 
-}  // namespace lusdview
+}  // namespace light3d

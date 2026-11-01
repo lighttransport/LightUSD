@@ -127,6 +127,7 @@ class RenderStream {
   size_t remainingMemoryLimitBytes() const;
   size_t providedAssetMemoryBytes() const;
   void clearAssets() {
+    invalidateCopyPreparation_();
     clip_assets_.clear();
     clip_asset_budget_reservations_.clear();
     streaming_assets_.clear();
@@ -288,6 +289,18 @@ class RenderStream {
                        uint32_t cap) const;
   int cameraField(int camera_id, uint8_t field) const;
   int cameraInfo(int camera_id, lightusd_next_camera_info* out) const;
+  // UsdVol (binding-next-render-query-volume.cc).
+  int volumesJsonCopy(uint8_t* out, uint32_t cap) const;
+  uintptr_t volumeDense(int volume, int field, uint32_t max_voxels, uint32_t flags,
+                        lightusd_next_volume_dense_info* info) const;
+  // The field's sparse grid as one NanoVDB grid buffer (cached with the scene).
+  uintptr_t volumeNanovdb(int volume, int field,
+                          lightusd_next_volume_nanovdb_info* info) const;
+  // World-space samples of a field (nearest unless flags bit0 = trilinear).
+  // Returns the scratch buffer's float address, valid until the next call.
+  uintptr_t volumeSample(int volume, int field, const double* points, uint32_t count,
+                         uint32_t flags, lightusd_next_volume_samples_info* info) const;
+  uintptr_t particleArray(int id, uint8_t which, uint32_t* float_count) const;
   int cameraTransformCopy(int camera_id, uint8_t* out, uint32_t cap) const;
   int cameraOpticsCopy(int camera_id, uint8_t* out, uint32_t cap) const;
   // Skeleton fields: 0=joint count, 1=root joint, 2=animation id.
@@ -342,6 +355,8 @@ class RenderStream {
   /// Legacy computeMeshTangents: request tangents for one output mesh.
   /// Returns 1 for a valid mesh id and 0 otherwise.
   int requestMeshTangents(int mesh_id);
+  // Internal synchronous getMeshCopy transaction; nesting is rejected.
+  int meshCopyScope(int mesh_id, bool begin);
   int meshBufferCopy(int mesh_id, uint8_t kind, uint8_t* out,
                      uint32_t cap);
   int meshView(int mesh_id, lightusd_next_mesh_view* out);
@@ -702,6 +717,13 @@ class RenderStream {
   // resident at a time either way.
   bool buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
                         std::string *err);
+  bool prepareCopyMesh_(int mesh_id, int source_index, bool* soup_out,
+                        std::string* err);
+  void invalidateCopyPreparation_() {
+    mesh_copy_prepared_ = false;
+    stage_budget_cache_valid_ = false;
+  }
+  size_t stageMemoryForBudget_() const;
 
   static std::string fmtFloat_(float v) {
     std::ostringstream ss;
@@ -898,6 +920,9 @@ class RenderStream {
   tr::RenderScene render_scene_;
   bool render_scene_valid_ = false;
   std::vector<std::string> render_scene_warnings_;
+  // UsdVol world-space samples: returned to the caller as a borrowed pointer,
+  // overwritten by the next volumeSample call.
+  mutable std::vector<float> volume_sample_scratch_;
   std::vector<lightusd::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<OutputMesh> analytic_outputs_;
@@ -997,6 +1022,17 @@ class RenderStream {
   lightusd::next::pcp::CompositionReport composition_report_;
   std::string mesh_view_error_;
   int mesh_view_source_id_ = -1;
+  int mesh_copy_scope_id_ = -1;
+  int mesh_copy_source_index_ = -1;
+  uint8_t mesh_copy_build_flags_ = 0;
+  bool mesh_copy_prepared_ = false;
+  bool mesh_copy_soup_ = false;
+  // Only a synchronous, single-owner copy scope reuses the structurally
+  // immutable loaded Stage's footprint. Lazy materializations invalidate it;
+  // all other budget components are accounted live on every query.
+  mutable bool stage_budget_cache_valid_ = false;
+  mutable size_t stage_budget_cache_epoch_ = 0;
+  mutable size_t stage_budget_cache_bytes_ = 0;
   std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
   std::vector<uint8_t> stage_usdc_export_;
   mutable std::unordered_map<int, std::vector<MeshOnlyPrimvar>>

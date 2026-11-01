@@ -98,7 +98,7 @@ std::vector<std::string> Path::elements() const {
 namespace {
 // a + sep + b, allocated at exactly its length: `x + "/" + y` grows its
 // temporary by doubling, and a composed stage keeps ~10M of these path
-// strings (full-LOD Caldera: 2.7 GiB of heap for 1.7 GiB of text).
+// strings (full-LOD benchmark scene: 2.7 GiB of heap for 1.7 GiB of text).
 std::string JoinExact(const std::string& a, const char* sep,
                       const std::string& b) {
   const size_t sl = std::char_traits<char>::length(sep);

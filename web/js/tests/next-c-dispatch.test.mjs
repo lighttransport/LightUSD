@@ -3316,19 +3316,19 @@ assert.equal(authoredMetadata.startTimeCode, 3);
 assert.equal(authoredMetadata.endTimeCode, 93);
 stream.end();
 const unsupportedUsd = `#usda 1.0
-def Volume "Unknown" {}
+def NurbsPatch "Unknown" {}
 `;
 const unsupportedLoad = stream.begin(encode(unsupportedUsd));
 assert.equal(unsupportedLoad.success, true, unsupportedLoad.error || stream.error());
 assert.equal(stream.unsupportedRenderableCount(), 1);
 assert.equal(stream.unsupportedRenderablePath(0), '/Unknown');
 assert.equal(new TextDecoder().decode(stream.recordPathBuffer(9, 0)), '/Unknown');
-assert.equal(stream.unsupportedRenderableTypeName(0), 'Volume');
+assert.equal(stream.unsupportedRenderableTypeName(0), 'NurbsPatch');
 assert.ok(stream.unsupportedRenderableReason(0).length > 0);
 assert.deepEqual(stream.getUnsupportedRenderables(), [{
   index: 0,
   primPath: '/Unknown',
-  type: 'Volume',
+  type: 'NurbsPatch',
   reason: stream.unsupportedRenderableReason(0)
 }]);
 stream.end();

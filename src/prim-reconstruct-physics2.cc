@@ -57,7 +57,7 @@ bool ReconstructPrim<MjcActuator>(
     MjcActuator *actuator, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ actuator
   for (auto &prop : properties) {
     MJC_ACTUATOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -78,7 +78,7 @@ bool ReconstructPrim<NewtonActuator>(
     NewtonActuator *actuator, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ actuator
   for (auto &prop : properties) {
     NEWTON_ACTUATOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -99,7 +99,7 @@ bool ReconstructPrim<MjcTendon>(
     MjcTendon *tendon, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ tendon
   for (auto &prop : properties) {
     MJC_TENDON_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -124,7 +124,7 @@ bool ReconstructPrim<MjcKeyframe>(
     MjcKeyframe *keyframe, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ keyframe
   for (auto &prop : properties) {
     MJC_KEYFRAME_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -144,7 +144,7 @@ bool ReconstructPrim<MjcSensor>(
     MjcSensor *sensor, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ sensor
   for (auto &prop : properties) {
     MJC_SENSOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -164,7 +164,7 @@ bool ReconstructPrim<PhysicsCollisionGroup>(
     PhysicsCollisionGroup *group, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ group
   for (auto &prop : properties) {
     PHYSICS_COLLISION_GROUP_TYPED_ATTRS(EXPAND_TYPED_ATTR)

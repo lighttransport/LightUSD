@@ -440,7 +440,8 @@ class CrateReader::Impl {
   // Field-name views point into the token blob, which outlives the stage build
   // (no per-field string allocation while decoding millions of fieldsets).
   bool ResolveFieldset(uint32_t fieldset_index,
-                       std::vector<std::pair<std::string_view, Value>>& out);
+                       std::vector<std::pair<std::string_view, Value>>& out,
+                       std::vector<DecodedExtensionField>* extensions = nullptr);
   bool ResolveFieldsetRaw(
       uint32_t fieldset_index,
       std::vector<std::pair<std::string_view, ValueRep>>& out);
@@ -452,12 +453,14 @@ class CrateReader::Impl {
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
+  bool DecodeInt64ListOpField(std::string name, ValueRep rep,
+                              DecodedExtensionField* out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
   bool DecodeDictionaryUncached(ValueRep rep, Value& out, int depth);
   // Decoded dictionaries and arrays by ValueRep. A crate stores each distinct
   // value once and every spec that authors it points at the same rep, so the
   // specs share one decoded value (refcounted, copy-on-write) instead of a
-  // copy each -- Caldera's prefab prims all carry a small nested `customData`
+  // copy each -- benchmark scene's prefab prims all carry a small nested `customData`
   // and the same few small arrays (~2.6 GB of dictionaries plus ~3.9 GB of
   // arrays decoded per prim on full LOD). Sharded: EmitPrimBody decodes in
   // parallel.

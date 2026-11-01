@@ -153,6 +153,11 @@ static int vk_buffer_create_ex(lrt_vk_engine *e, VkDeviceSize size,
     memset(out, 0, sizeof(*out));
     if (size == 0) size = 16;
     out->size = size;
+    /* BLAS/TLAS addresses are queried after building (including compacted and
+     * pooled structures). Their backing storage must support device addresses,
+     * not only the build inputs and scratch buffers. VUID-pInfo-09542. */
+    if (usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR)
+        device_addr = 1;
     if (device_addr) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     VkBufferCreateInfo bi;
     memset(&bi, 0, sizeof(bi));

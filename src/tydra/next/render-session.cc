@@ -4,6 +4,7 @@
 #include "render-session.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <limits>
 #include <mutex>
@@ -117,6 +118,7 @@ struct PreparedRenderUpdate::Impl {
   std::shared_ptr<RenderScene> scene;
   std::map<RenderResourceKind, IdMap> ids;
   RenderId next_id = 1;
+  double time_code = 0.0;
   RenderUpdateResult result;
 };
 
@@ -131,7 +133,7 @@ class AcceptSceneUpdateSink final : public SceneUpdateSink {
 struct RenderSession::Impl {
   explicit Impl(const ConverterConfig& config)
       : converter(config), max_resident_bytes(config.limits.max_resident_bytes),
-        transaction_owner(new int(0)) {}
+        transaction_owner(new int(0)), time_code(config.time_code) {}
 
   mutable std::recursive_mutex operation_mu;
   mutable std::mutex publication_mu;
@@ -142,6 +144,11 @@ struct RenderSession::Impl {
   uint64_t revision = 0;
   RenderId next_id = 1;
   std::map<RenderResourceKind, IdMap> ids;
+  /* Conversion time. `time_pending` marks a time change the committed scene
+   * has not been converted at yet, which forces the next update to re-convert
+   * everything instead of taking the no-op or mesh-patch shortcuts. */
+  double time_code;
+  bool time_pending = false;
 
   bool IsAffected(RenderResourceKind kind, const std::string& key,
                   const ::lightusd::next::StageChangeSet& changes) const {
@@ -317,6 +324,8 @@ struct RenderSession::Impl {
       changes.new_revision = snapshot.revision;
       changes.full_resync = true;
     }
+    converter.SetTimeCode(time_code);
+    if (time_pending) changes.full_resync = true;
     out.full_resync = changes.full_resync;
 
     // A transaction may advance the immutable Stage revision without changing
@@ -476,6 +485,7 @@ struct RenderSession::Impl {
       ids = std::move(next_ids);
       next_id = candidate_next_id;
       revision = snapshot.revision;
+      time_pending = false;
       out.revision = revision;
     } else {
       if (prepared_scene) *prepared_scene = std::move(committed);
@@ -588,8 +598,12 @@ RenderUpdateResult RenderSession::Prepare(
       &candidate->next_id);
   if (!result) return result;
   candidate->owner = impl_->transaction_owner;
+  candidate->time_code = impl_->time_code;
   candidate->base_revision = changes.base_revision;
   candidate->new_revision = snapshot.revision;
+  /* Apply() upgrades a pending time change to a full resync internally; the
+   * candidate must describe the same update so Commit re-emits everything. */
+  if (result.full_resync) changes.full_resync = true;
   candidate->changes = std::move(changes);
   candidate->result = result;
   prepared->impl_ = std::move(candidate);
@@ -709,6 +723,9 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
     impl_->ids = std::move(candidate.ids);
     impl_->next_id = candidate.next_id;
     impl_->revision = candidate.new_revision;
+    /* A time change requested after Prepare leaves the pending flag set for
+     * the next update instead of being swallowed here. */
+    if (impl_->time_code == candidate.time_code) impl_->time_pending = false;
   }
   out.success = true;
   out.status = ::lightusd::next::OperationStatus::Ok;
@@ -721,6 +738,19 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
 
 void RenderSession::Abort(PreparedRenderUpdate* prepared) {
   if (prepared) prepared->impl_.reset();
+}
+
+void RenderSession::SetTimeCode(double time_code) {
+  if (!std::isfinite(time_code)) return;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  if (time_code == impl_->time_code) return;
+  impl_->time_code = time_code;
+  impl_->time_pending = true;
+}
+
+double RenderSession::GetTimeCode() const {
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->time_code;
 }
 
 RenderSceneSnapshot RenderSession::GetSnapshot() const {
@@ -749,6 +779,7 @@ void RenderSession::Reset() {
   impl_->revision = 0;
   impl_->next_id = 1;
   impl_->ids.clear();
+  impl_->time_pending = false;
 }
 
 }  // namespace next

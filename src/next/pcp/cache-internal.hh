@@ -25,6 +25,7 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include "../memory-trim.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <condition_variable>
@@ -136,7 +137,7 @@ struct StackSpecCache {
 // Exact-safe negative lookup filter for Specs().
 //
 // Most ExpandArcs calls ask for a site that NO layer in the stack authors
-// (measured 85.6% on a full-LOD Caldera district). FindSpecs() answers each of
+// (measured 85.6% on a full-LOD benchmark scene district). FindSpecs() answers each of
 // those with one `std::unordered_map` probe per layer, hashing the (long) path
 // string every time. This Bloom filter over the union of the stack's authored
 // prim paths answers "definitely absent" with ONE cheap probe.
@@ -231,8 +232,10 @@ struct SpecsMemo {
     p = nullptr;
     return *this;
   }
-  SpecsMemo(SpecsMemo &&) {}
-  SpecsMemo &operator=(SpecsMemo &&) {
+  // noexcept: keeps Src nothrow-movable, so a growing std::vector<Src>
+  // moves its elements instead of copying each site string and context.
+  SpecsMemo(SpecsMemo &&) noexcept {}
+  SpecsMemo &operator=(SpecsMemo &&) noexcept {
     p = nullptr;
     return *this;
   }
@@ -270,7 +273,7 @@ struct SpecState {
 // A single composition source (one node's worth of provenance).
 // The arc context a source carries -- time offset, expression variables,
 // arc chain, arc-site trail. Every source derived through the same arc shares
-// it (full-LOD Caldera: 24.7M sources, 2.9M distinct contexts), so it lives
+// it (full-LOD benchmark scene: 24.7M sources, 2.9M distinct contexts), so it lives
 // behind one shared pointer instead of 64 inline bytes per Src. Immutable
 // while shared: Src's setters copy it first (copy-on-write).
 struct SrcContext {
@@ -391,6 +394,9 @@ struct Src {
 // (never on the flatten hot path): tombstones keep probe chains valid; dead
 // deque entries are reclaimed on clear(). Default copy deep-copies (worker
 // seeding; Src's SpecsMemo resets on that element-wise copy).
+static_assert(std::is_nothrow_move_constructible<Src>::value,
+              "std::vector<Src> growth must move, not copy");
+
 struct SrcCache {
   static uint64_t Hash(const std::string &s) {
     return StackSpecCache::HashSite(s.data(), s.size());
@@ -557,6 +563,56 @@ struct ExpansionFrame {
   }
 };
 
+// Namespace scope of one batch of a batched (low-memory) build. Only the
+// subtrees under `roots` are composed, plus their ancestors (`spine`); a spine
+// prim's other children are left out, and its full child-name list is
+// recorded so the writer can still emit the prim's primChildren. Instancing
+// carries across batches: `seeded_protos` (instance key -> prototype path,
+// from earlier batches) makes every later member an instance, and a
+// prototype in `holders_with_peers` is a Holder even when its peers are all in
+// other batches.
+struct BatchScope {
+  std::unordered_set<std::string> spine;  // proper ancestors of the roots
+  std::unordered_set<std::string> roots;
+  std::vector<std::pair<std::string, std::string>> seeded_protos;
+  std::unordered_set<std::string> seeded_keys;
+  std::unordered_set<std::string> seeded_proto_paths;
+  const std::unordered_set<std::string> *holders_with_peers = nullptr;
+  // Layers (registry ids) no later batch reads (pass 2, from pass 1's last
+  // use): the opinion fill may release them as the default build does. Null:
+  // the fill releases no layer.
+  const std::unordered_set<std::string> *releasable_layers = nullptr;
+  // Output: spine prim path -> its full child names (walk threads add here).
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::mutex full_children_mu;
+#endif
+  std::unordered_map<std::string, std::vector<std::string>> full_children;
+
+  bool Masks(const std::string &parent) const { return spine.count(parent) != 0; }
+  // Keeps the children that are spine prims or batch roots; records the full
+  // list first. `parent` is a spine prim (Masks(parent)).
+  void Filter(const std::string &parent, std::vector<std::string> *children) {
+    {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      std::lock_guard<std::mutex> lk(full_children_mu);
+#endif
+      full_children.emplace(parent, *children);
+    }
+    std::string child;
+    size_t kept = 0;
+    for (size_t i = 0; i < children->size(); ++i) {
+      child.assign(parent == "/" ? std::string() : parent);
+      child += '/';
+      child += (*children)[i];
+      if (spine.count(child) || roots.count(child)) {
+        if (kept != i) (*children)[kept] = std::move((*children)[i]);
+        ++kept;
+      }
+    }
+    children->resize(kept);
+  }
+};
+
 }  // namespace cache_detail
 using namespace cache_detail;
 
@@ -568,6 +624,11 @@ struct Cache::Impl {
   AssetResolver *resolver = nullptr;
   CompositionOptions options;
   LayerRegistry registry;          // owned by this Impl
+  // Set for one batch of a batched build (see BatchScope); null otherwise.
+  BatchScope *batch_scope_ = nullptr;
+  // BuildStage with release_layers_during_fill: returns freed pages to the OS
+  // off the critical path (see MemoryTrimmer); null otherwise.
+  MemoryTrimmer *trimmer_ = nullptr;
   LayerRegistry *reg_ = &registry;  // borrowed pointer: worker Impls point this
                                     // at the *main* Impl's registry (parse-once
                                     // shared across the parallel build).
@@ -669,10 +730,13 @@ struct Cache::Impl {
   // Instancing: instance key -> prototype prim path; and the groupings.
   // Every registered prim's path appears in prototype_of, its group's member
   // list and instance_prim_index_, and each member repeats its prototype's
-  // path: they share refcounted PathStr nodes instead (full-LOD Caldera:
+  // path: they share refcounted PathStr nodes instead (full-LOD benchmark scene:
   // 1.06M instances, ~7K prototypes). prototype_of is keyed by a view into
   // its entry's own path node, so lookups by std::string need no allocation.
-  std::map<std::string, PathStr> prototype_by_key;
+  // Hashed: the in-order structure commit looks every instance key up here
+  // (long keys; ordered-map compares were a serial cost). Iteration order is
+  // never relied on.
+  std::unordered_map<std::string, PathStr> prototype_by_key;
   // Instance keys in DISCOVERY order (first registration during the stage
   // walk): pxr numbers flattened prototypes by this order, not by path.
   std::vector<std::string> instance_key_order;

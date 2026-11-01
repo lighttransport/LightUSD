@@ -415,6 +415,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     binding-next-render-lifecycle.cc
     binding-next-render-query-geometry.cc
     binding-next-render-query-scene.cc
+    binding-next-render-query-volume.cc
     binding-next-render-query-shading.cc
     binding-next-render-query-animation.cc
     binding-next-render-assets.cc

@@ -5,8 +5,51 @@
 #include "tydra/next/render-converter-clip.hh"
 namespace lightusd {
 namespace web_next {
+int RenderStream::meshCopyScope(int mesh_id, bool begin) {
+    if (mesh_id < 0) return -1;
+    if (begin) {
+      if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount() ||
+          mesh_copy_scope_id_ != -1) return -1;
+      mesh_copy_scope_id_ = mesh_id;
+    } else {
+      if (mesh_copy_scope_id_ != mesh_id) return -1;
+      mesh_copy_scope_id_ = -1;
+    }
+    invalidateCopyPreparation_();
+    return 0;
+}
+
+bool RenderStream::prepareCopyMesh_(int mesh_id, int source_index,
+                                    bool* soup_out, std::string* err) {
+    if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size())
+      return false;
+    const uint8_t flags = static_cast<uint8_t>(
+        (build_vertex_indices_ ? 1 : 0) |
+        (build_vertex_indices_set_ ? 2 : 0) | (enable_value_clips_ ? 4 : 0));
+    if (mesh_copy_scope_id_ == mesh_id && mesh_copy_prepared_ &&
+        mesh_copy_source_index_ == source_index && mesh_copy_build_flags_ == flags) {
+      if (soup_out) *soup_out = mesh_copy_soup_;
+      return true;
+    }
+    bool soup = false;
+    const bool ok = buildRenderMesh_(meshes_[static_cast<size_t>(source_index)].GetPrim(),
+                                     &soup, err);
+    if (ok && mesh_copy_scope_id_ == mesh_id) {
+      mesh_copy_source_index_ = source_index;
+      mesh_copy_build_flags_ = flags;
+      mesh_copy_soup_ = soup;
+      mesh_copy_prepared_ = true;
+    }
+    if (soup_out) *soup_out = soup;
+    return ok;
+}
+
 bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
+    // Every real build replaces shared scratch, including unscoped callers
+    // (merge, other mesh views and failures). Only a successful scoped
+    // preparation may publish it for reuse.
+    invalidateCopyPreparation_();
     mesh_view_source_id_ = -1;
     if (soup_out) *soup_out = false;
     tr::ValueArrayRead<float> P;

@@ -61,6 +61,7 @@ int RenderStream::provideAssetBytes(const uint8_t* name, uint32_t name_size,
     std::string data;
     if (byte_size) data.assign(reinterpret_cast<const char*>(bytes), byte_size);
     clip_assets_[key] = std::move(data);
+    invalidateCopyPreparation_();
     if (reservation) clip_asset_budget_reservations_[key] = std::move(reservation);
     else clip_asset_budget_reservations_.erase(key);
     return 0;
@@ -125,6 +126,7 @@ int RenderStream::importAssetStore(const NextAssetStore& store) {
             std::move(stream_reservations[item.first]);
     }
     asset_resolver_ = std::move(candidate);
+    invalidateCopyPreparation_();
     imported_asset_bytes_ = imported_bytes;
     payload_budget_ = next_budget;
     error_.clear();
@@ -388,6 +390,7 @@ int RenderStream::finalizeStreamingAsset(const uint8_t* name, uint32_t name_size
     if (it == streaming_assets_.end() ||
         it->second.written_size != it->second.expected_size) return 0;
     clip_assets_[key] = std::move(it->second.bytes);
+    invalidateCopyPreparation_();
     clip_asset_budget_reservations_[key] = std::move(it->second.budget_reservation);
     streaming_assets_.erase(it);
     return 1;
@@ -470,6 +473,7 @@ int RenderStream::removeAssetBytes(const uint8_t* name, uint32_t name_size) {
     std::string key(reinterpret_cast<const char*>(name), name_size);
     key = NormalizeRenderAssetKey(key);
     const bool removed = clip_assets_.erase(key) != 0;
+    if (removed) invalidateCopyPreparation_();
     clip_asset_budget_reservations_.erase(key);
     return removed ? 1 : 0;
 }

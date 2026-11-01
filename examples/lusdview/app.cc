@@ -50,6 +50,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
+#include "raster_lighting.hh"  // PrepareRasterGeometryLightSamples (GL-only builds)
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
@@ -718,7 +719,30 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
                                     : "error";
   report["exit_code"] = exitCode;
   report["scene"] = scenePath;
+  report["render_thread"] = renderThreadActive_;
   report["profile"] = largeSceneProfile_;
+  if (previewRequest_.enabled) {
+    report["preview_accumulated_frames"] = previewVolumeRenderer_ ? previewVolumeRenderer_->accumulatedFrames() : 0;
+    report["preview_source"] = {
+        {"samples", previewRequest_.result.samples},
+        {"cell_size", previewRequest_.result.voxel_size},
+        {"direct_volume",
+         previewRequest_.direct_volume &&
+             previewRequest_.options.kind ==
+                 lightusd::tydra::next::ScenePreviewKind::Volume}};
+  }
+  if(previewLods_.success) {
+    uint64_t bytes=0;std::array<size_t,4> levels{};
+    for(const auto& tile:previewLods_.tiles) {
+      int level=3;const auto selection=loadOpts_.variantOverrides.find(tile.path);
+      if(selection!=loadOpts_.variantOverrides.end()) {
+        const auto value=selection->second.find("previewLod");
+        if(value!=selection->second.end() && value->second.size()==4)level=std::max(0,std::min(3,int(value->second[3]-'0')));
+      }
+      ++levels[size_t(level)];bytes+=tile.bytes[size_t(level)];
+    }
+    report["preview_lod"]={{"levels",levels},{"selected_geometry_bytes",bytes},{"budget_bytes",previewLods_.gpu_budget_bytes},{"updates",previewLodUpdates_},{"pixel_error",previewLodPixelError_}};
+  }
   report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
   nlohmann::json stereo = {{"requested", stereoRequested_},
                            {"resolved", false}};
@@ -1855,6 +1879,8 @@ void App::getRequestedWindowSize(int* width, int* height) const {
 App::App(Backend backend) : backend_(backend) {}
 
 App::~App() {
+  if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+  if (previewRefinement_.valid()) previewRefinement_.wait();
 #if defined(LUSDVIEW_HAVE_MCP)
   // Stop the MCP transports first so no worker thread calls back into App while
   // its members are being destroyed.
@@ -1907,7 +1933,13 @@ void App::autoDetectUiScale() {
   // Use 2x only on genuinely high-density / large panels: a HiDPI content scale,
   // or a native width of at least 2K (2560). Standard 1080p/1920 stays at 1x, so
   // the font/widgets are not oversized on a normal-DPI display.
+#ifdef __APPLE__
+  // Cocoa/GLFW window sizes are in points. ImGui applies the Retina framebuffer
+  // scale itself; multiplying font/widget sizes here would scale them twice.
+  const float scale = 1.0f;
+#else
   const float scale = (xs >= 1.5f || mw >= 2560) ? 2.0f : 1.0f;
+#endif
   uiScale_ = scale;
   // A first run on a 4K-class display starts at 2560x1600. A normal 2560-wide
   // monitor still gets crisp 2x UI metrics without nearly filling its workarea.
@@ -2762,6 +2794,10 @@ void App::updateRtLodCamera() {
 }
 
 void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
+  if (ok && previewRequest_.enabled &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Points)
+    for (auto& points : draw_.points) points.previewAlbedo = true;
   // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
   // main thread before the render thread drains the queued appendMesh ops (a
   // use-after-free). Use the one-shot uploadScene path instead (load stays async);
@@ -2889,7 +2925,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
     // When the RT path owns the screenshot the rasterized scene is never drawn,
     // so skip the (potentially huge) raster upload entirely.
-    if (!rtOwnsScreenshot_) {
+    if (!rtOwnsScreenshot_ &&
+        !(previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume)) {
       const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
       if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
       for (size_t i = 0; i < draw_.meshes.size(); ++i)
@@ -3162,6 +3201,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       if (robustBoundsValid_) {
         fitMin = robustBoundsMin_;
         fitMax = robustBoundsMax_;
+      }
+      float previewMin[3]={1e30f,1e30f,1e30f},previewMax[3]={-1e30f,-1e30f,-1e30f};
+      if (previewLods_.success && !previewLods_.tiles.empty() &&
+          loaded_.filepath == previewLods_.root_path) {
+        for(const auto& tile:previewLods_.tiles) for(size_t k=0;k<3;++k) {
+          previewMin[k]=std::min(previewMin[k],static_cast<float>(tile.minimum[k]));
+          previewMax[k]=std::max(previewMax[k],static_cast<float>(tile.maximum[k]));
+        }
+        fitMin=previewMin;fitMax=previewMax;
       }
       camera_.fitToScene(fitMin, fitMax);
       if (!viewDirExplicit_) {
@@ -4275,7 +4323,9 @@ void App::startLoadAsync(const std::string& path) {
   // Keep RT/CUDA/HIP on their scene-owned paths, but do not make Vulkan raster
   // materialize the complete DrawScene before the first upload.
   const bool progressiveStream = useNext && !rt && !cudaRt_ && !hipRt_ &&
-                                 !renderThreadOwnsContext;
+                                 !renderThreadOwnsContext &&
+                                 !previewLodReloadPending_ &&
+                                 !previewRequest_.enabled;
   if (progressiveStream) {
     const size_t maxBytes =
         opts.streamBufferBytes ? opts.streamBufferBytes : (size_t(64) << 20);
@@ -4651,40 +4701,220 @@ bool App::tryApplyNextSceneUpdate(
       next->meshes[i].prototypeLods = draw_.meshes[i].prototypeLods;
     }
   }
-  LOGI("incremental scene update: retained %zu/%zu mesh GPU slots; "
-       "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
-       "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
-       "%.2f MiB uploaded",
-       next->meshes.size() - plan.replacementUpdates.size(),
-       next->meshes.size(), plan.replacementUpdates.size(),
-       plan.vertexUpdates.size(), plan.worldUpdates.size(),
-       plan.instanceUpdates.size(), plan.materialUpdates.size(),
-       plan.textureUpdates.size(), transaction_ms,
-       static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
+  LOGI(
+      "incremental scene update: retained %zu/%zu mesh GPU slots; "
+      "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
+      "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
+      "%.2f MiB uploaded",
+      next->meshes.size() - plan.replacementUpdates.size(), next->meshes.size(),
+      plan.replacementUpdates.size(), plan.vertexUpdates.size(),
+      plan.worldUpdates.size(), plan.instanceUpdates.size(),
+      plan.materialUpdates.size(), plan.textureUpdates.size(), transaction_ms,
+      static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
   return true;
+}
+
+bool App::renderScenePreviewVolume(std::vector<uint8_t>* rgba, int* width,
+                                   int* height, std::string* error, bool advance) {
+  namespace preview = lightusd::tydra::next;
+  if (!previewVolumeRenderer_ ||
+      previewVolumeRoot_ != previewRequest_.result.usd_path) {
+    // Retain the old viewport image, but release its grid buffers before
+    // allocating the replacement so refinements share one renderer budget.
+    previewVolumeRenderer_.reset();
+    previewVolumeRoot_.clear();
+    auto engine = std::make_unique<preview::PreviewVolumeRenderer>();
+    const auto backend = cpuRt_    ? preview::PreviewComputeBackend::Cpu
+                         : cudaRt_ ? preview::PreviewComputeBackend::Cuda
+                         : backend_ == Backend::Vulkan
+                             ? preview::PreviewComputeBackend::Vulkan
+                             : preview::PreviewComputeBackend::Cpu;
+    if (!engine->load(previewRequest_.result, backend,
+                      previewRequest_.options.gpu_budget_bytes, error))
+      return false;
+    previewVolumeRoot_ = previewRequest_.result.usd_path;
+    previewVolumeRenderer_ = std::move(engine);
+    LOGI("direct UsdVol grids: backend=%s", previewVolumeRenderer_->backend());
+  }
+  gui_.viewportPixelSize(width, height);
+  if (headless_ || *width < 1 || *height < 1)
+    getRequestedWindowSize(width, height);
+  const auto eye = camera_.eye();
+  const auto forward = light3d::normalize(camera_.target() - eye);
+  const auto view = camera_.view();
+  const auto projection = camera_.proj(false);
+  preview::PreviewVolumeCamera camera;
+  camera.settings=previewRequest_.volume;
+  camera.exposure=camera_.exposure();
+  camera.eye = {eye.x, eye.y, eye.z};
+  camera.forward = {forward.x, forward.y, forward.z};
+  camera.orthographic = std::abs(projection.m[15]) > .5f;
+  camera.near_plane = camera_.nearPlane();
+  camera.far_plane = camera_.farPlane();
+  const float rx = 1.f / std::abs(projection.m[0]),
+              uy = 1.f / std::abs(projection.m[5]);
+  camera.right = {view.m[0] * rx, view.m[4] * rx, view.m[8] * rx};
+  camera.up = {view.m[1] * uy, view.m[5] * uy, view.m[9] * uy};
+  return previewVolumeRenderer_->render(camera, *width, *height, rgba, error, advance);
+}
+
+void App::stepScenePreviewLods() {
+  if (!previewLods_.success || !useNextLoader_ || !nextSession_ ||
+      !loaded_.ok || loadActive_ || progressiveActive_ ||
+      loaded_.filepath != previewLods_.root_path)
+    return;
+  int width = 0, height = 0;
+  gui_.viewportPixelSize(&width, &height);
+  if (headless_ || height < 1) getRequestedWindowSize(&width, &height);
+  const auto projection = camera_.proj(false);
+  const double focal_pixels =
+      std::max(1, height) * .5 * std::abs(projection.m[5]);
+  const auto now = std::chrono::steady_clock::now();
+  const auto eye = camera_.eye(),
+             forward = light3d::normalize(camera_.target() - eye);
+  const auto delta = eye - previewLodLastEye_,
+             turn = forward - previewLodLastForward_;
+  const bool changed =
+      !previewLodHaveCamera_ || light3d::dot(delta, delta) > 1e-8f ||
+      light3d::dot(turn, turn) > 1e-8f || width != previewLodLastWidth_ ||
+      height != previewLodLastHeight_ ||
+      std::abs(focal_pixels - previewLodLastFocalPixels_) >
+          1e-4 * std::max(1., focal_pixels);
+  if (changed) {
+    previewLodLastEye_ = eye;
+    previewLodLastForward_ = forward;
+    previewLodStillSince_ = now;
+    previewLodHaveCamera_ = true;
+    previewLodLastWidth_ = width;
+    previewLodLastHeight_ = height;
+    previewLodLastFocalPixels_ = focal_pixels;
+    previewRefinementTried_ = false;
+    if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+  }
+  if (!headless_ &&
+      (gui_.cameraInteractive() ||
+       now - previewLodStillSince_ < std::chrono::milliseconds(250)))
+    return;
+  lightusd::tydra::next::ScenePreviewLodCamera camera;
+  camera.eye = {eye.x, eye.y, eye.z};
+  camera.forward = {forward.x, forward.y, forward.z};
+  camera.orthographic = std::abs(projection.m[15]) > .5f;
+  camera.focal_pixels = focal_pixels;
+  camera.near_plane = camera_.nearPlane();
+  if (previewRefinement_.valid() &&
+      previewRefinement_.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    const bool cancelled = previewRefinementCancel_->load();
+    auto refined = previewRefinement_.get();
+    if (!cancelled && refined.first.success && refined.second.success &&
+        refined.second.root_path != previewLods_.root_path) {
+      previewRequest_.result = std::move(refined.first);
+      previewLods_ = std::move(refined.second);
+      loadOpts_.variantOverrides =
+          lightusd::tydra::next::SelectScenePreviewLods(previewLods_, camera,
+                                                        previewLodPixelError_);
+      previewLodReloadPending_ = true;
+      LOGI("source refinement: cell %.9g, samples %llu",
+           previewRequest_.result.voxel_size,
+           static_cast<unsigned long long>(previewRequest_.result.samples));
+      startLoadAsync(previewLods_.root_path);
+      return;
+    }
+    if (!cancelled && !refined.first.success)
+      LOGW("source refinement: %s", refined.first.error.c_str());
+  }
+  if (previewRequest_.enabled && previewRequest_.source_refinement &&
+      !previewRefinementTried_ && !previewRefinement_.valid()) {
+    previewRefinementTried_ = true;
+    previewRefinementCancel_ = std::make_shared<std::atomic<bool>>(false);
+    const auto cancel = previewRefinementCancel_;
+    auto request = previewRequest_;
+    previewRefinement_ = std::async(
+        std::launch::async, [request, camera, width, height, cancel]() mutable {
+          request.options.progress =
+              [cancel, last = std::chrono::steady_clock::now()](
+                  const std::string& phase, uint64_t count) mutable {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last > std::chrono::seconds(5)) {
+                  LOGI("source refinement: %s %llu", phase.c_str(),
+                       static_cast<unsigned long long>(count));
+                  last = now;
+                }
+                return !cancel->load();
+              };
+          auto result = lightusd::tydra::next::RefineScenePreview(
+              request.source, request.result, request.options, camera, width,
+              height, request.lod_pixel_error);
+          lightusd::tydra::next::ScenePreviewLods lods;
+          if (result.success && result.usd_path != request.result.usd_path &&
+              !cancel->load()) {
+            if (request.direct_volume &&
+                request.options.kind ==
+                    lightusd::tydra::next::ScenePreviewKind::Volume) {
+              lods.success = true;
+              lods.root_path = result.render_usd_path;
+              lods.cell_size = result.voxel_size;
+              lods.gpu_budget_bytes = request.options.gpu_budget_bytes;
+            } else
+              lods = lightusd::tydra::next::BuildScenePreviewLods(
+                  result, request.options);
+          }
+          return PreviewRefinement{std::move(result), std::move(lods)};
+        });
+  }
+  if (previewRequest_.enabled && previewRequest_.direct_volume &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Volume)
+    return;
+  const auto choices = lightusd::tydra::next::SelectScenePreviewLods(
+      previewLods_, camera, previewLodPixelError_, loadOpts_.variantOverrides);
+  if (choices.empty() || choices == loadOpts_.variantOverrides) return;
+  loadOpts_.variantOverrides = choices;
+  previewLodReloadPending_ = true;
+  size_t levels[4] = {};
+  for (const auto& choice : choices)
+    ++levels[size_t(choice.second.at("previewLod")[3] - '0')];
+  LOGI("preview LOD: tiles=%zu levels=%zu/%zu/%zu/%zu, camera error %.2f px",
+       choices.size(), levels[0], levels[1], levels[2], levels[3],
+       previewLodPixelError_);
+  startRecomposeAsync({});
 }
 
 void App::finishLoadIfReady() {
   if (!loadActive_) return;
   if (!loadFinished_.load(std::memory_order_acquire)) return;
   if (streamLoadActive_ && !streamCompleteSeen_) return;
-  if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
-  clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
+  if (loadThread_.joinable())
+    loadThread_.join();  // sync point: worker fully done
+  std::shared_ptr<std::promise<void>> resumePreviewRenderer;
+#if defined(LUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_ && previewLodReloadPending_) {
+    auto paused = std::make_shared<std::promise<void>>();
+    auto ready = paused->get_future();
+    resumePreviewRenderer = std::make_shared<std::promise<void>>();
+    auto resume = resumePreviewRenderer->get_future().share();
+    postGpu([paused, resume] {
+      paused->set_value();
+      resume.wait();
+    });
+    ready.wait();
+  }
+#endif
+  clearPtexDecode();     // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   bool incrementalUploaded = false;
   bool renderSessionCommitted = false;
   const bool render_session_bootstrap =
-      pendingNextRenderUpdate_ &&
-      pendingNextRenderBootstrap_;
+      pendingNextRenderUpdate_ && pendingNextRenderBootstrap_;
   if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
       pendingNextRenderSession_ && pendingNextRenderUpdate_ &&
-      !render_session_bootstrap) {
+      !render_session_bootstrap && !previewLodReloadPending_) {
     DrawSceneCommitSink sink([&]() {
       return tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
     });
-    const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
-                                               pendingNextRenderUpdate_.get(), &sink);
+    const auto committed = CommitPreparedScene(
+        *pendingNextRenderSession_, pendingNextRenderUpdate_.get(), &sink);
     incrementalUploaded = committed == LIGHTUSD_OK && sink.committed();
     renderSessionCommitted = committed == LIGHTUSD_OK;
     if (committed != LIGHTUSD_OK) {
@@ -4692,15 +4922,15 @@ void App::finishLoadIfReady() {
            lightusd::api::LastError());
     }
   } else if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
-             !render_session_bootstrap) {
+             !render_session_bootstrap && !previewLodReloadPending_) {
     incrementalUploaded =
         tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
   }
-  // Bootstrap the retained RenderSession after an initial load. The GPU upload
-  // still follows the normal full/progressive path; this commit publishes only
-  // the stable-ID catalog prepared by the worker.
-  if (ok && render_session_bootstrap && pendingNextRenderSession_ &&
-      pendingNextRenderUpdate_) {
+  // LOD variants can replace complete mesh buffer layouts. Publish the retained
+  // catalog without an incremental GPU sink, then upload the complete scene.
+  // Bootstrap uses the same catalog-only commit after an initial load.
+  if (ok && (render_session_bootstrap || previewLodReloadPending_) &&
+      pendingNextRenderSession_ && pendingNextRenderUpdate_) {
     const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
                                                pendingNextRenderUpdate_.get());
     renderSessionCommitted = committed == LIGHTUSD_OK;
@@ -4730,18 +4960,40 @@ void App::finishLoadIfReady() {
     nextRenderSession_ = std::move(pendingNextRenderSession_);
   }
   auto snapshot = nextSession_ ? nextSession_->PublicSnapshot()
-                             : lightusd::api::DocumentSnapshot{};
+                               : lightusd::api::DocumentSnapshot{};
   nextStageSnapshot_ = lightusd::api::Stage{};
-  if (snapshot) lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
+  if (snapshot)
+    lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
   nextStageRevision_ = nextStageSnapshot_
-        ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
+                           ? lightusd::api::DocumentSnapshotRevision(snapshot)
+                           : 0;
   pendingNextSession_.reset();
   pendingNextRenderSession_.reset();
   pendingNextRenderUpdate_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
-  applyLoaded(ok, /*progressive=*/!alreadyUploaded, alreadyUploaded);
+  const auto savedCamera = camera_;
+  const auto savedLens = cameraLens_;
+  const auto savedShutter = cameraShutter_;
+  applyLoaded(ok, /*progressive=*/!alreadyUploaded && !previewLodReloadPending_,
+              alreadyUploaded);
+  if (previewLodReloadPending_) {
+    camera_ = savedCamera;
+    cameraLens_ = savedLens;
+    cameraShutter_ = savedShutter;
+    gui_.setCameraLens(cameraLens_);
+    gui_.setCameraShutter(cameraShutter_);
+    previewLodReloadPending_ = false;
+    ++previewLodUpdates_;
+  }
+  if (resumePreviewRenderer) {
+    resumePreviewRenderer->set_value();
+    auto uploaded = std::make_shared<std::promise<void>>();
+    auto ready = uploaded->get_future();
+    postGpu([uploaded] { uploaded->set_value(); });
+    ready.wait();
+  }
   streamLoadActive_ = false;
   loadStream_.reset();
 }
@@ -5741,8 +5993,13 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
     renderer_ = CreateGLRenderer();
   }
 #if defined(HAVE_VULKAN)
-  else {
+  else if (backend == Backend::Vulkan) {
     renderer_ = CreateVulkanRenderer();
+  }
+#endif
+#if defined(HAVE_METAL)
+  else if (backend == Backend::Metal) {
+    renderer_ = CreateMetalRenderer();
   }
 #endif
   if (!renderer_) {
@@ -6044,7 +6301,7 @@ bool App::renderHipViewport() {
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
     LOGI("HIP offscreen presentation: %s compute -> primary %s viewport blit",
-         hipTracer_.deviceName(), backend_ == Backend::Vulkan ? "Vulkan" : "OpenGL");
+         hipTracer_.deviceName(), BackendName(backend_));
     // A deformable scene keeps its CPU geometry: the timeline re-poses it and
     // rebuilds the BVH below, so draw_ is read again on every new time code.
     if (sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_)) return true;
@@ -7231,7 +7488,7 @@ void App::captureModeSweepFrame(const std::string& modeName) {
 void App::logCapabilities() const {
   if (!renderer_) return;
   const RendererCaps& c = renderer_->caps();
-  const char* backend = (backend_ == Backend::Vulkan) ? "vulkan" : "gl";
+  const char* backend = BackendName(backend_);
   const bool rtOn = renderer_->rayTracingActive();
   const char* rt = !rtOn ? "off"
                          : (renderer_->rayTracingIsHardware() ? "hardware"
@@ -7305,8 +7562,7 @@ int App::run(const std::string& initialFile, int maxFrames,
                            ? (pathTrace_.enabled ? RenderTechnique::HipPathTrace
                                                  : RenderTechnique::HipRT)
                                          : RenderTechnique::CpuRT;
-    previousTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : RenderTechnique::VulkanRaster;
+    previousTechnique_ = RasterTechnique(backend_);
   }
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   if (hipInteractive_ || cudaInteractive_ || cpuInteractive_) renderThreadActive_ = false;
@@ -7345,8 +7601,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   if (headless_) {
-    if (backend_ != Backend::Vulkan) {
-      LOGE("--headless requires the Vulkan backend (pass --backend vk)");
+    if (backend_ != Backend::Vulkan && backend_ != Backend::Metal) {
+      LOGE("--headless requires Metal or Vulkan (pass --backend metal or vk)");
       return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
@@ -7433,11 +7689,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
-      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? (pathTrace_.enabled
-                                                        ? RenderTechnique::VulkanPathTrace
-                                                        : RenderTechnique::VulkanRT)
-                                                               : RenderTechnique::VulkanRaster);
+      activeTechnique_ = backend_ == Backend::Vulkan && rtPath_
+                             ? (pathTrace_.enabled ? RenderTechnique::VulkanPathTrace
+                                                   : RenderTechnique::VulkanRT)
+                             : RasterTechnique(backend_);
       activeOverlay_ = rtPath_ ? (pathTrace_.enabled
                                       ? OverlayKind::VulkanPathTrace
                                       : OverlayKind::VulkanRT)
@@ -7471,11 +7726,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
-      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? (pathTrace_.enabled
-                                                        ? RenderTechnique::VulkanPathTrace
-                                                        : RenderTechnique::VulkanRT)
-                                                               : RenderTechnique::VulkanRaster);
+      activeTechnique_ = backend_ == Backend::Vulkan && rtPath_
+                             ? (pathTrace_.enabled ? RenderTechnique::VulkanPathTrace
+                                                   : RenderTechnique::VulkanRT)
+                             : RasterTechnique(backend_);
       activeOverlay_ = rtPath_ ? (pathTrace_.enabled
                                       ? OverlayKind::VulkanPathTrace
                                       : OverlayKind::VulkanRT)
@@ -7625,6 +7879,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     finishLoadIfReady();
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
+    stepScenePreviewLods();
+    // Batch captures wait for the camera-selected variants, not an intermediate
+    // coarse frame. The CPU/CUDA screenshot paths consume the same final scene.
+    if (headless_ && (previewLodReloadPending_ || previewRefinement_.valid())) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
+    }
 
     // Advance the playback clock and request a re-evaluation at the new time.
     // Headless renders a fixed --time frame unless --play asked for playback --
@@ -8361,7 +8622,23 @@ int App::run(const std::string& initialFile, int maxFrames,
       // on the main thread, deep-copy the ImGui draw lists, and hand it to the
       // render thread. The main loop never touches GL or blocks on the GPU.
       auto pkt = std::make_unique<FramePacket>();
-      gui_.renderViewportScene(pkt.get());
+      const bool directVolume =
+          previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume;
+      if (directVolume) {
+        std::vector<uint8_t> rgba;
+        int width = 0, height = 0;
+        std::string error;
+        if (!renderScenePreviewVolume(&rgba, &width, &height, &error)) {
+          LOGE("direct volume: %s", error.c_str());
+          return finishRun(1);
+        }
+        postGpu([this, rgba = std::move(rgba), width, height] {
+          renderer_->uploadViewportImage(rgba.data(), width, height);
+        });
+      } else
+        gui_.renderViewportScene(pkt.get());
       updateTextureResidency();
       glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
       pkt->wantCapture = checkpointDue ||
@@ -8472,7 +8749,18 @@ int App::run(const std::string& initialFile, int maxFrames,
           LOGW("stereo live viewport: %s", stereoError.c_str());
         }
       }
-      if (stereoLiveRendered) {
+      if (previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume) {
+        std::vector<uint8_t> rgba;
+        int width = 0, height = 0;
+        std::string error;
+        if (!renderScenePreviewVolume(&rgba, &width, &height, &error)) {
+          LOGE("direct volume: %s", error.c_str());
+          return finishRun(1);
+        }
+        renderer_->uploadViewportImage(rgba.data(), width, height);
+      } else if (stereoLiveRendered) {
         // The two eye passes were presented above to make their offscreen
         // captures current. The uploaded side-by-side image is presented once
         // more below with the current ImGui frame.
@@ -8483,21 +8771,18 @@ int App::run(const std::string& initialFile, int maxFrames,
           // cache) so this doesn't keep getting offered/retried.
           hipProbe_ = ProbeState::Unavailable;
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (cudaInteractive_) {
         if (!renderCudaViewport()) {
           cudaProbe_ = ProbeState::Unavailable;
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (cpuInteractive_) {
         if (!renderCpuViewport()) {
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (rasterMotionHold) {
         renderer_->uploadViewportImage(rasterMotionAccum_.lastRgba.data(),
@@ -8760,7 +9045,9 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     if (quitAfterFullPresent_) running = false;
 
-    if (maxFrames >= 0) ++frameCount;
+    if (maxFrames >= 0 && !previewLodReloadPending_ &&
+        !previewRefinement_.valid())
+      ++frameCount;
     bool fixedFrameBudgetReached = maxFrames >= 0 && frameCount >= maxFrames;
     if (maxFrames >= 0 && headless_ && pathTrace_.enabled && !cudaRt_ &&
         !hipRt_ && pathTrace_.targetSamples > 0) {
@@ -8899,6 +9186,22 @@ int App::run(const std::string& initialFile, int maxFrames,
       LOGW("capture not supported by this backend");
     }
   };
+  if (previewRequest_.enabled && previewRequest_.direct_volume &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Volume &&
+      !screenshot.empty()) {
+    std::vector<uint8_t> rgba;
+    int width = 0, height = 0;
+    std::string error;
+    if (!renderScenePreviewVolume(&rgba, &width, &height, &error, false) ||
+        !WriteScreenshotImage(screenshot, rgba, width, height, &error)) {
+      LOGE("direct volume capture: %s", error.c_str());
+      return finishRun(1);
+    }
+    reportCaptureWidth_ = width;
+    reportCaptureHeight_ = height;
+    return finishRun(0);
+  }
   // CUDA ray tracing: trace the loaded scene on the GPU (CUDA driver API + NVRTC
   // loaded at runtime via cuew) and write it in place of the rasterized capture.
   if (cudaRt_ && !screenshot.empty() && !draw_.empty()) {

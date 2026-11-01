@@ -477,6 +477,11 @@ struct MaterialConverterConfig {
 };
 
 struct RenderSceneConverterConfig {
+  // Dense voxel cap per volume field (cells; 0 = usdVol's default). A field
+  // over the cap is box-filtered by the smallest stride that fits while it is
+  // decoded, instead of being skipped.
+  size_t volume_max_voxels{0};
+
   // Load texture image data on convert.
   // false: no actual texture file/asset access.
   // App/User must setup TextureImage manually after the conversion.

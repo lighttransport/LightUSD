@@ -1192,7 +1192,7 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
       // renderable), and its field-asset prims are the data sources that
       // geometry references — unlike UsdRender, which is pure scene
       // description and has its own group below.
-      ValidateVolume(ps, prim_location, result);
+      ValidateVolume(ps, prim_location, prim_types, result);
     } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
       ValidateFieldAsset(ps, prim_location, result);
     } else if (type_name == "ParticleField" ||

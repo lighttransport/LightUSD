@@ -27,6 +27,7 @@ IN_SCOPE_DOMAINS = {
     "usdShade",
     "usdSkel",
     "usdUI",
+    "usdVol",
 }
 
 EXCLUDED_DOMAINS = {
@@ -36,7 +37,6 @@ EXCLUDED_DOMAINS = {
     "usdRender": "render-product/pass execution is explicitly excluded",
     "usdRi": "RenderMan-specific",
     "usdSemantics": "not part of the currently supported schema surface",
-    "usdVol": "volume schema expansion is explicitly excluded",
 }
 
 REQUIRED_CAPABILITIES = [

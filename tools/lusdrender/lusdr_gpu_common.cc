@@ -685,7 +685,7 @@ bool ShadeAndWriteGaussianImage(
         Vec3 color{0, 0, 0};
         for (int sp = 0; sp < spp; ++sp) {
           const lrt_hit &hit = hits[base + size_t(sp)];
-          if (hit.prim_id == 0xFFFFFFFFu) continue;
+          if (hit.prim_id == 0xFFFFFFFFu) {color=Add(color,opt.bg);continue;}
           const TriInfo *ti = find_info(hit.prim_id);
           if (!ti) continue;
           Vec3 normal = Normalize(ti->p1);

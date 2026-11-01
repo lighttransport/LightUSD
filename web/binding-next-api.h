@@ -551,6 +551,53 @@ typedef struct lightusd_next_camera_info {
 int32_t lightusd_next_render_camera_info_get(uint32_t handle,
                                              int32_t camera_id,
                                              lightusd_next_camera_info* out);
+/* UsdVol. volumes_json: JSON {volumes:[...fields...], particleFields:[...]}
+ * (returns the byte size; copies when cap suffices). volume_dense decodes a
+ * field to float voxels (x fastest; flags bit0 = downsample to fit, bit1 =
+ * keep vec3 components) and returns their heap address (0 on failure),
+ * valid while the render handle lives. particle_array returns the address
+ * of positions(0)/orientations(1)/scales(2)/opacities(3)/SH(4) floats. */
+typedef struct lightusd_next_volume_dense_info {
+  int32_t dims[3];
+  int32_t index_origin[3];
+  int32_t stride;
+  int32_t components;
+  float background;
+  int32_t reserved;
+  double cell_to_world[16]; /* row vector: (x,y,z,1) * M */
+} lightusd_next_volume_dense_info;
+/* NanoVDB: grid_type is a PNANOVDB_GRID_TYPE_* id (1 float, 2 double,
+ * 4 int32, 5 int64, 6 vec3f, 7 vec3d, 8 mask, 9 half); index_to_world is the
+ * field's column-vector grid-to-world map. */
+typedef struct lightusd_next_volume_nanovdb_info {
+  uint64_t size; /* raw GridData-first NanoVDB bytes */
+  int32_t grid_type;
+  int32_t components;
+  float background;
+  int32_t reserved;
+  double index_to_world[16];
+} lightusd_next_volume_nanovdb_info;
+/* World-space samples of one field: count * components floats,
+ * component-interleaved. */
+typedef struct lightusd_next_volume_samples_info {
+  uint32_t count;
+  uint32_t components;
+} lightusd_next_volume_samples_info;
+int32_t lightusd_next_render_volumes_json(uint32_t handle, uint8_t* out, uint32_t cap);
+uintptr_t lightusd_next_render_volume_dense(uint32_t handle, int32_t volume, int32_t field,
+                                            uint32_t max_voxels, uint32_t flags,
+                                            lightusd_next_volume_dense_info* info);
+/* Sparse grid as one NanoVDB buffer (address valid while the handle lives). */
+uintptr_t lightusd_next_render_volume_nanovdb(uint32_t handle, int32_t volume, int32_t field,
+                                              lightusd_next_volume_nanovdb_info* info);
+/* Sample at `count` world points (3 doubles each; flags bit0 = trilinear).
+ * The float address stays valid until the next sample call on this handle. */
+uintptr_t lightusd_next_render_volume_sample(uint32_t handle, int32_t volume, int32_t field,
+                                             const double* points, uint32_t count,
+                                             uint32_t flags,
+                                             lightusd_next_volume_samples_info* info);
+uintptr_t lightusd_next_render_particle_array(uint32_t handle, int32_t id, uint8_t which,
+                                              uint32_t* float_count);
 int32_t lightusd_next_render_camera_transform(uint32_t handle, int32_t camera_id,
                                               uint8_t* out, uint32_t cap);
 /* Returns 8 f32 values: focal length, horizontal/vertical aperture,
@@ -598,6 +645,11 @@ int32_t lightusd_next_render_mesh_primvar_buffer(uint32_t handle, int32_t mesh_i
 int32_t lightusd_next_render_mesh_buffer(uint32_t handle, int32_t mesh_id,
                                          uint8_t kind, uint8_t* out,
                                          uint32_t cap);
+/* Internal getMeshCopy scope: begin=1 starts, begin=0 ends. Returns 0 on
+ * success, -1 for invalid/nested/mismatched scopes. No payload is retained
+ * beyond the existing one-mesh scratch; all ordinary calls remain unscoped. */
+int32_t lightusd_next_render_mesh_copy_scope(uint32_t handle, int32_t mesh_id,
+                                             uint8_t begin);
 /* Legacy computeMeshTangents: makes the tangent stream (kind 4) available for
  * a normal-mapped mesh while tangents are deferred. Returns 1 for a valid mesh
  * id, 0 for an invalid one, and -1 for an invalid handle. */

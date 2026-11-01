@@ -163,7 +163,13 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     if (auto src = CrateDataSource::MmapFile(filename)) {
       source_ = std::move(src);
       source_->set_max_array_elements(options_.max_array_elements);
-      return ParseFromSource();
+      CrateReadResult result = ParseFromSource();
+      // Parsing touched the structural sections (and decoded what it keeps);
+      // drop those mapped pages from the process. Lazy arrays fault theirs
+      // back in from the page cache when read. A large composition keeps
+      // tens of thousands of crates mapped (full45: 3.3 GiB of file RSS).
+      source_->DiscardRange(0, source_->size());
+      return result;
     }
   }
 

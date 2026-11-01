@@ -57,6 +57,12 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0,
 // UsdVol
 std::string to_string(const Volume &volume, const uint32_t indent = 0,
                       bool closing_brace = true);
+std::string to_string(const VolumeFieldBase &field, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const FieldBase &field, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const VolumeFieldAsset &field, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const FieldAsset &field, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const OpenVDBAsset &asset, const uint32_t indent = 0,

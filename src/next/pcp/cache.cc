@@ -64,7 +64,7 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
                        const PreviewCallback& preview_callback) {
   if (!stage) return false;
   const bool ok = impl_->BuildStage(stage, warn, err, preview_callback);
-  if (ok) impl_->registry.RetainImportedAssets(stage->GetRootLayer());
+  if (ok) impl_->reg_->RetainImportedAssets(stage->GetRootLayer());
   return ok;
 }
 
@@ -408,6 +408,44 @@ void Cache::PreloadLayer(const std::string &identifier,
 
 // --- one-call composition helpers ------------------------------------------
 
+namespace {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// Destroys composition caches off the caller's thread (background_reclaim);
+// joined by WaitForBackgroundReclaim or at static destruction.
+class BackgroundReclaimer {
+ public:
+  static BackgroundReclaimer &Get() {
+    static BackgroundReclaimer r;
+    return r;
+  }
+  void Add(Cache &&cache) {
+    std::unique_ptr<Cache> owned(new Cache(std::move(cache)));
+    std::lock_guard<std::mutex> lk(mu_);
+    threads_.emplace_back([c = std::move(owned)]() mutable { c.reset(); });
+  }
+  void Wait() {
+    std::vector<std::thread> threads;
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      threads.swap(threads_);
+    }
+    for (std::thread &th : threads) th.join();
+  }
+  ~BackgroundReclaimer() { Wait(); }
+
+ private:
+  std::mutex mu_;
+  std::vector<std::thread> threads_;
+};
+#endif
+}  // namespace
+
+void WaitForBackgroundReclaim() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  BackgroundReclaimer::Get().Wait();
+#endif
+}
+
 bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            AssetResolver &resolver, Stage *out_stage,
                            const std::string &root_identifier,
@@ -466,7 +504,14 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
       filler->keepalive = std::make_shared<Cache>(std::move(cache));
   }
 #endif
-  cache = Cache();  // synchronous reclamation belongs to load/compose latency
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (options.background_reclaim) {
+    BackgroundReclaimer::Get().Add(std::move(cache));
+  } else
+#endif
+  {
+    cache = Cache();  // synchronous reclamation belongs to load/compose latency
+  }
   const auto t3 = Clock::now();
   if (timing) {
     LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
@@ -583,6 +628,8 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // also avoids constructing and then potentially replacing the vector.
       auto cn0 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (!children_filtered) children = ComposeChildNames(srcs);
+      if (batch_scope_ && batch_scope_->Masks(w.out_path.str()))
+        batch_scope_->Filter(w.out_path.str(), &children);
       auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (prof) {
         prof_childnames_ns_ +=
@@ -689,33 +736,53 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
 // First-claim registry for instance keys during the parallel structure walk.
 // A rank is a prim's DFS position: the item indices from the top list down
 // through nested tasks, compared lexicographically. The lowest claim of a key
-// is its prototype candidate.
+// is its prototype candidate. Only commit-order registration is authoritative;
+// claims from subtrees later discarded by commit remain speculative hints.
 struct Cache::Impl::WalkClaims {
   static constexpr size_t kShards = 64;
+  struct Claim {
+    std::vector<uint32_t> rank;
+    bool committed = false;
+  };
   struct Shard {
     std::mutex m;
-    std::unordered_map<std::string, std::vector<uint32_t>> rank;
+    std::unordered_map<std::string, Claim> rank;
   };
   Shard shards[kShards];
+  // Keys whose prototype an earlier batch owns (batched build): every claim
+  // in this walk is a later member.
+  const std::unordered_set<std::string> *seeded = nullptr;
   // True when an earlier rank already claimed `key`; otherwise records `rank`
   // as the lowest claim and returns false.
   bool EarlierOrClaim(const std::string &key, const std::vector<uint32_t> &rank) {
+    if (seeded && seeded->count(key)) return true;
     Shard &sh = shards[std::hash<std::string>()(key) % kShards];
     std::lock_guard<std::mutex> lk(sh.m);
     auto it = sh.rank.find(key);
     if (it == sh.rank.end()) {
-      sh.rank.emplace(key, rank);
+      sh.rank.emplace(key, Claim{rank, false});
       return false;
     }
-    const std::vector<uint32_t> &held = it->second;
+    if (it->second.committed) return true;
+    const std::vector<uint32_t> &held = it->second.rank;
     // A held rank that is a proper prefix of ours is the same position: a
     // prim re-walked at commit (CommitWalk) under its own rank.
     const bool prefix = held.size() < rank.size() &&
                         std::equal(held.begin(), held.end(), rank.begin());
     if (prefix) return false;
     if (held < rank) return true;
-    it->second = rank;
+    it->second.rank = rank;
     return false;
+  }
+  // Called only after AssignPrototype establishes a prototype in DFS order.
+  // Publish in the same entry so no second owning key set is needed.
+  void ConfirmPrototype(const std::string &key) {
+    if (seeded && seeded->count(key)) return;
+    Shard &sh = shards[std::hash<std::string>()(key) % kShards];
+    std::lock_guard<std::mutex> lk(sh.m);
+    Claim &claim = sh.rank[key];
+    claim.committed = true;
+    std::vector<uint32_t>().swap(claim.rank);
   }
 };
 
@@ -731,7 +798,13 @@ struct Cache::Impl::WalkCommitCtx {
   std::vector<uint32_t> parents;
   std::vector<uint32_t> roots;
   std::deque<std::vector<WalkItem>> rewalks;
+  // Commit-thread-only diagnostics. These count attempted re-walks; a failed
+  // repair can still send the whole build through the serial fallback.
+  size_t speculative_rewalks = 0;
+  size_t seed_rewalks = 0;
+  size_t source_rewalks = 0;
   WalkPause *pause = nullptr;
+  WalkCanDonate can_donate;
   WalkDonate donate;
   WalkClaims *claims = nullptr;
   std::string *warn = nullptr;
@@ -761,13 +834,15 @@ struct Cache::Impl::WalkCommitCtx {
 // `donate` at the point the serial walk would reach it; a placeholder item
 // then stands in for that subtree. Anything that would need a mutation
 // (source-cache miss, unseeded prototype child, depth limit) marks the item
-// kWalkFail and stops that branch; committing it falls back.
+// kWalkMiss, kWalkSeed or kWalkFail and stops that branch. Commit repairs the
+// first two; failures retain the serial fallback.
 void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
                                   const std::vector<uint32_t> &rank_prefix,
                                   std::vector<WalkItem> *items,
+                                  const WalkCanDonate &can_donate,
                                   const WalkDonate &donate, WalkClaims *claims,
                                   std::unordered_set<std::string> *local_keys,
-                                  WalkPause *pause) {
+                                  WalkPause *pause, bool force_root_prototype) {
     struct Entry {
       BuildStageWork w;
       uint32_t parent;
@@ -785,15 +860,28 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
       const uint32_t idx = static_cast<uint32_t>(items->size());
       rank.back() = idx;
       if (!at_root && !e.w.is_root) {
-        const int32_t tid = donate(std::move(e.w), rank);
-        if (tid >= 0) {
+        if (can_donate(e.w)) {
+          constexpr size_t kSiblingBundleSize = 16;
+          std::vector<BuildStageWork> bundle;
+          bundle.reserve(kSiblingBundleSize);
+          const uint32_t parent = e.parent;
+          const uint32_t depth = e.w.depth;
+          bundle.push_back(std::move(e.w));
+          while (bundle.size() < kSiblingBundleSize && !stack.empty() &&
+                 stack.back().parent == parent &&
+                 !stack.back().w.is_root && stack.back().w.depth == depth) {
+            bundle.push_back(std::move(stack.back().w));
+            stack.pop_back();
+          }
+          const int32_t tid = donate(std::move(bundle), rank);
           WalkItem ph;
           ph.task = tid;
-          ph.parent = e.parent;
+          ph.parent = parent;
           items->push_back(std::move(ph));
           continue;
         }
       }
+      const bool force_prototype = at_root && force_root_prototype;
       at_root = false;
       WalkItem it;
       it.parent = e.parent;
@@ -831,12 +919,15 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
         }
       }
       if (!children_filtered) children = ComposeChildNames(*srcs);
+      if (batch_scope_ && batch_scope_->Masks(e.w.out_path.str()))
+        batch_scope_->Filter(e.w.out_path.str(), &children);
       const bool composed_active = ComposedActive(*srcs);
       bool walked_as_instance = false;
       if (composed_active && instanceable && options.detect_instances) {
         it.flags |= kWalkRegistered;
         it.ikey.reset(new std::string(ComputeInstanceKeyImpl(*srcs)));
-        if (local_keys->count(*it.ikey) || claims->EarlierOrClaim(*it.ikey, rank)) {
+        if (!force_prototype &&
+            (local_keys->count(*it.ikey) || claims->EarlierOrClaim(*it.ikey, rank))) {
           walked_as_instance = true;
           it.flags |= kWalkSpecInstance;
         } else {
@@ -889,15 +980,17 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
 // with the workers parked, a source-cache miss resolves its sources, a
 // prototype seeds its children's sources; then that prim's subtree is walked
 // again (ranked at this position) and committed in place. A prim walked as
-// an instance that turns out to be a prototype, or the depth limit, returns
-// false (the caller falls back to the serial walk).
+// an instance that turns out to be a prototype is repaired the same way,
+// ignoring speculative claims for that root. Unresolved repairs and depth
+// limits return false (the caller falls back to the serial walk).
 bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent,
                              const std::vector<uint32_t> &rank_prefix,
                              WalkCommitCtx &ctx) {
     std::vector<uint32_t> gidx(items.size(), UINT32_MAX);
     std::vector<uint32_t> rank = rank_prefix;
     rank.push_back(0);
-    auto rewalk = [&](const WalkItem &it, uint32_t parent_g) {
+    auto rewalk = [&](const WalkItem &it, uint32_t parent_g,
+                      bool force_root_prototype) {
       ctx.rewalks.emplace_back();
       std::vector<WalkItem> &again = ctx.rewalks.back();
       std::unordered_set<std::string> local;
@@ -905,10 +998,14 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
       SpecReadOnlyTLS() = &store;
       SpeculativeWalk(BuildStageWork{Path(), it.path, 0,
                                      (it.flags & kWalkRoot) != 0, it.depth},
-                      rank, &again, ctx.donate, ctx.claims, &local, nullptr);
+                      rank, &again, ctx.can_donate, ctx.donate, ctx.claims,
+                      &local, nullptr, force_root_prototype);
       SpecReadOnlyTLS() = nullptr;
-      // Still unresolved after the mutation: do not loop.
-      if (again.empty() || (again[0].flags & (kWalkMiss | kWalkSeed)))
+      // A resolved source miss can expose an unseeded prototype: commit may
+      // seed it once before a forced re-walk. Repeated misses, or a forced
+      // prototype whose children are still unseeded, cannot make progress.
+      if (again.empty() || (again[0].flags & kWalkMiss) ||
+          (force_root_prototype && (again[0].flags & kWalkSeed)))
         return false;
       return CommitWalk(again, parent_g, rank, ctx);
     };
@@ -926,10 +1023,11 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
       }
       if (it.flags & kWalkFail) return false;
       if (it.flags & kWalkMiss) {
+        ++ctx.source_rewalks;
         ctx.Pause();
         (void)SourcesForPath(it.path, ctx.warn, ctx.err);
         ctx.Resume();
-        if (!rewalk(it, parent_g)) return false;
+        if (!rewalk(it, parent_g, false)) return false;
         ++k;
         continue;
       }
@@ -941,13 +1039,18 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
         AssignPrototype(path, *it.ikey, false);
         auto pit = prototype_of.find(path);
         is_instance = pit != prototype_of.end() && pit->second.proto != path;
+        if (pit != prototype_of.end() && !is_instance)
+          ctx.claims->ConfirmPrototype(*it.ikey);
         it.ikey.reset();  // the prototype maps keep their own copy
       }
-      if (walked_as_instance && !is_instance) return false;
-      if ((it.flags & kWalkSeed) && !is_instance) {
+      if (((it.flags & kWalkSeed) || walked_as_instance) && !is_instance) {
+        if (walked_as_instance) ++ctx.speculative_rewalks;
+        else ++ctx.seed_rewalks;
         // A prototype whose child sources are not seeded yet: seed them as
         // the serial walk does (its registration above is idempotent when
-        // the re-walk registers it again), then walk its subtree.
+        // the re-walk registers it again), then walk its subtree. A speculative
+        // instance may have relied on a claim from a discarded subtree; its
+        // children need the same seeding before the forced prototype re-walk.
         ctx.Pause();
         std::vector<Src> shared_srcs;
         for (const Src &s : *it.srcs) {
@@ -968,7 +1071,7 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
           }
         }
         ctx.Resume();
-        if (!rewalk(it, parent_g)) return false;
+        if (!rewalk(it, parent_g, true)) return false;
         ++k;
         continue;
       }
@@ -1004,19 +1107,21 @@ void Cache::Impl::MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads) {
     }
     for (size_t i = 0; i < n; ++i) off[i + 1] += off[i];
     std::vector<uint32_t> kids(off[n]);
-    {
-      std::vector<uint32_t> cur(off.begin(), off.end() - 1);
-      for (size_t i = 0; i < n; ++i) {
-        const uint32_t p = ctx.parents[i];
-        if (p != UINT32_MAX) kids[cur[p - base]++] = static_cast<uint32_t>(base + i);
-      }
+    // Parent indices are strictly earlier than their children. Once an item
+    // has been visited, its parent entry is dead and can hold its own child
+    // cursor. This avoids copying `off` into a separate cursor vector.
+    for (size_t i = 0; i < n; ++i) {
+      const uint32_t p = ctx.parents[i];
+      if (p != UINT32_MAX)
+        kids[ctx.parents[p - base]++] = static_cast<uint32_t>(base + i);
+      ctx.parents[i] = off[i];
     }
     out->resize_prims(base + n);
     auto build = [&](size_t lo, size_t hi) {
       for (size_t i = lo; i < hi; ++i) {
         WalkItem &it = *ctx.nodes[i];
         PrimSpec &ps = *out->prim_mutable(static_cast<uint32_t>(base + i));
-        ps = PrimSpec(it.path.name());
+        ps.set_name(it.path.name());
         if (it.flags & kWalkIsInstance) {
           // prototype_of no longer changes (prefer_min=false assignments
           // never demote a prototype): the same value the commit saw.
@@ -1049,8 +1154,8 @@ void Cache::Impl::MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads) {
 // subtree still spreads over all threads). This thread then commits the top
 // items in DFS order, splicing each task's items in as soon as it is done
 // (CommitWalk) and freeing them. Returns false -- with `out`, fill_ and the
-// instancing maps reset -- when a commit hits a failed item or a wrong
-// instance guess; the caller then runs the serial walk.
+// instancing maps reset to earlier-batch seeds -- when a commit hits a failed
+// item or cannot repair a speculative result; the caller runs the serial walk.
 bool Cache::Impl::ParallelStructureWalk(Layer *out,
                                         const std::vector<std::string> &root_names,
                                         int threads,
@@ -1058,12 +1163,13 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
                                         std::string *warn, std::string *err) {
     if (threads < 2) return false;
     struct TaskRec {
-      BuildStageWork w;
+      std::vector<BuildStageWork> roots;  // same-parent sibling bundle
       std::vector<uint32_t> rank;  // DFS rank of the placeholder
       std::vector<WalkItem> items;
       std::atomic<bool> done{false};
     };
     std::unique_ptr<WalkClaims> claims(new WalkClaims());
+    if (batch_scope_) claims->seeded = &batch_scope_->seeded_keys;
     std::deque<TaskRec> recs;    // grows only (stable element addresses)
     // Task ids not yet taken, DFS-earliest first: the commit consumes tasks
     // in DFS order, so the earliest pending one is always the most urgent.
@@ -1078,6 +1184,7 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
     bool stop = false;
     std::atomic<int> idle{0};
     std::atomic<int> queued{0};
+    size_t bundled_roots = 0;  // extra sibling entries per queued task
     WalkPause pause;
     // Task lookup by id without the queue lock: a fixed two-level table whose
     // entries are written (under `mu`) before the id is published. The
@@ -1090,17 +1197,26 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
     std::condition_variable ccv;
     std::atomic<bool> commit_waiting{false};
 
-    auto add_task = [&](BuildStageWork &&w, const std::vector<uint32_t> &rank) {
-      std::lock_guard<std::mutex> lk(mu);
-      const int32_t id = static_cast<int32_t>(recs.size());
-      recs.emplace_back();
-      recs.back().w = std::move(w);
-      recs.back().rank = rank;
-      std::unique_ptr<TaskRec *[]> &chunk = task_table[size_t(id) / kTaskChunk];
-      if (!chunk) chunk.reset(new TaskRec *[kTaskChunk]);
-      chunk[size_t(id) % kTaskChunk] = &recs.back();
-      queue.push(id);
-      queued.fetch_add(1);
+    auto add_task = [&](std::vector<BuildStageWork> &&roots,
+                        const std::vector<uint32_t> &rank) {
+      // Every donating worker and the popping ones share `mu`: copy the rank
+      // before taking it, and wake a worker after releasing it (a waiter
+      // woken under the lock only blocks on it again).
+      std::vector<uint32_t> rank_copy(rank);
+      int32_t id;
+      {
+        std::lock_guard<std::mutex> lk(mu);
+        id = static_cast<int32_t>(recs.size());
+        if (!roots.empty()) bundled_roots += roots.size() - 1;
+        recs.emplace_back();
+        recs.back().roots = std::move(roots);
+        recs.back().rank = std::move(rank_copy);
+        std::unique_ptr<TaskRec *[]> &chunk = task_table[size_t(id) / kTaskChunk];
+        if (!chunk) chunk.reset(new TaskRec *[kTaskChunk]);
+        chunk[size_t(id) % kTaskChunk] = &recs.back();
+        queue.push(id);
+        queued.fetch_add(1);
+      }
       cv.notify_one();
       return id;
     };
@@ -1114,12 +1230,13 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
         // Hand off work whenever a worker idles with nothing queued: the
         // commit consumes in DFS order, so short tasks keep it fed (coarser
         // hand-off measured slower: long tasks stall the in-order commit).
-        const WalkDonate donate = [&](BuildStageWork &&w,
+        const WalkCanDonate can_donate = [&](const BuildStageWork &) {
+          return idle.load(std::memory_order_relaxed) >
+                 queued.load(std::memory_order_relaxed);
+        };
+        const WalkDonate donate = [&](std::vector<BuildStageWork> &&roots,
                                       const std::vector<uint32_t> &rank) {
-          if (idle.load(std::memory_order_relaxed) <=
-              queued.load(std::memory_order_relaxed))
-            return int32_t(-1);
-          return add_task(std::move(w), rank);
+          return add_task(std::move(roots), rank);
         };
         for (;;) {
           int32_t id;
@@ -1143,8 +1260,10 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
           TaskRec &rec = *cur;
           pause.Enter();  // parks right away while a pause is held
           std::unordered_set<std::string> local;
-          SpeculativeWalk(rec.w, rec.rank, &rec.items, donate, claims.get(),
-                          &local, &pause);
+          for (const BuildStageWork &root : rec.roots) {
+            SpeculativeWalk(root, rec.rank, &rec.items, can_donate, donate,
+                            claims.get(), &local, &pause);
+          }
           // Items live until MaterializeWalk; drop the push_back growth slack
           // now, before the commit takes pointers into the vector.
           if (rec.items.capacity() > rec.items.size() + rec.items.size() / 8) {
@@ -1174,13 +1293,17 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
     {
       SpecReadOnlyStore store;
       SpecReadOnlyTLS() = &store;
-      const WalkDonate top_donate = [&](BuildStageWork &&w,
+      const WalkCanDonate top_can_donate = [&](const BuildStageWork &w) {
+        return w.depth >= 2;
+      };
+      const WalkDonate top_donate = [&](std::vector<BuildStageWork> &&roots,
                                         const std::vector<uint32_t> &rank) {
-        return w.depth >= 2 ? add_task(std::move(w), rank) : int32_t(-1);
+        return add_task(std::move(roots), rank);
       };
       for (const std::string &nm : root_names) {
-        SpeculativeWalk({Path("/" + nm), Path("/" + nm), 0, true, 1}, {}, &top,
-                        top_donate, claims.get(), &top_keys, nullptr);
+        SpeculativeWalk({Path("/" + nm), Path("/" + nm), 0, true, 1}, {},
+                        &top, top_can_donate, top_donate, claims.get(),
+                        &top_keys, nullptr);
       }
       SpecReadOnlyTLS() = nullptr;
     }
@@ -1191,6 +1314,12 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
     cv.notify_all();
 
     WalkCommitCtx ctx;
+    // The commit appends about one entry per cached source set (the warm
+    // cached ~one per composed prim): reserve once instead of doubling
+    // these through ~10 M serial appends.
+    ctx.nodes.reserve(sources_cache.size());
+    ctx.parents.reserve(sources_cache.size());
+    fill_.reserve(fill_.size() + sources_cache.size());
     ctx.task_items = [&](int32_t j) -> std::vector<WalkItem> * {
       TaskRec &rec = *task_table[size_t(j) / kTaskChunk][size_t(j) % kTaskChunk];
       // Tasks are mostly done by the time the commit reaches them: check,
@@ -1211,11 +1340,13 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
     };
     ctx.pause = &pause;
     // A re-walk on this thread hands entries to idle workers like they do.
-    ctx.donate = [&](BuildStageWork &&w, const std::vector<uint32_t> &rank) {
-      if (idle.load(std::memory_order_relaxed) <=
-          queued.load(std::memory_order_relaxed))
-        return int32_t(-1);
-      return add_task(std::move(w), rank);
+    ctx.can_donate = [&](const BuildStageWork &) {
+      return idle.load(std::memory_order_relaxed) >
+             queued.load(std::memory_order_relaxed);
+    };
+    ctx.donate = [&](std::vector<BuildStageWork> &&roots,
+                     const std::vector<uint32_t> &rank) {
+      return add_task(std::move(roots), rank);
     };
     ctx.claims = claims.get();
     ctx.warn = warn;
@@ -1240,7 +1371,23 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
       instances_by_prototype.clear();
       instance_key_order.clear();
       instance_prim_index_.clear();
+      // Discard this attempt's registrations, but retain earlier batches'
+      // authoritative prototypes. The serial fallback must start with the
+      // same seeds as BuildStage did before the speculative walk.
+      if (batch_scope_) {
+        for (const auto &kp : batch_scope_->seeded_protos) {
+          prototype_by_key[kp.first] = PathStr(kp.second);
+          instance_key_order.push_back(kp.first);
+        }
+      }
     }
+    if (options.enable_timing)
+      LIGHTUSD_LOG_I("[next_walk] tasks=" + UIntToStr(recs.size()) +
+                     " bundled_roots=" + UIntToStr(bundled_roots) +
+                     " speculative_rewalks=" + UIntToStr(ctx.speculative_rewalks) +
+                     " seed_rewalks=" + UIntToStr(ctx.seed_rewalks) +
+                     " source_rewalks=" + UIntToStr(ctx.source_rewalks) +
+                     " serial_fallback=" + UIntToStr(ok ? 0 : 1));
     return ok;
   }
 #endif
@@ -1320,10 +1467,48 @@ class Cache::Impl::DeferredFiller final : public PrimFiller {
 };
 #endif
 
+auto Cache::Impl::ComposeRootNames() const -> std::vector<std::string> {
+  // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
+  // children (pxr PcpComposeSiteChildNames): iterate the root layer stack
+  // weakest-first so a sublayer-only root prim keeps its position. Prototype
+  // assignment is order-independent (see test_prototype_order_independent).
+  std::set<std::string> seen_root;
+  std::vector<std::string> root_names;
+  for (auto lit = layer_stacks[0].layers.rbegin();
+       lit != layer_stacks[0].layers.rend(); ++lit) {
+    const auto &lp = *lit;
+    for (uint32_t ri : lp->root_indices()) {
+      const PrimSpec *ps = lp->prim(ri);
+      if (!ps) continue;
+      if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
+    }
+  }
+  // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
+  // author a spec for the new name, so take the names from the root layer
+  // stack's namespace edits as well.
+  if (const std::vector<StackRelocates::Arrival> *arrivals =
+          layer_stacks[0].relocates.ArrivalsAt("/")) {
+    for (const StackRelocates::Arrival &a : *arrivals) {
+      if (seen_root.insert(a.name).second) root_names.push_back(a.name);
+    }
+  }
+  return root_names;
+}
+
 auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                   const Cache::PreviewCallback &preview_callback) -> bool {
     NEXT_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
+    // release_layers_during_fill: the source compaction and the fill free
+    // gigabytes in the middle of the composition peak; return those pages on
+    // a helper thread (joined when this build returns). (A purge right after
+    // the warm merge contended with the structure walk for no lower peak.)
+    MemoryTrimmer trimmer;
+    struct TrimmerScope {
+      MemoryTrimmer *&slot;
+      ~TrimmerScope() { slot = nullptr; }
+    } trimmer_scope{trimmer_};
+    if (options.release_layers_during_fill && !batch_scope_) trimmer_ = &trimmer;
 
     // BuildStage re-registers every prim's instancing from scratch below, so
     // reset the prototype maps first. They are otherwise only pruned via
@@ -1335,32 +1520,18 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     instances_by_prototype.clear();
     instance_key_order.clear();
     instance_prim_index_.clear();
+    if (batch_scope_) {
+      // Prototypes from earlier batches: their later members are instances.
+      for (const auto &kp : batch_scope_->seeded_protos) {
+        prototype_by_key[kp.first] = PathStr(kp.second);
+        instance_key_order.push_back(kp.first);
+      }
+    }
 
     const Layer *root = layer_stacks[0].layers[0].get();
-    // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
-    // children (pxr PcpComposeSiteChildNames): iterate the root layer stack
-    // weakest-first so a sublayer-only root prim keeps its position. Prototype
-    // assignment is order-independent (see test_prototype_order_independent).
-    std::set<std::string> seen_root;
-    std::vector<std::string> root_names;
-    for (auto lit = layer_stacks[0].layers.rbegin();
-         lit != layer_stacks[0].layers.rend(); ++lit) {
-      const auto &lp = *lit;
-      for (uint32_t ri : lp->root_indices()) {
-        const PrimSpec *ps = lp->prim(ri);
-        if (!ps) continue;
-        if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
-      }
-    }
-    // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
-    // author a spec for the new name, so take the names from the root layer
-    // stack's namespace edits as well.
-    if (const std::vector<StackRelocates::Arrival> *arrivals =
-            layer_stacks[0].relocates.ArrivalsAt("/")) {
-      for (const StackRelocates::Arrival &a : *arrivals) {
-        if (seen_root.insert(a.name).second) root_names.push_back(a.name);
-      }
-    }
+    std::vector<std::string> root_names = ComposeRootNames();
+    if (batch_scope_ && batch_scope_->Masks("/"))
+      batch_scope_->Filter("/", &root_names);
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     prof_childnames_ns_ = prof_protomap_ns_ = prof_addprim_ns_ = prof_push_ns_ = 0;
     prof_source_hits_ = prof_source_misses_ = prof_structure_nodes_ = 0;
@@ -1389,7 +1560,11 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // sublayer paths use, so every consumer gets the same Layer it would have
     // parsed itself. Stopped (and joined) right after the structure pass.
     ArcLayerPrefetch prefetch;
-    if (warm_threads > 1) StartArcLayerPrefetch(&prefetch, warm_threads);
+    // A batch (batched build) reaches only its own subtrees' layers, which
+    // its workers load on first touch; the prefetch would crawl every arc of
+    // every loaded layer again for each batch.
+    if (warm_threads > 1 && !batch_scope_)
+      StartArcLayerPrefetch(&prefetch, warm_threads);
     if (warm_threads > 1) {
       // Sources die with this build: drop inert ones while warming, before
       // they pile up (see DropInertSources).
@@ -1429,6 +1604,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // them), else at the start of the fill.
     std::vector<std::deque<std::vector<SpecRef>>> fill_specs;
     std::deque<std::vector<Src>> fill_sources;
+    std::vector<const std::vector<Src> *> shared_fill_sources;
     bool fill_prepared = false;
     auto prepare_fill = [&]() {
       if (fill_prepared) return;
@@ -1464,10 +1640,94 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
           if (record.second)
             compact_targets.push_back(const_cast<std::vector<Src> *>(record.second));
         }
-        std::sort(compact_targets.begin(), compact_targets.end());
-        compact_targets.erase(
-            std::unique(compact_targets.begin(), compact_targets.end()),
-            compact_targets.end());
+        const auto pointer_sort_start = options.enable_timing
+                                           ? std::chrono::steady_clock::now()
+                                           : std::chrono::steady_clock::time_point{};
+        const size_t sort_n = compact_targets.size();
+        int sort_threads = options.num_threads;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+        if (sort_threads < 0)
+          sort_threads = static_cast<int>(std::thread::hardware_concurrency());
+#else
+        sort_threads = 1;
+#endif
+        sort_threads = std::max(1, std::min(sort_threads, 32));
+        size_t sort_runs = 1;
+        while (sort_runs * 2 <= static_cast<size_t>(sort_threads) &&
+               sort_runs * 2 <= sort_n / 65536)
+          sort_runs *= 2;
+        const auto ptr_less = std::less<const std::vector<Src> *>{};
+#if defined(LIGHTUSD_ENABLE_THREAD)
+        if (sort_runs >= 2) {
+          std::vector<size_t> bounds(sort_runs + 1);
+          for (size_t t = 0; t <= sort_runs; ++t)
+            bounds[t] = sort_n * t / sort_runs;
+          auto sort_chunk = [&](size_t t) {
+            std::sort(compact_targets.begin() + bounds[t],
+                      compact_targets.begin() + bounds[t + 1], ptr_less);
+          };
+          std::vector<std::thread> pool;
+          pool.reserve(sort_runs - 1);
+          for (size_t t = 1; t < sort_runs; ++t)
+            pool.emplace_back([&, t] { sort_chunk(t); });
+          sort_chunk(0);
+          for (std::thread &th : pool) th.join();
+
+          std::vector<std::vector<Src> *> scratch(sort_n);
+          std::vector<size_t> next_bounds;
+          auto *src = &compact_targets;
+          auto *dst = &scratch;
+          while (sort_runs > 1) {
+            const size_t merged_runs = (sort_runs + 1) / 2;
+            next_bounds.resize(merged_runs + 1);
+            for (size_t t = 0; t < merged_runs; ++t)
+              next_bounds[t] = bounds[2 * t];
+            next_bounds[merged_runs] = sort_n;
+            auto merge_pair = [&](size_t t) {
+              const size_t lo = bounds[2 * t];
+              const size_t mid = bounds[std::min(2 * t + 1, sort_runs)];
+              const size_t hi = bounds[std::min(2 * t + 2, sort_runs)];
+              if (mid == hi) {
+                std::copy(src->begin() + lo, src->begin() + hi,
+                          dst->begin() + lo);
+              } else {
+                std::merge(src->begin() + lo, src->begin() + mid,
+                           src->begin() + mid, src->begin() + hi,
+                           dst->begin() + lo, ptr_less);
+              }
+            };
+            pool.clear();
+            pool.reserve(merged_runs > 0 ? merged_runs - 1 : 0);
+            for (size_t t = 1; t < merged_runs; ++t)
+              pool.emplace_back([&, t] { merge_pair(t); });
+            merge_pair(0);
+            for (std::thread &th : pool) th.join();
+            std::swap(src, dst);
+            bounds.swap(next_bounds);
+            sort_runs = merged_runs;
+          }
+          if (src != &compact_targets) compact_targets.swap(scratch);
+        } else
+#endif
+        {
+          std::sort(compact_targets.begin(), compact_targets.end(), ptr_less);
+        }
+        size_t unique_targets = 0;
+        for (size_t i = 0; i < compact_targets.size();) {
+          size_t j = i + 1;
+          while (j < compact_targets.size() &&
+                 compact_targets[j] == compact_targets[i])
+            ++j;
+          if (j - i > 1) shared_fill_sources.push_back(compact_targets[i]);
+          compact_targets[unique_targets++] = compact_targets[i];
+          i = j;
+        }
+        compact_targets.resize(unique_targets);
+        const double pointer_sort_ms = options.enable_timing
+            ? std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - pointer_sort_start).count()
+            : 0.0;
+        const size_t compact_target_count = compact_targets.size();
         auto compact_range = [&](size_t lo, size_t hi, size_t *removed_out,
                                  size_t *bytes_out) {
           size_t removed_sum = 0, bytes_sum = 0;
@@ -1513,12 +1773,19 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                         &vector_bytes_released);
         }
         std::vector<std::vector<Src> *>().swap(compact_targets);
+        // ~10 M inert sources were just freed; return their pages before the
+        // PrimSpecs and opinions are built on top (allocators otherwise keep
+        // them for seconds, through the composition peak).
+        if (trimmer_) trimmer_->Request();
         if (options.enable_timing) {
           const double compact_ms =
               std::chrono::duration<double, std::milli>(
                   std::chrono::steady_clock::now() - compact_start).count();
           LIGHTUSD_LOG_I("[next_fill] discarded_sources=" + UIntToStr(discarded) +
               " source_vector_bytes_released=" + UIntToStr(vector_bytes_released) +
+              " compact_targets=" + UIntToStr(compact_target_count) +
+              " shared_vectors=" + UIntToStr(shared_fill_sources.size()) +
+              " pointer_sort=" + FormatMilliseconds(pointer_sort_ms) + "ms" +
               " compact=" + FormatMilliseconds(compact_ms) + "ms");
         }
       }
@@ -1546,6 +1813,27 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // prefetch still has queued was not reached (e.g. arcs on inactive prims).
     StopArcLayerPrefetch(&prefetch, warn);
 #endif
+    if (trimmer_) {
+      // The arc-layer prefetch loads every arc target it finds, including
+      // unselected variants' (e.g. the proxy LODs of a full-LOD stage). A
+      // layer no layer stack holds is never read by this build (composition
+      // reads layers only through stacks): free those prims now, before the
+      // composed prims are built.
+      std::unordered_set<const Layer *> in_stacks;
+      for (const LayerStack &st : layer_stacks)
+        for (const auto &l : st.layers) in_stacks.insert(l.get());
+      size_t unread = 0, unread_prims = 0;
+      for (const std::shared_ptr<Layer> &l : reg_->layers()) {
+        if (in_stacks.count(l.get()) || l->prims().empty()) continue;
+        ++unread;
+        unread_prims += l->prims().size();
+        l->release_prims();
+      }
+      if (unread) trimmer_->Request();
+      if (options.enable_timing)
+        LIGHTUSD_LOG_I("[next_build] unread_layers_released=" + UIntToStr(unread) +
+                       " prims=" + UIntToStr(unread_prims));
+    }
     const FaultCounters fault_structure1 = ReadFaultCounters();
     const auto structure_t1 = std::chrono::steady_clock::now();
     if (preview_callback) {
@@ -1603,7 +1891,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
         }
       } else
 #endif
-      FillOpinions(out.get());
+      FillOpinions(out.get(), shared_fill_sources);
       std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(fill_);
       // Drop any newly resolved entries as before. The transferred vectors
       // (including shared ones that FillOpinions could not drain) die here.
@@ -1743,29 +2031,48 @@ auto Cache::Impl::FlattenInstances(Layer *out) -> void {
 
     InstanceIndexLookup idx_by_path(out, instance_prim_index_);
 
-    for (const auto &grp : instances_by_prototype) {
-      const std::string &proto_path = grp.first;
-      const std::vector<PathStr> &members = grp.second;
+    // One group's Holder edits: the prototype stays a plain (non-instanceable)
+    // reference target, every other member references it. Each prim is in at
+    // most one group, so groups are independent. `find` resolves a path to
+    // its prim index; false when the group needs the serial lookup instead.
+    auto flatten_group = [&](const std::string &proto_path,
+                             const std::vector<PathStr> &members,
+                             auto &&find) -> bool {
       // A lone instanceable prim with no peers still composed its own subtree as
       // the prototype; leaving it untouched is already a valid flatten.
       bool has_instance = false;
       for (const std::string &m : members)
         if (m != proto_path) { has_instance = true; break; }
-      if (!has_instance) continue;
+      // Batched build: the peers may all be in other batches.
+      if (!has_instance && batch_scope_ && batch_scope_->holders_with_peers &&
+          batch_scope_->holders_with_peers->count(proto_path))
+        has_instance = true;
+      if (!has_instance) return true;
 
-      const uint32_t proto_idx = idx_by_path.find(proto_path);
-      if (proto_idx == UINT32_MAX) continue;
+      // A batched build's prototype may live in an earlier batch: its members
+      // here are still rewritten.
+      uint32_t proto_idx = UINT32_MAX;
+      if (!(batch_scope_ && batch_scope_->seeded_proto_paths.count(proto_path)) &&
+          !find(proto_path, &proto_idx))
+        return false;
+      if (proto_idx == UINT32_MAX && !batch_scope_) return true;
+      std::vector<uint32_t> member_idx;
+      member_idx.reserve(members.size());
+      for (const std::string &m : members) {
+        if (m == proto_path) continue;
+        uint32_t m_idx = UINT32_MAX;
+        if (!find(m, &m_idx)) return false;
+        member_idx.push_back(m_idx);
+      }
       // Holder: keep the composed subtree, drop the instanceable flag so it is a
       // plain reference target (an instanceable holder would hide its content).
-      if (PrimSpec *proto = out->prim(proto_idx)) {
+      if (PrimSpec *proto = proto_idx == UINT32_MAX ? nullptr : out->prim(proto_idx)) {
         proto->meta().instanceable = false;
         proto->meta().instance_prototype().clear();
       }
 
       const std::string ref = "<" + proto_path + ">";
-      for (const std::string &m : members) {
-        if (m == proto_path) continue;
-        const uint32_t m_idx = idx_by_path.find(m);
+      for (const uint32_t m_idx : member_idx) {
         if (m_idx == UINT32_MAX) continue;
         PrimSpec *mp = out->prim(m_idx);
         if (!mp) continue;
@@ -1776,7 +2083,52 @@ auto Cache::Impl::FlattenInstances(Layer *out) -> void {
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
       }
+      return true;
+    };
+    auto serial_find = [&](const std::string &path, uint32_t *idx) {
+      *idx = idx_by_path.find(path);
+      return true;
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    // Large stages (full-LOD: 1.06 M members in ~7 K groups) edit groups in
+    // parallel. Workers only read the recorded index; a group with a path it
+    // lacks is left whole to the serial pass (whose lookup may build the full
+    // map), so every edit is applied once, by one thread.
+    int nt = options.num_threads;
+    if (nt < 0)
+      nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                         kMaxExecutionThreads);
+    nt = std::max(1, std::min(nt, 16));
+    if (nt > 1 && instance_prim_index_.size() >= 65536) {
+      std::vector<std::pair<const std::string *, const std::vector<PathStr> *>> groups;
+      groups.reserve(instances_by_prototype.size());
+      for (const auto &grp : instances_by_prototype)
+        groups.emplace_back(&grp.first, &grp.second);
+      auto recorded_find = [&](const std::string &path, uint32_t *idx) {
+        auto it = instance_prim_index_.find(path);
+        if (it == instance_prim_index_.end()) return false;
+        *idx = it->second.idx;
+        return true;
+      };
+      std::vector<uint8_t> deferred(groups.size(), 0);
+      std::atomic<size_t> next{0};
+      std::vector<std::thread> pool;
+      for (int t = 0; t < nt; ++t) {
+        pool.emplace_back([&] {
+          for (size_t g; (g = next.fetch_add(1)) < groups.size();) {
+            if (!flatten_group(*groups[g].first, *groups[g].second, recorded_find))
+              deferred[g] = 1;
+          }
+        });
+      }
+      for (std::thread &th : pool) th.join();
+      for (size_t g = 0; g < groups.size(); ++g)
+        if (deferred[g]) flatten_group(*groups[g].first, *groups[g].second, serial_find);
+      return;
     }
+#endif
+    for (const auto &grp : instances_by_prototype)
+      flatten_group(grp.first, grp.second, serial_find);
   }
 
 auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbering) -> void {
@@ -2051,7 +2403,10 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
       // Divide the loading budget between files and each file's parser.
       // All-serial readers strand cores behind a large layer; an automatic
       // arena per outer worker would multiply the budget instead.
-      n = std::min(n, static_cast<size_t>(std::max(1, nt / 4)));
+      // A single seed can reveal many targets. Keep the full outer team
+      // available for that fan-out rather than permanently sizing it to the
+      // initial queue. Idle workers wait while another load is active.
+      n = static_cast<size_t>(std::max(1, nt / 4));
       const int parse_threads = std::min(8, nt / static_cast<int>(n));
       load_opts.parse_num_threads = parse_threads;
       load_opts.usda_parse_options.num_threads = parse_threads;
@@ -2182,10 +2537,14 @@ auto Cache::Impl::ExpandWarmNode(const WarmTask &it, WarmShared *shared,
         if (it.protos) *protos = *it.protos;
         protos->push_back(it.p);
         *child_protos = std::move(protos);
+        if (batch_scope_ && batch_scope_->Masks(it.p.str()))
+          batch_scope_->Filter(it.p.str(), children);
         return true;
       }
     }
     *children = ComposeChildNames(srcs);
+    if (batch_scope_ && batch_scope_->Masks(it.p.str()))
+      batch_scope_->Filter(it.p.str(), children);
     if (warm_drop_inert_ && children->empty()) {
       // A leaf derives nothing: drop its inert sources right away. (A parent
       // waits for its last child, see WarmSubtree.) Only this worker's own
@@ -2276,7 +2635,7 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
     // Frontier size: a few roots per worker. Discovery is SERIAL (every level
     // resolves its prims on this thread), so digging deeper for a finer
     // frontier costs more than it saves now that busy workers donate subtrees
-    // to idle ones (see WarmSubtree). Measured on Island (32 threads), the
+    // to idle ones (see WarmSubtree). Measured on reference scene (32 threads), the
     // next-refactor tuning nt*16 / depth 12 cut the worker phase ~1.4 s but
     // added ~2.6 s of serial discovery (it now also expands instance
     // prototypes), a net ~1 s loss.
@@ -2288,6 +2647,11 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
     // one; its filtered child seeds land in the main cache, which every worker
     // reads as its seed. Items are kept in namespace order.
     WarmShared shared;
+    if (batch_scope_) {
+      // Earlier batches own these prototypes: no member here is the first.
+      for (const std::string &key : batch_scope_->seeded_keys)
+        shared.first_member.emplace(key, WarmOrder{});
+    }
     std::vector<WarmTask> level;
     level.reserve(root_names.size());
     for (size_t i = 0; i < root_names.size(); ++i) {
@@ -2352,6 +2716,7 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
         wp->options.usda_parse_options.num_threads = 1;
       wp->load_rules_ = load_rules_;
       wp->reg_ = reg_;  // borrow the shared, parse-once registry
+      wp->batch_scope_ = batch_scope_;  // same namespace mask
       wp->root_layer = root_layer;
       wp->root_identifier = root_identifier;
       // Seed the worker with the main's resolution context so its reference
@@ -2402,6 +2767,11 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
     }
     for (auto &t : ts) t.join();
     auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
+    // The structure walk registers about one instance per claim made here
+    // (both skip the subtrees of later instances): size its instancing maps
+    // once instead of rehashing them through ~1 M serial commits.
+    prototype_of.reserve(prototype_of.size() + shared.claims);
+    instance_prim_index_.reserve(instance_prim_index_.size() + shared.claims);
 
     size_t worker_delta_entries = 0;
     uint64_t merge_ns = 0, destroy_ns = 0;
@@ -2414,6 +2784,34 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
         total += workers[static_cast<size_t>(t)]->sources_cache.size();
       sources_cache.reserve(total);
     }
+    // All source/mapping references of a worker are adopted or remapped by the
+    // time MergeSources returns, so its state can be released while the next
+    // worker merges. That teardown is ~1.2 s of the merge wall on full45; a
+    // single helper thread keeps at most two workers alive (the same overlap
+    // as the previous inline reset) but takes the free off the critical path.
+    std::mutex destroy_mu;
+    std::condition_variable destroy_cv;
+    std::unique_ptr<Impl> destroy_slot;
+    bool destroy_quit = false;
+    std::thread destroyer([&destroy_mu, &destroy_cv, &destroy_slot, &destroy_quit] {
+      for (;;) {
+        std::unique_ptr<Impl> victim;
+        {
+          std::unique_lock<std::mutex> lk(destroy_mu);
+          destroy_cv.wait(lk, [&] { return destroy_quit || destroy_slot != nullptr; });
+          victim = std::move(destroy_slot);
+          if (!victim && destroy_quit) return;
+        }
+        victim.reset();
+      }
+    });
+    auto hand_off = [&](std::unique_ptr<Impl> victim) {
+      {
+        std::lock_guard<std::mutex> lk(destroy_mu);
+        destroy_slot = std::move(victim);
+      }
+      destroy_cv.notify_one();
+    };
     for (int t = 0; t < W; ++t) {
       worker_delta_entries += workers[static_cast<size_t>(t)]->sources_cache.size();
       const auto m0 = PWClock::now();
@@ -2426,15 +2824,19 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
       }
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
       if (err) *err += werr[static_cast<size_t>(t)];
-      // All source/mapping references have been adopted or remapped above.
-      // Drop this worker before merging the next, reducing overlapping state.
-      workers[static_cast<size_t>(t)].reset();
+      hand_off(std::move(workers[static_cast<size_t>(t)]));
       if (prof) {
         destroy_ns += static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 PWClock::now() - m1).count());
       }
     }
+    {
+      std::lock_guard<std::mutex> lk(destroy_mu);
+      destroy_quit = true;
+    }
+    destroy_cv.notify_one();
+    destroyer.join();
     if (prof) {
       auto ms = [](PWClock::time_point a, PWClock::time_point b) {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(b - a)
@@ -2544,6 +2946,7 @@ auto Cache::Impl::PrewarmPrimIndices(const std::vector<Path> &paths, std::string
             wp->options.usda_parse_options.num_threads = 1;
           wp->load_rules_ = load_rules_;
           wp->reg_ = reg_;  // borrow the shared, parse-once registry
+          wp->batch_scope_ = batch_scope_;  // same namespace mask
           wp->root_layer = root_layer;
           wp->root_identifier = root_identifier;
           wp->defer_instances_ = true;

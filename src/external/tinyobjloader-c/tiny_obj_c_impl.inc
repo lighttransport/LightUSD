@@ -836,7 +836,8 @@ static bool TOBJ_T(parse_mtl_buffer)(TOBJ_T(tobj_builder) * b,
       TOBJ_T(read_reals)(b, &c, m->transmittance, 3);
     } else if (tobj_slice_eq(tok, tl, "Ns")) {
       TOBJ_T(read_reals)(b, &c, &m->shininess, 1);
-      if (m->shininess < 0) TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+      // Exporters (Blender) write negative exponents; clamp like a 0 exponent.
+      if (m->shininess < 0) m->shininess = 0;
     } else if (tobj_slice_eq(tok, tl, "Ni")) {
       TOBJ_T(read_reals)(b, &c, &m->ior, 1);
     } else if (tobj_slice_eq(tok, tl, "d")) {

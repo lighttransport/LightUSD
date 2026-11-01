@@ -25,6 +25,12 @@ bool ValidatePrimPath(const Path &path, std::string *err);
 bool ValidatePropPath(const Path &path, std::string *err);
 
 ///
+/// Validate a Prim property name directly (`Path::prop_part()` without building
+/// a Path). Same checks and messages as ValidatePropPath(const Path&).
+///
+bool ValidatePropName(tstring_view prop_name, std::string *err);
+
+///
 ///
 /// Construct Path from a string.
 /// It splits string into prim_part and prop_part(e.g. "/bora.dora" => "/dora", "bora") if required and constrcut Path object.

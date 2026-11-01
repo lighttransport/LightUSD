@@ -1,8 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "usda-writer-print.hh"
+#include "../layer/int64-listop.hh"
 
 namespace lightusd {
 namespace next {
+
+template <class Emit>
+static void EmitExtensionField(const DecodedExtensionField& field, bool composed,
+                               const Emit& emit) {
+  if (field.int64_list_op) {
+    const auto& stack = *field.int64_list_op;
+    if (composed || stack.ops.size() != 1) {
+      emit(field.name + " = " + PrintValue(field.value, PrintOptions{}));
+      return;
+    }
+    const auto& op = stack.ops[0];
+    if (op.is_explicit()) {
+      emit(field.name + " = " + ((op.bits & 2u)
+          ? PrintValue(op.items[0], PrintOptions{}) : "None"));
+      return;
+    }
+    static const char* qualifiers[6] = {"", "add ", "prepend ", "append ", "delete ", "reorder "};
+    for (size_t r = 1; r < 6; ++r) {
+      if (!(op.bits & kInt64ListOpBits[r])) continue;
+      emit(std::string(qualifiers[r]) + field.name + " = " +
+           PrintValue(op.items[r], PrintOptions{}));
+    }
+    if (op.bits == 0) emit("prepend " + field.name + " = []");
+    return;
+  }
+  emit(field.name + " = " +
+       (field.unregistered && !field.unregistered_source.empty() && field.value.is_dictionary()
+            ? field.unregistered_source : PrintValue(field.value, PrintOptions{})));
+}
 
 const char* SpecifierKeyword(PrimSpecifier spec) {
   switch (spec) {
@@ -136,13 +166,9 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + um.first + " = " + um.second);
   }
   for (const auto& field : meta.unknownFields) {
-    // Verbatim raw source only for DICT payloads (its whole purpose); plain
-    // strings must go through PrintValue so quoting survives ("$Side").
-    lines.push_back(opts.indent + field.name + " = " +
-                    (field.unregistered && !field.unregistered_source.empty() &&
-                             field.value.is_dictionary()
-                         ? field.unregistered_source
-                         : PrintValue(field.value, PrintOptions{})));
+    EmitExtensionField(field, opts.composed_stage_output, [&](const std::string& line) {
+      lines.push_back(opts.indent + line);
+    });
   }
   if (meta.relocates_set || !meta.relocates.empty()) {
     if (meta.relocates.empty()) {
@@ -304,11 +330,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     }
   }
   for (const auto& field : m->unknownFields) {
-    kv(field.name + " = " +
-       (field.unregistered && !field.unregistered_source.empty() &&
-                field.value.is_dictionary()
-            ? field.unregistered_source
-            : PrintValue(field.value, PrintOptions{})));
+    EmitExtensionField(field, opts.composed_stage_output, kv);
   }
   WriteIndent(os, depth, opts.indent);
   os << ")";
@@ -1221,11 +1243,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
       kv(um.first + " = " + um.second);
     }
     for (const auto& field : meta.unknownFields()) {
-      kv(field.name + " = " +
-         (field.unregistered && !field.unregistered_source.empty() &&
-                  field.value.is_dictionary()
-              ? field.unregistered_source
-              : PrintValue(field.value, PrintOptions{})));
+      EmitExtensionField(field, opts.composed_stage_output, kv);
     }
 
     // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):

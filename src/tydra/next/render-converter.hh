@@ -356,6 +356,12 @@ class RenderSceneConverter {
   // Get last error
   std::string GetLastError() const;
 
+  /// Time code used by every conversion (time-sampled attributes, shader
+  /// ports, transforms and volume material constants). Changing it affects the
+  /// next Convert/ConvertToSink; nothing already converted is re-evaluated.
+  void SetTimeCode(double time_code);
+  double GetTimeCode() const;
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

@@ -32,7 +32,8 @@ namespace lightusd {
 
 std::string to_string(const SpatialAudio &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "SpatialAudio");
   ss << print_typed_attr(prim.filePath, "filePath", indent + 1);
   ss << print_typed_attr(prim.auralMode, "auralMode", indent + 1);
@@ -42,7 +43,7 @@ std::string to_string(const SpatialAudio &prim,
   ss << print_typed_attr(prim.mediaOffset, "mediaOffset", indent + 1);
   ss << print_typed_attr(prim.gain, "gain", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

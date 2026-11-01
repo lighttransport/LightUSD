@@ -33,6 +33,8 @@
   mutable uint64_t prof_source_misses_ = 0;
   mutable uint64_t prof_structure_nodes_ = 0;
 
+  // Names of the pseudo-root's children, in composed order.
+  std::vector<std::string> ComposeRootNames() const;
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) ;
 
@@ -63,7 +65,7 @@
     kWalkRegistered = 1,    // instanceable + active (+ detect_instances)
     kWalkSpecInstance = 2,  // walked as an instance (children not expanded)
     kWalkRoot = 4,
-    kWalkFail = 8,          // depth limit: fatal if committed
+    kWalkFail = 8,          // depth limit: fail parallel commit, report via fallback
     kWalkMiss = 16,         // source-cache miss: resolved at commit
     kWalkSeed = 32,         // prototype child sources unseeded: resolved at
                             // commit (seeding is a mutation)
@@ -106,13 +108,16 @@
   // caller emits a placeholder there) or -1 to walk it here. `rank` is the
   // entry's DFS rank (see SpeculativeWalk).
   using WalkDonate =
-      std::function<int32_t(BuildStageWork &&, const std::vector<uint32_t> &)>;
+      std::function<int32_t(std::vector<BuildStageWork> &&,
+                            const std::vector<uint32_t> &)>;
+  using WalkCanDonate = std::function<bool(const BuildStageWork &)>;
   void SpeculativeWalk(const BuildStageWork &root,
                        const std::vector<uint32_t> &rank_prefix,
-                       std::vector<WalkItem> *items, const WalkDonate &donate,
-                       WalkClaims *claims,
+                       std::vector<WalkItem> *items,
+                       const WalkCanDonate &can_donate,
+                       const WalkDonate &donate, WalkClaims *claims,
                        std::unordered_set<std::string> *local_keys,
-                       WalkPause *pause);
+                       WalkPause *pause, bool force_root_prototype = false);
   bool CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent,
                   const std::vector<uint32_t> &rank_prefix, WalkCommitCtx &ctx);
   void MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads);

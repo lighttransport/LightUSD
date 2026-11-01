@@ -18,6 +18,8 @@ from checker_parity_fixtures import generate
 ROOT = Path(__file__).resolve().parents[1]
 FINDING = re.compile(r'^(Error|Warning|Warn):\s*\(([^)]+:[^).]+\.[^)]+)\)\s*(.*)$', re.M)
 ANSI = re.compile(r'\x1b\[[0-9;]*m')
+# usda 1.2 VtArrayEdit values: `= edit [ ... ]`.
+NEWER_SYNTAX = re.compile(r'=\s*edit\s*\[')
 
 
 def run(command, timeout):
@@ -77,7 +79,7 @@ def main():
     generated = tempfile.TemporaryDirectory(prefix='checker-parity-')
     fixtures += generate(Path(generated.name))
     if not fixtures: raise RuntimeError('empty fixture corpus')
-    failures, observed, checked = [], set(), 0
+    failures, observed, checked, newer_syntax = [], set(), 0, []
     for fixture in fixtures:
         try:
             ref, text = run([a.usdchecker, '--skipVariants', str(fixture)], a.timeout)
@@ -89,7 +91,13 @@ def main():
                 if 'Failed to open stage' in text or 'Failed to open layer' in text:
                     # Both tools must reject the input. A reader may defer a
                     # malformed authored opinion to semantic validation.
-                    if out.returncode not in (1, 2) or not any(i['severity'] == 'error' for i in report['issues']):
+                    rejected = out.returncode in (1, 2) and any(i['severity'] == 'error' for i in report['issues'])
+                    if not rejected and NEWER_SYNTAX.search(fixture.read_text(errors='replace')):
+                        # usda 1.2 array edits postdate older reference builds
+                        # (e.g. the OpenUSD in CI); LightUSD parses them, so a
+                        # reference parse failure says nothing about parity.
+                        newer_syntax.append(str(fixture)); continue
+                    if not rejected:
                         failures.append([str(fixture), 'reference parse failure was not rejected', out.returncode])
                     checked += 1; continue
                 raise RuntimeError('reference failed without recognizable diagnostics: ' + text[-1000:])
@@ -117,9 +125,12 @@ def main():
             failures.append([str(fixture), 'harness failure', str(error)])
     summary = {'referenceCommit': manifest['referenceCommit'], 'fixtures': checked,
                'registeredValidators': sorted(inventory), 'observedErrors': sorted(observed),
-               'unexercisedErrors': sorted(set(mapping)-observed), 'failures': failures}
+               'unexercisedErrors': sorted(set(mapping)-observed), 'failures': failures,
+               'skippedNewerSyntax': newer_syntax}
     if a.report: a.report.write_text(json.dumps(summary, indent=2)+'\n')
     print(f'Checker parity: {checked} fixtures, {len(inventory)} validators, {len(observed)} observed error IDs, {len(failures)} failures')
+    if newer_syntax:
+        print(f'Skipped {len(newer_syntax)} fixture(s) using syntax the reference cannot parse: ' + ', '.join(newer_syntax))
     for failure in failures: print(json.dumps(failure))
     return int(bool(failures))
 

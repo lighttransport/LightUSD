@@ -73,10 +73,22 @@ typedef struct {
 
 PyObject* lightusd_wrap_stage(lightusd_state*, lightusd_stage*);
 PyObject* lightusd_import_scene(PyObject*, PyObject*, PyObject*);
+/* py-volumetric.c */
+PyObject* lightusd_py_mesh_to_level_set(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_info(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_from_vdb(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_write_vdb(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_sample(PyObject*, PyObject*);
+PyObject* lightusd_py_vdb_inspect(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_to_mesh(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_to_tet_mesh(PyObject*, PyObject*);
+PyObject* lightusd_py_tet_mesh_quality(PyObject*, PyObject*);
+PyObject* lightusd_py_volumetric_device(PyObject*, PyObject*);
 PyObject* lightusd_import_report_object(lightusd_string*);
 PyObject* lightusd_query_physics(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_convert_units(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_physics_schema_definitions(PyObject*, PyObject*);
+PyObject* lightusd_physics_schema_provenance(PyObject*, PyObject*);
 PyObject* lightusd_validate_physics(PyObject*, PyObject*, PyObject*);
 
 int lightusd_numbers_from_python(lightusd_state*, lightusd_type, uint8_t array,

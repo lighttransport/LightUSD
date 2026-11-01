@@ -209,7 +209,7 @@ struct CompositionOptions {
   // When true, BuildStage frees each prim's cached composition sources as
   // soon as its opinions are filled and drops the sources cache afterwards,
   // so the transient compose state does not coexist in full with the finished
-  // stage (Island: ~400 MB lower peak RSS). Composed output is unaffected; a
+  // stage (reference scene: ~400 MB lower peak RSS). Composed output is unaffected; a
   // later per-prim query (GetPropertyStack, ComputePrimIndex, ...) re-resolves
   // the sources it needs instead of hitting the cache. Off by default so a
   // long-lived Cache (e.g. a StageSession with full cache retention) stays
@@ -248,6 +248,20 @@ struct CompositionOptions {
   // read so the composition core takes no implicit process-environment input;
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;
+
+  // ComposeStageFromLayer/File: free the composition cache (source layers,
+  // sources, instancing maps) on a background thread instead of before
+  // returning, so the caller's next step (e.g. the write) overlaps it. Call
+  // pcp::WaitForBackgroundReclaim() before tearing down the process. Threaded
+  // builds only; otherwise the reclaim stays synchronous.
+  bool background_reclaim = false;
+
+  // With release_build_sources (ComposeStageFromLayer/File): free each source
+  // layer's prims during the opinion fill once the fill is past the last prim
+  // whose sources read it, instead of keeping every layer until the cache
+  // dies. Lowers the composition peak; the layers are unusable afterwards
+  // (root layer stack excluded). Threaded builds only.
+  bool release_layers_during_fill = false;
 
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the

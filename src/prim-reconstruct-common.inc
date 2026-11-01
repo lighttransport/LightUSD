@@ -206,10 +206,10 @@ struct target_traits<TypedAttributeWithFallback<T>> {
 
 template<typename Target>
 static ParseResult ParseTypedAttributeUnified(
-    std::set<std::string> &table,
-    const std::string prop_name,
+    ParsePropertyTable &table,
+    tstring_view prop_name,
     Property &prop,
-    const std::string &name,
+    tstring_view name,
     Target &target)
 {
   using Traits = target_traits<Target>;
@@ -219,7 +219,7 @@ static ParseResult ParseTypedAttributeUnified(
 
   ParseResult ret;
 
-  if (prop_name.compare(name) != 0) {
+  if (prop_name != name) {
     ret.code = ParseResult::ResultCode::Unmatched;
     return ret;
   }
@@ -234,17 +234,31 @@ static ParseResult ParseTypedAttributeUnified(
   Attribute &attr = prop.attribute();
   std::string attr_type_name = attr.type_name();
 
+  // Remember the AUTHORED variability. The code below consumes the value into
+  // a typed field, and the typed wrappers model values only -- so without this
+  // a `uniform` opinion is lost on write and the attribute becomes animatable
+  // (pxr prints the qualifier from the spec, so the crate differs too).
+  target.set_variability(attr.variability());
+
   // Check type match. Role types (for example color4f) are accepted when
   // their underlying storage matches the schema type (for example float4).
-  const uint32_t target_underlying_type_id =
-      value::TypeTraits<T>::underlying_type_id();
-  const uint32_t attr_underlying_type_id =
-      value::GetUnderlyingTypeId(attr_type_name);
-  if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
-      (value::TypeTraits<T>::underlying_type_name() != attr_type_name) &&
-      (target_underlying_type_id == value::TYPE_ID_INVALID ||
-       attr_underlying_type_id == value::TYPE_ID_INVALID ||
-       target_underlying_type_id != attr_underlying_type_id)) {
+  //
+  // The underlying-type id lookup is a runtime string -> id table probe; do it
+  // only when the authored type name is neither the schema type nor its
+  // underlying type name (the common case), which keeps it off the hot path.
+  bool type_matches = (value::TypeTraits<T>::type_name() == attr_type_name) ||
+                      (value::TypeTraits<T>::underlying_type_name() ==
+                       attr_type_name);
+  if (!type_matches) {
+    const uint32_t target_underlying_type_id =
+        value::TypeTraits<T>::underlying_type_id();
+    const uint32_t attr_underlying_type_id =
+        value::GetUnderlyingTypeId(attr_type_name);
+    type_matches = (target_underlying_type_id != value::TYPE_ID_INVALID &&
+                    attr_underlying_type_id != value::TYPE_ID_INVALID &&
+                    target_underlying_type_id == attr_underlying_type_id);
+  }
+  if (!type_matches) {
     // A connection-only property (`X.connect = </path>` with no authored value)
     // carries no value to type-check — a connection is a type-agnostic path.
     // Some assets declare it with a non-conformant type (e.g.
@@ -313,7 +327,7 @@ static ParseResult ParseTypedAttributeUnified(
       has_default = true;
     } else {
       // Variability checks
-      bool is_config_attr = (name.find("config:") == 0);
+      bool is_config_attr = name.starts_with("config:");
 
       if constexpr (!is_varying) {
         // Uniform attribute - no timeSamples allowed
@@ -449,10 +463,10 @@ static ParseResult ParseTypedAttributeUnified(
 
 // For animatable attribute(`varying`) with fallback
 template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+static ParseResult ParseTypedAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedAttributeWithFallback<Animatable<T>> &target)
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
@@ -461,10 +475,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
 // For 'uniform' attribute with fallback
 template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+static ParseResult ParseTypedAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedAttributeWithFallback<T> &target) /* out */
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
@@ -473,10 +487,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
 // For animatable attribute(`varying`) without fallback
 template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+static ParseResult ParseTypedAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedAttribute<Animatable<T>> &target) /* out */
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
@@ -485,10 +499,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
 // For uniform attribute without fallback
 template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+static ParseResult ParseTypedAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedAttribute<T> &target) /* out */
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
@@ -497,16 +511,15 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
 // Special case for Extent(float3[2]) type.
 // TODO: Reuse code of ParseTypedAttribute as much as possible
-[[maybe_unused]] static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+[[maybe_unused]] static ParseResult ParseExtentAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedAttribute<Animatable<Extent>> &target) /* out */
 {
   ParseResult ret;
 
-  if (prop_name.compare(name) == 0 ||
-      prop_name.compare(name + ".connect") == 0) {
+  if ((prop_name == name) || (prop_name == (name + ".connect"))) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
@@ -594,16 +607,16 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 // Allowed syntax:
 //   "T varname"
 template<typename T>
-static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+static ParseResult ParseShaderOutputTerminalAttribute(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedTerminalAttribute<T> &target, /* out */
   bool strict_type_check) // false: accept non-conformant authored type with a warning
 {
   ParseResult ret;
 
-  if (prop_name.compare(name) == 0) {
+  if (prop_name == name) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       goto end;
@@ -730,16 +743,16 @@ end:
 
 // Allowed syntax:
 //   "token outputs:surface.connect = </path/to/conn/>"
-[[maybe_unused]] static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
+[[maybe_unused]] static ParseResult ParseShaderInputConnectionProperty(ParsePropertyTable &table, /* inout */
+  tstring_view prop_name,
   Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
+  tstring_view name,
   TypedConnection<value::token> &target) /* out */
 {
   ParseResult ret;
   ret.code = ParseResult::ResultCode::InternalError;
 
-  if (prop_name.compare(name) == 0) {
+  if (prop_name == name) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
@@ -1300,6 +1313,8 @@ bool ParseTimeSampledEnumProperty(
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
         __prop.second.is_attribute() && __prop.second.is_empty()) {              \
       DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      __target.set_value_empty();                                                \
+      __target.set_variability(attr.variability());                              \
       __target.metas() = std::move(__prop.second.attribute().metas());           \
       __table.insert(__name);                                                    \
       continue;                                                                  \
@@ -1308,6 +1323,7 @@ bool ParseTimeSampledEnumProperty(
     if (!__parser_fn(__name, __strict_check, fun, attr, &__target, warn, err)) { \
       return false;                                                              \
     }                                                                            \
+    __target.set_variability(attr.variability());                                \
     __target.metas() = std::move(__prop.second.attribute().metas());             \
     __table.insert(__name);                                                      \
     continue;                                                                    \
@@ -1334,6 +1350,8 @@ bool ParseTimeSampledEnumProperty(
       if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&          \
           __prop.second.is_attribute() && __prop.second.is_empty()) {                                   \
         DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+        __target.set_value_empty();                                                                      \
+        __target.set_variability(attr.variability());                                                    \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \
         __table.insert(__name);                                                                         \
       } else {                                                                                          \
@@ -1341,6 +1359,7 @@ bool ParseTimeSampledEnumProperty(
         if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
           return false;                                                                                 \
         }                                                                                               \
+        __target.set_variability(attr.variability());                                                    \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \
         __table.insert(__name);                                                                         \
       }                                                                                                 \

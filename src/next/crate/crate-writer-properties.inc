@@ -815,7 +815,7 @@
       tokens.push_back(t);
     }
   };
-  EmittedProps EmitPrimProperties(const PrimSpec& prim) {
+  EmittedProps EmitPrimProperties(const PrimSpec& prim, std::string_view stable_base) {
     EmittedProps out;
     PropNameTable& name_table = GetPropNameTable();
     const std::string& base = prim.path().str();
@@ -837,7 +837,7 @@
     auto prop_path_index = [&](std::string_view stable_name) -> uint32_t {
       if (clean_prop_paths && !stable_name.empty() &&
           stable_name.find('/') == std::string_view::npos) {
-        return InternPropPath(base, base_hash, stable_name);
+        return InternPropPath(stable_base, base_hash, stable_name);
       }
       return InternPath(base + "." + std::string(stable_name));
     };

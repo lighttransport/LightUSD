@@ -113,7 +113,7 @@ set(LUSDVIEW_SOURCES
     skinning.cc
     ${PROJECT_SOURCE_DIR}/examples/vchar/autorigger_client.cc
     vchar_control_map.cc
-    camera_nav.cc
+    ${COMMON_DIR}/light3d/camera-nav.cc
     camera_stereo.cc
     frame_packet.cc
     gui.cc
@@ -258,7 +258,7 @@ if(LUSDVIEW_HAVE_OPTIX)
               -DOUTPUT=${LUSDVIEW_OPTIX_IR_HEADER}
               -DSYMBOL=kLusdviewOptixDeviceIr
               -P ${CMAKE_CURRENT_SOURCE_DIR}/cuda/embed_binary.cmake
-      DEPENDS cuda/optix_device.cu cuda/embed_binary.cmake
+      DEPENDS cuda/optix_device.cu cuda/optix_launch_abi.hh cuda/embed_binary.cmake
       VERBATIM
       COMMENT "Generating embedded lusdview OptiX IR")
   add_custom_target(lusdview_optix_ir DEPENDS ${LUSDVIEW_OPTIX_IR_HEADER})
@@ -311,6 +311,7 @@ if(NOT MSVC)
 endif()
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
     ${LIGHTUSD_TARGET_STATIC}
+    tydra_next
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(lightusd_gpu_rt_common PUBLIC Threads::Threads)
@@ -364,6 +365,9 @@ function(lusdview_set_warning_flags target)
     endif()
     if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
       list(APPEND _flags_list -Wno-switch-default)
+    endif()
+    if(LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+      list(APPEND _flags_list -Wno-thread-safety-negative)
     endif()
     if(NOT LIGHTUSD_NO_WERROR)
       list(APPEND _flags_list -Werror)
@@ -441,6 +445,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra_next)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)
@@ -464,7 +469,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_openpbr_material_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_openpbr_material_test PRIVATE Threads::Threads)
   endif()
@@ -490,7 +496,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_lighting_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_lighting_test PRIVATE Threads::Threads)
   endif()
@@ -512,7 +519,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_geometry_primvar_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_geometry_primvar_test PRIVATE Threads::Threads)
   endif()
@@ -534,7 +542,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_texture_pipeline_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()
@@ -575,7 +584,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   add_executable(lusdview_camera_nav_test
       tests/camera_nav_test.cc
-      camera_nav.cc
+      ${COMMON_DIR}/light3d/camera-nav.cc
       ${COMMON_DIR}/light3d/math.cpp)
   target_compile_features(lusdview_camera_nav_test PRIVATE cxx_std_17)
   lusdview_set_warning_flags(lusdview_camera_nav_test)
@@ -886,6 +895,52 @@ if(MINGW)
 endif()
 
 # ---------------------------------------------------------------------------
+# Native Metal uses the vendored Apple metal-cpp header; only window attachment
+# needs Objective-C++. Keep Apple frameworks and sources out of other platforms.
+option(LUSDVIEW_WITH_METAL "Build the native Metal backend on macOS" ${APPLE})
+if(LUSDVIEW_WITH_METAL)
+  if(NOT APPLE)
+    message(FATAL_ERROR "LUSDVIEW_WITH_METAL requires macOS")
+  endif()
+  target_sources(${EXAMPLE_TARGET} PRIVATE
+      metal/metal_renderer.cc metal/metal_surface.mm)
+  set_source_files_properties(metal/metal_surface.mm PROPERTIES
+      COMPILE_OPTIONS "-fno-objc-arc")
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE HAVE_METAL=1)
+  target_include_directories(${EXAMPLE_TARGET} SYSTEM PRIVATE ${COMMON_DIR}/metalcpp)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE
+      "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework Foundation")
+  if(LIGHTUSD_BUILD_TESTS)
+    add_executable(lusdview_metal_renderer_test
+        tests/metal_renderer_test.cc metal/metal_renderer.cc metal/metal_surface.mm
+        ${COMMON_DIR}/imgui/imgui.cpp ${COMMON_DIR}/imgui/imgui_draw.cpp
+        ${COMMON_DIR}/imgui/imgui_tables.cpp ${COMMON_DIR}/imgui/imgui_widgets.cpp
+        ${COMMON_DIR}/imgui/imgui_impl_glfw.cpp)
+    target_compile_features(lusdview_metal_renderer_test PRIVATE cxx_std_17)
+    target_compile_definitions(lusdview_metal_renderer_test PRIVATE HAVE_METAL=1)
+    target_include_directories(lusdview_metal_renderer_test SYSTEM PRIVATE ${COMMON_DIR}/metalcpp)
+    target_include_directories(lusdview_metal_renderer_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/src/external ${COMMON_DIR} ${COMMON_DIR}/imgui)
+    target_link_libraries(lusdview_metal_renderer_test PRIVATE glfw
+        "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework Foundation")
+    set_target_properties(lusdview_metal_renderer_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME lusdview-metal-viewer
+          COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/metal_viewer_test.py
+                  $<TARGET_FILE:lusdview> ${PROJECT_SOURCE_DIR})
+      set_tests_properties(lusdview-metal-viewer PROPERTIES
+          LABELS "lusdview;gpu;metal" SKIP_RETURN_CODE 77 TIMEOUT 150)
+    endif()
+    add_test(NAME lusdview-metal-renderer COMMAND lusdview_metal_renderer_test)
+    set_tests_properties(lusdview-metal-renderer PROPERTIES
+        LABELS "lusdview;gpu;metal" SKIP_RETURN_CODE 77 TIMEOUT 60)
+  endif()
+  message(STATUS "lusdview: native Metal backend ENABLED (vendored Metal.hpp)")
+endif()
+
 # Vulkan backend (optional) - SPIR-V generation + vk_renderer + imgui_impl_vulkan
 # ---------------------------------------------------------------------------
 if(LUSDVIEW_WITH_VULKAN)
@@ -999,6 +1054,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(LUSDVIEW_CXX_FLAGS "${LUSDVIEW_CXX_FLAGS} -Wno-switch-default")
   endif()
+  # Match the core library on Clang 21+: negative capabilities require explicit
+  # annotations throughout the call graph, which the viewer does not promise.
+  if(LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+    set(LUSDVIEW_CXX_FLAGS "${LUSDVIEW_CXX_FLAGS} -Wno-thread-safety-negative")
+  endif()
   if(NOT LIGHTUSD_NO_WERROR)
     set(LUSDVIEW_CXX_FLAGS "${LUSDVIEW_CXX_FLAGS} -Werror")
   endif()
@@ -1012,6 +1072,11 @@ endif()
 # Apply -Weverything only to project-owned C++ sources in lusdview.
 set_source_files_properties(${LUSDVIEW_SOURCES}
     PROPERTIES COMPILE_FLAGS "${LUSDVIEW_CXX_FLAGS}")
+
+if(LUSDVIEW_WITH_METAL)
+  set_source_files_properties(metal/metal_renderer.cc tests/metal_renderer_test.cc
+      PROPERTIES COMPILE_FLAGS "${LUSDVIEW_CXX_FLAGS}")
+endif()
 
 # Vendored C/C++ third-party code: suppress all warnings.
 set_source_files_properties(

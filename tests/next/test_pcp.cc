@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -25,6 +27,7 @@
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
+#include "next/pcp/batched-compose.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 
@@ -54,6 +57,388 @@ static const std::string& PcpScratchDirectory() {
 
 static std::string PcpScratchPath(const char* name) {
   return PcpScratchDirectory() + "/" + name;
+}
+
+static void test_source_snapshot_replay() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  AssetResolver resolver;
+  const std::string id = "/virtual/snapshot-source";  // Opaque callback identifier.
+  resolver.SetCustomResolver([&](const std::string&, const std::string&) { return id; });
+  std::atomic<int> reads{0};
+  resolver.SetAssetReader([&](const std::string&, std::vector<uint8_t>* bytes,
+                              std::string*) {
+    const int n = ++reads;
+    const std::string text = n == 1 ? "#usda 1.0\ndef Xform \"Original\" {}\n"
+                                    : "#usda 1.0\ndef Xform \"Changed\" {}\n";
+    bytes->assign(text.begin(), text.end());
+    return true;
+  });
+  pcp::LayerRegistry registry;
+  std::string warn, err;
+  PCP_CHECK(registry.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto first = registry.GetOrLoad(resolver, "source.usda", "", &warn, &err);
+  PCP_CHECK(first && first->prim_at_path("/Original"), err);
+  if (!first) return;
+  PCP_CHECK(AssetAnchorPath(first->prim_at_path("/Original")->asset_anchor_id()) ==
+            "/virtual", "snapshot must preserve the original asset anchor");
+  PCP_CHECK(registry.GetOrLoad(resolver, "source-alias.usda", "", &warn, &err) == first,
+            "warm aliases should share the original parsed source");
+  resolver.SetCustomResolver([](const std::string&, const std::string&) {
+    return "/virtual/replaced.usda";
+  });
+  std::weak_ptr<Layer> released = first;
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "snapshot layer should evict");
+  first.reset();
+  PCP_CHECK(released.expired(), "snapshot must not retain parsed metadata");
+  pcp::LayerLoadOptions changed_options;
+  changed_options.max_memory = 4;
+  auto replay = registry.GetOrLoad(resolver, "source.usda", "", &warn, &err,
+                                    changed_options);
+  PCP_CHECK(replay && replay->prim_at_path("/Original"), err);
+  PCP_CHECK(reads == 1 && registry.parse_count() == 2,
+            "evicted layer must reparse the original bytes without rereading");
+  PCP_CHECK(registry.GetOrLoad(resolver, "source-alias.usda", "", &warn, &err) == replay &&
+            reads == 1, "warm alias binding must survive source eviction");
+  PCP_CHECK(registry.snapshot_identifiers() == std::vector<std::string>{id},
+            "evicted sources remain in dependency manifests");
+  if (!replay) return;
+  replay->meta().imported_assets = std::make_shared<ImportedAssets>();
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 0, "foreign dependency owner stays pinned");
+  replay->meta().imported_assets.reset();
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "plain USD owner can evict again");
+  registry.Preload(id, replay);
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 0, "preloads have no replay contract");
+  PCP_CHECK(registry.snapshot_identifiers().empty(), "preload replaces the source version");
+  resolver.SetCustomResolver([&](const std::string&, const std::string&) { return id; });
+
+  // A hard byte limit must fail before publishing any parsed layer/snapshot.
+  pcp::LayerRegistry limited;
+  err.clear();
+  PCP_CHECK(limited.EnableSourceSnapshots(PcpScratchDirectory(), 4, &err), err);
+  PCP_CHECK(!limited.GetOrLoad(resolver, "source.usda", "", &warn, &err),
+            "snapshot byte limit must reject input");
+  PCP_CHECK(limited.size() == 0 && limited.snapshot_identifiers().empty() &&
+            err.find("byte limit") != std::string::npos, "failed snapshot was published");
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  pcp::LayerRegistry concurrent;
+  reads = 0;
+  err.clear();
+  PCP_CHECK(concurrent.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  for (int round = 0; round != 2; ++round) {
+    std::vector<std::shared_ptr<Layer>> results(8);
+    std::vector<std::string> errors(8), warnings(8);
+    std::vector<std::thread> workers;
+    for (size_t i = 0; i < results.size(); ++i)
+      workers.emplace_back([&, i] {
+        results[i] = concurrent.GetOrLoad(resolver, "source.usda", "",
+                                          &warnings[i], &errors[i]);
+      });
+    for (auto& worker : workers) worker.join();
+    for (size_t i = 0; i < results.size(); ++i)
+      PCP_CHECK(results[i] && results[i] == results[0], errors[i]);
+    PCP_CHECK(reads == 1 && concurrent.parse_count() == static_cast<size_t>(round + 1),
+              "concurrent initial/replay loads must share one parse");
+    PCP_CHECK(concurrent.EvictSnapshottedLayers() == 1, "joined loads should evict");
+  }
+#endif
+
+  const std::string file = PcpScratchPath("snapshot-native.usda");
+  { std::ofstream out(file); out << "#usda 1.0\ndef Xform \"Before\" {}\n"; }
+  AssetResolver files;
+  pcp::LayerRegistry native;
+  err.clear();
+  PCP_CHECK(native.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto original = native.GetOrLoad(files, file, "", &warn, &err);
+  PCP_CHECK(original && original->prim_at_path("/Before"), err);
+  PCP_CHECK(native.EvictSnapshottedLayers() == 1, "native snapshot should evict");
+  std::remove(file.c_str());
+  auto deleted = native.GetOrLoad(files, file, "", &warn, &err);
+  PCP_CHECK(deleted && deleted->prim_at_path("/Before"),
+            "replay must survive removal of the original file: " + err);
+  const std::string wrong_extension = PcpScratchPath("snapshot-wrong.usdc");
+  { std::ofstream out(wrong_extension); out << "#usda 1.0\ndef Xform \"Text\" {}\n"; }
+  err.clear();
+  PCP_CHECK(!native.GetOrLoad(files, wrong_extension, "", &warn, &err),
+            "native snapshot dispatch must keep USDC extension checks");
+  std::remove(wrong_extension.c_str());
+  std::cout << "source snapshot replay/eviction/limits: PASSED\n";
+#endif
+}
+
+static void test_batched_source_snapshot_back_reference() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  const std::string root = PcpScratchPath("snapshot-batched-root.usda");
+  {
+    std::ofstream out(root);
+    out << "#usda 1.0\ndef Xform \"Root\" {\n"
+           "def Xform \"A\" (references = @shared.usda@</Shared>) {}\n"
+           "def Xform \"B\" (references = @shared.usda@</Shared>) {}\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetCustomResolver([](const std::string& name, const std::string&) {
+    return name == "shared.usda" ? "/virtual/shared.usda" : std::string();
+  });
+  int reads = 0;
+  resolver.SetAssetReader([&](const std::string& name, std::vector<uint8_t>* bytes,
+                              std::string*) {
+    if (name != "/virtual/shared.usda") return false;
+    ++reads;
+    const std::string text = reads == 1
+        ? "#usda 1.0\ndef Xform \"Shared\" { def Scope \"Original\" {} }\n"
+        : "#usda 1.0\ndef Xform \"Shared\" { def Scope \"Changed\" {} }\n";
+    bytes->assign(text.begin(), text.end());
+    return true;
+  });
+  pcp::CompositionOptions options;
+  options.num_threads = 1;
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 2;
+  batches.roots_per_batch = 1;
+  batches.target_batch_prims = 1;
+  batches.pipeline = false;
+  batches.source_snapshot_directory = PcpScratchDirectory();
+  pcp::BatchedComposer composer;
+  std::string warn, err;
+  PCP_CHECK(composer.Open(root, resolver, options, batches, &warn, &err), err);
+  PCP_CHECK(composer.Plan(&warn, &err), err);
+  PCP_CHECK(composer.batch_count() >= 2, "snapshot probe must span multiple batches");
+  bool a = false, b = false, changed = false;
+  PCP_CHECK(composer.Run([&](pcp::ComposedBatch& batch) {
+    a = a || batch.layer->prim_at_path("/Root/A/Original");
+    b = b || batch.layer->prim_at_path("/Root/B/Original");
+    changed = changed || batch.layer->prim_at_path("/Root/A/Changed") ||
+                         batch.layer->prim_at_path("/Root/B/Changed");
+    return true;
+  }, &warn, &err), err);
+  PCP_CHECK(a && b && !changed && reads == 1,
+            "later batches must back-reference the first source snapshot");
+  const auto ids = composer.source_identifiers();
+  PCP_CHECK(std::find(ids.begin(), ids.end(), "/virtual/shared.usda") != ids.end(),
+            "evicted source missing from final dependency manifest");
+  std::remove(root.c_str());
+#endif
+}
+
+static void test_source_snapshot_crate_and_package() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  auto input = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"Root\" {\n"
+      "custom float[] weights = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]\n}\n");
+  PCP_CHECK(input.success, input.error_summary);
+  if (!input.success) return;
+  const std::string crate = PcpScratchPath("snapshot-array.usdc");
+  CrateWriteOptions options;
+  options.compress_arrays = false;
+  CrateWriter writer(options);
+  PCP_CHECK(writer.WriteToFile(crate.c_str(), input.stage).success, "write snapshot fixture");
+  AssetResolver resolver;
+  pcp::LayerRegistry registry;
+  std::string warn, err;
+  PCP_CHECK(registry.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto layer = registry.GetOrLoad(resolver, crate, "", &warn, &err);
+  PCP_CHECK(layer && layer->prim_at_path("/Root"), err);
+  if (!layer || !layer->prim_at_path("/Root")) return;
+  const Value* source = layer->prim_at_path("/Root")->property_value("weights");
+  PCP_CHECK(source && source->is_lazy(), "fixture must retain mapped lazy array data");
+  if (!source) return;
+  Value retained = *source;
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "crate metadata should evict");
+  layer.reset();
+  auto replay = registry.GetOrLoad(resolver, crate, "", &warn, &err);
+  PCP_CHECK(replay && replay->prim_at_path("/Root"), err);
+  replay.reset();
+  registry.Clear();  // Unlinks the snapshot while retained still owns its mapping.
+  PCP_CHECK(retained.materialize(), "retained source must survive registry cleanup");
+  const auto values = retained.as_float_array();
+  PCP_CHECK(values.size() == 16 && values[7] == 7 && values[15] == 15,
+            "mapped source bytes changed after metadata eviction");
+
+  std::ifstream file(crate, std::ios::binary);
+  std::vector<uint8_t> usdc((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+  const std::string alternative = "#usda 1.0\ndef Scope \"Alternate\" {}\n";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["layers/alternate.usda"] = std::vector<uint8_t>(alternative.begin(), alternative.end());
+  std::vector<uint8_t> archive;
+  PCP_CHECK(WriteUSDZFromUSDCAndAssetsToMemory(
+      archive, usdc.data(), usdc.size(), assets).success, "write snapshot package");
+  const std::string package = PcpScratchPath("snapshot-package.usdz");
+  { std::ofstream out(package, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(archive.data()),
+               static_cast<std::streamsize>(archive.size())); }
+  const std::string id = package + "[layers/alternate.usda]";
+  auto selected = registry.GetOrLoad(resolver, id, "", &warn, &err);
+  PCP_CHECK(selected && selected->prim_at_path("/Alternate"), err);
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "package entry should evict");
+  std::remove(package.c_str());
+  selected = registry.GetOrLoad(resolver, id, "", &warn, &err);
+  PCP_CHECK(selected && selected->prim_at_path("/Alternate"),
+            "snapshot must preserve package entry selection after source removal: " + err);
+  std::remove(crate.c_str());
+#endif
+}
+
+static void test_batched_discovery_frontier_lower_bound() {
+  const std::string root = PcpScratchPath("frontier-root.usda");
+  const std::string model = PcpScratchPath("frontier-model.usda");
+  const std::string tail = PcpScratchPath("frontier-tail.usda");
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\ndef Xform \"World\" (references = "
+         "@frontier-model.usda@</Model>) {}\n";
+  }
+  {
+    std::ofstream f(model);
+    f << "#usda 1.0\ndef Xform \"Model\" {\n"
+         "def Scope \"A\" {\ndef Scope \"One\" {}\n"
+         "def Scope \"Two\" {}\n}\n"
+         "def Scope \"B\" (references = @frontier-tail.usda@</Tail>) {}\n"
+         "def Scope \"C\" {}\n}\n";
+  }
+  {
+    std::ofstream f(tail);
+    f << "#usda 1.0\ndef Scope \"Tail\" {\ndef Scope \"Shape\" {}\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(PcpScratchDirectory());
+  pcp::CompositionOptions options;
+  options.num_threads = 1;  // Observe demand loads without background prefetch.
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 3;
+  pcp::BatchedComposer composer;
+  std::string warn, err;
+  const bool opened = composer.Open(root, resolver, options, batches, &warn, &err);
+  PCP_CHECK(opened, err);
+  if (!opened) return;
+  PCP_CHECK(composer.frontier_size() == 3, "reject the entire overflowing level");
+  auto dependencies = composer.source_identifiers();
+  // A contributes two children; B and C contribute at least one each. The
+  // level cannot fit three roots, so discovery must not load B's reference.
+  PCP_CHECK(std::find(dependencies.begin(), dependencies.end(), tail) == dependencies.end(),
+            "do not load later roots after the frontier lower bound overflows");
+  Stage regular;
+  PCP_CHECK(pcp::ComposeStageFromFile(root, resolver, &regular, options, &warn, &err), err);
+  const std::string expected = WriteUSDAToString(regular);
+  for (size_t cap : {size_t(0), size_t(1), size_t(2), size_t(3), size_t(4),
+                     size_t(5), size_t(8), (std::numeric_limits<size_t>::max)()}) {
+    batches.max_frontier = cap;
+    batches.target_batch_prims = 1;
+    Stage batched;
+    const bool ok = pcp::ComposeStageBatched(root, resolver, &batched, options,
+                                            batches, &warn, &err);
+    PCP_CHECK(ok, err);
+    if (ok) PCP_CHECK(WriteUSDAToString(batched) == expected,
+                      "frontier rejection must preserve all composed children");
+  }
+}
+
+// Eight batches each cross a packed path-storage block and the parallel writer
+// threshold. The first batch is freed before the second and before PATHS is
+// encoded: prim and property paths must not borrow the released layer text.
+static void test_batched_writer_path_lifetime() {
+  const std::string root = PcpScratchPath("packed-path-root.usda");
+  const std::string model = PcpScratchPath("packed-path-model.usda");
+  const std::string output = PcpScratchPath("packed-path-output.usdc");
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\ndef Scope \"World\" {\n";
+    for (char name = 'A'; name <= 'H'; ++name)
+      f << "def Scope \"" << name
+        << "\" (references = @packed-path-model.usda@</Model>) {}\n";
+    f << "}\n";
+    PCP_CHECK(f.good(), "write packed-path root");
+  }
+  {
+    std::ofstream f(model);
+    f << "#usda 1.0\ndef Scope \"Model\" {\n"
+         "def Scope \"S\" { float value = 1 }\n";
+    for (int i = 0; i < 9000; ++i)
+      f << "def Scope \"Child_" << i << "_" << std::string(160, 'x')
+        << "\" {\nfloat value = 1\n"
+           "rel target = </Outside/Unwritten.outputs:surface>\n}\n";
+    f << "}\n";
+    PCP_CHECK(f.good(), "write packed-path model");
+  }
+  AssetResolver resolver;
+  pcp::CompositionOptions options;
+  options.num_threads = 4;
+  Stage regular;
+  std::string warn, err;
+  const bool composed = pcp::ComposeStageFromFile(root, resolver, &regular,
+                                                 options, &warn, &err);
+  PCP_CHECK(composed, err);
+  if (!composed) return;
+  CrateWriteOptions write;
+  write.num_threads = 1;
+  std::vector<uint8_t> expected;
+  PCP_CHECK(CrateWriter(write).WriteToMemory(expected, regular).success,
+            "encode regular reference");
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 8;
+  batches.roots_per_batch = 1;
+  for (int mode : {0, 1, 2}) {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__wasi__) || defined(LIGHTUSD_NEXT_NO_MMAP)
+    if (mode == 2) continue;
+#endif
+    const int threads = mode == 0 ? 1 : 4;
+    batches.overlap_plan_write = mode == 2;
+    write.spill_directory = PcpScratchDirectory();
+    write.num_threads = threads;
+    CrateWriteResult result;
+    const bool ok = pcp::FlattenToUSDCFileBatched(root, resolver, output, options,
+        batches, write, &result, &warn, &err);
+    PCP_CHECK(ok, err);
+    PCP_CHECK(result.success, result.error);
+    if (!ok || !result.success) continue;
+    std::ifstream f(output, std::ios::binary);
+    const std::vector<uint8_t> actual((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+    PCP_CHECK(actual == expected,
+              "released batches preserve prim/property/target paths exactly");
+  }
+  std::remove(output.c_str());
+  std::remove(root.c_str());
+  std::remove(model.c_str());
+}
+
+static void test_prepared_writer_late_instance_fields() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__) && !defined(LIGHTUSD_NEXT_NO_MMAP)
+  for (int mode : {0, 1, 2}) {
+    const std::string text = "#usda 1.0\ndef Xform \"Root\" (customData = {string label = \"after\"}) {\n"
+        "token[] names = [\"Child\"]\ndef Scope \"Child\" " +
+        std::string(mode == 1 ? "(instanceable = false)" : "") +
+        " { float value = 3 }\n}\n";
+    auto parsed = LoadUSDAFromString(text);
+    PCP_CHECK(parsed.success, parsed.error_summary);
+    if (!parsed.success) continue;
+    Layer expected = parsed.stage.GetRootLayer()->Clone();
+    expected.prim_at_path_mutable("/Root")->meta().instanceable_authored = mode == 2;
+    auto input = parsed.stage.ReleaseRootLayer();
+    input->prim_at_path_mutable("/Root")->meta().instanceable = true;
+    input->prim_at_path_mutable("/Root")->meta().instanceable_authored = mode == 2;
+    CrateWriteOptions options;
+    options.spill_directory = PcpScratchDirectory();
+    CrateWriter writer(options);
+    std::vector<uint8_t> flags(input->prim_count(), 0);
+    PCP_CHECK(writer.PrepareBatch(*input, flags, flags, {}), "encode pending prototype field");
+    input.reset();
+    const std::string output = PcpScratchPath("prepared-late-instance.usdc");
+    const auto result = writer.WritePreparedFile(output.c_str(), {"/Root"});
+    PCP_CHECK(result.success, result.error);
+    PCP_CHECK(!writer.WritePreparedFile(output.c_str(), {}).success,
+              "committed scratch cannot be replayed again or truncate the final file");
+    std::ifstream file(output, std::ios::binary);
+    const std::vector<uint8_t> actual((std::istreambuf_iterator<char>(file)),
+                                     std::istreambuf_iterator<char>());
+    std::vector<uint8_t> reference;
+    PCP_CHECK(CrateWriter(options).WriteLayerToMemory(reference, expected).success,
+              "encode final prototype metadata reference");
+    PCP_CHECK(actual == reference,
+              "late field removal/boolean update preserves token first-use order and raw dedup");
+    std::remove(output.c_str());
+  }
+#endif
 }
 
 // Build an in-memory root layer:
@@ -4822,6 +5207,12 @@ static void test_spec_lookup_filter_exactness() {
 }
 
 int main() {
+  test_source_snapshot_replay();
+  test_batched_source_snapshot_back_reference();
+  test_source_snapshot_crate_and_package();
+  test_batched_discovery_frontier_lower_bound();
+  test_batched_writer_path_lifetime();
+  test_prepared_writer_late_instance_fields();
   test_local_opinions_require_composition();
   test_compute_prim_index();
   test_typed_composition_issues();

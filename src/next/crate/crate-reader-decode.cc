@@ -4,6 +4,7 @@
 // LightUSD Next - USDC Crate Reader decode/allocation helpers
 
 #include "crate-reader-internal.hh"
+#include "../layer/int64-listop.hh"
 #include "safe-arithmetic.hh"
 #include "../execution.hh"
 #include "../writer/dtoa.hh"
@@ -23,7 +24,8 @@ namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
-                                         std::vector<std::pair<std::string_view, Value>>& out) {
+                                         std::vector<std::pair<std::string_view, Value>>& out,
+                                         std::vector<DecodedExtensionField>* extensions) {
   out.clear();
 
   if (fieldset_index >= fieldset_indices_.size()) {
@@ -48,6 +50,19 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
         // generic-decoder miss as an unsupported field in strict mode.
         if (name == "variantSelection" &&
             field.value_rep.type_id() == CrateTypeId::VariantSelectionMap) {
+          ++start;
+          continue;
+        }
+        // Structured integer list-ops are retained by the metadata decoder,
+        // not flattened into a Value (which would lose authored sublists).
+        if (field.value_rep.type_id() == CrateTypeId::Int64ListOp) {
+          if (!extensions) { ++start; continue; }  // structural pre-pass
+          DecodedExtensionField extension;
+          if (DecodeInt64ListOpField(std::string(name), field.value_rep,
+                                                   &extension)) {
+            extensions->push_back(std::move(extension));
+            out.emplace_back(name, Value());  // retain authored field order
+          } else AddWarning("Failed to decode Int64 list-op field '" + std::string(name) + "'");
           ++start;
           continue;
         }
@@ -337,6 +352,35 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     if (!GetString(k, key) || !GetString(v, val)) return false;
     out.emplace_back(std::move(key), std::move(val));
   }
+  return true;
+}
+
+bool CrateReader::Impl::DecodeInt64ListOpField(
+    std::string name, ValueRep rep, DecodedExtensionField* out) {
+  auto fail = [&]() { AddError("Invalid or over-budget Int64 list-op metadata"); return false; };
+  if (rep.type_id() != CrateTypeId::Int64ListOp || rep.is_array() ||
+      rep.is_array_edit() || rep.is_inlined() || rep.is_compressed()) return fail();
+  if (!CheckByteAllocation(sizeof(Int64ListOpStack) + sizeof(Int64ListOp),
+                           "Int64 list-op metadata")) return false;
+  Int64ListOp op;
+  op.bits = 0;
+  if (rep.payload()) {
+    if (!SeekToPayload(reader(), rep) || !reader()->read_u8(op.bits) ||
+        (op.bits & 0x80u)) return fail();
+    for (size_t r = 0; r < 6; ++r) {
+      if (!(op.bits & kInt64ListOpBits[r])) continue;
+      uint64_t n = 0;
+      if (!reader()->read_u64(n) || n > options_.max_array_elements ||
+          n > (std::numeric_limits<size_t>::max)() ||
+          !reader()->has_elements(static_cast<size_t>(n), 8) ||
+          !CheckElementAllocation(n, 96, "Int64 list-op")) return fail();
+      std::vector<int64_t> values(static_cast<size_t>(n));
+      for (int64_t& value : values)
+        if (!reader()->read_i64(value)) return fail();
+      op.items[r] = Value::MakeInt64Array(values);
+    }
+  }
+  *out = MakeInt64ListOpField(std::move(name), std::move(op));
   return true;
 }
 

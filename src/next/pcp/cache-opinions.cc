@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include "../layer/int64-listop.hh"
 #include <unordered_set>
 #include <string_view>
 #include "cache-internal.hh"
@@ -364,6 +365,8 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     // prim that references a variant-set asset), and share plain property
     // metadata now rather than at the layer's finalize, after every prim of
     // a ~10M-prim stage has been filled.
+    if (!static_cast<const PrimSpec*>(out)->meta().unknownFields().empty())
+      ResolveInt64ListOpFields(&out->meta().unknownFields());
     out->meta().trim_ext();
     out->share_property_metas();
   }
@@ -809,7 +812,83 @@ auto Cache::Impl::BuildPreviewLayer(const Layer &structure) -> Layer {
     return preview;
   }
 
-auto Cache::Impl::FillOpinions(Layer *out) -> void {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// For release_layers_during_fill: the fill batch after which each source
+// layer is no longer read. A source reads specs (and variant content) from the
+// layers of its layer stack, so every layer of every stack a record's sources
+// use counts as read by that record. Root-stack layers (possibly the caller's)
+// are never released.
+auto Cache::Impl::PlanLayerRelease(size_t opinion_batch, int nt) -> LayerReleasePlan {
+  const auto t0 = std::chrono::steady_clock::now();
+  LayerReleasePlan plan;
+  const size_t nstacks = layer_stacks.size();
+  const size_t n = fill_.size();
+  const size_t workers = std::max<size_t>(1, std::min<size_t>(nt, 16));
+  // Last record per stack, per worker slice (records ascend within a slice).
+  std::vector<std::vector<uint32_t>> last(workers,
+                                          std::vector<uint32_t>(nstacks, UINT32_MAX));
+  {
+    std::vector<std::thread> pool;
+    for (size_t t = 0; t < workers; ++t) {
+      pool.emplace_back([&, t] {
+        std::vector<uint32_t> &mine = last[t];
+        const size_t lo = n * t / workers, hi = n * (t + 1) / workers;
+        for (size_t i = lo; i < hi; ++i) {
+          const std::vector<Src> *srcs = fill_[i].second;
+          if (!srcs) continue;
+          for (const Src &s : *srcs)
+            if (s.stack_idx < nstacks) mine[s.stack_idx] = static_cast<uint32_t>(i);
+        }
+      });
+    }
+    for (std::thread &th : pool) th.join();
+  }
+  std::unordered_set<const Layer *> keep;
+  if (!layer_stacks.empty())
+    for (const auto &l : layer_stacks[0].layers) keep.insert(l.get());
+  std::unordered_map<Layer *, uint32_t> layer_last;
+  for (size_t st = 0; st < nstacks; ++st) {
+    uint32_t lst = UINT32_MAX;
+    for (size_t t = 0; t < workers; ++t)
+      if (last[t][st] != UINT32_MAX && (lst == UINT32_MAX || last[t][st] > lst))
+        lst = last[t][st];
+    if (lst == UINT32_MAX) continue;  // stack read by no record
+    const LayerStack &stack = layer_stacks[st];
+    for (size_t li = 0; li < stack.layers.size(); ++li) {
+      const auto &l = stack.layers[li];
+      if (!l || keep.count(l.get())) continue;
+      if (batch_scope_) {
+        // A batch releases only the layers no later batch reads.
+        const std::string &id = li < stack.layer_identifiers.size()
+                                    ? stack.layer_identifiers[li]
+                                    : stack.identifier;
+        if (!batch_scope_->releasable_layers ||
+            !batch_scope_->releasable_layers->count(id)) {
+          keep.insert(l.get());
+          layer_last.erase(l.get());
+          continue;
+        }
+      }
+      uint32_t &v = layer_last[l.get()];
+      if (lst + 1 > v) v = lst + 1;  // stored +1: 0 = unset
+    }
+  }
+  // A layer some stack keeps but no record reads stays (not in the map).
+  const size_t nbatches = (n + opinion_batch - 1) / opinion_batch;
+  plan.by_batch.resize(nbatches);
+  for (const auto &kv : layer_last) {
+    plan.by_batch[(kv.second - 1) / opinion_batch].push_back(kv.first);
+    ++plan.layers;
+  }
+  plan.ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+  return plan;
+}
+#endif
+
+auto Cache::Impl::FillOpinions(
+    Layer *out,
+    const std::vector<const std::vector<Src> *>& shared_srcs) -> void {
     // The serial structure pass has parsed every referenced layer, so the full
     // set of property names is now interned. Freeze the name table: the parallel
     // fill below does heavy find() (and intern() that all HIT) on it, and the
@@ -819,28 +898,57 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
     GetPropNameTable().freeze();
     // With release_build_sources, free each slot's composition sources the
     // moment its opinions are composed, so the transient compose state (~600
-    // MB of Src vectors on Island) drains as the output fills in instead of
+    // MB of Src vectors on reference scene) drains as the output fills in instead of
     // coexisting in full with the finished stage. The structure walk is done,
     // so nothing resolves sources again during the fill, and the caller drops
     // sources_cache right after it (those emptied entries must never be read
     // back as "no sources"). A vector shared by several slots (one source path
     // placed at two output paths) is left for the final drop.
     const bool release = options.release_build_sources;
-    std::vector<const std::vector<Src> *> shared_srcs;
-    if (release) {
-      std::vector<const std::vector<Src> *> seen;
-      seen.reserve(fill_.size());
-      for (const auto &record : fill_) {
-        if (record.second) seen.push_back(record.second);
+    auto release_shared = [&] {
+      if (!release) return;
+      const size_t n = shared_srcs.size();
+      if (shared_srcs.empty()) {
+        if (options.enable_timing)
+          LIGHTUSD_LOG_I("[next_fill] shared_vectors=0 shared_release=0ms");
+        return;
       }
-      std::sort(seen.begin(), seen.end());
-      for (size_t i = 1; i < seen.size(); ++i) {
-        if (seen[i] == seen[i - 1] &&
-            (shared_srcs.empty() || shared_srcs.back() != seen[i])) {
-          shared_srcs.push_back(seen[i]);
+      const auto start = std::chrono::steady_clock::now();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      int nt = options.num_threads;
+      if (nt < 0)
+        nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                           kMaxExecutionThreads);
+      nt = std::max(1, std::min(nt, kMaxExecutionThreads));
+      if (nt > 1 && n >= 2048) {
+        const size_t workers = std::min<size_t>(static_cast<size_t>(nt), n);
+        std::vector<std::thread> pool;
+        pool.reserve(workers);
+        for (size_t t = 0; t < workers; ++t) {
+          const size_t lo = n * t / workers;
+          const size_t hi = n * (t + 1) / workers;
+          pool.emplace_back([&, lo, hi] {
+            for (size_t i = lo; i < hi; ++i)
+              std::vector<Src>().swap(
+                  *const_cast<std::vector<Src> *>(shared_srcs[i]));
+          });
         }
+        for (std::thread &th : pool) th.join();
+      } else
+#endif
+      {
+        for (const std::vector<Src> *srcs : shared_srcs)
+          std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
       }
-    }
+      if (options.enable_timing) {
+        const double elapsed = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        LIGHTUSD_LOG_I("[next_fill] shared_vectors=" +
+                       UIntToStr(n) + " shared_release=" +
+                       FormatMilliseconds(elapsed) + "ms");
+      }
+    };
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         const std::vector<Src> *srcs = fill_[i].second;
@@ -849,7 +957,8 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
           ComposeOpinions(*srcs, ps);
         }
         if (release &&
-            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs)) {
+            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs,
+                                std::less<const std::vector<Src> *>{})) {
           // sources_cache owns the vector (address-stable deque storage);
           // fill_ only borrows it read-only for the structure pass.
           std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
@@ -874,6 +983,48 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
                                                     (static_cast<size_t>(nt) *
                                                      static_cast<size_t>(32)));
       std::atomic<size_t> next{0};
+      // release_layers_during_fill: a source layer's prims are freed once
+      // every batch up to the last record reading it is done.
+      LayerReleasePlan plan;
+      if (release && options.release_layers_during_fill &&
+          (!batch_scope_ || batch_scope_->releasable_layers))
+        plan = PlanLayerRelease(opinion_batch, nt);
+      const size_t nbatches = (fill_.size() + opinion_batch - 1) / opinion_batch;
+      std::unique_ptr<std::atomic<uint8_t>[]> batch_done;
+      std::mutex watermark_mu;
+      size_t watermark = 0;  // every batch below is done
+      std::atomic<size_t> released_prims{0};
+      std::atomic<size_t> purged_at{0};
+      if (!plan.by_batch.empty()) {
+        batch_done.reset(new std::atomic<uint8_t>[nbatches]);
+        for (size_t k = 0; k < nbatches; ++k) batch_done[k].store(0);
+      }
+      auto finish_batch = [&](size_t k) {
+        if (!batch_done) return;
+        batch_done[k].store(1, std::memory_order_release);
+        std::vector<Layer *> free_now;
+        {
+          std::lock_guard<std::mutex> lk(watermark_mu);
+          while (watermark < nbatches &&
+                 batch_done[watermark].load(std::memory_order_acquire)) {
+            for (Layer *l : plan.by_batch[watermark]) free_now.push_back(l);
+            ++watermark;
+          }
+        }
+        size_t freed = 0;
+        for (Layer *l : free_now) {
+          freed += l->prims().size();
+          l->release_prims();
+        }
+        if (!freed) return;
+        // Hand the freed pages back in steps, not per layer (a purge walks
+        // every arena).
+        const size_t total = released_prims.fetch_add(freed) + freed;
+        size_t last = purged_at.load();
+        if (trimmer_ && total - last >= (size_t(1) << 20) &&
+            purged_at.compare_exchange_strong(last, total))
+          trimmer_->Request();
+      };
       std::vector<std::thread> pool;
       pool.reserve(nt);
       for (int t = 0; t < nt; ++t) {
@@ -883,14 +1034,23 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
                                             std::memory_order_relaxed);
             if (b >= fill_.size()) break;
             do_range(b, std::min(fill_.size(), b + opinion_batch));
+            finish_batch(b / opinion_batch);
           }
         });
       }
       for (std::thread &th : pool) th.join();
+      release_shared();
+      if (batch_done && trimmer_) trimmer_->Request();
+      if (options.enable_timing && !plan.by_batch.empty())
+        LIGHTUSD_LOG_I("[next_fill] layers_released=" +
+                       UIntToStr(plan.layers) + " layer_prims_released=" +
+                       UIntToStr(released_prims.load()) + " plan=" +
+                       FormatMilliseconds(plan.ms) + "ms");
       return;
     }
 #endif
     do_range(0, fill_.size());
+    release_shared();
   }
 
 }}} // namespace lightusd::next::pcp

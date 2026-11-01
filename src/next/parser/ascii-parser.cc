@@ -3,6 +3,7 @@
 //
 // LightUSD Next - USDA ASCII Parser implementation
 
+#include "../layer/int64-listop.hh"
 #include "ascii-parser-internal.hh"
 #include "../crate/crate-timing.hh"
 #include "../safe-file-size.hh"
@@ -982,6 +983,41 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
         Match(TokenType::CloseBrace);
       }
+    } else if (key == "inactiveIds") {
+      Value ids;
+      const bool clear = Check(TokenType::None);
+      if (clear) { lexer_->next(); ids = Value::MakeInt64Array({}); }
+      else {
+        ParseArrayContext context;
+        context.max_usda_lazy_array_elements = options_.max_usda_lazy_array_elements;
+        context.num_threads = options_.num_threads;
+        ParseResult parsed = ParseArrayValue(*lexer_, TypeId::Int64, context);
+        if (!parsed.success) { AddError("Invalid inactiveIds int64 list"); return false; }
+        ids = std::move(parsed.value);
+      }
+      auto& fields = prim->meta().unknownFields();
+      auto existing = std::find_if(fields.begin(), fields.end(),
+          [](const DecodedExtensionField& f) { return f.name == "inactiveIds"; });
+      Int64ListOp op;
+      if (existing != fields.end() && existing->int64_list_op &&
+          existing->int64_list_op->ops.size() == 1)
+        op = existing->int64_list_op->ops[0];
+      size_t run = 0;
+      switch (arc_qual) {
+        case ArcQual::Add: run = 1; break;
+        case ArcQual::Prepend: run = 2; break;
+        case ArcQual::Append: run = 3; break;
+        case ArcQual::Delete: run = 4; break;
+        case ArcQual::Reorder: run = 5; break;
+        default: break;
+      }
+      if (run == 0 || op.is_explicit()) { op = Int64ListOp(); op.bits = 0; }
+      if (run == 0) op.bits = clear ? 1 : 3;
+      else op.bits |= kInt64ListOpBits[run];
+      op.items[run] = std::move(ids);
+      auto field = MakeInt64ListOpField("inactiveIds", std::move(op));
+      if (existing == fields.end()) fields.push_back(std::move(field));
+      else *existing = std::move(field);
     } else if (key == "apiSchemas") {
       prim->meta().setApiSchemasAuthored();
       std::vector<std::string> schemas;

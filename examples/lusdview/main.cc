@@ -11,6 +11,8 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
+#include "tydra/next/scene-preview.hh"
+#include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -236,12 +238,22 @@ uint64_t HostMemoryCapacityBytes() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
+    return 1;
+  }
   const std::string executableName =
       (argc > 0 && argv[0]) ? std::filesystem::path(argv[0]).filename().string()
                             : std::string();
   const bool virtualHumanProfile = executableName == "vchar" ||
                                    executableName == "vchar.exe";
-#if defined(HAVE_VULKAN)
+#if defined(HAVE_METAL)
+  lusdview::Backend backend = lusdview::Backend::Metal;
+#elif defined(HAVE_VULKAN)
   lusdview::Backend backend = lusdview::Backend::Vulkan;
 #else
   lusdview::Backend backend = lusdview::Backend::GL;
@@ -369,7 +381,7 @@ int main(int argc, char** argv) {
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   int streamIdleMs = 350;            // ms of input quiet before the lossless refine
-  bool headless = false;      // windowless offscreen rendering (Vulkan only)
+  bool headless = false;      // windowless offscreen rendering (Metal/Vulkan)
   bool threaded = false;
   bool threadedExplicit = false;
   bool adaptiveQuality = true;
@@ -445,8 +457,11 @@ int main(int argc, char** argv) {
       } else if (std::strcmp(argv[i], "gl") == 0 ||
                  std::strcmp(argv[i], "opengl") == 0) {
         backend = lusdview::Backend::GL;
+      } else if (std::strcmp(argv[i], "metal") == 0 ||
+                 std::strcmp(argv[i], "mtl") == 0) {
+        backend = lusdview::Backend::Metal;
       } else {
-        LOGE("--backend must be gl, opengl, vk, or vulkan");
+        LOGE("--backend must be gl, opengl, vk, vulkan, metal, or mtl");
         return 1;
       }
       backendExplicit = true;
@@ -1225,7 +1240,7 @@ int main(int argc, char** argv) {
       streamMotionQuality = std::atoi(argv[++i]);
     } if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
-          "Usage: lusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
+          "Usage: lusdview [--config PATH] [--backend gl|vk|metal] [--rt] [--frames N] "
           "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
@@ -1234,8 +1249,8 @@ int main(int argc, char** argv) {
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
           "default config path).\n"
-          "  --backend gl|vk Select renderer backend (default: Vulkan when built "
-          "and available, otherwise OpenGL).\n"
+          "  --backend gl|vk|metal Select renderer backend (default: Metal on macOS, "
+          "otherwise Vulkan when built, then OpenGL).\n"
           "  --vk-device INDEX|NAME  Select a Vulkan physical device by index or "
           "case-insensitive device/driver substring (e.g. 0, nvidia, rtx, llvmpipe). "
           "Also available in config as vulkan_device.\n"
@@ -1262,6 +1277,30 @@ int main(int argc, char** argv) {
           "  --stereo      Resolve authored stereoRole left/right cameras; "
           "headless raster screenshots are side-by-side (use --camera when "
           "multiple pairs exist).\n"
+          "  --scene-preview  Convert/cache a bounded scene preview before loading.\n"
+          "  --preview-kind gaussian|points|volume  Representation (default gaussian).\n"
+          "  --preview-budget-mib N  Total renderer budget (default 1/4 VRAM).\n"
+          "  --preview-resolution N  Explicit sampling resolution.\n"
+          "  --preview-cache-dir DIR  Reuse portable cached USD sidecars.\n"
+          "  --preview-refresh  Regenerate the cached preview.\n"
+          "  --preview-lod-pixels N  Camera LOD error (default 2 pixels).\n"
+          "  --preview-no-lod  Load the finest cached representation.\n"
+          "  --preview-compute auto|cpu|vulkan|cuda  Conversion compute backend.\n"
+          "  --preview-volume-grids  Open an existing UsdVol scene directly.\n"
+          "  --preview-volume-mode surface|medium  Direct-grid rendering mode.\n"
+          "  --preview-volume-cutoff F    Residual transmittance, [0,1] (default 1e-7; 0 disables).\n"
+          "  --preview-volume-steps N     Ray step budget, 1..65536 (default 4096).\n"
+          "  --preview-shadow-steps N     Shadow step budget, 1..65536 (default 1024).\n"
+          "  --preview-volume-step-size F  Step in voxel units, (0,2] (default .5).\n"
+          "  --preview-volume-error F     Relative quadrature error, [0,1] (default .001).\n"
+          "  --preview-volume-bounces N   Scattering orders, 1..256 (default 1).\n"
+          "  --preview-volume-samples N   Paths per pixel, 1..64 (default 2).\n"
+          "  --preview-light-samples N    Textured light samples, 1..64 (default 8).\n"
+          "  --preview-accumulation-frames N  Stable-camera frame cap, 1..4096 (default 64).\n"
+          "  --preview-volume-density/scattering/emission/anisotropy F  Medium controls.\n"
+          "  --preview-volume-headlight / --preview-volume-no-shadows  Lighting controls.\n"
+          "  --preview-no-source-refine  Keep the initial cached samples.\n"
+          "  --preview-volume-carrier  Use cached isosurface meshes.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -1362,7 +1401,7 @@ int main(int argc, char** argv) {
           "overriding the SkelAnimation; honors in-between shapes. Also editable "
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
-          "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
+          "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Use the default next-core + tydra-next loader "
           "(compatibility flag).\n"
           "  --legacy-load Use the legacy eager loader.\n"
@@ -1476,11 +1515,40 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+#if !defined(HAVE_METAL)
+  if (backend == lusdview::Backend::Metal) {
+    LOGE("Metal backend not compiled in (requires macOS and LUSDVIEW_WITH_METAL=ON)");
+    return 1;
+  }
+#endif
+
   if ((quitAfterFullUpload || quitAfterConvert) && maxFrames >= 0) {
     LOGE("--quit-after-full-upload/--quit-after-convert cannot be combined with --frames");
     return 1;
   }
 
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = timeCode.value_or(0.0);
+    scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &file, scenePreview, 0, &scenePreviewError)) {
+      LOGE("scene preview: %s", scenePreviewError.c_str());
+      return 1;
+    }
+    useNextLoader = true;
+    largeSceneProfile = LargeSceneProfile::Off;
+    largeSceneProfileExplicit = true;
+    dynamicLod = false;
+    const double budgetGiB = double(scenePreview.options.gpu_budget_bytes) /
+                             double(uint64_t(1) << 30);
+    vramBudgetGiB = budgetGiB;
+    vramBudgetExplicit = true;
+    maxGpuMemGiB = budgetGiB;
+    maxGpuMemExplicit = true;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    textureOptions.textureBudgetMB = 32;
+    textureBudgetExplicit = true;
+  }
   LargeSceneProfile effectiveProfile = largeSceneProfile;
   // Large production assets should receive the interactive streaming budget
   // even when opened directly from the command line. Keep `--large-scene-
@@ -1607,7 +1675,7 @@ int main(int argc, char** argv) {
   }
   if (effectiveProfile != LargeSceneProfile::Off) {
     if (!useNextExplicit) useNextLoader = true;
-    if (!backendExplicit) {
+    if (!backendExplicit && backend != lusdview::Backend::Metal) {
       backend = lusdview::Backend::Vulkan;
       backendExplicit = true;
     }
@@ -1724,19 +1792,19 @@ int main(int argc, char** argv) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
-  // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  // Metal and Vulkan support windowless rendering; GL needs a window/context.
   if (viewDirExplicit && !cameraName.empty()) {
     LOGE("--view-dir cannot be combined with the selected --camera/profile camera");
     return 1;
   }
 
-  if (headless) {
+  if (headless && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
   // The `next` loader is the OpenGL large-scene mesh preview; default it to the
   // GL backend unless the user picked one explicitly (it feeds either backend).
-  if (useNextLoader && !backendExplicit) {
+  if (useNextLoader && !backendExplicit && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::GL;
   }
 
@@ -1769,7 +1837,7 @@ int main(int argc, char** argv) {
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
          ProfileName(effectiveProfile),
-         backend == lusdview::Backend::Vulkan ? "vk" : "gl",
+         lusdview::BackendName(backend),
          useNextLoader ? "on" : "off",
          rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
          rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
@@ -2091,6 +2159,9 @@ int main(int argc, char** argv) {
   }
   if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
+  app.setScenePreviewRequest(scenePreview);
+  if(scenePreview.enabled && scenePreview.camera_lod)
+    app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);

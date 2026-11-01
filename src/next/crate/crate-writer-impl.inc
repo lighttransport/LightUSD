@@ -66,7 +66,17 @@ private:
     if (tok != UINT32_MAX) return tok;
     if (WorkerCtx* w = WorkerTLS()) {  // chunk-local cache; committed later
       uint32_t& wtok = w->field_tok[t];
-      if (wtok == UINT32_MAX) wtok = InternToken(FieldTokName(t));
+      if (wtok == UINT32_MAX) {
+        const size_t before = w->events.size();
+        wtok = InternToken(FieldTokName(t));
+        if (preparing_plan_ && t == kTokInstanceable && w->events.size() != before)
+          w->events.back().kind = 3;  // definition bound by a surviving field use
+      }
+      // A generated prototype's field may disappear after Plan. Record each
+      // field use, not merely its first intern, so replay can preserve the
+      // first surviving use's position in the token stream.
+      if (preparing_plan_ && t == kTokInstanceable)
+        w->events.push_back(InternEvent{FieldTokName(t), wtok, 2, WFieldCount()});
       return wtok;
     }
     tok = InternToken(FieldTokName(t));
@@ -95,21 +105,35 @@ private:
   std::unordered_map<std::string_view, uint32_t> string_to_index_;  // views of tokens_
 
   // Paths. Each path is a canonical (stem, name) VIEW pair (see PathRec in
-  // crate-writer-tables.inc); the views point at storage that outlives the
-  // write: the input Layer's prim paths, the PropNameTable, or path_owned_.
+  // crate-writer-tables.inc); pointers reference storage that outlives the
+  // write: the input Layer's prim paths (packed copies for batched writes),
+  // the PropNameTable, or path_owned_.
   struct PathRec {
-    std::string_view stem;  // prim part (the whole path for a prim path)
-    std::string_view name;  // property name ("" for a prim path)
+    const char* stem_data = nullptr;
+    const char* name_data = nullptr;
+    uint32_t stem_size = 0;
+    uint32_t name_size = 0;
+
+    PathRec() = default;
+    PathRec(std::string_view stem, std::string_view name)
+        : stem_data(stem.empty() ? "" : stem.data()),
+          name_data(name.empty() ? "" : name.data()),
+          stem_size(static_cast<uint32_t>(stem.size())),
+          name_size(static_cast<uint32_t>(name.size())) {}
+    std::string_view stem() const { return {stem_data, stem_size}; }
+    std::string_view name() const { return {name_data, name_size}; }
   };
+  static_assert(sizeof(PathRec) == 2 * sizeof(const char*) + 2 * sizeof(uint32_t),
+                "PathRec must stay compact on 32-bit and 64-bit targets");
   std::vector<PathRec> paths_;
-  std::vector<uint64_t> path_hashes_;   // per record, for rehash
+  std::vector<uint16_t> path_fingerprints_;  // low hash bits; high bits live in index slots
   // Open-addressed index, split into kPathShards independent tables by hash
   // bits 28..31 (disjoint from the slot-index bits below and the fingerprint
   // above), so the parallel commit can probe/insert shards concurrently while
   // record ids stay global (paths_ order). A slot holds record index + 1 in
   // its low 32 bits (0 = empty) and the record hash's high 32 bits, so a probe
-  // chain is walked without touching path_hashes_ / paths_ (both far larger
-  // than any cache) until the fingerprint matches.
+  // chain is walked without touching paths_ (far larger than any cache) until
+  // the 48-bit fingerprint matches.
   static constexpr size_t kPathShards = 16;
   struct PathShard {
     std::vector<uint64_t> slots;
@@ -121,9 +145,26 @@ private:
   // Fields and fieldsets
   // The two FIELDS columns are compressed independently. Retaining them in
   // column order avoids CrateField padding and full-column extraction copies.
-  struct FieldColumns {
+  // The worker chunk delta keeps plain vectors; shortcuts (indexed reference)
+  // commit it once per batch.
+  struct ChunkFieldColumns {
     std::vector<uint32_t> tokens;
     std::vector<ValueRep> reps;
+    size_t size() const { return reps.size(); }
+    void clear() { tokens.clear(); reps.clear(); }
+    void reserve(size_t count) { tokens.reserve(count); reps.reserve(count); }
+    void push_back(const CrateField& field) {
+      tokens.push_back(field.token_index.value);
+      reps.push_back(field.value_rep);
+    }
+  };
+  // Main-stage columns: identical semantics to the chunk struct, but the
+  // storage is a SpillVec (0-byte budget = exactly one plain vector, as
+  // before; with a budget, fully committed prefixes move to the spill file at
+  // batch boundaries and return via Resolve()).
+  struct FieldColumns {
+    SpillVec<uint32_t> tokens;
+    SpillVec<ValueRep> reps;
     size_t size() const { return reps.size(); }
     void clear() { tokens.clear(); reps.clear(); }
     void reserve(size_t count) { tokens.reserve(count); reps.reserve(count); }
@@ -134,8 +175,8 @@ private:
   } fields_;
   // Retain fieldsets in their final flat order, including the sentinel. Each
   // spec needs only an offset instead of an allocated vector of field indices.
-  std::vector<uint32_t> fieldset_offsets_;
-  std::vector<uint32_t> flat_fieldsets_;
+  SpillVec<uint32_t> fieldset_offsets_;
+  SpillVec<uint32_t> flat_fieldsets_;
 
   uint32_t BeginFieldset(size_t field_count) {
     const size_t limit = (std::numeric_limits<uint32_t>::max)();
@@ -152,13 +193,88 @@ private:
   uint32_t AddFieldset(const std::vector<uint32_t>& indices) {
     const uint32_t number = BeginFieldset(indices.size());
     if (!result_.error.empty()) return 0;
-    flat_fieldsets_.insert(flat_fieldsets_.end(), indices.begin(), indices.end());
+    flat_fieldsets_.append(indices.data(), indices.size());
     flat_fieldsets_.push_back(UINT32_MAX);
     return number;
   }
 
   // Specs
-  std::vector<CrateSpec> specs_;
+  SpillVec<CrateSpec> specs_;
+
+  // ---- Append-only column spill (batched/streamed writes) ------------------
+  // The structural columns whose committed prefixes may move out of memory
+  // while the shared budget is exceeded. Order is only a tie-breaker; the
+  // flush driver always drains whichever column holds the most sealed bytes.
+  void SpillColumns(SpillColumnBase** out) {
+    out[0] = &fields_.tokens;
+    out[1] = &fields_.reps;
+    out[2] = &fieldset_offsets_;
+    out[3] = &flat_fieldsets_;
+    out[4] = &specs_;
+  }
+  static constexpr size_t kSpillColumnCount = 5;
+
+  // One-time per-write configuration (the columns are empty here, in
+  // ReserveTables). Only streamed/batched writes ever spill, but enabling the
+  // storage mode is harmless for the others: nothing evicts without a budget
+  // and the flush driver checks stream_values_.
+  void ConfigureSpillColumns() {
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    const bool on = options_.spill_columns_bytes != 0;
+    for (SpillColumnBase* c : cols) {
+      c->set_spill_enabled(on);
+      if (on) c->set_spill_directory(options_.spill_directory);
+    }
+  }
+
+  // Move fully committed column prefixes to the spill file while the shared
+  // resident budget is exceeded. Runs strictly at batch boundaries: all
+  // appends of the batch are complete there, so any chunk that is not the
+  // (still growing) last one can move without changing element semantics.
+  // The commit's rebases (fields_before / fs_before / flat offsets) and every
+  // size() stay absolute across evictions; only the section builders read
+  // spilled bytes, through Resolve().
+  void MaybeSpillColumns() {
+    const uint64_t budget = options_.spill_columns_bytes;
+    if (!stream_values_ || budget == 0) return;
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    for (int round = 0; round < 32; ++round) {
+      uint64_t resident = 0;
+      uint64_t best_sealed = 0;
+      SpillColumnBase* best = nullptr;
+      for (SpillColumnBase* c : cols) {
+        resident += c->ResidentBytes();
+        const uint64_t sealed = c->SealedBytes();
+        if (sealed > best_sealed) {
+          best_sealed = sealed;
+          best = c;
+        }
+      }
+      if (resident <= budget) return;
+      if (!best) return;  // only the open (append) chunks remain
+      std::string error;
+      const uint64_t freed = best->SpillSealed(resident - budget, &error);
+      if (!error.empty()) {
+        // The writer keeps every byte in memory on a spill I/O problem (the
+        // output is still exact) and reports the fault once.
+        if (result_.error.empty()) result_.error = error;
+        return;
+      }
+      if (!freed) return;  // nothing evictable left
+    }
+  }
+
+  // True when any column's spill write or re-read hit an I/O error (queued by
+  // the array itself so thread-built sections can report too).
+  bool SpillIoFailed() {
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    for (SpillColumnBase* c : cols)
+      if (c->io_failed()) return true;
+    return false;
+  }
 
   // VALUE data section payloads. A block is either inline (`data`) or a verbatim
   // pass-through reference into a retained source crate buffer (`src` pins the
@@ -210,7 +326,8 @@ private:
   struct InternEvent {
     std::string_view text;   // points into the worker's owned storage
     uint32_t local;          // provisional id >= base
-    uint8_t kind;            // 0 = token, 1 = string
+    uint8_t kind;            // 0 = token, 1 = string, 2 = field use, 3 = deferred definition
+    uint64_t field = UINT64_MAX;  // kind 2: deferred instanceable field use
   };
   struct PathEvent {
     std::string_view stem;
@@ -266,8 +383,8 @@ private:
             return UINT32_MAX;
           }
           const uint32_t idx = slot - 1;
-          if (hashes[idx] == h && recs[idx].stem == stem &&
-              recs[idx].name == name) {
+          if (hashes[idx] == h && recs[idx].stem() == stem &&
+              recs[idx].name() == name) {
             return idx;
           }
         }
@@ -330,11 +447,26 @@ private:
     };
     std::vector<BlockLogOp> ops;
 
+    // Immutable source identities remain unique after destruction. Keep only
+    // eight large-range digests across chunk resets: no buffers are pinned,
+    // and only this ctx's encoder thread reads/writes the cache.
+    struct SourceDigest {
+      uint64_t id = 0, offset = 0, length = 0, low = 0, high = 0;
+    };
+    SourceDigest source_digests[8] = {};
+    size_t next_source_digest = 0;
+
     // fields/fieldsets/specs chunk delta (rebased at commit)
-    FieldColumns fields;
+    ChunkFieldColumns fields;
     std::vector<uint32_t> fs_offsets;  // per fieldset: local flat offset
     std::vector<uint32_t> flat;        // local field ids + sentinels
     std::vector<CrateSpec> specs;
+    struct PendingInstanceField {
+      size_t field;
+      bool authored;
+      std::string path;
+    };
+    std::vector<PendingInstanceField> pending_instance_fields;
 
     // final ids for this chunk's provisional domains, produced by commit
     // stage A (tok/str/path) and stage B (block), consumed by B and C
@@ -363,6 +495,7 @@ private:
       fields.clear();
       fs_offsets.clear(); flat.clear();
       specs.clear();
+      pending_instance_fields.clear();
       req_minor = 0; passed = 0; reencoded = 0;
       // Cached type-name tokens are chunk-local provisional ids; a reused ctx
       // must not serve them to the next chunk. Keep the capacity.
@@ -506,11 +639,35 @@ private:
     op.kind = kind;
     op.tag = tag;
     op.block = std::move(block);
-    if (n) {
+    // Push ops never enter a dedup table; their digest is not consumed by
+    // either commit path, including blocks whose embedded reps are fixed up.
+    if (n && kind == kOpIntern) {
       if (stream_values_) {
-        const XXH128_hash_t digest = XXH3_128bits(op.block.bytes(), n);
-        op.digest = digest.low64;
-        op.digest2 = digest.high64;
+        const bool cacheable = op.block.is_ref() && n >= kSourceWindowBytes &&
+            tag == kBlobNone && op.block.embedded_value_rep_offsets.empty();
+        const uint64_t id = cacheable ? op.block.src->identity() : 0;
+        bool hit = false;
+        if (cacheable) {
+          for (const auto& entry : w.source_digests) {
+            if (entry.id == id && entry.offset == op.block.src_offset &&
+                entry.length == op.block.src_len) {
+              op.digest = entry.low;
+              op.digest2 = entry.high;
+              hit = true;
+              break;
+            }
+          }
+        }
+        if (!hit) {
+          const XXH128_hash_t digest = StreamDigest(op.block.bytes(), n, &op.block);
+          op.digest = digest.low64;
+          op.digest2 = digest.high64;
+          if (cacheable) {
+            w.source_digests[w.next_source_digest] = WorkerCtx::SourceDigest{
+                id, op.block.src_offset, op.block.src_len, op.digest, op.digest2};
+            w.next_source_digest = (w.next_source_digest + 1) % 8;
+          }
+        }
       } else {
         op.digest = HashBlockBytes(op.block.bytes(), n);
       }
@@ -783,7 +940,12 @@ private:
 
   // Write `n` bytes at the next 8-byte-aligned sink position; returns that
   // absolute offset.
-  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n) {
+  static constexpr size_t kSourceWindowBytes = size_t(4) << 20;
+  bool WindowMappedSources() const {
+    return serial_sections_ || options_.spill_columns_bytes != 0;
+  }
+  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n,
+                          const DataBlock* source = nullptr) {
     static const uint8_t kZeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     const uint64_t pad = (8 - (value_stream_pos_ % 8)) % 8;
     if (pad) {
@@ -794,17 +956,38 @@ private:
     }
     const uint64_t off = value_stream_pos_;
     if (n) {
-      if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
+      if (WindowMappedSources() && source && source->is_ref() && source->src->is_mmapped() &&
+          n >= kSourceWindowBytes) {
+        for (size_t at = 0; at < n;) {
+          const size_t count = std::min(kSourceWindowBytes, n - at);
+          if (!(*value_sink_)(bytes + at, count)) {
+            value_stream_error_ = true;
+            break;
+          }
+          DropStreamedSourceRange(*source, at, count);
+          at += count;
+        }
+      } else if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
       value_stream_pos_ += n;
     }
     return off;
   }
 
   uint64_t StreamInternBlock(const DataBlock& block) {
+    // A previously emitted immutable range already has its final offset.
+    // Probe before touching its bytes, not after needlessly faulting/hash-reading
+    // a source that the low-memory writer may have just retired.
+    if (block.is_ref()) {
+      if (const uint64_t* cached = stream_source_ranges_.find(
+              block.src->identity(), block.src_offset, block.src_len)) {
+        ++blocks_deduped_;
+        return *cached;
+      }
+    }
     const size_t n = block.size();
     uint64_t h = 0, h2 = 0;
     if (n) {
-      const XXH128_hash_t digest = XXH3_128bits(block.bytes(), n);
+      const XXH128_hash_t digest = StreamDigest(block.bytes(), n, &block);
       h = digest.low64;
       h2 = digest.high64;
     }
@@ -831,7 +1014,7 @@ private:
         stream_source_ranges_.emplace(key_id, block.src_offset, block.src_len, *off);
       return *off;
     }
-    const uint64_t off = StreamRawBlock(p, n);
+    const uint64_t off = StreamRawBlock(p, n, &block);
     if (block.is_ref()) DropStreamedSourceRange(block);
     // Empty blocks are never shared (a staged empty block is never deduped).
     if (n) {
@@ -849,7 +1032,7 @@ private:
     if (WorkerCtx* w = WorkerTLS())
       return WorkerLogBlock(*w, std::move(block), kOpPush, tag);
     if (stream_values_) {
-      const uint64_t off = StreamRawBlock(block.bytes(), block.size());
+      const uint64_t off = StreamRawBlock(block.bytes(), block.size(), &block);
       if (block.is_ref()) DropStreamedSourceRange(block);
       return off;
     }
@@ -865,13 +1048,62 @@ private:
   // read-only, so any later touch just re-faults the same bytes from the file
   // -- the output cannot change. No-op for owned (non-mmap) sources.
   static constexpr size_t kDropResidentMinBytes = size_t(1) << 20;
-  static void DropStreamedSourceRange(const DataBlock& block) {
-    if (!block.is_ref() || block.src_len < kDropResidentMinBytes) return;
+  static void DropStreamedSourceRange(const DataBlock& block, size_t at = 0,
+                                      size_t count = SIZE_MAX) {
+    if (!block.is_ref() || !block.src->is_mmapped() || at >= block.src_len) return;
+    const uint64_t length = std::min<uint64_t>(count, block.src_len - at);
+    if (length < kDropResidentMinBytes) return;
     constexpr uint64_t kPage = 4096;
-    const uint64_t begin = (block.src_offset + kPage - 1) & ~(kPage - 1);
-    const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
+    const uint64_t begin = (block.src_offset + at + kPage - 1) & ~(kPage - 1);
+    const uint64_t end = (block.src_offset + at + length) & ~(kPage - 1);
     if (end > begin) block.src->DiscardRange(begin, end - begin);
   }
+
+  // Batched write (see StreamWriteBatch): prims of the current batch an
+  // earlier batch already wrote; full primChildren tokens of the batch's prims
+  // whose children span batches; packed prim path text that survives batch
+  // release; pass-1 counts for the table reserves. Blocks never move their
+  // bytes, so path records can retain views without one Path per prim.
+  const std::vector<uint8_t>* skip_prims_ = nullptr;
+  std::unordered_map<uint32_t, std::vector<uint32_t>> stream_child_tokens_;
+  std::vector<std::unique_ptr<char[]>> stream_path_blocks_;
+  std::deque<Path> stream_paths_;  // move ownership when copying costs more
+  char* stream_path_next_ = nullptr;
+  size_t stream_path_remaining_ = 0;
+  std::vector<std::string_view> stream_path_views_;  // current batch only
+  std::string_view OwnStreamPath(std::string_view text) {
+    if (text.empty()) return {};
+    if (text.size() > stream_path_remaining_) {
+      const size_t capacity = std::max<size_t>(size_t(1) << 20, text.size());
+      stream_path_blocks_.emplace_back(new char[capacity]);
+      stream_path_next_ = stream_path_blocks_.back().get();
+      stream_path_remaining_ = capacity;
+    }
+    char* const data = stream_path_next_;
+    std::memcpy(data, text.data(), text.size());
+    stream_path_next_ += text.size();
+    stream_path_remaining_ -= text.size();
+    return {data, text.size()};
+  }
+  void ClearStreamPaths() {
+    stream_path_views_.clear();
+    stream_path_blocks_.clear();
+    stream_paths_.clear();
+    stream_path_next_ = nullptr;
+    stream_path_remaining_ = 0;
+  }
+  bool stream_meta_done_ = false;
+  bool stream_root_done_ = false;
+  bool stream_reserved_ = false;  // ReserveTables done for this stream
+  size_t stream_nprim_ = 0;
+  size_t stream_nprop_ = 0;
+  // Batched (low-memory) write: build the structural payloads one at a time,
+  // freeing their tables, and keep the field encoder narrow.
+  bool serial_sections_ = false;
+  // Release each prim to its skeleton once encoded (options_.consume_prims).
+  bool consume_prims_ = false;
+  // The parallel build releases them on reaper threads instead.
+  bool reap_prims_ = false;
 
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
   // Deferred-fill layer (see PrimFiller): prims are composed right before
@@ -937,6 +1169,66 @@ private:
     }
   }
 
+  // Streaming-dedup digest of a block's bytes; the dedup table trusts it
+  // without comparing bytes, so every site uses this one function. A block of
+  // kParallelDigestMinBytes+ (Island: 256 MB pass-through arrays, single
+  // XXH3-128 runs at ~6 GB/s, and the in-order commit waits for their chunk)
+  // digests fixed kDigestPieceBytes pieces on several threads, then the piece
+  // digests seeded with the length: the result depends only on the bytes.
+  static constexpr size_t kDigestPieceBytes = size_t(4) << 20;
+  static constexpr size_t kParallelDigestMinBytes = size_t(32) << 20;
+  XXH128_hash_t StreamDigest(const uint8_t* p, size_t n,
+                             const DataBlock* source = nullptr) const {
+    const bool discard = WindowMappedSources() && source && source->is_ref() &&
+                         source->src->is_mmapped();
+    if (n < kParallelDigestMinBytes) {
+      if (!discard || n < kSourceWindowBytes) {
+        const XXH128_hash_t digest = XXH3_128bits(p, n);
+        if (discard) DropStreamedSourceRange(*source);
+        return digest;
+      }
+      // Streaming XXH3 matches its one-shot digest; only source residency and
+      // read granularity change, never the content-dedup key.
+      XXH3_state_t state;
+      (void)XXH3_128bits_reset(&state);
+      for (size_t at = 0; at < n;) {
+        const size_t count = std::min(kSourceWindowBytes, n - at);
+        (void)XXH3_128bits_update(&state, p + at, count);
+        DropStreamedSourceRange(*source, at, count);
+        at += count;
+      }
+      const XXH128_hash_t digest = XXH3_128bits_digest(&state);
+      DropStreamedSourceRange(*source);  // boundary pages and a short last window
+      return digest;
+    }
+    const size_t pieces = (n + kDigestPieceBytes - 1) / kDigestPieceBytes;
+    std::vector<XXH128_hash_t> d(pieces);
+    auto run = [&](size_t lo, size_t hi) {
+      for (size_t k = lo; k < hi; ++k) {
+        const size_t off = k * kDigestPieceBytes;
+        const size_t count = std::min(kDigestPieceBytes, n - off);
+        d[k] = XXH3_128bits(p + off, count);
+        if (discard) DropStreamedSourceRange(*source, off, count);
+      }
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    const size_t T = std::min<size_t>(8, static_cast<size_t>(ResolveThreads()));
+    if (T > 1) {
+      std::vector<std::thread> pool;
+      pool.reserve(T - 1);
+      for (size_t t = 1; t < T; ++t)
+        pool.emplace_back(run, pieces * t / T, pieces * (t + 1) / T);
+      run(0, pieces / T);
+      for (std::thread& th : pool) th.join();
+    } else
+#endif
+      run(0, pieces);
+    const XXH128_hash_t digest = XXH3_128bits_withSeed(
+        d.data(), pieces * sizeof(XXH128_hash_t), static_cast<XXH64_hash_t>(n));
+    if (discard) DropStreamedSourceRange(*source);
+    return digest;
+  }
+
   static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {
     // Word-at-a-time multiply/xor-shift over (length, head, middle, tail) --
     // cheap on multi-MB blocks; candidates are confirmed with a full memcmp,
@@ -986,10 +1278,13 @@ private:
   // ResolveThreads() threads (t = slice number); serial below `min_parallel`
   // items or in a non-threaded build. Returns the slice count used.
   template <class Fn>
-  size_t ParallelRanges(size_t n, size_t min_parallel, Fn fn) const {
+  size_t ParallelRanges(size_t n, size_t min_parallel, Fn fn,
+                        size_t max_threads = SIZE_MAX) const {
     size_t T = 1;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-    if (n >= min_parallel) T = static_cast<size_t>(ResolveThreads());
+    if (n >= min_parallel)
+      T = std::min(static_cast<size_t>(ResolveThreads()),
+                   std::max(size_t(1), max_threads));
     if (T > n) T = n;
     if (T > 1) {
       std::vector<std::thread> pool;
@@ -1002,6 +1297,7 @@ private:
     }
 #else
     (void)min_parallel;
+    (void)max_threads;
 #endif
     fn(size_t(0), size_t(0), n);
     return 1;
@@ -1066,6 +1362,8 @@ private:
   #include "crate-writer-fields.inc"
 
   #include "crate-writer-sections.inc"
+
+  #include "crate-writer-plan.inc"
 
 };
 

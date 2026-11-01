@@ -17,12 +17,19 @@
 
 #include "lightusd-c.h"
 #include "gpu_scene.hh"      // DrawScene
-#include "camera_nav.hh"     // CameraProjection
+#include "light3d/camera-nav.hh"     // CameraProjection
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
 #include "skinning.hh"       // RtSkinnedMeshUpload
 
 namespace lusdview {
+
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
 class ViewerDocument;
 struct ViewerChanges;
 

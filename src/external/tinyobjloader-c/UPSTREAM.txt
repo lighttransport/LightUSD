@@ -56,3 +56,7 @@ after a separate tokenizing pass (a number must still end at whitespace or the
 end of the line). Parsed arrays and errors are byte-identical on 400 Menagerie
 OBJ files and generated edge-case numbers; a 31 MB OBJ parses in 0.165 s
 instead of 0.234 s.
+
+Local MTL leniency: a negative `Ns` (written by Blender's exporter, e.g.
+`Ns -1.960784`) is clamped to 0 instead of failing the parse; the C++ loader
+accepts any value.

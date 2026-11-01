@@ -9,6 +9,7 @@
 #include "../layer/listop-field-table.hh"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <map>

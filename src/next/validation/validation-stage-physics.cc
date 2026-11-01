@@ -72,10 +72,13 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
       }
       if (Api(p, "PhysicsMassAPI")) {
         double value = 0;
-        if (GetNumericScalarProperty(p, "physics:mass", &value) && value < 0)
-          error("physics.mass", "Mass cannot be negative");
-        if (GetNumericScalarProperty(p, "physics:density", &value) && value < 0)
-          error("physics.density", "Density cannot be negative");
+        // NaN and infinity are not masses either (a plain `< 0` lets NaN pass).
+        if (GetNumericScalarProperty(p, "physics:mass", &value) &&
+            !(value >= 0 && std::isfinite(value)))
+          error("physics.mass", "Mass must be finite and non-negative");
+        if (GetNumericScalarProperty(p, "physics:density", &value) &&
+            !(value >= 0 && std::isfinite(value)))
+          error("physics.density", "Density must be finite and non-negative");
         const Value* axes = p.property_value("physics:principalAxes");
         // MassAPI inertia and orientation have independent fallback sentinels.
         // OpenUSD's mass-property computation resolves each independently.

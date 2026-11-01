@@ -15,10 +15,11 @@ function(lightusd_add_render_support)
   # before its first include so the 64-bit stdio entry points get declared;
   # doing so trips -Wreserved-macro-identifier. Suppress it per-source rather
   # than with a diagnostic pragma inside miniz.c, keeping the vendored file
-  # free of local edits so it stays easy to re-vendor / merge upstream. GCC
-  # silently accepts the unknown -Wno- spelling, so no per-compiler guard.
-  set_source_files_properties("${support}/external/miniz.c"
-      PROPERTIES COMPILE_FLAGS "-Wno-reserved-macro-identifier")
+  # free of local edits so it stays easy to re-vendor / merge upstream.
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties("${support}/external/miniz.c"
+        PROPERTIES COMPILE_FLAGS "-Wno-reserved-macro-identifier")
+  endif()
   add_library(lightusd_subdiv_objects OBJECT
       "${support}/tsd/tsd-validate.cc"
       "${support}/tsd/tsd-topology.cc"

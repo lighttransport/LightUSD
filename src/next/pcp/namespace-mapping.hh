@@ -26,7 +26,7 @@ namespace pcp {
 
 /// An immutable, refcounted path string: one pointer, shared by copies.
 /// Mapping pairs repeat the same few paths millions of times (full-LOD
-/// Caldera: 20.6M pair strings, 3.0M distinct) -- every composed mapping
+/// benchmark scene: 20.6M pair strings, 3.0M distinct) -- every composed mapping
 /// carries its inner pairs' sources and its outer pairs' targets -- so copies
 /// share one node instead of each owning a std::string. Empty == null.
 class PathStr {

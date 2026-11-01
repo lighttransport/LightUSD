@@ -1,0 +1,17 @@
+<mujoco model="three_link_chain">
+  <option timestep="0.0166666666666667" gravity="0 0 -9.81" integrator="implicitfast" iterations="50"/>
+  <worldbody>
+    <body name="link1" pos="1 0 0">
+      <joint name="hinge1" type="hinge" pos="-1 0 0" axis="0 1 0"/>
+      <geom name="link1_geom" type="capsule" fromto="-0.95 0 0 0.95 0 0" size="0.05" mass="1" contype="0" conaffinity="0"/>
+      <body name="link2" pos="2.1 0 0">
+        <joint name="hinge2" type="hinge" pos="-1 0 0" axis="0 1 0"/>
+        <geom name="link2_geom" type="capsule" fromto="-0.95 0 0 0.95 0 0" size="0.05" mass="1" contype="0" conaffinity="0"/>
+        <body name="link3" pos="2.1 0 0">
+          <joint name="hinge3" type="hinge" pos="-1 0 0" axis="0 1 0"/>
+          <geom name="link3_geom" type="capsule" fromto="-0.95 0 0 0.95 0 0" size="0.05" mass="1" contype="0" conaffinity="0"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

@@ -79,24 +79,25 @@ Null outputs are invalid arguments; invalid indexes clear outputs and return
 The existing seven-group `RenderScene.physics` annotation API remains available
 for render consumers. Typed stage snapshots cover the additional authored
 engine records and arrays directly. [Structured native validation](physics-validation.md)
-is available through `physics.validate()`. Versioned engine descriptors remain
-roadmap work.
+is available through `physics.validate()`.
 
-## Standard schema descriptors
+## Schema descriptors
 
-`physics.schema_definitions()` exposes immutable standard UsdPhysics definitions
-from the generated native C11 tables. Each schema records its parent, local
-properties, multiple-apply namespace and defining source file. Properties record
+`physics.schema_definitions()` exposes immutable UsdPhysics, MuJoCo and Newton
+definitions from the generated native C11 tables. Each schema records its parent,
+local properties, multiple-apply namespace, defining source file and
+`provenance` (upstream project, pinned version and commit). Properties record
 their USD type, variability, relationship kind and allowed token values. The
-tables use the repository's frozen OpenUSD 26.08 manifest; recognition describes
-the schema inventory rather than solver execution support.
+tables use the repository's frozen schema manifests; recognition describes the
+schema inventory rather than solver execution support.
 
 Python authoring uses these definitions for standard property types and
 variability. Drive and limit properties use their instance namespaces, for
 example `drive:angular:physics:stiffness` and `limit:rotX:physics:low`.
 `PhysicsDriveAPI`/`PhysicsLimitAPI` require a nonempty instance, while single-apply
-schemas reject an instance suffix. Engine extension authoring still uses the
-existing explicit type inventory until versioned native descriptors are added.
+schemas reject an instance suffix. Engine extension authoring also uses the
+generated descriptors, with an explicit type inventory for legacy properties
+outside those schemas.
 Native C consumers can query the same permanent descriptor views through the
 `lu_validation_schema_*` and `lu_validation_property_*` C11 APIs without linking
 the C++ validation engine.

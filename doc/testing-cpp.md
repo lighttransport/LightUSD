@@ -226,6 +226,41 @@ USDC, or written-crate checker failures. Declaration-only relationships have no
 target list-op; the comparator ignores their unused qualifiers while preserving
 the distinction between declarations and authored `None`/`[]` target opinions.
 
+### pxr crate fidelity (does OpenUSD read our crates as the source layer?)
+
+`run-usdcat-compare.sh` compares our *reader* against pxr's (both tools read the
+same input) and asks `usdchecker` whether our crates validate like the source.
+A third failure mode is left uncovered by both: a crate our own reader accepts
+but pxr decodes differently. `tests/run-pxr-crate-fidelity.sh` covers it — for
+each fixture it writes our crate with `lusdcat`, then has *pxr's* `usdcat` print
+both the source and our crate and diffs the two prints:
+
+```bash
+# tests/usda/*.usda by default; pass a pattern/binding for another corpus
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh
+
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh 'tests/usdc/*.usdc'
+
+SHOW=40 bash tests/run-pxr-crate-fidelity.sh tests/usda/variantSet-003.usda
+```
+
+It reports byte-identical / text-only / semantic counts and exits nonzero on a
+semantic difference. Textual differences (spec field and property ordering) are
+re-classified through `tests/compare-usda.js` so they do not mask data loss.
+Fixtures `lusdcat` cannot write standalone are skipped and remain covered by
+`run-usdcat-compare.sh`'s checker pass; a source pxr cannot parse is skipped
+too.
+
+This is the check that found variant specs without a `properties` field,
+integer-compressed `string[]`/`token[]`/`asset[]` index arrays, `= None`
+relationships and payloads written as `ValueBlock`, the `relocates` /
+`layerRelocates` crate field rename, and the shader/material node types that had
+no writer (`MtlxAutodeskStandardSurface`, `OpenPBRSurface`, MaterialX
+`outputs:mtlx:surface`). Each of those was invisible to a self-round-trip
+because our reader accepts both encodings.
+
 ### Headless NVIDIA viewer regression
 
 The viewer tests are part of the native CTest tree only when
@@ -480,6 +515,33 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-area-light-vulkan` | Vulkan RT finite-light soft-shadow response | Hardware Vulkan RT |
 | `lusdview-area-light-cuda` | CUDA finite-light soft-shadow response | CUDA device |
 
+The `lmetalview` example (native macOS Swift + Metal viewer, `next` product
+only) registers its own tests. Configure with
+`-DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON
+-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
+
+| Name | What it tests | Skip condition |
+|------|---------------|----------------|
+| `lmetalview_core_test` | Preview-scene ABI constants, mesh/material/texture extraction, UsdSkel skinning/blend shapes, retained-stage time scrubbing, in-place node/light/PointInstancer/visibility/skin/morph updates (including animated light intensity/color, instance visibility, prototype switching and count growth), and fallback detection for baked animation channels, shared camera controller, UDIM/Ptex/EXR/KTX2 fixtures | None (compiled unit) |
+| `lmetalview-headless-smoke` | Runtime MSL compilation, offscreen render, PNG output | No Metal device (`77`) |
+| `lmetalview-headless-{udim,ptex,exr,ktx2,ktx2bc1}` | The corresponding texture path through the Metal shader (texture arrays, Ptex atlas + face ids, EXR/KTX2 decode, block-compressed BC upload) | No Metal device (`77`) |
+| `lmetalview-headless-{instanced,pointinstancer,nonmesh}` | Native/point instancing expansion and the point-splat/curve-ribbon pipelines | No Metal device (`77`) |
+| `lmetalview-headless-animated-fast` | In-place GPU playback: load a skinned/blend-shape asset at frame 1, update node transforms/palettes/weights to frame 2, render | No Metal device (`77`) |
+| `lmetalview-headless-animated-light` | In-place playback of an animated distant-light transform | No Metal device (`77`) |
+| `lmetalview-headless-animated-pointinstancer` | In-place playback of animated PointInstancer positions/orientations/scales | No Metal device (`77`) |
+| `lmetalview-headless-animated-camera` | In-place playback of an animated authored camera | No Metal device (`77`) |
+| `lmetalview-headless-animated-visibility` | In-place playback of time-sampled mesh visibility | No Metal device (`77`) |
+| `lmetalview-headless-animated-material` | Animated material inputs force the re-conversion fallback | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-visibility` | In-place playback of PointInstancer `invisibleIds` | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-reveal` | Reveals a PointInstancer instance hidden at load | No Metal device (`77`) |
+| `lmetalview-headless-animated-proto-index` | In-place PointInstancer prototype switching | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-count` | In-place PointInstancer instance-count growth/shrink | No Metal device (`77`) |
+
+```bash
+# lmetalview only
+ctest -R '^lmetalview' --output-on-failure
+```
+
 ```bash
 # Run every test whose name belongs to the lusdview matrix. The name filter
 # includes tests that do not carry the lusdview label.
@@ -515,6 +577,18 @@ ctest -R roundtrip --output-on-failure
 # Exclude benchmark-labeled tests
 ctest --output-on-failure -LE benchmark
 ```
+
+## Native Metal viewer regression (macOS)
+
+With the GUI viewer and tests enabled, build `lusdview_metal_renderer_test` and
+run `ctest --test-dir build_ninja -R '^lusdview-metal-'
+--output-on-failure`. This windowless GPU test checks depth, transforms,
+instancing, visibility, sampled textures and streaming bounds, eviction,
+clipping, resize and ImGui composition with a dynamic font atlas. The Python integration test also verifies default/explicit backend selection, USD
+loading, capability reporting and scene/UI captures. No Metal device
+returns skip code 77; shader or pixel failures fail. Run with GPU access when a
+sandbox hides Metal devices. See [Native Metal on macOS](lusdview.md#native-metal-on-macos)
+for configuration, CLI screenshots and current feature limits.
 
 ## Regression Test Procedure
 
@@ -941,6 +1015,14 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ### Stable `next` library tests
 
+CI builds the default `next` product with the MCP server enabled and with
+ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
+driver so Clang supplies the C++ UBSan runtime used by the shared library.
+The legacy product with `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON` and examples
+also needs a configure check: the unified `lusdcat` target must be created
+only once. Keep compact writer-layout assertions valid on both 32-bit and
+64-bit targets.
+
 `next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
 Run it explicitly when changing shared code or the next product:
 
@@ -958,6 +1040,48 @@ source arrays, integer boundaries, and all 65,536 binary16 encodings. TypeInfo
 tests check stable pointers and field parity with the C table. On GCC/Clang,
 `next_c11_syntax` compiles every first-party C core source (including generated
 schema data) with `-std=c11 -Wall -Wextra -Wpedantic -Werror`.
+
+`next_c11_storage` checks core ABI layout revision 2 and the reported value
+size, alignment, storage offset, type-descriptor size and chunk size against
+the consumer headers. The C API test also checks that `lightusd_abi_get()`
+forwards the same core layout revision and value dimensions. Consumers must
+reject a mismatched core major/revision or target layout before passing value
+storage across a shared-library boundary.
+
+`next_test_int64_listop` checks signed 64-bit list-op metadata through USDA,
+USDC, composition and PointInstancer masking. It covers all six authored runs,
+empty versus explicit clear, exact IDs beyond 2^53, malformed/count-limited
+payloads, three-layer edits, and deterministic comparisons with the string
+list-op model. A 9,001-prim case checks serial/parallel staged and streaming
+writer parity. Retained operation storage is included in memory estimates.
+Nested list-op values outside metadata are not covered by this codec.
+The CPU preview test checks inactiveIds visibility and rejection of preview
+cache version 3; current preview and source geometry versions are 4 and 2.
+
+`next_test_stream_residency` compares staged/streamed bytes for owned and
+observable mapped sources around the 32 MiB digest threshold. It checks serial
+and parallel encoders (9,001 prims), source-range and cross-source content
+deduplication, page advice before writing, bounded sink calls, lazy-value reuse
+and a sink failure after the first window. It also checks that ordinary
+zero-budget writes preserve their non-windowed path. Real SSD measurements are also
+required: source advice changes read faults and cannot be assessed from
+`/dev/null` timings alone. Use guards and check both low and regular profiles.
+
+The PCP test checks low-profile discovery at frontier caps 0, 1, 2, 3, 4, 5,
+8 and SIZE_MAX.
+Once expanded children plus one entry per unvisited root cannot fit, discovery
+must retain the previous whole frontier without loading later references.
+The later references and all children must still appear in the final composed
+stage. Run the fixture composition sweep and low-profile batch targets 1, 400,
+and 50 with frontier 64 when changing this pruning rule.
+
+The PCP writer lifetime regression uses eight >8,192-prim batches with short
+and long paths, exceeding a packed path-storage block in each batch. Both
+serial and parallel low-memory output must match regular staged output after
+the source batches have been released. Property paths and external target
+paths exercise both borrowed and separately owned path text. Run composition,
+writer rewrite and real-output hash gates when changing this ownership.
+
 
 For C-core size measurements, configure a Ninja tree with
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
@@ -1656,6 +1780,221 @@ with animation enabled/disabled and a mesh triangulation/tangent configuration;
 it checks both exit status and scene counts. The command's legacy conversion
 path remains separate.
 
+`next_test_volume_c` covers the UsdVol render C surface: volume/field info
+(binding, grid name, value type, components, bounds), dense voxels,
+`lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
+buffer identity), `lightusd_render_volume_field_sample` in world space
+(nearest and trilinear, scalar and vec3) and the unsupported bool grid. It
+also compares sparse samples with dense voxel values under translated,
+rotated and scaled field transforms, covers batches above 256 points, and
+checks rejection of a singular field transform. When the optional corpus
+contains `utahteapot.vdb`, it checks that sparse world sampling still reaches
+interior and exterior values after dense extraction exceeds its voxel budget.
+It checks sample count overflow, and has been run as a 32-bit Linux executable
+to verify that the 8 GiB request cap does not wrap on a 32-bit `size_t`.
+It needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
+argv[1], expected under `reference/`) and prints SKIP without it, like the
+`usdvol-vdb-corpus` C++ test.
+The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by
+its voxel limit reports both the requested cell count and the limit. It checks
+header and sparse decoder budget failures release partial allocations and
+rejects sampling below the retained grid-and-sampler footprint.
+
+On a 32-bit native build, `volumetric-tet-overflow-32` (legacy) or
+`next_test_tet_overflow_32` (next) checks that a lattice whose position buffer
+would overflow `size_t` is rejected before allocation or sampling. A standalone
+build against a 32-bit tinyvdb checkout can run the same fixture:
+
+```sh
+cc -m32 -std=c11 -O2 -I/path/to/tinyvdb/src tests/volumetric/tet-overflow-32.c \
+  /path/to/tinyvdb-build/libtinyvdb_mesh_ops.a \
+  /path/to/tinyvdb-build/libtinyvdb.a -lm -pthread -o /tmp/tet-overflow-32
+/tmp/tet-overflow-32
+```
+
+The experimental CPU sparse renderer can be checked with the optional teapot
+corpus (the test skips when the file is unavailable):
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^tool-lusdrender-sparse-volume-cpu$' --output-on-failure
+```
+
+It checks a volume-only render, field translation, 180-degree rotation, uniform
+and nonuniform scaling, foreground and coincident-volume depth ordering,
+identical images with one and two
+threads, low-memory diagnostics, and the shared budget across two VDB files.
+When `icosahedron.vdb` is available, it compares visible images from the dense
+and sparse paths byte-for-byte. It also compares animated field-transform and
+VDB file-path frames with equivalent single-time renders.
+The foreground check fails with the old scaled-field depth
+calculation. This compares the two LightUSD paths, not an external reference. Custom
+asset readers allocate their own file buffers outside the cache budget.
+When `LIGHTUSD_WITH_QJS=ON`, CMake adds `--with-qjs` to this regression. It
+also renders both time samples through the persistent `-js` `setTime` path and
+compares them byte-for-byte with the corresponding frame renders.
+
+For CPU mesher changes, build each tinyvdb revision separately and compare a
+level-set fixture on the same host (the test uses two workers and writes only
+temporary files):
+
+```sh
+bash tests/volumetric/compare-mesh-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build /path/to/level-set.vdb 0.15
+```
+
+The command compares the bytes of surface vertices and triangles, tetrahedral
+vertices and cells, and boundary triangles. It reports SHA-256 hashes and fails
+on differences or empty output. Choose a spacing appropriate for the fixture;
+run representative fixtures to cover the change. Since the serialization is
+native binary, compare builds on the same host with the same ABI. This does
+not independently check internal scan-budget counts.
+
+`volumetric-tet-worker-identity` checks that the uniform stuffing output stays
+byte-identical with 1, 2, 4 and 8 workers for an analytic sphere. When
+`TINYVDBIO_DATA_DIR` contains `icosahedron.vdb`, it repeats the comparison
+through the real level-set sampler, including its per-worker accessor state.
+Run it with:
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^volumetric-tet-worker-identity$' --output-on-failure
+```
+
+For experimental CPU graded stuffing, compare an analytic sphere, box and
+torus using two builds on the same host:
+
+```sh
+bash tests/volumetric/compare-graded-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build 0.2
+```
+
+This compares counts and all vertex, tetrahedron and boundary array bytes.
+The refinement suite also tests a high-valence edge; these three outputs do
+not cover every topology or numeric scale.
+The `volumetric-tet-float-range` CPU test checks that both uniform and graded
+stuffing reject coordinates outside float range and tetrahedra that collapse
+when a small object is represented at a large world offset, while preserving
+the caller's existing output.
+`next_test_tydra` exercises bounded VDB decoding, grid-selection fallback and
+allocator ownership across moves. The Python volumetric suite additionally
+tests that a compressed MJCF VDB exceeding the decoded-memory budget is
+rejected and that a larger budget succeeds.
+
+`volumetric-level-set-allocator` (legacy) and `next_test_level_set_allocator`
+(next) sweep allocation failures through the CPU mesh-to-level-set pipeline.
+They verify unchanged existing outputs/reports, complete cleanup, exact-cap
+success and just-below-cap rejection, byte-identical serialized grids versus
+normal allocation and multiple worker counts, and independent concurrent calls.
+The initial tetrahedron fixture covers 350 allocation sites. The sweep also
+passes Valgrind with zero errors and no leaked blocks.
+
+`next_test_tydra` additionally checks generated-field peak/retained accounting,
+move ownership, bounded replacement failure and retry, and serialized identity.
+The Python volumetric suite exercises repeated distinct SDF assets within one
+import budget and successful retry after optional generation failures.
+
+The Blender CPU runtime script `blender/tests/test_usd_physics_runtime.py`
+checks fractional timestep restoration, finite/unlimited hinge and slider limits,
+D6 locked/free axes, skipped unsupported limits and unlimited export. Its
+motor-driven hinge must rotate more than a full revolution. Run with
+`ALSOFT_DRIVERS=null blender -b --factory-startup --python
+blender/tests/test_usd_physics_runtime.py`; require the final
+`BLENDER_USD_PHYSICS_RUNTIME_PASS` marker as well as process success, since
+Blender can exit zero after a Python exception. The lightweight Python hook
+suite also covers invalid timesteps and one-sided/out-of-range limits.
+
+For the corresponding single-thread analytic sphere instruction profile:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-graded.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-graded
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/graded.callgrind \
+  /tmp/profile-graded 0.2
+```
+
+The hash is a quick diagnostic, not a substitute for the byte comparison.
+Pass `1` as a second argument to `/tmp/profile-graded` to enable the optional
+surface guard; compare it separately because it intentionally changes the mesh.
+
+For a CPU-only wasm32 graded regression, after building the next WASM target
+with `LIGHTUSD_TINYVDB_GPU=OFF`, run the refinement and complete stencil tests
+with Emscripten and Node. Set `EM_CACHE` to a writable cache if needed:
+
+```sh
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-refine.c src/external/tinyvdb/tinyvdb_tet_refine.c \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-refine-wasm.js
+node /tmp/graded-refine-wasm.js
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-stencil.c src/lz4/lz4.c \
+  web/build_ninja/vol-next/lightusd_next_build/tydra_next_build/liblightusd_tinyvdb.a \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-stencil-wasm.js
+node /tmp/graded-stencil-wasm.js
+```
+
+The tests check topology, positive volumes, accuracy and limits on each
+platform. Identical serialized output across native and wasm32 is not
+guaranteed: the three analytic fixtures had equal counts but different array
+bytes across the tested builds.
+The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
+background is below the isovalue, alongside its threaded determinism and
+budget-failure cases.
+
+For a reproducible one-worker surface-mesher instruction count, build the same
+driver against each revision and use the same VDB and host:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-surface.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-surface
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/surface.callgrind \
+  /tmp/profile-surface /path/to/level-set.vdb
+```
+
+This includes file loading and one-worker surface construction; compare
+instruction counts rather than inferring CPU speed from a loaded host.
+
+For the corresponding tetrahedral stuffing workload, build the `profile-tet`
+target and pass the VDB path, spacing and optional worker count (default 1):
+
+```sh
+nice cmake --build build_ninja/sdf-legacy --target profile-tet -j2
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/tet.callgrind \
+  build_ninja/sdf-legacy/profile-tet /path/to/level-set.vdb 1.0 8
+```
+
+This includes file loading, lattice sampling, stuffing and boundary assembly.
+The worker argument makes the parallel stuffing path reproducible; use wall
+clock comparisons only on an idle host.
+
+To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
+build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
+CPU libraries, then run:
+
+```sh
+python3 tests/volumetric/make-profile-sphere.py /tmp/profile-sphere.obj
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/vol.callgrind \
+  /path/to/bench_volumetric /tmp/profile-sphere.obj --res 32 --tets 0 --threads 1
+callgrind_annotate --inclusive=yes --threshold=95 /tmp/vol.callgrind
+```
+
+The fixture has 1,106 vertices and 2,208 triangles. At tinyvdb `33a9532` this
+run recorded 10.86 billion instructions for 48,458 candidates; winding-number
+evaluation accounted for 94.7% inclusive. At `f990ab8`, skipping winding for
+candidates outside both band widths reduced the count to 5.01 billion and
+produced the same VDB bytes on that fixture. The tinyvdb mesh-level-set test
+also compares a full evaluator against the optimized path for asymmetric bands,
+open and closed meshes, both winding modes and partial evaluator fallback.
+Use representative meshes and retain instruction counts when comparing runs
+under shared CPU load. `--host-only`
+uses a synthetic evaluator, so its output is not a correctness comparison.
+
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
@@ -2313,6 +2652,12 @@ stage's paths remain unchanged.
 
 `next_test_asset_import` covers owned report queries, failure reports, option
 validation and the shared unsupported-feature policies through the C API.
+Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
+pin indices, and out-of-bounds reversed ranges; they also check valid tuples
+split across pin elements and valid empty ranges. Direct flexcomp connectivity
+rejects fractional, out-of-range and missing vertex indices while accepting a
+valid triangle. `python/tests/test_mjcf_raw_flex.py` verifies raw flex index
+diagnostics in warn and error policies.
 `next_test_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth
@@ -2331,6 +2676,8 @@ engine properties, dictionary metadata, large array views, stage edits/closure
 and invalid arguments. The new C header is also valid C11.
 Generated standard physics descriptor cases verify uniform/varying authoring,
 allowed-token metadata and drive/limit instance namespaces. The descriptor
+tests also compare immutable OpenUSD, MuJoCo and Newton version and commit
+provenance against the generated schema manifests. The descriptor
 lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
 C++ validation engine.
 
@@ -2415,7 +2762,26 @@ joints by sorted prim path, not authored order).
 `tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including
 `usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
-recovers. It exits nonzero on any validator issue.
+recovers. It fails if the four physics validators are unavailable, a converted
+stage cannot be opened, or a validator reports an issue. Repeat `--require-kind
+KIND=COUNT` to require at least that many parsed records in each result; for
+example:
+
+```sh
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
+  tests/next/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
+  --require-kind CubeShape=2 tests/feat/physics-oracle/hinge.urdf
+```
+
+`python/tests/test_openusd_physics_harness.py` checks missing validators,
+failed stage opens and missing required parser records without needing OpenUSD.
+These checks establish validation and parser coverage, not dynamics equivalence.
+
+With Python OpenUSD available, `python/tests/test_openusd_physics_semantics.py`
+also checks a rotated URDF hinge's parsed world-space anchor, axis, limits and
+body relationships across three profiles and both layouts. It checks parsed
+site-frame connect and weld joints across the two physics profiles and both
+layouts. These are rest-frame semantic checks; they do not simulate dynamics.
 
 The urdf-usd-converter test corpus (`tests/data/*.urdf`, 81 files) is a useful
 URDF sweep: all non-`error_*` files except those referencing deliberately
@@ -2435,3 +2801,337 @@ skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
+
+Parallel instance-claim repair (large-scene §10.91) needs fresh coverage in
+`next_test_pcp_parallel` and `next_test_instance_group`: compare serial and
+parallel prototype selection/child order when a discarded subtree owns a
+speculative claim, including nested repairs, donations and earlier-batch seeds.
+Check depth-limit/unresolved-source fallback as well. This qualification is
+deferred under the current implementation-first workflow; existing passing
+results do not validate the new repair path.
+
+Projected SPECS delta encoding (large-scene §10.92) additionally needs byte
+parity against the C encoder for most-common-delta ties, arbitrary/wrapped u32
+values, wide-delta candidate pruning and counts across the parallel threshold.
+Exercise mapped and fallback spec views, invalid-fieldset fallback to zero,
+and complete writer parity. A small standalone native/no-thread codec smoke
+has passed; the integration and regression work remains deferred.
+
+Heavy field chunk refinement (large-scene §10.93) needs complete writer parity
+for multiple heavy prims in one original chunk, a heavy prim on either chunk
+edge, combined smaller arrays, time samples and variable-size elements. Check
+consume-prims reaping and pre/post-first-commit failures, plus unchanged fixed
+ranges for low-memory/deferred-fill inputs. Real-SSD Island measurements must
+include chunk_plan overhead and peak RSS; equal context counts alone do not
+prove equal memory use. These runtime checks remain deferred.
+
+Discovery sizing and prefetch fan-out (large-scene §10.94) need coverage for a
+single seed revealing several targets, queue drain/shutdown and explicit parser
+budgets. Compare the complete discovered count to BuildStage for inactive prims,
+arcs and namespace edits. Frontier/depth caps, active instanceable subtrees and
+callback policies must keep conservative sizing; fixed batches remain fixed.
+Retained-plan release (§10.95) needs one-shot output/resource parity, failed
+Plan/writer startup cleanup and confirmation that public repeated Plan and
+dependency manifests retain their previous behavior. Runtime checks are deferred.
+
+For bounded readback/Tydra profiling, build the opt-in `bench_scene_readback`
+target and run `bench_scene_readback scene.usdc 1 retained` (or `4 metadata`).
+It uses 512 MiB reader/converter budgets; still use the process memory guard.
+Its native chunk-copy timing excludes JS extraction and is not a browser result.
+See large-scene §10.96 for baseline provenance and progress-gate limitations.
+
+ChunkedArray::copy_bytes_to and the web geometry bridge (§10.97) need permanent
+native/WASM coverage for aligned/unaligned copies, exact/short capacities,
+partial chunk tails, f32/u32/u16 payloads, heap growth and complete mesh/points/
+curves output parity. The native focused smoke and Emscripten syntax check have
+passed; full regressions/current-runtime performance checks remain deferred.
+
+Scoped web mesh preparation (large-scene §10.98) needs native dispatch/runtime
+coverage for begin/end/nesting, one actual geometry build across repeated
+size/header/payload calls, failed builds and intervening scratch builds. Check
+all ten streams for indexed/soup/merged/analytic/skinned/blend-shape inputs,
+flag changes and supplied-clip replacement/removal. JS must close on preflight,
+header and copy failures and block deletion during the operation. Syntax and
+a small mock-dispatch lifecycle check pass; fresh WASM output/performance and
+heap-growth checks remain deferred.
+
+Direct compressed-section emission (large-scene §10.99) needs permanent coverage
+for byte parity with the owning/C APIs, zero/partial inputs, callback lifetime,
+compression failures without emission and destination failures without raw
+fallback. Check C bound overflow on 32-bit/memory64 and near the 255-chunk limit
+without allocating giant fixtures. Large no-thread u32 columns need independent
+C byte parity across threshold/chunk-code boundaries. Focused native/no-thread
+smokes pass; complete section/scene parity and SSD/RSS qualification are deferred.
+
+Pass-1 lifetime coverage should include the late back-reference/stateful-reader
+case in large-scene §10.101: discovery and the first batch have not loaded the
+later root, whose layer then reaches an earlier shared source. The original
+reader must not be invoked again across planning/run; dependency identifiers
+must stay complete. A focused two-batch probe passes. Parallel authority checks
+should also inspect next_walk speculative_rewalks/seed_rewalks/source_rewalks
+and serial_fallback so an unexercised branch or silent serial fallback cannot
+masquerade as repair-path coverage.
+
+Focused authority checks (§10.102) now establish a real 64K-gated parallel walk
+with byte parity and no fallback, depth-triggered fallback matching the serial
+partial-stage/typed-diagnostic contract, and two injected stale-claim repairs
+with nested child/type/order checks. The injected probe compiles current
+implementation sources directly; it does not establish worker race coverage.
+Permanent cases should retain these distinct gates instead of treating a
+successful parallel run with zero re-walks as repair coverage.
+
+A focused wide-writer check (§10.103) now exercises real range refinement
+(261 versus 256 chunks), serial/fixed/refined byte parity and consume/reaper
+cleanup using a bounded synthetic input. The isolated fixed-chunk control
+changes only the refinement boolean; both parallel probes use identical
+thread/consumption/allocator settings. This does not cover production Island,
+lazy-array fan-out, time-sampled/variable-size workloads or failure paths.
+
+Focused spill-view checks (§10.104) now cover typed view/legacy parity, appends
+after snapshots, mapped and no-mmap builds, mapping fallback, interrupted and
+partial writes, truncated prefixes, tail-write failures and fallback-read EOF.
+A batched writer fixture crosses real chunk thresholds and observes four
+actual mapped spill views; memory-only, mapped-spill and forced-ENOMEM fallback
+writes produce identical regular SSD files. Ordinary WriteLayerToFile alone
+does not trigger boundary eviction and cannot establish this coverage. These
+bounded checks do not replace large-scene, 32-bit or multi-chunk LZ4 gates.
+
+Fresh wasm32 scoped-copy checks (§10.105) now link the current module and
+compare complete copied outputs with scopes enabled/disabled in that same
+runtime. Fixture geometry-read counters establish one versus 24 preparations
+per mesh. Indexed, explicit indices-disabled, merged and a real face-varying
+soup case pass; nested/mismatched scope rejection and failure cleanup pass.
+Use fresh streams for bounded A/B checks: the crate reader's cumulative decode
+budget charges temporary decodes as well as retained storage. This does not
+replace skinned/blend-shape, clip-mutation, heap-growth or memory64 coverage.
+
+Focused discovery/prefetch checks (§10.106) now establish the complete-count
+target boundary, unknown sizing under frontier/depth limits and reader/payload
+callbacks, an authored inactive leaf, and fixed-root batch preservation. Their
+pass-1 path order matches serial BuildStage. A controlled single-seed reader
+proves two automatic workers overlap after fan-out, explicit parser settings
+retain the former one-worker policy, and stopping during a read joins without
+loading newly found children. This does not establish actual parser throughput,
+namespace-edit coverage or the full callback/load-rule matrix.
+
+Low-memory PATHS node-storage reuse (§10.107) needs coverage around the 131,072
+encoded-node threshold, deep trees, variants, relative/property and empty paths,
+and serial/parallel node preparation. A bounded wide fixture now establishes
+ordinary, batched memory-only, mapped-spill, forced mapping-fallback and
+no-thread mapped-spill byte parity with saved pre-change output. Exact-size
+projected encoding also applies to the preorder in the selected policy. This
+check does not establish whole-process memory or production throughput gains;
+the two eliminated arrays account for eight bytes per encoded path specifically
+at column preparation, while retained traversal/codec state remains live.
+
+Mixed-array scheduling checks (§10.108) now cover time-sampled-only arrays,
+default-plus-sample arrays, the variable-size token proxy, multiple small arrays
+per prim and accumulated work across prims, including original chunk edges.
+The expected refined range count, complete serial/parallel byte parity and
+consume/reaper removal of both properties and time samples pass. Large lazy
+payloads and pre/post-commit failures still need separate coverage; serial
+versus parallel timings do not isolate the benefit of refinement itself.
+
+Earlier-batch prototype seeds must survive a failed parallel walk (§10.109).
+The focused 64K-gated reproduction now checks the member's IsInstance and
+GetPrototype results, typed depth diagnostics and complete post-fix crate
+parity against serial. Before the fix, primitive/byte counts were unchanged
+despite the member being incorrectly promoted to a new prototype. Permanent
+coverage must inspect prototype identity as well as output counts and retain
+the explicit serial_fallback timing gate. Full seeded-batch/donation coverage
+remains deferred.
+
+Source-miss repair (§10.110) must distinguish a repeated miss from progress to
+an unseeded prototype. A focused current-source probe now establishes the
+source -> seed -> forced-rewalk transition, seed-only and stale-claim repairs,
+and depth-triggered failure after partial repair. Successful cases inspect
+child/type/order and confirmed authority after temporary spec stores are gone;
+failure cases inspect pause/TLS cleanup. Keep the repeated-miss and unresolved
+forced-seed guards when extending coverage. This does not replace concurrent
+worker/donation checks or measure production fallback frequency.
+
+Medium low-memory structural delta encoding (§10.111) has focused writer parity
+with a C-entry-point counter: batched memory-only, mapped spill, mapping fallback
+and no-thread spill outputs match the saved file and avoid medium C delta calls;
+ordinary zero-budget output retains those calls. Future coverage should include
+131,072/four-million-element boundaries and pathological wide-delta histograms.
+Lower full-delta/output scratch does not bound histogram state or prove a
+production-scene RSS/throughput gain.
+
+The bounded Island comparison (§10.113) now establishes full-file parity and
+the default-profile refinement's observed RSS reduction with a matched
+fixed-chunk control. Three alternating pairs use regular SSD files, per-run
+fsync, normal teardown, identical jemalloc/flags and unchanged encoded-context
+counts. Parallel planning uses disjoint boundary masks merged in order; the
+mixed-array consume check also retains its exact output/range count, and
+no-thread compilation passes. Full suites and cold/other-scene performance
+remain deferred; a near-equal write median is not a general throughput claim.
+
+The residual scoped WASM extraction profile (§10.112) times 64 exported budget
+queries separately from mesh-buffer calls. Any future budget-query reuse must
+preserve accounting across lazy materialization and asset/export mutations;
+the current change retains all checks. Its recorded module is a profiling
+artifact, not a newly qualified WASM distribution.
+
+The PCP path-lifetime fixture also compares the prepared writer path against
+ordinary output across ~72000 prims, exercising mapped encoded-operation
+scratch and multiple 1024-prim contexts. Three smaller checks cover late
+instanceable-field removal, moving the first surviving token use, authored-false
+updates, raw token-vector/array dedup and rejection of a second commit before
+it can truncate the output. CLI focused checks compare retained/prepared and
+ordinary output with 1/4 compose threads, require preparation before Plan
+completion with no Run pass, and verify scratch-limit failure cleanup. See
+[planning/encoding overlap](large-scene.md#10117-planning-overlaps-writer-encoding-and-scratch-io).
+
+The `next_test_pcp` suite also checks opt-in immutable source snapshots:
+read-once callback replay, concurrent initial/replay loads, parsed-layer
+expiration, byte-limit failures, native-file removal, original asset anchors,
+pass-1 back references, retained mapped USDC values after registry cleanup and
+USDZ entry replay after archive removal. Source snapshots require a selected
+POSIX disk directory; preloads and foreign dependency owners remain retained.
+See [large-scene snapshot details](large-scene.md#10116-immutable-source-snapshots-and-pass-1-eviction)
+for options, focused CLI parity evidence and remaining qualification.
+
+The `next_test_spill_array` test checks append/resolve equivalence with spilling
+enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
+the test verifies that no bytes spill and no I/O failure is reported. The
+structural-column spill budget and directory have no effect on Windows.
+
+### Opt-in NVIDIA level-set regression
+
+For bounded OpenGL, Vulkan, CUDA and OptiX surface checks, use
+`examples/lusdview/tests/check-level-set-gpu.py` and the optional
+`profile-gpu-level-set` fixture/profiling target. The runner verifies actual
+backend selection, transformed silhouettes and mesh occlusion, and monitors
+additional VRAM without changing other GPU processes. Build, Xvfb, validation
+layer and profiler instructions are in [lusdview.md](lusdview.md). These hardware
+checks are opt-in and are not part of the ordinary CPU regression suite.
+
+### Cached large-scene preview regression
+
+Build `lusdpreview` and `test_scene_preview`, then run
+`ctest --test-dir build_ninja -R '^next_test_scene_preview$' --output-on-failure`.
+The generated fixtures cover all three representations, bounded outputs,
+portable export, cross-batch native instances, forward PointInstancers,
+texture baking, dependency invalidation, malformed/truncated cache recovery,
+cancellation and default VRAM sizing. Additional cases cover PointInstancer
+targets inside native instance copies, prototype-local transforms, adaptive
+volume bricks with mixed-scale environment geometry, portable four-level USD
+variants, hysteresis and aggregate LOD budget selection.
+
+Run `python3 tools/lusdpreview/check-lod.py --viewer build_ninja/lusdview
+--output build_ninja/preview-lod-check` for 27 headless captures across all three
+representations and CPU / Vulkan / CUDA. Near/far captures must trigger automatic
+refinement within budget; the finest capture must match disabled-LOD rendering
+within one 8-bit rounding step. Run under GPU-assisted validation as below.
+LOD reloads upload the complete replacement scene before capturing a settled
+frame. The camera runner forces device-local staged mesh uploads to cover scene
+replacement before the first raster draw; scene teardown must flush pending
+copies before destroying their destination buffers.
+The `lusdview-vk-gaussian-chunks` hardware-RT test also checks the shader
+feature declarations required by the NVIDIA ray-query path.
+
+For headless hardware qualification run
+[check-renderers.py](../tools/lusdpreview/check-renderers.py) with the built
+viewer/renderer, source scene, cache and output directories. It exercises both
+applications on CPU / Vulkan / CUDA for Gaussian, point and volume previews,
+records actual per-process NVML VRAM and RSS, and requires hardware allocations.
+Use the [Vulkan validation layer procedure](lusdview.md#gpu-assisted-validation-shader-faults--device-loss)
+for shader/descriptor qualification. Keep large source assets, cached sidecars,
+images and measurement logs in ignored build directories.
+
+
+For extended previews, `next_test_scene_preview_compute` checks CPU conversion
+and direct UsdVol SDF/albedo rendering, rejects malformed compute buffers and
+verifies camera updates reuse immutable grid data. Run its executable with
+`vulkan` and `cuda` on hardware to compare each kernel against the CPU reference;
+an unavailable requested backend fails. `next_test_light_filter` checks the
+portable light-filter registry, `lightusd:filter:kind`/parameter parsing with
+clamping, the fold into the render-ready light intensity/color, warnings for
+unknown kinds and missing targets, custom-kind registration/unregistration, and
+the folded values recorded in a cached preview. The compute test also checks
+preview light and shadow linking (mask exclusion/inclusion, independent light and
+shadow masks, CPU/lavapipe parity), and `check-source-refinement.py --software`
+runs the 12-capture refinement matrix against Mesa without NVIDIA probing.
+Custom filter kinds register through the C API
+(`lightusd_register_light_filter`, covered by `next_test_light_filter_c`) and
+through Python (`lightusd.register_light_filter`, covered by
+`python/tests/test_light_filter.py`); both surfaces share the C++ registry used
+by conversion and preview caches. `next_test_scene_preview` also checks
+that regional source resampling produces finer detail and retains the background,
+including PointInstancer targets inside native instances and nested prototype
+triangle/placement graphs.
+Run `tools/lusdpreview/check-source-refinement.py` for 18 automatic-resampling
+captures and run it under Xvfb with `--threaded --owner vk` / `--owner gl` for six
+captures per actual render owner. The JSON report must confirm an active render
+thread, finer source cells and increased sample counts; direct volume captures
+must report the grid path. Keep logs, caches and images in ignored build folders.
+
+Persistent-index qualification must request an uncached camera region and reject
+the `open` progress phase, while observing `source-index`. The retained sample
+count and source detail must increase for a targeted surface. Changing a source
+layer must invalidate the index; keep original geometry and generated indices
+out of Git. Index creation may revisit the whole scene once.
+
+The compute test also checks analytic Beer-Lambert absorption and single
+scattering, emission and phase changes, density-only UsdVol loading/framing,
+and authored scene light effects. Passing a third argument to the executable
+retains its fixtures in that directory for application-level checks. Run
+`check-renderers.py ... --native-volume` on its `fog.usda`, and use
+`--kinds volume --volume-mode medium` to qualify participating media on larger
+previews. `check-particle-radiance.py` guards against relighting converted point
+colors with extreme scene lights; captures must remain nonblank and identical.
+
+Textured-emission and multiple-scattering qualification extends the compute test
+with analytic Monte Carlo Beer-Lambert transmission, nonnegative higher-order
+energy, fixed-seed repeatability, colored dome/rect lighting, rotated dome
+transforms and malformed texture/sample descriptors. CPU, CUDA and Vulkan must
+pass; Vulkan runs under GPU-assisted validation. The conversion test checks
+portable linear-HDR sidecars after deleting the original texture, and upgrades
+a legacy lighting cache while rejecting geometry resampling. For application
+checks, retain the compute fixtures and run:
+
+```sh
+python3 tools/lusdpreview/check-renderers.py FIXTURES/textured-fog.usda \
+  --native-volume --volume-mode medium --volume-bounces 4 --volume-samples 8 \
+  --viewer build_ninja/preview-render/lusdview \
+  --renderer build_ninja/preview-render/lusdview_lightrt_c_build/lusdrender \
+  --cache build_ninja/textured-volume-cache --output build_ninja/textured-volume-check
+```
+
+Use the same scattering controls with `--kinds volume --no-source-refine` for
+Caldera and larger cached scenes. Keep the 2048 MiB process VRAM gate and inspect
+noise and lighting variation in the captures; stochastic paths need an RMS
+comparison, since tiny floating-point differences can change collision branches.
+
+Emitter-importance checks add single-pixel off-axis dome and rect maps and
+compare their raw radiance against integrated energy at one light sample.
+Validate truncated/nonmonotone CDFs, the 1–64 CLI bound and render-cache
+invalidation when the sample count changes. Headless qualification should also
+use a sparse bright map whose nonzero texels occupy less than 0.1% of the image.
+Run CPU, CUDA and GPU-assisted Vulkan; keep captures within the 2048 MiB gate.
+
+Projection and accumulation checks cover angular/mirrored-ball emission energy
+against numerical spherical integrals, including partial texels at disk edges.
+The compute test compares both GPU backends to CPU and checks statistically
+bounded Monte Carlo energy. Accumulation must reduce image MSE, respect its cap,
+reset on camera/viewport/shading/scene changes, and retain its count when a final
+capture reads the last frame. App reports include `preview_accumulated_frames`;
+require a value above one for real progressive viewer/render-thread tests.
+
+For software-only preview development, run compute checks through
+`scripts/with-software-rendering.sh` and application checks with
+`tools/lusdpreview/check-renderers.py --software`. This pins Mesa lavapipe and
+llvmpipe, disables the preview NVIDIA-memory probe, skips CUDA and distinguishes
+software results from hardware qualification. Do not force an NVIDIA device
+when using this mode. Hardware tests remain an explicit separate qualification.
+
+Higher-quality medium/light checks include independent partial overlaps,
+extinction-weighted emission, finest-level halo priority, a thin density peak,
+diagonal cubic-density optical depth, rays beyond 4096 steps, scattering beyond
+eight bounces, and explicit ray/shadow-budget exhaustion. Finite rect/disk/
+sphere/cylinder illumination is checked against geometric solid-angle integrals;
+a conservative medium in a unit environment checks radiance conservation.
+The shared scalar kernel runs on CPU and Mesa lavapipe only for current goal
+qualification. See `doc/preview-lighting-goal.md` for the mandatory no-hardware
+constraint and completion audit.

@@ -39,7 +39,10 @@ struct AsyncShaderReloadResult {
   std::string error;
 };
 
-enum class Backend { GL, Vulkan };
+enum class Backend { GL, Vulkan, Metal };
+inline const char* BackendName(Backend b) {
+  return b == Backend::Metal ? "metal" : b == Backend::Vulkan ? "vulkan" : "gl";
+}
 enum class TransparencyMode { Auto, Weighted, Sorted };
 
 // Thread-safe renderer snapshot for runtime transparency requests.
@@ -112,8 +115,13 @@ enum class RenderTechnique {
   CpuRT,
   VulkanPathTrace,
   CudaPathTrace,
-  HipPathTrace
+  HipPathTrace,
+  MetalRaster
 };
+inline RenderTechnique RasterTechnique(Backend b) {
+  return b == Backend::Metal ? RenderTechnique::MetalRaster :
+         b == Backend::Vulkan ? RenderTechnique::VulkanRaster : RenderTechnique::GLRaster;
+}
 enum class OverlayKind {
   None,
   VulkanRT,
@@ -133,6 +141,9 @@ enum class CudaRtBackend { Auto, SoftwareBvh, Optix };
 // former group; returns false (owner left as-is) for the latter.
 inline bool TechniqueRequiresOwner(RenderTechnique t, Backend* owner) {
   switch (t) {
+    case RenderTechnique::MetalRaster:
+      if (owner) *owner = Backend::Metal;
+      return true;
     case RenderTechnique::GLRaster:
       if (owner) *owner = Backend::GL;
       return true;
@@ -159,6 +170,7 @@ inline OverlayKind OverlayForTechnique(RenderTechnique t) {
 }
 inline const char* RenderTechniqueLabel(RenderTechnique t) {
   switch (t) {
+    case RenderTechnique::MetalRaster: return "Metal Raster";
     case RenderTechnique::GLRaster: return "GL Raster";
     case RenderTechnique::VulkanRaster: return "Vulkan Raster";
     case RenderTechnique::VulkanRT: return "Vulkan RT";
@@ -382,7 +394,7 @@ class Renderer {
 
   // Create device resources. `window` is the GLFW window (Vulkan creates its
   // surface from it; GL assumes its context is already current). A null window
-  // requests a windowless/offscreen backend (Vulkan only): no surface, no
+  // requests a windowless/offscreen backend (Vulkan or Metal): no surface, no
   // swapchain — the composited frame is rendered to an offscreen target sized by
   // setHeadlessSize() and retrieved via captureWindow().
   virtual bool init(GLFWwindow* window, std::string* err) = 0;
@@ -794,6 +806,9 @@ class Renderer {
 };
 
 std::unique_ptr<Renderer> CreateGLRenderer();
+#if defined(HAVE_METAL)
+std::unique_ptr<Renderer> CreateMetalRenderer();
+#endif
 #if defined(HAVE_VULKAN)
 std::unique_ptr<Renderer> CreateVulkanRenderer();
 

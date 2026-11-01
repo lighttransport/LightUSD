@@ -115,8 +115,9 @@ void string_pool_concurrent_test(void) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   StringPool &pool = StringPool::instance();
 
-  const int kThreads = 8;
-  const int kPerThread = 2000;
+  static constexpr int kThreads = 8;
+  // static: MSVC requires a capture for a local const int used in the lambda.
+  static constexpr int kPerThread = 2000;
 
   std::vector<std::thread> threads;
   std::vector<std::vector<const char *>> shared_ptrs(kThreads);

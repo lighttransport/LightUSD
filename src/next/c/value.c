@@ -309,7 +309,7 @@ int lu_value_set_strings(lu_value* dst, uint16_t type, size_t count,
     bytes += size + 1;
   }
   if (bytes > SIZE_MAX - header) return 0;
-  allocation = lu_buffer_create(header + bytes, _Alignof(max_align_t), budget);
+  allocation = lu_buffer_create(header + bytes, _Alignof(lu_max_align_t), budget);
   if (!allocation) return 0;
   s = (strings*)lu_buffer_data(allocation);
   lu_atomic_init(&s->references, 1);
@@ -629,6 +629,7 @@ int lu_value_materialize(lu_value* v) {
     return 0;
   }
   publish(v, &decoded);
+  lu_storage_note_materialization();
   return 1;
 }
 

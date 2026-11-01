@@ -15,7 +15,7 @@
 namespace lightusd { namespace tydra { namespace next {
 using namespace urdf_detail;
 
-static bool ConvertPayload(
+static bool ConvertPayloadLayer(
     const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
     ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
@@ -84,6 +84,14 @@ static bool ConvertPayload(
         }
         prim_capacity += names->size();
       }
+      // One PhysicsAttachment per distinct pin body (a string array).
+      if (const auto* pins = JsonArray(*object, "pinBodies")) {
+        if (pins->size() > size_t(UINT32_MAX) - prim_capacity) {
+          if (err) *err = "Robot pin count limit exceeded";
+          return false;
+        }
+        prim_capacity += pins->size();
+      }
       for (const auto& item : *object->object_items())
         if (item.value().is_object() || item.value().is_array())
           pending.push_back(&item.value());
@@ -132,6 +140,10 @@ static bool ConvertPayload(
   std::unique_ptr<PhysicsMaterials> physics_materials;
   if (!no_physics && !profile.legacy && mjcf_source)
     physics_materials.reset(new PhysicsMaterials(&layer));
+  // openusd has no mjc:contype/conaffinity: express them as collision groups.
+  std::unique_ptr<CollisionFilterGroups> collision_groups;
+  if (!no_physics && !profile.legacy && !profile.engine && mjcf_source)
+    collision_groups.reset(new CollisionFilterGroups());
   Define(&layer, "/World/Links", "Xform");
   Define(&layer, "/World/Joints", "Xform");
 
@@ -283,16 +295,30 @@ static bool ConvertPayload(
       }
       if (const Json* inertial = JsonObject(link, "inertial")) {
         float mass = 0.0f;
+        bool zero_mass = false;
+        const Json *colliders = JsonArray(link, "collisions");
         if (ReadNumber(*inertial, "mass", &mass) && mass > 0.0f) {
           Set(prim, "physics:mass", tn::Value(mass), "float");
+        } else if (profile.newton && ReadBool(*inertial, "zeroMass", &zero_mass) && zero_mass &&
+                   colliders && !colliders->empty()) {
+          // An explicit MJCF mass 0 overrides the geoms; physics:mass = 0
+          // would read as unspecified and be derived from the colliders.
+          Set(prim, "physics:mass", tn::Value(1e-12f), "float");
         }
+        const bool zero_mass_standin = zero_mass && colliders && !colliders->empty() &&
+                                       profile.newton && !(mass > 0.0f);
         const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
         if (com.size() >= 3)
           SetPoint3(prim, "physics:centerOfMass", com, false);
         // A full inertia tensor is diagonalized into principal moments +
         // principal-axes rotation (the lossless USD representation).
         const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
-        if (!profile.legacy) {
+        if (zero_mass_standin) {
+          // A massless body has no rotational inertia either (MuJoCo, and
+          // Newton's finalize() zeroes it); use the same stand-in.
+          AuthorInertia(prim, Json{{"diagonalInertia", Json::array({0.0, 0.0, 0.0})},
+                                   {"mass", 1.0}, {"zeroInertia", true}});
+        } else if (!profile.legacy) {
           AuthorInertia(prim, *inertial);
         } else if (full.size() >= 6) {
           // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
@@ -383,6 +409,8 @@ static bool ConvertPayload(
       AddURDFCustom(&layer, "/World/custom", scope, custom, &children);
     }
   }
+
+  if (collision_groups) collision_groups->Write(&layer);
 
   // MJCF <contact><exclude> -> physics:filteredPairs on the first body.
   if (const Json *pairs = JsonArray(root, "filteredPairs")) {
@@ -601,6 +629,9 @@ static bool ConvertPayload(
   }
 
   if (!profile.legacy) AddDeformablesFromJson(&layer, payload.Array("deformables"), link_names, warn);
+  if (!profile.legacy &&
+      !AddSkinsFromJson(&layer, payload.Array("skins"), link_names, link_worlds, warn, err))
+    return false;
 
   NameMap tendon_names;
   Scope tendons_scope(&layer, "Tendons");
@@ -759,11 +790,38 @@ static bool ConvertPayload(
     }
   }
 
+  if (DefineCapacityExceeded()) return false;  // reported by ConvertPayload
   layer.finalize();
   tn::Stage stage;
   stage.SetRootLayer(std::move(layer));
   *out_stage = std::move(stage);
   return true;
+}
+
+static bool ConvertPayload(
+    const ::lightusd::tydra::detail::URDFPayload &payload,
+    const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
+    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
+  ResetDefineCapacity();
+  const bool ok = ConvertPayloadLayer(payload, mesh_buffers, out_stage, warn, err);
+  if (DefineCapacityExceeded()) {
+    // A builder's prim did not fit the reserved capacity: failing keeps the
+    // PrimSpec pointers builders hold valid. The estimate is a bug to fix.
+    if (err)
+      *err = "Robot conversion needs more prims than were reserved (an internal "
+             "estimate; please report the input)";
+    return false;
+  }
+  return ok;
+}
+
+bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& value,
+    std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
+  urdf_detail::MeshBufferConsumption consume(true);
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string& robot_json,

@@ -9,6 +9,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# ccache (installed and persisted per job by hendrikmuhs/ccache-action; the
+# root CMakeLists picks it up as the compiler launcher). Sloppiness lets
+# precompiled-header TUs (src/next) be cached too.
+env:
+  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+  CCACHE_COMPRESS: "true"
+
 jobs:
 
   # Disable gcc4.9 and gcc5 since its too obsolete and failed to do apt-get
@@ -78,6 +85,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-i386-asan
+        max-size: 2G
     - name: setup
       run: |
           sudo apt update
@@ -92,9 +104,11 @@ jobs:
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make
-      run: cd build_m32 && make
+      run: cmake --build build_m32 -j $(nproc)
     - name: test
-      run: cd build_m32 && ctest --output-on-failure
+      # Benchmarks (label "benchmark") are timing runs, not checks; under
+      # Debug + ASan on i386 they alone took ~15 min.
+      run: cd build_m32 && ctest --output-on-failure -j $(nproc) -LE benchmark
 
   build:
 
@@ -102,13 +116,18 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-clang-legacy
+        max-size: 500M
     # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
     # so use clang
     # TODO: Use libc++ for STL?
     - name: configure
       run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
     - name: tests
       run: cd build && ctest --output-on-failure
 
@@ -174,6 +193,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-mcp-qjs
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_mcp -S . \
@@ -186,7 +210,7 @@ jobs:
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_mcp -j2
+      run: cmake --build build_mcp -j $(nproc)
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
@@ -199,6 +223,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-next-product
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_next_product -S . -G Ninja \
@@ -208,7 +237,7 @@ jobs:
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_next_product -j2
+      run: cmake --build build_next_product -j $(nproc)
     - name: tests
       run: cd build_next_product && ctest --output-on-failure
 
@@ -223,6 +252,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-fuzz-cabi
+        max-size: 500M
     - name: configure (clang + sanitizers)
       run: |
         CXX=clang++ CC=clang cmake -B build_fuzz -S . -G Ninja \
@@ -233,7 +267,7 @@ jobs:
           -DLIGHTUSD_BUILD_TESTS=Off \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
     - name: build the C ABI fuzzer
-      run: cmake --build build_fuzz -j2 --target fuzz_next_cabi
+      run: cmake --build build_fuzz -j $(nproc) --target fuzz_next_cabi
     - name: seed corpus
       run: |
         mkdir -p /tmp/cabi-corpus /tmp/cabi-artifacts
@@ -261,6 +295,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-next-asan-ubsan
+        max-size: 500M
     - name: configure (clang, ASan + UBSan)
       run: |
         CXX=clang++ CC=clang cmake -B build_asan -S . -G Ninja \
@@ -271,7 +310,7 @@ jobs:
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: build
-      run: cmake --build build_asan -j2
+      run: cmake --build build_asan -j $(nproc)
     - name: tests
       run: |
         cd build_asan && \
@@ -289,6 +328,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-hardening
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_hardening -S . -G Ninja \
@@ -297,7 +341,7 @@ jobs:
           -DLIGHTUSD_WITH_TYDRA=Off \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: build
-      run: cmake --build build_hardening -j2
+      run: cmake --build build_hardening -j $(nproc)
     - name: tests
       run: cd build_hardening && ctest --output-on-failure
     - name: assert mitigations on lusdcat
@@ -326,6 +370,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-lusdview-hermetic
+        max-size: 500M
     - name: install configure dependencies
       run: |
         sudo apt-get update
@@ -342,7 +391,7 @@ jobs:
           -DLIGHTUSD_BUILD_GUI_VIEWER=On
     - name: build tests
       run: |
-        cmake --build build_lusdview -j2 \
+        cmake --build build_lusdview -j $(nproc) \
           --target lusdview_lighting_test \
           --target lusdview_lightrt_bridge_test \
           --target lusdview_openpbr_material_test \
@@ -366,6 +415,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-legacy-with-next
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
@@ -377,7 +431,7 @@ jobs:
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_next
+      run: cmake --build build_next -j $(nproc)
     - name: tests
       run: cd build_next && ctest --output-on-failure
 
@@ -392,6 +446,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-aousd
+        max-size: 500M
     - name: Fetch AOUSD supplemental
       run: |
         SUITE_ROOT=$(bash scripts/fetch-aousd-supplemental.sh)
@@ -408,9 +467,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_NEXT_BUILD_TESTS=On \
           -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \
-          -DLIGHTUSD_NEXT_ENABLE_THREAD=On
+          -DLIGHTUSD_NEXT_ENABLE_THREAD=On \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     - name: make next
-      run: cmake --build build_next_aousd -j 4
+      run: cmake --build build_next_aousd -j $(nproc)
     - name: ctest aousd
       run: ctest --test-dir build_next_aousd -R "aousd" --output-on-failure
     - name: Python aousd binding
@@ -459,6 +519,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-arm64-gcc
+        max-size: 500M
 
     - name: prep
       run: |
@@ -467,7 +532,7 @@ jobs:
     - name: configure
       run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5
@@ -497,6 +562,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-arm64-clang
+        max-size: 500M
 
     - name: prep
       run: |
@@ -512,7 +582,7 @@ jobs:
     - name: configure
       run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5

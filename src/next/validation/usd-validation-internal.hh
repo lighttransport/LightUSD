@@ -282,7 +282,7 @@ void ValidateGeomPoints(const PrimSpec &ps, const std::string &prim_location,
 void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
 void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
-                    USDValidationResult *result);
+                    const PrimTypeByPath &prim_types, USDValidationResult *result);
 void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
 void ValidateParticleField(

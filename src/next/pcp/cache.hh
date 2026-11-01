@@ -290,6 +290,7 @@ class Cache {
   struct Impl;
 
  private:
+  friend struct BatchedComposeAccess;
   std::unique_ptr<Impl> impl_;
 };
 
@@ -308,6 +309,10 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           Stage *out_stage,
                           const CompositionOptions &options = {},
                           std::string *warn = nullptr, std::string *err = nullptr);
+
+/// Waits for the composition caches CompositionOptions::background_reclaim
+/// handed to background threads.
+void WaitForBackgroundReclaim();
 
 /// Compose an already-loaded in-memory root layer into `out_stage`.
 bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,

@@ -520,6 +520,8 @@ bool CrateWriter::ExtractMeshProperties(
         // is genuinely unprefixed -- both spellings are correct, on different
         // prim types. See AddSkelAnimationAttrs in sconv-skel.cc.)
         fields.push_back({"skel:blendShapes", crate_val});
+        sconv_detail::EmitAttrVariability("skel:blendShapes", mesh->blendShapes,
+                                          fields);
       }
     }
   }
@@ -643,7 +645,38 @@ bool CrateWriter::ExtractSphereProperties(
   EXTRACT_FIELD_TYPED_ATTR((field).filePath, "filePath")  \
   EXTRACT_FIELD_TYPED_ATTR((field).fieldName, "fieldName") \
   EXTRACT_FIELD_TYPED_ATTR((field).fieldDataType, "fieldDataType") \
-  EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex")
+  EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex") \
+  EXTRACT_FIELD_TYPED_ATTR((field).vectorDataRoleHint, "vectorDataRoleHint")
+
+bool CrateWriter::ExtractVolumeFieldBaseProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const VolumeFieldBase* field = prim.data().as<VolumeFieldBase>();
+  if (!field) { if (err) *err = "Failed to cast prim to VolumeFieldBase"; return false; }
+  (void)field;  // no attributes of its own; Xformable properties come from GPrim
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractFieldBaseProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const FieldBase* field = prim.data().as<FieldBase>();
+  if (!field) { if (err) *err = "Failed to cast prim to FieldBase"; return false; }
+  (void)field;
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractVolumeFieldAssetProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const VolumeFieldAsset* field = prim.data().as<VolumeFieldAsset>();
+  if (!field) { if (err) *err = "Failed to cast prim to VolumeFieldAsset"; return false; }
+  EXTRACT_FIELD_ASSET_ATTRS(*field)
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
 
 bool CrateWriter::ExtractFieldAssetProperties(
   const Prim& prim, const Path& prim_path,
@@ -730,6 +763,7 @@ bool CrateWriter::ExtractCylinderProperties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", cylinder->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -762,6 +796,7 @@ bool CrateWriter::ExtractConeProperties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", cone->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -794,6 +829,7 @@ bool CrateWriter::ExtractCapsuleProperties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", capsule->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -998,6 +1034,7 @@ bool CrateWriter::ExtractCameraProperties(
       crate::CrateValue crate_val;
       crate_val.Set(proj_to_token(proj_val));
       fields.push_back({"projection", crate_val});
+      sconv_detail::EmitAttrVariability("projection", camera->projection, fields);
     }
 
     // ANIMATED projection. There was no timeSamples branch, so `token
@@ -1041,6 +1078,7 @@ bool CrateWriter::ExtractCameraProperties(
     value::token tok(stereo_str);
     crate_val.Set(tok);
     fields.push_back({"stereoRole", crate_val});
+    sconv_detail::EmitAttrVariability("stereoRole", camera->stereoRole, fields);
   }
 
   // Extract shutter:open (double). Namespaced in the schema (usdGeom.hh,
@@ -1096,6 +1134,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     const GeomBasisCurves::Type& type_val = basis_curves->type.get_value();
     std::string type_str = (type_val == GeomBasisCurves::Type::Cubic) ? "cubic" : "linear";
     AddEnumAttribute("type", type_str, fields);
+    sconv_detail::EmitAttrVariability("type", basis_curves->type, fields);
   }
 
   if (basis_curves->basis.authored()) {
@@ -1109,6 +1148,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
       basis_str = "catmullRom";
     }
     AddEnumAttribute("basis", basis_str, fields);
+    sconv_detail::EmitAttrVariability("basis", basis_curves->basis, fields);
   }
 
   if (basis_curves->wrap.authored()) {
@@ -1122,6 +1162,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
       wrap_str = "pinned";
     }
     AddEnumAttribute("wrap", wrap_str, fields);
+    sconv_detail::EmitAttrVariability("wrap", basis_curves->wrap, fields);
   }
 
   // Extract points (point3f[]) - TypedAttribute returns optional
@@ -1715,6 +1756,7 @@ bool CrateWriter::ExtractGeomSubsetProperties(
           if (!AddArrayAttribute("indices", indices_value, fields, err)) {
             return false;
           }
+          sconv_detail::EmitAttrVariability("indices", subset->indices, fields);
         }
       }
     }
@@ -1833,6 +1875,18 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = xform;
   } else if (auto* volume = prim.data().as<Volume>()) {
     xformable = static_cast<const Xformable*>(volume);
+  } else if (auto* field_base = prim.data().as<VolumeFieldBase>()) {
+    xformable = static_cast<const Xformable*>(field_base);
+  } else if (auto* legacy_field_base = prim.data().as<FieldBase>()) {
+    xformable = static_cast<const Xformable*>(legacy_field_base);
+  } else if (auto* field_asset = prim.data().as<VolumeFieldAsset>()) {
+    xformable = static_cast<const Xformable*>(field_asset);
+  } else if (auto* legacy_field_asset = prim.data().as<FieldAsset>()) {
+    xformable = static_cast<const Xformable*>(legacy_field_asset);
+  } else if (auto* openvdb_asset = prim.data().as<OpenVDBAsset>()) {
+    xformable = static_cast<const Xformable*>(openvdb_asset);
+  } else if (auto* field3d_asset = prim.data().as<Field3DAsset>()) {
+    xformable = static_cast<const Xformable*>(field3d_asset);
   } else if (auto* skelroot = prim.data().as<SkelRoot>()) {
     xformable = static_cast<const Xformable*>(skelroot);
   } else if (auto* skel = prim.data().as<Skeleton>()) {
@@ -2084,9 +2138,14 @@ bool CrateWriter::ExtractImageableAttrs(
   }
 
   if (purpose.authored()) {
-    crate::CrateValue purpose_crate_val;
-    purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
-    fields.push_back({"purpose", purpose_crate_val});
+    if (purpose.is_value_empty()) {
+      sconv_detail::EmitAttrDeclaration("purpose", "token", fields);
+    } else {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+    sconv_detail::EmitAttrVariability("purpose", purpose, fields);
   }
 
   return true;
@@ -2247,16 +2306,22 @@ bool CrateWriter::ExtractGPrimProperties(
 
   // Extract orientation
   if (gprim->orientation.authored()) {
-    Orientation orient_val = gprim->orientation.get_value();
-    {  // Write it even when it EQUALS the default: `uniform token orientation =
-       // "rightHanded"` is an authored opinion, and an authored opinion blocks
-       // weaker ones during composition. Skipping it "because it looks like the
-       // default" silently changed what the layer means.
+    if (gprim->orientation.is_value_empty()) {
+      // DECLARED without a value (`uniform token orientation`): write the
+      // declaration only -- get_value() would author the schema fallback.
+      sconv_detail::EmitAttrDeclaration("orientation", "token", fields);
+    } else {
+      Orientation orient_val = gprim->orientation.get_value();
+      // Write it even when it EQUALS the default: `uniform token orientation =
+      // "rightHanded"` is an authored opinion, and an authored opinion blocks
+      // weaker ones during composition. Skipping it "because it looks like the
+      // default" silently changed what the layer means.
       crate::CrateValue orient_crate_val;
       value::token orient_tok(to_string(orient_val));
       orient_crate_val.Set(orient_tok);
       fields.push_back({"orientation", orient_crate_val});
     }
+    sconv_detail::EmitAttrVariability("orientation", gprim->orientation, fields);
   }
 
   return true;
@@ -2516,6 +2581,7 @@ bool CrateWriter::ExtractGeomPlaneProperties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", plane->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -2555,6 +2621,7 @@ bool CrateWriter::ExtractGeomCylinder1Properties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", cylinder->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -2594,6 +2661,7 @@ bool CrateWriter::ExtractGeomCapsule1Properties(
     value::token axis_token(axis_str);
     axis_crate_val.Set(axis_token);
     fields.push_back({"axis", axis_crate_val});
+    sconv_detail::EmitAttrVariability("axis", capsule->axis, fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);

@@ -1106,6 +1106,8 @@ void main() {
         "uniform float uDensityScale;\n"
         "uniform vec3 uAlbedo; uniform vec3 uEmission;\n"
         "uniform float uBackground;\n"
+        "uniform bool uIsLevelSet; uniform float uIsovalue;\n"
+        "uniform mat4 uVP; uniform mat4 uModel;\n"
         "vec3 blackbody(float value){\n"
         "  float k=value>100.0?value:1000.0+5500.0*max(value,0.0);\n"
         "  float t=clamp(k/100.0,10.0,400.0);\n"
@@ -1129,6 +1131,45 @@ void main() {
         "  if(!rayAABB(oo,od,uBmin,uBmax,t0,t1)) discard;\n"
         "  t0=max(t0,0.0);\n"
         "  vec3 ext=uBmax-uBmin;\n"
+        "  gl_FragDepth=gl_FragCoord.z;\n"
+        "  if(uIsLevelSet){\n"
+        "    vec3 invExt=1.0/max(ext,vec3(1e-20));\n"
+        "    float ds=max((t1-t0)/512.0,min(ext.x,min(ext.y,ext.z))/256.0);\n"
+        "    float prev=texture(uDensity,(oo+od*t0-uBmin)*invExt).r-uIsovalue;\n"
+        "    float t=t0, hit=-1.0;\n"
+        "    for(int i=0;i<512;i++){\n"
+        "      float tn=min(t0+float(i+1)*ds,t1);\n"
+        "      float f=texture(uDensity,(oo+od*tn-uBmin)*invExt).r-uIsovalue;\n"
+        "      if((f<0.0&&prev>0.0)||(f>0.0&&prev<0.0)){\n"
+        "        float lo=t,hi=tn,flo=prev;\n"
+        "        for(int k=0;k<16;k++){\n"
+        "          float mid=0.5*(lo+hi);\n"
+        "          float fm=texture(uDensity,(oo+od*mid-uBmin)*invExt).r-uIsovalue;\n"
+        "          if(fm==0.0){lo=hi=mid;break;}\n"
+        "          if((fm>0.0)==(flo>0.0)){lo=mid;flo=fm;}else{hi=mid;}\n"
+        "        }\n"
+        "        hit=0.5*(lo+hi);break;\n"
+        "      }\n"
+        "      if(f!=0.0){prev=f;t=tn;}\n"
+        "      else if(prev==0.0)t=tn;\n"
+        "      if(tn>=t1)break;\n"
+        "    }\n"
+        "    if(hit<0.0)discard;\n"
+        "    vec3 p=oo+od*hit,uvw=(p-uBmin)*invExt;\n"
+        "    vec3 e=1.0/vec3(textureSize(uDensity,0));\n"
+        "    vec3 g=vec3(texture(uDensity,uvw+vec3(e.x,0,0)).r-texture(uDensity,uvw-vec3(e.x,0,0)).r,\n"
+        "                texture(uDensity,uvw+vec3(0,e.y,0)).r-texture(uDensity,uvw-vec3(0,e.y,0)).r,\n"
+        "                texture(uDensity,uvw+vec3(0,0,e.z)).r-texture(uDensity,uvw-vec3(0,0,e.z)).r)*invExt/e;\n"
+        "    vec3 worldPoint=(uModel*vec4(p,1)).xyz;\n"
+        "    vec3 viewDir=normalize(uCameraPos-worldPoint);\n"
+        "    vec3 n=transpose(mat3(uInvModel))*g;\n"
+        "    n=dot(n,n)>0.0?normalize(n):viewDir;\n"
+        "    if(dot(n,viewDir)<0.0)n=-n;\n"
+        "    fragColor=vec4(uAlbedo*(0.15+0.85*max(dot(n,viewDir),0.0))+uEmission,1.0);\n"
+        "    vec4 clip=uVP*vec4(worldPoint,1);\n"
+        "    gl_FragDepth=0.5*(clip.z/clip.w)+0.5;\n"
+        "    return;\n"
+        "  }\n"
         "  float step=min(ext.x,min(ext.y,ext.z))/128.0;\n"
         "  if(step<=0.0) step=(t1-t0)/256.0;\n"
         "  float T=1.0; vec3 L=vec3(0.0);\n"
@@ -1171,6 +1212,8 @@ void main() {
       uVolAlbedo_ = glGetUniformLocation(volumeProgram_, "uAlbedo");
       uVolEmission_ = glGetUniformLocation(volumeProgram_, "uEmission");
       uVolBackground_ = glGetUniformLocation(volumeProgram_, "uBackground");
+      uVolIsLevelSet_ = glGetUniformLocation(volumeProgram_, "uIsLevelSet");
+      uVolIsovalue_ = glGetUniformLocation(volumeProgram_, "uIsovalue");
     }
     static const float kCube[24] = {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
                                     0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1};
@@ -4546,6 +4589,8 @@ void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
   }
   gv.densityScale = v.densityScale;
   gv.background = v.background;
+  gv.isLevelSet = v.isLevelSet;
+  gv.isovalue = v.isovalue;
 
   glGenTextures(1, &gv.tex3d);
   glBindTexture(GL_TEXTURE_3D, gv.tex3d);
@@ -5147,6 +5192,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
       glUniform3fv(uVolAlbedo_, 1, gv.albedo);
       glUniform3fv(uVolEmission_, 1, gv.emission);
       glUniform1f(uVolBackground_, gv.background);
+      glUniform1i(uVolIsLevelSet_, gv.isLevelSet);
+      glUniform1f(uVolIsovalue_, gv.isovalue);
       glUniform1i(uVolHasEmissionField_, gv.emissionTex3d != 0);
       glUniform1i(uVolHasTemperatureField_, gv.temperatureTex3d != 0);
       glActiveTexture(GL_TEXTURE1);

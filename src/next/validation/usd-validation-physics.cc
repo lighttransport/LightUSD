@@ -725,6 +725,29 @@ void ValidateNewtonLimitGain(const PrimSpec &ps, const char *name,
   }
 }
 
+// NewtonSDFCollisionAPI: Newton builds the collider SDF from these
+// parameters; lightusd:sdf names LightUSD's precomputed level-set Volume.
+void ValidateNewtonSdf(const PrimSpec &ps, const std::string &prim_location,
+                       const PrimTypeByPath &prim_types, USDValidationResult *result) {
+  double v = 0.0;
+  if (GetNumericScalarProperty(ps, "newton:sdfMaxResolution", &v) && !(v > 0.0))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfMaxResolution"),
+             "newton:sdfMaxResolution must be positive");
+  if (GetNumericScalarProperty(ps, "newton:sdfNarrowBandInner", &v) &&
+      !(v <= 0.0 && std::isfinite(v)))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfNarrowBandInner"),
+             "newton:sdfNarrowBandInner must be finite and <= 0 (inside the surface)");
+  if (GetNumericScalarProperty(ps, "newton:sdfNarrowBandOuter", &v) &&
+      !(v >= 0.0 && std::isfinite(v)))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfNarrowBandOuter"),
+             "newton:sdfNarrowBandOuter must be finite and >= 0 (outside the surface)");
+  ValidatePhysicsRelationship(ps, "lightusd:sdf", "physics.extension.newton.relationship",
+                              prim_location, prim_types, {"Volume"}, result);
+}
+
 void ValidateNewtonPhysics(const PrimSpec &ps,
                            const std::vector<AppliedSchema> &schemas,
                            const std::string &prim_location,
@@ -774,6 +797,7 @@ void ValidateNewtonPhysics(const PrimSpec &ps,
   ValidateNewtonInertia(ps, prim_location, result);
   ValidateNewtonLimitGain(ps, "newton:limitStiffness", prim_location, result);
   ValidateNewtonLimitGain(ps, "newton:limitDamping", prim_location, result);
+  ValidateNewtonSdf(ps, prim_location, prim_types, result);
   ValidateTokenSetProperty(ps, "newton:kamino:padmm:warmstarting",
                            {"none", "containers", "reduced"},
                            "physics.extension.newton.token", prim_location,

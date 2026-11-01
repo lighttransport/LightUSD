@@ -13,12 +13,14 @@
           std::map<std::string, std::vector<std::string>>>& variant_names,
       const std::unordered_map<std::string, std::vector<std::string>>&
           parent_children) {
+      // Batched write: an ancestor an earlier batch already wrote.
+      if (skip_prims_ && (*skip_prims_)[i]) return;
       const PrimSpec& prim = layer.prims()[i];
       // The next prim's path probe (InternPathStable below) is a random load
       // into the path table; start it now.
       if (i + 1 < layer.prims().size()) {
         const PathRec nk = SplitPath(layer.prims()[i + 1].path().str());
-        PrefetchPathSlot(HashPathKey(HashStem(nk.stem), nk.name));
+        PrefetchPathSlot(HashPathKey(HashStem(nk.stem()), nk.name()));
       }
       // Variant-namespace prims ("/Prim/{vset=sel}/..."): emit them ONLY for an
       // unflattened layer (round-trip), detected by their owning prim still
@@ -214,7 +216,18 @@
             "displayGroupOrder", prim.meta().displayGroupOrder()));
       }
 
-      if (children_from_links_) {
+      auto batch_children = stream_child_tokens_.empty()
+                                ? stream_child_tokens_.end()
+                                : stream_child_tokens_.find(static_cast<uint32_t>(i));
+      if (batch_children != stream_child_tokens_.end()) {
+        // Batched write: a prim whose children span batches (tokens of its
+        // full child list, resolved before the batch).
+        if (!batch_children->second.empty()) {
+          fieldset.push_back(WFieldCount());
+          WPushField(MakeTokenVectorFieldFromTokens(
+              FieldToken(kTokPrimChildren), batch_children->second));
+        }
+      } else if (children_from_links_) {
         // Verified fully linked layer: the children are exactly the linked
         // prims, in link order (the order the map path substitutes anyway).
         const std::vector<uint32_t>& ci = prim.child_indices();
@@ -244,7 +257,9 @@
       // Properties, relationships, connections and time samples are emitted as
       // separate pxrUSD-style Attribute/Relationship specs (below). Collect the
       // child property names here for the prim's "properties" field.
-      EmittedProps emitted = EmitPrimProperties(prim);
+      const std::string_view stable_path = stream_path_views_.empty()
+          ? std::string_view(prim.path().str()) : stream_path_views_[i];
+      EmittedProps emitted = EmitPrimProperties(prim, stable_path);
       std::vector<std::string_view>& prop_names = emitted.names;
       if (!prim.meta().propertyOrder().empty()) {
         // Views of the emitted names (not of propertyOrder) keep the list
@@ -353,6 +368,9 @@
       }
       // instanceable=false is a real (blocking) opinion when authored.
       if (prim.meta().instanceable || prim.meta().instanceable_authored) {
+        if (preparing_plan_ && WorkerTLS() && prim.meta().instanceable)
+          WorkerTLS()->pending_instance_fields.push_back(
+              {WFieldCount(), prim.meta().instanceable_authored, prim.path().str()});
         CrateField f;
         f.token_index.value = FieldToken(kTokInstanceable);
         f.value_rep = ValueRep::Make(CrateTypeId::Bool,
@@ -569,7 +587,7 @@
       // normal name -> Prim.) Using the right spec type keeps the unflattened
       // output readable by pxrUSD (which rejects a Prim named "{...}").
       CrateSpec spec;
-      spec.path_index.value = InternPathStable(prim.path().str());
+      spec.path_index.value = InternPathStable(stable_path);
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::Prim;
       {
@@ -582,6 +600,8 @@
         }
       }
       WPushSpec(spec);
+      if (consume_prims_ && !reap_prims_)
+        const_cast<PrimSpec&>(prim).release_to_skeleton();
   }
 
   static bool IsVariantHolderName(const std::string& nm) {
@@ -647,6 +667,16 @@
 
   void BuildFieldsAndSpecs(const Layer& layer) {
     // 1. PseudoRoot spec (index 0)
+    EmitPseudoRootSpec(layer, nullptr);
+    // 2. Prim specs
+    BuildPrimSpecs(layer);
+  }
+
+  // The pseudo-root spec from the layer metadata. Its primChildren are the
+  // layer's root prims, or `root_names` when given (a batched write whose
+  // batch holds only some of them).
+  void EmitPseudoRootSpec(const Layer& layer,
+                          const std::vector<std::string>* root_names) {
     {
       std::vector<uint32_t> fieldset;
 
@@ -938,7 +968,9 @@
 
       {
         std::vector<std::string> root_children;
-        if (!layer.root_indices().empty()) {
+        if (root_names) {
+          root_children = *root_names;
+        } else if (!layer.root_indices().empty()) {
           root_children.reserve(layer.root_indices().size());
           for (uint32_t ri : layer.root_indices()) {
             if (const PrimSpec* rp = layer.prim(ri)) {
@@ -968,7 +1000,11 @@
       spec.spec_type = SpecType::PseudoRoot;
       WPushSpec(spec);
     }
+  }
 
+  // Every prim's specs, in layer order (prims flagged in skip_prims_ are left
+  // out).
+  void BuildPrimSpecs(const Layer& layer) {
     // Pre-scan variant holder prims ("/owning/{vset=var}") to recover, per
     // owning prim, each variant set's variant names — needed to emit
     // variantSetChildren (on the owning prim) and variantChildren (on each
@@ -1044,10 +1080,21 @@
       }
     }
 
-    // 2. Prim specs
     const size_t nprims = layer.prims().size();
+    // A prim path with a variant component: its encoding reads the owner
+    // prim's metadata (and workers then probe prims by path).
+    std::atomic<bool> any_variant_path{false};
+    ParallelRanges(nprims, 65536, [&](size_t, size_t lo, size_t hi) {
+      for (size_t i = lo; i < hi && !any_variant_path.load(std::memory_order_relaxed); ++i)
+        if (layer.prims()[i].path().str().find('{') != std::string::npos)
+          any_variant_path.store(true, std::memory_order_relaxed);
+    });
+    // Release prims as they are written only when no prim is read by another
+    // prim's encoding (variant owners are).
+    consume_prims_ = options_.consume_values && options_.consume_prims &&
+                     !any_variant_path.load();
 #if defined(LIGHTUSD_ENABLE_THREAD)
-    const bool want_parallel = options_.parallel_fields &&
+    const bool want_parallel = !WorkerTLS() && options_.parallel_fields &&
                                nprims >= kMinPrimsForParallelFields &&
                                ResolveThreads() > 1;
 #else
@@ -1062,7 +1109,6 @@
       // ids at first emit; intern them up front so worker threads never
       // mutate the shared table (and every PropNameId has a token slot).
       PropNameTable& name_table = GetPropNameTable();
-      bool any_variant_path = false;
       for (const auto& prim : layer.prims()) {
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
         // Deferred fill: no relationships yet; workers intern new names in
@@ -1070,12 +1116,11 @@
         // does not.
         if (!deferred_filler_)
 #endif
-        for (const std::string& rel_name : prim.relationship_names()) {
-          (void)name_table.intern(rel_name);
-        }
-        if (!any_variant_path &&
-            prim.path().str().find('{') != std::string::npos) {
-          any_variant_path = true;
+        // (relationship_names() copies and sorts; most prims have none.)
+        if (prim.has_relationship_data()) {
+          for (const std::string& rel_name : prim.relationship_names()) {
+            (void)name_table.intern(rel_name);
+          }
         }
       }
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
@@ -1113,6 +1158,8 @@
       FillForWrite(layer, i);
       BuildOnePrim(layer, i, variant_names, parent_children);
       ReleaseAfterWrite(layer, i);
+      if (preparing_plan_ && (i + 1) % kFieldsChunkPrims == 0 &&
+          !FlushPreparedContext(*WorkerTLS())) return;
       if (!result_.error.empty()) return;
     }
 
@@ -1125,6 +1172,99 @@
   static constexpr size_t kMinPrimsForParallelFields = 8192;
   static constexpr size_t kFieldsChunkPrims = 1024;
   static constexpr size_t kChunksForWideFields = 256;  // ~262 K prims
+
+  // A scheduling estimate, not a memory bound: count immutable array headers
+  // without decoding or hashing any payload. Variable-sized elements use
+  // their string-object footprint as a proxy for per-element encoding work.
+  static size_t EstimatePrimArrayWork(const PrimSpec& prim, size_t limit) {
+    size_t work = 0;
+    auto add = [&](const Value* value) {
+      if (!value || !value->is_array()) return;
+      size_t bytes = GetTypeSize(value->type_id());
+      if (!bytes) bytes = sizeof(std::string);
+      const size_t count = value->array_size();
+      if (count > (limit - work) / bytes) work = limit;
+      else work += count * bytes;
+    };
+    for (const PropSlot& slot : prim.properties().slots()) {
+      if (!slot.is_array()) continue;
+      add(prim.property_value(slot.name_id));
+      if (work == limit) break;
+      if (slot.is_time_sampled()) {
+        const auto* samples = prim.time_samples(slot.name_id);
+        if (samples) {
+          for (const auto& sample : *samples) {
+            add(prim.time_sample_value(sample.second));
+            if (work == limit) break;
+          }
+        }
+      }
+      if (work == limit) break;
+    }
+    return work;
+  }
+
+  // Refine only within the original chunks: ordinary prim ranges retain the
+  // 1024-prim cap, while a heavy prim gets its own independently encoded
+  // range. First-use/commit order stays identical to the prim order.
+  std::vector<size_t> MakeFieldsChunkBounds(const Layer& layer, bool refine) {
+    const size_t n = layer.prims().size();
+    std::vector<size_t> bounds;
+    bounds.reserve(n / kFieldsChunkPrims + 2);
+    bounds.push_back(0);
+    if (!refine) {
+      for (size_t base = 0; base < n;) {
+        base += std::min(n - base, kFieldsChunkPrims);
+        bounds.push_back(base);
+      }
+      return bounds;
+    }
+    // Plan independent original chunks concurrently, before any encoder
+    // contexts are live. One bit per prim records each right boundary;
+    // merge in namespace order after joining. This bounds planning metadata
+    // without a vector/allocation per cut or a second pass over array headers.
+    const size_t nchunks = n / kFieldsChunkPrims +
+                           (n % kFieldsChunkPrims != 0);
+    constexpr size_t kMaskWords = (kFieldsChunkPrims + 63) / 64;
+    std::vector<std::array<uint64_t, kMaskWords>> cuts(nchunks);
+    constexpr size_t kArrayWorkPerChunk = size_t(16) << 20;
+    ParallelRanges(nchunks, 1, [&](size_t, size_t lo, size_t hi_chunk) {
+      for (size_t c = lo; c < hi_chunk; ++c) {
+        const size_t base = c * kFieldsChunkPrims;
+        const size_t hi = base + std::min(n - base, kFieldsChunkPrims);
+        auto cut = [&](size_t end) {
+          if (end == base) return;
+          const size_t bit = end - base - 1;
+          cuts[c][bit / 64] |= uint64_t(1) << (bit % 64);
+        };
+        size_t work = 0;
+        for (size_t i = base; i < hi; ++i) {
+          const size_t cost = EstimatePrimArrayWork(layer.prims()[i],
+                                                    kArrayWorkPerChunk);
+          if (cost == kArrayWorkPerChunk) {
+            cut(i);
+            cut(i + 1);
+            work = 0;
+          } else {
+            if (cost > kArrayWorkPerChunk - work) {
+              cut(i);
+              work = 0;
+            }
+            work += cost;
+          }
+        }
+        cut(hi);
+      }
+    }, 8);
+    for (size_t c = 0; c < nchunks; ++c) {
+      const size_t base = c * kFieldsChunkPrims;
+      const size_t span = std::min(n - base, kFieldsChunkPrims);
+      for (size_t bit = 0; bit < span; ++bit)
+        if (cuts[c][bit / 64] & (uint64_t(1) << (bit % 64)))
+          bounds.push_back(base + bit + 1);
+    }
+    return bounds;
+  }
 
   // Final id tables for one chunk's provisional id domains: fin_tok[i] maps
   // token provisional id (w_base_tok + i) to its final global index, likewise
@@ -1479,13 +1619,24 @@
   struct ShardTeam {
     size_t size = 1;
 #if defined(LIGHTUSD_ENABLE_THREAD)
+    // Runs come back to back (several per committed chunk, ~10 K chunks on a
+    // large write), so both sides spin briefly before sleeping: a condvar
+    // wake per run otherwise adds its latency to every commit stage.
+    static constexpr int kSpin = 4096;
     std::mutex m;
     std::condition_variable go, done;
-    uint64_t gen = 0;
-    size_t pending = 0;
-    bool quit = false;
-    const std::function<void(size_t)>* job = nullptr;
+    std::atomic<uint64_t> gen{0};
+    std::atomic<size_t> pending{0};
+    std::atomic<int> sleepers{0};  // helpers blocked on `go` (counted under m)
+    std::atomic<bool> quit{false};
+    std::atomic<const std::function<void(size_t)>*> job{nullptr};
     std::vector<std::thread> threads;
+
+    static void Relax() {
+#if defined(__x86_64__) || defined(__i386__)
+      __builtin_ia32_pause();
+#endif
+    }
 
     void Start(size_t n) {
       size = n < 1 ? 1 : n;
@@ -1493,17 +1644,28 @@
         threads.emplace_back([this, t] {
           uint64_t seen = 0;
           for (;;) {
-            const std::function<void(size_t)>* j;
-            {
-              std::unique_lock<std::mutex> lk(m);
-              go.wait(lk, [&] { return quit || gen != seen; });
-              if (quit) return;
-              seen = gen;
-              j = job;
+            bool ready = false;
+            for (int i = 0; i < kSpin && !ready; ++i) {
+              if (quit.load(std::memory_order_acquire)) return;
+              ready = gen.load(std::memory_order_acquire) != seen;
+              if (!ready) Relax();
             }
-            (*j)(t);
-            std::lock_guard<std::mutex> lk(m);
-            if (--pending == 0) done.notify_one();
+            if (!ready) {
+              std::unique_lock<std::mutex> lk(m);
+              sleepers.fetch_add(1, std::memory_order_relaxed);
+              go.wait(lk, [&] {
+                return quit.load(std::memory_order_acquire) ||
+                       gen.load(std::memory_order_acquire) != seen;
+              });
+              sleepers.fetch_sub(1, std::memory_order_relaxed);
+              if (quit.load(std::memory_order_acquire)) return;
+            }
+            seen = gen.load(std::memory_order_acquire);
+            (*job.load(std::memory_order_acquire))(t);
+            if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+              std::lock_guard<std::mutex> lk(m);
+              done.notify_one();
+            }
           }
         });
       }
@@ -1513,16 +1675,22 @@
         fn(0);
         return;
       }
+      job.store(&fn, std::memory_order_release);
+      pending.store(size - 1, std::memory_order_release);
       {
+        // Under m: a helper about to sleep has counted itself and re-checks
+        // `gen` while holding m, so this bump is never missed.
         std::lock_guard<std::mutex> lk(m);
-        job = &fn;
-        pending = size - 1;
-        ++gen;
+        gen.fetch_add(1, std::memory_order_acq_rel);
       }
-      go.notify_all();
+      if (sleepers.load(std::memory_order_acquire) > 0) go.notify_all();
       fn(0);
+      for (int i = 0; i < kSpin; ++i) {
+        if (pending.load(std::memory_order_acquire) == 0) return;
+        Relax();
+      }
       std::unique_lock<std::mutex> lk(m);
-      done.wait(lk, [&] { return pending == 0; });
+      done.wait(lk, [&] { return pending.load(std::memory_order_acquire) == 0; });
     }
     void Stop() {
       {
@@ -1582,7 +1750,7 @@
       }
       w.fin_path[e] = static_cast<uint32_t>(paths_.size());
       paths_.push_back(rec);
-      path_hashes_.push_back(pe.hash);
+      path_fingerprints_.push_back(static_cast<uint16_t>(pe.hash));
     }
     if (paths_.size() == first_new) return;
 
@@ -1631,7 +1799,7 @@
       const bool changed = FixOpBlobIds(op, fin);
       if (op.kind == kOpPush) {
         if (stream_values_) {
-          const uint64_t off = StreamRawBlock(op.block.bytes(), op.block.size());
+          const uint64_t off = StreamRawBlock(op.block.bytes(), op.block.size(), &op.block);
           if (op.block.is_ref()) DropStreamedSourceRange(op.block);
           w.fin_block[i] = off;
         } else {
@@ -1651,7 +1819,7 @@
           h2 = 0;
         } else if (stream_values_) {
           const XXH128_hash_t digest =
-              XXH3_128bits(op.block.bytes(), op.block.size());
+              StreamDigest(op.block.bytes(), op.block.size(), &op.block);
           h = digest.low64;
           h2 = digest.high64;
         } else {
@@ -1672,7 +1840,7 @@
     *h2 = 0;
     if (b.size() == 0) return;
     if (stream_values_) {
-      const XXH128_hash_t d = XXH3_128bits(b.bytes(), b.size());
+      const XXH128_hash_t d = StreamDigest(b.bytes(), b.size(), &b);
       *h = d.low64;
       *h2 = d.high64;
     } else {
@@ -1885,7 +2053,7 @@
   void CommitStageW(WorkerCtx& w) {
     for (size_t j = 0; j < w.wjob_op.size(); ++j) {
       const DataBlock& b = w.ops[w.wjob_op[j]].block;
-      const uint64_t off = StreamRawBlock(b.bytes(), b.size());
+      const uint64_t off = StreamRawBlock(b.bytes(), b.size(), &b);
       if (off != w.wjob_off[j]) stream_plan_mismatch_ = true;
       if (b.is_ref()) DropStreamedSourceRange(b);
     }
@@ -1902,8 +2070,8 @@
       }
       std::vector<ValueRep>& reps = w.fields.reps;
       for (ValueRep& r : reps) r = RemapValueRep(r, fin);
-      fields_.tokens.insert(fields_.tokens.end(), toks.begin(), toks.end());
-      fields_.reps.insert(fields_.reps.end(), reps.begin(), reps.end());
+      fields_.tokens.append(toks.data(), toks.size());
+      fields_.reps.append(reps.data(), reps.size());
     }
 
     // 5. fieldsets (rebase local flat ids by the fields appended so far)
@@ -1916,9 +2084,8 @@
       // w.fs_offsets entries are uint32_t slot offsets into w.flat.
       for (uint32_t& v : w.fs_offsets)
         v += static_cast<uint32_t>(flat_before);
-      fieldset_offsets_.insert(fieldset_offsets_.end(), w.fs_offsets.begin(),
-                               w.fs_offsets.end());
-      flat_fieldsets_.insert(flat_fieldsets_.end(), w.flat.begin(), w.flat.end());
+      fieldset_offsets_.append(w.fs_offsets.data(), w.fs_offsets.size());
+      flat_fieldsets_.append(w.flat.data(), w.flat.size());
     }
 
     // 6. specs (path domain remap, fieldset rebase)
@@ -1944,14 +2111,11 @@
   static void ReleaseWorkerTLS() { WorkerTLS() = nullptr; }
 
   void BuildFieldsChunk(
-      const Layer& layer, size_t chunk,
+      const Layer& layer, size_t lo, size_t hi,
       const std::unordered_map<std::string,
           std::map<std::string, std::vector<std::string>>>& variant_names,
       const std::unordered_map<std::string, std::vector<std::string>>&
           parent_children) {
-    const size_t nprims = layer.prims().size();
-    const size_t lo = chunk * kFieldsChunkPrims;
-    const size_t hi = std::min(nprims, lo + kFieldsChunkPrims);
     for (size_t i = lo; i < hi; ++i) {
       FillForWrite(layer, i);
       BuildOnePrim(layer, i, variant_names, parent_children);
@@ -1973,9 +2137,14 @@
       const std::unordered_map<std::string, std::vector<std::string>>&
           parent_children) {
     const size_t nprims = layer.prims().size();
-    const size_t nchunks =
-        (nprims + kFieldsChunkPrims - 1) / kFieldsChunkPrims;
-    if (nchunks == 0) return false;
+    const size_t fixed_chunks = nprims / kFieldsChunkPrims +
+                                (nprims % kFieldsChunkPrims != 0);
+    if (fixed_chunks == 0) return false;
+    struct ReapScope {
+      bool& flag;
+      ReapScope(bool& f, bool on) : flag(f) { flag = on; }
+      ~ReapScope() { flag = false; }
+    } reap_scope(reap_prims_, consume_prims_);
 
 #if !defined(LIGHTUSD_ENABLE_THREAD)
     (void)variant_names;  // only the worker path emits per-chunk specs
@@ -1985,11 +2154,24 @@
     // Each worker holds up to one encoded chunk until its commit finishes, a
     // roughly fixed per-worker cost: 16 workers pay off only on large layers
     // (district: fields_specs 3.1 -> 2.5 s from 8 to 16), while on a small one
-    // (merged ALab, ~24 chunks) they just add ~50 MB of peak RSS.
+    // (merged ALab, ~24 chunks) they just add ~50 MB of peak RSS. A batched
+    // (low-memory) write stays narrow: Island's in-flight chunks hold 0.6 GB
+    // when wide, and full45's batches are written under the next compose.
     int want = ResolveThreads();
-    const int max_workers = nchunks >= kChunksForWideFields ? 16 : 8;
+    const bool wide = fixed_chunks >= kChunksForWideFields && !serial_sections_;
+    if (want <= 1) return false;
+    bool refine_chunks = wide && options_.spill_columns_bytes == 0;
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+    if (deferred_filler_) refine_chunks = false;
+#endif
+    CratePhaseTimer chunk_timer(options_.enable_timing, "next_crate_write");
+    const std::vector<size_t> chunk_bounds =
+        MakeFieldsChunkBounds(layer, refine_chunks);
+    chunk_timer.lap("chunk_plan");
+    const size_t nchunks = chunk_bounds.size() - 1;
+    const int max_workers = wide ? 16 : 8;
     if (want > max_workers) want = max_workers;
-    if (want > static_cast<int>(nchunks)) want = static_cast<int>(nchunks);
+    if (nchunks < static_cast<size_t>(want)) want = static_cast<int>(nchunks);
     if (want <= 1) return false;
     const size_t W = static_cast<size_t>(want);
 
@@ -1999,7 +2181,12 @@
     // wide (large-layer) runs get 2 ctx per worker -- with one, workers spent
     // more time parked than encoding. Small layers keep one per worker (each
     // ctx holds an encoded chunk: memory).
-    const size_t P = nchunks >= kChunksForWideFields ? 2 * W : W;
+    const size_t P = wide ? 2 * W : W;
+    if (options_.enable_timing) {
+      LIGHTUSD_LOG_I("[next_crate_write] field_chunks=" << nchunks
+                       << " fixed_chunks=" << fixed_chunks
+                       << " workers=" << W << " contexts=" << P);
+    }
     std::unique_ptr<WorkerCtx[]> ctx(new WorkerCtx[P]);
     std::vector<size_t> free_ctx;
     free_ctx.reserve(P);
@@ -2033,7 +2220,7 @@
       for (size_t t = 0; t < W; ++t) {
         threads.emplace_back([this, &layer, &variant_names, &parent_children,
                               &ctx, &free_ctx, &done, &owner_slot, &next_take,
-                              &mut, &cv, &fatal, nchunks] {
+                              &mut, &cv, &fatal, &chunk_bounds, nchunks] {
           for (;;) {
             if (next_take.load() >= nchunks) break;  // no chunk left to take
             size_t c;
@@ -2053,7 +2240,8 @@
             }
             WorkerTLS() = &ctx[c];
             ctx[c].Reset();
-            BuildFieldsChunk(layer, i, variant_names, parent_children);
+            BuildFieldsChunk(layer, chunk_bounds[i], chunk_bounds[i + 1],
+                             variant_names, parent_children);
             BucketPathEvents(ctx[c]);
             {
               std::lock_guard<std::mutex> lk(mut);
@@ -2064,6 +2252,29 @@
           }
           ReleaseWorkerTLS();
         });
+      }
+
+      // consume_prims: committed chunks are released to their skeletons on
+      // reaper threads, off the encoders' path.
+      constexpr size_t kReapers = 2;
+      if (reap_prims_) {
+        for (size_t r = 0; r < kReapers; ++r) {
+          threads.emplace_back([&, r] {
+            for (size_t k = r; k < nchunks; k += kReapers) {
+              {
+                std::unique_lock<std::mutex> lk(mut);
+                // Committed: a fallback to the serial build (which
+                // re-encodes every prim) happens only before any commit.
+                cv.wait(lk, [&] { return fatal || c_done > k; });
+                if (fatal) return;
+              }
+              const size_t lo = chunk_bounds[k];
+              const size_t hi = chunk_bounds[k + 1];
+              for (size_t i = lo; i < hi; ++i)
+                const_cast<PrimSpec&>(layer.prims()[i]).release_to_skeleton();
+            }
+          });
+        }
       }
 
       // Commit stages A1, B and C trail chunk readiness / the stage before

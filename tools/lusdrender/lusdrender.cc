@@ -5,16 +5,20 @@
 //
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
-                    // unconditionally (was only included under LIGHTUSD_WITH_QJS)
+
+#include "preview_gpu_budget.hh"
+#include "tydra/next/scene-preview-compute.hh"
+#include "tydra/next/scene-preview.hh"
+// unconditionally (was only included under LIGHTUSD_WITH_QJS)
 #include <iostream>
 #include <mutex>
 #include <new>
@@ -252,7 +256,7 @@ void CollectGpuPointsRec(
   lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
-  if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+  if (lightusd::next::IsParticleField(prim)) {
     lightusd::next::ParticleFieldData field;
     std::string field_warning;
     if (!lightusd::next::GetParticleFieldData(
@@ -1140,6 +1144,14 @@ static bool TryRunInstancedVk(const lightusd::next::Stage &stage,
 #endif  // HAVE_VULKAN
 
 int main(int argc, char **argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::cerr << scenePreviewError << "\n";
+    return EXIT_FAILURE;
+  }
 #if defined(__GLIBC__)
   // Triangle streaming allocates and frees large transient per-job buffers
   // (megabytes each) while the final geometry buffers stay live. glibc's default
@@ -1163,6 +1175,133 @@ int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = std::isfinite(opt.timecode) ? opt.timecode : 0.0;
+    scenePreview.options.composition.variant_overrides = opt.variant_overrides;
+    if (!opt.mask.empty()) {
+      std::cerr << "scene preview does not yet accept -mask; use a USD wrapper layer\n";
+      return EXIT_FAILURE;
+    }
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &opt.input, scenePreview, 0, &scenePreviewError)) {
+      std::cerr << "scene preview: " << scenePreviewError << "\n";
+      return EXIT_FAILURE;
+    }
+    if (scenePreview.camera_lod ||
+        (scenePreview.direct_volume &&
+         scenePreview.options.kind ==
+             lightusd::tydra::next::ScenePreviewKind::Volume)) {
+      std::array<double,3> direction={1,.6,1};
+      if(opt.has_view_dir) direction={-opt.view_dir.x,-opt.view_dir.y,-opt.view_dir.z};
+      const auto camera=lightusd::tydra::next::InitialScenePreviewLodCamera(
+          scenePreview.result,opt.input,opt.camera,opt.height>0?opt.height:540,opt.fit_scale,direction);
+      if (scenePreview.source_refinement) {
+        const auto refined = lightusd::tydra::next::RefineScenePreview(
+            scenePreview.source, scenePreview.result, scenePreview.options,
+            camera, std::max(1, opt.width), opt.height > 0 ? opt.height : 540,
+            scenePreview.lod_pixel_error);
+        if (!refined.success) {
+          std::cerr << "source refinement: " << refined.error << "\n";
+          return EXIT_FAILURE;
+        }
+        if (refined.usd_path != scenePreview.result.usd_path) {
+          scenePreview.result = refined;
+          if (scenePreview.options.kind !=
+                  lightusd::tydra::next::ScenePreviewKind::Volume ||
+              !scenePreview.direct_volume) {
+            scenePreview.lods = lightusd::tydra::next::BuildScenePreviewLods(
+                refined, scenePreview.options);
+            if (!scenePreview.lods.success) {
+              std::cerr << scenePreview.lods.error << "\n";
+              return EXIT_FAILURE;
+            }
+            opt.input = scenePreview.lods.root_path;
+          }
+        }
+      }
+      if (scenePreview.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume &&
+          scenePreview.direct_volume) {
+        namespace preview = lightusd::tydra::next;
+        const auto backend =
+            opt.cuda ? preview::PreviewComputeBackend::Cuda
+            : (opt.vulkan || opt.vulkan_rt || opt.vulkan_instanced)
+                ? preview::PreviewComputeBackend::Vulkan
+                : preview::PreviewComputeBackend::Cpu;
+        preview::PreviewVolumeRenderer renderer;
+        if (!renderer.load(scenePreview.result, backend,
+                           scenePreview.options.gpu_budget_bytes,
+                           &scenePreviewError)) {
+          std::cerr << scenePreviewError << "\n";
+          return EXIT_FAILURE;
+        }
+        preview::PreviewVolumeCamera rays;
+        rays.settings=scenePreview.volume;
+        rays.exposure=float(camera.exposure);
+        rays.eye = {float(camera.eye[0]), float(camera.eye[1]),
+                    float(camera.eye[2])};
+        rays.forward = {float(camera.forward[0]), float(camera.forward[1]),
+                        float(camera.forward[2])};
+        const int width = std::max(1, opt.width),
+                  height = opt.height > 0 ? opt.height : 540;
+        const float fy = float(height) * .5f / float(camera.focal_pixels),
+                    fx = fy * float(width) / float(height);
+        const Vec3 forward{rays.forward[0], rays.forward[1], rays.forward[2]};
+        const Vec3 right = Normalize(
+            Cross(forward, Vec3{float(camera.up[0]), float(camera.up[1]),
+                                float(camera.up[2])}));
+        const Vec3 up = Normalize(Cross(right, forward));
+        rays.right = {right.x * fx, right.y * fx, right.z * fx};
+        rays.up = {up.x * fy, up.y * fy, up.z * fy};
+        rays.orthographic = camera.orthographic;
+        rays.near_plane = float(camera.near_plane);
+        rays.far_plane = float(camera.far_plane);
+        lightusd::Image image;
+        image.width = width;
+        image.height = height;
+        image.channels = 4;
+        image.bpp = 8;
+        for(uint32_t frame=0;frame<std::min(static_cast<uint32_t>(opt.samples),rays.settings.accumulation_frames);++frame)
+          if (!renderer.render(rays, width, height, &image.data,
+                               &scenePreviewError)) {
+            std::cerr << scenePreviewError << "\n";
+            return EXIT_FAILURE;
+          }
+        lightusd::image::WriteOption write;
+        write.format = lightusd::image::WriteImageFormat::Autodetect;
+        const auto saved =
+            lightusd::image::WriteImageToFile(opt.output, image, write);
+        if (!saved) {
+          std::cerr << saved.error() << "\n";
+          return EXIT_FAILURE;
+        }
+        std::cerr << "direct UsdVol grids: backend=" << renderer.backend()
+                  << " accumulated_frames=" << renderer.accumulatedFrames() << "\n";
+        return EXIT_SUCCESS;
+      }
+      opt.preview_variant_overrides=lightusd::tydra::next::SelectScenePreviewLods(
+          scenePreview.lods,camera,scenePreview.lod_pixel_error);
+      if(opt.preview_variant_overrides.empty()) {std::cerr<<"preview LOD selection exceeds budget\n";return EXIT_FAILURE;}
+    }
+    opt.rt_preview = true;
+    opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::next::ScenePreviewKind::Volume;
+    opt.legacy_load = false;
+    opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /
+                       double(uint64_t(1) << 30);
+    opt.texture_budget_mb = 32;
+    opt.texture_budget_explicit = true;
+    opt.large_scene_profile = Options::LargeSceneProfile::Off;
+    opt.lod_stream = false;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    const uint64_t width=static_cast<uint64_t>(std::max(1,opt.width));
+    const uint64_t height=static_cast<uint64_t>(opt.height>0?opt.height:540);
+    const uint64_t samples = static_cast<uint64_t>(std::max(1, opt.samples));
+    const uint64_t frameLimit = scenePreview.options.gpu_budget_bytes / 2 / 256;
+    if (width > frameLimit / height / samples) {
+      std::cerr << "preview frame/sampling buffers exceed the GPU budget; reduce resolution or samples\n";
+      return EXIT_FAILURE;
+    }
   }
   SetIblBackendEnvmap(opt.ibl_envmap);
   ApplyLargeSceneProfile(&opt);
@@ -1912,7 +2051,8 @@ int main(int argc, char **argv) {
 #ifdef HAVE_CUDA_RT
     if (opt.cuda) {
       if (!RunCudaSharedRT(opt, base_colors, geos, gpu_materials,
-                           gpu_textures, gpu_lights, camera, out_height)) {
+                           gpu_textures, gpu_lights, camera, out_height,
+                           native_gaussian ? &gaussian_ctx.direct.ellipse_chunks : nullptr)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;
@@ -2104,6 +2244,12 @@ int main(int argc, char **argv) {
   env.mesh_config.build_vertex_indices = !opt.direct_prims;
   env.mesh_config.compute_tangents_and_binormals = false;
   env.scene_config.load_texture_assets = true;
+  // The next path's volume density budget, applied while decoding: an
+  // oversized grid is box-filtered instead of decoded in full first.
+  env.scene_config.volume_max_voxels =
+      std::max<size_t>(size_t(64) << 20,
+                       std::min<size_t>(size_t(512) << 20, MemBudget::Get().Cap() / 16)) /
+      sizeof(float);
   env.set_search_paths({lightusd::io::GetBaseDir(opt.input)});
   if (opt.no_assetresolver) {
     SetupNullAssetResolution(&env.asset_resolver);

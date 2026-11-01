@@ -166,6 +166,10 @@ public:
   /// Finalize layer (build path index, sort properties)
   void finalize();
 
+  /// Free every prim (and the path index); the metadata stays. For a source
+  /// layer no reader will touch again while its owners still hold it.
+  void release_prims();
+
   /// (Re)build only the path->index map from current prim paths. Unlike
   /// finalize() this is not guarded and does not sort properties, so it can be
   /// called mid-mutation (e.g. composition pass 2 needs prim_at_path lookups

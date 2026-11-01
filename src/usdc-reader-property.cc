@@ -24,6 +24,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                                         const PathIndexToSpecIndexMap &psmap,
                                         prim::PropertyMap *props) {
 
+  // Reused across properties: a per-iteration scratch vector would allocate
+  // (and grow) a fresh field list for every property of every prim.
+  crate::FieldValuePairVector decoded_fvs;
+
   for (size_t i = 0; i < pathIndices.size(); i++) {
     int child_index = int(pathIndices[i]);
     if ((child_index < 0) || (child_index >= int(_nodes->size()))) {
@@ -57,17 +61,18 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       continue;
     }
 
-    nonstd::optional<Path> path = GetPath(spec.path_index);
+    // Borrowed path: GetPath() would copy the Path (and its full path string)
+    // for every property.
+    const Path *path = GetPathRef(spec.path_index);
 
     if (!path) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
     }
 
-    DCOUT("Path prim part: " << path.value().prim_part()
-                             << ", prop part: " << path.value().prop_part()
+    DCOUT("Path prim part: " << path->prim_part()
+                             << ", prop part: " << path->prop_part()
                              << ", spec_index = " << spec_index);
 
-    crate::FieldValuePairVector decoded_fvs;
     const crate::FieldValuePairVector *child_fvs = nullptr;
     uint64_t scratch_reserved = 0;
     if (!ResolveFieldValuePairs(spec, &child_fvs, &decoded_fvs,
@@ -87,25 +92,34 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
     } _scratch_release{crate_reader, scratch_reserved};
 
     {
-      std::string prop_name = path.value().prop_part();
+      // The property-map key owns this string; move it into the map below
+      // instead of copying it a second time.
+      tstring_view prop_name_view = path->prop_part();
+      std::string prop_name;
       if (spec.spec_type == SpecType::Connection) {
-        if (!endsWith(prop_name, ".connect")) {
+        if (!prop_name_view.ends_with(".connect")) {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag,
-              fmt::format("Invalid connection property name `{}`", prop_name));
+              kTag, fmt::format("Invalid connection property name `{}`",
+                                to_string(prop_name_view)));
         }
-        prop_name = removeSuffix(prop_name, ".connect");
+        prop_name_view =
+            tstring_view(prop_name_view.c_str(),
+                         prop_name_view.size() - sizeof(".connect") + 1);
       }
 
-      if (prop_name.empty()) {
-        DCOUT("path = " << dump_path(path.value()));
+      if (prop_name_view.size() == 0) {
+        DCOUT("path = " << dump_path(*path));
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
       }
 
       std::string prop_err;
-      if (!pathutil::ValidatePropPath(Path("", prop_name), &prop_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Property name `{}`: {}", prop_name, prop_err));
+      if (!pathutil::ValidatePropName(prop_name_view, &prop_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, fmt::format("Invalid Property name `{}`: {}",
+                              to_string(prop_name_view), prop_err));
       }
+
+      prop_name = to_string(prop_name_view);
 
       Property prop;
       // In lazy mode, child_fvs points to local decoded_fvs — safe to move from.
@@ -119,15 +133,16 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      (*props)[prop_name] = std::move(prop);
       DCOUT("Add property : " << prop_name);
 
       // Record mmap ref with full path key
       if (_has_pending_mmap_ref) {
-        std::string prim_path = path.value().prim_part();
-        _mmap_table.add(prim_path, prop_name, _pending_mmap_ref);
+        _mmap_table.add(to_string(path->prim_part()), prop_name,
+                        _pending_mmap_ref);
         _has_pending_mmap_ref = false;
       }
+
+      props->insert_or_assign(std::move(prop_name), std::move(prop));
     }
   }
 
@@ -214,11 +229,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   for (auto &fv : fvs) {
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
-
-    // Debug: Check timeSamples field specifically
-    if (fv.first.find("time") != std::string::npos) {
-      DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
-    }
 
     if (fv.first == "custom") {
       if (auto pv = fv.second.get_value<bool>()) {
@@ -416,9 +426,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
         if (items.empty() && (spec_type != SpecType::Connection)) {
           if (qual == ListEditQual::ResetToExplicit) {
-            // An explicit empty target list clears weaker targets. Keep the
-            // opinion; a declaration-only relationship has no targetPaths.
-            rel.set(std::vector<Path>{});
+            // An explicitly EMPTY target list is what pxr stores for
+            // `<rel> = None`: "no targets, authored". Model it as the blocked
+            // relationship our ASCII parser produces for the same text, so
+            // `= None` survives a USDC round-trip byte-identically instead of
+            // turning into an empty PathVector.
+            rel.set_blocked();
           } else {
             // An authored but EMPTY bucket: a list-edit qualifier on a
             // relationship with no targets (`append rel myval`). rel.set({}) would

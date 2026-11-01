@@ -47,7 +47,7 @@ std::vector<std::string> ApplyStringListOp(
 /// edits, clips, ordering, unknown fields): a second lazily-allocated tier
 /// under PrimMetadataCold, so a prim that only carries a kind / customData /
 /// instance prototype / apiSchemas pays for those few fields (~0.15 KB)
-/// instead of every cold field head (~1.3 KB). Full-LOD Caldera composes
+/// instead of every cold field head (~1.3 KB). Full-LOD benchmark scene composes
 /// 10M prims, most with a kind or customData and none with these.
 struct PrimMetadataRare {
   std::string doc;
@@ -106,7 +106,7 @@ struct PrimMetadataRare {
 /// ~190 bytes of empty std::string / std::vector heads (Phase 8.1 footprint
 /// split).
 /// apiSchemas list-op edits: the one rare-ish field composed prims carry
-/// (full-LOD Caldera: 0.5M of them), kept off the 1 KB PrimMetadataRare.
+/// (full-LOD benchmark scene: 0.5M of them), kept off the 1 KB PrimMetadataRare.
 struct ApiSchemaListOp {
   StringListOps edits;
   // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
@@ -115,7 +115,7 @@ struct ApiSchemaListOp {
 };
 
 struct PrimMetadataCold {
-  // Held by most composed prims (full-LOD Caldera: 6.7M), so packed: the
+  // Held by most composed prims (full-LOD benchmark scene: 6.7M), so packed: the
   // flags share one word and the fields few prims set are pointer-sized
   // (lazy-containers.hh).
   std::string kind;         // model kind (component/group/assembly/...)
@@ -162,7 +162,7 @@ struct PrimMetadata {
   // Composition arcs (stored as paths for lazy resolution). Pointer-sized
   // while empty (lazy-containers.hh): composed prims carry no arcs, and the
   // 88 inline bytes of empty heads per PrimSpec cost ~1.1 GB on a full-LOD
-  // Caldera flatten.
+  // benchmark scene flatten.
   LazyStringList references;
   LazyStringList payloads;
   LazyStringList inherits;

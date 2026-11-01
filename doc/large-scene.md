@@ -1,12 +1,12 @@
 # Loading large USD scenes in LightUSD
 
 Production USD scenes are 10–20 GB on disk, spread across thousands of payloaded
-files. This document analyzes three publicly-available scenes — **Moana Island**
-(Disney), **ALab** (Animal Logic), and **Caldera** (Activision) — and describes
+files. This document analyzes three publicly-available scenes — **reference scene**
+(Disney), **ALab** (Animal Logic), and **benchmark scene** (Activision) — and describes
 how LightUSD loads them within a bounded RAM budget (target: **fit a parse into
 16 GB**, geometry deferred), plus the remaining implementation work.
 
-See also [instancing.md](instancing.md) for the Island instancing analysis, and
+See also [instancing.md](instancing.md) for the reference scene instancing analysis, and
 [benchmarks.md](benchmarks.md) for middle-scale public scenes
 (Pixar Kitchen_set, Intel Moore Lane) that render interactively *without* the
 large-scene budgeting flags described here.
@@ -29,9 +29,9 @@ sharing** and **LOD/proxy variant selection** — *not* mmap (see §Roadmap).
 
 ## 1. Scene structures
 
-### 1.1 Moana Island (`<asset-root>/island`, ~17 GB)
+### 1.1 reference scene (`<asset-root>/reference_scene`, ~17 GB)
 
-Root `usd/island.usda` (~22 KB) — a single `Xform "island"` (kind `assembly`)
+Root `usd/reference_scene.usda` (~22 KB) — a single `Xform "reference_scene"` (kind `assembly`)
 with 20 element children via `prepend references`. Each element uses a
 three-file pattern (`element.usda` → `instance.usda` → `geometry.usda`) with
 `prepend payload` to binary `model.usd` + XGen archives.
@@ -43,7 +43,7 @@ three-file pattern (`element.usda` → `instance.usda` → `geometry.usda`) with
 | component instances | 101 |
 | `references` / `payload` | 3,924 / 214 |
 | top-level `PointInstancer` | 0 (XGen instancing baked in binary `.usd`) |
-| largest file | `xgGroundCover.usd` 652 MB |
+| largest file | `vegetation_instancer.usd` 652 MB |
 
 ### 1.2 ALab v2.3.0 (`<asset-root>/alab/v2.3.0.zip`, ~4 GB USD in-zip)
 
@@ -64,10 +64,10 @@ assembly references, and `inherits`/`specializes` against `__class__`.
 ALab is the canonical "payload everything" scene: a typical working set loads
 only the chosen geometry LOD per asset (~80 % of geometry stays deferred).
 
-### 1.3 Caldera (`<asset-root>/caldera`, 9.7 GB)
+### 1.3 benchmark scene (`<asset-root>/benchmark`, 9.7 GB)
 
-Root `caldera.usda` (text) → 4 subLayers
-(`map_source/mp_wz_island.usd` + `cameras`/`breadcrumbs`/`endpoints`). The root
+Root `benchmark.usda` (text) → 4 subLayers
+(`map_source/mp_wz_reference_scene.usd` + `cameras`/`breadcrumbs`/`endpoints`). The root
 also authors `over` prims selecting the `districtLod = "proxy"` variant for each
 map district. **63,684 files, all binary crate except the text root.**
 
@@ -89,9 +89,9 @@ References are `..`-relative across directories (e.g.
 
 | Scene | LoadNone / proxy working set | Full |
 |---|---|---|
-| Island | structure only, << 1 GB | ~17 GB |
+| reference scene | structure only, << 1 GB | ~17 GB |
 | ALab | metadata ~0.9 GB | textures 7.3 GB + geometry |
-| Caldera | structure ~1.4 GB (measured) | ~10 GB |
+| benchmark scene | structure ~1.4 GB (measured) | ~10 GB |
 
 All three fit a structural parse well under 16 GB when payloads are deferred.
 
@@ -107,11 +107,11 @@ and **keeps the composition graph alive** so geometry can be streamed in later:
 ```cpp
 lightusd::LargeSceneLoadOptions opts;
 opts.payload_mode = PayloadMode::LoadNone;       // defer all geometry payloads
-opts.allow_parent_relative_paths = true;         // Caldera '..' paths
+opts.allow_parent_relative_paths = true;         // benchmark scene '..' paths
 opts.dedup_layers = true;                        // parse each file once
 
 lightusd::LargeSceneLoader loader;
-loader.Load("caldera.usda", opts, &warn, &err);
+loader.Load("benchmark.usda", opts, &warn, &err);
 
 loader.stage();                                  // composed structure
 auto snapshot = loader.stage_snapshot();         // immutable, worker-safe view
@@ -161,18 +161,18 @@ With `dedup_layers`, the loader installs `pcp::LayerRegistry`
 layer-loading seam (`load_layer_fn` / `load_layer_userdata`). Each referenced
 file is resolved + parsed exactly once and shared across every prim that
 references it — essential for the tens of thousands of repeated prefab
-references in Caldera.
+references in benchmark scene.
 
-For cold-load profiling across Caldera districts, use
-`examples/lusdview/tests/run-caldera-matrix.sh`. It defaults to the main
+For cold-load profiling across benchmark scene districts, use
+`examples/lusdview/tests/run-benchmark-matrix.sh`. It defaults to the main
 super-terrain, two season sub-scenes, chem factory, hotel, capital cliffs, and
 phosphate-mine cliffs, and writes a TSV summary while keeping the dataset
 outside the repository:
 
 ```sh
-CALDERA_ROOT=/mnt/disk1/data/caldera \
+BENCHMARK_ROOT=$ASSET_ROOT \
   TIMEOUT_SECS=180 \
-  examples/lusdview/tests/run-caldera-matrix.sh
+  examples/lusdview/tests/run-benchmark-matrix.sh
 ```
 
 Set `SCENES_FILE` to a newline-delimited custom scene list. The harness forces
@@ -181,7 +181,7 @@ composition, render-prim collection, geometry estimation, first useful frame,
 and full-upload timings separately.
 
 To inventory every USD layer, including generated geometry and support layers,
-run `examples/lusdview/tests/run-caldera-inventory.sh`. It performs bounded,
+run `examples/lusdview/tests/run-benchmark-inventory.sh`. It performs bounded,
 parallel parse-only probes and writes one TSV row per file with its class,
 parse time, peak RSS, and parsed stage bytes. Use the inventory to select
 composed-root candidates for the full viewer matrix; leaf geometry files are
@@ -192,7 +192,7 @@ measured for parser cost but are not misleadingly treated as standalone scenes.
 `CompositionGraphOptions::allow_parent_relative_paths` (added in this work)
 threads through the reference/payload/`LoadPayload` asset-path validation so
 `..` segments are permitted and delegated to the resolver. Without it the DAG
-engine rejected such arcs (Caldera composes to almost nothing).
+engine rejected such arcs (benchmark scene composes to almost nothing).
 
 ### 2.5 Example / benchmark
 
@@ -252,9 +252,9 @@ over "root" {
 }
 ```
 
-### 2.6 Measured result (Caldera)
+### 2.6 Measured result (benchmark scene)
 
-`large-scene-load caldera.usda --mode=none` composes the full proxy-mode
+`large-scene-load benchmark.usda --mode=none` composes the full proxy-mode
 structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
 **~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
 deferred proxy geometry on demand.
@@ -331,22 +331,22 @@ the current LightRT Vulkan engine/upload budget. An explicit
 ALab load still failed Vulkan engine creation in this run. The default does not
 silently truncate the asset.
 
-### 2.6.1 Rendering Caldera (lusdrender + lusdview, NVIDIA RTX 5060 Ti)
+### 2.6.1 Rendering benchmark scene (lusdrender + lusdview, NVIDIA RTX 5060 Ti)
 
-Both viewers compose Caldera through the `next` loader (`LoadUSDComposed`,
+Both viewers compose benchmark scene through the `next` loader (`LoadUSDComposed`,
 payloads eager), which handles its `..`-relative payload paths and variant LOD.
-The **default Tydra loader rejects Caldera** ("Unsafe asset path" on the
+The **default Tydra loader rejects benchmark scene** ("Unsafe asset path" on the
 `..`-relative payloads), so lusdview must use `--next`.
 
 **Scene facts.** The default (root-authored) LOD is `districtLod = proxy`
 (12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
-Points). The map is a flat ~8 km island, so **auto-framing the whole bounds is
+Points). The map is a flat ~8 km reference_scene, so **auto-framing the whole bounds is
 useless** — frame a scene camera instead (`layers/cameras.usd`:
 `phospate_mine_overview`, `map_capital_square`, `map_capital_overview`,
 `map_airfield_overview`, `tile_p_beach`, …). **Use the exact prim name** —
 most cameras are `map_`-prefixed (`map_capital_square`, not `capital_square`);
 a name that doesn't match **silently falls back to auto-fit** (the useless
-whole-island shot). List them with
+whole-reference_scene shot). List them with
 `build/lusdcat layers/cameras.usd | grep 'def Camera'`. The guide Points
 triangulate into huge planes that engulf the camera, so they must be hidden
 (both viewers hide `guide` by default).
@@ -355,7 +355,7 @@ triangulate into huge planes that engulf the camera, so they must be hidden
 1280×720, `~4–5 GiB` RSS:
 
 ```sh
-T=tests; M=<asset-root>/caldera/caldera.usda
+T=tests; M=<asset-root>/benchmark/benchmark.usda
 ./build/tools/lusdrender/lusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
 ./build/tools/lusdrender/lusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
 ./build/tools/lusdrender/lusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
@@ -366,7 +366,7 @@ This needed the GPU-collector fix: `-vk/-vkr` previously emitted **raw local**
 points for every Mesh (no world transform / purpose / mask), piling all
 districts at the origin; they now reuse the CPU path's world-space,
 purpose-filtered, masked collection. (Native instances are not yet emitted on
-the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
+the GPU path — negligible for benchmark scene: ~29 K of 12.70 M tris.)
 
 **lusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
 
@@ -385,22 +385,22 @@ the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
   `normalize(vec3(0))` NaN in `mesh.vert` that clipped every zero-normal mesh
   (the `--next` flat preview stores zero normals); before the fix `--next`
   rasterized **nothing** on VK (even plain suzanne).
-- lusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
+- lusdview's 30 M default `--max-tris` budget **truncates** benchmark scene; raise it
   (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
 
 **Known limitations (follow-ups).** ~~lusdview's VK ray-query (`--rt`) is
-blank on Caldera~~ — **fixed**: the RT TLAS included *every* USD purpose, so
-Caldera's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
+blank on benchmark scene~~ — **fixed**: the RT TLAS included *every* USD purpose, so
+benchmark scene's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
 camera; the TLAS now skips purposes hidden in the UI and the mine district
 ray-traces correctly (the July 2026 recipe is in the §2.8 historical note
 and in git history). The VK-raster flat shading still wants the smooth-normal +
 headlight treatment the lusdrender preview already uses. For full LOD, see §2.6.2.
 
-### 2.6.1-a Island element composition and lusdview timings
+### 2.6.1-a reference scene element composition and lusdview timings
 
 The following table records each partial element under
-`<asset-root>/island/usd/elements/*/element.usda`. Each run used the `next`
-loader, eager payload resolution (`--load-payloads`), the Island large-scene
+`<asset-root>/reference_scene/usd/elements/*/element.usda`. Each run used the `next`
+loader, eager payload resolution (`--load-payloads`), the reference scene large-scene
 profile, one headless Vulkan frame at time 1, and `--timing`.
 
 `USD tree MiB` is the sum of non-AppleDouble `*.usd`, `*.usda`, `*.usdc`, and
@@ -482,6 +482,11 @@ LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
 # Flattened USDC output profile
 LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
+
+# Low-memory flatten to USDC (§10.74): same bytes, about 0.44x the peak RSS on
+# full45, about 2.3x the wall time. --batch-prims sets the batch size.
+LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f --memory-profile low \
+  --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
 ```
 
 2) `tydra_to_renderscene`: `--next` conversion and low-memory release path:
@@ -508,20 +513,20 @@ fi
 3) Scene-specific invocation examples used in this document:
 
 ```sh
-# Caldera (proxy composition baseline)
-CALDERA=<asset-root>/caldera/caldera.usda
-[ -f "$CALDERA" ] && LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
-  --compose-threads-auto --defer-payloads "$CALDERA"
+# benchmark scene (proxy composition baseline)
+BENCHMARK=<asset-root>/benchmark/benchmark.usda
+[ -f "$BENCHMARK" ] && LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+  --compose-threads-auto --defer-payloads "$BENCHMARK"
 
 # ALab merged scene proxy mode
 ALAB=<asset-root>/alab/_merged_ALab/entry.usda
 [ -f "$ALAB" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
   --lowmem --memstat "$ALAB"
 
-# Moana Island payload-heavy scene
-ISLAND=<asset-root>/island/usd/island.usda
-[ -f "$ISLAND" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
-  --lowmem --memstat "$ISLAND"
+# reference scene payload-heavy scene
+REFERENCE_SCENE=<asset-root>/reference_scene/usd/reference_scene.usda
+[ -f "$REFERENCE_SCENE" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+  --lowmem --memstat "$REFERENCE_SCENE"
 ```
 
 For interactive prefab timing, use
@@ -542,9 +547,9 @@ For comparisons between commits/branches:
 - Use `--no-animation` for static-scene conversion comparisons (without
   per-prim time-sample scans) when timing geometry + scene traversal only.
 
-### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
+### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-reference_scene
 
-**Whole-island full LOD does not fit on a 62 GiB host, and the wall is host
+**Whole-reference_scene full LOD does not fit on a 62 GiB host, and the wall is host
 RAM, not VRAM** (a 125 GiB host does complete it — see §2.6.8).
 Both viewers (and every lusdrender backend, including `-vk`/`-vkr`) *eagerly
 compose all 45 districts' full payloads into host-RAM arrays and build a single
@@ -557,7 +562,7 @@ path today (one soup, one BLAS).
 
 Two gotchas when forcing full LOD:
 
-- **A global `-variant districtLod=full` has no effect.** The root `caldera.usda`
+- **A global `-variant districtLod=full` has no effect.** The root `benchmark.usda`
   authors an explicit per-district `over … (variants = {string districtLod =
   "proxy"})` for all 45 districts, and an authored selection beats a load-time
   override. You must re-author the selection in a **stronger wrapper layer**.
@@ -575,11 +580,11 @@ that sublayers the scene and re-authors *just that district* to `full`:
 ```usda
 #usda 1.0
 (
-    subLayers = [ @<asset-root>/caldera/caldera.usda@ ]
+    subLayers = [ @<asset-root>/benchmark/benchmark.usda@ ]
     upAxis = "Z"
 )
-over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
-    over "mp_wz_island_geo" {
+over "world" { over "mp_wz_reference_scene" { over "mp_wz_reference_scene_paths" {
+    over "mp_wz_reference_scene_geo" {
         over "map_phosphate_mine" ( variants = { string districtLod = "full" } ) {}
     }
 }}}
@@ -588,7 +593,7 @@ over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
 Render the wrapper exactly like the scene, framing the matching camera:
 
 ```sh
-W=caldera_mine_full.usda   # the wrapper above
+W=benchmark_mine_full.usda   # the wrapper above
 # lusdrender CPU ray tracing:
 ./build/tools/lusdrender/lusdrender $W mine_cpu.png -rtPreview \
     -camera phospate_mine_overview -w 1280 -height 720 -maxMem 45 -stats
@@ -621,17 +626,17 @@ scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
 `full`, frame its camera, `lusdrender -rtPreview`) renders any district at full
 detail within the host budget. Every district measured so far fits comfortably
 as a single promotion (18–50 M default-purpose tris, ≤21 GiB host RSS) — it is
-only the whole *island* at full that does not fit (see top of this section).
+only the whole *reference_scene* at full that does not fit (see top of this section).
 
 | District (camera) | Default tris @ full | View |
 |---|---:|---|
-| `map_phosphate_mine` (`phospate_mine_overview`) | 29.8 M | ![phosphate mine](images/caldera/caldera-phosphate-mine-full.jpg) |
-| `map_capital` (`map_capital_square`) | 44.3 M | ![capital square](images/caldera/caldera-capital-square-full.jpg) |
-| `map_beachhead` (`map_beachhead_village`) | 23.6 M | ![beachhead village](images/caldera/caldera-beachhead-village-full.jpg) |
-| `map_tile_p` (`tile_p_beach`) | 27.8 M | ![tile_p beach](images/caldera/caldera-tile-p-beach-full.jpg) |
-| `map_airfield` (`map_airfield_overview`) | 36.9 M | ![airfield](images/caldera/caldera-airfield-full.jpg) |
-| `map_arsenal` (`map_arsenal_ship`) | 24.1 M | ![arsenal shipyard](images/caldera/caldera-arsenal-shipyard-full.jpg) |
-| `map_agricultural_center` (`map_agricultural_center_bridge`) | 18.1 M | ![agricultural center](images/caldera/caldera-agricultural-center-full.jpg) |
+| `map_phosphate_mine` (`phospate_mine_overview`) | 29.8 M | ![phosphate mine](images/benchmark/benchmark-phosphate-mine-full.jpg) |
+| `map_capital` (`map_capital_square`) | 44.3 M | ![capital square](images/benchmark/benchmark-capital-square-full.jpg) |
+| `map_beachhead` (`map_beachhead_village`) | 23.6 M | ![beachhead village](images/benchmark/benchmark-beachhead-village-full.jpg) |
+| `map_tile_p` (`tile_p_beach`) | 27.8 M | ![tile_p beach](images/benchmark/benchmark-tile-p-beach-full.jpg) |
+| `map_airfield` (`map_airfield_overview`) | 36.9 M | ![airfield](images/benchmark/benchmark-airfield-full.jpg) |
+| `map_arsenal` (`map_arsenal_ship`) | 24.1 M | ![arsenal shipyard](images/benchmark/benchmark-arsenal-shipyard-full.jpg) |
+| `map_agricultural_center` (`map_agricultural_center_bridge`) | 18.1 M | ![agricultural center](images/benchmark/benchmark-agricultural-center-full.jpg) |
 
 Every other authored camera frames one of these same districts from a different
 pose — the district is promoted to `full` exactly as above, only the `-camera`
@@ -639,12 +644,12 @@ changes:
 
 | District (camera) | Default tris @ full | View |
 |---|---:|---|
-| `map_phosphate_mine` (`phospate_mine_bridge`) | 29.8 M | ![mine bridge](images/caldera/caldera-phosphate-mine-bridge-full.jpg) |
-| `map_capital` (`map_capital_overview`) | 44.3 M | ![capital overview](images/caldera/caldera-capital-overview-full.jpg) |
-| `map_beachhead` (`map_beachhead_overview`) | 23.6 M | ![beachhead overview](images/caldera/caldera-beachhead-overview-full.jpg) |
-| `map_tile_p` (`tile_p_road`) | 27.8 M | ![tile_p road](images/caldera/caldera-tile-p-road-full.jpg) |
-| `map_airfield` (`map_airfield_waiting_room`) | 36.9 M | ![airfield waiting room](images/caldera/caldera-airfield-waiting-room-full.jpg) |
-| `map_arsenal` (`map_arsenal_overview`) | 24.1 M | ![arsenal overview](images/caldera/caldera-arsenal-overview-full.jpg) |
+| `map_phosphate_mine` (`phospate_mine_bridge`) | 29.8 M | ![mine bridge](images/benchmark/benchmark-phosphate-mine-bridge-full.jpg) |
+| `map_capital` (`map_capital_overview`) | 44.3 M | ![capital overview](images/benchmark/benchmark-capital-overview-full.jpg) |
+| `map_beachhead` (`map_beachhead_overview`) | 23.6 M | ![beachhead overview](images/benchmark/benchmark-beachhead-overview-full.jpg) |
+| `map_tile_p` (`tile_p_road`) | 27.8 M | ![tile_p road](images/benchmark/benchmark-tile-p-road-full.jpg) |
+| `map_airfield` (`map_airfield_waiting_room`) | 36.9 M | ![airfield waiting room](images/benchmark/benchmark-airfield-waiting-room-full.jpg) |
+| `map_arsenal` (`map_arsenal_overview`) | 24.1 M | ![arsenal overview](images/benchmark/benchmark-arsenal-overview-full.jpg) |
 
 (1280×720 `lusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
 to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
@@ -655,7 +660,7 @@ count is per *district*, so it is identical across that district's cameras.)
 
 These measurements promote one district to `districtLod = "full"` in a stronger
 wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
-The input tree is `<asset-root>/caldera` (10,496,782,370 bytes, about 10.50
+The input tree is `<asset-root>/benchmark` (10,496,782,370 bytes, about 10.50
 GB, including all USD and texture assets). Each run used `--load-payloads`,
 `--large-scene-profile balanced`, one headless Vulkan frame at time 1, and
 `--timing`. `Extract` is the sum of next-core extraction/collection phases;
@@ -680,7 +685,7 @@ upload/present fields are intentionally blank.
 | map_tile_p | 5848 | 42,998,848 / 57,564,635 | 41,333 | 345.6 | 49.055 | 20.894 | 24.837 | 95.860 | 14,952 | 3.70 | 407.3 | pass |
 
 The full-promotion cost is not proportional to the selected district alone:
-every row still composes the complete proxy island and its shared layers. The
+every row still composes the complete proxy reference_scene and its shared layers. The
 capital and airfield rows are the heaviest host-memory cases; the phosphate
 mine has the most converted mesh nodes because its full payload is highly
 fragmented. This is why per-shot full LOD remains preferable to promoting all
@@ -690,7 +695,7 @@ fragmented. This is why per-shot full LOD remains preferable to promoting all
 
 The `map_capital` full payload is itself a 42,470-byte crate, but its composed
 content contains 114 top-level children below `/world/map_capital`. Loading
-that crate directly is much cheaper than composing the complete island wrapper,
+that crate directly is much cheaper than composing the complete reference_scene wrapper,
 but it still produces a large single conversion batch. A stronger decomposition
 is to author one small wrapper per top-level child and reference the child path
 inside the capital crate:
@@ -719,7 +724,7 @@ software Vulkan backend was used because the NVIDIA driver was unavailable.
 
 | Input decomposition | Compose s | Convert s | Load total s | Meshes | ntris | Peak RSS MiB | GPU upload s | Present ms |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Full-island wrapper, `map_capital = full` | 102.006 | 30.525 | 178.830 | 3623 | 45,498,738 | 26,134 | — | — |
+| Full-reference_scene wrapper, `map_capital = full` | 102.006 | 30.525 | 178.830 | 3623 | 45,498,738 | 26,134 | — | — |
 | Direct `map_capital.usd` crate | 49.396 | 41.780 | 125.879 | 3614 | 39,402,788 | 17,712 | 7.33 | 556.1 |
 | One child wrapper: `cityhall_01` | 2.163 | 1.298 | 4.724 | 337 | 2,670,852 | 1,108 | 0.39 | 60.2 |
 
@@ -750,7 +755,7 @@ first and `map_phosphate_mine` 8th; the coverage+alignment score ranks the mine
 first at `align=0.98`.)
 
 ```sh
-M=<asset-root>/caldera/caldera.usda
+M=<asset-root>/benchmark/benchmark.usda
 # CPU ray tracing, default budgets (host = 50% of MemAvailable):
 ./build/tools/lusdrender/lusdrender $M out.png -lodStream -rtPreview \
     -camera map_capital_square -purpose default,render,proxy -w 1280 -height 720 -stats
@@ -766,7 +771,7 @@ per-district cost charge; default 10 / 3 GiB), `-lodMinVerts`/`-lodMaxVerts`
 overlays that author no `full` geometry — e.g. a 14.6 M-vert spawn-marker set
 that would otherwise hijack the ranking; defaults 1000 / 2000000),
 `-lodContainer` (the namespace prim whose children are districts; default
-`mp_wz_island_geo`).
+`mp_wz_reference_scene_geo`).
 
 Measured (`phospate_mine_overview`, RTX 5060 Ti / 62 GiB host, default budgets):
 
@@ -804,16 +809,16 @@ frame), the chosen set is composed in a single soup/BLAS (no eviction), and the
 cost charge ignores per-district size variation — so on a tight machine lower
 `-lodDistrictMem` (fewer promotions) or set `-maxMem` to a higher explicit cap.
 
-### 2.6.4 Realtime island preview: GPU-budget LOD + robust auto-framing (lusdview)
+### 2.6.4 Realtime reference_scene preview: GPU-budget LOD + robust auto-framing (lusdview)
 
 `-lodStream` (above) is a lusdrender, ray-tracing, load-time selection. The
 interactive **lusdview** rasterizer hits a different wall on a fully assembled
-scene. The Moana island (`<asset-root>/island`) composes via `--next` to
+scene. The Moana reference_scene (`<asset-root>/reference_scene`) composes via `--next` to
 **83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
 dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
 ~2.06 GiB). The problem is **draw/buffer count**: the per-mesh raster path
 creates ~84 k host-visible Vulkan buffers and stalls for **7+ minutes** before
-the first frame. (A plain `--next --backend vk` whole-island run times out in
+the first frame. (A plain `--next --backend vk` whole-reference_scene run times out in
 the buffer-creation loop, not on memory.)
 
 **`--max-draw-meshes N` / `--max-gpu-mem <GiB>` (GPU-budget LOD).**
@@ -828,13 +833,13 @@ unit cube, transformed per instance). The scene then uploads as **~N+1 buffers**
 Simple preview only: the proxy boxes shade flat, no shadows/GI.
 
 ```sh
-M=<asset-root>/island/usd/island.usda
+M=<asset-root>/reference_scene/usd/reference_scene.usda
 # 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
 # merge the other ~79.8 k meshes into one bbox proxy:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
   ./build/lusdview --headless --next --backend vk \
     --max-tris 80000000 --max-gpu-mem 16 --max-draw-meshes 4000 \
-    --frames 2 --screenshot island.ppm $M
+    --frames 2 --screenshot reference_scene.ppm $M
 ```
 
 ```
@@ -844,14 +849,14 @@ gpu-budget LOD: 4000 meshes full (0.08 GiB), merged 79801 meshes / 42730328
 render stats: 4001/4001 meshes visible, 42869757 instances, 581550424 drawn tris, 4001 draw calls
 ```
 
-**`--no-robust-frame` (robust auto-framing, on by default).** The island's *raw*
+**`--no-robust-frame` (robust auto-framing, on by default).** The reference_scene's *raw*
 scene bbox is **170,091 units across** — a handful of far-flung meshes sit at
-±tens of thousands while the actual island occupies a ~9,200-unit region near the
-origin. `fitToScene` on the raw bbox renders the island as a sub-pixel speck.
+±tens of thousands while the actual reference_scene occupies a ~9,200-unit region near the
+origin. `fitToScene` on the raw bbox renders the reference_scene as a sub-pixel speck.
 `ComputeRobustSceneBounds()` fixes the framing with **mass-weighted endpoint
 trimming**: each mesh's world-AABB min/max endpoints carry its geometry mass
 (`instanceCount × triCount`), and per axis 1% of the *mass* is trimmed from each
-tail. Sparse far elements weigh ~nothing and drop out; the dense island defines
+tail. Sparse far elements weigh ~nothing and drop out; the dense reference_scene defines
 the kept range. It only overrides framing when the result is materially tighter
 (robust diag < 70% of full), so normal scenes that fill their bbox are
 untouched. It is computed from the full per-mesh set **before** the LOD merge
@@ -862,7 +867,7 @@ The named-USD-camera path (`--camera`) is unaffected.
 robust auto-frame: trimmed 1% outliers, scene diag 170091.6 -> 9265.6 (95% smaller)
 ```
 
-With both on, the whole island uploads in seconds instead of stalling, fits well
+With both on, the whole reference_scene uploads in seconds instead of stalling, fits well
 under 16 GiB VRAM, renders all 42.9 M instances through the existing per-instance
 frustum culling, and frames Motunui (shoreline, palms as full trunks + bbox-proxy
 foliage) instead of a speck. **Limitations:** the proxy is rebuilt only on load
@@ -893,7 +898,7 @@ viewDepth`, from the instance's world-AABB):
 Box proxies render on both raster backends: GL (`initBoxProxy`) and Vulkan
 (`initBoxProxyRaster` / `drawBoxProxies`, reusing the prototype instanced
 pipeline — meshId `-1`, geometric-normal shading). This matters for the headless
-path specifically: **headless forces the Vulkan backend**, so on island/Caldera
+path specifically: **headless forces the Vulkan backend**, so on reference_scene/benchmark scene
 captures the VK box proxies are what keep the distant scene visible. The feature
 is **off by default** and the LOD-off path is byte-identical (verified MAE 0 on
 both backends). The cull itself is accelerated by a coarse per-prototype spatial
@@ -901,16 +906,16 @@ grid (`BuildRtLodGrid`) that frustum-rejects whole cells before the per-instance
 loop.
 
 ```sh
-M=<asset-root>/island/usd/island.usda
-# Whole island, VK raster, robust auto-frame; collapse anything under 48 px to a
+M=<asset-root>/reference_scene/usd/reference_scene.usda
+# Whole reference_scene, VK raster, robust auto-frame; collapse anything under 48 px to a
 # box, drop anything under 1 px:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
   ./build/lusdview --headless --next --backend vk \
     --raster-lod --raster-lod-cull-px 1 --raster-lod-full-px 48 \
-    --max-tris 80000000 --frames 4 --screenshot island.ppm $M
+    --max-tris 80000000 --frames 4 --screenshot reference_scene.ppm $M
 ```
 
-Measured on the RTX 5060 Ti (whole island, 42.9 M instances, VK raster, robust
+Measured on the RTX 5060 Ti (whole reference_scene, 42.9 M instances, VK raster, robust
 auto-frame, 4 frames so the focal length settles — see note below):
 
 | Mode | Full-detail instances | `present` (GPU+readback) | Distant scene |
@@ -921,7 +926,7 @@ auto-frame, 4 frames so the focal length settles — see note below):
 
 So size-culling alone cuts visible instances ~340× (23.7 M → 69 k) and the GPU
 present ~10× (5.6 s → 0.56 s); switching the drop to a box proxy keeps the same
-~10× frame-time win **without** losing the distant island — the far vegetation
+~10× frame-time win **without** losing the distant reference_scene — the far vegetation
 clumps become cheap gray boxes (~12 tris each) instead of vanishing. Unlike
 §2.6.4's merge this re-selects every time the camera settles, so pulling the
 camera in promotes near boxes back to full geometry.
@@ -940,27 +945,27 @@ single global threshold rather than a per-prototype importance score.
 
 ### 2.6.6 Realtime large-scene profiles (`--large-scene-profile`, lusdview)
 
-`lusdview --large-scene-profile off|auto|caldera|island|alab` is a preset layer
-over the existing Vulkan large-scene flags. It is meant for repeatable Caldera,
-Island, and ALab smoke/performance runs without memorizing the full flag list:
+`lusdview --large-scene-profile off|auto|benchmark|reference_scene|alab` is a preset layer
+over the existing Vulkan large-scene flags. It is meant for repeatable benchmark scene,
+reference scene, and ALab smoke/performance runs without memorizing the full flag list:
 profiles enable `--next`, prefer the Vulkan backend, enable raster/RT LOD, set
 conservative draw/VRAM budgets, and print the resolved settings at startup.
-`auto` only applies a profile when the input path clearly names Caldera, Island
+`auto` only applies a profile when the input path clearly names benchmark scene, reference scene
 or Moana, or ALab; otherwise it resolves to `off`.
 
 Explicit CLI flags win. For example, `--large-scene-profile instance-heavy
---max-gpu-mem 6 --raster-lod-full-px 32` keeps the Island preset but uses the
+--max-gpu-mem 6 --raster-lod-full-px 32` keeps the reference scene preset but uses the
 user's GPU budget and LOD threshold. Profiles do **not** enable texture resize or
 BCn/compressed texture paths; those remain controlled only by
 `--texture-max-size`, `--texture-budget-mb`, and `--texture-compress`.
 
 Scene-specific defaults:
 
-- `caldera`: raises the triangle cap to avoid the old 30 M-triangle truncation,
+- `benchmark`: raises the triangle cap to avoid the old 30 M-triangle truncation,
   uses the named overview camera when no camera is passed, and enables district
   LOD streaming with host/VRAM budgets.
-- `island`: caps full raster uploads by draw count and VRAM, then relies on
-  per-frame raster LOD to keep the distant island visible as box proxies.
+- `reference_scene`: caps full raster uploads by draw count and VRAM, then relies on
+  per-frame raster LOD to keep the distant reference_scene visible as box proxies.
 - `alab`: enables parent-relative composition paths because the public ALab
   layout uses `../lightingrenderovers/`, then applies the same Vulkan/LOD budget
   preset pattern.
@@ -969,14 +974,14 @@ Optional local harness:
 
 ```sh
 LUSDVIEW=./build_ninja/lusdview \
-CALDERA=/path/to/caldera.usda \
-ISLAND=/path/to/island.usda \
+BENCHMARK=/path/to/benchmark.usda \
+REFERENCE_SCENE=/path/to/reference_scene.usda \
 ALAB=/path/to/alab.usda \
   bash examples/lusdview/tests/run-large-scene-profiles.sh
 
 LUSDRENDER=./build_ninja/tools/lusdrender/lusdrender \
-CALDERA=/path/to/caldera.usda \
-ISLAND=/path/to/island.usda \
+BENCHMARK=/path/to/benchmark.usda \
+REFERENCE_SCENE=/path/to/reference_scene.usda \
 ALAB=/path/to/alab.usda \
   bash tools/lusdrender/tests/run-large-scene-profiles.sh
 ```
@@ -990,29 +995,29 @@ code, elapsed seconds, image bytes, and log path. Use `LUSDVIEW_EXTRA_ARGS` or
 bounds each viewer scene run. They are intentionally not required ctests because
 these large assets are not tracked in the repository.
 
-### 2.6.7 Ray-traced full island (lusdview `--hip`, AMD RX 9070 XT)
+### 2.6.7 Ray-traced full reference_scene (lusdview `--hip`, AMD RX 9070 XT)
 
 §2.6.4 is a *rasterizer* preview: it merges the long tail into a flat box-proxy so
 the per-mesh draw path stays cheap. The **HIP ray tracer** (`--hip`) takes the
 opposite approach — it ignores the raster draw/buffer budget entirely and traces
 the **full** geometry: every prototype's real triangles, instanced by the real
 per-instance transforms, in one 2-level BVH (per-prototype BLAS + a TLAS over all
-instances). On a 16 GiB GPU the **whole Moana island fits** — all 42.9 M instances
+instances). On a 16 GiB GPU the **whole Moana reference_scene fits** — all 42.9 M instances
 over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
 
 ```sh
-M=<asset-root>/island/usd/island.usda
-# Full island, HIP ray tracing, framed on the hero shot camera.
+M=<asset-root>/reference_scene/usd/reference_scene.usda
+# Full reference_scene, HIP ray tracing, framed on the hero shot camera.
 # --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
 ./build/lusdview --headless --next --hip \
   --camera shotCam --max-instances 0 --rt-samples 2 \
-  --frames 4 --screenshot island.ppm $M
+  --frames 4 --screenshot reference_scene.ppm $M
 ```
 
 ```
 next: 83798 draws, 42869753 instances, 30009608 unique tris (17508653596 effective), instXform VRAM ~2.06 GB, up=Y
 [rt_scene_build] 83798 meshes -> 30009608 tris / 42869754 instances: phaseA(geom) 28518 ms, phaseB(assemble+TLAS) 56137 ms
-HIP: traced 42869754 instances, 30009608 unique tris, 91138 colors -> island.ppm
+HIP: traced 42869754 instances, 30009608 unique tris, 91138 colors -> reference_scene.ppm
 ```
 
 Measured on the RX 9070 XT (gfx1201, 16 GiB): **2 m 03 s** wall-clock end-to-end,
@@ -1023,17 +1028,17 @@ bare ironwood trees.
 
 Notes and gotchas:
 
-- **`--next` is mandatory.** The standard Tydra loader rejects the island's
-  `..`-relative payloads (same "Unsafe asset path" as Caldera, §2.6.1); `--next`
+- **`--next` is mandatory.** The standard Tydra loader rejects the reference_scene's
+  `..`-relative payloads (same "Unsafe asset path" as benchmark scene, §2.6.1); `--next`
   composes them. `--hip` then traces whatever geometry the loader produced — it
   does **not** apply the §2.6.4 raster box-proxy LOD.
 - **`--max-instances 0`.** The ray tracer defaults to a 16 M instance cap; the
-  island has 42.9 M, so the default **truncates by mesh build order** (not frustum
-  visibility) and drops most of the scene. Pass `0` for the full island.
-- **Named cameras.** `island.usda` authors `shotCam`, `birdseyeCam`, `beachCam`,
+  reference_scene has 42.9 M, so the default **truncates by mesh build order** (not frustum
+  visibility) and drops most of the scene. Pass `0` for the full reference_scene.
+- **Named cameras.** `reference_scene.usda` authors `shotCam`, `birdseyeCam`, `beachCam`,
   `dunesACam`, `grassCam`, `palmsCam`, `rootsCam`; select one with `--camera`
   (a name that doesn't match silently falls back to whole-scene auto-fit, which
-  for the island is a speck — see §2.6.4's robust framing). `--rt-samples N` adds
+  for the reference_scene is a speck — see §2.6.4's robust framing). `--rt-samples N` adds
   Halton(2,3) sub-pixel AA.
 - **What makes it feasible.** Two earlier fixes: (1) the CPU scene build is
   parallelized (`rt_scene_build.cc` — per-mesh geometry, per-instance transforms,
@@ -1053,13 +1058,13 @@ without a limit:
 ./build/lusdview --headless --next --cuda --load-payloads \
   --large-scene-profile instance-heavy --max-tris 20000000 \
   --max-instances 2000000 --vram-budget 12 --rt-samples 1 \
-  --frames 1 --screenshot island-cuda.png $M
+  --frames 1 --screenshot reference_scene-cuda.png $M
 ```
 
 When `--max-tris` is between 1 and 64 million, RT converts legacy point and
 curve carriers into a bounded analytic splat stream (`max-tris / 8` samples)
 instead of materializing triangle tubes. Meshes retain priority. The 20M
-Island profile measured about 26.2M KiB peak RSS and 4.6 GiB CUDA VRAM on an
+reference scene profile measured about 26.2M KiB peak RSS and 4.6 GiB CUDA VRAM on an
 RTX 5060 Ti; curve and unoriented-point quality is intentionally reduced.
 
 ### 2.7 RenderScene optimization for realtime viewers
@@ -1136,21 +1141,21 @@ later sections; the tables and recipes are in git history
 (`git log -- doc/large-scene.md`). Durable outcomes, so they are not re-derived:
 
 - LightRT VK BLAS compaction stays ON by default (`LRT_VK_BLAS_COMPACT=0` opts
-  out): caldera `-vkInstanced` 1051→525 MiB; island full instance set
+  out): benchmark `-vkInstanced` 1051→525 MiB; reference_scene full instance set
   7153→5408 MiB and 49.6→31.7 s.
 - Device-local MDI instance mirror is auto-enabled at ≥20 % VRAM headroom
-  (`LUSDVIEW_MDI_DEVLOCAL=0/1` forces it); it costs ~1.37 GB on island and does
+  (`LUSDVIEW_MDI_DEVLOCAL=0/1` forces it); it costs ~1.37 GB on reference_scene and does
   nothing under `--raster-lod`, whose frame is primitive-bound.
 - TLAS `PREFER_FAST_BUILD` was measured and rejected, and the `-vk` tiled
   ray/hit dispatch did not pay off (implemented, off by default).
 - The `--raster-lod` knobs remain the budget lever for tight-VRAM raster runs;
-  island RT cost is dominated by the grid + LOD-bound BLAS set, not the rt-lod
+  reference_scene RT cost is dominated by the grid + LOD-bound BLAS set, not the rt-lod
   pixel thresholds.
 
 ### 2.6.8 Next-core load/compose profile on a 32-core, 125 GiB host (2026-10)
 
-Measured on the workstation that hosts the Caldera checkout
-(`/path/to/caldera`, 10.5 GB, 63,684 files; 32 cores, 125 GiB RAM,
+Measured on the workstation that hosts the benchmark scene checkout
+(`/path/to/benchmark`, 10.5 GB, 63,684 files; 32 cores, 125 GiB RAM,
 NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, formerly `next_usdcat`),
 `--compose-threads-auto`, `LIGHTUSD_NEXT_TIMING=1`.
 
@@ -1162,8 +1167,8 @@ NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, formerly `next_usdcat`)
 | proxy LOD, payloads loaded | auto | **3.47–3.56 s** | 9.2–9.3 s | **12.8 s** | 1.90 GiB | 286 MB USDC (byte-identical) |
 | one district at full LOD (`map_phosphate_mine = full`) | 1 | 126–133 s | 62–63 s | 188–196 s | 6.8 GiB | 580 MB USDC (4,458,013 paths/specs) |
 | one district at full LOD | auto | **69–72 s** | 59–76 s | **130–148 s** | **20.9–25.2 GiB** | 580 MB USDC (byte-identical) |
-| whole island at full LOD (all 45 districts `full`) | 1 | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
-| whole island at full LOD | auto | *not re-measured* | — | — | — | — |
+| whole reference_scene at full LOD (all 45 districts `full`) | 1 | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
+| whole reference_scene at full LOD | auto | *not re-measured* | — | — | — | — |
 
 **The threaded next core is the default for native builds** (`LIGHTUSD_NEXT_ENABLE_THREAD`
 now defaults ON outside Emscripten; WASM stays OFF). Every figure above is
@@ -1186,23 +1191,23 @@ pre-pass (`tables`) takes only 0.22–0.34 s of a 9.2–9.8 s write, while
 4.46 M), so the crate write is the next target; the parallel ASCII (USDA)
 writer already hides its build behind workers.
 
-**The full-island case fits in RAM — and now completes.** With the whole
-island promoted to `districtLod = full` (all 45 districts) the next-core loader
+**The full-reference_scene case fits in RAM — and now completes.** With the whole
+reference_scene promoted to `districtLod = full` (all 45 districts) the next-core loader
 composes **10,224,245 prims** (10,217,261 source misses) and writes a
 **3.01 GB** USDC in **114 min** on this 32-core / 125 GiB host, peaking around
 **59 GiB RSS** (measured by sampling `/proc/<pid>/status`). The memory budget
 therefore fits with room to spare; the wall is compose time, not RAM.
 
-That is the *whole island* in one process. The per-district full LOD
+That is the *whole reference_scene* in one process. The per-district full LOD
 (§2.6.2) remains the production-correct approach — one district at full LOD is
-~3.5 min and ~8 GiB — but the full-island load is now demonstrated to
+~3.5 min and ~8 GiB — but the full-reference_scene load is now demonstrated to
 complete rather than exhausting the host.
 
 **Memory is the price.** The threaded path keeps per-worker resolver snapshots
 and the merged sources cache alive, so the full-LOD district peaks at
 **20.9–25.2 GiB** versus **6.8 GiB** single-threaded, and the proxy rises from
 1.07 to 1.35 GiB. `--compose-threads 8`/`16` do not reduce the peak (the merge,
-not the worker count, dominates). **Re-measure the whole-island full-LOD case
+not the worker count, dominates). **Re-measure the whole-reference_scene full-LOD case
 before using the threaded build for it** — single-threaded it peaks at ~59 GiB,
 and the threaded warm phase is expected to add a large multiple of that.
 
@@ -1216,7 +1221,7 @@ case; these are not Release optimization baselines):
 | `compose` (opinion composition) | 40–57 s | |
 | crate write `fields_specs` | 41–42 s | 4.46 M specs |
 
-For the whole island the same phases scale to `sources` 20.5 min, `structure`
+For the whole reference_scene the same phases scale to `sources` 20.5 min, `structure`
 24.6 min, `compose` 34.8 min, and a crate write of 35.3 min (of which
 `fields_specs` alone is 27 min for 61.8 M specs), so both the compose and the
 writer are linear in the composed prim count.
@@ -1261,7 +1266,7 @@ filter only builds if the stack is queried heavily enough to amortize it, so
 small reference stacks do not pay for one. A false positive falls through to
 the old probes; a negative is answered with two bit tests.
 
-Measured with the same Caldera fixtures (SHA-256 of every output unchanged):
+Measured with the same benchmark scene fixtures (SHA-256 of every output unchanged):
 
 | Case | metric | before | after |
 |---|---|---:|---:|
@@ -1300,17 +1305,17 @@ by the crate write.
 Reproduce with:
 
 ```sh
-M=/path/to/caldera/caldera.usda
+M=/path/to/benchmark/benchmark.usda
 # threaded (default for native builds)
 LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
-  --defer-payloads -o /tmp/caldera.usda "$M"          # proxy structure
+  --defer-payloads -o /tmp/benchmark.usda "$M"          # proxy structure
 LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
-  --load-payloads -o /tmp/caldera.usdc "$M"            # proxy + payloads
+  --load-payloads -o /tmp/benchmark.usdc "$M"            # proxy + payloads
 # single-threaded reference (build configured with
 # -DLIGHTUSD_NEXT_ENABLE_THREAD=OFF)
 LIGHTUSD_NEXT_TIMING=1 ./build-next-st/lusdcat -f --compose-threads 1 \
-  --load-payloads -o /tmp/caldera-st.usdc "$M"
-sha256sum /tmp/caldera.usdc /tmp/caldera-st.usdc      # must match
+  --load-payloads -o /tmp/benchmark-st.usdc "$M"
+sha256sum /tmp/benchmark.usdc /tmp/benchmark-st.usdc      # must match
 ```
 
 Full-LOD district wrapper (one district promoted to `full`):
@@ -1318,11 +1323,11 @@ Full-LOD district wrapper (one district promoted to `full`):
 ```usda
 #usda 1.0
 (
-    subLayers = [ @/path/to/caldera/caldera.usda@ ]
+    subLayers = [ @/path/to/benchmark/benchmark.usda@ ]
     upAxis = "Z"
 )
-over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
-    over "mp_wz_island_geo" {
+over "world" { over "mp_wz_reference_scene" { over "mp_wz_reference_scene_paths" {
+    over "mp_wz_reference_scene_geo" {
         over "map_phosphate_mine" ( variants = { string districtLod = "full" } ) {}
     }
 } } }
@@ -1330,7 +1335,7 @@ over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
 
 ### 2.6.9 Python binding (abi3) load/compose profile (2026-10)
 
-This is the same Caldera fixture measured **through the Python API**
+This is the same benchmark scene fixture measured **through the Python API**
 (`lightusd.load`), not the CLI, to check that the extension adds no second
 parse/compose copy and to A/B the `158add057..3455474cf` commit range. Both
 sides were built as in-place abi3 extensions from clean worktrees; each run is
@@ -1410,7 +1415,7 @@ for p in 0 1; do
 import sys, time, lightusd
 payloads = sys.argv[1] == "1"
 t = time.perf_counter()
-st = lightusd.load("/path/to/caldera/caldera.usda",
+st = lightusd.load("/path/to/benchmark/benchmark.usda",
                    composed=True, load_payloads=payloads)
 dt = time.perf_counter() - t
 rss = next(int(l.split()[1]) for l in open("/proc/self/status")
@@ -1428,7 +1433,7 @@ done
 
 The loader bounds memory and streams payloads. Cross-directory cwp anchoring
 (§3.1) and referenced-prim descendant reconstruction (§3.2) are now **fixed** —
-Caldera composes its full proxy-mode structure (32,811 prims, geometry deferred)
+benchmark scene composes its full proxy-mode structure (32,811 prims, geometry deferred)
 in ~1.7 GiB. The items below are remaining enhancements.
 
 ### 3.1 Cross-directory cwp anchoring — FIXED
@@ -1436,11 +1441,11 @@ in ~1.7 GiB. The items below are remaining enhancements.
 **Was:** a loaded layer's PrimSpecs got their working-path stamped from
 `GetBaseDir(authored_asset_path)` — a *relative* path — instead of the *resolved
 absolute* base directory, so nested references lost their parent-directory
-context (e.g. `prefabs/...` inside `map_source/mp_wz_island_geo.usd` anchored to
+context (e.g. `prefabs/...` inside `map_source/mp_wz_reference_scene_geo.usd` anchored to
 the scene root instead of `map_source/`). A second case: when sublayer
 flattening merged a stronger `over` (carrying the root layer's cwp) onto a weaker
-`def` that authored the reference (e.g. Caldera's root `over mp_wz_island_paths`
-over `mp_wz_island.usd`'s `def`), the merged prim kept the root cwp and
+`def` that authored the reference (e.g. benchmark scene's root `over mp_wz_reference_scene_paths`
+over `mp_wz_reference_scene.usd`'s `def`), the merged prim kept the root cwp and
 mis-anchored the arc.
 
 **Fix (implemented):**
@@ -1465,10 +1470,10 @@ reverted. Full unit suite (853 cases) unaffected.
 **Was:** `CompositionGraph` built a `PrimIndex` per prim by walking only the
 **root-layer** namespace (`BuildPrimIndex` DFS over the root-layer PrimSpec's
 children) and `ScanArcsAndEnqueueTasks` scanned only a prim's *own* arcs. Child
-prims introduced *by a reference* (e.g. `paths.usd`'s `mp_wz_island_geo`, which
+prims introduced *by a reference* (e.g. `paths.usd`'s `mp_wz_reference_scene_geo`, which
 itself references `geo.usd`) were never added to the namespace, so their arcs
-were never followed and they never reached the Stage. Caldera's chain
-(`mp_wz_island` → `paths` → `geo` → prefabs → proxy payloads) stopped a few
+were never followed and they never reached the Stage. benchmark scene's chain
+(`mp_wz_reference_scene` → `paths` → `geo` → prefabs → proxy payloads) stopped a few
 levels in (≈6 files parsed, 0 deferred payloads).
 
 **Fix (implemented, `src/composition-graph.cc`):** `BuildPrimIndex` now expands
@@ -1482,7 +1487,7 @@ own arcs are then scanned and followed (which pulls nested references such as
 `geo.usd`). This reconstructs referenced descendants *and* follows their nested
 arcs, recursively.
 
-**Result:** Caldera (proxy, LoadNone) composes **32,811 prims / 122 files / 373
+**Result:** benchmark scene (proxy, LoadNone) composes **32,811 prims / 122 files / 373
 deferred payloads** in **~1.7 GiB / ~3 s** — the full structural composition,
 geometry deferred. Regression test `feat-large-scene` asserts a referenced
 prim's grandchild (`/P/M`) is reconstructed. Full unit suite (853) unaffected.
@@ -1597,7 +1602,7 @@ payload from a subdirectory; that payload references `./leaf.usda`, and
 `load_payload("/P")` must compose `/P/Nested/M`, proving lazy payload parsing
 uses the resolved payload path for cwd stamping and re-scans arcs authored on
 the newly loaded payload node. On the ALab shot this composes the character
-geometry (3,293 → 4,560 prims, 1,271 → 2,540 deferred payloads); Caldera is
+geometry (3,293 → 4,560 prims, 1,271 → 2,540 deferred payloads); benchmark scene is
 unchanged (32,811). Value clips themselves (`clips` metadata) are resolved at
 Tydra / attribute-evaluation time (`enable_value_clips`), not during
 composition.
@@ -1709,11 +1714,11 @@ Measured under a hard 32 GB cgroup cap
 |---|---|---|---|---|---|
 | Kitchen_set (Pixar) | 0.13 GB | <1 s | — | — | ~66 k |
 | ALab (Animal Logic) | **0.06 GB** | 0.8 s | 0.13 GB | 1.4 s | ~36 k |
-| Caldera (Activision) | **2.3 GB** | 45 s | 3.1 GB | 76 s | ~3.45 M |
-| Moana Island (Disney) | **8.3 GB** | 1 m 48 s | 8.5 GB | ~5 m | ~6.1 M |
+| benchmark scene (Activision) | **2.3 GB** | 45 s | 3.1 GB | 76 s | ~3.45 M |
+| reference scene (Disney) | **8.3 GB** | 1 m 48 s | 8.5 GB | ~5 m | ~6.1 M |
 
 next now flattens **at or below usdcat's RSS on every scene, and faster** — a
-5.2× cut on Caldera (was 11.8 GB) and 3.2× on Island (was 26.6 GB), with
+5.2× cut on benchmark scene (was 11.8 GB) and 3.2× on reference scene (was 26.6 GB), with
 **byte-identical output** (verified by `cmp` against the pre-optimization flatten).
 
 The peak used to be dominated by three avoidable residencies on the write path,
@@ -1733,7 +1738,7 @@ references into the memory-mapped source until they are actually needed):
 - **Time samples eagerly decoded at parse time.** `TimeSampleStorage::add_dedup`
   hashed each sample value, and `Value::hash()` forces a materialize — so every
   array-valued time sample was decoded into the heap at parse and stayed resident
-  for the stage lifetime (Caldera: ~3.4 M of ~3.45 M flatten lines are
+  for the stage lifetime (benchmark scene: ~3.4 M of ~3.45 M flatten lines are
   time-sample data — the dominant cost). Lazy samples now **skip content dedup**
   and stay byte-range references until the writer decodes them one at a time.
 
@@ -1746,8 +1751,8 @@ a *full* flatten no longer carries gratuitous peak overhead.
 
 A June 2026 snapshot compared `next_usdcat` (the `src/next` PCP engine,
 streaming flattened USDA to a `FILE*`) against the then-current `lusdcat`
-library pipeline: Caldera 9.71 s / 2.93 GiB versus 1:46.7 / 10.37 GiB; Island
-43.42 s / 9.67 GiB versus a hard failure on `xgGroundCover.usd` against the
+library pipeline: benchmark scene 9.71 s / 2.93 GiB versus 1:46.7 / 10.37 GiB; reference scene
+43.42 s / 9.67 GiB versus a hard failure on `vegetation_instancer.usd` against the
 512 MiB per-asset cap. That snapshot is pre-optimization and is superseded by
 §6.2 (USDA writer), §8 and §9 (reader/writer work); the tables stay in git
 history (`git log -- doc/large-scene.md`).
@@ -1757,7 +1762,7 @@ the 512 MiB composition safety cap needs `--relax-asset-cap` (raises the
 per-layer cap to 8 GiB) or `--max-composition-asset-mb=N`. The default stays
 512 MiB for untrusted input.
 
-Island's large XGen arrays are also still kept lazy/mmap-backed during
+reference scene's large XGen arrays are also still kept lazy/mmap-backed during
 compose/write. The USDC reader decodes older packed array-count headers (low
 32 bits = element count, high 32 bits = auxiliary metadata) before applying
 guards. It still rejects malformed over-cap arrays through
@@ -1768,19 +1773,19 @@ guard.
 ### 6.2 ASCII (USDA) writer optimizations
 
 On a fully-composed large scene the **write phase dominates** total wall-clock
-(Caldera ~57 %, Island ~63 % before this work). The `src/next` USDA writer
+(benchmark scene ~57 %, reference scene ~63 % before this work). The `src/next` USDA writer
 (`src/next/writer/{value-printer,usda-writer,dtoa}.{hh,cc}`) was optimized in two
 passes. Every change is **byte-identical** to the serial writer — verified by
 `cmp`/sha256 against the prior binary across the 615-file `tests/usda` +
-`tests/usdc` corpus and on Caldera + Island (10.18 GB hash match) + ALab, in both
+`tests/usdc` corpus and on benchmark scene + reference scene (10.18 GB hash match) + ALab, in both
 serial and threaded (4/8/16) modes. Output to `/dev/null`, Release build, on a
 32-thread / 16-core workstation:
 
 | Scene (flatten write phase) | Before | After |
 |---|---:|---:|
-| Caldera (4.25 GB) | 728 MB/s | **~850–925 MB/s** |
-| Island (10.18 GB) | 371 MB/s, 26.2 s | **~1000 MB/s, ~11.7 s** |
-| Island peak RSS | 9.67 GiB | **~8.0 GiB** |
+| benchmark scene (4.25 GB) | 728 MB/s | **~850–925 MB/s** |
+| reference scene (10.18 GB) | 371 MB/s, 26.2 s | **~1000 MB/s, ~11.7 s** |
+| reference scene peak RSS | 9.67 GiB | **~8.0 GiB** |
 
 #### Pass 1 — per-element number formatting
 
@@ -1792,16 +1797,16 @@ hot loop. Two byte-identical changes:
   It now formats once into a stack buffer and appends directly. New
   `dtos_to(char*, float/double)` (`writer/dtoa`) and `IntTo`/`UIntTo(char*, …)`
   (`strfmt.hh`); `ChunkedStream` drops the `num_` member. Serial writer
-  +~16 % (Caldera 218 → 253 MB/s, Island piped 162 → 176 MB/s).
+  +~16 % (benchmark scene 218 → 253 MB/s, reference scene piped 162 → 176 MB/s).
 - **Indent cache.** `WriteIndent` emits the indentation prefix in one write from a
   `thread_local` cached padding string instead of `depth` tiny writes.
 
 #### Pass 2 — parallel writer rearchitecture
 
 A profile (a debug switch that skips array-value formatting) showed **~95 % of
-Island's write phase was array formatting running serially on the main thread**.
+reference scene's write phase was array formatting running serially on the main thread**.
 The previous parallel design split work by **subtree frontier**, which only
-parallelized *leaf* subtrees — but Island's geometry lives in *interior* prims,
+parallelized *leaf* subtrees — but reference scene's geometry lives in *interior* prims,
 whose arrays were serialized on the main thread regardless of thread count (write
 scaled only ~1.6× from 1→8 threads).
 
@@ -1810,7 +1815,7 @@ The writer was rebuilt around a **document-ordered task list**:
 1. **Phase 1 (serial, cheap):** one pre-order walk of the whole stage emits cheap
    structural bytes inline as `Text` tasks and **offloads every array value**
    (≥ 256 elements) as a task referencing the borrowed array. No giant array is
-   formatted here, so the walk is fast (~1.6 s on Island).
+   formatted here, so the walk is fast (~1.6 s on reference scene).
 2. **Phase 2 (parallel):** a worker pool formats **byte-balanced segments** (each
    a contiguous task run) while the main thread writes the finished segment
    buffers **in document order**. Synchronization is lock-free (atomics + a
@@ -1828,7 +1833,7 @@ element-range chunks formatted concurrently:
   buffer (held in a deque, freed as soon as their chunks are consumed, so peak
   memory stays bounded) and then chunked.
 - **Half-backed types** (`half`, `quath`, …) widen to float via `as_float_array`,
-  so Island's 21 M-element `quath` orientation arrays chunk through the float
+  so reference scene's 21 M-element `quath` orientation arrays chunk through the float
   range printer too. This was the last serial bottleneck.
 
 New `value-printer` API: `ArrayElementCount`, `IsChunkableType`,
@@ -1842,7 +1847,7 @@ Tests: `test_array_range_split_parity` (range reconstruction == full print acros
 types and cut points) and `test_parallel_writer_parity` (1-thread vs 8-thread
 byte-identical) in `tests/next/test_writer.cc`.
 
-The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
+The remaining serial cost is the ~6 s Phase-1 build walk on reference scene (not yet
 overlapped with Phase 2) — the next available lever.
 
 ### 6.3 USDA `/dev/null` write vs USDC crate write
@@ -1853,19 +1858,19 @@ They exercise different serializers:
 
 - `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
   text through the optimized parallel ASCII writer. On the local 32-thread /
-  16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
+  16-core workstation, reference scene writes ~10.8 GB of USDA text to `/dev/null` in
   about **14 s** with `LIGHTUSD_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
-- `-o out.usdc` uses the next crate writer. Island's crate output is only
+- `-o out.usdc` uses the next crate writer. reference scene's crate output is only
   ~2.5 GB, but the write phase is still about **36-40 s** even when the output
   path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
   Thus the time is not storage bandwidth.
 
 The remaining USDC cost is internal crate construction. As detailed in
-[`crate-writer.md`](crate-writer.md), the Island crate writer is dominated by the
+[`crate-writer.md`](crate-writer.md), the reference scene crate writer is dominated by the
 serial per-spec structural build and global interning/dedup tables over ~4.25M
 specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
 and array encoding are a smaller slice. Threaded crate writer paths help
-moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
+moderately: for reference scene, a `/dev/null`-symlink USDC write was ~47.6 s with
 `LIGHTUSD_NEXT_NUM_THREADS=1` and ~36.1 s with `LIGHTUSD_NEXT_NUM_THREADS=16`,
 but they do not remove the global-dedup floor. Writing the same USDC to
 `/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
@@ -2147,12 +2152,12 @@ cd build-next-pcp && make feat-large-scene -j16 && \
 # focused payload-policy owner-anchor regression (next pcp unit level):
 cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
-<build>/large-scene-load <asset-root>/caldera/caldera.usda --mode=none
+<build>/large-scene-load <asset-root>/benchmark/benchmark.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
 # full composition + USDA writer stress checks:
 env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
-  <asset-root>/island/usd/island.usda
+  <asset-root>/reference_scene/usd/reference_scene.usda
 env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
@@ -2230,9 +2235,9 @@ maximum 5% growth allowance; all three cases pass.
 
 | Case | Process, baseline → candidate | Load + compose | Write | Peak RSS, GiB |
 |---|---:|---:|---:|---:|
-| Caldera proxy → USDC | 3.27 → 2.98 s | 0.991 → 0.887 s | 1.821 → 1.680 s | 1.71 → 1.68 |
-| Caldera full district → USDC | 34.84 → 26.95 s | 18.22 → 9.73 s | 13.83 → 14.32 s | 18.86 → 15.88 |
-| Caldera full district → USDA | 25.59 → 15.81 s | 20.50 → 10.18 s | 2.385 → 2.381 s | 21.01 → 15.92 |
+| benchmark scene proxy → USDC | 3.27 → 2.98 s | 0.991 → 0.887 s | 1.821 → 1.680 s | 1.71 → 1.68 |
+| benchmark scene full district → USDC | 34.84 → 26.95 s | 18.22 → 9.73 s | 13.83 → 14.32 s | 18.86 → 15.88 |
+| benchmark scene full district → USDA | 25.59 → 15.81 s | 20.50 → 10.18 s | 2.385 → 2.381 s | 21.01 → 15.92 |
 
 These are 8.9%, 22.6% and 38.2% end-to-end improvements respectively. The
 district improvement comes from loading/composition/reclamation; this final
@@ -2318,7 +2323,7 @@ This case demonstrates no parser/writer throughput win. The lexer copy fix is
 retained with identical token/rewind semantics, and large string-array range
 support is covered separately by owned-array and threaded escaping tests.
 
-Island follows Caldera in the qualification sequence. With all thread hints
+reference scene follows benchmark scene in the qualification sequence. With all thread hints
 automatic, process medians are 15.29 → 15.58 s for USDC and 9.35 → 10.66 s for
 USDA. The USDC write itself improves from 10.027 to 9.117 s, but the conservative
 serial inner-parser policy increases load/composition from about 3.4 to 5.0 s.
@@ -2331,7 +2336,7 @@ parser threads. A separate matched baseline/candidate run with
 `--parse-threads 8` (other hints automatic, one warmup, three alternating
 measured pairs) gives:
 
-| Island output | Process, baseline → candidate | Load + compose | Write | Peak RSS, GiB |
+| reference scene output | Process, baseline → candidate | Load + compose | Write | Peak RSS, GiB |
 |---|---:|---:|---:|---:|
 | USDC | 15.13 → 14.18 s | 3.361 → 3.350 s | 9.826 → 9.201 s | 4.74 → 4.73 |
 | USDA | 10.73 → 9.15 s | 3.731 → 3.184 s | 4.399 → 4.000 s | 5.37 → 5.28 |
@@ -2342,7 +2347,7 @@ scene's exact hashes: USDC is 2,512,205,846 bytes with SHA-256
 USDA is 10,375,532,893 bytes with SHA-256
 `8fb8b237c0d757f52946d6a3772284facf6521b3e399fb0f6b570f3ec9c87b2b`.
 Both baseline/candidate default exports match too, and the crate reopens with
-next and OpenUSD. The Island timing exposes 1.32 s of direct compressed-int
+next and OpenUSD. The reference scene timing exposes 1.32 s of direct compressed-int
 streaming within a 3.55 s USDA write. No additional parallel compressed-int
 scheduler is included; this remains a measured follow-up hotspot rather than
 an unverified bounded-buffer implementation.
@@ -2398,7 +2403,7 @@ between small serial and large parallel inputs. Security and memory limits
 remain unchanged.
 
 Two earlier versions were rejected. Lending parser workers to every prefetched
-layer raised the Caldera district peak from 15,671,604 to 22,170,512 KiB. A
+layer raised the benchmark scene district peak from 15,671,604 to 22,170,512 KiB. A
 filesystem-query size gate passed the three-pair scene run but failed the
 extended composition-only check with maximum RSS ratio 1.070. The reader-source
 revision below was requalified separately; rejected measurements are not mixed
@@ -2406,39 +2411,39 @@ into its result.
 
 The accepted run uses one warmup and three alternating measured pairs,
 automatic parse/compose/write hints, normal teardown and `/dev/null` output.
-Caldera runs first, followed by Island and merged ALab. Times are medians; RSS
+benchmark scene runs first, followed by reference scene and merged ALab. Times are medians; RSS
 is the median process peak. All seven maximum-peak RSS comparisons pass the
 5% gate (ratios 0.996, 0.977, 0.980, 0.996, 0.988, 1.004 and 1.009):
 
 | Case | Process, baseline → candidate | Load + compose | Median peak RSS, GiB |
 |---|---:|---:|---:|
-| Caldera proxy → USDC | 2.84 → 2.91 s | 0.833 → 0.837 s | 1.638 → 1.640 |
-| Caldera district → USDC | 29.06 → 27.88 s | 11.420 → 10.915 s | 16.96 → 17.01 |
-| Caldera district → USDA | 15.63 → 15.35 s | 10.272 → 10.017 s | 16.53 → 16.03 |
-| Island → USDC | 15.74 → 15.40 s | 5.010 → 3.955 s | 4.495 → 4.483 |
-| Island → USDA | 10.92 → 9.52 s | 5.090 → 3.892 s | 5.213 → 5.165 |
+| benchmark scene proxy → USDC | 2.84 → 2.91 s | 0.833 → 0.837 s | 1.638 → 1.640 |
+| benchmark scene district → USDC | 29.06 → 27.88 s | 11.420 → 10.915 s | 16.96 → 17.01 |
+| benchmark scene district → USDA | 15.63 → 15.35 s | 10.272 → 10.017 s | 16.53 → 16.03 |
+| reference scene → USDC | 15.74 → 15.40 s | 5.010 → 3.955 s | 4.495 → 4.483 |
+| reference scene → USDA | 10.92 → 9.52 s | 5.090 → 3.892 s | 5.213 → 5.165 |
 | Merged ALab → USDC | 1.37 → 1.39 s | 0.596 → 0.570 s | 0.987 → 0.988 |
 | Merged ALab → USDA | 1.46 → 1.46 s | 0.580 → 0.572 s | 1.943 → 1.951 |
 
-Island's automatic load/composition time falls by 21.1% for the USDC case and
+reference scene's automatic load/composition time falls by 21.1% for the USDC case and
 23.5% for USDA; process time falls by 2.2% and 12.8%. ALab remains effectively
-flat. These results do not establish a writer speedup: the Island crate-write
+flat. These results do not establish a writer speedup: the reference scene crate-write
 medians are 9.126 → 9.670 s, while USDA write medians are 3.718 → 3.677 s.
 Earlier explicit-parser samples in §8 use different runs/settings and are not
 a paired comparison with this automatic policy.
 
-The separate seven-pair Caldera composition-only check measures process
+The separate seven-pair benchmark scene composition-only check measures process
 medians of 15.49 → 15.45 s and load/composition of 9.941 → 9.865 s. Load ranges
 are 9.219–11.139 s and 9.788–10.802 s. Maximum RSS ratio is 1.000714; the gate
-passes. Treat Caldera as effectively neutral in this follow-up rather than
+passes. Treat benchmark scene as effectively neutral in this follow-up rather than
 claiming an additional speedup from the three-pair output sample.
 
 Validation explicitly selects `--parse-threads 0` and reproduces the exact §8
-USDC hashes for proxy, district, Island and merged ALab, and the §8 USDA hashes
-for district, Island and merged ALab. Each retained validation crate reopens
+USDC hashes for proxy, district, reference scene and merged ALab, and the §8 USDA hashes
+for district, reference scene and merged ALab. Each retained validation crate reopens
 with next and OpenUSD. Throughput output stays on `/dev/null`; validation uses
 task-owned `/dev/shm` files below the aggregate 48 GB cap, promptly removed,
-and streaming hashes for text. The all-45-district Caldera and separate baked
+and streaming hashes for text. The all-45-district benchmark scene and separate baked
 frame 1004 scale checks were not repeated in this follow-up; their results
 remain those of §8. No new raw-parser/writer throughput win is claimed.
 
@@ -2464,7 +2469,7 @@ Browser and physics profiles were not repeated in this follow-up.
 ### 9.1 Large-crate readback limits (2026-10)
 
 The USDC reader's structural-table caps are count bounds independent of the
-byte budget. The composed Caldera district crate (580,261,850 B,
+byte budget. The composed benchmark scene district crate (580,261,850 B,
 4,458,013 specs) contains **12,642,785 FIELDS entries**, above the secure
 default `max_fields = 10,485,760`, so a default read-back fails even with a
 generous memory budget:
@@ -2551,7 +2556,7 @@ Phase-level medians move both ways inside the run-to-run spread (`fields_specs`
 6.82 s → 6.33 s and `property_index` 66 ms → 126 ms are not attributable to a
 reader-only change); the aggregate wall/CPU/instruction agreement and the
 fault count are the evidence, not any single phase. Reading the district and
-the full island, and composing the district, still produce the §8/§9.1 hashes
+the full reference_scene, and composing the district, still produce the §8/§9.1 hashes
 exactly.
 
 Fresh writer attribution on the same rewrite (instrumented bins carry ~1.7 s of
@@ -2567,7 +2572,7 @@ Verification for this section: native suite 67/67 (`ctest` in `build_ninja`) and
 standalone `next` Debug 71/71, 227 `tests/usdc/*.usdc` fixtures rewritten to
 USDA byte-identically by the baseline and candidate binaries, and these
 unchanged outputs — district rewrite `e049a40f…` (578,776,001 B), composed
-district `98619c40…` (580,261,850 B), island `a8f50922…` (2,512,205,846 B)
+district `98619c40…` (580,261,850 B), reference_scene `a8f50922…` (2,512,205,846 B)
 (snapshot note in §9.3).
 
 ### 9.3 Qualification of the fieldset-name change (2026-10)
@@ -2592,7 +2597,7 @@ ten prims, `--rewrite-layer --max-crate-elements 100000000`): baseline and
 candidate both reproduce the §9 hashes exactly — USDC
 `a8d08517…`/3,537,903,797 B and USDA `5ca18bda…`/10,039,453,727 B.
 
-Island composition (`island.usda`, `--parse-threads 8 --compose-threads 8`,
+reference scene composition (`reference_scene.usda`, `--parse-threads 8 --compose-threads 8`,
 USDC to `/dev/null`), one warmup plus three alternating pairs:
 
 | Metric | baseline | candidate | delta |
@@ -2604,12 +2609,12 @@ USDC to `/dev/null`), one warmup plus three alternating pairs:
 
 That is the expected result for this scene: only ~3.7 s of a 15 s run is
 `BuildStage`, and the crate reader is a fraction of that, so a reader-side cut
-does not move island. The district rewrite in §9.2 is the case that isolates it.
-Both binaries emit the same island crate (1,815,093,161 B, SHA-256
+does not move reference_scene. The district rewrite in §9.2 is the case that isolates it.
+Both binaries emit the same reference_scene crate (1,815,093,161 B, SHA-256
 `267d237a…`), but that is **not** the §9 size/hash (2,512,205,846 B,
-`a8f50922…`): the island copy on this machine resolves 20 elements
+`a8f50922…`): the reference_scene copy on this machine resolves 20 elements
 (`elements/` has exactly the 20 referenced dirs, all present) and composes to a
-1.82 GB crate, so the §9 number came from a larger island snapshot. Treat the
+1.82 GB crate, so the §9 number came from a larger reference_scene snapshot. Treat the
 `a8f50922…` value as tied to that snapshot, not as a property of the current
 local asset; the matched-binary equality above is the meaningful check.
 
@@ -2618,7 +2623,7 @@ alternating pairs, no swap):
 
 | Case | Metric | baseline | candidate | delta |
 |---|---|---:|---:|---:|
-| Island `island.usda` → USDA | process wall | 8.48 s | 8.57 s | +1.1% |
+| reference scene `reference_scene.usda` → USDA | process wall | 8.48 s | 8.57 s | +1.1% |
 | | CPU | 42.95 s | 42.81 s | −0.3% |
 | | peak RSS | 4.37 GiB | 4.37 GiB | −0.1% |
 | | `build_stage` | 3762 ms | 3895 ms | +3.5% (spread 3606–3971 both) |
@@ -2632,7 +2637,7 @@ alternating pairs, no swap):
 | | peak RSS | 6.655 GiB | 6.653 GiB | −0.04% |
 
 The district re-run agrees with §9.2 (−2.9% wall / −4.0% CPU then, −1.7% /
-−3.4% now; the candidate CPU median is 32.75 s in both). Island and the baked
+−3.4% now; the candidate CPU median is 32.75 s in both). reference scene and the baked
 frame are neutral: they are dominated by composition and by the USDA text
 writer, not by crate field decoding. No case comes near the 1.05× RSS ceiling.
 
@@ -2661,7 +2666,7 @@ skeleton-purpose-001) returns bytes identical to the native `lusdcat
 --rewrite-layer --output-format usdc` rewrite of the same fixture — e.g.
 suzanne 50,018 B `2269a062…` from both, with matching token/path/spec counts.
 
-Full-scale limits of the all-45-district crate (`caldera_fullLOD2.usdc`,
+Full-scale limits of the all-45-district crate (`benchmark_fullLOD2.usdc`,
 3,014,654,530 B, 61,833,354 specs): it declares **176,656,972 fields**, so the
 default `--max-crate-elements` and even 100M are rejected with the
 "raise the crate table limit" hint; at 300M it then needs a larger memory budget
@@ -2710,7 +2715,7 @@ python3 tests/next/bench-large-scene.py \
 ```
 
 with `full45-parse.json` = one case `{mode: "parse", input:
-caldera_fullLOD2.usdc, args: ["--max-crate-elements", "300000000",
+benchmark_fullLOD2.usdc, args: ["--max-crate-elements", "300000000",
 "--max-memory-mib", "49152"]}`.
 3,014,654,530 B, 61,833,354 specs): it declares **176,656,972 fields**, so the
 default `--max-crate-elements` and even 100M are rejected with the
@@ -2871,7 +2876,7 @@ one warmup plus three alternating pairs, `--max-load 24 --min-available-gib 8
 the candidate.
 
 **A + B (allocator conf + writer), district** — compose
-`/tmp/lightusd-scene-p0/caldera_mine_full.usda` → USDC and rewrite of the
+`/tmp/lightusd-scene-p0/benchmark_mine_full.usda` → USDC and rewrite of the
 composed district crate:
 
 | district compose → USDC | baseline | candidate | ratio |
@@ -2913,7 +2918,7 @@ first `prim_at_path` / `index_at_path` / mutator builds it under a lock. Source
 layers keep the eager index. District compose: `flatten` 0.47 -> 0.08 s,
 `finalize` 0.27 -> 0.07 s.
 
-**A–D, district compose and Island** (with `thp:always` compiled in; same protocol; the district baseline was
+**A–D, district compose and reference scene** (with `thp:always` compiled in; same protocol; the district baseline was
 faster in this pair than in the A+B pair, 26.8 vs 37.0 s median, so compare
 ratios within a pair only):
 
@@ -2922,12 +2927,12 @@ ratios within a pair only):
 | district compose → USDC, process | 26.8 s | 19.9 s | 0.74 | 0.75 |
 | ↳ `warm` / `structure` / `compose` | 3.09 / 3.88 / 3.61 s | 2.38 / 2.41 / 2.27 s | 0.77 / 0.62 / 0.63 | |
 | ↳ `reclaim` / `fields_specs` | 1.78 / 8.21 s | 1.24 / 6.64 s | 0.70 / 0.81 | |
-| Island compose → USDC (8 threads), process | 14.8 s | 9.3 s | 0.63 | 0.99 |
+| reference scene compose → USDC (8 threads), process | 14.8 s | 9.3 s | 0.63 | 0.99 |
 | ↳ `build_stage` / `fields_specs` | 3.70 / 5.52 s | 2.76 / 3.46 s | 0.75 / 0.63 | |
-| Island compose → USDA (8 threads), process | 15.4 s | 8.5 s | 0.55 | 0.98 |
+| reference scene compose → USDA (8 threads), process | 15.4 s | 8.5 s | 0.55 | 0.98 |
 
 Byte identity of the A–E candidate: district rewrite `e049a40f…`, composed
-district `98619c40…`, Island USDC `267d237a…` (1,815,093,161 B, same as the
+district `98619c40…`, reference scene USDC `267d237a…` (1,815,093,161 B, same as the
 baseline binary on this snapshot), merged ALab USDC `2f7176c8…`
 (732,541,268 B) and USDA `f764d58c…` (4,566,009,415 B). Native `ctest` 67/67
 and standalone `next` Debug 71/71 pass after each phase.
@@ -2979,7 +2984,7 @@ position: 2 of the 227 `tests/usdc` fixtures
 USDC, while every scene hash still matched. `PropNameToken` now never interns;
 unrecorded names are interned at the `properties` field as before. After the
 fix: 227/227 fixtures byte-identical in USDA and USDC, district rewrite
-`e049a40f…`, composed district `98619c40…`, Island `267d237a…`, merged ALab
+`e049a40f…`, composed district `98619c40…`, reference scene `267d237a…`, merged ALab
 `2f7176c8…` / `f764d58c…`, baked 1004 USDC `a8d08517…`.
 
 Verification for this round: native `ctest` 67/67 and standalone `next` Debug
@@ -3011,12 +3016,12 @@ Two byte-neutral crate-writer changes:
 
 `test_lazy_array` checks the parallel encoder against the serial C encoder
 (mixed widths, an exact most-common tie, wide deltas, counts not a multiple
-of 4). District rewrite/compose, Island, merged ALab and baked 1004 hashes are
+of 4). District rewrite/compose, reference scene, merged ALab and baked 1004 hashes are
 unchanged; `tests/usdc` fixtures are below the parallel threshold and were
 byte-identical after the range-table change.
 
 **`4a0aa8688` — "Speed up full45 compose: warm merge, walk, merge fast path,
-compaction".** Byte-neutral compose-side changes for the all-district Caldera
+compaction".** Byte-neutral compose-side changes for the all-district benchmark scene
 flatten:
 
 - Warm merge: worker cache entries are drained with the hashes their table
@@ -3128,7 +3133,7 @@ repeat 2, zero process swap; two full pairs measured 0.83 / 0.82 wall and
 | ALab merged → USDC | wall | 1.42 s | 1.27 s | 0.89 |
 | | `fields_specs` | 0.47 s | 0.40 s | 0.84 |
 | | peak RSS | 0.95 GiB | 0.96 GiB | 1.009 |
-| Island compose → USDC | wall | 13.7 s | 11.4 s | 0.83 |
+| reference scene compose → USDC | wall | 13.7 s | 11.4 s | 0.83 |
 | | `fields_specs` | 5.18 s | 2.45 s | 0.47 |
 | | peak RSS | 4.27 GiB | 4.29 GiB | 1.004 |
 
@@ -3140,7 +3145,7 @@ parallel vs serial fields) produced byte-identical crates
 
 **Byte identity**: full45 `a0175bc1292f…` (3,014,654,530 B), district compose
 `98619c40…` (580,261,850 B), district rewrite `e049a40f…` (578,776,001 B),
-Island `267d237a…` (1,815,093,161 B), baked 1004 `a8d08517…`
+reference scene `267d237a…` (1,815,093,161 B), baked 1004 `a8d08517…`
 (3,537,903,797 B) and merged ALab `2f7176c8…` (732,541,268 B) all reproduce. The 227-fixture `tests/usdc` sweep (`--rewrite-layer`, USDA and
 USDC) is identical to the baseline binary, including a run with the parallel
 threshold forced to zero so every fixture exercises the worker path; the full
@@ -3189,7 +3194,7 @@ the low half and the record hash's high 32 bits as a fingerprint, so probe
 chains no longer load `path_hashes_` / `paths_` until the fingerprint matches.
 Because a chain is now walked in the slot array alone, the table is sized for
 load ≤ 3/4 instead of ≤ 1/2, so the 64-bit slots cost no more memory than the
-old 32-bit ones (Island: 8 M × 8 B instead of 16 M × 4 B; at load ≤ 1/2 they
+old 32-bit ones (reference scene: 8 M × 8 B instead of 16 M × 4 B; at load ≤ 1/2 they
 had added 64 MB there, and full45 keeps 128 M slots at load 0.48).
 Stage A2 prefetches the slot 8 events ahead; stage B prefetches the stream
 dedup bucket 16 ops ahead and its first chain entry 8 ahead, plus the
@@ -3235,7 +3240,7 @@ candidate `lusdcat-R3b` = this round):
 | | peak RSS | 73.1 GiB | 73.3 GiB | 1.003 |
 | ALab merged (repeat 3) | wall | 1.19 s | 1.07 s | 0.90 |
 | | peak RSS | 0.958 GiB | 0.951 GiB | 0.994 |
-| Island compose, 8 threads (repeat 3) | wall | 12.6 s | 8.3 s | 0.66 |
+| reference scene compose, 8 threads (repeat 3) | wall | 12.6 s | 8.3 s | 0.66 |
 | | `fields_specs` | 4.59 s | 1.39 s | 0.30 |
 | | peak RSS | 4.27 GiB | 4.23 GiB | 0.991 |
 
@@ -3251,11 +3256,11 @@ identical to `lusdcat-H`, also with every parallel threshold forced to 0
 fixtures; native ctest 67/67.
 
 **RSS bisect.** The first candidate failed the gate on merged ALab (1.054) and
-grew Island by +~140 MB over W2. An RSS-vs-lap trace showed a constant
+grew reference scene by +~140 MB over W2. An RSS-vs-lap trace showed a constant
 +80 MB with jemalloc decay disabled (64 MB = 64-bit slots at load ≤ 1/2, the
 rest small buffers) and +~140 MB with default decay; ALab's excess vanished at
 `--write-threads 8`. Fixes: the ≤ 3/4 slot sizing and the 8-worker cap for
-small layers (both above). After them Island is below W2 and ALab at H.
+small layers (both above). After them reference scene is below W2 and ALab at H.
 
 **Rejected in this round**
 
@@ -3297,7 +3302,7 @@ pre-touching at setup only moved the cost (rejected).
 **No end-to-end gain yet**: stage B (block ops, ~10.2–10.8 s) is now the
 critical stage. Paired vs `lusdcat-R3b` (repeat 2/3, zero swap): full45 wall
 0.988 (`fields_specs` 18.5 → 17.8 s), RSS 1.000; ALab 1.009 / 1.005;
-Island 1.036 / 0.995. Kept as the prerequisite for a parallel stage B.
+reference scene 1.036 / 0.995. Kept as the prerequisite for a parallel stage B.
 
 Stage B breakdown (sampled, full45): 63.3 M ops, 22.8 M pass-through refs,
 10.2 M raw pushes, 11.3 M blocks re-hashed after the fix-up; fix-up ~29%,
@@ -3357,7 +3362,7 @@ full45 stage busy times after the change: A2 8.9–9.5 s, B 6.9–8.5 s, W
 4.4–5.4 s, C 6.7–7.5 s; worker encode ~8.5 s per worker.
 
 **Results** (paired vs `lusdcat-R4`, repeat 2/3, zero swap): full45 wall
-0.988 (`fields_specs` 18.3 → 15.8 s), RSS 1.001; Island wall 0.91
+0.988 (`fields_specs` 18.3 → 15.8 s), RSS 1.001; reference scene wall 0.91
 (`fields_specs` 1.49 → 1.12 s), RSS 1.026 (two ctx per worker; 1.015 vs
 `lusdcat-H`); ALab 1.000 / 1.002. full45 `a0175bc1…`, district `98619c40…`,
 district rewrite `e049a40f…`, staged district `98ad30c3…` (parallel =
@@ -3377,7 +3382,7 @@ is now a write error; no fixture or scene reaches it.
 
 Paired vs `lusdcat-R5` (repeat 2/3, zero swap): full45 wall 0.961 (`PATHS`
 lap 6.65 → 0.96 s — now just the append; `structural_payloads` 17.2 →
-17.9 s), RSS 1.003; Island 0.94 / 1.001; ALab 0.98 / 1.009. Peak RSS stays in
+17.9 s), RSS 1.003; reference scene 0.94 / 1.001; ALab 0.98 / 1.009. Peak RSS stays in
 compose (the write phase tops out at ~62 GB on full45). Hashes, sweep, ctest
 and a forced-threshold TSan sweep unchanged/clean.
 
@@ -3408,10 +3413,10 @@ full45 (single run): FIELDSETS delta 17.5 → 1.5 s, `structural_payloads`
 phase 43 → 35 s.
 
 Paired vs `lusdcat-R6` (repeat 2/3, zero swap): full45 wall 184.1 → 171.4 s
-(**0.931**), `structural_payloads` 19.7 → 5.9 s, RSS 1.001; Island 7.73 →
+(**0.931**), `structural_payloads` 19.7 → 5.9 s, RSS 1.001; reference scene 7.73 →
 6.38 s (**0.825**), `structural_payloads` 1.67 → 0.40 s, RSS 1.002; ALab
 1.009 / 0.997. Hashes: full45 `a0175bc1…`, district `98619c40…`, district
-rewrite `e049a40f…`, Island `267d237a…`, merged ALab `2f7176c8…`, baked 1004
+rewrite `e049a40f…`, reference scene `267d237a…`, merged ALab `2f7176c8…`, baked 1004
 rewrite `a8d08517…`; 227-fixture sweep identical; ctest 67/67.
 
 ### 10.12 Parallel layer teardown and a phased warm merge (rounds 8–9)
@@ -3445,15 +3450,15 @@ Now, per worker:
 
 The main cache index is reserved once for all workers' deltas before the
 merges (it was regrown inside each merge: 3.6 s). Phases run in parallel when
-a worker delta has ≥ 8192 entries (Island's ~35 K deltas benefit; ALab's tiny
+a worker delta has ≥ 8192 entries (reference scene's ~35 K deltas benefit; ALab's tiny
 ones stay serial, +~16 ms). full45 merge loop 28 → 11.2 s; ALab with the
 parallel path forced was TSan-clean and reproduced its hash.
 
 **Results** (paired vs `lusdcat-R7`, repeat 2/3, zero swap; R9 = before the
 8192 threshold): full45 wall 155.1 → 122.3 s (**0.788**), `warm` 41.4 →
-26.7 s, peak RSS 73.4 → 71.9 GiB (0.980); Island 0.937 (merge loop 0.38 →
+26.7 s, peak RSS 73.4 → 71.9 GiB (0.980); reference scene 0.937 (merge loop 0.38 →
 0.48 s at the old 65 536 threshold, back to ~0.37 s with 8192); ALab 1.048
-(1.05 → 1.10 s). Hashes: full45 `a0175bc1…`, district `98619c40…`, Island
+(1.05 → 1.10 s). Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene
 `267d237a…`, merged ALab `2f7176c8…`; ctest 67/67; no-thread build OK.
 
 **Next: the structure walk** (`structure` 41–46 s, serial). Its own counters
@@ -3488,8 +3493,8 @@ During the full45 walk `SpecsFor` now resolves 38.5 M memo hits and 270 M
 known-empty states with 2.1 M full lookups (before: ~75 M lookups). Paired vs
 `lusdcat-R9b` (repeat 2, zero swap): full45 wall 124.6 → 115.5 s (**0.927**),
 `structure` 38.7 → 28.2 s, RSS 0.998; with the parallel-only gate (R10b) ALab
-0.991 and Island 0.993 vs R9b (repeat 3). Hashes: full45 `a0175bc1…`, district
-`98619c40…`, Island `267d237a…`, merged ALab `2f7176c8…`; ctest 67/67; TSan
+0.991 and reference scene 0.993 vs R9b (repeat 3). Hashes: full45 `a0175bc1…`, district
+`98619c40…`, reference scene `267d237a…`, merged ALab `2f7176c8…`; ctest 67/67; TSan
 (ALab, parallel merge forced) clean.
 
 Remaining walk counters (full45): sources ~4, register ~4.1, child names
@@ -3542,10 +3547,10 @@ what the compact records follow.
 
 Results (paired vs `lusdcat-R10b`, repeat 2/3, zero swap): full45 wall
 113.5 → 107.3 s (**0.945**), `structure` 27.0 → 17.7 s, peak RSS 1.024;
-Island 0.963 (RSS 1.017); ALab 1.018 (serial walk; noise). Hashes: full45
-`a0175bc1…`, district `98619c40…`, Island `267d237a…`, merged ALab
+reference scene 0.963 (RSS 1.017); ALab 1.018 (serial walk; noise). Hashes: full45
+`a0175bc1…`, district `98619c40…`, reference scene `267d237a…`, merged ALab
 `2f7176c8…`; ctest 67/67; no-thread build OK; TSan with the walk forced on
-(ALab, Island) race-free and hash-identical.
+(ALab, reference scene) race-free and hash-identical.
 
 **Deferred opinion fill** (`-DLIGHTUSD_NEXT_DEFERRED_FILL=ON`, off by
 default; run-time switch `CompositionOptions::defer_opinion_fill`, set by
@@ -3563,11 +3568,11 @@ relationship-name pre-warm); a layer with variant-component paths is filled up
 front (cross-prim variant-owner reads). Output is semantically identical but
 not byte-identical (token / string table order): the USDA conversions of the
 deferred and eager crates are identical for the district (7.7 GB, `cmp`),
-Island, merged ALab and full45 (`583e382e…`).
+reference scene, merged ALab and full45 (`583e382e…`).
 
 Paired vs the default build (`lusdcat-R11b`, repeat 2/3, zero swap): full45
 wall 101.8 → 100.7 s (0.988), peak RSS 1.001, user CPU 892 → 800 s,
-`fields_specs` 16.8 → 24.3 s; Island 5.23 → 4.37 s (**0.836**), peak RSS
+`fields_specs` 16.8 → 24.3 s; reference scene 5.23 → 4.37 s (**0.836**), peak RSS
 4.39 → 3.53 GiB (**0.806**); merged ALab 1.10 → 1.11 s but peak RSS 1.234
 (the Cache kept for the write outweighs the saving), so stages under 64 K
 prims now fill eagerly (ALab byte-identical to the default build, same RSS).
@@ -3577,8 +3582,8 @@ Single-run full45: wall ~94.7 s (eager ~104 s), load+compose 51.8 s,
 73.2 GiB eager: the full45 peak is in the warm phase (source resolution), not
 the composed layer, so deferring the fill does not lower it. (With only the
 value payloads released after encoding, the peak was 81 GiB.) (Before the
-skeleton release, Island was slower / larger: 5.8 → 6.4 s, 4.5 → 5.4 GB.) TSan
-on the deferred build (ALab, Island) race-free, semantically identical.
+skeleton release, reference scene was slower / larger: 5.8 → 6.4 s, 4.5 → 5.4 GB.) TSan
+on the deferred build (ALab, reference scene) race-free, semantically identical.
 
 ### 10.15 Warm-phase peak RSS: inert composition sources, metadata ext (round 12)
 
@@ -3677,7 +3682,7 @@ The peak is now in the opinion fill; the warm phase stays under 38 GiB.
   walk). Superseded: it ran after the warm peak, and the freed holes were
   never reused (−9 GiB allocated but no lower process peak).
 - *Eager child derivation in the warm* (derive a node's children's lists at
-  expansion, then compact it). Byte-identical, but ALab 1.054× / Island 1.045×
+  expansion, then compact it). Byte-identical, but ALab 1.054× / reference scene 1.045×
   slower. On the serial discovery it computed the frontier's lists, which is
   the workers' parallel work. And a donated child whose list the donor had
   already derived made the receiver recompute the whole ancestor chain.
@@ -3685,14 +3690,14 @@ The peak is now in the opinion fill; the warm phase stays under 38 GiB.
   unchanged. The gap is fragmentation.
 
 **Verification.**
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep: 1,933 inputs (tests/usda, tests/usdc and the AOUSD
   supplemental composition / value_resolution / compliance cases), `-f
   --compose-threads 4`, USDA and USDC, byte-identical to R11b.
 - Rewrite sweep (705 fixtures, USDA and USDC) identical.
 - ctest 67/67.
-- TSan (ALab 8 threads, Island 16 threads) race-free and hash-identical.
+- TSan (ALab 8 threads, reference scene 16 threads) race-free and hash-identical.
 - Deferred-fill build: district USDA conversion unchanged (`6f476a6e…`).
 
 **Paired vs `lusdcat-R11b`** (zero swap):
@@ -3701,7 +3706,7 @@ The peak is now in the opinion fill; the warm phase stays under 38 GiB.
 |---|---:|---:|
 | full45, repeat 2 | 98.4 → 92.0 s (**0.935**) | 73.2 → 50.7 GiB (**0.693**) |
 | merged ALab, repeat 3 | **0.883** | 0.896 |
-| Island, repeat 3 | 0.961 | 0.955 |
+| reference scene, repeat 3 | 0.961 | 0.955 |
 
 On full45:
 - warm workers +0.4 s;
@@ -3715,7 +3720,7 @@ On full45:
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
 | full45, repeat 2 | 89.8 → 93.9 s (1.045) | 1.009 | compose fill 5.7 → 2.4 s, `tables` 3.8 → 1.4 s, `fields_specs` 15.3 → 24.3 s; user CPU 0.927 |
-| Island, repeat 3 | **0.830** | **0.836** | 4.10 → 3.43 GiB |
+| reference scene, repeat 3 | **0.830** | **0.836** | 4.10 → 3.43 GiB |
 | merged ALab, repeat 3 | 1.000 | 0.991 | under 64 K prims, fills eagerly |
 
 District USDA conversion unchanged (`6f476a6e…`).
@@ -3739,7 +3744,7 @@ modes:
 The writer's ordered-commit pipeline also absorbs the fill worse than the
 standalone parallel fill: +9 s `fields_specs` against −5.7 s fill/tables.
 
-Verdict: keep deferred opt-in. It pays off on Island-sized stages; on full45
+Verdict: keep deferred opt-in. It pays off on reference scene-sized stages; on full45
 it needs a cheaper mapping store and a fill-aware writer chunking before it
 can win.
 
@@ -3772,14 +3777,14 @@ layer metadata pointed at per-object overheads, not at the data itself.
    which the fill then strips, leaving an empty 1.1 KB rare tier behind.
 4. **Decoded-value cache in the crate reader** (`FindDecoded` /
    `StoreDecoded`). A crate stores each distinct value once, and every spec
-   that authors it points at the same ValueRep. Dictionaries (Caldera prefab
+   that authors it points at the same ValueRep. Dictionaries (benchmark scene prefab
    prims all carry a small nested `customData`) and arrays (lazy and eager)
    are now decoded once per file and shared; both are refcounted and
    copy-on-write.
    - The cache is keyed by the raw ValueRep and cleared per parse.
    - Exception: reference `customData` is decoded through a ValueRep built
      from the current stream position, and the caller reads on after it.
-     That path stays uncached. Caching it broke Island: a layer failed to
+     That path stays uncached. Caching it broke reference scene: a layer failed to
      load, and the flatten silently turned the `instancer` prim into an
      empty `over`.
 
@@ -3810,12 +3815,12 @@ layer metadata pointed at per-object overheads, not at the data itself.
 Loaded layers, at fill end: 12.1 → 6.5 GiB.
 
 **Verification (R14).**
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933 inputs) and rewrite sweep (705 fixtures), USDA
   and USDC, byte-identical to R11b.
 - ctest 67/67.
-- TSan (ALab 8 threads, Island 16 threads) race-free and hash-identical.
+- TSan (ALab 8 threads, reference scene 16 threads) race-free and hash-identical.
 - Deferred build: district USDA conversion unchanged (`6f476a6e…`).
 
 **Paired results (zero swap):**
@@ -3824,11 +3829,11 @@ Loaded layers, at fill end: 12.1 → 6.5 GiB.
 |---|---|---:|---:|
 | R13 vs R12b | full45, repeat 2 | 0.946 | **0.777** (50.8 → 39.5 GiB) |
 | R13 vs R12b | ALab, repeat 3 | 0.989 | 0.930 |
-| R13 vs R12b | Island, repeat 3 | 0.976 | 0.889 |
+| R13 vs R12b | reference scene, repeat 3 | 0.976 | 0.889 |
 | R14 vs R13 | full45, repeat 2 | 1.012 (noise) | 0.923 (39.5 → 36.5 GiB) |
 | R14 vs R12b | full45, repeat 2 | **0.957** | **0.718** (50.8 → 36.5 GiB) |
 | R14 vs R12b | ALab, repeat 3 | 0.979 | 0.932 |
-| R14 vs R12b | Island, repeat 3 | 0.948 | 0.894 |
+| R14 vs R12b | reference scene, repeat 3 | 0.948 | 0.894 |
 
 **What is left** (full45 at fill end, about 24.7 GiB allocated / 34 GB
 resident):
@@ -3886,7 +3891,7 @@ the 1-minute load above 24, so the stricter gate refused the next run.
 | case | wall | peak RSS |
 |---|---:|---:|
 | full45, repeat 2 | 0.964 | 0.968 (36.6 → 35.4 GiB) |
-| Island | 0.977 | 0.987 |
+| reference scene | 0.977 | 0.987 |
 | merged ALab | 1.03 (0.04 s, noise) | 0.994 |
 
 R15 vs R12b cumulative on full45: peak 50.8 → 35.4 GiB (0.696).
@@ -3895,7 +3900,7 @@ Verification:
 - All four reference hashes match.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67.
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 The full45 peak is now in the structure walk (35.4–35.8 GiB). At the start
@@ -3942,17 +3947,17 @@ Paired vs `lusdcat-R15` (`--max-load 48`, zero swap):
 | case | wall | peak RSS |
 |---|---:|---:|
 | full45, repeat 2 | **0.967** | **0.940** (35.5 → 33.4 GiB) |
-| Island | 0.988 | 0.994 |
+| reference scene | 0.988 | 0.994 |
 | merged ALab | 1.011 | 0.991 |
 
 R16 vs R12b cumulative on full45: peak 50.8 → 33.4 GiB (0.656).
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67.
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 Next: the write-phase peak. `value_emit` adds about 4.7 GiB over
@@ -4002,19 +4007,19 @@ Paired vs `lusdcat-R16` (`--max-load 48`, zero swap):
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
 | full45, repeat 2 | 1.002 | 0.989 (33.2 → 32.9 GiB) | `structural_payloads` 5.86 → 5.19 s |
-| Island | 0.981 | 1.001 | `structural_payloads` 0.936 |
+| reference scene | 0.981 | 1.001 | `structural_payloads` 0.936 |
 | merged ALab | 1.011 (noise) | 0.999 | |
 
 R17 vs R12b cumulative on full45: peak 50.8 → 32.9 GiB (0.647).
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67.
 - Staged mode (`WriteLayerToMemory`, district): parallel == serial
   (`98ad30c3…`).
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 ### 10.20 Inert sources in instance lists (round 18)
@@ -4046,18 +4051,18 @@ Paired vs `lusdcat-R17` (`--max-load 48`, zero swap):
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
 | full45, repeat 2 | 0.999 | 0.977 (32.9 → 32.1 GiB) | warm workers 0.976, build_stage 0.979 |
-| Island | 1.002 | 1.009 | noise |
+| reference scene | 1.002 | 1.009 | noise |
 | merged ALab | 0.989 | 0.997 | |
 
 R18 vs R12b cumulative on full45: peak 50.8 → 32.1 GiB (0.632).
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933, `--compose-threads 4`) and rewrite sweep (705)
   identical in USDA and USDC.
 - ctest 67/67.
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 ### 10.21 Src diet: shared arc context (round 19)
@@ -4104,15 +4109,15 @@ Paired vs `lusdcat-R18` (`--max-load 48`, zero swap):
 | case | wall | user CPU | peak RSS | notes |
 |---|---:|---:|---:|---|
 | full45, repeat 2 | **0.962** (83.2 → 80.1 s) | 0.872 | 1.000 | warm workers 0.828, warm merge 0.768, structure 0.918, build_stage 0.872 |
-| Island | **0.941** | | 1.006 | warm workers 0.838, merge 0.765 |
+| reference scene | **0.941** | | 1.006 | warm workers 0.838, merge 0.765 |
 | merged ALab | 0.968 | 0.830 | 0.997 | |
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67.
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 ### 10.22 Composed opinion storage: Value 48 B, packed cold metadata (round 20)
@@ -4148,19 +4153,19 @@ Paired vs `lusdcat-R19` (`--max-load 48`, zero swap):
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
 | full45, repeat 2 | **0.973** (80.2 → 78.0 s) | **0.938** (32.1 → 30.1 GiB) | `fields_specs` 0.944: smaller values to read |
-| Island | 0.982 | **0.908** (3.68 → 3.34 GiB) | |
+| reference scene | 0.982 | **0.908** (3.68 → 3.34 GiB) | |
 | merged ALab | 1.000 | 0.987 | |
 
 R20 vs R12b cumulative on full45: wall 92.3 → 78.0 s, peak 50.8 → 30.1 GiB
 (0.593).
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67, including the C `test_storage` ABI check.
 - Staged mode (district): parallel == serial (`98ad30c3…`).
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 ### 10.23 Composed path strings built at exact size (round 21)
@@ -4191,18 +4196,18 @@ Paired vs `lusdcat-R20` (`--max-load 48`, zero swap):
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
 | full45, repeat 2 | 0.995 | **0.944** (30.2 → 28.5 GiB) | warm workers 0.955 |
-| Island | 0.977 | 0.989 | structure 0.883 |
+| reference scene | 0.977 | 0.989 | structure 0.883 |
 | merged ALab | 0.978 | 0.990 | |
 
 R21 vs R12b cumulative on full45: wall 92.3 → 77.9 s, peak 50.8 → 28.5 GiB
 (0.56).
 
 Verification:
-- Hashes: full45 `a0175bc1…`, district `98619c40…`, Island `267d237a…`,
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, reference scene `267d237a…`,
   merged ALab `2f7176c8…`.
 - Composition sweep (1,933) and rewrite sweep (705) identical in USDA and USDC.
 - ctest 67/67.
-- TSan (ALab, Island) clean and hash-identical.
+- TSan (ALab, reference scene) clean and hash-identical.
 - Deferred build: district USDA unchanged.
 
 What is left on the path side is the instancing bookkeeping, about 0.9 GiB
@@ -4246,62 +4251,53 @@ Paired vs `lusdcat-R21` (`--max-load 48`, zero swap):
 | case | wall | peak RSS |
 |---|---:|---:|
 | full45, repeat 2 | 1.004 | 0.995 (28.43 → 28.30 GiB) |
-| Island | 0.994 | 1.011 (noise) |
+| reference scene | 0.994 | 1.011 (noise) |
 | merged ALab | 0.989 | 1.004 |
 
 Verification:
 - All four hashes.
 - Composition sweep (1,933) and rewrite sweep (705) identical.
 - ctest 67/67, including the `Cache` instancing API tests.
-- TSan (ALab, Island) clean.
+- TSan (ALab, reference scene) clean.
 - Deferred build: district USDA unchanged.
 
-### 10.25 Migration to zen5 (2026-10-26)
+### 10.25 Migration to the benchmark host (2026-10-26)
 
-The work moved to the host `zen5`: Ryzen 9 3950X (16C/32T, Zen 2 despite
-the name), 60 GiB RAM, Ubuntu 26.04, the same g++ 15.2 / glibc 2.43.
-- Repo: `~/work/lightusd/large-scene`, cloned from a bundle of
-  `large-scene` / `dev` / `main`, with the uncommitted rounds 12–22 applied
-  as a patch. The tree hash matches the source.
-- OpenUSD v26.05 source: `~/work/lightusd/OpenUSD`, cloned from GitHub at
-  `2095fafa`.
-- Scenes: `~/data/{caldera, island, alab/usd/{_merged_ALab, ALab-2.3.0,
-  baked_procedurals, techvar_assets, generated, trailer_cameras}}`. ALab's
-  `texture_pack` and `files` were not copied (the geometry flatten does not
-  read them).
-- Bench kit (rewritten manifests and root files, tracer, sweep scripts,
-  README): `~/work/lightusd/bench`.
+The work moved to a second host: Ryzen 9 3950X (16C/32T), 60 GiB RAM,
+Ubuntu 26.04, g++ 15.2, and glibc 2.43. The source checkout, OpenUSD tree,
+scene inputs, and benchmark scripts were placed under separate local roots
+(`$REPO_ROOT`, `$OPENUSD_ROOT`, `$ASSET_ROOT`, and `$BENCH_ROOT`). The source
+tree hash matched the original checkout.
 
-Data moved over IPoIB, routed 10.10.10.2 → 10.10.10.1 → zen5 10.10.11.3:
-three parallel `rsync -aH` streams with `ssh -c aes128-gcm@openssh.com`
-(~590 MB/s per stream, ~64 GB in 2 min 16 s).
+The inputs and benchmark kit were copied to the host; network addresses,
+hostnames, and user directory names are omitted.
 
-On zen5, jemalloc is linked through the runtime `.so.2`
+On the benchmark host, jemalloc is linked through the runtime `.so.2`
 (`-DLIGHTUSD_NEXT_ALLOC_JEMALLOC=...`; no `-dev` symlink).
 
-zen5 smoke results:
+Benchmark-host smoke results:
 
 | case | wall | peak RSS | hash |
 |---|---:|---:|---|
 | district | 13.5 s | 6.08 GiB | `98619c40…` |
 | full45 | 125.1 s | 29.1 GiB | `a0175bc1…` |
-| merged ALab | 3.0 s | 0.77 GiB | `2f7176c8…` |
-| Island | 8.5 s | 3.23 GiB | `267d237a…` |
+| merged scene | 3.0 s | 0.77 GiB | `2f7176c8…` |
+| reference scene | 8.5 s | 3.23 GiB | `267d237a…` |
 
 ctest 61/61 (no TSan-only suite in this configuration).
 
-**Open item: one Island run on zen5 produced `a8f50922…`** (8 parse /
+**Open item: one reference-scene run produced `a8f50922…`** (8 parse /
 8 compose / 8 write threads). It was the first run after the copy. Then 21
 further runs, 12 warm-cache and 4 cold-cache (page cache evicted with
-`posix_fadvise`) plus 5 other thread mixes, all gave `267d237a…`. This
-looked like a rare scheduling-dependent race. **Resolved in §10.27: not a
-race.** That run passed `--max-crate-elements 300000000` (the command was
-shared with full45); the later runs did not. `a8f50922…` is the full Island
-output, and `267d237a…` was missing five arrays that were silently dropped.
+`posix_fadvise`) plus 5 other thread mixes, all gave `267d237a…`. The initial
+difference looked like a scheduling race, but §10.27 resolved it: that run
+used `--max-crate-elements 300000000` (shared with full45), while the later
+runs did not. `a8f50922…` is the full reference-scene output, and
+`267d237a…` was missing five silently dropped arrays.
 
-### 10.26 Allocator evaluation on zen5 (2026-10-27)
+### 10.26 Allocator evaluation on benchmark host (2026-10-27)
 
-Host: zen5, Ryzen 9 3950X 16C/32T, 60 GiB RAM, quiet (xmrig stopped).
+Host: benchmark host, Ryzen 9 3950X 16C/32T, 60 GiB RAM, quiet.
 Same source tree (R22), byte-identical outputs from every allocator (all
 hashes match per workload). All timings are medians; peak RSS is the
 maximum over runs.
@@ -4319,23 +4315,23 @@ maximum over runs.
   - emscripten's dlmalloc, emmalloc and mimalloc;
   - each built for wasm32 and wasm64 (memory64).
 - Not measured: snmalloc 0.7.6, rpmalloc 2.0.1 and tcmalloc (gperftools
-  2.19.1). Fetching and building them on zen5 was denied by the session's
+  2.19.1). Fetching and building them on benchmark host was denied by the session's
   permission policy.
 - Google's MiniMalloc (github.com/google/minimalloc) is an offline
   static buffer-placement solver for ML accelerators (known lifetimes →
   offsets), not a general-purpose heap. It is not applicable here and was
   not benchmarked.
 
-(Island here ran without `--max-crate-elements`, so it composed the
-truncated scene of §10.27; the allocator ratios are unaffected.)
+(The reference-scene allocator run used the default cap and the truncated
+stage described in §10.27; the allocator ratios are unaffected.)
 
-**Native** (`lusdcat -f` → USDC; district, Island 8/8/8 and merged ALab
+**Native** (`lusdcat -f` → USDC; district, reference scene 8/8/8 and merged ALab
 ×3, full45 ×2, interleaved):
 
 | workload | glibc wall / RSS | jemalloc wall / RSS | mimalloc wall / RSS |
 |---|---:|---:|---:|
 | district | 11.00 s / 7.36 GiB | 6.88 s / 4.97 GiB | 6.22 s / 5.34 GiB |
-| Island | 6.53 s / 3.63 GiB | 4.86 s / 3.34 GiB | 4.19 s / 3.72 GiB |
+| reference scene | 6.53 s / 3.63 GiB | 4.86 s / 3.34 GiB | 4.19 s / 3.72 GiB |
 | merged ALab | 1.37 s / 0.79 GiB | 1.17 s / 0.78 GiB | 1.10 s / 1.11 GiB |
 | full45 | 104.7 s / 35.4 GiB | 70.6 s / 29.3 GiB | 67.3 s / 33.8 GiB |
 | geomean vs jemalloc | 1.390 / 1.186 | 1 / 1 | **0.914 / 1.185** |
@@ -4362,11 +4358,11 @@ at a 4–5% lower peak.
   path a web viewer takes;
 - `flatten`: `NextFlattenSession`.
 
-Inputs are self-contained Island elements flattened natively
-(`~/work/lightusd/bench/wasm-inputs`). "heap" is the final wasm linear
+Inputs are self-contained reference scene elements flattened natively
+(`$BENCH_ROOT/wasm-inputs`). "heap" is the final wasm linear
 memory, which never shrinks: what a browser tab commits.
 
-`isBayCedarA1` flatten is excluded from the wasm32 numbers: mimalloc
+`the large flatten input` flatten is excluded from the wasm32 numbers: mimalloc
 reached the 2 GiB wasm32 limit there (dl/emmalloc peaked at 1.9 GiB).
 Nothing approached the 16 GiB wasm64 limit.
 
@@ -4380,9 +4376,9 @@ Nothing approached the 16 GiB wasm64 limit.
 | wasm64 | mimalloc | **0.921** (0.78–1.03) | 1.453 (0.84–2.63) | 1.001 | +63 KB |
 
 mimalloc's heap overhead is largest on small scenes, where its fixed
-arenas / pages dominate (isLavaRocks 16.8 → 33.3 MiB, isDunesA +51%). On
-the large flattens it is smaller than dlmalloc (isIronwoodA1 −30%,
-isMountainA −16%).
+arenas / pages dominate (sceneObject01 16.8 → 33.3 MiB, sceneObject02 +51%). On
+the large flattens it is smaller than dlmalloc (sceneObject03 −30%,
+sceneObject04 −16%).
 
 The wasm64 build carries `-sASSERTIONS=2`, so compare wasm64 against
 wasm64 only.
@@ -4393,7 +4389,7 @@ wasm64 only.
   `MI_DEFAULT_PURGE_DELAY=0` (a local hook in `src/util/options.c`; the
   `MIMALLOC_PURGE_DELAY` env var still overrides it). `auto` keeps the old
   installed-library search (jemalloc, tcmalloc, mimalloc). Fresh default
-  build on zen5: district / Island / ALab / full45 hashes unchanged
+  build on benchmark host: district / reference scene / ALab / full45 hashes unchanged
   (98619c40 / 267d237a / 2f7176c8 / a0175bc1); full45 71.6 s / 27.6 GiB
   peak; ctest 61/61.
 - The WASM next module defaults to dlmalloc for both wasm32 and wasm64
@@ -4417,87 +4413,3302 @@ wasm64 only.
     mimalloc opt-in (`LIGHTUSD_WASM_MALLOC=mimalloc`) for speed-first or
     multithreaded builds, where dlmalloc's global lock serializes threads.
 
-Raw data: `zen5:~/work/lightusd/bench/{native-small.csv, native-full45.csv,
+Raw data: `$BENCH_ROOT/{native-small.csv, native-full45.csv,
 wasm.jsonl, wasm64.jsonl, mimalloc-tuning.csv}`.
 Scripts: `allocbench.sh`, `wasmsuite.sh`, `wasmbench.mjs`,
 `wasm64-followup.sh`.
 
 Side findings (not allocator related; follow up separately):
-- `RenderStream` aborts on `isMountainA` (render only; flatten is fine).
-- `isHibiscus`, `isBayCedarA1` and `isDunesA` render do not finish within
+- `RenderStream` aborts on `sceneObject04` (render only; flatten is fine).
+- `sceneObject05`, `the large flatten input` and `sceneObject02` render do not finish within
   60 s on any allocator.
-- `getMeshCopy` costs ~30 ms per mesh (isKava: 1,080 meshes in 36 s).
+- `getMeshCopy` costs ~30 ms per mesh (sceneObject06: 1,080 meshes in 36 s).
 
-### 10.27 The Island "race" was silent data loss (2026-10-27)
+### 10.27 The array-cap output discrepancy was silent data loss (2026-10-27)
 
 The open item from §10.25 (`a8f50922…` once vs `267d237a…`) was not a
-race. The odd run had `--max-crate-elements 300000000`. With the flag the
-output is `a8f50922…` (2,512,205,846 B) every time; without it, it is
-`267d237a…` (1,815,093,161 B), also every time. `a8f50922…` is the full
-scene, the same hash §9.2 recorded on the earlier snapshot.
+race. The differing run used `--max-crate-elements 300000000`. With the flag
+the output is `a8f50922…` (2,512,205,846 B) every time; without it, it is
+`267d237a…` (1,815,093,161 B), also every time. The larger output retains
+five arrays that had been silently dropped.
 
-Without the flag, the default 16 M-element array cap silently dropped the
-values of five attributes:
-- `/island/isBeach/geometry/xgGroundCover/instancer`: `positions`,
-  `orientations`, `scales` and `protoIndices`, from
-  `isBeach/xgenInstances/xgGroundCover.usd`;
-- `/island/osOcean/geometry/ocean_geo.faceVertexIndices`, from
-  `osOcean/model.usd`.
-
-Only the declarations remained. The run exited 0 with no warning. Even a
-plain `--rewrite-layer` of `xgGroundCover.usd` (683 MB) produced an
-80 KB file.
+Without the flag, the default 16 M-element array cap silently dropped values
+from two geometry payloads. Only the declarations remained. The run exited 0
+with no warning. Even a plain `--rewrite-layer` of a large groom payload
+produced an 80 KB file.
 
 Three bugs combined:
 1. **Regression from `5b78bdef9` (2026-08-04).** The lazy-array probe in
-   `UnpackArrayUncached` was capped at `max_array_elements`, so a
-   compressed block could not advertise a count it doesn't hold. That also
-   capped *uncompressed* arrays, whose `count × stride` bytes must already
-   be in the file. Meanwhile the FIELDS validation
-   (`crate-reader-sections.cc`) still accepted over-cap lazy arrays. The
-   over-cap value fell through to eager decode, which refused it, and
-   `ResolveFieldset` dropped the field with a warning.
+   `UnpackArrayUncached` was capped at `max_array_elements`, so a compressed
+   block could not advertise a count it doesn't hold. That also capped
+   *uncompressed* arrays, whose `count × stride` bytes must already be in the
+   file. Meanwhile the FIELDS validation (`crate-reader-sections.cc`) still
+   accepted over-cap lazy arrays. The over-cap value fell through to eager
+   decode, which refused it, and `ResolveFieldset` dropped the field with a
+   warning.
 2. **Warnings never left the reader.** `ConvertLoadedUSDC` (pcp layer
    loading) discarded `USDCLoadResult::warnings`, unlike the USDA path.
-3. **The writer skips an unencodable `default` field** (on purpose, so
-   pxr can still read the layer). Anything dropped upstream vanished
-   without a trace.
+3. **The writer skips an unencodable `default` field** (on purpose, so pxr
+   can still read the layer). Anything dropped upstream vanished without a
+   trace.
 
 Fixes:
-- **Uncompressed arrays:** probed uncapped again; their count is
-  file-backed. They stay lazy, pass through to the writer byte for byte,
-  and materializing them still enforces the cap (`max_elements`).
+- **Uncompressed arrays:** probed uncapped again; their count is file-backed.
+  They stay lazy, pass through to the writer byte for byte, and materializing
+  them still enforces the cap (`max_elements`).
 - **Compressed arrays:** stay capped, and an over-cap compressed array now
   fails the layer load in FIELDS validation, instead of being accepted and
   then dropped field by field.
 - **Warnings:** `ConvertLoadedUSDC` forwards reader warnings, prefixed
   `USDC layer <path>:`.
-- **`lusdcat`:** prints the `raise --max-crate-elements` hint for this
-  error and for composition warnings that carry it.
+- **`lusdcat`:** prints the `raise --max-crate-elements` hint for this error
+  and for composition warnings that carry it.
 - **Test:** `test_lazy_array` covers both cases. Built without the fix, it
   fails on `cp->is_lazy()`.
 
-Island without the flag now warns that the two layers failed to load
-(composition continues, as for any unloadable arc) and writes
+The reference scene without the flag now warns that the two layers failed to
+load (composition continues, as for any unloadable arc) and writes
 `adf9f5f3…` (1,719,598,316 B). With the flag nothing changes: `a8f50922…`.
 
-The bench kit now passes the flag for Island: `allocbench.sh`, the
-manifests and the README reference hash.
+The bench kit now passes the flag for the reference scene: `allocbench.sh`,
+the manifests and the README reference hash.
 
-The forwarded warnings exposed one more silent drop:
-- ALab's `vegetation_bonsai01` groom payload has eight `inactiveIds`
-  fields (`Int64ListOp`) that the crate reader cannot decode.
-- Instance deactivation is lost there. The ALab hash is unchanged, since
-  that data was never in the output.
-- Follow-up: support `Int64ListOp`.
+The forwarded warnings exposed one more silent drop in a separate scene's
+vegetation groom payload, where eight `inactiveIds` fields (`Int64ListOp`)
+cannot be decoded by the crate reader. Instance deactivation is lost there;
+the output hash is unchanged because that data was not present in the output.
+Follow up by supporting `Int64ListOp`.
 
 Verification:
-- Hashes unchanged: district `98619c40…`, full45 `a0175bc1…`, merged ALab
+- Hashes unchanged: district `98619c40…`, full45 `a0175bc1…`, merged scene
   `2f7176c8…`.
 - ctest 61/61; Debug `test_lazy_array` passes.
 - Composition sweep (1,933 inputs) and rewrite sweep (705 fixtures), USDA
   and USDC: byte-identical to R22.
-- Island with the flag, 10 plain runs at 2–32 threads: all `a8f50922…`.
-- TSan build (`-fsanitize=thread`, system malloc), Island at 8 and 16
-  threads: 0 reports, `a8f50922…`; 78 s / 65 s, ~10 GiB peak.
+- The reference scene with the flag, 10 plain runs at 2–32 threads: all
+  `a8f50922…`.
+- TSan build (`-fsanitize=thread`, system malloc), reference scene at 8 and
+  16 threads: 0 reports, `a8f50922…`; 78 s / 65 s, ~10 GiB peak.
 
+
+### 10.28 Structure-walk hand-off granularity, measured (2026-10-27, rejected)
+
+The parallel structure walk (round 11, §10.14) hands a not-yet-walked entry to
+another thread whenever that thread is idle (`idle > queued`) and the donating
+walk has emitted `donate_after` items. On full45 that produces **2.09 M tasks
+for 12.3 M items**: the hierarchy is broad and shallow, so the natural
+hand-off unit (a depth-≥ 7 subtree) is ~5 items.
+
+Measured cost (one full45 flatten on benchmark host, `LIGHTUSD_NEXT_TIMING=1`, temporary
+per-task timers; R22 = current `main`-line tree):
+
+| counter | value |
+|---|---:|
+| walk items / tasks | 12.3 M / 2.09 M |
+| tasks emitting ≤ 2 items | 1.41 M |
+| task walk time, summed over threads | 103.7 s |
+| of which the item loop | 92–104 s |
+| per task | ~40–50 µs |
+| `add_task`, summed (mutex hold only 1.0–1.7 s) | 78–85 s |
+| worker queue section, summed (cv idle 24–37 s) | 108–121 s |
+| commit | 9.8 s, of which 6.5 s waiting on tasks |
+| materialize | 3.1 s |
+| structure phase (wall) | 13.5–15.0 s |
+
+So the walk burns ~104 s of thread time where the intrinsic per-item cost is
+~1.15 µs (measured by walking the whole tree on one thread: 10.2 M items in
+11.8 s), and the in-order commit waits behind the resulting task stream. The
+sequencer is the task hand-off itself: ~4 M mutex acquisitions (one add, one
+pop per task) with a 0.5 µs critical section but a ~2.5 µs futex hand-off.
+
+Note the host is 16 physical cores / 32 SMT (a 32-thread CPU loop scales 1 →
+32 as 19x), so the walk also over-subscribes its own 32 threads.
+
+**Attempt 1 — bundle consecutive DFS entries per task.** The stack pops in
+pre-order, so the top `k` entries are exactly the next `k` DFS positions; a
+task can own that contiguous range (one placeholder, one task, `end` unchanged
+per frame). A per-root parent list in the task (`WalkCommitCtx::task_parents`)
+maps each root back through the committing frame's `gidx`.
+
+Bundling alone does not work, because a hand-off of `k` entries transfers only
+~5 k items while the donor still walks `donate_after` (512) items between
+hand-offs: the top phase ends up walking the tree itself.
+
+| bundle | tasks | commit | materialize | structure | output |
+|---:|---:|---:|---:|---:|---|
+| 1 (R22) | 2.09 M | 9.8 s (6.5 wait) | 3.1 s | 13.5–15.0 s | reference |
+| 4 | 19 k | 2.3 s | 3.2 s | 17.9 s (top = 10.7 s) | `a0175bc1…` |
+| 8 | 18 k | 2.4 s | 3.1 s | 11.5 s | `a0175bc1…` |
+| 12 | 16 k | — | — | 24.9 s (serial fallback) | `a0175bc1…` |
+| 16 | 14 k | — | — | 23.1 s (serial fallback) | `a0175bc1…` |
+| 32 | 5.8 k | — | — | 24.8 s (serial fallback) | `a0175bc1…` |
+| 128 | 4.9 k | — | — | 22.0 s (serial fallback) | `a0175bc1…` |
+
+Bundle 8 is the only size that both stayed on the parallel path and was
+byte-identical — and it saves only ~2 s because the top phase then walks
+3.7 M items (4.4 s) and the workers only get 8.9 s of work.
+
+**Blocker — the instance-guess fallback is scheduling dependent.**
+`bundle ≥ 12` hits `walked_as_instance && !is_instance` in `CommitWalk`: a
+prim was claimed as an instance because the registry held an *earlier* rank
+for its key, but the prim holding that rank sits inside a subtree the commit
+dropped (it walked as a prototype and was an instance). The prim then turns
+out to be the prototype while its subtree was never walked, and the walk
+aborts to the serial path (structure ~24 s, i.e. 1.7x).
+
+Its probability is a function of the *split*, not of the bundle code: R22 never
+hit it on full45 in these runs, bundle 8 never hit it, bundle ≥ 12 always did.
+Fixing it properly means resolving that prim at commit time (mark it, pause the
+walkers, re-walk the prim as a prototype at its DFS position and commit that
+in its place — the item must be replaced, not committed, and no later item in
+the frame may refer to it).
+
+**Attempt 2 — that re-walk (rejected).** Implementing the resolution removes
+the fallback (`fails=0`) but changes instance decisions relative to the serial
+walk: the district composed 734,638 prims instead of 735,484 (846 missing,
+different per run), and the USDC hash moved away from `98619c40…`. The
+re-walked prim claims its key again at rank `[k, 0]`; the registry's
+"held rank is a proper prefix of ours" rule accepts it, so the prim expands —
+but the *other* prims' claims are still shaped by the speculative pass, and
+the dropped-subtree case the re-walk papers over is exactly the case where
+those claims are stale. Reverted; the conservative fallback stays.
+
+**Writer pipeline, same session (no change adopted).** Temporary per-stage
+timers in `BuildFieldsAndSpecsParallel` on full45 (`fields_specs` 12.2 s):
+encode summed over 16 workers 79–89 s, A1 0.8 s, **A2 7.1–7.6 s (serial,
+61.8 M path records), B 6.8 s, W 4.8–5.5 s, C 6.0–6.2 s**, gate waits 18–24 s,
+worker wait for a ctx 32 s. The wall (12 s) exceeds the slowest stage (A2,
+7.1 s): the ordered pipeline loses ~5 s to hand-off/stall, not to CPU
+contention. Rejected experiments: `kFieldsChunkPrims` 1024 → 4096 (12.36 s,
+no change), ctx pool 2 W → 4 W (12.01 s), encode workers 8 / 12 / 16 (13.9 /
+12.5 / 12.3 s — 16 is best). A2, B and C are single-threaded ordered appends;
+parallelising one of them is the next real lever here.
+
+**State.** No code change from this section; the tree is R22 (2ec4f06f0) and
+all hashes still match: district `98619c40…`, full45 `a0175bc1…`, merged ALab
+`2f7176c8…`, reference scene (with `--max-crate-elements`) `a8f50922…`; ctest 61/61.
+
+### 10.29 Parallel first-use interning of the prim/type/property-name tables (2026-10-27)
+
+`BuildTables` was the last fully serial phase in the write path (3.59 s on
+full45). Split measured with temporary timers:
+
+| part | full45 |
+|---|---:|
+| prim names (9.1 M distinct of 10.2 M `InternToken` calls) | 1.40 s |
+| type names (`InternToken`, 10.2 M calls) | 0.60 s |
+| property slots (51.6 M iterations, interning only the first use of each id) | 0.59 s |
+| metadata probing + `InternString` (doc, apiSchemas, edits, variantSets, references, inherits) | 1.00 s |
+
+None of it can be reordered: the crate's token indices are the table order, so
+the fix keeps the serial order **by construction** and only parallelises the
+work that decides it.
+
+- **Collect (parallel, one slice per thread).** Each slice walks its prim
+  range exactly like the serial loop and records, per text, the smallest
+  `(prim index << 32 | item ordinal)` it sees, in a per-slice
+  `unordered_map<string_view, uint64_t>` (token texts and string texts
+  separately — `InternString` interned the token too, so a string item gets
+  the same key in both maps). Property names are deduped per slice through a
+  small `prop_seen` byte vector keyed by `PropNameId`, so the 51.6 M repeat
+  slots never touch the hash.
+- **Merge (serial).** Fold the slices into one map keeping the minimum key —
+  the first use of a text is in the lowest slice, so a text seen earlier wins.
+- **Replay (serial).** Sort by key and `InternToken` / `InternString` in that
+  order: exactly the serial sequence of table insertions.
+- **Id arrays (parallel).** `prim_name_tokens_` is now filled by a read-only
+  concurrent scan of the (now immutable) token map, and `prop_name_tokens_`
+  from the seen ids. The values are order independent.
+
+`BuildPrimTablesParallel` returns false (serial loop) for layers under 65 536
+prims, in non-threaded builds, and when a deferred-fill layer is present
+(that build interns per prim at encode time by design).
+
+Results (`tables` lap; paired, `/dev/null`):
+
+| scene | baseline | candidate | elapsed (paired median) | peak RSS |
+|---|---:|---:|---:|---:|
+| district | 234 ms | **180 ms** | — | — |
+| reference scene 8/8/8 | 94 ms | **58 ms** | 0.960 | 0.999 |
+| merged ALab | 8.2 ms | 8.2 ms | 1.012 (0.83 s run; unchanged path) | 0.997 |
+| full45 | 3605 / 3566 ms | **2087 / 2071 ms** | 0.962 (69.09 → 66.49 s) | 1.004 |
+
+full45 run-to-run spread in this pair was dominated by the structure walk
+(12.2–14.8 s across four runs), not by this change; the `tables` delta
+(-1.5 s) is the clean signal. Transient RSS: the per-slice maps hold ~891 K
+distinct tokens, ~+80 MB, inside the 1.05x budget.
+
+What is left in the 2.1 s: collect 0.82 s, merge 0.58 s, sort+intern 0.51 s,
+prim/property id fill 0.11 s. The merge is the next target — a k-way merge of
+per-slice key-sorted runs would intern directly and drop the global map's
+~5 M string-keyed probes (~0.6 s). Intern (0.3 s of it) is the ~891 K real
+insertions and is inherent.
+
+Verification:
+- Hashes unchanged: district `98619c40…`, full45 `a0175bc1…`, merged ALab
+  `2f7176c8…`, reference scene (with `--max-crate-elements`) `a8f50922…`.
+- Rewrite sweep, 227 fixtures × {USDA, USDC} = 454 outputs, byte-identical to
+  `lusdcat-base` (R22) — this is the token-order check.
+- Staged mode (`WriteLayerToMemory`): parallel and `SERIAL_FIELDS=1` writes of
+  the district are byte-identical.
+- ctest 61/61 (1 skip). Non-threaded build compiles and its district hash
+  matches; the `LIGHTUSD_NEXT_DEFERRED_FILL=ON` build compiles and still takes
+  the serial path (`tables` 69 ms on the district).
+
+### 10.30 OpenUSD v26.11.1 on the reference scenes (2026-10-27)
+
+Reference measurement of the same work in pxrUSD, for context on what the
+rounds above bought. Full write-up: [large-scene-vs-openusd.md](large-scene-vs-openusd.md);
+raw records + scripts: `$BENCH_ROOT/usd-26.11-vs-lightusd.md`.
+
+Build: v26.11.1 (96c198916), Release, `PXR_ENABLE_PYTHON_SUPPORT=ON`,
+imaging / GL / Vulkan / usdview / tests / examples / all image+geometry
+plugins OFF (6m44s, 3291 targets). Boost is **not** required in v26.11.1
+(only with OpenVDB). The benchmark host has no Python dev headers and no sudo, so
+CPython 3.13.7 was built from source for the bindings.
+
+Phases measured with `bench/usd_phase_bench.py`
+(`Open` / `Traverse` / `Flatten` / `Sdf.Layer.Export`), cross-checked with
+`usdcat -f --usdFormat usdc` (126.7 vs 126.1 s on the district). LightUSD is
+`lusdcat -f ... --output-format usdc` (§4.1 defaults). Both tools read the
+same input file: the bench wrappers nest `over` prims on one line, which
+pxr's PEGTL text parser rejects ("Expected }"), so they were re-emitted one
+prim body per line; `lusdcat` on the reformatted wrappers reproduces
+`98619c40…` / `a0175bc1…` exactly, so the reformat is semantics-preserving.
+(Side note: a prim body opening on the same line as its parent's `{` is
+accepted by LightUSD's parser and rejected by pxrUSD's.)
+
+District (`district scene`, 1 district, 724 700 stage prims, 9.5 M paths):
+
+| phase | pxrUSD 26.11.1 | LightUSD | ratio |
+|---|---:|---:|---:|
+| load + compose (`Open`+`Flatten`) | 80.33 s | 3.92 s | 20.5x |
+| write (`Export` → USDC) | 45.20 s | 2.33 s | 19.4x |
+| total | 126.10 s | 6.25 s | 20.2x |
+| peak RSS | 11.35 GB | 4.79 GB | 2.37x |
+| output | 500.9 MB | 580.3 MB | |
+
+Cumulative districts (`cumulative scene set`, paths measured on the USDC):
+
+| n | stage prims | paths | pxr total | pxr RSS | LightUSD total | LightUSD RSS | ratio |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 724 700 | 9.5 M | 126.1 s | 11.4 GB | 6.3 s | 4.8 GB | 20.2x |
+| 5 | 1 632 126 | 23.8 M | 286.8 s | 20.5 GB | 11.8 s | 10.5 GB | 24.3x |
+| 15 | 2 015 184 | 28.8 M | 340.3 s | 23.2 GB | 14.4 s | 12.6 GB | 23.6x |
+| 45 | 10 187 143 | ~132 M | not runnable | 24.2 GB (load only) | 63.2 s | 29.9 GB | — |
+
+full45 (`full45 scene`, all 45 districts): pxr's load alone is 34.2 s
+(`Open`) + 8.4 s (`Traverse` 10.2 M prims) at 24.2 GB — 0.67x LightUSD's whole
+compose+write. `Flatten` memory grows ~0.6 GB per 1 M written paths beyond the
+stage (11.4 → 20.5 → 23.2 GB), i.e. ~100+ GB at ~132 M paths, over this host's
+60 GiB, so pxr cannot flatten the full scene here (runs were capped with
+`ulimit -v 44000000`).
+
+Reading:
+- pxr's `Open` is lazy; nearly all composition cost sits in `Flatten`.
+  LightUSD's single `load+compose` does that work in 20-24x less time.
+- pxr's flattened-layer `Export` is 19x slower than LightUSD's streaming
+  writer; per output byte ~23x (LightUSD's crate is 15% larger).
+- Composition scale is comparable (pxr 724 700 vs LightUSD 735 484 prims on
+  the district, 1.0-1.5% apart), so the ratios are not an input-size artefact.
+
+### 10.31 `fields_specs` pipeline: where the 12 s actually goes (2026-10-27)
+
+Round 23 left the write phase's largest lap unexamined at stage level.
+Temporary timers in `BuildFieldsAndSpecsParallel` (per-stage work and gate
+waits, per-chunk completion timestamps, worker `Reset()` / notify / context-wait
+accounting) on full45:
+
+| measurement | value |
+|---|---:|
+| `fields_specs` lap | 12.0–12.2 s |
+| last chunk **encoded** | 10.41–10.53 s |
+| stage drain after that (A1 → A2 → B → W → C) | 15–20 ms |
+| stage work / gate (s): A1 | 0.79 / 9.6 |
+| A2 | 7.46 / 2.9 |
+| B | 6.80 / 3.6 |
+| W | 4.66 / 5.7 |
+| C | 5.55 / 4.7 |
+| workers: encode / `Reset()` / context wait | 77.5–79 / 4.0–4.3 / ≈86 s |
+| worker utilisation | 46–47 % |
+| `notify_all`, `done[]` lock | 0.10 s, 0.006 s |
+| A2 split: probe / **serial append** / insert | 2.41 / **3.73** / 1.63 s |
+
+So the lap ends when the last chunk is *encoded* — the ordered stages are
+never the tail — yet the encoders are idle half the time, and every downstream
+stage is idle 25–75 %. The ring is in-order (chunk k must traverse A1→C in
+sequence) and back-pressured by the context pool.
+
+Worker-count fit (`--write-threads` 2/4/8/16 → 31.7 / 19.6 / 13.4 / 12.0 s)
+gives `t ≈ 7.4 s + 48.5 s / W`: a **fixed ≈7.4 s floor that matches A2's
+single-threaded work**, plus encode work divided by W. (Fitted on W=2/4; the
+model under-predicts W=16 by ~14 %, i.e. large W also loses to contention —
+see the work inflation below.) (The encode *total work*
+also grows with W: 50.9 s at W=2 → 79 s at W=16, +55 % — the encoders do not
+scale, which is a separate contention effect.)
+
+Three fixes were tried and measured on full45, all reverted:
+
+1. **Per-stage condition variables + `notify_one`** instead of one shared
+   `mut`/`cv` with `notify_all` on every chunk completion (the hand-off
+   wake-herd looked like the culprit: ~0.3–1 ms per hand-off, ≈100× a normal
+   wakeup). Result: 12.14 → 11.99 s, last-chunk 10.53 → 10.41 s, `notify`
+   cost 101 → 46 ms — a 1 % win only, so the herd is *not* the limiter.
+   Reverted rather than carry six condition variables for 1 %.
+2. **Parallel ordered append** in A2 (count each contiguous event slice's
+   misses → prefix sum → each slice writes its own pre-assigned contiguous
+   range, ids identical to the serial order). Result: append 3.73 → 4.90 s,
+   A2 7.77 → 8.68 s, lap 11.7 → 12.9 s — worse. Two extra shard-team
+   rendezvous per chunk (4 → 6) and a second pass over the events cost more
+   than the parallel stores save.
+3. **Whole-store adoption** (move the worker's `path_store` deque per chunk
+   instead of moving + re-splitting each new path's transient text, so the
+   events' stem/name views stay valid untouched). Result: 12.18 s — no change.
+   The append is memory-bound (≈60 ns per path record over 61.8 M records,
+   first-touch stores into 2.5 GB), not adoption-bound.
+
+**Verdict.** The lap is bounded by A2's per-record building (≈7.4 s,
+memory-bound: probe 2.4 s over 61.8 M keys, append 3.7 s of first-touch stores
+for `paths_` + `path_hashes_`, insert 1.6 s) plus `encode_work / W`
+(≈3 s at W=16, with W the effective ceiling 16). Synchronisation is not the
+lever; the remaining candidates are structural: slim the per-path record (the
+side array `path_hashes_` alone is 8 B × 61.8 M = 0.5 GB of stores and RSS —
+the shard slots already carry fingerprints), or reduce the encode work growth
+(+55 % from W=2 to W=16). Both are multi-hour changes with a bounded ~3–4 s
+payoff; the W-fit says nothing below ≈7.4 s is reachable without changing what
+A2 stores.
+
+### 10.32 Warm merge: pipelined worker teardown and parallel spec adoption (2026-10-27)
+
+The warm phase's merge (rounds 8–10) was 7.4–7.9 s of the 16.5 s warm on
+full45. Phase timers in `MergeSources` (summed over the 32 worker merges,
+`LIGHTUSD_NEXT_TIMING`; total `merge_loop` 5.97 s + `destroy` 1.21 s):
+
+| phase | s | parallel? |
+|---|---:|---|
+| prescan (probe the main cache, record first refs) | 0.91 | yes |
+| adopt stacks/mappings in first-reference order | 0.59 | **no** |
+| build remapped chain / site objects | 0.80 | yes |
+| adopt worker `StackSpecCache` entries | 1.15 | **no** |
+| remap `Src` records in place | 0.95 | yes |
+| **move keys + value vectors into the main cache** | **1.37** | **no** |
+
+The prescan and remap walk the same ~90 M cold `Src` records (~7 GB each), so
+they are bandwidth-bound and near their floor; the serial pieces were the
+target.
+
+**1. Pipelined worker teardown.** `MergeSources` adopts or remaps every
+reference a worker has, so the worker can be released while the next one
+merges. The loop used to call `workers[t].reset()` inline (1.21 s of the merge
+wall, i.e. 16 % of it, doing nothing). One helper thread now takes the victim
+on a one-slot queue (so at most two workers are alive, as before — the peak-RSS
+overlap is unchanged) and destroys it in the shadow of the next merge:
+`destroy` 1207 → **0.2 ms**, merge 7441 → 6402 ms in the same run.
+
+**2. Parallel per-stack spec adoption.** The worker `StackSpecCache` entries
+were inserted into the main per-stack caches in one serial loop. The target
+stack of each worker stack is resolved serially (adoption mutates the main
+tables) and the main vector is pre-sized, then the insertions run on all
+threads with a single atomic work counter — the target caches are disjoint, so
+this is embarrassingly parallel and order-free (a hash map's insertion order
+carries no meaning). `spec` 1180 → **421–456 ms**.
+
+Results (paired, `/dev/null`, full45, baseline = R22 before round 23):
+
+| | baseline | now | ratio |
+|---|---:|---:|---:|
+| `next_warm.merge_ms` | 7894.9 | **5530.2** | 0.700 |
+| `next_warm.merge_loop_ms` | 6228.0 | 5193.4 | 0.834 |
+| full45 elapsed (median, n=2) | 68.94 s | **64.77 s** | **0.9395** |
+| peak RSS | 30.05 GB | 29.99 GB | 0.998 |
+| merged ALab elapsed / RSS | 0.85 s | 0.84 s | 0.988 / 0.998 |
+| reference scene elapsed / RSS | 4.18 s | 4.12 s | 0.986 / 0.990 |
+
+(The elapsed ratio includes round 23's `tables` change: 3607 → 2080 ms; the
+warm work alone is the −2.37 s in `merge_ms`.)
+
+What is left in the 5.1 s merge: prescan 0.70, adopt 0.65, chain 0.83, spec
+0.43, remap 0.98, **insert 1.36 (serial)**. The insert is one random probe per
+entry into a 10.2 M-slot table (163 MB) — memory-latency bound at ~130 ns per
+entry — so parallelising it needs a sharded index (per-shard slots + value
+deques, since the value `std::vector<Src>` addresses are held by the walk).
+Expected ~1 s, and safe for the merge's ordering semantics: seeded entries are
+skipped by the prescan and a worker's own insertions stay in insertion order,
+so the first-reference adoption order (the only order that affects ids) does
+not change.
+
+Verification: district `98619c40…`, full45 `a0175bc1…` (2 runs), merged ALab
+`2f7176c8…`, reference scene `a8f50922…`; composition sweep 1933 inputs × {USDA, USDC}
+all identical to R22 (3866/3866); rewrite sweep 705 × 2 all identical
+(1410/1410); staged `WriteLayerToMemory` parallel-vs-serial identical; ctest
+61/61; non-threaded build compiles and produces the district hash.
+
+### 10.33 Warm-merge insertion prefetch probe (2026-10-27)
+
+Prefetching every taken entry among the next eight worker entries, instead of
+only the first, was tested against the round-24 binary on district compose.
+With one warmup and three alternating pairs, median elapsed increased by 2.4%
+(candidate/baseline 1.024); peak RSS ratio was 1.004 and sampled process swap
+was zero. This is a district-only measurement, not a full45 result. The change
+was reverted; sharding the source cache remains the larger insertion lever.
+
+### 10.34 Parallel warm-merge index insertion (2026-10-27)
+
+The merge now appends the taken keys and address-stable source vectors in their
+original order, then inserts their already-known hashes into the source-cache
+index in parallel. The prescan has established that the keys are distinct and
+absent. Threads atomically claim empty slots; readers resume only after the
+threads join. The serial path remains for small merges, tables with tombstones,
+index overflow, and compilers without the atomic builtins. This preserves the
+entry order used for first-reference adoption without sharding the value store.
+
+Against round 24, full45 alternating pairs (n=2, no warmup, `/dev/null`) had
+median elapsed 66.19 -> 64.85 s (ratio 0.980), warm merge 5458.5 -> 4977.4 ms,
+and maximum RSS ratio 1.000. District (n=3, one warmup) had median elapsed
+ratio 1.019, while warm merge fell 636.8 -> 604.5 ms. ALab elapsed/RSS ratios
+were 1.000/1.001 and reference scene 1.012/1.004 (n=3, one warmup). All paired runs
+reported zero sampled process swap. Small-scene elapsed variation exceeds the
+warm-merge saving, so the district and reference scene overall regressions are recorded
+rather than attributed solely to this change.
+
+Full45 output SHA-256 `a0175bc1...`, ALab `2f7176c8...`, reference scene `a8f50922...`,
+and the non-threaded district `98619c40...` match their references. The
+composition sweep matched 3866/3866 outputs, native CTest passed (60 passed,
+1 skipped), and the non-threaded build compiled. No writer code changed.
+
+### 10.35 Ordered slice replay for writer tables (2026-10-27)
+
+The per-slice token/string first-use maps are converted to key-sorted runs in
+parallel. Slice prim ranges are contiguous and ordered, so serial replay of the
+runs in slice order preserves first use, including when a text appears in more
+than one slice. `InternToken` and `InternString` deduplicate those repeated
+texts. This eliminates the separate global minimum-key maps and their string
+probes; token runs are replayed before string runs as in the previous code.
+
+Against round 25, full45 alternating pairs (n=2, no warmup) reduced the
+`tables` lap from 2029.1 to 1488.9 ms; median total elapsed 64.65 -> 63.78 s
+(ratio 0.986), maximum RSS ratio 1.003. District (n=3, one warmup) reduced
+`tables` from 157.9 to 139.0 ms, while overall elapsed ratio was 1.035. ALab
+elapsed/RSS ratios were 1.012/1.000, reference scene 0.993/1.000 (n=3, one warmup).
+All paired runs had zero sampled process swap. The short-scene elapsed changes
+are reported as measured and do not establish a causal regression.
+
+Full45, ALab, reference scene, and non-threaded district hashes match their references;
+the 705-fixture rewrite sweep matched 1410/1410 outputs. Staged parallel and
+serial output matched each other and the pre-change staged harness byte for
+byte. Native CTest passed (60 passed, 1 skipped); non-threaded and deferred-fill
+builds compiled. The full45 table result is the useful signal; whole-run times
+include structure-walk variation.
+This describes round 26's measured intermediate implementation. Round 27
+replaced the sorted temporary runs with first-use event vectors to remove the
+per-slice sort; see §10.37 for its separate district measurement and pending
+full45 check.
+
+### 10.36 Teardown worker-count and source-cache clear probes (2026-10-27)
+
+Raising the `Layer` destructor's worker cap from 16 to 32 reduced one full45
+teardown observation from 5.8 to 5.4 s, but paired total elapsed was 1.003x
+round 26 and teardown observations overlapped (baseline 5.37/5.26 s, candidate
+5.40/5.37 s). Peak RSS ratio was 0.999. Reverted: the apparent first-run
+change did not repeat in the pair.
+
+A second probe cleared the `SrcCache`'s per-entry vectors/strings on 16 threads
+before releasing its deques. District median elapsed was 1.005x and reclaim
+was 265–285 ms, indistinguishable from the 265–277 ms baseline. On full45 the
+first candidate/baseline pair measured reclaim 1644/1650 ms and elapsed
+65.23/65.69 s, but the harness refused the next pair because host available
+memory fell below its 4 GiB reserve (the host also had essentially all swap
+occupied). The experiment was reverted; the partial full45 pair is not a
+performance claim.
+
+### 10.37 First-use event vectors for writer tables (2026-10-27)
+
+Each table-building slice now stores a text in an `unordered_set` and appends
+it to an event vector only on first insertion. Since the scan visits prims in
+ascending order and slices cover consecutive prim ranges, these vectors are
+already the first-use sequence; this removes the per-slice sort and stores
+string views rather than `(key, string_view)` pairs. District hash remains
+`98619c40…`; the 705-fixture rewrite sweep is 1410/1410. Paired district
+elapsed ratio was 0.979 (three pairs) with peak RSS ratio 1.008, though the
+individual timings were noisy. In the combined round-27–30 full45 run the table lap was effectively flat
+against round 26 (median 1612 vs 1605 ms); see §10.41. The event vectors
+replace the sort while keeping peak RSS within the required limit.
+
+### 10.38 32-bit path-hash side table (2026-10-27)
+
+`path_hashes_` stores only the low 32 bits. The path-index slot already stores
+the high 32 bits, so lookup still checks the exact 64-bit hash in two pieces;
+rehash reconstructs the original hash from the slot tag and side value. This
+halves the side array (about 0.5 GiB to 0.25 GiB on full45) and keeps path
+record ids and probe order unchanged. District hash is unchanged; paired
+district peak RSS ratio was 0.990. ALab and reference scene paired elapsed/RSS ratios
+were 1.000/1.005 and 1.012/0.994, and all three hashes match. The combined full45 run in §10.41 confirms output identity and a 0.992 peak
+RSS ratio against round 26.
+
+### 10.39 Sparse ordered PATHS token replay (2026-10-27)
+
+`RegisterPathElementTokens` already runs a parallel pre-pass that identifies
+path records whose components may be absent from the starting token table. The
+serial replay now stores only those record indices in per-slice ordered lists
+and skips the second scan over every path. For each selected record, the prior
+non-root stem is recovered from the adjacent path records; skipped records
+cannot introduce tokens because the pre-pass found all their components in
+the initial table. District output remains `98619c40…`; the path-token lap
+moved from 151–152 to 140–148 ms. Overall district paired elapsed was 1.018x
+and peak RSS 1.016x vs round 26, so this small-scene comparison does not show a
+whole-run benefit. On full45 the path-token lap fell from a 2162 ms baseline median to 2052 ms
+in the round-27–30 candidate pair; the full hash and RSS also pass (§10.41).
+
+### 10.40 Packed per-slice property-name flags (2026-10-27)
+
+`BuildPrimTablesParallel` now stores each slice's seen-`PropNameId` flags as
+64-bit words instead of one byte per id. The main thread merges slices with
+wordwise OR and visits only set bits when filling the id array. Property IDs
+are still interned during the original prim-order event replay; this bitmap
+only controls the order-independent lookup array. District output remains
+`98619c40…`; paired district elapsed ratio was 0.982 and peak RSS ratio 0.990
+(n=3, one warmup), though the `tables` lap itself was within run-to-run noise.
+The rewrite sweep matched 1410/1410 outputs. The full45 pair had elapsed
+ratio 0.974, peak RSS ratio 0.992, and zero sampled swap; the full output hash
+is unchanged (§10.41).
+
+
+### 10.41 Combined rounds 27–30 full45 verification (2026-10-27)
+
+Against the round-26 binary, two alternating full45 flatten pairs (`/dev/null`,
+zero warmup) produced median elapsed 68.46 -> 66.69 s (ratio 0.974) and maximum
+peak RSS 29,965,632 -> 29,729,176 KiB (ratio 0.992). All four runs had zero
+sampled process swap. The PATHS token lap median fell 2162 -> 2052 ms; tables
+were 1605 -> 1612 ms, within run-to-run noise. One candidate full45 output has
+SHA-256 `a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+
+Current ALab and reference scene output hashes remain `2f7176c8…` and `a8f50922…`;
+paired elapsed/RSS ratios are 1.000/0.997 and 0.993/0.992. District and
+non-threaded district hashes remain `98619c40…`. The 705-fixture rewrite sweep
+matched 1410/1410. Staged parallel, staged serial, and the pre-change staged
+harness outputs match byte-for-byte (`98ad30c3…`). Native CTest passed 60 tests
+with one expected skip; non-threaded and deferred-fill builds compile.
+
+A separate full45 rewrite-only pair was attempted against the 3.01 GB flattened
+USDC file. It was stopped by the standard 4 GiB headroom monitor when the
+reader/writer process reached about 42 GiB RSS. It produced no valid timing
+pair and is not used as evidence; the paired full45 flatten covers the current
+writer path while staying within the host reserve.
+
+### 10.42 Compact path records (2026-10-27)
+
+`PathRec` previously held two `std::string_view`s (32 bytes). It now stores two
+data pointers and two 32-bit lengths (24 bytes; enforced with `static_assert`),
+and returns ordinary `string_view`s to existing readers. Empty views use a
+non-null empty-string pointer. The record still references the same stable
+layer, property-name, or owned-path storage; hash and path ordering are
+unchanged. At 61,833,354 full45 paths, the path vector is 494,666,832 bytes
+smaller (about 472 MiB), before allocator effects.
+
+The round-31 full45 pair against round 30 had median elapsed ratio 0.993 and
+maximum peak-RSS ratio 0.985; all four runs sampled zero process swap and met
+the 4 GiB reserve. The direct full45 USDC output SHA-256 matches round 30:
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+District compose paired elapsed/RSS ratios were 0.986/1.022 (three repeats,
+within the 5% RSS gate). ALab and reference scene paired runs also passed the 5% RSS
+gate, with zero sampled swap: 0.996 and 1.001 peak-RSS ratios respectively.
+Their elapsed medians were affected by cold-page and run-order variance and
+are not treated as performance claims. The native build completed after the
+change. The 705-fixture rewrite sweep matched 1,410/1,410 outputs, and staged
+parallel/serial/pre-change files matched byte-for-byte (`98ad30c3…d022a54`).
+
+### 10.43 Compact path hash fingerprints (2026-10-27)
+
+Round 32 removed the low-hash side array entirely and compared path text after
+the slot's 32-bit tag matched. Full45 output stayed identical and peak RSS
+fell (max ratio 0.986 vs round 30), but median elapsed regressed 2.5% (ratio
+1.025). The extra path-string comparisons are not worth that loss, so the
+zero-side-array variant was replaced.
+
+Round 33 keeps only the low 16 hash bits per path; the slot's high 32 bits plus
+this value form a 48-bit lookup fingerprint. Exact stem/name comparison still
+resolves fingerprint collisions. Rehash recomputes the full hash from the
+stable path views, avoiding the old 32-bit-per-path side array. This leaves a
+118 MiB fingerprint vector at 61.8M paths, compared with 236 MiB for the
+round-31 32-bit low-hash array.
+
+Against round 30, the full45 paired median elapsed ratio was 0.985 (64.50 to
+63.52 s) and maximum peak-RSS ratio was 0.984 (29,767,828 to 29,296,912 KiB);
+all runs sampled zero process swap and passed the 4 GiB reserve. The full45
+file SHA-256 remains `a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+District elapsed/RSS ratios were 0.997/0.996; ALab and reference scene passed the RSS
+gate at 1.001 and 0.963, respectively, with zero sampled swap. The 705-fixture
+rewrite sweep matched 1,410/1,410; staged parallel, serial, and pre-change
+outputs matched (`98ad30c3…d022a54`). The native build completed.
+
+### 10.44 Bounded top-level structure-walk queue probe (2026-10-27, rejected)
+
+The top-level speculative walk currently enqueues every eligible depth-2
+subtree, unlike worker donation, which checks idle workers against queued
+work. A temporary cap of four queued tasks per worker let the top walk process
+eligible entries inline while the queue was full. District composition stayed
+byte-identical (`98619c40…`); paired elapsed/RSS ratios were 0.997/0.976.
+
+The first full45 attempt stopped when the benchmark's live monitor observed
+less than its required 4 GiB reserve. After removing duplicate verified
+scratch outputs from tmpfs, the paired run completed against round 33: elapsed
+median 62.935 -> 63.995 s (ratio 1.017), maximum peak RSS ratio 1.008, and
+zero sampled process swap. The structure lap median increased 13.66 -> 14.23 s.
+This is a target-scene regression, so the cap was reverted and the native
+build refreshed to match the source. The slower candidate's full45 output was
+not separately hashed; the district hash remained `98619c40…`. Do not keep
+this queue cap.
+
+### 10.45 Depth-threshold donation probe (2026-10-27, rejected)
+
+Round 35 changed worker donation from depth >= 2 to depth >= 3, leaving the
+top-level task queue unchanged. District elapsed/RSS ratios were 1.020/1.013.
+On paired full45 runs against round 33, elapsed median rose 62.125 -> 62.980 s
+(ratio 1.014), peak RSS ratio was 1.003, and sampled child swap stayed zero.
+The structure lap increased 12.94 -> 13.70 s. Reverted; no hash or sweep was
+run for this slower candidate.
+
+### 10.46 Compose-thread scaling (2026-10-27, no default change)
+
+The same R33 executable was measured across compose thread counts. On the
+district flatten, medians were 18.40 s at 1 thread, 8.33 at 4, 6.65 at 8,
+and 6.12 at both 16 and 32. Peak RSS rose from 3.65 GiB at 16 to 3.99 GiB
+at 32. Full45 paired samples at 16, 24, and 32 threads were noisy and close:
+medians were 62.87, 62.87, and 63.64 s; 16 used less peak RSS than 32 (27.70
+vs 27.81 GiB). At 32, warm workers were faster but structure was slower.
+These data do not justify changing the automatic thread policy.
+
+A full45 compose-only serial probe reached about 36 GiB child RSS and the
+runner stopped it when available memory crossed the required 4 GiB reserve.
+It produced no timing result; the reserve guard was left unchanged.
+
+### 10.47 A2 path-slot prefetch distance (2026-10-27, rejected)
+
+Doubling the stage-A2 path-slot prefetch distance from 8 to 16 was paired
+against round 33 at 16 compose threads. Elapsed medians were 64.40 and
+63.96 s (ratio 0.993), while `fields_specs` was effectively unchanged at
+10.71 and 10.72 s. Peak RSS stayed within the gate and sampled child swap was
+zero. This small elapsed difference is within run variation; restored the
+distance to 8.
+
+### 10.48 Removing the low path fingerprint (2026-10-27, rejected)
+
+With the 16-bit side fingerprint removed, lookup still filtered on the slot's
+32-bit tag and resolved matches with exact stem/name equality. Against round
+33 at 16 compose threads, elapsed medians were 63.705 and 63.835 s and the
+`fields_specs` median increased 7.4% (10.72 -> 11.51 s). Maximum RSS was
+effectively flat; no swap was sampled. The side fingerprint was restored.
+
+### 10.49 Inline small instance-key sets in the speculative walk (2026-10-27, rejected)
+
+`WalkLocalKeys` stores the first eight keys as `string_view`s into the owning
+`WalkItem::ikey` strings,
+using an `unordered_set` only after the inline capacity is exceeded. The
+strings remain owned by the task items until the speculative walk completes
+and commit consumes them.
+
+District paired elapsed/RSS ratios were 0.990/0.997 (three runs). The first
+five full45 pairs showed a lower unpaired candidate median, but the follow-up
+five pairs showed the same wide run-to-run spread. Across all ten matched
+pairs, the median baseline-minus-candidate elapsed difference was -0.165 s
+(candidate slightly slower); the corresponding structure-lap difference was
+only +0.252 s. The unpaired medians (63.665 vs 62.60 s) were skewed by
+variation between runs and do not establish a gain. Maximum peak RSS ratio
+was 1.006 and sampled child swap was zero. Reverted the inline set.
+
+Before reverting, the emitted full45 USDC was byte-identical to the saved reference:
+3,014,654,530 bytes, SHA-256
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+ALab elapsed/RSS ratios were 1.000/1.010; reference scene ratios were 1.013/0.998;
+both passed the 5% RSS gate with zero sampled child swap. The composition
+identity sweep covered 1,934 listed inputs (3,868 USDA/USDC outputs), all
+`SAME` against R33. These checks confirm correctness, but the timing result
+does not justify retaining the source change.
+
+### 10.50 Structure-walk task-shape profile (2026-10-27, instrumentation removed)
+
+Temporary counters on two same-binary full45 runs observed 1.75 M and 1.88 M
+tasks, respectively, confirming substantial schedule variation. Only 4,362
+and 4,394 tasks recorded any local instance key (about 0.25%); the rest left
+the task-local set empty. This makes avoiding its occasional node allocation
+too small to explain a multi-second change. Rank depths and items per task
+were also highly skewed: most tasks emitted one or two items, with a long
+tail. The counters were removed after collection; no timing claim is based on
+these instrumented runs.
+
+### 10.51 Borrowed instance-key views (2026-10-27, rejected)
+
+After the task-shape profile showed few keys per task, the task-local
+`unordered_set` was changed to store `string_view`s into `WalkItem::ikey`
+instead of copying each key. District paired elapsed/RSS ratios were
+1.020/1.014; the structure lap median rose 1.139 -> 1.220 s. Reverted without
+a full45 run. The owned-string set remains the simpler baseline.
+
+### 10.52 FIFO structure-task queue (2026-10-27, rejected)
+
+The queue was changed from a rank-ordered priority heap to FIFO, based on
+top-level tasks being discovered in DFS order. District elapsed/RSS ratios
+were 0.989/1.002. On full45, four of five matched pairs were slower; the
+median paired elapsed penalty was 1.82 s, with a 0.36 s median structure-lap
+penalty. Maximum RSS ratio was 1.001 and sampled child swap was zero. Reverted:
+the explicit DFS-rank priority improves the target workload.
+
+### 10.53 Inline DFS-rank storage (2026-10-27, rejected)
+
+Round 43 replaced each speculative walk's `vector<uint32_t>` rank with a small
+inline buffer (eight entries) and heap overflow for deeper ranks. This was
+intended to remove the common short-rank allocation from task creation and
+priority-queue comparisons. On five paired full45 runs against round 33, the
+median baseline-minus-candidate elapsed delta was +0.51 s (candidate faster),
+but only three of five pairs favored the candidate; structure-lap median delta
+was +0.524 s. The gain is within observed run variation. District elapsed was
+2.2% slower and reference scene 1.0% slower; ALab was flat. Maximum peak-RSS ratio was
+0.998 and timed child swap was zero.
+
+Correctness passed: the full45 USDC was byte-identical to the saved output
+(3,014,654,530 bytes, SHA-256
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`), and the
+composition sweep matched 3,866/3,866 USDA/USDC outputs over 1,934 inputs.
+Because the apparent full45 gain is small and inconsistent, with slower small
+scenes and more complex rank storage, the inline representation was reverted.
+
+### 10.54 Priority-queue backing-store reservation (2026-10-27, rejected)
+
+Round 44 reserved space for 2^21 task IDs in the structure walk's priority
+queue, based on the observed full45 task count below 1.9 M, to avoid vector
+growth and copies. The district paired run (three repetitions) was 1.0% slower
+and had a 1.5% higher maximum peak RSS ratio. Since the fast loop showed no
+benefit and a measurable RSS increase, the reservation was reverted without a
+full45 run.
+
+### 10.55 Reuse the fill-source duplicate scan (2026-10-27, pending full45 flatten)
+
+`prepare_fill` already sorts every `fill_` source-vector pointer to compact
+each distinct vector once. `FillOpinions` then repeated the same full sort to
+identify vectors shared by multiple prims, so it would not release one before
+all its users were filled. The first sorted pass now extracts duplicate
+pointers while scanning runs, compacts the target list in place, and passes
+the sorted duplicate list into `FillOpinions`. Shared vectors are released
+after all fill workers join. Group detection and unique compaction share one
+linear scan.
+
+On full45, the candidate has 10,224,245 compact targets, zero duplicated
+source vectors, and the first pointer sort plus duplicate scan takes 313–316
+ms. Reusing that result removes a second sort of this same ~10.2 M pointer
+list from the fill path; the observed `build_stage` reduction is 0.38 s.
+
+The full45 compose-only paired run (two pairs) improved elapsed median from
+48.78 to 48.225 s (ratio 0.989); `build_stage` improved 33.313 to 32.933 s,
+while the structure walk stayed flat (14.104 to 14.153 s). Maximum peak-RSS
+ratio was 1.001 and all child-swap samples were zero. District paired elapsed
+ratio was 0.995 and max RSS ratio 1.008; a direct district output remained
+580,261,850 bytes with SHA-256
+`98619c408f717732b2ad7c2a90493303331f2d65f3e86c9656b62ccc877439bc`.
+ALab and reference scene elapsed ratios were 0.988 and 0.992, with max RSS ratios 1.004
+and 0.996. The 1,934-input composition sweep matched 3,866/3,866 outputs.
+After combining duplicate detection and compaction into one scan, the sweep was
+rerun and again matched 3,866/3,866; a direct district USDC remained byte
+identical. The follow-up district pair was run under high host load and is not
+timing evidence; remeasure the final micro-refinement when the host is quiet.
+
+Full45 flatten and direct output identity were later verified in §10.58.
+
+### 10.56 Parallelize the fill-source pointer sort (2026-10-27, pending full45)
+
+Round 48 keeps the R47 duplicate-scan reuse, then sorts the compact-target
+pointers as parallel chunks followed by pairwise parallel merge rounds. It uses
+one temporary pointer array; on full45 that is about 82 MiB. District's
+`pointer_sort` lap fell from 21–22 ms to 9–11 ms. The district paired elapsed
+median was noisy (ratio 1.030, max RSS ratio 0.959) under elevated host load;
+the direct USDC remained 580,261,850 bytes with SHA-256
+`98619c408f717732b2ad7c2a90493303331f2d65f3e86c9656b62ccc877439bc`.
+ALab elapsed/RSS ratios were 0.982/0.998 and reference scene 1.002/0.998; sampled child
+swap was zero. The 1,934-input composition sweep matched 3,866/3,866 outputs.
+
+After reverting the round-49 token-replay experiment, the current R47–48
+binary was paired again on ALab and reference scene (two repeats, one warmup). Elapsed
+and max-RSS ratios were 1.006/1.000 for ALab and 0.981/1.002 for reference scene;
+sampled child swap remained zero. This confirms the small-scene gates on the
+current source after the writer change was reverted.
+
+Full45 compose-only and flatten pairs, RSS, swap, and hash checks were later
+completed in §10.58.
+
+### 10.57 Cache predecessor path indices during token replay (2026-10-27, rejected)
+
+Round 49 packs each flagged path index with the preceding non-root path index
+during the parallel prepass. Ordered token replay can then recover the prior
+stem directly instead of scanning backward for each flagged path. The change
+compiled, and the 705-fixture USDA/USDC rewrite sweep matched 1,410/1,410
+outputs.
+
+The initial district pair set was host-load contaminated. In a follow-up
+four-pair run, median whole-run elapsed was 6.20 vs 6.245 s (ratio 1.007),
+maximum peak RSS ratio was 1.002, and all sampled child-swap values were zero.
+The `path_tokens` medians were effectively flat (142.49 ms baseline vs
+142.03 ms candidate). ALab and reference scene also showed flat path-token laps; their
+paired elapsed/RSS ratios were 0.989/1.001 and 0.993/1.000. District output
+remains byte-identical at 580,261,850 bytes, SHA-256
+`98619c408f717732b2ad7c2a90493303331f2d65f3e86c9656b62ccc877439bc`.
+
+The experiment was reverted: it adds per-slice event storage without a
+measured speedup on the fast loop or small scenes. The 1,410/1,410 rewrite
+sweep passed before the revert. Full45 validation for the retained rounds
+47–48 is recorded in §10.58.
+
+### 10.58 Full45 validation of rounds 47–48 (2026-10-27)
+
+After moving saved `.usdc` validation outputs out of tmpfs, the paired harness
+completed safely with a 4 GiB live reserve, zero sampled child swap, and the
+5% peak-RSS gate. Against R33, five alternating full45 compose-only pairs had
+a median elapsed ratio of 1.004 and maximum peak-RSS ratio 0.996. Five full45
+flatten pairs had elapsed median ratio 1.020 (median of per-pair ratios 1.008)
+and maximum peak-RSS ratio 0.999. Three of five pairs favored the baseline in
+each mode, so no end-to-end speedup is established; run-to-run phase variation
+is larger than the measured change.
+
+The targeted fill lap did improve consistently: full45 `next_fill.compact_ms`
+fell from a 766 ms compose-only median to 597 ms (about 22%), while the
+candidate's parallel `pointer_sort` lap was 132–140 ms. This is a phase-level
+saving of roughly 170 ms, not a demonstrated whole-run gain. Keep rounds
+47–48 as a low-risk fill-phase optimization for now, and measure subsequent
+changes against this validated candidate.
+
+A direct candidate full45 flatten wrote 3,014,654,530 bytes to `/dev/shm`; its
+SHA-256 matches the reference exactly:
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`. ALab
+and reference scene paired checks on the same post-R49-revert candidate passed with
+elapsed/RSS ratios 1.006/1.000 and 0.981/1.002, zero child swap. The district
+hash also matches. The saved validation outputs have been moved to
+`$TMP_DIR`; `/tmp` now holds only about 3 GiB.
+
+### 10.59 Same-parent sibling bundles in the structure walk (2026-10-27, accepted)
+
+Round 50 groups up to eight consecutive pending children with the same parent
+and depth into one speculative structure-walk task. Each task walks its roots
+in serial sibling order using the same local instance-key set, and the commit
+still consumes task placeholders in DFS order. The task count falls from about
+1.75–1.88 M to about 0.54–0.72 M on full45; bundled roots are reported in the
+timing-gated `[next_walk]` line.
+
+Against R33, five alternating full45 compose-only pairs improved median elapsed
+from 49.18 to 42.92 s (ratio 0.873); maximum peak RSS ratio was 0.992. Five
+flatten pairs improved 63.43 to 57.93 s (ratio 0.913), with maximum peak RSS
+ratio 0.993. Every timed run had zero sampled child swap. The structure phase
+median fell 14.71 to 9.08 s. Direct full45 flatten output remained 3,014,654,530
+bytes with SHA-256 `a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+
+Correctness gates passed: the 1,934-input USDA/USDC composition sweep matched
+3,868/3,868 outputs; direct district, ALab, reference scene and full45 output hashes
+matched their references. ALab/reference scene paired elapsed/RSS ratios were
+1.000/1.002 and 0.974/0.998, with zero child swap. Keep R50. Remaining work
+should profile commit/materialization and the still-large speculative walk
+record count before changing instance-claim or DFS authority.
+
+### 10.60 Inline structure-donation eligibility probe (2026-10-27, rejected)
+
+Round 51 replaced the per-node `std::function` donation-eligibility predicate
+with a small inline policy object. The intended saving was in the speculative
+walk hot loop; donation callbacks and all traversal/instance decisions stayed
+unchanged. The candidate compiled and completed five alternating district
+flatten pairs against the R50 executable. Median elapsed was 1.0035x baseline,
+maximum peak RSS was 1.0009x, and sampled child swap was zero. The measured
+phase timings were flat, so the predicate abstraction is retained; R51 was
+reverted. The district benchmark also completed byte-identical output checks.
+
+### 10.61 Increase same-parent sibling bundle cap to 16 (2026-10-27, accepted)
+
+Round 52 doubles R50's maximum same-parent, same-depth sibling roots per
+speculative task from eight to sixteen. It preserves ordered root processing
+within each task and the existing DFS-ranked commit. Against the R50 executable,
+five alternating full45 flatten pairs had median elapsed ratio 0.9867 and
+maximum peak-RSS ratio 1.0009; all sampled child-swap values were zero. The
+full45 compose-only screen (three alternating pairs) had elapsed ratio 0.9858
+and maximum peak-RSS ratio 1.0011, also with zero sampled swap. Thus the
+measured full flatten improvement is about 1.3%, with memory within the 5%
+gate.
+
+The output hash remained `a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`
+at 3,014,654,530 bytes. The 1,934-input composition sweep matched 3,868/3,868
+outputs. ALab elapsed/RSS ratios were 1.000/1.004; reference scene ratios were
+0.984/1.001; both passed with zero sampled child swap. The five-pair district
+elapsed ratio was 1.000 and RSS ratio 0.998. Keep R52 and continue testing
+larger same-parent caps against this binary; the earlier larger DFS-range
+bundle rejection (§10.28) used different task/rank semantics.
+
+### 10.62 Larger sibling caps and committed-index storage probes (2026-10-27, rejected)
+
+Round 53 increased the cap from 16 to 32. Its three-pair full45 compose-only
+screen was effectively flat against R52 (elapsed ratio 0.9974, max RSS ratio
+0.9991); the lower task count did not produce a reliable timing gain. Round 54
+tested cap 24 and was also flat (elapsed ratio 0.9998, max RSS ratio 1.0147).
+Keep cap 16.
+
+Round 55 removed the temporary per-task `gidx` vector by storing each committed
+global index on its `WalkItem`. It compiled and passed the district run, but
+five district pairs were 1.0124x elapsed with 1.0050x max RSS. Three full45
+compose-only pairs were flat at 1.0005x elapsed and 1.0032x max RSS. The extra
+walk-item state did not pay for itself; the temporary parent-index vector is
+retained. R53–55 were reverted.
+
+### 10.63 Increase A2 path-shard helper team from four to eight (2026-10-27, rejected)
+
+Round 56 raised only the `fields_specs` A2 path probe/insert team cap to eight;
+the separate streaming block team stayed at four. Five district pairs were
+0.9913x elapsed and 1.0017x maximum RSS. A three-pair full45 flatten screen
+was 0.9950x elapsed and 0.9994x max RSS, but the required five-pair full45
+flatten rerun measured 1.0064x elapsed and 1.0026x max RSS. All sampled child
+swap values were zero. The 1,410-output rewrite sweep, staged parallel/serial
+byte comparison (579,974,418 bytes each), and direct full45 hash/size checks
+passed. ALab was neutral and reference scene improved, but the target full45 median
+regressed; keep the four-thread A2 cap. R56 was reverted.
+
+### 10.64 Increase parallel `fields_specs` chunk size from 1024 to 2048 (2026-10-27, rejected)
+
+Round 57 doubled `kFieldsChunkPrims` from 1024 to 2048, aiming to reduce
+per-chunk coordination. Five alternating full45 flatten pairs against R52
+measured median elapsed ratio 1.0030 and maximum peak-RSS ratio 1.0037; all
+sampled child-swap values were zero. The district five-pair screen had already
+regressed at 1.038 elapsed ratio, despite 0.998 RSS. The larger chunks do not
+produce a repeatable target-scene gain, so retain 1024 and restore the R52
+binary.
+
+### 10.65 Small stack scratch for walk commit indices (2026-10-28, rejected)
+
+Round 58 replaced the per-call `gidx` vector with a 64-entry stack buffer and
+the same vector fallback for larger task results. This targets allocation
+overhead across the roughly 0.4–0.5 M walk tasks without adding a field to
+every `WalkItem`. Five district compose pairs regressed (elapsed ratio 1.0177,
+maximum peak-RSS ratio 0.9982). The three-pair full45 compose-only screen was
+flat/slower (elapsed ratio 1.0026, maximum peak-RSS ratio 0.9991). All sampled
+child swap remained zero. Revert R58; the per-call vector remains.
+
+### 10.66 Inline short task DFS ranks (2026-10-28, rejected)
+
+Round 59 stored ranks of up to eight indices inline in each task and reused a
+rank prefix buffer per worker; deeper ranks retained a vector fallback. This
+avoided one small rank-vector allocation per task. Five district compose pairs
+improved slightly (elapsed ratio 0.9948, maximum peak-RSS ratio 0.9976), and
+the three-pair full45 compose-only screen improved 0.93% (elapsed ratio 0.9907,
+maximum peak-RSS ratio 1.0009). However, the five-pair full45 flatten result
+regressed 0.87% (elapsed ratio 1.0087, maximum peak-RSS ratio 1.0045). All
+timed runs had zero sampled child swap. Since the primary flatten path lost,
+revert R59 and retain vector-backed task ranks.
+
+### 10.67 Skip clearing the per-task commit-index scratch (2026-10-28, rejected)
+
+Round 60 used an uninitialized `uint32_t[]` for `CommitWalk`'s local-to-global
+index scratch. The intended invariant is that a parent slot is read only after
+that parent commits and writes it. Five district compose pairs were flat
+(elapsed ratio 1.0035, maximum peak-RSS ratio 0.9986); the three-pair full45
+compose-only screen regressed 1.8% (elapsed ratio 1.0182, maximum peak-RSS
+ratio 1.0049), with zero sampled child swap. The 43 MB of avoided initialization
+was not measurable as a benefit; restore the initialized vector.
+
+### 10.68 Reuse DFS-rank buffers by commit recursion depth (2026-10-28, rejected)
+
+Round 61 retained a rank vector per active `CommitWalk` recursion level and
+reused its capacity for subsequent tasks at that level. Five district compose
+pairs improved 0.87% (elapsed ratio 0.9913, maximum peak-RSS ratio 0.9971),
+but the three-pair full45 compose-only screen regressed 0.45% (elapsed ratio
+1.0045, maximum peak-RSS ratio 1.0006). Timed runs had zero sampled child swap.
+The district signal did not transfer to full45, so restore the per-call rank
+copy.
+
+### 10.69 Reuse the committed parent-index array as child cursors (2026-10-28, accepted)
+
+Round 62 removes `MaterializeWalk`'s separate `cur` vector, which copied the
+full `off` prefix array before filling the CSR child-index array. Committed
+parents precede their children. During the ascending child pass, each parent's
+`ctx.parents` slot has already served as that prim's input parent index and is
+then repurposed as its next-child cursor. `off` remains intact for the final
+child ranges; each child is still appended in ascending commit order.
+
+Against R52, an initial five-pair full45 flatten set improved median elapsed
+by 0.23% (ratio 0.9977; max-RSS ratio 1.0076). An independent five-pair
+confirmation set improved 0.48% (ratio 0.9952; max-RSS ratio 1.0007). Both
+sets had zero sampled child swap. Three full45 compose-only pairs measured
+0.9981 elapsed and 0.9994 max RSS. Five ALab and reference scene pairs were neutral at
+1.000 elapsed; their maximum RSS ratios were 1.0018 and 1.0007, with zero
+sampled swap.
+
+Correctness gates passed: the 1,934-input composition sweep had 2,456 byte-
+identical USDA/USDC outputs and 1,412 matching return-code-only outcomes. The
+direct USDC sizes and hashes match all four references: district 580,261,850
+bytes (`98619c408f717732b2ad7c2a90493303331f2d65f3e86c9656b62ccc877439bc`),
+full45 3,014,654,530 bytes
+(`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`),
+merged ALab 732,541,268 bytes
+(`2f7176c8008f0ae219c58159ef19f3179dab26b2d35073f5fc5aeac174dc7493`), and
+reference scene 2,512,205,846 bytes
+(`a8f5092209cbcd30841c129354bda0aaae5ea21607f7bd70725ef933d7b2c478`). Keep
+R62 and continue measuring the remaining structure-walk and writer phases.
+
+### 10.70 Raise warm-merge worker cap to 32 (2026-10-28, rejected)
+
+Round 63 raised `MergeSources`' parallel worker cap from 16 to 32. Five
+full45 flatten pairs regressed to a 1.0115 median elapsed ratio against R62
+(57.56 -> 58.22 s); maximum peak RSS ratio was 1.0011. Three compose-only
+pairs were 0.9887 elapsed / 0.9954 RSS, but the five-pair district screen
+regressed 1.0157 / 1.0083. Full45's merge loop rose from a roughly 4.6–4.7 s
+baseline to 5.1–5.2 s; the compose-only signal did not carry through flatten.
+All sampled child swap remained zero. Revert the cap increase and retain 16.
+
+### 10.71 Shorten the commit's task-ready spin (2026-10-28, rejected)
+
+Round 64 reduced the ordered commit's spin-before-condition-variable loop from
+4096 to 1024 iterations. Five district compose pairs improved 1.56% in median
+elapsed time (maximum RSS ratio 0.9818), but five full45 flatten pairs were
+flat at 0.9997 elapsed and 1.0042 maximum RSS; sampled swap stayed zero. The
+district gain did not transfer to the target flatten path, so restore 4096.
+
+A timing-only full45 profile identified the next large walk costs: top phase
+1.2 ms, ordered commit 4.16 s (1.17 s summed task-ready wait), and materialize
+2.92 s. Within materialization, CSR setup/fill was 87 ms and parallel PrimSpec
+construction/child assignment was 1.60 s; the outer materialize lap also
+includes fill preparation. The top phase is negligible, so subsequent probes
+should target commit replay or PrimSpec construction. Temporary timers were
+removed after collecting this profile.
+
+### 10.72 Avoid the temporary Path::name string during materialization (2026-10-28, rejected)
+
+Round 65 added a `Path::name_view()` accessor and a `PrimSpec` string-view
+constructor so each materialized prim could copy its name directly without a
+temporary string. Five district compose pairs regressed 1.0141 elapsed with
+1.0030 maximum RSS. Five full45 flatten pairs were flat at 1.0002 elapsed and
+1.0061 maximum RSS. The name-view path does not improve the target workload;
+remove the API and retain `Path::name()`.
+
+### 10.73 Set materialized prim names in place (2026-10-28, accepted)
+
+Round 66 replaces the temporary `PrimSpec(it.path.name())` plus move
+assignment with `ps.set_name(it.path.name())` on the default-constructed
+output prim. Five district compose pairs improved 0.69% (elapsed ratio
+0.9931; maximum RSS ratio 0.9994). Five full45 flatten pairs improved 0.36%
+(ratio 0.9964; maximum RSS ratio 0.9978), with zero sampled process swap.
+ALab and reference scene were neutral at 1.000 elapsed; maximum RSS ratios were 1.0011
+and 1.0029. The direct full45 output remained 3,014,654,530 bytes with SHA-256
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+The full CTest run passed 60 tests with one expected skip. Keep R66.
+
+### 10.74 Low-memory profile: batched compose streamed into the writer (2026-10-28)
+
+`lusdcat -f --memory-profile low ... -o out.usdc` (library entry
+`pcp::FlattenToUSDCFileBatched`, `src/next/pcp/batched-compose.{hh,cc}`)
+flattens to USDC with the composed stage, its composition sources and the
+source layers never resident all at once. The output is byte-identical to
+the default profile. The goal was a full45 peak of about twice the source
+asset (6.55 GiB of USD on disk, 63,685 files), so 12–13 GiB against 28 GiB.
+
+**Where the default's memory goes.** A census with jemalloc `stats.allocated`
+/ `stats.resident` at the phase boundaries (temporary instrumentation, not
+committed), full45:
+
+| point | allocated | anon RSS | file RSS |
+|---|---:|---:|---:|
+| end of warm | 17.2 GiB | 20.7 GiB | 3.3 GiB |
+| end of fill (process peak) | 18.2 GiB | 24.1 GiB | 3.3 GiB |
+| compose done (layers and cache freed in `reclaim`) | **12.05 GiB** | 22.9 GiB | 1.9 GiB |
+| writer after `fields_specs` | 21.3 GiB | 24.6 GiB | 0 |
+| writer destroyed | 11.1 GiB | 17.6 GiB | 0 |
+
+- The composed layer alone is 12 GiB allocated. `consume_values` releases
+  only about 1 GiB of it, because most array values are lazy references.
+- The source layers and cache are about 6.4 GiB allocated, plus up to 3.3 GiB
+  of mapped crate pages.
+- The writer's whole-scene tables are about 7 GiB: path records, path shards,
+  fields, fieldsets and specs.
+- About 11 GiB of freed-but-resident heap is left at compose end.
+- Fewer threads do not help: with 4 threads everywhere the peak is 29.1 GiB.
+
+**Design.** Only one namespace batch of the composed stage exists at a time.
+
+1. **Frontier discovery.** One `Cache` composes the namespace top-down, a whole
+   level at a time, while the next level stays within `max_frontier` (64 K)
+   roots. It expands only active, non-instanceable prims with children. On
+   full45 the frontier is 10,612 roots at depth 6; the expanded prims above
+   them form the *spine* (237 prims).
+2. **`BatchScope` namespace mask** (`cache-internal.hh`). A batch composes a
+   run of consecutive frontier roots plus their ancestors. Each place that
+   lists a prim's children filters a spine prim's children down to spine prims
+   and the batch's roots, recording the full list for the writer:
+   - the serial walk;
+   - `SpeculativeWalk`;
+   - `ExpandWarmNode`, in the main `Impl` and in the warm workers' `Impl`s;
+   - the root names.
+
+   Each batch gets a fresh `Cache` (`BatchedComposeAccess::Open`) over one
+   shared `LayerRegistry`, so the batch's sources, spec caches and instancing
+   maps all die with it. The arc-layer prefetch is off in batches: it would
+   re-crawl every loaded layer's arcs once per batch.
+3. **Instancing across batches.** Instance keys are made of stack
+   identifiers, sites and offsets, so they are comparable across `Cache`s.
+   - Every key an earlier batch claimed is seeded into the next batch's
+     `prototype_by_key`, the walk's `WalkClaims` and the warm's `WarmShared`.
+     A later member therefore stays an instance, and the prototype (Holder) is
+     still the pre-order-first member.
+   - `FlattenInstances` rewrites members whose prototype lives in an earlier
+     batch.
+   - It clears `instanceable` on a Holder whose peers are all in later batches
+     (`holders_with_peers`, recorded by pass 1).
+4. **Two passes.** Pass 1 (`BatchedComposer::Plan`) composes every batch and
+   discards it. It records:
+   - the writer's token/string table order (below);
+   - Holders that have peers;
+   - each frontier root's composed prim count;
+   - the composed children and subtree sizes under heavy roots;
+   - each layer's last-use root.
+
+   Pass 2 (`Run`) recomposes with exact batch cuts at the target size. Roots
+   over the target are split into their children, which become spine prims.
+   After each batch, pass 2 drops from the registry every layer no later batch
+   uses (45,095 of 63,366 on full45). A layer that is needed again would simply
+   reload, because each batch has its own `Cache`.
+5. **Batched writer** (`CrateWriter::AddBatchTables` / `BeginBatchedFile` /
+   `WriteBatch` / `FinishBatched`).
+   - The first thing that fixes output bytes is the token/string order of
+     `BuildTables`. Pass 1 replays its per-prim interning
+     (`InternPrimTables`) batch by batch, in prim order, on the same writer,
+     so the tables match the whole-layer `BuildTables` exactly.
+   - Pass 2 runs the unchanged per-prim encoder and parallel chunk pipeline
+     (`BuildPrimSpecs`) on each batch:
+     - ancestors an earlier batch wrote are skipped (`skip_prims_`);
+     - spine prims take their full child list, ordered as
+       `Layer::apply_namespace_ordering` orders linked children by
+       `primOrder` / `rootPrimOrder`;
+     - the written prims' `Path`s move into the writer (`stream_paths_`),
+       because `PathRec`s view their text. Paths of 15 characters or fewer
+       are made heap strings first, since short-string-optimized text would
+       move with the object.
+   - Value dedup and source-range tables carry across batches.
+   - The structural payloads are built one at a time, PATHS first, and each
+     source table is freed as soon as its payload exists (`serial_sections_`).
+
+`Write()` was split into `CheckWriteOptions`, `ResetWriteState`,
+`ReserveTables`, `BeginValueStream` and `FinishWrite`, and `BuildTables` /
+`BuildFieldsAndSpecs` into `InternFixedTokens` + `InternPrimTables` and
+`EmitPseudoRootSpec` + `BuildPrimSpecs`. The default path runs the same code
+in the same order: its hashes, the rewrite sweep and staged mode are unchanged.
+
+**Bugs found on the way.**
+- The warm workers' `Impl`s did not inherit the batch scope at first. A spine
+  prim handed to a worker expanded its whole subtree: one 268 K-prim batch
+  warmed 10.2 M sources and the run peaked at 20.8 GiB.
+- Batch-local `finalize()` orders only the linked part of a spine prim's
+  children, so 7 sweep inputs with authored `primOrder` differed until the
+  writer applied the same ordering to the full list.
+
+**Results at the time** (full45, single runs, `--fast-exit`, output to
+`/dev/null`; the hash run wrote to `/dev/shm`). The next round (§10.75) took
+the low profile to 88.8 s / 11.9 GiB and the default to 42.6 s / 23.5 GiB:
+
+| profile | batch target | wall | peak RSS |
+|---|---:|---:|---:|
+| default | — | 53.2 s | 27.67 GiB |
+| low | 150 K prims | 140.3 s | 12.24 GiB |
+| low | **300 K prims (default)** | **121.8 s** | **12.23 GiB** |
+| low | 500 K prims | 114.1 s | 13.14 GiB |
+
+- With the 300 K target, pass 1 took about 48 s in 133 batches (largest 1.58 M
+  prims) and pass 2 about 59 s in 39 batches (largest 299 K prims).
+- During pass 2, RSS stays at 10–11.7 GiB. The final structural build peaks
+  at about 11.7 GiB.
+- The process peak, mid pass 2, is about 10.7 GiB anonymous plus 1.5 GiB
+  file-backed: the writer's tables, the layers still in use and the current
+  batch.
+- Smaller batches stop helping below about 300 K prims.
+- On small stages the profile does not pay: Island (283 K prims) becomes one
+  pass-2 batch and peaks at 3.9–4.2 GiB against 3.3 GiB by default.
+
+**Verification.**
+- Low profile:
+  - full45 `a0175bc1…`, district `98619c40…`, merged ALab `2f7176c8…` and
+    Island `a8f50922…` all equal the default output.
+  - Composition sweep, USDC: 1,933/1,933 inputs identical at two batch
+    settings: `--batch-prims 1`, and `--batch-prims 50 --batch-frontier 64`.
+  - The batched compose alone, merged back into one layer
+    (`pcp::ComposeStageBatched`, lusdcat `--batched-compose N`), matched
+    3,866/3,866 USDA and USDC outputs at 1 and at 4 roots per batch.
+- Default profile: district and full45 hashes unchanged; rewrite sweep
+  1,410/1,410; staged parallel == serial (`98ad30c3…`); CTest 65/65 with one
+  skip.
+- The no-thread build compiles again. The R47/R48 parallel pointer sort and
+  the shared-source release used `std::thread` unguarded and are now under
+  `LIGHTUSD_ENABLE_THREAD`. District is `98619c40…` there in both profiles.
+- No paired timing runs were made: the default profile's code path is a
+  refactor of the same calls in the same order.
+
+**Next levers** (remaining resident set at the peak):
+- Spill the append-only `fields_` / `flat_fieldsets_` / `fieldset_offsets_` /
+  `specs_` columns (about 4 GiB at the end) to a temporary file and map them
+  back one at a time for the section build.
+- Writer-owned path nodes `{parent, element token}` instead of `PathRec`
+  views plus the kept prim path strings (about 2 GiB of text).
+- `MADV_DONTNEED` the mapped crate pages that parsing touched (up to 1.5 GiB
+  file RSS).
+- A cheaper pass 1: it only needs names, type names, property names and the
+  instancing facts, not composed values.
+- Choose the default profile automatically when pass 1 finds the whole stage
+  fits in one batch.
+
+### 10.75 Both profiles faster and leaner (2026-10-28)
+
+Goal: the low profile at about 100 s and about 13 GB; the default profile at
+about 40 s and under 24 GB. Every step below is byte-identical.
+
+**Where full45 ended up** (`--fast-exit`, output to `/dev/null`, single runs,
+wall from process start to exit):
+
+| profile | before (§10.74) | after |
+|---|---:|---:|
+| default | 53.2 s / 27.67 GiB | **40.3–41.5 s / 23.45–23.6 GiB** (lusdcat total 39.0–40.1 s) |
+| low (`--memory-profile low`) | 121.8 s / 12.23 GiB | **85.4–85.9 s / 11.9 GiB** |
+
+The default's wall stays about 1 s above 40 s. Of the remaining ~41 s:
+- compose is ~24.5 s: warm ~14.5 s (workers 9.2 + merge 5.0), structure walk
+  ~7.7 s, fill 2.1 s;
+- the write is ~15 s: `fields_specs` 9.8 s, paths and sections ~4 s;
+- process exit is ~1.4 s. The kernel frees 4 KiB pages at about 2.4 s per
+  20 GB on this host, against 0.11 s for huge pages.
+
+The default's 23.5 GiB is under 24 GiB, but not under 24 GB (25.2 GB).
+
+**Memory**
+- **Parsed crate pages dropped** (`CrateReader::ReadFile`): once a crate has
+  been parsed, `DiscardRange` frees its whole mapping. Lazy arrays fault their
+  pages back in from the page cache. This removes the 3.3 GiB of file-backed
+  RSS that the compose peak held.
+- **`CrateWriteOptions::consume_prims`** (set by lusdcat together with
+  `consume_values`): each written prim is released to its skeleton (name, path,
+  children). Reaper threads do this only after the chunk's commit, which keeps
+  the serial fallback valid. With this the writer phase stays at or below about
+  21 GiB, below the compose peak.
+- **`PropertySpecBound`**: the spec / path / fieldset reserves now count
+  relationships and time-sampled properties. Before, `paths_`, `specs_` and
+  `fieldset_offsets_` doubled near the end of `fields_specs`; those multi-GB
+  copies cost about 2 s.
+- **`CompositionOptions::release_layers_during_fill`** (lusdcat):
+  - `PlanLayerRelease` records each layer's last fill batch. Every layer of a
+    stack that a record's sources use counts as read, which is conservative.
+  - Once the fill's completion watermark passes that batch, the layer's prims
+    are freed with `Layer::release_prims`; the root stack and batched builds
+    are excluded. 45,089 layers are released on full45.
+  - After the walk, the prims of the 18 K layers that no layer stack holds
+    (prefetched proxy-LOD arcs) are freed too.
+- **`MemoryTrimmer`** (`memory-trim.hh`) returns freed pages through an
+  asynchronous jemalloc `arena.<all>.purge`, falling back to `mi_collect`. It
+  runs after the source compaction, during the fill and at the start of the
+  writer's tail.
+  - A synchronous purge costs 0.1–0.9 s each.
+  - A purge right after the warm contended with the structure walk (+0.7 s, no
+    lower peak) and was dropped.
+- Net: the default peak went 27.67 → 23.5 GiB, now set at fill start
+  (layers + skeleton + sources).
+
+**Time**
+- `TypeNameTable` reads are lock-free:
+  - id → name pointer, plus a fixed open-addressed index, published under the
+    exclusive lock before `intern` returns the id;
+  - the rwlock had been about 30% of fill samples;
+  - fill 2.85 → 2.05 s.
+- `BuildPrimSpecs` prelude: the two serial `'{'` scans over 10 M prim paths
+  became one parallel scan. Prims without relationship data skip
+  `relationship_names()`, which allocates and sorts. `fields_specs` went
+  10.9 → 9.8 s.
+- Writer tail:
+  - FIELDS / FIELDSETS / SPECS payloads build while the path tree is checked;
+  - the PATHS payload is built speculatively during the element-token dry run.
+    Its parent lookups answer the ancestor-synthesis question, since a missing
+    ancestor is exactly a failed parent lookup;
+  - the three PATHS columns compress concurrently;
+  - the CSR is built in parallel, and subtree sizes come out of the DFS;
+  - path-synthesis pre-pass: one stem probe per run of records that share it;
+  - sections stream straight to the sink instead of through `buffer_`.
+
+  Together: path_tokens + structural 5.5 → 4.0 s; PATHS / toc copies
+  1.45 → 0.09 s.
+- Writer head:
+  - reserves (shards zero-filled in parallel) overlap `BuildTables`, so
+    setup + tables went 1.83 → 1.54 s;
+  - `LayerNeedsVariantHolders` scans in parallel.
+- Compose tail:
+  - `FlattenInstances` edits groups in parallel (0.94 → 0.10 s). Lookups that
+    miss the recorded index fall back to the serial pass.
+  - `apply_namespace_ordering` skips prims with no `primOrder` (finalize
+    0.59 → 0.35 s).
+  - `CompositionOptions::background_reclaim`: the cache is destroyed off
+    thread; join it with `pcp::WaitForBackgroundReclaim`.
+- `SrcCache::borrow_site_keys` (10 M key compares and frees between the warm
+  and the walk) is split across threads: structure 9.0 → 7.7 s.
+  - The rest of the walk tail is the in-order commit. `prototype_by_key` is
+    now hashed; its compares of long keys were serial in the commit.
+  - `add_task` copies the rank and notifies outside the queue lock.
+  - Both of these were neutral within noise.
+- `Layer::resize_prims` prefaults a large prim array with
+  `MADV_POPULATE_WRITE` from several threads before the serial default
+  construction (compose about −0.3 s). The helper is
+  `PopulatePagesParallel` in `memory-trim.hh`.
+- The structure walk's instancing maps (`prototype_of`,
+  `instance_prim_index_`) are reserved once after the warm. The size is the
+  warm's instance `Claim` count; both walks skip later instances' subtrees.
+  Before this, the in-order commit rehashed them through ~1 M serial inserts.
+  Structure drops from 7.9–8.1 to 7.2–7.8 s, and compose by about 0.6 s.
+- The commit's `ctx.nodes`, `ctx.parents` and `fill_` are reserved from the
+  source-cache size, which is about one entry per committed prim. Structure
+  drops to 7.1–7.3 s.
+- PATHS pre-order walk (0.55 s serial) is split at a namespace frontier for
+  1 M+ paths. Levels are expanded while fewer than 65,536 nodes have children;
+  only nodes with children count, because full45's root level already holds
+  about 4.3 K small prototype roots next to the one 61.8 M-node world subtree.
+  - Frontier subtree sizes are counted in parallel. A serial walk of the
+    levels above places each subtree, and the subtrees are walked in parallel
+    into their slots. Order, subtree sizes and sibling flags are unchanged.
+  - Full45: 78,961 tasks, largest 2.37 M nodes. The walk takes 0.24 s and
+    `path_tokens` drops from 4.4 to 4.0–4.2 s.
+  - Verified with the walk forced on for every input: rewrite sweep 1410
+    SAME and composition sweep 3866 SAME.
+- `ShardTeam` helpers and the caller spin about 20 µs before sleeping. The
+  commit stages run several team phases per chunk, about 50 K on full45, and
+  each condvar wake added its latency. `fields_specs` went 9.2–9.8 →
+  9.15–9.3 s; stage B measured P1 3.6, P2 2.7 and P3 1.2 s.
+- The writer tables get `MADV_HUGEPAGE` (`AdviseHugePages`): fewer faults and
+  a cheaper exit. lusdcat owns its `CrateWriter` and leaves its ~6 GB to
+  process exit under `--fast-exit`; without it they are freed during teardown.
+- **Low profile**:
+  - the writer callback runs on a consumer thread one batch behind the compose
+    (`BatchConsumer`, at most two batches alive): 116.9 → 102.3 s;
+  - after PATHS, the remaining payloads build concurrently;
+  - the default batch target is 400 K prims (97.7 s / 11.9 GiB measured, then
+    88.8 s with the writer gains above).
+
+**Measured and rejected**
+- jemalloc decay 0, `narenas` 1 / 2 / 8, `percpu_arena`: no lower peak, slower.
+- Vendored mimalloc: `purge_delay=0` gave 64 s / 25.0 GiB; the default delay
+  33 GiB.
+- Prefaulting the writer tables (`MADV_POPULATE_WRITE`): setup +2.1 s,
+  `fields_specs` −0.1 s.
+- `fields_specs`:
+  - stage B team 4 → 8: B is bound by its serial planning loop;
+  - 3 ctx per worker;
+  - a per-chunk mask on the chunk dedup table.
+
+  None of these moved it. Its stages measured A1 1.0, A2 5.9, B 7.5, W 3.8 and
+  C 5.8 s of busy time, against a 9.8–10.5 s lap.
+- A per-resolver stat memo, and 8 prefetch workers: no warm change.
+- `MALLOC_CONF=thp:always`:
+  - throughout: write +5–8 s;
+  - during compose only (`PR_SET_THP_DISABLE` before the write): 37.6–39.9 s
+    in good runs, but one run stalled on direct compaction (50.6 s), and the
+    peak reached 23.7–24.65 GiB;
+  - `MADV_HUGEPAGE` on the composed prim array: noise or slower.
+- A warm-only worker count of 24 or 16 (rest at 32): no gain.
+- A synchronous purge (instead of the async trimmer) after the source
+  compaction, before the prim array: 41–42.8 s and up to 23.97 GiB, so worse.
+- A parallel prefault of the warm merge's 512 MiB index: −20 ms.
+- Exit tail (1.35 s): at `_Exit`, jemalloc has 12.1 GiB allocated, 16.0
+  active and 16.5 resident, with 0.01 GiB dirty. 6.5 GiB is on huge pages
+  (the writer tables). The tail is the kernel freeing live 4 KiB pages, so
+  no purge removes it.
+- A pointer memo for PATHS element tokens: no change. That step (0.65 s) is
+  bound by random access, not hashing. The PATHS steps measured: parents
+  0.92, CSR 0.83, sort 0.39, DFS 0.55, nodes 0.65 s.
+- Huge pages for the prim array, at reserve or before the prefault: exit tail
+  unchanged. At exit 15.3 GiB is resident, of which 6.2 GiB is on huge pages
+  (the writer tables).
+- Compose threads 24: 42.4–42.5 s and 23.3 GiB, against 42.9–43.4 s and
+  23.6–23.8 GiB at 32. That is host-specific, so the automatic policy is
+  unchanged; pass `--compose-threads 24` on 16-core / 32-thread hosts.
+
+**Verification** (final tree)
+- full45 `a0175bc1…`, district `98619c40…`, merged ALab `2f7176c8…` and Island
+  `a8f50922…`, in both profiles.
+- Composition sweep 3,866/3,866 against `lusdcat-base`; rewrite sweep
+  1,410/1,410; low-profile USDC sweep (`--batch-prims 1`) 1,933/1,933.
+- CTest 65/65 with one skip; staged parallel == serial (`98ad30c3…`).
+- The no-thread build gives the district hash; the deferred build compiles.
+
+### 10.76 ALab and Island in both profiles; nothrow-movable `Src` (2026-10-28)
+
+Goal: speed up ALab and Island in both profiles, without giving back full45.
+Everything below is byte-identical.
+
+**Results** (`--fast-exit`, output to `/dev/null`, wall from process start to
+exit; ALab and Island three runs each, full45 two or three):
+
+| scene | profile | before | after |
+|---|---|---:|---:|
+| ALab | default | 0.80 s / 0.73 GiB | 0.78–0.79 s / 0.73 GiB |
+| ALab | low | 5.7 s / 0.86 GiB | **1.68 s / 0.76 GiB** |
+| Island | default | 3.48–3.51 s / 3.06 GiB | 3.47–3.49 s / 3.07 GiB |
+| Island | low | 10.2 s / 3.5 GiB | **5.3–5.4 s / 3.02–3.06 GiB** |
+| full45 | default | 40.3–41.5 s / 23.5 GiB | **38.2–39.1 s** / 23.6–24.0 GiB |
+| full45 | low | 85.5 s / 11.94 GiB | **80.0–81.4 s / 11.7 GiB** |
+
+Before this round, the low profile was slower and larger than the default on
+both small scenes. Each fits in one pass-2 batch, so the profile cannot save
+memory there. Its peak is now no higher than the default's.
+
+**Changes.**
+- **`Src` is nothrow-movable.** `SpecsMemo`'s move operations lacked
+  `noexcept`, so every `std::vector<Src>` growth copied each element: its site
+  string and its context `shared_ptr`. That was the hot path of the warm
+  workers (`ExpandArcs`). A `static_assert` now guards it.
+  - full45 warm workers drop from 9.2 to 7.4–7.7 s, and compose from 24.5 to
+    22.1–22.6 s. Island and ALab compose drop by about 3%.
+  - On a growth, `SpecState` now moves, keeping its "has specs" memo where the
+    copy reset it. The memo caches a fixed answer, and every hash and sweep
+    is unchanged.
+- **Pass-1 batch ramp.** A new parent's roots join a pass-1 batch at most
+  `fresh_cap` at a time, which was a fixed 4. ALab (9,667 roots under 3,377
+  parents) was planned in 1,079 batches and Island in 2,021, at about 3 ms of
+  fixed cost each.
+  - `fresh_cap` now doubles after each batch that fills under half the target,
+    while the plan's running total fits one batch target. An overshoot, or a
+    total past the target, resets it to 4. ALab plans in 12 batches (4.1 →
+    0.44 s), Island in 13 (6.8 → 1.9 s).
+  - The total condition matters. Pass 1 records a layer's last use per batch,
+    as the batch's last root. Unrestricted ramping made full45's pass-1
+    batches coarse (about 250 roots, against 80), and pass 2 then kept layers
+    1 GiB longer at its peak (12.7 GiB). Within one pass-2 batch's worth of
+    prims, coarse records cost nothing.
+- **Discovery.**
+  - It runs the arc-layer prefetch while it walks the spine, and stops it, not
+    drains it, when the walk ends. After pass 1, layers that no batch read
+    are dropped from the registry. ALab discovery: 0.9 → 0.6 s. full45: 1.04 →
+    0.87 s.
+  - A level that overflows `max_frontier` is no longer finished, since its
+    result is discarded. Island: 1.24 → 1.06 s.
+- **Pass-2 memory.**
+  - The writer reserves its tables at the first `WriteBatch`, not at
+    `BeginBatchedFile`. The reserve is 446 + 60 MiB on Island, and it used to
+    sit under the pass-2 compose.
+  - One purge between the passes, and one after each pass-2 batch is composed.
+    The allocator otherwise keeps the freed composition cache's pages while
+    the write grows: Island's peak drops from 3.42 to 3.01–3.05 GiB. Island had
+    1,140 MiB resident against 593 MiB allocated after the plan.
+  - The opinion fill in a pass-2 batch releases the layers no later batch
+    reads (`BatchScope::releasable_layers`, from pass 1's last use), as the
+    default fill does. The registry drops them before the batch goes to the
+    writer.
+- `Layer::~Layer` and `Layer::finalize` called `hardware_concurrency()`, which
+  reads sysfs, on every layer, including the parser's many small fragment
+  layers. They now ask only for a layer of 64 K+ prims.
+
+**Rejected.**
+- Waiting for the discovery prefetch to drain. On full45 it loads all 63 K
+  layers on 6 workers before pass 1: discovery took 7.7 s, the run 114 s and
+  13.8 GiB.
+- Growing `fresh_cap` 8x per batch. On full45 it planned all of the stage in
+  one 10.2 M-prim pass-1 batch: 22.3 GiB.
+- A depth-max guard on new-parent roots. It did not prevent the overshoot (the
+  1.99 M-prim pass-1 batch is one heavy root), and the total condition above
+  replaced it.
+
+**Measurement notes.**
+- Temporary probes that call `WaitForBackgroundReclaim()` inside the write
+  serialize the reclaim with the write: +4 s on the full45 default write.
+- jemalloc `prof_gdump` writes a dump at every high-water mark: 137 K files
+  (16 GB) for one Island run. Dump at chosen points instead
+  (`mallctl("prof.dump")`, `MALLOC_CONF=prof:true,lg_prof_sample:17`).
+
+**Still open.**
+- Island and ALab low compose the stage three times: discovery, pass 1, and
+  the single pass-2 batch. (§10.77: pass 2 now reuses pass 1's batches when
+  the plan fits one batch.)
+- Island's write: `TryPassThrough` hashes each large pass-through block with
+  XXH3-128 for the streaming dedup, about 0.25 s of CPU near the end of
+  `fields_specs`. (Done in §10.79.)
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Composition sweep 3,866/3,866; rewrite sweep 1,410/1,410.
+- Low-profile sweep 1,933/1,933 at `--batch-prims 1`, `50` with
+  `--batch-frontier 64`, and `400`. The last two exercise the ramp.
+- CTest 65/65; staged parallel == serial (`98ad30c3…`); no-thread build gives
+  the district hash; deferred build compiles.
+
+### 10.77 Low profile: write pass 1's batches when the plan fits one batch (2026-10-28)
+
+When pass 1's batches add up to no more than one pass-2 batch
+(`target_batch_prims`), pass 2 used to compose that single batch again. Pass 1
+now keeps its batches while their running total fits the target, and `Run()`
+writes them instead. Everything below is byte-identical.
+
+**Results** (`--fast-exit`, `/dev/null`, three runs each):
+
+| scene | profile | before (§10.76) | after |
+|---|---|---:|---:|
+| ALab | low | 1.68 s / 0.76 GiB | **1.47–1.48 s / 0.74 GiB** |
+| Island | low | 5.3–5.4 s / 3.02–3.06 GiB | **4.61–4.62 s / 2.16–2.17 GiB** |
+| ALab | default | 0.78–0.79 s / 0.73 GiB | 0.78–0.79 s / 0.73 GiB |
+| Island | default | 3.47–3.49 s / 3.07 GiB | 3.45–3.49 s / 3.03–3.08 GiB |
+| full45 | default | 38.2–39.1 s / 23.6–24.0 GiB | 39.1 s / 23.55 GiB (one run) |
+| full45 | low | 80.0–81.4 s / 11.7 GiB | 81.0–81.5 s / 11.71–11.75 GiB |
+
+Island's low profile now peaks 0.9 GiB under the default profile. full45
+plans past the target in its first batches, so it keeps nothing and runs as
+before.
+
+**How.**
+- **What pass 2 would change.** Pass-1 and pass-2 batches with the same bounds
+  differ only in `holders_with_peers`. A prototype whose instance group has
+  no other member in its own batch, but has peers in later batches, stays
+  instanceable in pass 1. Pass 2 makes it a plain reference target
+  (`FlattenInstances`). Released source layers change no output.
+  - `ComposeBatch` records such "lone" prototypes in pass 1. Once all peers
+    are known, `FixKeptHolders` applies the same two edits pass 2 would:
+    `instanceable = false` and an empty `instance_prototype`.
+  - This runs 31 times on ALab, 5 on Island and in 2 sweep inputs. Skipping
+    it changes ALab's hash (`dfda67bc`), so the sweeps do check it.
+- **Groups, not batches.** Each `WriteBatch` fills and drains the writer's
+  chunk pipeline, and a batch under 8 K prims encodes serially. Writing
+  Island's 13 pass-1 batches one by one took 1.51 s (45–75 ms each for
+  2–20 K prims), against 0.89 s for one batch of the same prims.
+  - A `BatchMerger` (now shared with `ComposeStageBatched`) concatenates
+    consecutive batches into groups of about 64 K prims (`kKeptGroupPrims`).
+    A spine prim repeated within a group is kept once and gains the later
+    batch's children; one an earlier group produced stays repeated.
+  - The merge runs on pass 1's callback thread, under the next batch's
+    compose. Each group is freed once written.
+
+  | Island low, kept plan written as | wall | peak |
+  |---|---:|---:|
+  | 13 pass-1 batches | 4.82 s | 2.21 GiB |
+  | groups of 50 K / 100 K prims | 4.56–4.58 s | 2.20–2.21 GiB |
+  | one group | 4.64 s | 2.37 GiB |
+- **The batched writer stays narrow.** A write of 256+ chunks used 16 workers
+  with two chunk slots each. In a batched write (`serial_sections_`) it now
+  uses at most 8 workers with one slot each.
+  - Island's merged plan with wide workers: 4.42 s / 2.98 GiB; narrow:
+    4.78 s / 2.41 GiB. The difference is encoded chunks in flight: Island's
+    chunks carry large arrays.
+  - full45 low is neutral (81.2 s / 11.75 GiB wide, 81.0 s / 11.67 GiB
+    narrow, one run each), because its batches are written under the next
+    batch's compose.
+- **Layer release.** The source layers leave the registry on a background
+  thread while the groups are written, followed by one purge. The writer reads
+  only the composed prims, whose lazy arrays hold their own sources. Done
+  before the write instead, it cost 0.15 s on Island and gave a higher peak
+  (2.42 vs 2.36 GiB, one-group runs).
+
+**Rejected.**
+- A faster pass-1 ramp (`fresh_cap` x4 or x8 per batch, still only while the
+  plan's total fits the target). ALab low 1.48 → 1.38 s (x4), Island
+  4.61 → 4.46 s (x4) and 4.36 s (x8). On full45, x8 again planned all
+  10.2 M prims in one pass-1 batch (22.6 GiB). x4 held 11.74 GiB, but its
+  largest pass-1 batch was 4.5 M prims, against 1.99 M at x2, too close to
+  the same failure for 0.1–0.15 s.
+
+**Measurement notes.**
+- ALab's low-profile peak with the kept plan is file pages: the two animated
+  geocache payloads (stoat 239 MiB, remi 136 MiB mapped) are resident
+  together. Written as its 12 pass-1 batches, ALab peaked at 0.45 GiB,
+  because remi's batch was freed, and its file unmapped, before stoat's was
+  read. That is a property of where the batch boundaries fall, not a general
+  gain, and smaller groups cost Island time. Lowering the writer's
+  resident-page drop threshold (`kDropResidentMinBytes`, 1 MiB) to 64 KiB or
+  8 KiB lowered ALab only to 0.69–0.71 GiB.
+- Timed runs writing a real file in the scratch directory are 0.4–1.5 s
+  slower than `/dev/null` runs. Compare like with like.
+
+**Still open.**
+- Island low: discovery 1.0 s and pass 1 1.77 s, against 1.95 s for the
+  default load and compose. Discovery is almost all first-touch layer loads
+  (`SourcesForPath` 925 of 968 ms; the 22-prim second level alone takes
+  434 ms). Pass 1's 13 batches build in 1.57 s, against about 0.9 s for
+  the one default build. The write cannot start before pass 1 ends,
+  because pass 1 fixes the token and string order.
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Low-profile sweep 1,933/1,933 at `--batch-prims 1`, `50` with
+  `--batch-frontier 64`, and `400`.
+- CTest 65/65.
+- No-thread build: ALab hash in both profiles and the district hash in low.
+  Deferred-fill build: ALab hash in low.
+
+### 10.78 Keep the speculative PATHS payload when only element tokens are missing (2026-10-28)
+
+A streamed write builds the PATHS payload speculatively, alongside the dry
+runs of `SynthesizeAncestorPaths` and `RegisterPathElementTokens`. If either
+dry run found something missing, the payload was dropped and built again
+during `structural_payloads`.
+
+On Island the token dry run always finds one: `outputs:ptexFaceOffset`, a
+property name that appears only in connection target paths. Its whole PATHS
+build (243 ms of the 297 ms `path_tokens`) was wasted, and the rebuild was
+most of `structural_payloads` (227 ms).
+
+**Change.**
+- The builder's tree work (parent lookups, child sort, pre-order walk) reads
+  no token. `BuildPathsSectionPayload` now takes a `before_tokens` callback,
+  called just before its first token lookup.
+- In the speculative build, that callback waits for the dry run's verdict.
+  When tokens are missing, it runs the real `RegisterPathElementTokens` there
+  (it changes only `tokens_` and `token_to_index_`). That is the same call,
+  in the same order, that the serial path runs after the no-op
+  `SynthesizeAncestorPaths`.
+- When an ancestor path is missing (ALab), the builder now stops right after
+  its parent pass instead of finishing a payload that is dropped. Nothing
+  else changes on that path.
+
+**Results** (default profile, `/dev/null`, three runs):
+
+| scene | before | after |
+|---|---:|---:|
+| Island | 3.45–3.49 s (write 1.39–1.41 s) | **3.21–3.22 s (write 1.17–1.18 s)** |
+| ALab | 0.78–0.79 s | 0.78–0.79 s |
+| full45 | 38.2–39.8 s | 39.8 s (one run; its payload was already kept) |
+
+Island's `structural_payloads` drops from 227 to 7 ms. The low profile's
+batched write builds its sections serially (§10.74) and is unaffected.
+
+**Verification.**
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, ALab `2f7176c8…`, Island
+  `a8f50922…`.
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (`98ad30c3…`); CTest 65/65.
+- No-thread build: Island hash. Deferred-fill build: ALab low hash.
+
+### 10.79 Parallel streaming-dedup digest for large blocks (2026-10-28)
+
+The streaming dedup keys a value block by its XXH3-128 digest and length,
+and trusts the key without comparing bytes. A single XXH3-128 runs at about
+6 GB/s here (256 MB in 42 ms, with or without `-march=native`).
+
+Island's slowest encoder chunks each hold a prim with very large lazy arrays:
+- the ground-cover instancer: three 21.4 M-element arrays, 119 ms;
+- `mountainb0004`: 10.7 M points, 67 ms, with three more such meshes in
+  the same chunk.
+
+Chunks commit in order. So while one of these chunks encodes (126–145 ms,
+against a 20 ms average), the commit stages wait, and the 32 chunk slots
+fill up with finished chunks. On average only 7.4 of the 16 workers were
+busy over `fields_specs` (5.4 s of encode CPU in 0.75 s of wall time).
+
+**Change.** `StreamDigest` replaces `XXH3_128bits` at all four
+streaming-dedup digest sites:
+- the worker log;
+- the serial intern;
+- the commit-time re-digest of fixed-up blocks;
+- `DigestBlock`.
+
+A block of 32 MiB or more is digested as fixed 4 MiB pieces on up to 8
+threads (at most `ResolveThreads()`). The piece digests are then digested
+again, seeded with the length. The result depends only on the bytes: the
+no-thread build and `--write-threads 1` give the same Island hash. Smaller
+blocks keep the single XXH3-128.
+
+The instancer's arrays now digest in 7–11 ms instead of 29–46 ms.
+
+**Results** (`/dev/null`, three runs; full45 two runs):
+
+| scene | profile | before (§10.78) | after |
+|---|---|---:|---:|
+| Island | default | 3.21–3.22 s / 3.04–3.06 GiB | **3.12–3.14 s** / 3.16 GiB |
+| Island | low | 4.61–4.62 s / 2.16–2.17 GiB | **4.44–4.47 s** / 2.17 GiB |
+| ALab | default / low | 0.78–0.79 s / 1.47–1.48 s | 0.78 s / 1.47–1.48 s |
+| full45 | default | 38.2–39.8 s / 23.5–24.0 GiB | 38.6–39.8 s / 23.4–23.7 GiB |
+| full45 | low | 80.0–81.5 s / 11.7 GiB | 80.4 s / 11.69 GiB (one run) |
+
+Island's default peak rises 0.1 GiB (+3.6%, within the 1.05× rule). The
+extra memory is clean file pages: 1.19 against 1.01 GiB at the peak (RSS
+tracer, with and without the change). Large source arrays are now hashed,
+and so faulted in, sooner. They stay resident until the commit writes the
+block and drops its pages (`DropStreamedSourceRange`). The low profile's
+narrow encoder (§10.77) keeps its peak unchanged.
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Island with the no-thread build and with `--write-threads 1`: `a8f50922…`.
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (`98ad30c3…`); CTest 65/65.
+- Deferred-fill build: Island `7d3bffa5…` and district USDA `765953e1…`,
+  both identical to a deferred build of `d6c8573a8`. (That build's Island
+  output already differed from the default build's.)
+
+### 10.80 Spill the append-only writer columns in the low profile (2026-10-29)
+
+The low profile's peak (11.64 GiB on full45) sat at the end of pass 2's
+build. A census at the batch boundary — temporary probes, not committed —
+attributed about 6.0 GiB of it to the writer's five append-only structural
+columns, which are only read once, when the structural sections build at
+the end:
+
+| column | bytes at batch 25 |
+|---|---:|
+| FIELDS value reps (`fields_.reps`) | 1.3 GiB |
+| FIELDSET flat indices (`flat_fieldsets_`) | 0.9 GiB |
+| FIELDS tokens (`fields_.tokens`) | 0.7 GiB |
+| SPECS records (`specs_`) | 0.7 GiB |
+| fieldset offsets (`fieldset_offsets_`) | 0.2 GiB |
+
+A jemalloc heap profile at the same point agreed (12.19 GB in use;
+`StreamWriteBatch`/`ReserveTables` 6.37 GB), and a batch-to-batch diff
+showed the rest was pcp cache and still-resident source layers.
+
+**Change.** `src/next/crate/spill-array.hh` adds `SpillVec<T>` (behind the
+type-erased `SpillColumnBase`), used for those five columns:
+
+- Elements live in ~8 MiB chunks. `CrateWriteOptions::spill_columns_bytes`
+  (default 0) sets a *shared* resident budget; at every batch boundary
+  (`StreamWriteBatch`) the writer moves whole sealed chunks from the front
+  of the largest column into an unlinked spill file in
+  `CrateWriteOptions::spill_directory` (empty = `/tmp`) until the total is
+  back under budget. The library itself never reads the environment.
+- Appends are only at the back and evictions only from the front, so
+  absolute element identity never moves: the commit's rebases
+  (`fields_before`, `fs_before`, flat offsets, spec fieldset numbers) and
+  every `size()` keep their meaning.
+- The section builders (`BuildFieldsSectionPayload`,
+  `BuildFieldsetsSectionPayload`, `BuildSpecsSectionPayload`) call
+  `Resolve()`: one sequential `pread` rebuilds the spilled prefix into a
+  raw (not zero-filled) buffer and the resident tail is copied behind it.
+  The codec calls are untouched, so the bytes are the ones a fully
+  resident write encodes.
+- Budget 0 keeps a single vector per column — exactly the previous
+  storage, growth and huge-page advice. Only streamed (batched) writes
+  spill; the staged path never does, so `ComputeValueLayoutAndPatch`'s
+  in-place rep patching is unaffected (the reps column can also be walked
+  chunk-wise if a budget is ever set there).
+- A spill write/read failure degrades to fully in-memory columns and
+  reports one error; output is never silently wrong.
+
+`lusdcat` enables a 512 MiB budget on the low-profile flatten path and
+passes the directory through: `--spill-mib N` (0 disables) and
+`--spill-dir DIR` (default: system temp).
+
+**Results** (full45 `-o /dev/null`, two runs each, paired):
+
+| configuration | wall | peak RSS |
+|---|---:|---:|
+| `--spill-mib 0` (previous behavior) | 79.1–80.8 s | 11.63–11.66 GiB |
+| `--spill-mib 512` (default) | 81.4–81.5 s | **9.30–9.31 GiB** |
+
+That is 2.34 GiB (20%) off the peak for 1.4–2.4 s (about 2–3%) of wall time:
+the spill writes and the rebuild pread copy about 4.5 GiB each way. Sampled
+child swap was 0 in every timed run. The default profile is untouched
+(38.2–39.7 s / 23.4–23.7 GiB, spill unreachable) and the new residual peak
+is mid pass 2 (rsstrace: 9.35 GiB at 53 s), not the section build.
+
+**Verification.**
+- Hashes in the low profile, spill on and off, equal to the pre-change
+  binary: full45 `a0175bc1…` (3,014,654,530 bytes), district `98619c40…`,
+  ALab `2f7176c8…`, Island `a8f50922…`.
+- District with `--spill-mib 8` (hundreds of evictions): `98619c40…`.
+- No-thread build output equals the threaded build (district `98619c40…`).
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (579,974,418 bytes both ways);
+  CTest 65/65.
+
+### 10.81 Reject impossible discovery levels earlier (2026-10-31)
+
+The low-profile frontier discovery used to stop only when the already-expanded
+portion of a level exceeded `max_frontier`. Each unvisited root must also
+contribute at least one entry, even when inactive, instanceable or a leaf.
+Discovery now rejects a level when its expanded entries plus that lower bound
+cannot fit. It retains the previous complete frontier, without resolving later
+roots' composition sources. The subtraction check avoids unsigned overflow.
+Batch sizing, prototype decisions and writer/token order are unchanged.
+
+Warm-input alternating pairs (three measured pairs after one warmup, SSD spill,
+`/dev/null`, `--fast-exit`, identical binaries apart from this change):
+
+| scene, low profile | baseline | candidate |
+|---|---:|---:|
+| Island, 8 parse/compose/write threads, median wall | 4.48 s | 4.39 s |
+| Island, median discovery | 838.2 ms | 754.7 ms |
+| ALab, automatic threads, median wall | 1.52 s | 1.52 s |
+| full45, automatic threads, median wall (two pairs) | 83.42 s | 83.28 s |
+
+Maximum RSS ratios are 1.00190 for Island and 1.00094 for ALab, within the
+1.05 limit. Sampled process swap is zero in every run (one-second samples).
+Evidence: `build_ninja/low-discovery/paired-small/`.
+Full45 shows no material wall-time regression; its maximum RSS ratio is
+0.99869 and every run has zero sampled process swap. These four low-profile
+runs use a 12 GiB process-tree RSS threshold, an 8 GiB headroom reserve and SSD
+spill; minimum observed available memory was 15,681.9 MiB. Evidence:
+`build_ninja/low-discovery/paired-full/`.
+
+The composition sweep matches the saved pre-change binary on 1,934 fixtures
+in both USDA and USDC (3,868 comparisons). The same fixtures also match its
+USDC output with low-profile batch targets 1, 400, and 50 plus frontier 64
+(5,802 comparisons). A PCP regression checks that a later reference is not
+loaded once the frontier lower bound overflows, and verifies complete composed
+output at caps 0, 1, 3, 4 and 8. The targeted native PCP, parallel PCP and
+composition tests pass. Complete CPU-only native and standalone Debug builds
+and CTest suites pass (72/76 passed respectively, one optional skip each).
+A fresh no-thread Release CLI/PCP build and its PCP test pass. Island, ALab
+and district real-file outputs match between threaded/no-thread builds and
+their references. Full45's real-file output with normal teardown matches
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`
+(3,014,654,530 bytes, 85.77 s; sampled process-tree RSS 9,538.2 MiB).
+Full hashes and check logs are in `build_ninja/low-discovery/`.
+
+Development remains serial after the reported OOM crash: `-j1` builds,
+guarded commands, disk-backed output/spill, and no physical GPU access.
+The historically ~24 GiB default-profile full45 run is excluded on the 32 GiB
+host; this change only runs in batched discovery.
+The local CPU qualification disables `LIGHTUSD_PREVIEW_GPU_COMPUTE`: unrelated
+preview SPIR-V generation exceeded the 8 GiB build guard, and a separate `-Od`
+compiler probe exceeded 4 GiB. The CPU build instead peaked at 545.3 MiB.
+
+### 10.82 CPU correctness audit: report the current C value layout (2026-10-31)
+
+The value carrier's earlier `max_align_t` -> `uint64_t`/`double` alignment
+change reduced `lu_value` from 64 to 48 bytes on this host. `lu_abi_get()`
+reported the actual dimensions, but its layout revision still said 1, the
+same revision used for the older carrier. The public descriptor now exposes
+`LU_CORE_C_LAYOUT_REVISION` = 2 and the runtime reports it. The package/core
+major versions and the current carrier layout are unchanged.
+
+Consumers preflight both major and layout revision, pointer width and the
+reported sizes/alignment/offsets before exchanging value storage with a loaded
+library. The storage regression fails before this correction and passes after
+it. C API coverage checks that `lightusd_abi_get()` forwards the revision and
+value dimensions. A strict-C11 dynamic-loader probe rejects the saved old
+revision-1 library and accepts the new revision-2 library before using values.
+Native full build/CTest passes (72 passed, one optional skip), as do focused
+storage and strict-C11 syntax checks. Standalone Debug build/CTest passes
+(76 passed, one optional skip), along with the no-thread storage/PCP build and
+both tests. Native/Debug build peaks are 415.2 / 493.7 MiB under serial guarded
+CPU-only execution. Evidence is retained in
+`build_ninja/cpu-correctness/`.
+
+At audit time, `Int64ListOp` was unhandled by next's value dispatch and
+reached the unsupported-value warning. Metadata restoration is implemented
+in §10.83 below, including preservation of authored operation sublists. The
+speculative instance registry remains an optimization prerequisite: wrong
+guesses are rejected at commit, partial state is cleared and a serial walk
+is used. This audit found no new failing-output case there; the fallback is
+retained. No serialization or composition logic changes in the ABI correction,
+so the scene performance/hash gates in §10.81 are not repeated.
+
+### 10.83. Preserve Int64 list-op metadata
+
+The next reader now retains USDC type-37 metadata on prims, layers and
+properties, including all six authored runs and empty-run header bits. USDA
+`inactiveIds` supports explicit, add, prepend, append, delete and reorder
+opinions. Composition retains edits until weaker layers are known and then
+writes a resolved explicit list. PointInstancer visibility uses these metadata
+IDs without floating-point conversion; the legacy attribute fallback remains.
+
+Optional immutable operation stacks live on extension fields. The dense prim
+and C value layouts are unchanged. Memory estimates include retained lists;
+binary decoding checks element counts, remaining bytes and allocation budgets
+before allocation. ID processing uses deterministic O(n log n) operations with
+a linear path for sorted explicit IDs. Nested list-op values outside metadata
+remain unsupported by this codec.
+
+Restored fields can change output hashes that previously reflected dropped
+metadata. Require unchanged output for unaffected fixtures and classify scene
+differences before accepting them. Regression coverage includes exact signed
+64-bit boundaries, IDs beyond 2^53, independent wire-byte checks, malformed
+payloads, multi-layer composition, masking, and serial/parallel staged and
+streaming writer parity above the 8,192-prim threshold. CPU preview cache
+version 4 and source geometry index version 2 reject samples produced before
+metadata visibility was applied.
+
+Final native CTest passes (73 passed, one optional skip), standalone Debug
+passes (77 passed, one optional skip), and three targeted no-thread tests pass.
+Composition comparisons are exact for 1,934 fixtures across five configurations
+(9,670 comparisons); 705 files rewritten in two formats also match (1,410).
+
+Three monitored low-profile pairs show median times 1.53 -> 1.52 s for the
+reference folder scene and 4.49 -> 4.36 s for the island scene. Maximum RSS
+ratios are 0.99758 and 1.00405. Two full-size low-profile pairs show median
+83.75 -> 83.57 s, maximum candidate RSS 9,519.9 MiB and RSS ratio 0.99978.
+All accepted pairs have zero sampled process swap. The initial full-size
+attempt tripped the unchanged 1 MiB swap gate and was discarded; a fresh
+attempt passed every run. No OOM event was recorded for that attempt.
+The saved Release baseline also predates §10.81, so these comparisons measure
+combined changes and do not isolate this feature's cost or speed.
+
+Real-output native/no-thread checks agree. Island and district output hashes
+match their prior references. The reference folder scene restores two integer
+list-op fields; removing only these fields and canonically rewriting both
+versions produces identical bytes. A full-size low-profile real write with
+normal teardown completes in 84.0 s and matches the unchanged reference SHA.
+Evidence, including discarded-run logs, is retained under
+`build_ninja/int64-listop/`.
+
+### 10.84. Reject overflowing frontiers before joining paths
+
+Discovery checks the next level's lower bound before constructing full child
+paths. The bound includes retained entries, this root's child count, and one
+entry per unvisited root. Separate checked subtractions avoid size_t overflow.
+A rejected level retains the previous frontier and spine; arc targets of later
+roots remain unopened as in §10.81. The PCP regression covers zero, exact-fit,
+near-fit and SIZE_MAX caps with byte-equivalent composed USDA output.
+
+The isolated baseline includes §10.83. Three low-profile pairs give reference
+folder median 1.52 -> 1.52 s and Island 4.40 -> 4.39 s, with maximum RSS ratios
+0.99906 and 0.99823. On a generated 50,000-child namespace with long names and
+a frontier cap of 64, discovery median is 228.4 -> 220.8 ms, while end-to-end
+runtime stays 0.77 s. This is a small allocation saving, not a demonstrated
+scene-level speedup. Two full-size low-profile pairs pass (elapsed ratio
+0.99880, maximum RSS ratio 1.00154); all accepted pairs have zero sampled swap.
+Native/Debug full suites, three no-thread checks and all 9,670 fixture
+comparisons pass. All four real-output reference hashes match; the full-size
+write with normal teardown takes 84.3 s. Evidence lives in
+`build_ninja/frontier-paths/`.
+
+### 10.85. Pack low-memory writer path text
+
+The batched writer can copy prim paths into stable 1 MiB text blocks before
+building specs. It does so only when this batch's path-text copy fits the
+Path-object storage saved over the whole stream; otherwise it retains the
+previous move-ownership path, including short-string promotion. Prim and property path records both reference
+these copies. The batch-sized view vector is reused after workers finish;
+blocks remain until PATHS encoding finishes, then are released. Transient
+relationship/connection paths keep their existing ownership. Normal staged
+writing still borrows its input layer's stable paths.
+
+This replaces retained `deque<Path>` objects and their individual string
+allocations. PathRec layout, first-use IDs and output encoding are unchanged.
+Copying text temporarily overlaps the input batch, so memory and runtime must
+be measured together. An eight-batch lifetime regression crosses both block and
+parallel-writer thresholds and requires serial/parallel batched bytes to match
+regular staged output, including short paths, properties and external targets.
+
+The unconditional first experiment passed correctness checks but failed a
+District null-output RSS gate (+10.9%), so it was rejected. Its evidence is kept
+under `build_ninja/path-arena/`. Final adaptive-storage qualification is
+tracked separately under `build_ninja/path-arena-final/`.
+
+Native full CTest passes (73 passed, one optional skip), standalone Debug
+passes (77 passed, one optional skip), and three targeted no-thread tests pass.
+All 9,670 composition and 1,410 rewrite comparisons match. Three small-scene
+pairs show no material runtime/RSS change. District null-output pairs pass the
+unchanged RSS/swap gates: median 21.305 -> 21.36 s, max RSS 2793.3 -> 2775.0
+MiB. Two full-size low-profile pairs give median 83.68 -> 82.20 s and max RSS
+9523.6 -> 9473.6 MiB. Every accepted run samples zero process swap.
+
+One-second RSS samples between pass-2 completion and path-token completion
+show about 742 MiB less retained memory (per-run phase medians, then median
+across pairs). The global peak falls only about 50 MiB because other phases
+still dominate. The packed storage is retained for its lower writer residency
+and modest runtime improvement; source-layer/page residency remains open.
+Phase samples and log offsets are recorded in `phase-memory.json`.
+All four real-output hashes match their references, with native/no-thread
+parity on the three smaller scenes. The full-size low-profile real write with
+normal teardown completes in 83.37 s, peak guarded group RSS 9466.5 MiB, and
+unchanged reference SHA. All final qualification stages pass.
+
+Benchmark-label correction: the scratch paired harness used in §10.85 changed
+its placeholder file but left the current CLI's `-o /dev/null` hardcoded. Its
+paired measurements are null-output runs, including those formerly labeled
+District SSD. Separate real-file hash writes remain valid. Corrected SSD
+comparisons in §10.86 use explicit file destinations and validate nonempty
+output sizes against the CLI report.
+
+### 10.86. Bound mapped array source residency while streaming
+
+Pass 1 only learns final source-layer use after planning. Releasing registry
+ownership earlier needs a dependency lifetime index or reloading inputs, so
+that ownership and the existing pass-2 last-use release remain unchanged.
+This round instead addresses pages faulted while streaming mapped arrays.
+
+Low-memory writes release mapped source pages after each 4 MiB hash window;
+sink copies use the same window size. This applies to batched writing and
+streaming writes with a nonzero structural spill budget. Regular zero-budget
+writes preserve their original source residency to favor throughput. A final hash cleanup releases boundary and tail pages,
+including sources eliminated by deduplication and therefore never written.
+The existing composite digest for >=32 MiB blocks is unchanged. Smaller mapped
+blocks use XXH3's equivalent streaming state; owned/staged bytes keep their
+existing path. The mapped source object and lazy values remain alive and
+readable. Per-thread windows do not imply a global process RSS cap.
+
+An always-on regression fails against the saved old library and passes with
+the windowed writer. It checks both digest regimes, source-range/content dedup,
+owned/mapped bytes, serial/parallel execution and partial sink failure.
+Qualification and real SSD measurements are in `build_ninja/source-residency/`.
+Corrected real-SSD tests rejected unconditional windowing: regular Island
+RSS fell 3231.2 -> 2262.1 MiB but median time rose 3.94 -> 5.03 s. Therefore
+windowing is restricted to the existing low-memory policy. Final qualification
+is tracked separately under `build_ninja/source-residency-low/`; this policy
+remains an experiment until its checks and timings complete.
+
+### 10.87. Avoid redundant streaming block hashes
+
+The serial writer checks already-emitted immutable source ranges before
+reading their bytes. Worker logs skip hashes for push-only blocks, whose
+digests neither commit path consumes. For interned large source references,
+each encoder context caches eight 128-bit digests keyed by unique source
+identity, offset and length. The cache retains no source ownership, survives
+chunk resets, and excludes tagged/embedded-rep blocks. It adds about 328 bytes
+per context and does not read shared commit tables concurrently.
+
+The native library and CLI compile successfully under a serial memory guard.
+Regression and performance validation are deferred at the user's request;
+these changes are implemented, not yet qualified. Earlier source-window
+measurements do not validate this newer hashing implementation.
+
+### 10.88. Reuse batch release and sizing bookkeeping
+
+The batched composer incrementally populates its pass-2 release-eligibility set
+from sorted last-use records. Each layer identifier is inserted once, replacing
+repeated full-map scans and temporary set construction. Older eligible ids
+remain eligible, including reloaded layers. Registry drops still occur after
+batch composition, sorted by last-use index then identifier as before. The
+sorted records borrow immutable plan keys rather than copying their strings.
+
+Pass-1 parent statistics borrow parent-prefix views from the fixed frontier.
+They replace temporary parent strings without changing estimates or batch
+ramp limits. Refinement occurs after that pass's view-key map has been destroyed.
+
+The native library and CLI compile successfully with a serial memory guard
+(420.5 MiB peak). Regression/performance checks are deferred at the user's
+request; no measured speedup or requalified output equivalence is claimed.
+
+### 10.89. Map completed spill columns for section encoding
+
+Spilled structural columns expose an RAII read-only view. The private spill
+file receives the resident tail, then existing delta/LZ4 codecs read the mapped
+column directly, avoiding a full private reconstruction/pread copy. Logical
+spill offsets/counts stay unchanged. Prefix length, byte sizing, file resize
+and partial/EINTR tail writes are checked. Unsupported/failed mappings retain
+the old Resolve copy path; one resident chunk still aliases its vector.
+The column must remain immutable until its view is released.
+
+FIELDS, FIELDSETS and SPECS use these views. FIELDS releases its token input
+before preparing value reps, reducing simultaneous reconstructed input buffers
+on the fallback path too. Codec scratch and spec projection buffers remain.
+The optimization adds temporary-file tail writes/space in exchange for removing
+full input copies; actual SSD throughput and peak RSS remain to be measured.
+
+Native library/CLI compilation passes under a serial 8 GiB memory guard
+(673.8 MiB peak). Regression, fault-injection, platform and output-byte checks
+are deferred at the user's request. This is implemented, not yet qualified.
+
+### 10.90. Reuse prototype seed containers between batches
+
+Batch composition lends the pass's prototype vector and key set to its local
+scope using constant-time swaps. A scoped owner restores them on all return
+paths. Successful builds append newly discovered prototypes after BuildStage
+has detached the scope. This removes the per-batch vector/key-set copy while
+keeping the prototype-path membership set local; selection and serial fallback
+logic are unchanged. Ancestor traversal similarly borrows prefix views and
+constructs the scope's owning strings directly, eliminating temporary parents.
+
+The native library and CLI compile under a serial memory guard (419.1 MiB
+peak). Regression/performance validation remains deferred; no measured speedup
+or output-equivalence claim is made for this implementation yet.
+
+### 10.91. Commit-authoritative instance claims
+
+Parallel structure workers still use ranked claims to avoid expanding every
+duplicate prototype. Commit now confirms actual prototype keys in those same
+sharded entries, releasing their speculative rank storage. Confirmed keys and
+earlier-batch seeds are authoritative for subsequent worker pruning.
+
+A speculative instance can refer to a claim made inside a subtree that commit
+later discards. If DFS-order registration instead makes it a prototype, commit
+seeds its shared child sources with workers parked, then re-walks that subtree
+with only its root forced to expand. Descendants retain ordinary pruning and
+commit-order registration. This replaces the immediate whole-walk fallback for
+that mismatch. Source-cache repairs retain their existing path; unresolved
+repairs and depth failures still discard the parallel result and fall back to
+the serial walk.
+
+The changed native cache translation unit compiles under a serial 8 GiB guard
+(655.6 MiB peak). The CLI build timed out while rebuilding stale objects and
+has not relinked this change. Regression qualification remains deferred.
+Required coverage includes claims
+from discarded subtrees, nested repairs/donations, shared prototype child
+seeding, earlier-batch seeds, inactive prims, depth limits and serial fallback.
+No performance or output-equivalence claim is made yet.
+
+### 10.92. Encode SPECS projections directly from read views
+
+The delta encoder accepts an immutable projected u32 accessor as well as a
+contiguous input array. It reuses the large-column histogram/common-delta
+selection and exact output sizing, with inline execution below the existing
+parallel threshold and on no-thread builds. SPECS now projects path indices,
+fieldset offsets and spec types from its retained read view instead of
+allocating a u32 per spec. Fieldset offsets are resolved only for their column
+and released before spec types are encoded.
+
+This removes the full spec projection buffer and, on the projected serial
+path, the C encoder's full delta and worst-case output scratch arrays. The
+result is allocated at its exact encoded size. Histograms, compressed payload
+buffers and other sections' projections remain; wide-delta counting can still
+grow with the number of distinct deltas. Histogram counters use size_t to
+support a serial column larger than UINT32_MAX elements (up to 512 KiB per
+worker for the flat histogram on 64-bit hosts). Accessor calls add work and
+read the immutable source repeatedly; throughput and full-scene RSS need
+measurement before qualification.
+
+Changed native and no-thread codec/writer units compile under serial 8 GiB
+guards (673.3 and 595.6 MiB peak). A small standalone codec smoke passes 16
+byte-parity cases against the contiguous C-backed path and decode checks on
+each build, including empty/singleton inputs, wraparound and mixed/wide deltas.
+These small cases do not exercise the parallel threshold or complete writer.
+CLI relinking, spilled SPECS parity, parallel-threshold cases, full regression
+and SSD measurements remain deferred.
+
+### 10.93. Split heavy field-encoding chunks
+
+Large default-profile writes refine each existing 1024-prim field chunk using
+an array-work estimate from immutable value headers. The estimate sums default
+and time-sampled array counts times the fixed element size; variable-size
+elements use sizeof(std::string) as a work proxy. It never materializes or
+hashes an array. A prim at the 16 MiB work threshold is isolated; smaller prims
+split before their combined estimate exceeds that threshold. The threshold
+is a scheduling heuristic, not a bound on encoded bytes or process memory.
+
+Every refined range remains inside its original chunk. Workers and consume-
+prim reapers share the same explicit boundaries; all commit stages retain
+prim order. Worker/context counts stay based on the original chunk count, so
+refinement adds no in-flight slots. Boundary/readiness bookkeeping does grow
+with the number of splits, and encoder/source residency still needs measuring.
+Low-memory batched/spill-budget writes, small writes and deferred-fill stages
+retain fixed ranges. A missing array flag or unexpectedly expensive scalar
+may make the estimate inaccurate without affecting encoding decisions.
+
+Opt-in writer timing now reports chunk_plan and the refined/fixed chunk counts,
+worker count and context count. Use these to measure planning overhead along
+with fields_specs and true SSD timing/RSS. Native writer compilation passes
+under a serial 8 GiB guard (673.4 MiB peak); the no-thread writer unit also
+compiles (595.9 MiB peak). Writer runtime, byte parity,
+consume/reaper/error paths and Island performance qualification are deferred;
+no measured throughput or memory improvement is claimed.
+
+### 10.94. Discovery fan-out and proven small-stage sizing
+
+Automatic arc prefetch now sizes its outer worker team from the existing
+thread budget, independent of the initial seed count. A root with one reference
+can reveal many layers; previously its one-worker pool stayed serial for that
+entire fan-out. Idle workers wait while a load is active. The automatic outer
+budget remains max(1, threads/4), with at most eight parser threads per file
+and no multiplication beyond the supplied budget. Explicit parser-thread
+settings keep the prior policy. A lone initial file may now use fewer parser
+threads in exchange for later fan-out capacity; actual wait/throughput effects
+still need measurement.
+
+Discovery also records the prim count when it reaches every leaf without
+stopping at a frontier/depth cap or opaque active instanceable subtree. The
+count is expanded ancestors plus frontier leaves, excluding the pseudo-root.
+Policy/resolver callbacks disable this optimization. If that completed count
+fits the existing target, automatic pass 1 plans all roots in one batch. An
+incomplete discovery, opaque instance subtree or larger count keeps the old
+cautious ramp; fixed roots-per-batch remains explicit. No new source walk or
+array payload access is added. Timing reports discovered_prims (zero means
+unknown/empty), so a small frontier is never mistaken for a small stage.
+
+Native cache/batch units compile with a serial 8 GiB guard (655.4 MiB peak),
+as do no-thread units (387.1 MiB peak).
+Behavior, completed-count coverage and fan-out/SSD performance remain deferred.
+
+### 10.95. Source lifetime at the retained-plan boundary
+
+The one-shot file-flatten driver drops source registry ownership immediately
+after a successful retained Plan, before writer initialization. This advances
+the release previously done inside Run. It requires a nonempty retained result
+covering the whole plan and a joined batch consumer; Run then reads only owning
+composed groups. Root ownership and array/imported-resource owners survive.
+Public BatchedComposer Plan retains its registry and dependency-query/repeated-
+Plan behavior. Errors or discarded/incomplete retained plans do not release.
+
+The lifetime constraints for general pass 1 remain:
+
+| State | Safe release condition |
+| --- | --- |
+| A batch's temporary composition cache | BuildStage and all fill/walk workers have joined; existing batch teardown |
+| Sources in a complete retained one-shot plan | Final planning callback has completed and the retained groups own all output; release before writer initialization |
+| A source shared with an unplanned frontier root | Keep it: future last use has not been established |
+| Multi-batch pass 2 | Existing recorded last-use cutoff plus fill watermark |
+| Public/custom-reader composer snapshots | Retain under the existing API lifetime; no speculative eviction/reload |
+
+This does not lower the general multi-batch pass-1 peak. Earlier release there
+still needs a complete future-dependency proof or a snapshot-preserving spill
+mechanism, not an LRU reload of potentially stateful readers. The changed batch
+unit compiles (418.5 MiB peak); retained-output parity, failure cleanup and actual
+RSS remain unqualified under the deferred-regression workflow.
+
+### 10.96. Bounded CPU readback/conversion/copy profile
+
+`bench_scene_readback` is an opt-in EXCLUDE_FROM_ALL target, not a CTest. It
+reads a crate with lazy mmap arrays and a 512 MiB reader budget, converts with
+textures/animation disabled and a 512 MiB conversion budget, then measures
+owned bulk and element-indexed chunk copies. It reports wall/process CPU time,
+process high-water RSS, copied bytes and progress gates (mesh names stripped).
+Native copies are a lower bound for JS extraction: floats/indices are retained
+separately and JS marshaling, scratch reconstruction and heap growth are absent.
+
+A bounded warm-cache fixture contains 8,201 prims (8 regular triangle meshes),
+702,903 crate bytes and 14,082,240 retained geometry bytes to copy. Single runs
+against the existing native archives, identified by hashes in the ignored
+profile artifacts, give:
+
+| Operation | One thread | Four threads |
+| --- | ---: | ---: |
+| Read composed crate | 44.9 ms | 28.0 ms |
+| Retained conversion | 74.8 ms | 33.5 ms |
+| Bulk owned chunk copy | 1.18 ms | 1.19 ms |
+
+An instrumented reader run attributes 40.5 of 45.1 ms to BuildStage; its
+properties/bodies laps take 9.2/10.9 ms. Structural-table reads total only a few
+milliseconds. Thus this fixture is stage-construction-bound, not file-I/O-bound.
+Metadata-only conversion still takes 59.3 ms with one thread and copies 7.0 MB
+of retained triangulation; it is not a cheap skip of mesh work. Progress is
+reported in the serial merge AFTER the mesh arena completes, explaining a
+silent interval before the first mesh callback; gate intervals are not exact
+per-algorithm timings. High-water native RSS stays near 54 MiB. The external
+guard samples can miss short peaks; use getrusage high-water values here.
+
+An older pre-change WASM runtime was staged locally and profiled under Node
+on the same fixture. A first run spends 195.5 ms in begin and 567.5 ms in
+getMeshCopy for eight meshes. A second instrumented run gives 575.5 ms copy,
+including 442.0 ms in 160 size queries, 65.7 ms in 24 payload transfers and
+45.2 ms in getMesh headers. It peaks below 194 MiB. These are separate samples,
+not a paired improvement claim or qualification of the current worktree.
+
+Source inspection matches the main WASM bottleneck: meshBufferCopy calls
+buildRenderMesh_ even for zero-destination size queries, and getMeshCopy first
+preflights all ten streams, then queries each again through its copy accessor.
+The next substantial change needs scoped geometry preparation with complete
+scratch/configuration invalidation; blindly retaining the current scratch ID
+would risk stale geometry. Bulk copies (§10.97) address the element-loop cost,
+not this repeated reconstruction. Large production/readback and fresh-runtime
+qualification remain deferred. All profiling artifacts and fixture data stay
+under ignored build_ninja/cpu-implementation, with an artifact hash manifest.
+
+### 10.97. Bulk copies into unaligned FFI byte buffers
+
+ChunkedArray::copy_bytes_to validates byte capacity, then uses the existing C
+chunk-storage memcpy path. It accepts unaligned destinations without casting
+them to typed element pointers. Web mesh, points and curves buffer copies use
+it for multi-chunk payloads instead of resolving a chunk for every element;
+existing contiguous memcpy and short-buffer/size-query behavior are preserved.
+
+An Emscripten syntax check passes for the changed binding. A small native smoke
+passes 15 shape/type cases (float/u32/u16; empty, single, exact chunk and partial
+tails), including unaligned destinations, untouched short destinations and
+null handling. The native profile measures 1.17 ms bulk versus 2.60 ms indexed
+copies on its 14.1 MB geometry stream; this is not a WASM speedup measurement.
+Full WASM relinking, typed-buffer/heap-growth regression and current-runtime
+performance remain deferred.
+
+### 10.98. Scope geometry preparation to one owned mesh copy
+
+The counted web bridge adds an internal mesh-copy scope around the synchronous
+getMeshCopy operation. Its size preflight, header view and buffer transfers
+share one successful preparation of the existing scratch geometry. The scope
+adds only descriptor state, not another geometry buffer. An older runtime
+without the new dispatch export retains the previous path. JS keeps the stream
+busy for the entire operation and closes the native scope in finally, including
+preflight errors, header failures and transfer exceptions. Nested native scopes
+are rejected.
+
+Reuse requires the same output mesh/source index and the same explicit/adaptive
+vertex-index settings and value-clip enable flag. Every actual scratch build
+invalidates preparation before reading/altering geometry, including builds for
+other meshes, merging and failures. Supplied-asset changes/clear/removal also
+invalidate it; stream end/reset clears the scope. A successful preparation can
+republish it only inside the matching scope. Tangents and skin streams keep
+their existing preparation logic; unscoped getters always rebuild as before.
+
+This targets the repeated-build size-query cost in §10.96 without creating a
+cross-call cache or depending on mesh_view_source_id_ as a validity token.
+All six changed native web units pass Emscripten syntax checks under an 8 GiB
+guard (216.9 MiB peak). A focused current-JS/mock-dispatch check passes normal
+and failure cleanup, busy/deletion guarding, begin rejection and old-runtime
+fallback (60.4 MiB peak). These checks do not establish native geometry parity
+or actual build counts. A full current WASM relink and runtime checks for merged/
+analytic output, indexed/soup meshes, skin/blend remaps, supplied clips, config
+changes and performance remain deferred. The older WASM timings are baselines,
+not evidence of a speedup from this implementation.
+
+### 10.99. Emit compressed sections without an intermediate result vector
+
+CompressCrateBlobTo compresses into the existing uninitialized bound-sized
+scratch and synchronously emits its encoded bytes. Structural section builders
+append directly from that borrowed buffer, removing the exact-size compressed
+result vector previously copied between scratch and section payload. The owning
+CompressCrateBlob API wraps the same helper and retains its previous behavior.
+Codec framing, LZ4 chunk boundaries and raw fallback are unchanged. An emitter
+is invoked once on success and never on compression failure; destination errors
+remain with the destination, so they cannot trigger an extra raw fallback after
+a partially written compressed header.
+
+Large contiguous u32 columns also use the existing exact-size histogram encoder
+on no-thread/one-core builds, at the existing 4M-element threshold. Previously
+those builds retained a full delta array and worst-case output scratch through
+the C fallback. Small contiguous columns and signed-column fallback still use
+that path. Histograms, compression scratch and final payload buffers remain;
+this is not a fully streaming codec or a measured whole-scene peak reduction.
+
+The adjacent C blob bound now computes ceiling division without adding to an
+untrusted near-SIZE_MAX size, checks aggregate bound additions and uses remaining
+capacity for chunk headers. This rejects oversized scratch requests before
+allocation rather than allowing the chunk count or bound to wrap.
+
+Native and no-thread codec/writer units compile under serial 8 GiB guards
+(675.6/597.3 MiB peak). Ten small compressible/incompressible cases match the
+direct C codec, decode correctly, and preserve short-destination failure flags;
+missing emitters and SIZE_MAX inputs reject without invoking the emitter.
+A 4M+3-element smoke matches the C delta encoder and decodes exactly for wrapped
+common/mixed-wide deltas on both builds (<55 MiB sampled RSS). These probes link
+the changed objects directly; complete CLI/library relinking, 32-bit overflow
+coverage, multi-chunk LZ4 and actual SSD scene/RSS qualification remain deferred.
+
+### 10.100. Integrated CPU CLI and retained-plan smoke
+
+The native next/core archives and lusdcat now link the accumulated CPU changes
+through §10.99. Earlier object-only build notes remain historical. The serial
+integrated build peaks at 477.7 MiB under an 8 GiB guard; a final diagnostic
+relink peaks at 418.7 MiB. GPU compute remains disabled. Old readback profile
+artifact hashes/timings must not be relabeled as measurements of these new
+archives.
+
+A tiny two-hop reference fixture discovers five prims and plans one batch;
+default/low outputs match at 1,344 bytes and read back with two meshes. An
+instanceable counterpart correctly leaves the size unknown, keeps its two-
+batch plan, and matches at 1,386 bytes with one shared mesh. Both log
+kept_registry_layers_dropped=2 at the retained-plan boundary before writer
+initialization. This counts ownership drops, not reclaimed physical bytes.
+The smoke stays below 23 MiB and is not a regression campaign.
+
+These cases establish basic integrated read/compose/write behavior and the
+complete/opaque discovery distinction. They do not qualify parallel speculative
+repairs, wide heavy chunks, actual spills, large-scene throughput/RSS or WASM
+runtime geometry parity. Broader checks remain deferred. General pass-1 source
+eviction still requires a proof covering unplanned roots' transitive back-
+references or snapshot-preserving storage; dropping a recently used registry
+entry alone supplies neither.
+
+### 10.101. Pass-1 lifetime audit with a late back-reference
+
+A focused callback-reader fixture establishes why a completed batch is not a
+layer's final-use proof. Discovery uses a two-root frontier cap and one thread
+(no prefetch); the first root has two children, so it rejects the next whole
+level before resolving the second root. The trace is:
+
+| Boundary | Shared-layer reads | Later-root layer reads |
+| --- | ---: | ---: |
+| After discovery | 1 | 0 |
+| After planning batch 0 | 1 | 0 |
+| After planning batch 1 | 1 | 1 |
+
+The later-root layer references the same shared layer. The reader deliberately
+would return different shared contents on a second invocation. The current
+registry preserves the original snapshot: both pass 1 and pass 2 contain all
+four expected mesh appearances with one shared-layer read. Evicting/re-reading
+at the first boundary would change the later result. Source dependency queries
+after Plan also retain all four expected identifiers.
+
+This completes the current-lifetime investigation: temporary caches can die
+after their workers join; retained one-shot plans release registry ownership
+after planning; general pass 1 must retain snapshots until future dependencies
+are established; pass 2 uses the recorded cutoff and fill watermark. General
+earlier eviction is still unimplemented and would require snapshot-preserving
+storage or a complete dependency proof. A page-only alternative is already
+present: CrateReader::ReadFile discards mapped input pages after parsing.
+
+The tiny stateful-reader probe passes below 2 MiB sampled RSS and compiles below
+248 MiB. It is a lifecycle audit, not a large-scene memory/performance claim.
+For the separate instance-authority work, opt-in next_walk diagnostics now count
+attempted speculative/seed/source re-walks and serial_fallback. Counts distinguish
+unexercised repairs from successful parallel results; they do not themselves
+prove parity. The updated native CLI links under the serial guard (656.5 MiB
+peak). Runtime coverage of the new parallel repair remains deferred.
+
+### 10.102. Focused instance-authority and fallback checks
+
+A bounded 65,575-prim in-memory scene crosses the actual 64K source-cache gate
+for ParallelStructureWalk. It contains nested instance groups and no large
+arrays. The serial and eight-thread builds produce identical 1,078,448-byte
+crates, identical prim/prototype counts and serial_fallback=0. This natural run
+reports zero re-walks, so it is not claimed as repair-path coverage.
+
+The same scene with a namespace-depth limit exercises serial_fallback=1.
+Serial/fallback crates match at 1,078,660 bytes with 65,573 prims; both report
+the typed MaxDepthExceeded diagnostic. The existing API returns a diagnostic-
+bearing partial stage here, not false. The probe initially assumed a fatal
+return; that harness assertion was corrected without changing library behavior.
+This confirms fallback preserves the serial contract, including diagnostics.
+
+A separate tiny direct-source probe injects two earlier speculative claims
+without authoritative prototypes, representing claims from discarded subtrees.
+It compiles the current cache/batch implementation sources and uses the existing
+internal accessor, without an exported test hook. Commit performs two nested
+speculative re-walks, materializes four correctly ordered/typed prims, preserves
+child links, and confirms both prototype keys without fallback. This directly
+exercises forced-root expansion even after prototype confirmation.
+
+The threshold smoke peaks at 147.7 MiB; the injected probe stays below 2 MiB
+(its source compilation peaks at 647.7 MiB). These focused checks are not a race
+campaign: donated-task interleavings, seeded large batches and production output/
+performance qualification remain deferred. Artifacts/logs stay under ignored
+build_ninja/cpu-implementation/parallel-walk-smoke* and claim-repair-smoke*.
+
+### 10.103. Bounded heavy-chunk and reaper check
+
+A synthetic write with 262,144 prims crosses the real wide-writer threshold.
+Four array-heavy prims sit next to each other and on either side of an original
+chunk edge. Metadata refinement creates 261 ranges from the original 256;
+four workers still use eight contexts. A consume-prims run verifies all
+property slots have been reaped after completion. Refined parallel, fixed-
+chunk parallel and serial outputs match exactly at 21,369,287 bytes on real SSD
+files.
+
+The fixed-chunk control compiles an isolated copy of the current writer with
+only refine_chunks=false; copied writer files are checked against production
+sources. Its optimization/hardening flags match the normal writer. Both
+parallel probes use the same four-thread/consume configuration and system libc
+allocator (the production CLI uses jemalloc). Single samples are:
+
+| Parallel policy | fields_specs | Whole write | Peak RSS |
+| --- | ---: | ---: | ---: |
+| Fixed 256 chunks | 161.9 ms | 441.8 ms | 301.0 MiB |
+| Refined 261 chunks | 142.8 ms | 422.3 ms | 298.5 MiB |
+
+Refinement planning takes 2.5 ms. These samples exercise splitting, ordered
+commit and consume/reaper boundaries with no observed RSS increase in this
+workload; they are not statistical performance evidence or Island qualification.
+Array sharing, workload and allocator differ from the production scene.
+Source overlays, probes, logs and the checked artifact/byte-parity manifest are
+ignored build_ninja/cpu-implementation/heavy-chunk-* and fixed-chunk-overlay.
+Failure/fallback, variable/time-sampled arrays, large lazy payloads and actual
+Island SSD throughput/RSS remain deferred.
+
+### 10.104 Focused mapped-spill, fallback and writer integration checks
+
+Bounded standalone checks exercise the current SpillVec read views for u32,
+ValueRep and CrateSpec columns: empty/single/exact-chunk inputs, multiple
+chunks plus resident tails, view reset and appends after a completed snapshot.
+Mapped views match the legacy owning Resolve output. Injected mmap failure
+falls back to an owning copy; truncated prefixes, ftruncate/pwrite failure and
+fallback-read EOF fail without publishing a view. Interrupted and partial tail
+writes recover. All 18 successful native mappings are unmapped; the no-mmap
+build passes with zero mappings. Both runtime checks stay below 2 MiB sampled
+RSS; the native probe compiles below 186 MiB.
+
+A real batched writer fixture contains 131,073 Xform prims with eight scalar
+attributes each. It crosses the actual structural-column chunk thresholds,
+with four writer threads and either no spill budget or a 1 KiB budget. The
+spill case writes 41,943,032 prefix bytes, snapshots 16,777,704 tail bytes and
+successfully maps four views totaling 58,720,736 bytes. A third run injects
+ENOMEM for all four spill mappings, exercising the actual section builders'
+owning-copy fallback. All three runs succeed and produce byte-identical,
+nonempty regular SSD files of 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+The spill directory is empty after completion.
+
+Sampled process-tree peaks are 552.2 MiB without spilling, 495.7 MiB with
+mapped spills and 534.1 MiB with forced mapping fallback. These are single
+synthetic implementation checks using libc allocation, not production-scene
+RSS or performance qualification (the production CLI uses jemalloc). The
+initial ordinary-layer probe did not evict columns; only the corrected
+AddBatchTables/BeginBatchedFile/WriteBatch/FinishBatched runs establish spill
+coverage. Probes, logs, files and a hashed provenance manifest remain ignored
+under build_ninja/cpu-implementation/spill-view-* and writer-spill-*.
+Large-scene SSD performance, 32-bit platforms, multi-chunk LZ4 and broad
+regressions remain deferred.
+
+### 10.105 Fresh WASM scoped-copy integration and bounded profile
+
+The current next-only wasm32 module is now compiled and linked from the
+working tree in web/build_ninja (MinSizeRel, SIMD, dlmalloc, no threads or GPU
+compute). Serial compilation peaks at 360 MiB; the final link at 364.7 MiB.
+Emscripten requires SDK symbol-cache lock writes outside the workspace, so the
+link was retried with approved SDK-cache access after a sandbox failure.
+Generated outputs stay under ignored build_ninja/cpu-implementation/wasm-current.
+
+The bounded 8-mesh grid fixture from §10.96 compares scoped copies with the
+scope export disabled in the *same* new module. Two fresh streams reverse the
+sample order. Complete copied typed-array bytes and output metadata match.
+Geometry-read statistics divided by the fixture's known per-build byte count
+establish 192 preparations without scopes versus 8 with scopes: 24 versus one
+per mesh. Both paths still issue 160 size queries and 24 transfers; the scope
+removes repeated preparation rather than changing the extraction calls.
+Indexed copy samples are 721.5–729.6 ms unscoped and 75.9–76.1 ms scoped.
+The explicit indices-disabled setting matches too (714.7–722.5 versus
+71.2–80.3 ms), but this grid retains indexed geometry because it has no
+face-varying expansion. A separate authored face-varying UV fixture establishes
+actual soup parity: six vertices, no index stream and twelve UV scalars.
+
+Merged output also matches, with zero source preparations in either mode.
+Its 8–15 ms samples do not establish a speedup. Nested begin and mismatched
+end calls are rejected, invalid ids preserve their error result, and injected
+size-query failures close scopes before a subsequent real copy succeeds.
+All 47 scopes close. The complete probe peaks at 222.6 MiB sampled process-tree
+RSS (231.1 MiB process high-water report).
+
+An initial repeated unscoped loop eventually failed a topology read. The
+reader uses a monotonic cumulative allocation budget, including temporary
+deferred decodes, so the final A/B uses fresh streams with 512 MiB limits;
+the safety policy is unchanged. Mesh field/buffer queries now preserve failed
+preparation diagnostics for meshViewString instead of discarding them. This
+does not alter their existing source fallback behavior. The cumulative policy
+is consistent with the repeated-loop failure; this check does not measure
+general long-session capacity.
+
+These are current-runtime synthetic results, not a comparison with the older
+October runtime or browser/production-scene qualification. Skinned/blend-shape
+streams, supplied-clip mutation, forced heap growth, memory64 and complete
+regressions remain deferred. Probe, terminal log and source/runtime/fixture
+hashes are mesh-copy-current.mjs, mesh-copy-current.log and
+mesh-copy-current-summary.json under ignored build_ninja/cpu-implementation.
+
+### 10.106 Bounded discovery sizing and prefetch policy checks
+
+A standalone probe compiles current cache.cc and batched-compose.cc directly,
+using the existing internal batch accessor without adding a public test hook.
+A six-prim reference fixture establishes these sizing boundaries:
+
+| Policy | Discovered count | Pass-1 batches |
+| --- | ---: | ---: |
+| Complete, target six | 6 | 1 |
+| Complete, target five | 6 | 2 |
+| Frontier capped at two | unknown (0) | 1 |
+| Namespace depth capped at two | unknown (0) | 2 |
+| Authored inactive leaf | 6 | 1 |
+| Asset-reader callback | unknown (0) | 2 |
+| Payload selection callback | unknown (0) | 2 |
+| Payload notification callback | unknown (0) | 2 |
+| Fixed one root per batch | 6 | 5 |
+
+Every pass-1 path sequence (excluding repeated ancestors) matches an independent
+serial BuildStage call with the same options. An unknown count does not itself
+require multiple batches: the capped frontier has one root, so the original
+conservative policy also produces one batch. The inactive leaf remains an
+authored prim in the composed stage; this case does not prove arbitrary
+inactive-subtree or namespace-edit coverage.
+
+A controlled byte-reader check starts prefetch with eight requested threads
+and exactly one seed. That seed reveals two child files. A condition-variable
+barrier establishes both automatic workers are inside child reads concurrently;
+the seed and both children are each read once. The explicit three-parser-thread
+configuration retains one outer worker for the same initial queue and drains
+successfully. A third case stops while the seed read is held, releases it and
+joins all workers: the children are never read. These are policy and lifecycle
+checks, not filesystem throughput measurements or parser-speed claims.
+
+All twelve cases pass at 1.6 MiB sampled RSS; the direct-source probe compiles
+at 616.6 MiB. Fixtures, probe, terminal log and hashed provenance remain ignored
+under build_ninja/cpu-implementation/discovery-policy*. Large fan-out timing,
+namespace edits, more callback/load-rule combinations and broad regression
+qualification remain deferred. No production implementation change was needed
+by these checks.
+
+### 10.107 Reuse PATHS node storage for low-memory column encoding
+
+Large batched writes (serialized structural sections) and explicit spill-budget
+writes no longer allocate separate preorder token/jump arrays. After tree
+ordering, each node's element offset and subtree size are read for the last
+time while its token and jump are computed. Those entries are then overwritten
+in place with the final scalar columns. Nodes are unique in the preorder, and
+each worker reads and writes only its own node's entries. After the workers
+join, immutable accessors project through the retained preorder into these
+columns for encoding. No token lookup or source-array decode is repeated by
+the codec.
+
+This removes eight bytes per encoded path at the column-preparation phase.
+All three PATHS columns, including the preorder, use exact-size projected delta
+encoding sequentially, avoiding the contiguous C encoder's full delta and
+worst-case output scratch below its large-input threshold. The token column's
+node storage is released before the jump column encodes. The policy starts at
+131,072 encoded paths so fixed histogram overhead does not dominate small
+writes; small writes and ordinary zero-spill-budget writes keep the existing
+contiguous/parallel policy. The retained preorder and codec histograms still
+consume memory; this is not an overall process-memory bound.
+
+The native core/CLI is relinked. The first three-minute build slice stopped
+safely at its time limit (672.3 MiB peak), then the remaining serial build
+completed (673.5 MiB peak). A bounded 131,073-prim/eight-property fixture crosses
+the new path threshold. Ordinary, batched memory-only, mapped-spill and forced
+mapping-fallback writes all succeed and match the saved pre-change regular SSD
+output byte for byte: 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+Spill cases still exercise four actual mappings or four injected mapping
+failures, with no leftover spill files. A no-thread writer/codec object overlay
+also produces identical mapped-spill output; writer compilation peaks at
+598.1 MiB and codec compilation at 281.4 MiB. Its complete library archive was
+not relinked; the probe explicitly supplies the new objects before that archive.
+
+These focused libc probes do not establish production peak-RSS or throughput
+improvement. Process-tree RSS samples vary across modes and codec phases; the
+allocation reduction above is specific to column preparation. Large-scene
+SSD/RSS qualification, deep/variant/relative/empty path cases on the new branch,
+threshold boundaries and broad regressions remain deferred. Probe, outputs,
+logs and hashed artifact provenance remain ignored under
+build_ninja/cpu-implementation/writer-path-projection-* and path-projection-*.
+The wasm32 module in §10.105 predates this writer change; its scoped mesh-copy
+implementation and focused results are otherwise unchanged.
+
+### 10.108 Mixed-array heavy-chunk scheduling check
+
+A bounded 262,144-prim fixture extends the fixed-size scheduling check with a
+time-sampled-only array property, a token array sized by the string-footprint
+proxy, an authored default plus a sample, four smaller arrays on one prim,
+and smaller arrays whose combined work splits a range. Heavy prims sit next
+to each other and on the original 1024-prim range edges. Estimation reads
+array headers and stored time-sample indices, without materializing payloads.
+
+The planner produces the expected 262 ranges from 256 fixed ranges, retaining
+four workers and eight contexts. Parallel consume/reaper output exactly matches
+serial non-consuming output: 19,272,856 bytes, SHA-256
+`296d84072d321d4479c05f7c792b157ee9cb3b09667425bccbc10f8147b35099`.
+Every consumed prim has no properties or remaining time samples. Planning
+takes 2.49 ms in this sample; sampled process-tree peaks are 235.8 MiB serial
+and 313.4 MiB parallel. Different thread/consumption policies make this a
+functional check, not an isolated refinement speed or RSS comparison. The
+probe compiles at 192.6 MiB. No production implementation change was needed.
+
+Fixtures/probe, terminal logs, outputs and source/archive hashes remain ignored
+under build_ninja/cpu-implementation/heavy-chunk-mixed*. Large lazy payloads,
+failure/fallback coverage and actual Island SSD throughput/RSS remain deferred.
+
+### 10.109 Preserve earlier-batch prototype authority during serial fallback
+
+A failed parallel structure walk cleared every prototype map before the serial
+fallback. In a batched build, this also erased authoritative prototypes from
+earlier batches. BuildStage installs those seeds before attempting the parallel
+walk, so the later serial loop did not reinstall them: a later member could
+become a new prototype instead of remaining an instance of the earlier owner.
+
+The failure reset now discards this attempt's registrations and restores the
+batch scope's seed keys/prototype paths and ordering, matching BuildStage's
+initial state. Normal successful walks and non-batched fallback keep their
+existing behavior. No speculative claim survives the reset.
+
+A bounded reproduction compiles current cache/batch sources directly, supplies
+an earlier-owner BatchScope seed through the existing internal accessor, then
+uses the actual public Cache::BuildStage call. Its 65,536 ordinary children
+cross the real parallel source-count threshold. A separate depth-three branch
+with namespace depth limited to two forces a real eight-thread parallel failure
+and serial fallback (next_walk serial_fallback=1).
+
+Before the fix, serial reports the member as an instance of
+`/PreviousBatchOwner`, while parallel fallback incorrectly reports it as its
+own `/World/Member` prototype. Both builds still report 65,540 prims and
+1,077,664 crate bytes: prim/byte counts alone do not detect the authority bug.
+After the fix, both retain the earlier owner, report the same typed depth
+diagnostic/partial-stage success contract, and produce byte-identical crates.
+The probe passes at 140.5 MiB sampled RSS, compiling at 591.8 MiB. The native
+core/CLI is relinked (655.9 MiB peak). Reproduction binaries, before/after
+terminal logs and hashed provenance remain ignored under
+build_ninja/cpu-implementation/seeded-fallback-*.
+
+This fixes a concrete fallback defect; broader donation/race, seeded batch
+integration and production qualification remain deferred. The original
+before-fix reproduction is deliberately retained as an expected failing run.
+
+### 10.110 Complete source-miss to prototype-seed repair
+
+Resolving a parallel walk's cached-source miss can reveal an instanceable
+prototype whose child sources have not yet been seeded. The rewalk guard
+previously rejected both another source miss and any unseeded prototype. This
+discarded a repair that had made progress and unnecessarily requested serial
+fallback before the existing prototype-seeding branch could run.
+
+The guard now accepts an unseeded prototype after source resolution and lets
+CommitWalk perform its existing paused seed mutation and forced-root rewalk.
+Another source miss still fails immediately; a forced prototype rewalk that
+still reports unseeded children also fails. Thus the transition is bounded:
+source miss -> seed -> forced rewalk, with the serial fallback retained when
+a step cannot progress or hits a depth failure. No public API changes.
+
+A current-source internal probe distinguishes stale claims, unseeded prototypes
+and source misses. Before the change, the source-miss case returns false after
+one source attempt and zero seed repairs. Afterward it commits four expected
+prims with one source and two nested seed repairs. Seed-only repair commits
+with two seed repairs; stale-claim repair commits with two speculative repairs.
+All successful cases verify paths, child order, types and confirmed claim
+authority after temporary read-only stores are gone. Source pointers refer to
+stable cache-owned vectors; read-only spec lookups do not memoize pointers into
+temporary stores. The cache/layer lifetime remains required through materialize
+and opinion fill; this audit does not justify earlier pass-1 registry eviction.
+
+A depth-limited source-miss case reaches seed repair and then returns false,
+preserving the caller's serial fallback. Pause state and read-only TLS are
+cleared in every case. All four cases pass below 2.2 MiB sampled RSS; the probe
+compiles at 594.1 MiB. The native core/CLI is relinked at 655.9 MiB peak.
+Probe, before/after binaries, terminal logs and provenance stay ignored under
+build_ninja/cpu-implementation/repair-transition-*.
+These controlled repairs do not establish production fallback rates or worker
+race/donation coverage; broad regressions remain deferred.
+
+### 10.111 Exact-size encoding for medium low-memory structural columns
+
+FIELDS token ids and FIELDSETS indices still reached the contiguous C delta
+encoder below four million elements. Even with mapped spill views, that path
+allocated a full delta array, histogram state and worst-case output scratch
+before copying the exact result. The writer now selects projected exact-size
+encoding for structural u32 columns of at least 131,072 elements when sections
+are serialized (batched writes) or an explicit spill budget is set. Small
+columns and ordinary zero-budget writes retain their prior codec policy.
+PATHS reuse shares the same threshold constant. No public API changes.
+
+The projection aliases the existing input through an immutable accessor;
+it does not allocate another input column. Exact output and histogram state
+remain, including potentially large wide-delta counting state: this is an
+allocation reduction, not a bound on the complete codec or writer working set.
+
+A link-wrapped counter on the C u32 delta entry point checks calls between
+131,072 and four million elements in the bounded 131,073-prim/eight-property
+fixture. Before this change, a batched memory-only write makes two such calls.
+Afterward batched memory-only, mapped-spill and forced mapping-fallback writes
+make zero; ordinary zero-budget output still makes five. Every file matches
+the saved pre-change output byte for byte: 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+The before probe intentionally fails its new counter assertion after successfully
+writing the file; this is not a baseline writer failure.
+
+In this single matched libc memory-only pair, process high-water RSS falls
+from 547.3 to 325.8 MiB (guard-sampled group peaks 502.0 to 329.5 MiB).
+After-change mapped-spill and mapping-fallback process peaks are 313.7 and
+344.0 MiB. These synthetic samples do not establish production-scene RSS or
+throughput gains. A no-thread writer/codec object overlay also produces
+identical mapped-spill output with zero medium C calls (272.3 MiB process peak).
+No spill files remain. Native CLI/core relink passes at 675.2 MiB; no-thread
+writer compilation at 599.1 MiB. Its full archive remains historical; the probe
+links the current objects explicitly. Generated artifacts and provenance stay
+ignored under build_ninja/cpu-implementation/writer-medium-delta-* and
+medium-delta-*. Threshold/pathological-delta coverage, production SSD/RSS and
+broad regressions remain deferred. The earlier WASM runtime predates this change.
+
+### 10.112 Residual web mesh-copy budget-query profile
+
+The wasm32 scoped-copy runtime from §10.105 was profiled with resolved export
+wrappers around the remaining-memory and mesh-buffer calls. Eight indexed mesh
+copies issue 64 exported memory-budget queries in each of two passes. Those
+queries take 38.7/38.4 ms of 88.2/76.5 ms total extraction; 160 size queries
+and 24 transfers remain, taking 35.5/29.7 ms in the mesh-buffer export.
+These export timings are disjoint, but include their respective internal work;
+they are not pure memcpy or geometry-build timings. Runtime peak is 142.7 MiB
+sampled process-tree RSS. Module/fixture/script hashes and results are recorded
+in ignored cpu-implementation/mesh-copy-budget-profile-summary.json.
+
+RemainingMemoryLimitBytes recomputes Stage::GetMemoryUsage, which traverses
+layer/prims/value storage. That repeated scene traversal is the next extraction
+cost after eliminating repeated geometry preparation. No budget check was
+removed or cached: lazy materialization and mutable asset/export state require
+sound invalidation or a native transaction boundary before reusing an estimate.
+This is a profile of the recorded scoped-copy module, which predates the later
+writer-only changes; it is not a fresh all-source WASM release qualification.
+
+### 10.113 Parallel compact chunk planning and real Island comparison
+
+The named Island workload was profiled after the CPU implementations were in
+place, using regular SSD output and 8 GiB RSS/4 GiB reserve guards. This was a
+bounded implementation/performance check, not a restart of the disabled full
+qualification driver. A current-source writer overlay disables only
+refine_chunks, retaining the same CLI object, libraries, jemalloc allocator,
+optimization/hardening flags, worker count and encoded-context count. The
+overlay compiles without the production precompiled header; all copied writer
+sources are checked against production, with only that boolean changed.
+
+The real scene exposed about 78 ms of sequential range-planning cost, compared
+with 2.5 ms on the small synthetic scheduling fixture. Planning now examines
+independent original 1024-prim chunks on at most eight threads. Each chunk
+records its right boundaries in a 1024-bit mask. After joining, masks merge in
+namespace order. Cuts, the 16 MiB work estimate and ordered commit are unchanged.
+This adds 128 bytes per original chunk (35,456 bytes for Island), without a
+payload copy, a second header scan or one allocation per cut. Planner threads
+are joined and their masks released before encoded worker contexts are created.
+The existing ParallelRanges helper accepts an optional thread cap; its other
+callers retain their previous default behavior.
+
+Three warm alternating pairs compare the final implementation with the
+matched fixed-chunk control. Each output is fsynced after process exit before
+the next run; that separately recorded flush is outside CLI write timing.
+Normal teardown is used, without fast-exit. No final-pair samples are excluded.
+
+| Metric | Fixed chunks | Refined, parallel plan |
+| --- | ---: | ---: |
+| Chunks / workers / encoded contexts | 277 / 16 / 32 | 362 / 16 / 32 |
+| Median chunk planning | 0.007 ms | 23.3 ms |
+| Median fields_specs | 1459.0 ms | 1441.4 ms |
+| Median complete write | 2317.2 ms | 2310.9 ms |
+| Median sampled process-tree peak | 3219.3 MiB | 2732.1 MiB |
+| Maximum sampled process-tree peak | 3233.2 MiB | 2899.8 MiB |
+
+Writing time is essentially flat at this sample size; do not present the 0.3%
+median difference as a proven throughput gain. Median peak RSS is 15.1% lower,
+and even the highest observed refined peak is below the lowest fixed peak in
+these pairs. Planning falls from the prior sequential 77.5–79.2 ms samples to
+23.3–23.7 ms. The initial single pair and sequential-plan measurements remain
+in the logs; their timing variability motivated the alternating/flushed protocol.
+
+Both final regular files match byte for byte, 2,512,205,846 bytes, SHA-256
+`a8f5092209cbcd30841c129354bda0aaae5ea21607f7bd70725ef933d7b2c478`,
+also matching the established Island reference. Every run reports that byte
+count and the expected worker/context counts. The mixed-array consume check
+retains 262/256 ranges and its previous exact bytes; planning there is 0.98 ms.
+Native CLI/core relink passes at 675.2 MiB, no-thread writer compilation at
+600.2 MiB. No GPU access or full45 run was involved. The bounded results establish
+this workload's memory improvement, not universal scene/cold-storage behavior.
+Broad regression suites remain deferred.
+
+Logs, full output files, before/after planners, exact overlay/source/compiler
+provenance and binary hashes stay ignored under
+build_ninja/cpu-implementation/island-chunk-profile/parallel-summary.json,
+island-fixed-* and parallel-chunk-plan-*.
+
+### 10.114 Six-item CPU completion record
+
+The six requested CPU work items have requirement-specific implementation,
+audit and profiling evidence:
+
+| Requested item | Result and evidence |
+| --- | --- |
+| Instance-claim authority | Commit-confirmed claims and forced-root repair replace speculative authority; nested/source/seed repair and current 64K-gated seeded serial fallback pass (§10.102, §10.109–110). |
+| Earlier source lifetimes | The late-back-reference/stateful-reader counterexample establishes required pass-1 retention. Registry ownership is released at the proven retained-plan boundary before writer initialization; current tiny default/low output and snapshot checks pass (§10.100–101). General earlier eviction is deliberately not enabled. |
+| Discovery/pass 1 | Automatic fan-out team, complete small-stage sizing and conservative unknown/fixed-batch behavior are implemented and checked (§10.94, §10.106). |
+| Spill codecs | Mapped/fallback views, direct compressed emission, SPECS/PATHS projections and medium exact-size delta encoding remove full-size scratch/copies with byte parity (§10.104, §10.107, §10.111). |
+| Readback/Tydra costs | Native load/conversion/progress and web extraction profiles are recorded. Scoped preparation removes repeated mesh builds; output/lifecycle checks pass, and residual budget traversal is measured without weakening checks (§10.96–98, §10.105, §10.112). |
+| Default Island writing | Actual reference bytes, matched controls, unchanged encoded-context counts and three alternating pairs establish lower observed peak RSS at essentially unchanged write time; compact parallel planning removes most planning overhead (§10.108, §10.113). |
+
+The final combined source-repair/seeded-fallback reproduction passes against
+current code at 139.2 MiB sampled RSS; the final late-reader snapshot and tiny
+retained-plan CLI checks are rerun against the current native archive/CLI.
+The audit checks relevant source identities, terminal results, pinned profiling
+artifacts and the actual Island comparison; its detailed record is ignored
+build_ninja/cpu-implementation/six-item-cpu-audit.json.
+
+This closes these six work items without claiming broad regression or release
+qualification. The user deferred full suites; repository pre-merge gates still
+apply before a future merge. Other-scene/cold-storage/platform qualification,
+fresh all-source WASM distribution checks and GPU work are not claimed complete.
+
+### 10.115 Scoped mesh-copy Stage budget accounting
+
+This follow-up implements repeated budget-scan reuse, general pass-1 source
+snapshots/eviction and planning/write overlap. Fresh qualification and bounded
+scene measurements are recorded in the following sections.
+
+Within a mesh-copy scope, the private, structurally immutable loaded Stage's
+footprint is reused until a read-side storage materialization occurs. Lazy
+Value publication and deferred Layer path-index construction advance a shared
+atomic generation. Saturation disables reuse permanently rather than wrapping.
+Explicit scope/lifecycle/asset invalidation clears the cache. Layers with
+on-demand opinion fillers retain full scans because those callbacks can change
+arbitrary metadata. This generation is not a general-purpose mutation version.
+Input, asset, formatted-text, retained-export and streaming charges, and the
+configured limit, are still evaluated on each budget query.
+
+A saved pre-change wasm32 module and the fresh CPU-only module ran the same
+8-mesh fixture serially under the RSS guard: 64 budget queries took 37.9/37.8 ms
+before versus 4.9/4.9 ms after; warmed total mesh-copy time was 76.2 versus
+43.6 ms. This is a bounded fixture measurement, not a production-wide speedup.
+Scoped/unscoped indexed, indices-disabled, merged and face-varying output parity
+passes; 47 scopes opened and closed, including injected query failure.
+
+The permanent `web/js/tests/next-mesh-budget-cache.test.mjs` compares cached
+queries to a fresh scan after scope reopening. Eight cases cover limit changes,
+asset addition/removal/clear, retained USDC export and forced heap growth, with
+owned points surviving growth. It accepts `LIGHTUSD_NEXT_MODULE` for a specific
+built module, or the standard wasm32/memory64 product path. Fresh wasm32 passes
+at 85.1 MiB guarded group RSS. Native lazy-value tests and a bounded 8-thread
+1600-materialization/saturation probe pass. Fresh native Layer build passes
+at 676.8 MiB, and all Layer tests including lazy-index invalidation pass
+at 1.1 MiB. Broader qualification results follow below. Logs/scripts are under ignored
+`build_ninja/cpu-implementation/budget-*`; snapshot modules are retained there.
+
+### 10.116 Immutable source snapshots and pass-1 eviction
+
+`BatchedComposeOptions::source_snapshot_directory` enables exact raw-input
+snapshots in a caller-selected disk directory. The total payload byte limit is
+`source_snapshot_bytes` (8 GiB by default). Empty directory retains the prior
+cache policy. Low-memory `lusdcat --spill-dir DIR` enables this mode;
+`--source-snapshot-mib N` sets its total limit, and zero disables snapshots.
+Choose SSD storage explicitly; system temporary directories may be tmpfs.
+The initial backend is POSIX, with explicit configuration failure on unsupported
+platforms. No GPU work is involved.
+
+Native inputs copy in 64 KiB blocks into mode-0600 private files; descriptor
+identity, size and modification/change timestamps are checked during capture.
+Callback inputs are captured from the first returned bytes. A shared budget
+reserves concurrent captures before writing; I/O or limit failure fails the
+load rather than silently rereading or abandoning the memory policy. Raw
+snapshot files are removed on ordinary destruction/failure. Parsed metadata can
+then leave the registry after discovery and each batch, including pass 1;
+composed/lazy array owners keep their independent backing ownership.
+
+Replay preserves the original asset anchor and USDZ entry selection. Initial
+parse limits/modes are retained without keeping old callback captures; current
+progress callbacks and worker hints apply to replay. Observed request/anchor
+resolution bindings are frozen for snapshot replay. Snapshot identifiers remain
+in the final dependency manifest even after their parsed layer is evicted.
+Explicit preloads and sources with deferred opinion fillers or retained foreign
+import dependencies stay pinned: their complete mutable/auxiliary state has no
+native raw-USD replay contract. Foreign imports keep their existing dispatch.
+
+The native PCP suite passes with checks for weak-owner expiration after
+metadata eviction, read-once stateful callbacks, concurrent first/replay loads,
+byte-budget failure, native source removal, pass-1/back-reference correctness,
+mapped USDC value ownership after registry cleanup and USDZ entry selection
+following archive removal (357.4 MiB guarded peak on the final source). A four-reference CLI fixture
+produces identical 1380-byte files in ordinary, retained-batch and snapshot-batch
+modes; snapshot eviction counters are 5 at Plan and 9 at Run, versus zero in
+retained mode. No raw snapshot files remain after that run. Logs are in ignored
+`build_ninja/cpu-implementation/source-snapshot-*`.
+
+The final native-extension/content-dispatch distinction, opaque callback keys
+and warm-alias binding checks pass in that same fresh native suite. Final CLI
+parity is recorded in `source-snapshot-smoke/run-current.log` (30.0 MiB peak).
+The fresh native/no-thread/WASM qualification and bounded scene comparison
+below extend these focused checks. Planning/write overlap is described next.
+
+### 10.117 Planning overlaps writer encoding and scratch I/O
+
+`BatchedComposeOptions::overlap_plan_write` enables an encoded-operation log in
+an explicit writer spill directory. CLI usage is `--memory-profile low
+--overlap-plan-write --spill-dir DIR`; `--prepared-log-mib N` sets the total
+scratch-byte cap (8 GiB by default, `CrateWriteOptions::max_prepared_bytes`).
+The native mapped spill backend is required. This opt-in path avoids the second
+composition pass: Plan's existing consumer encodes while the next batch
+composes. Final USDC assembly follows Plan, once all ids and Holder facts are
+known. The current encoder uses one consumer worker alongside composition;
+large-scene throughput improvement has not been established.
+
+Each batch still contributes its table prepass in namespace order. The writer
+records its existing worker operations, fieldsets, specs, paths and intern
+events into an unlinked spill log. Field/block contexts flush every 1024 prims;
+token/string domains persist only for that batch so batch-wide name references
+remain valid. Immutable identical scratch payloads share disk bytes using the
+existing 128-bit digest table; every operation retains its separate replay
+identity. Final raw-byte dedup is rebuilt in original operation order after ids
+are fixed. This preserves dedup across token vectors, token arrays and numeric
+payloads; symbolic token patching alone would not preserve that equivalence.
+
+Late Holder changes can remove an unauthored instanceable field or turn an
+authored field false. Replay compacts affected field/fieldset columns, and
+records each instanceable field use so its token is interned at the first
+surviving use. Scalar values, dictionary contents, paths and nested ValueReps
+use the ordinary commit relocation logic. The public writer entry points are
+`PrepareBatch` and `WritePreparedFile`. Successful/failed final replay releases
+its scratch; a second commit is rejected before touching the final file.
+
+Large payloads replay from mapped spans; mapping failure returns a checked
+error rather than creating an unbounded private copy. Planning I/O and byte-limit
+failures stop planning, propagate the encoder error, join the consumer and do
+not publish a final output. Prepared mode skips Plan's retained-layer merger
+and releases source ownership once its operation log is complete.
+
+Focused native evidence: the full PCP executable passes, including three
+late-field removal/authored-false cases and its ~72000-prim path-lifetime case
+with an added prepared run (502.3 MiB guarded peak). Current CLI fixtures match
+ordinary and retained two-pass output byte for byte: 1912-byte mixed
+strings/token-vector/time-sample/target-path output and 1386-byte cross-batch
+instance output, with 1 and 4 compose threads. Prepare records precede Plan
+completion and no Run pass occurs. Zero scratch budget preserves the concrete
+error without creating the final file; temporary files are cleaned up. Fresh CPU-only native full build passes at 553.3 MiB; CTest passes 74 tests
+with one optional AOUSD value-resolution skip, zero failures, in 39.89 s
+(952.2 MiB guarded peak). Standalone Debug build and CTest also pass: 78 tests, one optional AOUSD
+skip, zero failures in 166.17 s (952.6 MiB guarded peak).
+No-thread build and CTest subsequently pass 61 tests with one optional AOUSD
+skip in 27.68 s (696.1 MiB). A mapped 12.58 MB raw-payload fixture matches
+ordinary output while four references reuse only 12.59 MB operation scratch.
+Injected ENOMEM at mapping, EIO during Plan writes and EIO during snapshot-tail
+writes return errors, leave no final CLI output and clean temporary files;
+guarded group peak is 30.5 MiB. Probe/logs: `plan-writer-faults/run-final.log`.
+
+### 10.118 Codec boundary qualification
+
+Fresh native and no-thread probes each pass 50 exact-byte/roundtrip cases.
+Lengths cover 1/3/4/5 and 131072/4194304 +/-1; inputs cover all-zero, ramp,
+equal-frequency deltas, signed extremes/wrapping and wide-unique histograms.
+Both projected and direct C++ encoders match the independent C delta encoder,
+then decode to the original column. Guarded peaks are 726.2 MiB (native) and
+694.0 MiB (no-thread). Source/results are in ignored
+`cpu-implementation/qualification-boundaries`. Writer integration and WASM
+qualification extend these codec checks below.
+
+Fresh writer integration now also passes on native and no-thread libraries:
+131073 prims with eight properties each produce identical 16798763-byte files
+through ordinary, batched-memory, mapped-spill and forced mapping-fallback
+paths. Projected path indices avoid the medium delta materialization call;
+spill files are removed after all eight cases (561.0 MiB guarded peak).
+Results: `cpu-implementation/qualification-writer-integration-summary.json`.
+
+Fresh WASM32 and memory64 core, four independent feature, combined compatibility
+and MCP modules build. Both full CPU Node profiles pass all 61 tests, zero
+failures: 523.1 MiB guarded peak for WASM32 and 607.1 MiB for memory64. Coverage
+includes skin weights, animation and blend-shape copies, live budget/heap
+growth, allocation failures, Worker isolation, loading/composition/export parity
+and legacy native validation parity. The latter requires a refreshed legacy
+`lusdcat`; the default next CLI does not implement `--validate-all`.
+
+Qualification corrected a volume-sampling ABI conversion error: its point
+count is `uint32_t`, so only the point and output-info pointers become BigInt
+on memory64. Both products were relinked and their contract tests pass. Actual
+filesystem-disabled WASM32 and memory64 probes also verify snapshot capture
+reports that it is unavailable on those platforms. Full-profile reports are
+`qualification-full-node32-final/summary.json` and
+`qualification-full-node64/summary.json` under ignored `cpu-implementation`.
+These are CPU-only results; browser rendering and physical GPU qualification
+remain outside this follow-up scope.
+
+### 10.119 Bounded scene comparison
+
+Three rotated-order, warm-cache ALab runs per mode use four compose, parse and
+writer threads, the production batching defaults and an 8 GiB process guard.
+Every run produces the same 732547046-byte USDC, SHA-256
+`6910d31b06e66867bf5992ae33ca91dce4be6ce1c4afe8c7f685118d03823596`.
+All snapshot and writer scratch files are removed on normal completion.
+
+| Mode | Median CLI wall time | Maximum process RSS |
+|---|---:|---:|
+| Default | 1.15 s | 645 MiB |
+| Low, retained sources | 1.79 s | 664 MiB |
+| Low, source snapshots | 2.48 s | 681 MiB |
+| Low, snapshots and prepared writer | 3.30 s | 836 MiB |
+
+This scene shows the additional SSD/replay cost; these opt-in modes provide no
+speed or RSS improvement here. Keep the default path for this workload. The
+comparison establishes production-scene byte parity and bounded operation, not
+a general throughput or peak-memory improvement. Source/log/results are under
+ignored `cpu-implementation/qualification-scene-performance*`. An earlier run
+with one frontier root per batch was deliberately interrupted and archived as
+`qualification-scene-stress`; it is excluded from these measurements.
+
+### 10.120 Phase split of the opt-in low-memory modes
+
+The follow-up profile attributes the overhead instead of changing policy. Four
+warm-cache, rotated-order laps used four compose/parse/writer threads, the
+production batching defaults and an 8 GiB process guard; every run reproduced
+the same 732547046-byte output. `LIGHTUSD_NEXT_TIMING=1` supplied the phase
+splits, `time -v` the user/system time, peak RSS and 512-byte block I/O, and a
+100 ms sampler the scratch-dir residency.
+
+| Mode | Wall | Peak RSS | user/sys | Output+scratch writes | discover | plan build | encode wait | consumer busy | Run |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Default | 1.11 s | 646 MiB | 1.90/0.82 s | 699 MiB | - | - | - | - | - |
+| Low, retained | 1.70 s | 663 MiB | 2.29/0.93 s | 699 MiB | 546 ms | 373 ms | 4 ms | 24 ms | 587 ms |
+| Low, snapshots | 2.38 s | 680 MiB | 2.97/1.68 s | 1474 MiB | 766 ms | 696 ms | 5 ms | 23 ms | 560 ms |
+| Low, prepared | 3.20 s | 836 MiB | 3.06/2.40 s | 2223 MiB | 764 ms | 706 ms | 855 ms | 1284 ms | - |
+
+The default path composes this 12 GB source set in one 441 ms stage build and is
+both the fastest and the smallest-RSS option. Batched composition adds a
+546 ms discovery pass and a 373 ms batched plan build that the single-stage
+path does not pay, and retained mode shows no peak-RSS gain on this scene
+(663 versus 646 MiB), so the low-memory profile is a memory-bounding option for
+scenes that do not fit, not a speed option.
+
+Source snapshots add 0.68 s and 775 MiB of writes. Discovery and plan build
+each grow by about 0.22 s and 0.32 s while 8281 layers are evicted and captured,
+and the replay pass itself is cheap (560 ms) because it hits page cache: block
+reads stay at 0 MiB after the first cold lap. Prepared mode adds another 0.82 s
+and 156 MiB: the encoded operation log is 1.40 GB, the writer waits 855 ms on
+the composition callback while the consumer is busy for 1284 ms, and the skipped
+Run pass (560 ms) does not pay for the encode. Costs track scratch bytes written
+and per-batch bookkeeping rather than SSD reads, so extra consumer parallelism
+could only help if the encoder stays CPU-bound; here user time grows with each
+mode.
+
+No policy change was made from this profile. The default path remains the
+recommended mode for this workload, and the opt-in modes remain appropriate only
+where the scene does not fit the default profile. Profile inputs and results are
+under ignored `build_ninja/preview-baseline/` (`phase1-profile.py`,
+`phase1-profile*.json`, `phase1-<lap>-<mode>.log`).
+
+### 10.121 Composed-file readback and conversion split
+
+A bounded probe on the 241 MB Caldera flattened USDC (53972 prims, 897 meshes,
+four threads) separates crate readback from Tydra conversion and the native
+mesh copies that stand in for FFI marshaling. `bench_scene_readback` now takes an
+optional fourth argument for the reader/converter resident budget, because its
+historical fixed 512 MiB bound cannot open production-size composed files and
+fails retained-geometry conversion:
+
+| Gate | metadata mode | Notes |
+|---|---:|---|
+| Crate read (lazy arrays, mmap) | 844 ms wall / 2324 ms CPU | 800 MiB peak |
+| Node hierarchy | 125 ms | |
+| Mesh conversion | 4642 ms wall / 17358 ms CPU | 4.1 s of CPU per thread, ~90% parallel efficiency |
+| Conversion finalize | 91 ms | 1360 MiB peak |
+| Owned chunk copy | 4.6 ms | 55.1 MB copied |
+| Scalar chunk copy | 10.7 ms | 55.1 MB copied |
+
+Conversion is about 7.5x the read cost in CPU time and 82% of the probe's total,
+while the owned/scalar mesh copies are below 0.1%. There is therefore no
+justification for changing FFI or mesh-copy paths. Retained mode reports failure
+at the 2048 MiB budget on this scene (peak 3.34 GiB, 13.9 s convert), so
+retained-mode probe numbers are only usable for smaller inputs or after the
+converter's retained accounting is understood.
+
+Mesh conversion is CPU-bound with good thread scaling and no measured defect, so
+this records a target for an instrumented follow-up rather than a change made
+here. The probe and logs stay under ignored `build_ninja/preview-baseline/`.
+
+### 10.122 Shadow convergence audit
+
+The preview volume integrator already applies the same adaptive refinement and
+`integration_error` tolerance to primary and shadow rays, with separate
+`shadow_steps` and `transmittance_cutoff` limits. An incomplete refinement or an
+exhausted step budget returns a NaN sentinel that the renderer converts into the
+reported "volume integration did not converge within the ray/shadow step limits"
+error; three compute-test cases plus a renderer-level `max_steps=1` case cover
+primary, surface and shadow exhaustion.
+
+A bounded measurement checked whether a separate shadow tolerance is needed.
+On a lit fog fixture (density 32, one sphere light), disabling shadows changes
+the image by RMS 101.9 / max 233 (mean 106.7 versus 56.9), so shadow rays are
+active. Rendering the same frame with 8, 512 and 4096 shadow steps produces
+byte-identical images (0 of 57600 differing bytes), as does a variant with a
+light 30 units away and a two-field overlap fixture. These fixtures cross only a
+few grid cells per shadow ray, so the measurement establishes convergence and the
+absence of step-count bias at ordinary lengths, not behaviour at exhaustion
+limits, which the unit tests cover.
+
+No separate shadow error tolerance or adaptive step bound was added: the shared
+refinement already bounds the error, the step limit is explicit, and exhaustion
+is reported rather than silently clamped. Revisit only with a measured bias case,
+for example a large high-resolution VDB with long shadow paths.
+
+### 10.123 Preview light and shadow linking
+
+Preview volumes identify their receivers without new prims: while
+`PreviewVolumeRenderer::load` traverses the cached stage it assigns a dense
+1-based id to each `OpenVDBAsset` parent path and stores it in field metadata
+lane 11; the header records the count in lane 47. A light with an authored
+`light:link`/`collection:lightLink:includes` or
+`shadow:link`/`collection:shadowLink:includes` relationship gets a compiled
+`ceil(count/32)`-word mask appended after its IES profile block, with the
+pointer in record lane 33 (light) or 34 (shadow). A zero pointer means the light
+links everything.
+
+The shared kernel tests the light mask once per light before emission and the
+shadow mask before the shadow ray, so the two links stay independent. Receiver
+0 (isosurface shading, which has no media prim) is unfiltered. Unlike USD, the
+shadow link is applied receiver-side: a receiver excluded from a light's shadow
+set is lit unshadowed, rather than the shadow ray filtering individual blockers.
+That is deliberate for a volume preview and is documented in the converter guide.
+
+Cached previews keep the scene-relative link relationships on the light prim
+(`light:link`, `shadow:link` and the collection forms), so an exported cache
+compiles the same masks without the original asset tree. Unresolved targets
+contribute no receivers.
+
+Coverage: `next_test_scene_preview_compute` checks light-link exclusion (the
+light is skipped, leaving only transmitted background), light-link inclusion
+(restores the unshadowed radiance), and shadow-link exclusion/inclusion
+(identical to the unshadowed frame and to the unmasked shadows-on frame
+respectively), with CPU and Mesa-lavapipe parity.
+`next_test_preview_light_assets` checks that a cached light keeps both
+relationships.
+
+An end-to-end check rendered a cached fog volume with one sphere light through
+the loader: linking the light to the fog prim keeps the frame at mean 97.4,
+while linking it to an unrelated path (`/NotFog`) resolves to no receivers and
+drops the mean to 50.7 (RMS 100.9, 5106 of 20736 pixels differing). That
+confirms the cached relationship, the compiled mask and the kernel test all
+reach the rendered image, not just the unit-level buffers.
+
+### 10.124 Software GPU qualification
+
+All results below are **software** (Mesa lavapipe for Vulkan, llvmpipe for GL)
+and do not qualify hardware performance or VRAM.
+
+- Shader budget (G1): the preview compute shader builds in 49.8 MiB / 0.2 s
+  after dropping the GLSL `precise` qualifier (see "Preview shader compiler
+  budget"); the previous >14.3 GiB failure is gone.
+- Compute parity (G2): `test_scene_preview_compute` passes on cpu and vulkan with
+  `geometry_max_error=0`, `conversion max_error=0`, `direct-grid
+  pixel_error=0`, `medium_pixel_error=0` (foreground 1291/1289).
+- Raster and renderer (G3/G5): the fog volume fixture passes all four
+  viewer/renderer x cpu/vk combinations in software (0.9 s / 219 MiB, 4.8 s /
+  986 MiB, 0.15 s / 15 MiB, 4.8 s / 842 MiB). A bounded Caldera capture
+  (`caldera.flattened.usdc`, 160x120, gaussian, no refinement) renders in 46.4 s
+  / 2044.7 MiB on CPU and 0.9 s / 218.5 MiB on Vulkan with 136224 samples.
+- Render thread (G4): `lusdview --threaded --backend gl` under Xvfb+llvmpipe
+  reports `render_thread: true` and `preview_accumulated_frames: 4`, and
+  `--threaded --backend vk` does the same on lavapipe. Both owners also pass the
+  full refinement matrix (gaussian/points/volume, cached and refined) with
+  `render_thread: true` in every report: cell 0.125 to 0.0052-0.0060 and samples
+  5204 to 118157-130722. Refinement installs asynchronously, so threaded
+  captures need a longer window than the non-threaded path;
+  `check-source-refinement.py` now takes `--threaded-frames` (default 600).
+- IES parser: the app no longer carries a second LM-63 parser.
+  `examples/lusdview/lighting_ies.cc` adapts `scene-preview-photometry.cc`,
+  keeping the app's max-candela normalization, TILT baked into the candela
+  table, the 0..180 symmetry wrap column, and the count-first TILT=INCLUDE
+  layout the app historically accepted (including external TILT tables).
+  `lusdview_lighting_test` covers parsing, interpolation, azimuth symmetry,
+  malformed/empty/CRLF reloads, TILT interpolation and packing.
+- Custom filter registration: the C API (`lightusd_register_light_filter`,
+  `next_test_light_filter_c`) and the Python module
+  (`lightusd.register_light_filter`, `python/tests/test_light_filter.py`) both
+  register a custom kind, feed it `lightusd:filter:value0..7`/color, and drive
+  the shared registry (duplicate kinds, rejecting parsers and unknown kinds are
+  covered).
+- CUDA (G6): the kernel compiles into the GPU tree (`scene-preview-compute-cuda`
+  and its generated kernel source); it is never executed or probed, per the
+  no-hardware constraint.
+- Source refinement: `check-source-refinement.py --software` passes 12 captures
+  (gaussian, points, volume x cpu, vk). Refined caches drop the cell size from
+  0.125 to 0.0055-0.0060 and raise samples from 5204 to 118157-130722; volume
+  kinds report `direct_volume: true`.
+- Bounded ALab: the merged ALab entry caches 1300538 gaussian samples and the
+  viewer selects 142411 samples at the 2 px LOD for both backends. The CPU frame
+  is much brighter than the Vulkan frame (mean 229.5 versus 28.1) because the
+  CPU capture ray traces the source triangles while Vulkan rasterizes cached
+  splats with ambient-only shading; an earlier qualification capture of the same
+  scene shows the same relationship.
+- Bounded Island: the full `island.usda` scene did not finish within a 40 minute
+  guarded conversion (it reached batch 282827, about 118 prims/s, before the
+  guard timeout), which puts a complete pass at several hours and a multi-GB
+  cache against 18 GB free. With explicit user agreement the full scene is out
+  of scope for this qualification, and a bounded subset referencing two elements
+  (`isBayCedarA1`, `isHibiscusYoung`, 101 MB of source) was captured instead.
+  Both backends render 896357 samples at
+  cell 1.3807 (Vulkan draws 16138 instances at the selected LOD); the CPU frame
+  traces 129104 source triangles while the Vulkan frame rasterizes the splats,
+  giving means 113.1 versus 32.7 for the representation reason described below.
+- Known backend difference: the CPU capture uses `--cpu-rt`, which renders the
+  source triangles (the Island subset reports 129104 tris), while the Vulkan
+  raster path draws the cached Gaussian splats with `nonmesh.frag`'s 0.2
+  ambient term and whatever authored lights exist (none in these scenes). The
+  two images therefore differ by representation and shading policy (cube
+  gaussian RMS 39.3 where both cover the same silhouette; Caldera 79.8; ALab
+  means 229.5 versus 28.1; Island subset 113.1 versus 32.7). An earlier
+  qualification pair shows the same relationship, so this is not a regression.
+  Direct volume-grid frames are byte-identical (RMS 0.0) and the compute kernels
+  agree exactly, which are the meaningful parity checks. Aligning splat
+  brightness with the RT path would mean changing the preview raster ambient
+  policy, a deliberate visual change rather than a bug fix; with explicit user
+  agreement it stays a documented representation difference.
+
+## Cached surface previews
+
+`lusdpreview` and `--scene-preview` in `lusdview` / `lusdrender` convert a composed
+scene on the CPU into portable Gaussian splats (default), constant-surflet
+`ParticleField` points, or `UsdVol` / OpenVDB surface bricks. Cached geometry and
+baked colors are reused by CPU, Vulkan and CUDA rendering. The default GPU
+budget is one quarter of installed VRAM (2 GiB on an 8 GiB GPU), with a runtime
+reserve and conservative geometry/scratch accounting.
+
+See [the converter guide](../tools/lusdpreview/README.md) for conversion,
+export, automatic camera-based LOD, explicit resolution/budget refinement, cache invalidation, memory
+limits and headless hardware qualification. Volume previews include a cached
+colored isosurface carrier for external surface renderers. Both applications now
+march cached UsdVol SDF/albedo bricks directly by default, with CPU/Vulkan/CUDA
+kernels. Camera refinement can resample the visible source region beyond the
+initial cache and also supports the experimental GL/Vulkan render thread.
+
+### Preview shader compiler budget
+
+`LIGHTUSD_PREVIEW_GPU_COMPUTE=ON` runs `glslangValidator` at build time for
+`scene-preview-compute.comp`. With `#define PREVIEW_PRECISE precise`, glslang
+16.2 grows about 780 MiB/s and exceeds 14.3 GiB after 18.5 s, which trips the
+8 GiB development guard and makes every GPU-enabled build unusable on a 30 GiB
+host. `-Od`, `glslc`, and an empty `main()` (definitions only, no call into
+`work()`) behave the same, and each of the two `precise` declarations in the
+ray functions reproduces it alone, so this is a compiler pathology rather than
+shader size or the call graph.
+
+The GLSL build therefore leaves `PREVIEW_PRECISE` empty; the kernel keeps its
+compensated summation, which is the actual accuracy mechanism. The same shader
+then compiles in 49.8 MiB / 0.2 s and emits a 475,834-byte header. Restoring
+`precise` requires re-measuring the compiler and re-running
+`test_scene_preview_compute vulkan` for CPU parity. Measure with the converter
+probe used for this record: run the shader through `glslangValidator` under a
+peak-RSS sampler (50 ms sampling, kill above a hard ceiling) rather than relying
+on wall time, because the growth is linear and looks like a slow compile.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "camera_nav.hh"
+#include "light3d/camera-nav.hh"
 #include "rt_camera.hh"
 
 #include <cmath>
@@ -57,7 +57,7 @@ int main() {
     return 1;
   }
 
-  lusdview::OrbitCamera camera;
+  light3d::OrbitCamera camera;
   const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};
   const float boundsMax[3] = {1.0f, 1.0f, 1.0f};
   camera.setSceneBounds(boundsMin, boundsMax);
@@ -65,7 +65,7 @@ int main() {
   camera.setAutoClip(false);
   camera.setClipPlanes(1.0f, 11.0f);
   camera.setAspect(2.0f);
-  camera.setProjection(lusdview::CameraProjection::Orthographic);
+  camera.setProjection(light3d::CameraProjection::Orthographic);
   camera.setOrthographicHeight(4.0f);
   camera.setLensShift(0.25f, -0.5f);
   camera.setExposure(1.25f);
@@ -82,7 +82,7 @@ int main() {
     std::fprintf(stderr, "authored orthographic projection is incorrect\n");
     return 1;
   }
-  camera.setProjection(lusdview::CameraProjection::Perspective);
+  camera.setProjection(light3d::CameraProjection::Perspective);
   const light3d::Mat4 shiftedPerspective = camera.proj(false);
   if (!Near(shiftedPerspective.m[8], 0.25f) ||
       !Near(shiftedPerspective.m[9], -0.5f)) {
@@ -93,11 +93,11 @@ int main() {
   camera.setAspect(1.0f);
   camera.setAspectOverride(2.0f);
   camera.setAspectOverrideEnabled(true);
-  camera.setConform(lusdview::CameraConform::Fit);
+  camera.setConform(light3d::CameraConform::Fit);
   const light3d::Mat4 fitProjection = camera.proj(false);
-  camera.setConform(lusdview::CameraConform::Vertical);
+  camera.setConform(light3d::CameraConform::Vertical);
   const light3d::Mat4 verticalProjection = camera.proj(false);
-  camera.setConform(lusdview::CameraConform::None);
+  camera.setConform(light3d::CameraConform::None);
   const light3d::Mat4 noneProjection = camera.proj(false);
   if (!Near(fitProjection.m[5] * 2.0f, verticalProjection.m[5]) ||
       !Near(noneProjection.m[0] * 2.0f, noneProjection.m[5])) {

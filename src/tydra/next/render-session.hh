@@ -172,6 +172,15 @@ class RenderSession {
                             SceneUpdateSink* sink);
   void Abort(PreparedRenderUpdate* prepared);
 
+  /// Time code the next Apply/Prepare converts at (scalar time-sampled
+  /// attributes, shader ports, transforms and volume material constants).
+  /// Setting a new time marks the update as a full resync: every resource is
+  /// re-converted so an Apply with an empty change set still re-evaluates the
+  /// scene, volumes included. The constructor takes the initial time code from
+  /// ConverterConfig::time_code.
+  void SetTimeCode(double time_code);
+  double GetTimeCode() const;
+
   RenderSceneSnapshot GetSnapshot() const;
   uint64_t revision() const;
   /// Return the stable ID for a committed resource key, or kInvalidRenderId.

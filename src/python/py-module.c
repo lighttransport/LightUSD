@@ -4,6 +4,10 @@
 
 #include "py-internal.h"
 
+#include <string.h>
+
+#include "lightusd-render-c.h"
+
 /* ============================================================
  * Generic helpers
  * ============================================================ */
@@ -377,15 +381,243 @@ static PyObject* mod_type_name(PyObject* module, PyObject* args) {
   return PyUnicode_FromString(lightusd_type_name((lightusd_type)type));
 }
 
+
+/* ============================================================
+ * Portable light-filter registration
+ * ============================================================ */
+
+/* Slots keep Python callables alive for the lifetime of the registration. The
+ * parser can run on conversion worker threads, so it acquires the GIL. */
+typedef struct {
+  PyObject* callable;
+  int used;
+} lightusd_py_filter_slot;
+
+static lightusd_py_filter_slot g_py_filters[32];
+
+static int lightusd_py_filter_parse(const lightusd_light_filter_params* params,
+                                    void* user, float* intensity,
+                                    float* color) {
+  lightusd_py_filter_slot* slot = (lightusd_py_filter_slot*)user;
+  if (!slot || !slot->callable) return 0;
+  PyGILState_STATE gil = PyGILState_Ensure();
+  int accepted = 0;
+  PyObject* dict = Py_BuildValue(
+      "{s:s,s:s,s:f,s:(fff),s:[ffffffff]}", "kind",
+      params && params->kind ? params->kind : "", "prim_path",
+      params && params->prim_path ? params->prim_path : "", "intensity",
+      params ? (double)params->intensity : 1.0, "color",
+      params ? (double)params->color[0] : 1.0,
+      params ? (double)params->color[1] : 1.0,
+      params ? (double)params->color[2] : 1.0, "values",
+      params ? (double)params->values[0] : 0.0,
+      params ? (double)params->values[1] : 0.0,
+      params ? (double)params->values[2] : 0.0,
+      params ? (double)params->values[3] : 0.0,
+      params ? (double)params->values[4] : 0.0,
+      params ? (double)params->values[5] : 0.0,
+      params ? (double)params->values[6] : 0.0,
+      params ? (double)params->values[7] : 0.0);
+  if (!dict) {
+    PyErr_Print();
+    PyGILState_Release(gil);
+    return 0;
+  }
+  PyObject* result = PyObject_CallFunctionObjArgs(slot->callable, dict, NULL);
+  Py_DECREF(dict);
+  if (result) {
+    Py_ssize_t size = PyTuple_Check(result) ? PyTuple_Size(result) : -1;
+    double value = PyFloat_AsDouble(
+        size == 4 ? PyTuple_GetItem(result, 0)
+                  : (size == 2 ? PyTuple_GetItem(result, 0) : result));
+    if (!PyErr_Occurred() && value >= 0.0) {
+      *intensity = (float)value;
+      if (size == 4) {
+        for (int k = 0; k < 3; ++k) {
+          PyObject* channel = PyTuple_GetItem(result, k + 1);
+          color[k] = (float)PyFloat_AsDouble(channel);
+        }
+        accepted = !PyErr_Occurred();
+      } else if (size == 2) {
+        PyObject* rgb = PyTuple_GetItem(result, 1);
+        if (rgb && PyTuple_Check(rgb) && PyTuple_Size(rgb) == 3) {
+          for (int k = 0; k < 3; ++k)
+            color[k] = (float)PyFloat_AsDouble(PyTuple_GetItem(rgb, k));
+          accepted = !PyErr_Occurred();
+        }
+      } else {
+        accepted = 1;
+      }
+    }
+    Py_DECREF(result);
+  }
+  if (!accepted && PyErr_Occurred()) PyErr_Print();
+  PyGILState_Release(gil);
+  return accepted;
+}
+
+static PyObject* lightusd_py_register_light_filter(PyObject* self,
+                                                   PyObject* args) {
+  (void)self;
+  const char* kind = NULL;
+  PyObject* callable = NULL;
+  if (!PyArg_ParseTuple(args, "sO:register_light_filter", &kind, &callable))
+    return NULL;
+  if (!PyCallable_Check(callable)) {
+    PyErr_SetString(PyExc_TypeError, "register_light_filter expects a callable");
+    return NULL;
+  }
+  int slot_index = -1;
+  for (int i = 0; i < 32; ++i)
+    if (!g_py_filters[i].used) {
+      slot_index = i;
+      break;
+    }
+  if (slot_index < 0) {
+    PyErr_SetString(PyExc_RuntimeError, "too many registered light filters");
+    return NULL;
+  }
+  Py_INCREF(callable);
+  g_py_filters[slot_index].callable = callable;
+  g_py_filters[slot_index].used = 1;
+  const lightusd_status status = lightusd_register_light_filter(
+      kind, lightusd_py_filter_parse, &g_py_filters[slot_index]);
+  if (status != LIGHTUSD_OK) {
+    Py_DECREF(callable);
+    g_py_filters[slot_index].callable = NULL;
+    g_py_filters[slot_index].used = 0;
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  Py_RETURN_NONE;
+}
+
+static PyObject* lightusd_py_unregister_light_filter(PyObject* self,
+                                                     PyObject* args) {
+  (void)self;
+  const char* kind = NULL;
+  if (!PyArg_ParseTuple(args, "s:unregister_light_filter", &kind)) return NULL;
+  const lightusd_status status = lightusd_unregister_light_filter(kind);
+  if (status != LIGHTUSD_OK) {
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  for (int i = 0; i < 32; ++i) {
+    /* The C layer keys registrations by kind; clear the first free slot whose
+     * kind is no longer registered. */
+    if (!g_py_filters[i].used) continue;
+    int still_registered = 0;
+    const size_t count = lightusd_light_filter_kind_count();
+    char name[64];
+    for (size_t k = 0; k < count; ++k) {
+      size_t required = 0;
+      if (lightusd_light_filter_kind(k, name, sizeof name, &required) ==
+              LIGHTUSD_OK &&
+          strcmp(name, kind) == 0) {
+        still_registered = 1;
+        break;
+      }
+    }
+    if (still_registered) break;
+    Py_DECREF(g_py_filters[i].callable);
+    g_py_filters[i].callable = NULL;
+    g_py_filters[i].used = 0;
+    break;
+  }
+  Py_RETURN_NONE;
+}
+
+static PyObject* lightusd_py_light_filter_kinds(PyObject* self, PyObject* ignored) {
+  (void)self;
+  (void)ignored;
+  const size_t count = lightusd_light_filter_kind_count();
+  PyObject* list = PyList_New((Py_ssize_t)count);
+  if (!list) return NULL;
+  for (size_t i = 0; i < count; ++i) {
+    char name[64];
+    size_t required = 0;
+    if (lightusd_light_filter_kind(i, name, sizeof name, &required) !=
+        LIGHTUSD_OK) {
+      Py_DECREF(list);
+      PyErr_SetString(PyExc_RuntimeError, "light filter kind enumeration failed");
+      return NULL;
+    }
+    PyObject* item = PyUnicode_FromString(name);
+    if (!item || PyList_SetItem(list, (Py_ssize_t)i, item) != 0) {
+      Py_XDECREF(item);
+      Py_DECREF(list);
+      return NULL;
+    }
+  }
+  return list;
+}
+
+/* light_filter_effective(stage, prim_path, time=0.0) -> (intensity, (r, g, b)) */
+static PyObject* lightusd_py_light_filter_effective(PyObject* self,
+                                                    PyObject* args) {
+  (void)self;
+  PyObject* stage_obj = NULL;
+  const char* path = NULL;
+  double time = 0.0;
+  if (!PyArg_ParseTuple(args, "Os|d:light_filter_effective", &stage_obj, &path,
+                        &time))
+    return NULL;
+  lightusd_stage* stage = lightusd_stage_handle(stage_obj);
+  if (!stage) {
+    PyErr_SetString(PyExc_ValueError, "invalid stage");
+    return NULL;
+  }
+  const lightusd_prim prim = lightusd_stage_prim_at_path(stage, path);
+  float intensity = 1.0f, color[3] = {1.0f, 1.0f, 1.0f};
+  if (lightusd_light_filter_parse(stage, prim, time, &intensity, color) !=
+      LIGHTUSD_OK) {
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  return Py_BuildValue("f(fff)", (double)intensity, (double)color[0],
+                       (double)color[1], (double)color[2]);
+}
+
 static PyMethodDef module_methods[] = {
+    {"register_light_filter", lightusd_py_register_light_filter, METH_VARARGS,
+     "register_light_filter(kind, callable) -> None; the callable receives the "
+     "authored filter parameters and returns an intensity or (intensity, rgb)."},
+    {"unregister_light_filter", lightusd_py_unregister_light_filter,
+     METH_VARARGS, "unregister_light_filter(kind) -> None"},
+    {"light_filter_kinds", lightusd_py_light_filter_kinds, METH_NOARGS,
+     "light_filter_kinds() -> list[str]"},
+    {"light_filter_effective", lightusd_py_light_filter_effective, METH_VARARGS,
+     "light_filter_effective(stage, prim_path, time=0.0) -> (intensity, (r, g, b))"},
     {"_validate_physics", (PyCFunction)(void (*)(void))lightusd_validate_physics,
      METH_VARARGS | METH_KEYWORDS, "Validate physics through the native semantic validator."},
     {"_physics_schema_definitions", lightusd_physics_schema_definitions, METH_NOARGS,
      "Return generated native UsdPhysics schema/property descriptors."},
+    {"_physics_schema_provenance", lightusd_physics_schema_provenance, METH_NOARGS,
+     "Return generated schema provenance as JSON."},
     {"_query_physics", (PyCFunction)(void (*)(void))lightusd_query_physics,
      METH_VARARGS | METH_KEYWORDS, "Query owned authored physics values through the native snapshot API."},
     {"_convert_units", (PyCFunction)(void (*)(void))lightusd_convert_units,
      METH_VARARGS | METH_KEYWORDS, "Physics-aware native unit conversion (in place)."},
+    {"_mesh_to_level_set", lightusd_py_mesh_to_level_set, METH_VARARGS,
+     "_mesh_to_level_set(points_f32, indices_i32, counts_i32_or_None, settings) -> level set"},
+    {"_level_set_from_vdb", lightusd_py_level_set_from_vdb, METH_VARARGS,
+     "_level_set_from_vdb(vdb) -> level set (decoded once)"},
+    {"_level_set_write_vdb", lightusd_py_level_set_write_vdb, METH_VARARGS,
+     "_level_set_write_vdb(level_set) -> VDB bytes"},
+    {"_vdb_inspect", lightusd_py_vdb_inspect, METH_VARARGS,
+     "_vdb_inspect(vdb) -> JSON bytes describing the grids"},
+    {"_level_set_info", lightusd_py_level_set_info, METH_VARARGS,
+     "_level_set_info(level_set) -> (voxel_size, background, active_voxels)"},
+    {"_level_set_sample", lightusd_py_level_set_sample, METH_VARARGS,
+     "_level_set_sample(level_set, points_f64) -> float32 bytes"},
+    {"_level_set_to_mesh", lightusd_py_level_set_to_mesh, METH_VARARGS,
+     "_level_set_to_mesh(level_set, max_cells) -> (points_f32, indices_i32) bytes"},
+    {"_level_set_to_tet_mesh", lightusd_py_level_set_to_tet_mesh, METH_VARARGS,
+     "_level_set_to_tet_mesh(level_set, settings) -> (points_f32, tets_i32, surface_i32) bytes"},
+    {"_tet_mesh_quality", lightusd_py_tet_mesh_quality, METH_VARARGS,
+     "_tet_mesh_quality(points_f32, tets_i32) -> mesh quality metrics"},
+    {"_volumetric_device", lightusd_py_volumetric_device, METH_VARARGS,
+     "_volumetric_device(device) -> 'cpu' | 'cuda' | 'hip' (raises UsdError when unavailable)"},
     {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
      METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,

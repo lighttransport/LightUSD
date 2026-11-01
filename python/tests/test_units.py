@@ -45,7 +45,7 @@ def test_meters_to_centimeters_and_grams():
     half = box['size'] / 2 * np.abs(np.asarray(box.local_transform())[:3, :3]).sum(axis=0)
     assert half == pytest.approx([10, 20, 30])
     scene = stage.prim_at('/World/PhysicsScene')
-    assert scene['physics:gravityMagnitude'] == pytest.approx(9.80665 * 100, rel=1e-5)
+    assert scene['physics:gravityMagnitude'] == pytest.approx(9.81 * 100, rel=1e-5)  # MuJoCo's default gravity
     assert not report.skipped
 
 
@@ -94,3 +94,44 @@ def Xform "R" {
     assert report.skipped == ['/R/j.newton:armature']
     with pytest.raises(ValueError):
         units.convert_units(stage, meters_per_unit=-1)
+
+
+def test_sdf_break_distance_and_vdb_field_scale():
+    stage = lightusd.loads('''#usda 1.0
+( metersPerUnit = 1 kilogramsPerUnit = 1 )
+def Mesh "M" (prepend apiSchemas = ["NewtonSDFCollisionAPI"]) {
+    uniform float newton:sdfNarrowBandInner = -0.1
+    uniform float newton:sdfNarrowBandOuter = 0.2
+}
+def PhysicsDistanceJoint "J" {
+    float physics:minDistance = 0.5
+    float physics:maxDistance = 2
+    float physics:breakForce = 10
+    float physics:breakTorque = 3
+}
+def Volume "V" {
+    rel field:sdf = </V/sdf>
+    def OpenVDBAsset "sdf" {
+        asset filePath = @sdf.vdb@
+        double3 xformOp:translate = (1, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+''')
+    units.convert_units(stage, meters_per_unit=0.01, kilograms_per_unit=0.001)
+    m, j, f = stage.prim_at('/M'), stage.prim_at('/J'), stage.prim_at('/V/sdf')
+    assert m['newton:sdfNarrowBandInner'] == pytest.approx(-10)
+    assert m['newton:sdfNarrowBandOuter'] == pytest.approx(20)
+    assert j['physics:minDistance'] == pytest.approx(50)
+    assert j['physics:maxDistance'] == pytest.approx(200)
+    assert j['physics:breakForce'] == pytest.approx(10 * 1000 * 100)       # kg m
+    assert j['physics:breakTorque'] == pytest.approx(3 * 1000 * 100 ** 2)  # kg m^2
+    # The .vdb stays in metres: an innermost scale maps it to centimetres.
+    assert list(f['xformOpOrder']) == ['xformOp:translate', 'xformOp:scale:units']
+    assert tuple(f['xformOp:scale:units']) == pytest.approx((100, 100, 100))
+    assert tuple(f['xformOp:translate']) == pytest.approx((100, 0, 0))
+    # Converting back removes it.
+    units.convert_units(stage, meters_per_unit=1, kilograms_per_unit=1)
+    f = stage.prim_at('/V/sdf')
+    assert list(f['xformOpOrder']) == ['xformOp:translate']
+    assert 'xformOp:scale:units' not in f.attributes

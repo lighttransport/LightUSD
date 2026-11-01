@@ -31,7 +31,8 @@ Core CPU kernel (`lightrt_c_tri.{c,h}`), not upstream:
 - memory-capped + parallelized 22M-instance TLAS build
 - cache-coherent leaf-slot color reorder (opt-in)
 - MinGW/MSVC Windows portability (`_aligned_malloc`, `<threads.h>` gating,
-  `_BitScanReverse64`/`Forward` fallbacks)
+  `_BitScanReverse64`/`Forward` fallbacks; 32-bit MSVC scans the two halves
+  with `_BitScanReverse`)
 
 Vulkan (`lightrt_c_vk.c`):
 - ray-query AS build inputs are **staged into device-local memory** (the AS build

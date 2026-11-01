@@ -37,6 +37,35 @@
 #include <ApplicationServices/ApplicationServices.h>
 
 
+// LightUSD local change: AppKit may temporarily omit a Core Graphics display
+// (for example during screen reconfiguration or in a remote desktop session).
+// Retry a missing NSScreen without attaching an unrelated display's geometry.
+static NSScreen* getMonitorScreen(_GLFWmonitor* monitor)
+{
+    if (monitor->ns.screen)
+        return monitor->ns.screen;
+
+    NSScreen* replacement = nil;
+    for (NSScreen* screen in [NSScreen screens])
+    {
+        NSNumber* number = [screen deviceDescription][@"NSScreenNumber"];
+        if (!number)
+            continue;
+
+        const CGDirectDisplayID displayID = [number unsignedIntValue];
+        if (displayID == monitor->ns.displayID)
+        {
+            monitor->ns.screen = screen;
+            return screen;
+        }
+        if (CGDisplayUnitNumber(displayID) == monitor->ns.unitNumber)
+            replacement = screen;
+    }
+
+    monitor->ns.screen = replacement;
+    return replacement;
+}
+
 // Get the name of the specified display, or NULL
 //
 static char* getMonitorName(CGDirectDisplayID displayID, NSScreen* screen)
@@ -99,8 +128,8 @@ static char* getMonitorName(CGDirectDisplayID displayID, NSScreen* screen)
 
     if (!service)
     {
-        _glfwInputError(GLFW_PLATFORM_ERROR,
-                        "Cocoa: Failed to find service port for display");
+        // LightUSD local change: Apple Silicon and remote displays can lack
+        // IOKit display services. A generic monitor name is a valid fallback.
         return _glfw_strdup("Display");
     }
 
@@ -470,14 +499,33 @@ void _glfwPlatformGetMonitorContentScale(_GLFWmonitor* monitor,
 {
     @autoreleasepool {
 
-    if (!monitor->ns.screen)
+    NSScreen* screen = getMonitorScreen(monitor);
+    if (!screen)
     {
-        _glfwInputError(GLFW_PLATFORM_ERROR,
-                        "Cocoa: Cannot query content scale without screen");
+        // LightUSD local change: avoid nil messaging followed by 0/0. Display
+        // mode dimensions are logical points; pixel dimensions retain Retina DPI.
+        float xs = 1.f, ys = 1.f;
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(monitor->ns.displayID);
+        if (mode)
+        {
+            const size_t w = CGDisplayModeGetWidth(mode);
+            const size_t h = CGDisplayModeGetHeight(mode);
+            if (w && h)
+            {
+                xs = (float) CGDisplayModeGetPixelWidth(mode) / (float) w;
+                ys = (float) CGDisplayModeGetPixelHeight(mode) / (float) h;
+            }
+            CGDisplayModeRelease(mode);
+        }
+        if (xscale)
+            *xscale = xs > 0.f ? xs : 1.f;
+        if (yscale)
+            *yscale = ys > 0.f ? ys : 1.f;
+        return;
     }
 
-    const NSRect points = [monitor->ns.screen frame];
-    const NSRect pixels = [monitor->ns.screen convertRectToBacking:points];
+    const NSRect points = [screen frame];
+    const NSRect pixels = [screen convertRectToBacking:points];
 
     if (xscale)
         *xscale = (float) (pixels.size.width / points.size.width);
@@ -493,13 +541,25 @@ void _glfwPlatformGetMonitorWorkarea(_GLFWmonitor* monitor,
 {
     @autoreleasepool {
 
-    if (!monitor->ns.screen)
+    NSScreen* screen = getMonitorScreen(monitor);
+    if (!screen)
     {
-        _glfwInputError(GLFW_PLATFORM_ERROR,
-                        "Cocoa: Cannot query workarea without screen");
+        // LightUSD local change: Core Graphics bounds already use GLFW's
+        // top-left, logical coordinate system. AppKit-only menu/Dock insets
+        // cannot be determined here; use the full display until it reappears.
+        const CGRect bounds = CGDisplayBounds(monitor->ns.displayID);
+        if (xpos)
+            *xpos = (int) bounds.origin.x;
+        if (ypos)
+            *ypos = (int) bounds.origin.y;
+        if (width)
+            *width = (int) bounds.size.width;
+        if (height)
+            *height = (int) bounds.size.height;
+        return;
     }
 
-    const NSRect frameRect = [monitor->ns.screen visibleFrame];
+    const NSRect frameRect = [screen visibleFrame];
 
     if (xpos)
         *xpos = frameRect.origin.x;

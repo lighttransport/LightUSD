@@ -19,10 +19,21 @@ def main():
     args = parser.parse_args()
     binaries = Path(args.bin_dir).resolve()
 
+    def find_tool(relative):
+        # Multi-config generators (Visual Studio) put executables in a
+        # per-configuration subdirectory, and Windows adds .exe.
+        base = binaries / relative
+        suffixes = ("", ".exe")
+        for directory in (base.parent, *(base.parent / c for c in
+                          ("Release", "RelWithDebInfo", "MinSizeRel", "Debug"))):
+            for suffix in suffixes:
+                candidate = directory / (base.name + suffix)
+                if candidate.is_file():
+                    return candidate
+        return base
+
     def run(tool, *argv, code=0):
-        path = binaries / tool
-        if tool == "lusddumpcrate":
-            path = binaries / "tools/lusddumpcrate/lusddumpcrate"
+        path = find_tool("tools/lusddumpcrate/lusddumpcrate" if tool == "lusddumpcrate" else tool)
         result = subprocess.run([str(path), *map(str, argv)], text=True, capture_output=True)
         assert result.returncode == code, (tool, argv, result.returncode, result.stdout, result.stderr)
         return result.stdout
@@ -80,7 +91,7 @@ def Xform "World" (variants = { string display = "low" } prepend variantSets = "
         assert "provisional preview phase=1" in interactive
         assert "released static geometry properties=" in interactive
         run("portable_asset_package", work / "package")
-        if (binaries / "usd_to_gltf").exists():
+        if find_tool("usd_to_gltf").exists():
             glb = work / "scene.glb"
             run("usd_to_gltf", scene, glb)
             run("usd_to_gltf", scene, work / "strict.glb", "--strict", code=1)

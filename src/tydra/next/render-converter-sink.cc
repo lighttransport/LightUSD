@@ -262,6 +262,26 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   }
   ResolveSkeletalAnimationTargets(&catalog);
 
+  // UsdVol Volumes and ParticleFields are small records (voxels and particle
+  // payloads decode on demand / once), so they ride on the catalog.
+  for (const RenderPrimRecord& rec : extracted.volumes) {
+    RenderVolume volume;
+    if (ConvertVolume(stage, rec.prim, &catalog, &volume)) {
+      for (const std::string& w : volume.warnings) AddWarning(w);
+      catalog.volume_by_path[volume.prim_path] = static_cast<int32_t>(catalog.volumes.size());
+      catalog.volumes.push_back(std::move(volume));
+    }
+  }
+  ResolveVolumeMaterials(&catalog);
+  for (const RenderPrimRecord& rec : extracted.records) {
+    if (rec.type_name.compare(0, 13, "ParticleField") != 0) continue;
+    RenderParticleField pf;
+    if (ConvertParticleField(stage, rec.prim, config_.time_code, &pf)) {
+      for (const std::string& w : pf.warnings) AddWarning(w);
+      catalog.particle_fields.push_back(std::move(pf));
+    }
+  }
+
   for (const RenderPrimRecord& rec : extracted.lights) {
     RenderLight light;
     if (!ConvertLight(stage, rec.prim, &light)) {

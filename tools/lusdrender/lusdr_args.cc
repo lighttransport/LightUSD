@@ -97,6 +97,29 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " input.usd output.png [options]\n\n"
       << "Options:\n"
       << "  -h, -help              Show this help.\n"
+      << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
+      << "  --preview-kind gaussian|points|volume (default gaussian).\n"
+      << "  --preview-budget-mib N Total renderer cap (default 1/4 VRAM).\n"
+      << "  --preview-resolution N Sampling resolution; auto by default.\n"
+      << "  --preview-lod-pixels N Camera LOD error (default 2 pixels).\n"
+      << "  --preview-no-lod      Load the finest cached representation.\n"
+      << "  --preview-compute auto|cpu|vulkan|cuda  Conversion compute backend.\n"
+      "  --preview-volume-grids  Open an existing UsdVol scene directly.\n"
+          "  --preview-volume-mode surface|medium  Direct-grid rendering mode.\n"
+          "  --preview-volume-cutoff F    Residual transmittance, [0,1] (default 1e-7; 0 disables).\n"
+          "  --preview-volume-steps N     Ray step budget, 1..65536 (default 4096).\n"
+          "  --preview-shadow-steps N     Shadow step budget, 1..65536 (default 1024).\n"
+          "  --preview-volume-step-size F  Step in voxel units, (0,2] (default .5).\n"
+          "  --preview-volume-error F     Relative quadrature error, [0,1] (default .001).\n"
+          "  --preview-volume-bounces N   Scattering orders, 1..256 (default 1).\n"
+          "  --preview-volume-samples N   Paths per pixel, 1..64 (default 2).\n"
+          "  --preview-light-samples N    Textured light samples, 1..64 (default 8).\n"
+          "  --preview-accumulation-frames N  Stable-camera frame cap, 1..4096 (default 64).\n"
+      "  --preview-volume-density/scattering/emission/anisotropy F  Medium controls.\n"
+      "  --preview-volume-headlight / --preview-volume-no-shadows  Lighting controls.\n"
+      << "  --preview-no-source-refine  Keep the initial cached samples.\n"
+      << "  --preview-volume-carrier  Use cached isosurface meshes.\n"
+      << "  --preview-cache-dir DIR --preview-refresh  Cache location/regeneration.\n"
       << "  -w, -width <N>         Output width (default 960).\n"
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
@@ -118,6 +141,9 @@ void PrintUsage(const char *prog) {
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
+      << "  -volumeLevelSet <surface|fog>\n"
+      << "                         Shade UsdVol levelSet fields as an isosurface\n"
+      << "                         (default) or as fog with density = clamp(-sdf).\n"
       << "                         instead of per-face geometric normals.\n"
       << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
       << "                         reference, or the vendored envmap library.\n"
@@ -416,6 +442,18 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    }
+    OPT_MATCH(a == "-volumeLevelSet" || a == "--volume-level-set") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "surface") {
+        opt->volume_level_set = Options::VolumeLevelSet::Surface;
+      } else if (std::string(v) == "fog") {
+        opt->volume_level_set = Options::VolumeLevelSet::Fog;
+      } else {
+        std::cerr << "-volumeLevelSet must be surface or fog.\n";
+        return false;
+      }
     }
     OPT_MATCH(a == "-ibl" || a == "--ibl") {
       const char *v = need_value(a.c_str());

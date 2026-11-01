@@ -161,6 +161,14 @@ std::string RenderSceneConverter::GetLastError() const {
   return impl_->GetLastError();
 }
 
+void RenderSceneConverter::SetTimeCode(double time_code) {
+  impl_->SetTimeCode(time_code);
+}
+
+double RenderSceneConverter::GetTimeCode() const {
+  return impl_->GetTimeCode();
+}
+
 RenderSceneConverter::Impl::Impl(const ConverterConfig& config)
     : config_(config) {}
 

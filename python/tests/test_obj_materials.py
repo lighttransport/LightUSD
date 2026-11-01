@@ -18,7 +18,7 @@ def material_stage(properties, **options):
 
 
 @pytest.mark.parametrize("properties", [b"Kd nan 0 0", b"Kd 1e100 0 0", b"Ks 0 .1junk 0",
-    b"Ni infinity", b"Ns -2", b"Ns -3", b"Pr", b"illum 2147483648", b"illum 2junk",
+    b"Ni infinity", b"Pr", b"illum 2147483648", b"illum 2junk",
     b"map_Kd -s 1e999 123.png", b"map_Kd -s 1 nan 123.png",
     b"map_Kd -mm 1 inf 123.png", b"map_Kd -texres 1junk 123.png",
     b"map_Kd -clamp maybe 123.png", b"map_Kd -s 1"])
@@ -116,8 +116,8 @@ def test_duplicate_material_names_keep_their_source_metadata(tmp_path, newline, 
     assert first["inputs:useSpecularWorkflow"] == 1
     assert second["inputs:roughness"] == pytest.approx(.8)
     assert second["inputs:useSpecularWorkflow"] == 0
-    assert stage.prim_at("/World/Materials/shared/Map_0")["inputs:file"] == str(tmp_path / "first/color.png")
-    assert stage.prim_at("/World/Materials/shared_1/Map_0")["inputs:file"] == str(tmp_path / "second/color.png")
+    assert stage.prim_at("/World/Materials/shared/Map_0")["inputs:file"] == (tmp_path / "first/color.png").as_posix()
+    assert stage.prim_at("/World/Materials/shared_1/Map_0")["inputs:file"] == (tmp_path / "second/color.png").as_posix()
     assert stage.prims_of_type("GeomSubset")[0].relationship("material:binding").targets == ("/World/Materials/shared",)
 
 

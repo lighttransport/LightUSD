@@ -69,6 +69,36 @@
   }
 
   ValueRep EncodeExtensionField(const DecodedExtensionField& field) {
+    if (field.int64_list_op) {
+      Int64ListOp op;
+      if (field.int64_list_op->ops.size() == 1) op = field.int64_list_op->ops[0];
+      else { op.bits = 3; op.items[0] = field.value; }
+      if (op.bits & 0x80u) {
+        WSetError("Unknown Int64 list-op header bits");
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      std::vector<uint8_t> raw(1, op.bits);
+      for (size_t r = 0; r < 6; ++r) {
+        if (!(op.bits & kInt64ListOpBits[r])) continue;
+        if (!op.items[r].is_empty() &&
+            (!op.items[r].is_array() || op.items[r].type_id() != TypeId::Int64)) {
+          WSetError("Int64 list-op requires int64 array items");
+          return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+        }
+        const auto items = op.items[r].as_int64_array();
+        const uint64_t count = items ? items->size() : 0;
+        const size_t at = raw.size();
+        if (count > ((std::numeric_limits<size_t>::max)() - at - 8) / 8) {
+          WSetError("Int64 list-op byte size overflow");
+          return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+        }
+        raw.resize(at + 8 + static_cast<size_t>(count) * 8);
+        std::memcpy(raw.data() + at, &count, 8);
+        if (count) std::memcpy(raw.data() + at + 8, items->data(), static_cast<size_t>(count) * 8);
+      }
+      const uint64_t index = InternBlock({TypeId::Int64, std::move(raw)});
+      return ValueRep::Make(CrateTypeId::Int64ListOp, index, false, false);
+    }
     if (!field.unregistered) return EncodeValue(field.value);
     return EncodeUnregisteredValue(
         field.unregistered_source.empty()

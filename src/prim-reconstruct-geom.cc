@@ -129,7 +129,7 @@ bool ReconstructPrim<GeomPoints>(
 
   DCOUT("Reconstruct Points.");
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, points, warn, err, options.strict_allowedToken_check)) {
     return false;
   }

@@ -33,6 +33,19 @@ struct Profile {
 };
 bool ParseProfile(const std::string &name, Profile *out);
 const Profile &ActiveProfile();
+// While alive, AddMeshFromJson moves meshRef buffers out of the caller's map
+// (ConvertURDFPayloadToUSDStageConsuming): each is authored once.
+class MeshBufferConsumption {
+ public:
+  explicit MeshBufferConsumption(bool consume);
+  ~MeshBufferConsumption();
+  MeshBufferConsumption(const MeshBufferConsumption &) = delete;
+  MeshBufferConsumption &operator=(const MeshBufferConsumption &) = delete;
+  static bool Active();
+
+ private:
+  bool previous_;
+};
 class ProfileScope {
  public:
   explicit ProfileScope(const Profile &profile);
@@ -68,6 +81,25 @@ class PhysicsMaterials {
   bool defined_ = false;
 };
 PhysicsMaterials *ActivePhysicsMaterials();
+
+// MuJoCo contype/conaffinity bitmasks as UsdPhysics collision groups (the
+// openusd profile, which has no mjc:* attributes): one group per distinct
+// (contype, conaffinity) pair, each filtering the groups it cannot touch
+// under MuJoCo's rule (ct_a & ca_b) || (ct_b & ca_a).
+class CollisionFilterGroups {
+ public:
+  CollisionFilterGroups();
+  ~CollisionFilterGroups();
+  CollisionFilterGroups(const CollisionFilterGroups &) = delete;
+  CollisionFilterGroups &operator=(const CollisionFilterGroups &) = delete;
+  void Record(const std::string &collider, int32_t contype, int32_t conaffinity);
+  // Writes /World/CollisionGroups; nothing when every pair collides.
+  size_t Write(tn::Layer *layer) const;
+ private:
+  CollisionFilterGroups *previous_;
+  std::map<std::pair<int32_t, int32_t>, std::vector<std::string>> members_;
+};
+CollisionFilterGroups *ActiveCollisionFilterGroups();
 bool IsEngineSchema(const std::string &schema);
 
 // Omit empty scopes and define each populated scope at its first child.
@@ -133,6 +165,10 @@ void SetRel(tn::PrimSpec *prim, const std::string &name,
             const std::vector<std::string> &targets);
 void SetInterpolation(tn::PrimSpec *prim, const std::string &name,
                       const char *interpolation);
+// Define fails (nullptr) instead of reallocating the layer's prim storage;
+// DefineCapacityExceeded() reports that since the last ResetDefineCapacity().
+void ResetDefineCapacity();
+bool DefineCapacityExceeded();
 tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
                      const std::string &type);
 Matrix4 IdentityMatrix();
@@ -181,6 +217,16 @@ Matrix4 MultiplyRowMajor(const Matrix4 &a, const Matrix4 &b);
 // deformable prims under /World/Deformables.
 void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
                             const NameMap &link_names, std::string *warn);
+// MJCF <skin> (payload "skins") as UsdSkel: /World/Skins/<name> SkelRoot with
+// a Skeleton (one root joint per bone body; bindTransforms from bindpos/
+// bindquat, restTransforms the bodies' initial world poses, so MuJoCo's
+// linear blend skinning at qpos0 is UsdSkel's) and the skinned Mesh. LightUSD
+// extension: lightusd:mjcSkin:bodies targets the bone bodies' prims (to drive
+// the joints from the simulation), plus group and inflate (already baked into
+// the bind-pose points).
+bool AddSkinsFromJson(tn::Layer *layer, const Json &items, const NameMap &link_names,
+                      const std::map<std::string, Matrix4> &link_worlds, std::string *warn,
+                      std::string *err);
 void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                           const Json &t, const NameMap &joint_names,
                           const NameMap &site_names, const NameMap &geom_names,

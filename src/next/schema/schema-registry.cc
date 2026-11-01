@@ -408,6 +408,7 @@ SchemaRegistry::SchemaRegistry() {
           {"VolumeFieldAsset", "fieldName", "token"},
           {"VolumeFieldAsset", "fieldIndex", "int"},
           {"VolumeFieldAsset", "fieldDataType", "token"},
+          {"VolumeFieldAsset", "vectorDataRoleHint", "token"},
           {"OpenVDBAsset", "fieldClass", "token"},
           {"Field3DAsset", "fieldPurpose", "token"},
           // UsdVol ParticleField applied API attributes.

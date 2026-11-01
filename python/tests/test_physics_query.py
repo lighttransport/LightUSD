@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import gc
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -128,6 +130,30 @@ def test_generated_standard_schema_descriptors_and_variability():
     record = physics.inspect(stage).joints[0]
     assert record.attributes["drive:angular:physics:stiffness"] == 3
     assert record.attributes["limit:rotX:physics:low"] == -3
+
+
+def test_schema_descriptor_provenance_matches_generated_manifests():
+    root = Path(__file__).resolve().parents[2]
+    engines = json.loads((root / "doc/generated/engine-physics-schemas.json").read_text())["engines"]
+    openusd = json.loads((root / "doc/generated/openusd-schema-26.08.json").read_text())["openusd"]
+    definitions = physics.schema_definitions()
+    for name, project, expected in (
+        ("PhysicsRigidBodyAPI", "openusd", openusd),
+        ("MjcActuator", "mujoco", engines["mujoco"]),
+        ("NewtonActuator", "newton-usd-schemas", engines["newton-usd-schemas"]),
+    ):
+        provenance = definitions[name]["provenance"]
+        assert provenance == {"project": project, **expected}
+        with pytest.raises(TypeError):
+            provenance["version"] = "changed"
+    for name, definition in definitions.items():
+        if name.startswith("Mjc"):
+            project, expected = "mujoco", engines["mujoco"]
+        elif name.startswith("Newton"):
+            project, expected = "newton-usd-schemas", engines["newton-usd-schemas"]
+        else:
+            project, expected = "openusd", openusd
+        assert definition["provenance"] == {"project": project, **expected}
 
 
 @pytest.mark.parametrize("schema", ["PhysicsDriveAPI", "PhysicsLimitAPI:", "PhysicsMassAPI:invalid"])

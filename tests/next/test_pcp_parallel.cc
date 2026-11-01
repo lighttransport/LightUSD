@@ -28,6 +28,9 @@
 #include <atomic>
 #include <thread>
 #endif
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
 #include <utility>
 #include <vector>
 

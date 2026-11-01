@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "lmetalview fallback test: Points under an animated Xform."
+    endTimeCode = 24
+    startTimeCode = 0
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Xform "Mover"
+    {
+        double3 xformOp:translate.timeSamples = {
+            0: (0, 0, 0),
+            24: (2, 0, 0),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Points "Dots"
+        {
+            point3f[] points = [(-0.5, 0, 0), (0, 0, 0), (0.5, 0, 0)]
+            float[] widths = [0.2, 0.2, 0.2]
+            color3f[] primvars:displayColor = [(0.9, 0.2, 0.1)] (
+                interpolation = "constant"
+            )
+        }
+    }
+}

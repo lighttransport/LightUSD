@@ -68,7 +68,7 @@ void crate_writer_validation_disabled_test(void);
 void crate_writer_compression_test(void);
 void crate_writer_compressed_int_array_roundtrip_test(void);
 void crate_writer_compressed_uint_array_roundtrip_test(void);
-void crate_writer_compressed_string_token_asset_array_test(void);
+void crate_writer_string_token_asset_index_array_test(void);
 void crate_reader_parallel_inlined_fieldsets_test(void);
 void crate_writer_specializes_test(void);
 void crate_writer_nan_dedup_test(void);

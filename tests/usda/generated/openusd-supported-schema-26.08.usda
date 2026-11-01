@@ -788,3 +788,174 @@ def Xform "S096_SceneGraphPrimAPI" (
     custom token parity:kind = "abstract"
     custom string parity:domain = "usdUI"
 }
+
+def Field3DAsset "S097_Field3DAsset" (
+)
+{
+    custom string parity:schema = "Field3DAsset"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S098_FieldAsset" (
+)
+{
+    custom string parity:schema = "FieldAsset"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S099_FieldBase" (
+)
+{
+    custom string parity:schema = "FieldBase"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdVol"
+}
+
+def OpenVDBAsset "S100_OpenVDBAsset" (
+)
+{
+    custom string parity:schema = "OpenVDBAsset"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdVol"
+}
+
+def ParticleField "S101_ParticleField" (
+)
+{
+    custom string parity:schema = "ParticleField"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdVol"
+}
+
+def ParticleField3DGaussianSplat "S102_ParticleField3DGaussianSplat" (
+)
+{
+    custom string parity:schema = "ParticleField3DGaussianSplat"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S103_ParticleFieldKernelBaseAPI" (
+    prepend apiSchemas = ["ParticleFieldKernelBaseAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldKernelBaseAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S104_ParticleFieldKernelConstantSurfletAPI" (
+    prepend apiSchemas = ["ParticleFieldKernelConstantSurfletAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldKernelConstantSurfletAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S105_ParticleFieldKernelGaussianEllipsoidAPI" (
+    prepend apiSchemas = ["ParticleFieldKernelGaussianEllipsoidAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldKernelGaussianEllipsoidAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S106_ParticleFieldKernelGaussianSurfletAPI" (
+    prepend apiSchemas = ["ParticleFieldKernelGaussianSurfletAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldKernelGaussianSurfletAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S107_ParticleFieldOpacityAttributeAPI" (
+    prepend apiSchemas = ["ParticleFieldOpacityAttributeAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldOpacityAttributeAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S108_ParticleFieldOrientationAttributeAPI" (
+    prepend apiSchemas = ["ParticleFieldOrientationAttributeAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldOrientationAttributeAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S109_ParticleFieldPositionAttributeAPI" (
+    prepend apiSchemas = ["ParticleFieldPositionAttributeAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldPositionAttributeAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S110_ParticleFieldPositionBaseAPI" (
+    prepend apiSchemas = ["ParticleFieldPositionBaseAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldPositionBaseAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S111_ParticleFieldRadianceBaseAPI" (
+    prepend apiSchemas = ["ParticleFieldRadianceBaseAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldRadianceBaseAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S112_ParticleFieldScaleAttributeAPI" (
+    prepend apiSchemas = ["ParticleFieldScaleAttributeAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldScaleAttributeAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S113_ParticleFieldSphericalHarmonicsAttributeAPI" (
+    prepend apiSchemas = ["ParticleFieldSphericalHarmonicsAttributeAPI"]
+)
+{
+    custom string parity:schema = "ParticleFieldSphericalHarmonicsAttributeAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdVol"
+}
+
+def Volume "S114_Volume" (
+)
+{
+    custom string parity:schema = "Volume"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S115_VolumeFieldAsset" (
+)
+{
+    custom string parity:schema = "VolumeFieldAsset"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdVol"
+}
+
+def Xform "S116_VolumeFieldBase" (
+)
+{
+    custom string parity:schema = "VolumeFieldBase"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdVol"
+}

@@ -1,5 +1,5 @@
 {
-  "excludedSchemaCount": 37,
+  "excludedSchemaCount": 17,
   "formatVersion": 1,
   "openusd": {
     "commit": "ee47c679abde5b467a7b6a41f3b2285564a4222e",
@@ -12,8 +12,7 @@
       "usdProfiles": "not part of the currently supported schema surface",
       "usdRender": "render-product/pass execution is explicitly excluded",
       "usdRi": "RenderMan-specific",
-      "usdSemantics": "not part of the currently supported schema surface",
-      "usdVol": "volume schema expansion is explicitly excluded"
+      "usdSemantics": "not part of the currently supported schema surface"
     },
     "localExtensions": [
       "PreliminaryAR",
@@ -30,11 +29,12 @@
       "usdProc",
       "usdShade",
       "usdSkel",
-      "usdUI"
+      "usdUI",
+      "usdVol"
     ],
     "runtimeOpenUSDDependency": false
   },
-  "requiredSchemaCount": 97,
+  "requiredSchemaCount": 117,
   "schemas": [
     {
       "domain": "usd",
@@ -1826,160 +1826,340 @@
       "kind": "concrete",
       "name": "Field3DAsset",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "abstract",
       "name": "FieldAsset",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "abstract",
       "name": "FieldBase",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "concrete",
       "name": "OpenVDBAsset",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "concrete",
       "name": "ParticleField",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "concrete",
       "name": "ParticleField3DGaussianSplat",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldKernelBaseAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldKernelConstantSurfletAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldKernelGaussianEllipsoidAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldKernelGaussianSurfletAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldOpacityAttributeAPI",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldOrientationAttributeAPI",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldPositionAttributeAPI",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldPositionBaseAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldRadianceBaseAPI",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldScaleAttributeAPI",
       "propertyCount": 2,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "singleApply",
       "name": "ParticleFieldSphericalHarmonicsAttributeAPI",
       "propertyCount": 3,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "concrete",
       "name": "Volume",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "abstract",
       "name": "VolumeFieldAsset",
       "propertyCount": 5,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",
       "kind": "abstract",
       "name": "VolumeFieldBase",
       "propertyCount": 0,
-      "reason": "volume schema expansion is explicitly excluded",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     }
   ]
 }

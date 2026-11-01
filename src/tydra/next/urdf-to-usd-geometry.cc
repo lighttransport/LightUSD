@@ -118,14 +118,75 @@ std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
 
 PhysicsMaterials *ActivePhysicsMaterials() { return active_physics_materials; }
 
+namespace {
+thread_local CollisionFilterGroups *active_collision_groups = nullptr;
+}  // namespace
+
+CollisionFilterGroups::CollisionFilterGroups() : previous_(active_collision_groups) {
+  active_collision_groups = this;
+}
+CollisionFilterGroups::~CollisionFilterGroups() { active_collision_groups = previous_; }
+CollisionFilterGroups *ActiveCollisionFilterGroups() { return active_collision_groups; }
+
+void CollisionFilterGroups::Record(const std::string &collider, int32_t contype,
+                                   int32_t conaffinity) {
+  members_[{contype, conaffinity}].push_back(collider);
+}
+
+size_t CollisionFilterGroups::Write(tn::Layer *layer) const {
+  auto collides = [](const std::pair<int32_t, int32_t> &a, const std::pair<int32_t, int32_t> &b) {
+    return (a.first & b.second) != 0 || (b.first & a.second) != 0;
+  };
+  bool filtered = false;
+  for (const auto &a : members_)
+    for (const auto &b : members_) filtered = filtered || !collides(a.first, b.first);
+  if (!filtered) return 0;
+  Define(layer, "/World/CollisionGroups", "Scope");
+  std::map<std::pair<int32_t, int32_t>, std::string> paths;
+  for (const auto &entry : members_)
+    paths[entry.first] = "/World/CollisionGroups/contype_" + std::to_string(entry.first.first) +
+                         "_conaffinity_" + std::to_string(entry.first.second);
+  for (const auto &entry : members_) {
+    tn::PrimSpec *group = Define(layer, paths[entry.first], "PhysicsCollisionGroup");
+    if (!group) continue;
+    SetRel(group, "collection:colliders:includes", entry.second);
+    std::vector<std::string> filters;
+    for (const auto &other : members_)
+      if (!collides(entry.first, other.first)) filters.push_back(paths[other.first]);
+    if (!filters.empty()) SetRel(group, "physics:filteredGroups", filters);
+  }
+  return members_.size();
+}
+
 void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
                       const Json &src, bool mjcf_source) {
   const Profile &profile = ActiveProfile();
   AddAPIs(prim, {"PhysicsCollisionAPI", "MjcCollisionAPI", "MjcImageableAPI",
                  "NewtonCollisionAPI"});
+  // MJCF sdf geoms: Newton builds an SDF from the mesh. NewtonSDFCollisionAPI
+  // and NewtonMeshCollisionAPI are alternative representations (Newton warns
+  // when both are applied).
+  bool sdf = false;
+  if (const Json *newton = JsonObject(src, "newton"))
+    if (mesh_collision && !profile.legacy) ReadBool(*newton, "sdf", &sdf);
   if (mesh_collision) {
-    AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI",
-                   "NewtonMeshCollisionAPI"});
+    AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI"});
+    AddAPI(prim, sdf ? "NewtonSDFCollisionAPI" : "NewtonMeshCollisionAPI");
+  }
+  if (const Json *grid = sdf ? JsonObject(src, "sdf") : nullptr) {
+    // The level set's resolution, so Newton's own SDF build matches the
+    // .vdb sidecar (lightusd:sdf); its narrow band only in unscaled frames.
+    Set(prim, "newton:sdfMaxResolution",
+        tn::Value(JsonInt(*grid, "maxResolution", 64)), "int", true);
+    bool unit = false;
+    ReadBool(*grid, "unitScale", &unit);
+    double inner = 0.1, outer = 0.1;
+    ReadNumber(*grid, "interiorWidth", &inner);
+    ReadNumber(*grid, "exteriorWidth", &outer);
+    if (unit) {
+      Set(prim, "newton:sdfNarrowBandInner", tn::Value(-static_cast<float>(inner)), "float", true);
+      Set(prim, "newton:sdfNarrowBandOuter", tn::Value(static_cast<float>(outer)), "float", true);
+    }
   }
   Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
   if (mesh_collision) {
@@ -191,6 +252,15 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     } else if (ReadNumberFrom(src, "newton", "contactGap", &dvalue)) {
       Set(prim, "newton:contactGap", tn::Value(static_cast<float>(dvalue)),
           "float");
+    }
+    // An unauthored MJCF margin/gap is MuJoCo's 0, which mujoco-usd-converter
+    // writes too; left unauthored, Newton would apply its builder default
+    // (rigid_gap = 0.1 m).
+    if (!profile.legacy) {
+      if (!prim->property("newton:contactMargin"))
+        Set(prim, "newton:contactMargin", tn::Value(0.0f), "float");
+      if (!prim->property("newton:contactGap"))
+        Set(prim, "newton:contactGap", tn::Value(0.0f), "float");
     }
     std::vector<double> values = JsonDoublesFrom(src, "mjc", "geomFriction");
     if (values.empty()) values = JsonDoublesFrom(src, "mjc", "friction");
@@ -267,6 +337,9 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   Set(prim, "mjc:contype", tn::Value(contact_bits("contype")), "int", true);
   Set(prim, "mjc:conaffinity", tn::Value(contact_bits("conaffinity")), "int",
       true);
+  if (CollisionFilterGroups *groups = mjcf_source ? ActiveCollisionFilterGroups() : nullptr)
+    groups->Record(prim->path().str(), contact_bits("contype"),
+                   contact_bits("conaffinity"));
   // `purpose=guide` hides the collider from default renders but keeps it
   // discoverable to schema-aware consumers (mujoco-usd-converter applies
   // the same to non-visual MuJoCo geom groups). A collider that is also the
@@ -296,6 +369,16 @@ void SetDisplayColorFromRGBA(tn::PrimSpec *prim, const Json &source) {
   SetInterpolation(prim, "primvars:displayOpacity", "constant");
 }
 
+namespace {
+thread_local bool consume_mesh_buffers = false;
+}  // namespace
+
+MeshBufferConsumption::MeshBufferConsumption(bool consume) : previous_(consume_mesh_buffers) {
+  consume_mesh_buffers = consume;
+}
+MeshBufferConsumption::~MeshBufferConsumption() { consume_mesh_buffers = previous_; }
+bool MeshBufferConsumption::Active() { return consume_mesh_buffers; }
+
 bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                      std::set<std::string> *siblings, const Json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
@@ -320,10 +403,20 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                            mesh_ref + "` was not registered.\n");
       return true;
     }
-    positions = &found->second.positions;
-    normals = &found->second.normals;
-    uvs = &found->second.uvs;
-    source_indices = &found->second.indices;
+    if (MeshBufferConsumption::Active()) {
+      // The caller handed the buffers over (the map itself is the caller's
+      // non-const object): take them, so each is freed as the stage is built.
+      auto &buffer = const_cast<URDFMeshBuffer &>(found->second);
+      json_positions = std::move(buffer.positions);
+      json_normals = std::move(buffer.normals);
+      json_uvs = std::move(buffer.uvs);
+      json_indices = std::move(buffer.indices);
+    } else {
+      positions = &found->second.positions;
+      normals = &found->second.normals;
+      uvs = &found->second.uvs;
+      source_indices = &found->second.indices;
+    }
   } else {
     json_positions = JsonFloats(*geom, "positions");
     json_normals = JsonFloats(*geom, "normals");
@@ -336,9 +429,12 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     return true;
   }
   const size_t point_count = positions->size() / 3;
+  // Arrays this function owns (parsed JSON or consumed buffers) are moved
+  // into the stage; borrowed buffers are copied.
+  const bool owned = positions == &json_positions;
   std::vector<int32_t> indices;
   if (!source_indices->empty()) {
-    indices = *source_indices;
+    indices = owned ? std::move(json_indices) : *source_indices;
   } else {
     indices.resize(point_count);
     for (size_t i = 0; i < point_count; ++i) indices[i] = static_cast<int32_t>(i);
@@ -390,17 +486,32 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     AddURDFCustom(layer, link_path + "/" + name, prim, JsonObject(mesh_json, "urdfCustom"), &children);
   }
   SetToken(prim, "subdivisionScheme", "none", true);
+  std::vector<float> extent(6);
+  for (size_t c = 0; c < 3; ++c)
+    extent[c] = extent[c + 3] = (*positions)[c];
+  for (size_t i = 3; i < positions->size(); i += 3)
+    for (size_t c = 0; c < 3; ++c) {
+      extent[c] = std::min(extent[c], (*positions)[i + c]);
+      extent[c + 3] = std::max(extent[c + 3], (*positions)[i + c]);
+    }
+  Set(prim, "extent",
+      tn::Value::MakeFloatCompArray(std::move(extent), tn::TypeId::Float3, 3),
+      "float3[]");
   Set(prim, "points",
-      tn::Value::MakeFloatCompArray(std::vector<float>(*positions),
+      tn::Value::MakeFloatCompArray(owned ? std::move(json_positions)
+                                          : std::vector<float>(*positions),
                                     tn::TypeId::Point3f, 3),
       "point3f[]");
   Set(prim, "faceVertexCounts", tn::Value::MakeIntArray(face_counts), "int[]");
-  // Non-identity indexing: per-vertex normals/UVs are expanded to
-  // faceVarying so the authored data stays consistent with the topology.
-  if (normals->size() == positions->size()) {
+  // Per-point normals/UVs index like the points, so `vertex` interpolation
+  // describes them exactly (and is what Newton's Mesh stores). The legacy
+  // profile keeps its historical faceVarying expansion for non-identity
+  // indexing, which multiplies the data by ~6 for welded meshes.
+  const bool per_point = identity_indices || !ActiveProfile().legacy;
+  if (normals->size() == point_count * 3) {
     std::vector<float> ns;
-    if (identity_indices) {
-      ns = *normals;
+    if (per_point) {
+      ns = owned ? std::move(json_normals) : *normals;
     } else {
       ns.reserve(indices.size() * 3);
       for (int32_t index : indices) {
@@ -411,12 +522,12 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     Set(prim, "normals",
         tn::Value::MakeFloatCompArray(std::move(ns), tn::TypeId::Normal3f, 3),
         "normal3f[]");
-    SetInterpolation(prim, "normals", identity_indices ? "vertex" : "faceVarying");
+    SetInterpolation(prim, "normals", per_point ? "vertex" : "faceVarying");
   }
   if (uvs->size() == point_count * 2) {
     std::vector<float> st;
-    if (identity_indices) {
-      st = *uvs;
+    if (per_point) {
+      st = owned ? std::move(json_uvs) : *uvs;
     } else {
       st.reserve(indices.size() * 2);
       for (int32_t index : indices) {
@@ -427,8 +538,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     Set(prim, "primvars:st",
         tn::Value::MakeFloatCompArray(std::move(st), tn::TypeId::Texcoord2f, 2),
         "texCoord2f[]");
-    SetInterpolation(prim, "primvars:st",
-                     identity_indices ? "vertex" : "faceVarying");
+    SetInterpolation(prim, "primvars:st", per_point ? "vertex" : "faceVarying");
   }
   const auto colors = JsonFloats(*geom, "colors");
   if (colors.size() == point_count * 3) {
@@ -495,11 +605,46 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
 
   if (collision) {
     AddCollisionAPIs(prim, true, mesh_json, mjcf_source);
+    // A precomputed level set of this collider (LightUSD extension): a
+    // UsdVol Volume beside it with the same transform, guide purpose so
+    // renderers skip it, and an OpenVDBAsset field reading the sidecar.
+    const Json *grid = JsonObject(mesh_json, "sdf");
+    if (grid && ActiveProfile().engine && !JsonString(*grid, "asset").empty()) {
+      const std::string vname = ChildName(name + "_sdf", siblings);
+      const std::string vpath = link_path + "/" + vname;
+      tn::PrimSpec *volume = Define(layer, vpath, "Volume");
+      tn::PrimSpec *field = volume ? Define(layer, vpath + "/sdf", "OpenVDBAsset") : nullptr;
+      if (!field) {
+        if (err) *err = "Failed to add the level-set volume of `" + name + "`";
+        return false;
+      }
+      SetTransformFromJson(volume, mesh_json);
+      SetToken(volume, "purpose", "guide", true);
+      SetRel(volume, "field:sdf", {vpath + "/sdf"});
+      if (const Json *box = JsonArray(*grid, "extent")) {
+        if (box->size() == 6) {
+          float e[6];
+          for (size_t i = 0; i < 6; ++i)
+            e[i] = (*box)[i].is_number() ? float((*box)[i].get<double>()) : 0.0f;
+          Set(volume, "extent",
+              tn::Value::MakeFloat3Array(tn::ValueArrayView<const float>(e, 6)), "float3[]");
+        }
+      }
+      Set(field, "filePath", tn::Value::MakeAssetPath(JsonString(*grid, "asset")), "asset");
+      SetToken(field, "fieldName", "sdf");
+      SetToken(field, "fieldClass", "levelSet");
+      SetToken(field, "fieldDataType", "float");
+      SetRel(prim, "lightusd:sdf", {vpath});
+    }
     return true;
   }
   bool render_only = false;
   ReadBool(mesh_json, "renderOnly", &render_only);
   if (!render_only) AddAPI(prim, "MjcImageableAPI");
+  if (!ActiveProfile().legacy && StringFrom(mesh_json, "newton", "massModel", "") == "shell") {
+    AddAPI(prim, "NewtonMassAPI");
+    SetToken(prim, "newton:massModel", "shell", true);
+  }
   if (JsonString(mesh_json, "purpose") == "guide") SetToken(prim, "purpose", "guide", true);
   // Bind a UsdShade material (MJCF <geom material=..> ->
   // /World/Materials/<m>); MJCF material names are unique, so the sanitized
@@ -595,6 +740,10 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
     // contype=0 geom and Newton a visual shape.
     const std::string purpose = JsonString(shape_json, "purpose");
     if (!purpose.empty()) SetToken(prim, "purpose", purpose, true);
+    if (!ActiveProfile().legacy && StringFrom(shape_json, "newton", "massModel", "") == "shell") {
+      AddAPI(prim, "NewtonMassAPI");
+      SetToken(prim, "newton:massModel", "shell", true);
+    }
     if (mjcf_source) {
       AddAPI(prim, "MjcImageableAPI");
       int32_t group = 0;

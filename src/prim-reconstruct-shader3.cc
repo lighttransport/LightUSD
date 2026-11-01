@@ -78,7 +78,7 @@ bool ReconstructShader<ShaderNode>(
   // TODO: references
   (void)references;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   // Add everything to props.
@@ -107,7 +107,7 @@ bool ReconstructShader<UsdPreviewSurface>(
   // Use centralized enum handler
   auto OpacityModeHandler = enum_handler::OpacityMode;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
@@ -172,7 +172,7 @@ bool ReconstructShader<UsdUVTexture>(
   auto SourceColorSpaceHandler = enum_handler::SourceColorSpace;
   auto WrapHandler = enum_handler::TextureWrap;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
@@ -249,7 +249,7 @@ bool ReconstructShader<UsdTransform2d>(
   (void)spec;
   (void)references;
   (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     DCOUT("prop = " << prop.first);

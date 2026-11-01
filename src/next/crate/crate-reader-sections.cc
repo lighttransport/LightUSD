@@ -70,6 +70,7 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
     case CrateTypeId::PayloadListOp:
     case CrateTypeId::TokenListOp:
     case CrateTypeId::StringListOp:
+    case CrateTypeId::Int64ListOp:
       return 1;
     case CrateTypeId::TimeSamples:
       return 32;
@@ -682,7 +683,8 @@ bool CrateReader::Impl::ReadFields() {
             tid == CrateTypeId::ReferenceListOp ||
             tid == CrateTypeId::PayloadListOp ||
             tid == CrateTypeId::TokenListOp ||
-            tid == CrateTypeId::StringListOp;
+            tid == CrateTypeId::StringListOp ||
+            tid == CrateTypeId::Int64ListOp;
         if (list_op) {
           const size_t saved = reader_->position();
           if (!reader_->seek(static_cast<size_t>(off))) {
@@ -692,6 +694,10 @@ bool CrateReader::Impl::ReadFields() {
           uint8_t bits = 0;
           if (!reader_->read_u8(bits)) {
             AddError("Failed to read list-op ValueRep header");
+            return false;
+          }
+          if (tid == CrateTypeId::Int64ListOp && (bits & 0x80u)) {
+            AddError("Unknown Int64 list-op header bits");
             return false;
           }
           if (!reader_->seek(saved)) {
@@ -711,7 +717,8 @@ bool CrateReader::Impl::ReadFields() {
             const uint64_t arc_prefix_bytes =
                 reference_items || version_.minor >= 8 ? 24u : 8u;
             const uint64_t item_bytes = arc_items
-                ? arc_prefix_bytes + (reference_items ? 8u : 0u) : 4u;
+                ? arc_prefix_bytes + (reference_items ? 8u : 0u) :
+                (tid == CrateTypeId::Int64ListOp ? 8u : 4u);
             uint64_t pos = static_cast<uint64_t>(off + 1);
             const uint8_t order[] = {0x02, 0x04, 0x20, 0x40, 0x08, 0x10};
             for (uint8_t bit : order) {

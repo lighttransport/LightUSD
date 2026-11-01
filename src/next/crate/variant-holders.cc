@@ -5,7 +5,12 @@
 
 #include "variant-holders.hh"
 
+#include <algorithm>
 #include <string>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 #include <vector>
 
 namespace lightusd {
@@ -200,7 +205,32 @@ bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
 }  // namespace
 
 bool LayerNeedsVariantHolders(const Layer& layer) {
-  for (const PrimSpec& prim : layer.prims()) {
+  const auto& prims = layer.prims();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Every write asks this up front; on a composed 10 M-prim stage the serial
+  // scan stood alone between the compose and the write. Slices stop once any
+  // prim needs holders (prim_at_path builds the lazy index thread-safely).
+  const size_t n = prims.size();
+  const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+  const size_t T = n >= 262144 ? std::min<size_t>(hw, 16) : 1;
+  if (T > 1) {
+    std::atomic<bool> found{false};
+    std::vector<std::thread> pool;
+    pool.reserve(T);
+    for (size_t t = 0; t < T; ++t) {
+      pool.emplace_back([&, t] {
+        for (size_t i = n * t / T, hi = n * (t + 1) / T;
+             i < hi && !found.load(std::memory_order_relaxed); ++i) {
+          if (PrimNeedsHolders(layer, prims[i]))
+            found.store(true, std::memory_order_relaxed);
+        }
+      });
+    }
+    for (std::thread& th : pool) th.join();
+    return found.load();
+  }
+#endif
+  for (const PrimSpec& prim : prims) {
     if (PrimNeedsHolders(layer, prim)) return true;
   }
   return false;

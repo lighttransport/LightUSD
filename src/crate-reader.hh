@@ -412,10 +412,17 @@ class CrateReader {
     std::vector<int32_t> *elementTokenIndexes{};
     std::vector<int32_t> *jumps{};
     std::vector<bool> *visit_table{};
+    /// Optional: receives the path index of each decoded path's parent
+    /// (kNoParentPathIndex for the root). Lets ReadCompressedPaths() build the
+    /// node hierarchy without re-deriving parents from path strings.
+    std::vector<int32_t> *parentIndices{};
     size_t startIndex{}; // usually 0
     size_t endIndex{}; // inclusive. usually pathIndexes.size() - 1
     Path parentPath;
   };
+
+  /// Sentinel for "this path has no parent path" in parentIndices.
+  static constexpr int32_t kNoParentPathIndex = -1;
 
   bool BuildDecompressedPathsImpl(
       BuildDecompressedPathsArg *arg);

@@ -21,6 +21,11 @@
 #include "../c/lightusd-core-c.h"
 
 namespace lightusd {
+// The legacy library (src/core/path-expression.hh) defines different classes
+// under the same lightusd:: names. This inline namespace gives the next
+// versions distinct mangled names, so a binary linking both libraries gets no
+// duplicate (MSVC LNK2005) or silently merged (ELF) definitions.
+inline namespace next_path_expr {
 
 // A single component of a path pattern (the portion following the literal
 // prefix path). A "stretch" component (`//`) has empty text and no predicate.
@@ -299,4 +304,5 @@ inline std::string PathPattern::GetText() const {
   return result;
 }
 
+} // inline namespace next_path_expr
 } // namespace lightusd

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Raw MJCF <deformable><flex> (as mj_saveXML writes flexcomps) -> soft bodies."""
+import json
+
 import numpy as np
 import pytest
 
@@ -57,6 +59,8 @@ def test_referenced_vertex_bodies_and_world_vertices_pin():
     (dict(root_extra='<keyframe><key qpos="0 0 0 0 0 0 0 0 0"/></keyframe>'), "keyframes"),
     (dict(flex_extra='dof="trilinear"'), "interpolated"),
     (dict(elements="0 1 7"), "element or body reference is missing"),
+    (dict(elements="0 1 2.5"), "element indices must be int32 values"),
+    (dict(elements="0 1 2147483648"), "element indices must be int32 values"),
 ])
 def test_unconvertible_flexes_are_reported(variant, message):
     elements = variant.pop("elements", None)
@@ -76,3 +80,35 @@ def test_other_profiles_keep_reporting_the_deformable():
     assert stage.get_prim_at("/World/Deformables/cloth") is None
     assert "Unsupported MJCF element: deformable" in stage.warnings()
     assert {"v1", "v2", "v3"} <= {p.name for p in stage if p.path.startswith("/World/Links/")}
+
+
+def test_interpolated_raw_flex_preserves_non_executable_source():
+    stage = lightusd.load_bytes(
+        _model(flex_extra='node="0 1 2 3" dof="0 1 2 3"'),
+        format="mjcf", unsupported_policy="preserve")
+    assert stage.get_prim_at("/World/Deformables/cloth") is None
+    records = json.loads(stage.custom_layer_data["lightusdImportUnsupported"])
+    record = next(item for item in records if item["feature"] == "mjcf.deformable")
+    assert record["encoding"] == "xml"
+    assert not record["executable"]
+    assert 'node="0 1 2 3"' in record["data"]
+    assert 'dof="0 1 2 3"' in record["data"]
+
+
+def test_fractional_raw_flex_dimension_is_reported():
+    xml = _model().replace(b'dim="2"', b'dim="2.5"')
+    stage = lightusd.load_bytes(xml, format="mjcf")
+    assert stage.get_prim_at("/World/Deformables/cloth") is None
+    assert "dim must be an integer" in stage.warnings()
+    with pytest.raises(lightusd.UsdError, match="dim must be an integer"):
+        lightusd.load_bytes(xml, format="mjcf", unsupported_policy="error")
+
+
+def test_raw_flex_point_outside_float_range_is_reported():
+    xml = _model().replace(b'vertex="0 0 0', b'vertex="1e39 0 0')
+    stage = lightusd.load_bytes(xml, format="mjcf")
+    assert stage.get_prim_at("/World/Deformables/cloth") is None
+    assert "exceeds float range" in stage.warnings()
+    assert {"v1", "v2", "v3"} <= {p.name for p in stage if p.path.startswith("/World/Links/")}
+    with pytest.raises(lightusd.UsdError, match="float range"):
+        lightusd.load_bytes(xml, format="mjcf", unsupported_policy="error")

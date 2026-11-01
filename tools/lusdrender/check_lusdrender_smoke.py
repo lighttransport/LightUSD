@@ -600,25 +600,32 @@ def Xform "World"
         text=True,
     )
     hip_log = hip_gaussian.stdout + hip_gaussian.stderr
-    native_gaussian = "native Gaussian ellipses: 2 in 2 chunk(s)" in hip_log
-    fallback_gaussian = "[gpu] gaussian splats:" in hip_log
-    if not native_gaussian and not fallback_gaussian:
-        raise RuntimeError(
-            "HIP Gaussian carrier path was not selected:\n" + hip_log)
-    if fallback_gaussian and "GPU chunks: 2" not in hip_log:
-        raise RuntimeError(
-            "HIP Gaussian fallback did not honor the bounded chunk limit:\n" +
-            hip_log)
-    hip_unavailable = (
-        "HIP ray tracing unavailable" in hip_log or
-        "Failed to create LightRT HIP Gaussian engine" in hip_log
-    )
-    if hip_gaussian.returncode != 0 and not hip_unavailable:
-        raise RuntimeError("unexpected HIP Gaussian failure:\n" + hip_log)
-    if hip_gaussian_out.exists():
-        w, h, rgba = read_png_rgba(hip_gaussian_out)
-        if (w, h) != (16, 16):
-            raise RuntimeError(f"unexpected HIP Gaussian dimensions {(w, h)}")
+    if "Requested GPU backend not built in" in hip_log:
+        # GPU tests can be excluded from a CPU-only build. Keep the CPU smoke
+        # coverage useful without treating the intentionally absent backend as
+        # a renderer failure or attempting GPU initialization.
+        print("HIP Gaussian smoke: SKIP (backend not built)")
+        hip_log = ""
+    if hip_log:
+        native_gaussian = "native Gaussian ellipses: 2 in 2 chunk(s)" in hip_log
+        fallback_gaussian = "[gpu] gaussian splats:" in hip_log
+        if not native_gaussian and not fallback_gaussian:
+            raise RuntimeError(
+                "HIP Gaussian carrier path was not selected:\n" + hip_log)
+        if fallback_gaussian and "GPU chunks: 2" not in hip_log:
+            raise RuntimeError(
+                "HIP Gaussian fallback did not honor the bounded chunk limit:\n" +
+                hip_log)
+        hip_unavailable = (
+            "HIP ray tracing unavailable" in hip_log or
+            "Failed to create LightRT HIP Gaussian engine" in hip_log
+        )
+        if hip_gaussian.returncode != 0 and not hip_unavailable:
+            raise RuntimeError("unexpected HIP Gaussian failure:\n" + hip_log)
+        if hip_gaussian_out.exists():
+            w, h, rgba = read_png_rgba(hip_gaussian_out)
+            if (w, h) != (16, 16):
+                raise RuntimeError(f"unexpected HIP Gaussian dimensions {(w, h)}")
 
     # primvars:displayColor (constant) as base color + primvars:displayOpacity
     # (constant) see-through blend: a 0.5-opacity green quad in front of an opaque

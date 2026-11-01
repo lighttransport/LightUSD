@@ -122,6 +122,9 @@ bool FixedDims(const std::string& name, Dims* out) {
       {"physics:mass", {0, 1}}, {"physics:density", {-3, 1}},
       {"physics:diagonalInertia", {2, 1}}, {"newton:inertia", {2, 1}},
       {"newton:contactMargin", {1, 0}}, {"newton:contactGap", {1, 0}},
+      {"newton:sdfNarrowBandInner", {1, 0}}, {"newton:sdfNarrowBandOuter", {1, 0}},
+      {"physics:breakForce", {1, 1}}, {"physics:breakTorque", {2, 1}},
+      {"physics:minDistance", {1, 0}}, {"physics:maxDistance", {1, 0}},
       {"physics:masses", {0, 1}}, {"physics:thicknesses", {1, 0}}};
   for (const auto& entry : kFixed)
     if (name == entry.name) { *out = entry.dims; return true; }
@@ -236,6 +239,33 @@ lightusd_status SetTokenList(lightusd_stage* stage, const std::string& path, con
   return lightusd_attr_set_token_array(stage, path.c_str(), name, LIGHTUSD_TYPE_TOKEN, raw.data(),
                                        raw.size(), LIGHTUSD_PROP_UNIFORM);
 }
+// OpenVDB voxels and their index->grid map stay in the file's units: append an
+// innermost uniform scale to the field prim (UsdVol places a field by the
+// field prim's transform times the grid's), accumulating over conversions.
+lightusd_status ScaleVolumeField(lightusd_stage* stage, const std::string& path, double factor) {
+  static const char* kOp = "xformOp:scale:units";
+  const lightusd_prim prim = lightusd_stage_prim_at_path(stage, path.c_str());
+  std::vector<std::string> order;
+  TokenList(prim, "xformOpOrder", &order);
+  bool present = false;
+  for (const auto& item : order) present = present || item == kOp;
+  double s = factor;
+  lightusd_value_view view{};
+  if (present && lightusd_attr_get(prim, kOp, &view) == LIGHTUSD_OK && IsFloatView(view) &&
+      !view.is_array && view.components == 3)
+    s *= ViewComponent(view, 0);
+  if (present && std::fabs(s - 1.0) < 1e-12) {
+    std::vector<std::string> kept;
+    for (const auto& item : order) if (item != kOp) kept.push_back(item);
+    lightusd_status status = lightusd_attr_remove(stage, path.c_str(), kOp);
+    return status == LIGHTUSD_OK ? SetTokenList(stage, path, "xformOpOrder", kept) : status;
+  }
+  const double scale[3] = {s, s, s};
+  lightusd_status status = lightusd_attr_set(stage, path.c_str(), kOp, LIGHTUSD_TYPE_DOUBLE3, 0, scale, 1, 0);
+  if (status != LIGHTUSD_OK || present) return status;
+  order.push_back(kOp);
+  return SetTokenList(stage, path, "xformOpOrder", order);
+}
 }  // namespace
 
 extern "C" lightusd_status lightusd_stage_convert_units(lightusd_stage* stage, double meters_per_unit,
@@ -323,6 +353,11 @@ extern "C" lightusd_status lightusd_stage_convert_units(lightusd_stage* stage, d
                                            prop.flags & (LIGHTUSD_PROP_CUSTOM | LIGHTUSD_PROP_UNIFORM));
         lightusd_value_destroy(scaled_default);
       }
+      if (status != LIGHTUSD_OK) { delete skip_list; return status; }
+      ++result.converted;
+    }
+    if (type == "OpenVDBAsset" && L != 1.0) {
+      status = ScaleVolumeField(stage, path, L);
       if (status != LIGHTUSD_OK) { delete skip_list; return status; }
       ++result.converted;
     }

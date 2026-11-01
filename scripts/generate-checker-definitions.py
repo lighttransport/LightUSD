@@ -81,6 +81,8 @@ typedef struct lu_validation_ref_error_row {{
 }} lu_validation_ref_error_row;
 
 extern const char lu_validation_strings[];
+/* JSON provenance generated from the same manifests as these tables. */
+extern const char lu_validation_schema_provenance[];
 extern const uint32_t lu_validation_token_offsets[];
 extern const size_t lu_validation_token_offset_count;
 extern const uint32_t lu_validation_ref_error_offsets[];
@@ -214,6 +216,8 @@ def emit_c(schema, shader, references):
               '',
               '#include "generated-schema-tables.h"',
               '',
+              'const char lu_validation_schema_provenance[] = ' + json.dumps(_provenance(schema)) + ';',
+              '',
               '/* NUL-separated UTF-8 arena, with no overlength C string literals. */',
               'const char lu_validation_strings[] = {']
     arena = b''.join(s.encode('utf-8') + b'\0' for s in strings) + b'\0'
@@ -255,10 +259,8 @@ def emit_c(schema, shader, references):
 
 
 def _provenance(schema):
-    if not schema.get('engines'):
-        return json.dumps(schema.get('openusd', {}), sort_keys=True)
     return json.dumps({'openusd': schema.get('openusd', {}),
-                       'engines': schema['engines']}, sort_keys=True)
+                       'engines': schema.get('engines', {})}, sort_keys=True)
 
 
 def _fields(kind, row):

@@ -4,6 +4,7 @@
 #include "../parser/lexer.hh"
 #include "../parser/value-parser.hh"
 #include <utility>
+#include <algorithm>
 
 namespace lightusd {
 namespace next {
@@ -59,8 +60,9 @@ void CrateReader::Impl::DecodeStageMetadata(
     if (spec.spec_type != SpecType::PseudoRoot) continue;
     if (spec.path_index.value >= paths_.size()) continue;
 
+    std::vector<DecodedExtensionField> integer_fields;
     std::vector<std::pair<std::string_view, Value>> fields;
-    if (!ResolveFieldset(spec.fieldset_index.value, fields)) {
+    if (!ResolveFieldset(spec.fieldset_index.value, fields, &integer_fields)) {
       AddWarning("Failed to resolve pseudo-root fieldset");
     }
 
@@ -260,7 +262,11 @@ void CrateReader::Impl::DecodeStageMetadata(
         // Preserve decodable extension metadata as a typed field. ResolveFields
         // has already unpacked this ValueRep, so retaining it is lossless for
         // every type the writer can encode.
-        layer.meta().unknownFields.push_back(
+        auto integer = std::find_if(integer_fields.begin(), integer_fields.end(),
+            [&](const DecodedExtensionField& f) { return f.name == field.first; });
+        if (integer != integer_fields.end())
+          layer.meta().unknownFields.push_back(std::move(*integer));
+        else layer.meta().unknownFields.push_back(
             MakeTypedExtensionField(std::string(field.first), field.second));
       }
     }

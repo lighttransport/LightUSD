@@ -123,7 +123,8 @@ int lu_crate_blob_compress_bound(size_t src_size, size_t *out_bound) {
     return 1;
   }
   const size_t n_chunks =
-      (src_size + LU_MAX_LZ4_CHUNK_SIZE - 1) / LU_MAX_LZ4_CHUNK_SIZE;
+      src_size / LU_MAX_LZ4_CHUNK_SIZE +
+      (src_size % LU_MAX_LZ4_CHUNK_SIZE != 0);
   if (n_chunks > 255) return 0;
   for (size_t i = 0; i < n_chunks; i++) {
     const size_t chunk_sz = src_size - i * LU_MAX_LZ4_CHUNK_SIZE <
@@ -132,6 +133,8 @@ int lu_crate_blob_compress_bound(size_t src_size, size_t *out_bound) {
                                 : LU_MAX_LZ4_CHUNK_SIZE;
     const int bound = LZ4_compressBound((int)chunk_sz);
     if (bound <= 0) return 0;
+    if ((size_t)bound > (size_t)-1 - sizeof(int32_t) ||
+        total > (size_t)-1 - (size_t)bound - sizeof(int32_t)) return 0;
     total += (size_t)bound + sizeof(int32_t);
   }
   *out_bound = total;
@@ -155,8 +158,8 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
 
   const size_t n_chunks = (src_size <= LU_MAX_LZ4_CHUNK_SIZE)
                               ? 0
-                              : (src_size + LU_MAX_LZ4_CHUNK_SIZE - 1) /
-                                    LU_MAX_LZ4_CHUNK_SIZE;
+                              : src_size / LU_MAX_LZ4_CHUNK_SIZE +
+                                    (src_size % LU_MAX_LZ4_CHUNK_SIZE != 0);
   if (n_chunks > 255) {
     set_error(out_error, "Too many chunks (>255)");
     return 0;
@@ -185,7 +188,7 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
       const size_t chunk_sz = (src_size - in_offset) < LU_MAX_LZ4_CHUNK_SIZE
                                   ? (src_size - in_offset)
                                   : LU_MAX_LZ4_CHUNK_SIZE;
-      if (out_pos + sizeof(int32_t) > dst_cap) {
+      if (dst_cap - out_pos < sizeof(int32_t)) {
         set_error(out_error, "LZ4 compression failed for chunk");
         return 0;
       }

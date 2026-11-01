@@ -197,7 +197,8 @@ json App::mcpSceneInfo(const json&, std::string&) {
               {"scene_generation", sceneGen_},
               {"window_generation", windowGeneration_},
               {"renderer_generation", rendererGeneration_},
-              {"backend", backend_ == Backend::GL ? "gl" : "vk"},
+              {"backend", backend_ == Backend::Metal ? "metal" :
+                          backend_ == Backend::GL ? "gl" : "vk"},
               {"ray_tracing", rtPath_},
               {"filepath", loaded_.filepath},
               {"mesh_count", draw_.meshes.size()},
