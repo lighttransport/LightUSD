@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Adapter from lusdrender's streamed flat geometry to the GPU RT core shared
 // with lusdview. Material enrichment is performed before this boundary; this
-// file deliberately owns only geometry/camera conversion and image output.
+// file also bridges semantic texture slots to the descriptor graph ABI.
 #if defined(HAVE_CUDA_RT) || defined(HAVE_HIP)
 
 #include <algorithm>
@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef HAVE_CUDA_RT
@@ -25,6 +26,98 @@
 
 namespace lusdr {
 namespace {
+
+// Descriptor ray tracing consumes graph routes rather than the legacy texture
+// slots. Preserve connected PreviewSurface inputs when no retained graph route
+// supplies that lane (MaterialX graphs remain authoritative).
+void RouteSemanticTextures(lusdview::DrawMaterialCPU *mat) {
+  using Node = lusdview::MaterialXGraphNodeCPU;
+  using Op = lusdview::MaterialXGraphOpCPU;
+  auto &graph = mat->materialXGraph;
+  const auto append = [&](const Node &node) {
+    graph.nodes.push_back(node);
+    return static_cast<int>(graph.nodes.size() - 1);
+  };
+  std::vector<std::pair<lusdview::DrawTexSampleCPU, int>> coordinates;
+  const auto route = [&](int lane, const lusdview::DrawTexSampleCPU &sample) {
+    if (sample.tex < 0 || graph.output[lane] >= 0) return;
+    int coord = -1;
+    for (const auto &entry : coordinates) {
+      const auto &old = entry.first;
+      if (old.uvSet == sample.uvSet && old.uv.m00 == sample.uv.m00 &&
+          old.uv.m01 == sample.uv.m01 && old.uv.m10 == sample.uv.m10 &&
+          old.uv.m11 == sample.uv.m11) coord = entry.second;
+    }
+    const size_t needed = (coord < 0 ? 4u : 0u) +
+                          (sample.channel >= 0 ? 4u : 3u);
+    if (graph.nodes.size() + needed >
+        static_cast<size_t>(lusdview::kRtMaterialGraphMaxNodes)) {
+      std::cerr << "Semantic texture route exceeds graph capacity: " << lane << "\n";
+      return;
+    }
+    if (coord < 0) {
+      Node uv;
+      uv.op = Op::Texcoord;
+      uv.value[2][2] = static_cast<float>(sample.uvSet);
+      const int source = append(uv);
+      Node row;
+      row.op = Op::Dot;
+      row.input[0] = source;
+      row.value[1][0] = sample.uv.m00;
+      row.value[1][1] = sample.uv.m01;
+      row.value[1][2] = row.value[1][3] = 0.0f;
+      const int u = append(row);
+      row.value[1][0] = sample.uv.m10;
+      row.value[1][1] = sample.uv.m11;
+      const int v = append(row);
+      Node pair;
+      pair.op = Op::Combine;
+      pair.input[0] = u;
+      pair.input[1] = v;
+      coord = append(pair);
+      coordinates.emplace_back(sample, coord);
+    }
+    Node image;
+    image.op = Op::Image;
+    image.input[0] = coord;
+    image.value[2][3] = 0.0f;  // image UVs come from input 0
+    image.textureId = sample.tex;
+    image.isUdim = sample.isUdim;
+    image.uvOffset[0] = sample.uv.tx;
+    image.uvOffset[1] = sample.uv.ty;
+    int value = append(image);
+    if (sample.channel >= 0) {
+      Node channel;
+      channel.op = Op::Extract;
+      channel.input[0] = value;
+      channel.value[1][0] = static_cast<float>(sample.channel);
+      value = append(channel);
+    }
+    Node scale;
+    scale.op = Op::Multiply;
+    scale.input[0] = value;
+    std::copy(sample.scale, sample.scale + 4, scale.value[1]);
+    const int scaled = append(scale);
+    Node bias;
+    bias.op = Op::Add;
+    bias.input[0] = scaled;
+    std::copy(sample.bias, sample.bias + 4, bias.value[1]);
+    graph.output[lane] = append(bias);
+    graph.valid = true;
+    graph.hasImages = true;
+  };
+  route(0, mat->baseColorSample);
+  route(1, mat->metallicSample);
+  route(2, mat->roughnessSample);
+  route(3, mat->opacitySample);
+  route(4, mat->emissiveSample);
+  route(5, mat->normalSample);
+  route(10, mat->specularColorSample);
+  route(13, mat->coatWeightSample);
+  route(15, mat->coatRoughnessSample);
+  if (mat->emissiveSample.tex >= 0 && mat->lightRtOpenPBR.emission == 0.0f)
+    mat->lightRtOpenPBR.emission = 1.0f;
+}
 
 void SetIdentity(float m[16]) {
   std::fill(m, m + 16, 0.0f);
@@ -231,6 +324,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         }
       };
       set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample);
+      set_sample(material_src.specular_tex_id, -1, nullptr, &mat.specularColorSample);
       set_sample(material_src.normal_tex_id, -1, nullptr, &mat.normalSample);
       set_sample(material_src.coat_normal_tex_id, -1, nullptr,
                  &mat.coatNormalSample);
@@ -278,6 +372,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         }
       }
     }
+    RouteSemanticTextures(&mat);
     scene->materials.push_back(std::move(mat));
 
     lusdview::DrawMeshCPU mesh;

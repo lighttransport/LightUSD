@@ -3196,4 +3196,7 @@ payload material bindings and transforms, native and point instances, masks,
 visibility/purpose, generated UVs, and animated radius/BVH invalidation. It uses
 small generated fixtures and requires no external assets. The Tydra next suite
 also checks default-time and interpolated analytic dimensions. See
-[headless GPU commands and the ray-query texture limitation](lusdrender.md#analytic-geometry-regression).
+[headless GPU commands and texture coverage](lusdrender.md#analytic-geometry-regression).
+The same fixtures verify PreviewSurface image routing on generated and authored
+geometry, UV rotation, and packed-channel scalar scale/bias on CPU and ray queries.
+The legacy compute preview uses constant roughness.

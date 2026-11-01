@@ -149,6 +149,36 @@ def Material "Material" {
 }
 ''')
 
+    textured_mesh = scene('textured-mesh', textured.read_text().split(HEADER, 1)[1].replace(CAMERA, '').replace(
+        'def Cube "Shape" {', '\n'.join([
+            'def Mesh "Shape" {',
+            ' point3f[] points = [(-1,-1,1),(1,-1,1),(1,1,1),(-1,1,1)]',
+            ' int[] faceVertexCounts = [4]',
+            ' int[] faceVertexIndices = [0,1,2,3]',
+            ' texCoord2f[] primvars:st = [(0,0),(1,0),(1,1),(0,1)] (interpolation = "vertex")'])))
+    transformed = scene('transformed-texture', textured_mesh.read_text().split(HEADER, 1)[1].replace(CAMERA, '').replace(
+        '</Material/UV.outputs:result>', '</Material/Transform.outputs:result>').replace(
+        ' def Shader "UV" {', ''' def Shader "Transform" {
+  uniform token info:id = "UsdTransform2d"
+  float2 inputs:in.connect = </Material/UV.outputs:result>
+  float inputs:rotation = 90
+  float2 inputs:translation = (1,0)
+  float2 outputs:result
+ }
+ def Shader "UV" {'''))
+
+    # G=0 isolates packed-channel selection; scale/bias must yield roughness .125.
+    write_png_rgba(args.output / 'packed.png', 1, 1, bytearray([255, 0, 0, 255]))
+    scalar_body = textured_mesh.read_text().split(HEADER, 1)[1].replace(CAMERA, '').replace(
+        'color3f inputs:diffuseColor.connect = </Material/Texture.outputs:rgb>',
+        'color3f inputs:diffuseColor = (0.8,0.1,0.1)\n  float inputs:roughness.connect = </Material/Texture.outputs:g>').replace(
+        '@quadrants.png@', '@packed.png@').replace('float3 outputs:rgb',
+        'float outputs:g\n  float4 inputs:scale = (1,2,1,1)\n  float4 inputs:bias = (0,0.125,0,0)\n  token inputs:sourceColorSpace = "raw"')
+    scalar = scene('scalar-texture', scalar_body)
+    scalar_constant = scene('scalar-constant', scalar_body.replace(
+        'float inputs:roughness.connect = </Material/Texture.outputs:g>',
+        'float inputs:roughness = 0.125'))
+
     def render(backend, path, tag, extra=()):
         output = args.output / (backend + '-' + tag + '.png')
         command = [str(args.renderer), str(path), str(output), BACKENDS[backend], '-stats',
@@ -211,11 +241,23 @@ def Material "Material" {
         assert len(pixels(p)[3]) == sphere_count, 'hidden/guide analytic geometry leaked'
         p, _ = render(backend, textured, 'texture')
         fg = pixels(p)[3]
-        # The descriptor ray-query shader currently omits PreviewSurface texture
-        # routes even for authored Meshes; test UV sampling on CPU/compute.
-        for channel in range(3) if backend != 'vkr' else ():
+        for channel in range(3):
             count = sum(rgb[channel] > max(rgb[(channel + 1) % 3], rgb[(channel + 2) % 3]) * 1.5 for _, _, rgb in fg)
             assert count > 5, 'generated UVs collapsed: channel %d on %s' % (channel, backend)
+        m, _ = render(backend, textured_mesh, 'mesh-texture')
+        t, _ = render(backend, transformed, 'transformed-texture')
+        for output in (m, t):
+            fg = pixels(output)[3]
+            for channel in range(3):
+                assert sum(rgb[channel] > max(rgb[(channel + 1) % 3], rgb[(channel + 2) % 3]) * 1.5
+                           for _, _, rgb in fg) > 5, 'authored texture route lost'
+        assert pixels(m)[2] != pixels(t)[2], 'texture UV transform ignored'
+        # Legacy compute shades roughness as a constant; descriptor/CPU paths
+        # evaluate scalar texture inputs.
+        if backend != 'vk':
+            scalar_image, _ = render(backend, scalar, 'scalar-texture')
+            constant_image, _ = render(backend, scalar_constant, 'scalar-constant')
+            assert max(abs(a - b) for a, b in zip(pixels(scalar_image)[2], pixels(constant_image)[2])) <= 2, 'scalar channel/scale/bias lost'
         if backend == 'cpu':
             _, log = render(backend, animated, 'anim.####', ['-frames', '0:1'])
             assert 'geometry animated: 1' in log, 'animated dimensions reused a static BVH'

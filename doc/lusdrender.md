@@ -35,10 +35,18 @@ python3 tools/lusdrender/check_analytic_primitives.py \
 ```
 
 The hardware check requires GPU device access and runs without a display.
-Generated UV texture sampling is checked on CPU and compute. The descriptor
-ray-query path currently drops PreviewSurface texture connections, including on
-authored Meshes; its analytic regression checks geometry and constant materials
-but does not assert textured color parity.
+Generated UV texture sampling is checked on CPU, compute, and descriptor
+ray queries. The regression also covers authored textured Meshes and rotated UVs.
+CPU and descriptor paths additionally check packed-channel roughness sampling
+with scale/bias against an equivalent constant material. Legacy compute preview
+uses constant roughness and does not evaluate that scalar texture check.
+
+The streamed material adapter translates resolved semantic texture slots into
+bounded graph routes for descriptor shading, including base color, metalness,
+roughness, opacity, emission, normal, specular color, and coat inputs. Existing
+retained MaterialX routes take precedence; shared UV coordinates are reused to
+stay within the graph node budget. A capacity diagnostic identifies any route
+that cannot fit.
 
 ## Shared lusdview RT materials (Vulkan, CUDA, and HIP)
 
