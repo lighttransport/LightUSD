@@ -4,7 +4,7 @@ This file tracks unfinished renderer work only. Completed implementation history
 old audit notes, machine-specific run logs, and superseded plans belong in Git
 history and are intentionally omitted here.
 
-Updated 2026-09-20.
+Updated 2026-11-02.
 
 ## Build performance
 
@@ -221,3 +221,29 @@ ctest --test-dir build_ninja -R 'lusdview|tool-lusdrender' --output-on-failure
 GPU-dependent tests require a usable hardware device and the documented
 environment in `doc/lusdview.md`. A missing backend or external corpus is an
 explicit skip, not proof of rendering parity.
+
+## Large-scene optimization follow-up
+
+The November static-batch audit corrected camera/viewport/catalog cull
+invalidation, conservative projected-size math, indirect capability/count
+limits, and original face-ID preservation for diagnostics and Ptex. Multi-material
+chunk draw statistics now count each submesh's visible commands once.
+
+- [x] Remove dead morph inputs from opaque skinned meshes without blendshapes
+  and avoid state recording for generated-LOD tails that draw nothing. Paired
+  RX 9070 XT runs reduce GPU time from 15.23 to 14.49 ms with byte-identical
+  captures; full details are in `lusdview.md`.
+- [ ] Detect skins with no time-varying pose and bake them automatically when
+  skinning is Auto. Preserve explicitly requested GPU skinning and animated
+  skeletons, and prove posed bounds, animation and next/legacy parity before
+  changing the default. See the measured CPU-skinning comparison in `lusdview.md`.
+- [ ] Evaluate a packed static vertex format with fixed-camera image parity and
+  GPU timing; static vertex/index bandwidth remains a material frame cost.
+- [ ] Repeat first-useful-frame, full-load, peak-RSS and GPU-frame benchmarks on
+  the external corpus after these changes. The AMD large-map Vulkan raster
+  benchmark now has three default and three LOD repetitions (see `lusdview.md`);
+  broader corpus and progressive hardware first-useful-frame coverage remain.
+- [ ] Resolve the AMD small-fixture CPU/GPU skinning maximum-pixel gate: the
+  isolated fixed-size/no-grid capture differs in two edge pixels, maximum
+  channel delta 198 versus threshold 128. Do not relax the threshold merely to
+  close the gate.

@@ -3186,6 +3186,15 @@ if(LIGHTUSD_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-lod"
         )
       set_tests_properties(lusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
+      add_test(
+        NAME lusdview-wire-depth-fill
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-wire-depth-fill.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-wire-depth-fill")
+      set_tests_properties(lusdview-wire-depth-fill PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 200 LABELS "lusdview")
+
 
       # The ray tracer traces vertex buffers, so the raster vertex shader's
       # deform never reaches it. --next --rt used to give up and re-run the whole

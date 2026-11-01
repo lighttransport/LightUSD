@@ -56,6 +56,11 @@ echo "==> mesh.vert (static batch) -> embedded/mesh_static_vert.spv.h"
 "$GLSLANG" -V -DLUSDVIEW_STATIC_BATCH=1 --vn mesh_static_vert_spv \
   -o "$OUT/mesh_static_vert.spv.h" "$HERE/mesh.vert"
 
+# Skin-only variant: preserve all skinning math, omit dead morph attributes.
+echo "==> mesh.vert (skin only) -> embedded/mesh_skin_vert.spv.h"
+"$GLSLANG" -V -DLUSDVIEW_SKIN_ONLY=1 --vn mesh_skin_vert_spv \
+  -o "$OUT/mesh_skin_vert.spv.h" "$HERE/mesh.vert"
+
 echo "==> mesh.frag (weighted OIT) -> embedded/mesh_oit_frag.spv.h"
 "$GLSLANG" -V -DLUSDVIEW_OIT=1 --vn mesh_oit_frag_spv \
   -o "$OUT/mesh_oit_frag.spv.h" "$HERE/mesh.frag"

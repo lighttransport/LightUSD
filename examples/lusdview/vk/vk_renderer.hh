@@ -787,6 +787,7 @@ class VulkanRenderer final : public Renderer {
   // influence/morph streams). Null when the variant failed to build; the draw
   // loop then falls back to pipeline_.
   VkPipeline meshStaticPipeline_{VK_NULL_HANDLE};
+  VkPipeline meshSkinPipeline_{VK_NULL_HANDLE};
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
   // Color-write-disabled fill used as the hidden-line depth prepass in
@@ -1294,6 +1295,8 @@ class VulkanRenderer final : public Renderer {
   float staticCullVP_[16]{};
   float staticCullPxLast_{-1.0f};
   bool staticCullValid_{false};
+  int staticCullHeightLast_{-1};
+  uint32_t maxDrawIndirectCount_{1};
   float exposure_{0.0f};
   float materialXTime_{0.0f};
   float materialXFrame_{0.0f};

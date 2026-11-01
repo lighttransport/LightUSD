@@ -16,6 +16,8 @@ set(LUSDVIEW_SHADER_EMBED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/embedded)
 # Core raster and environment shader headers are mandatory for the Vulkan backend.
 set(_required_spv
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_vert.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_static_vert.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_skin_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_oit_simple_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_frag.spv.h

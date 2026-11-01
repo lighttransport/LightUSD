@@ -15,8 +15,10 @@ layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
+#ifndef LUSDVIEW_SKIN_ONLY
 layout(location = 7) in float aMorphInfl; // blendshape influence (world units)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 = none
+#endif
 
 // Blendshape morph + linear-blend skinning (sets 1,2,7,8,9 + fetchBone /
 // morphChanId / applyMorphSkin); shared with the GPU-tessellation vertex stage.
@@ -138,6 +140,9 @@ void main() {
 #ifdef LUSDVIEW_STATIC_BATCH
   pos = aPos;
   nrm = aNormal;
+#elif defined(LUSDVIEW_SKIN_ONLY)
+  applyMorphSkin(aPos, aNormal, uvec2(0), aJoint, aWeight, aInfluence,
+                 pos, nrm);
 #else
   applyMorphSkin(aPos, aNormal, aMorphOffsetCount, aJoint, aWeight, aInfluence,
                  pos, nrm);
@@ -179,12 +184,15 @@ void main() {
   // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
   vDomJoint = -1;
   vDomWeight = 0.0;
+  vMorphInfl = 0.0;
 #ifndef LUSDVIEW_STATIC_BATCH
   if (aWeight.x > vDomWeight) { vDomWeight = aWeight.x; vDomJoint = int(aJoint.x); }
   if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
   if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
   if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
+#ifndef LUSDVIEW_SKIN_ONLY
   vMorphInfl = aMorphInfl;
+#endif
 #endif
   vUV1 = aUV1;
   // Per-vertex displayColor (USD primvars:displayColor, vertex interp). The GL

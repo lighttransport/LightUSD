@@ -3200,3 +3200,24 @@ also checks default-time and interpolated analytic dimensions. See
 The same fixtures verify PreviewSurface image routing on generated and authored
 geometry, UV rotation, and packed-channel scalar scale/bias on CPU and ray queries.
 The legacy compute preview uses constant roughness.
+
+### Static batch culling audit
+
+`lusdview_rt_lod_test` includes CPU-only static-chunk projected-radius checks:
+projection Y sign, off-axis view depth, viewport height, camera-intersecting
+spheres, orthographic scale and degenerate projection fallback. Run it with
+`ctest --test-dir build_ninja -R '^lusdview_rt_lod_test$' --output-on-failure`.
+The Vulkan chunk path retains direct draws for primitive/source-face diagnostics
+and Ptex, gates indirect commands on enabled device features, and splits lists
+at the physical device limit. Camera-record equivalence, noninstanced LOD,
+persistent MCP scene replacement and incremental topology gates exercise the
+surrounding camera/resource lifecycle; they do not replace external large-scene
+performance measurements.
+
+`lusdview-wire-depth-fill` renders an authored quad in shaded and wireframe
+modes with a fixed camera. It requires a visible shaded interior and an
+unpainted wireframe interior, catching an opaque shader specialization replacing
+the color-write-disabled depth pipeline. It runs on software or hardware Vulkan.
+The deformation depth-parity harness disables the grid as well as skeleton
+helpers: grid placement follows posed bounds and is composited after the AOV,
+so it can differ even when CPU/GPU geometry matches.

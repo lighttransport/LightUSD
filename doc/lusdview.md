@@ -1106,7 +1106,7 @@ Merging is a culling trade-off: one batch per scene has a scene-spanning AABB,
 so the per-mesh frustum/size test can only answer "all" or "nothing". Two
 changes give the static side its granularity and its vertex bandwidth back:
 
-* **Chunked indirect draws.** Each single-submesh, world-baked, undeformed batch
+* **Chunked indirect draws.** Each submesh of a world-baked, undeformed batch
   is split into triangle runs of at most 4096 triangles (further bounded by a
   world-AABB radius cap of 2 % of the batch extent, so a run stays a local
   culling unit instead of spanning a district). The runs become one
@@ -1114,7 +1114,13 @@ changes give the static side its granularity and its vertex bandwidth back:
   zeroes for chunks the camera rejects. Frustum culling is always on; the
   projected-size threshold follows the raster-LOD policy, so `--raster-lod` and
   the large-scene profiles now also reach static geometry. The patch is skipped
-  entirely while the camera and the policy are unchanged.
+  entirely while the camera, viewport height, policy and chunk catalog are
+  unchanged. Projected-size tests use nearest view-space sphere depth and an
+  unsigned projection scale; orthographic cameras use constant pixel scale.
+  Devices without enabled multi-draw support retain direct draws, and command
+  lists are split at the device's `maxDrawIndirectCount`. Primitive-ID and
+  source-face-ID diagnostics, plus Ptex materials, retain direct draws because
+  each indirect command restarts `gl_PrimitiveID`.
 * **A lean vertex stage for static batches** (`mesh.vert` with
   `LUSDVIEW_STATIC_BATCH`). The deform shader read the joint, weight, influence,
   morph-offset and morph-influence vertex streams unconditionally, so every
@@ -2046,3 +2052,64 @@ scene that would not naturally need paging, set
 When authored mip levels are insufficient to keep every face represented, the
 fallback builder performs an additional bounded coarse resample; native source
 data remains available for requested-quality page upgrades.
+
+### AMD large-map hardware verification (2026-11-02)
+
+The current static-chunk audit was exercised on an AMD Radeon RX 9070 XT
+(16 GiB), RADV/Mesa 26.0.8, and Threadripper 1950X with host GPU device
+passthrough. A public Caldera map provided 476,100 mesh records, 39,402,788
+unique triangles and 162,715 instances, batched to 3,615 meshes. Tests used
+headless Vulkan at 1280×720, full payloads/full fidelity, profile and preview
+cache off, eight compose/conversion workers and 180 frames. The first 30 GPU
+samples were discarded; filesystem cache was uncontrolled.
+
+| Mode | Runs | Median GPU | Median loader | Median peak RSS |
+|---|---:|---:|---:|---:|
+| Default GPU skinning | 3 | 15.23 ms | 58.66 s | 15.09 GiB |
+| Raster LOD | 3 | 8.69 ms | 58.43 s | 14.71 GiB |
+| CPU skinning diagnostic | 1 | 22.68 ms | 64.20 s | 12.74 GiB |
+
+All seven benchmark processes completed with no truncation or swaps. Repeated
+captures within each three-run mode were identical. LOD substitutes proxies;
+its faster rendering trades detail. The auto-fit scene occupies a small part
+of the view because of conservative skin bounds, and this entry has one
+material/zero textures, so these numbers do not predict close-view or textured
+scene performance. CPU skinning was slower on this host; the older NVIDIA
+result alone does not justify baking every static skin automatically.
+These are current-tree measurements, not a before/after speedup measurement or
+progressive first-useful-frame timings. Local logs, exact commands, reports,
+images and binary metadata are in `build_ninja/bench-amd-20261102/`.
+
+A separate small-fixture CPU/GPU skinning comparison still fails its strict
+maximum-pixel threshold. With fixed 1280×800 dimensions, an empty config and no
+grid, only two pixels differ (mean 0.000154/255), but maximum channel delta is
+198 versus the allowed 128. Retain that unresolved gate instead of treating
+successful large-scene rendering as proof of complete hardware skinning parity.
+
+### Skin-only opaque draws (2026-11-02)
+
+Opaque skinned meshes without blendshapes now use a vertex variant that omits
+morph influence and sparse-morph offset/count inputs (12 bytes per vertex).
+It retains the existing skinning math and SkinWeights outputs. Morph-bearing,
+translucent and depth-only draws retain their corresponding pipelines; static
+and skin-only variants cannot override the wireframe depth fill. The omitted
+morph-influence AOV output is explicitly zero. Generated prototype LOD tails
+also skip per-mesh push constants and cull-state commands when no LOD will draw.
+
+A paired AMD RX 9070 XT/RADV run on the same 476,100-mesh-record map and
+1280×720 full-fidelity configuration above measured two runs per binary:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Median GPU frame | 15.23 ms | 14.49 ms |
+| Median per-run GPU p95 | 15.33 ms | 14.58 ms |
+| Median CPU record/submit | 4.95 ms | 4.90 ms |
+
+GPU time falls 4.86%; all four captures are byte-identical with unchanged scene
+counts, no proxies, and GPU skinning retained. No material CPU-record, load-time
+or memory improvement is claimed. The baseline executable, exact commands,
+individual logs/reports/images and aggregation are retained locally under
+`build_ninja/bench-amd-draw-opt/`. The new `lusdview-wire-depth-fill` image gate
+fails on the baseline and passes on the candidate. The deformation parity
+harness now disables the bounds-dependent grid overlay, which had produced
+identical false failures on both binaries despite matching CPU/GPU geometry.

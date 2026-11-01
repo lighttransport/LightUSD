@@ -54,6 +54,9 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
+    # Grid overlays are composited after the depth AOV and follow the posed
+    # scene bounds, so they can differ between CPU/GPU even for identical geometry.
+    # Exclude them from this geometry comparison, just like skeleton helpers.
     # The fixture may not contain the requested camera, in which case lusdview
     # auto-fits. Do not let a previous loader/run's ImGui camera layout change
     # that auto-fit and turn a geometry comparison into a view-state comparison.
@@ -63,7 +66,7 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
         pass
     cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--config", config,
-           "--no-skeleton",
+           "--no-skeleton", "--no-grid",
            "--screenshot", out,
            *backend, *extra, scene]
     timeout = float(e.get("LUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
