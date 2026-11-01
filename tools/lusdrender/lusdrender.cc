@@ -86,6 +86,7 @@ extern "C" {
 #include "lusdr_math.hh"
 #include "lusdr_types.hh"
 #include "lusdr_context.hh"
+#include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 #include "lusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
@@ -696,15 +697,31 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
                             const Options &opt, TextureCache &tc,
                             const lightusd::next::UsdPrim &prim,
                             GpuInstProto *out) {
+  uint32_t nv = 0;
+  std::vector<Vec3> vn;
+  bool perVertexN = false;
+  std::vector<float> generated_uvs;
+  if (lightusd::tydra::next::IsAnalyticGeomTypeName(prim.GetTypeName())) {
+    GeneratedMeshNext generated;
+    if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+      return false;
+    std::vector<float> normals;
+    ExpandGeneratedMeshCornersNext(generated, &out->verts, &normals,
+                                    &generated_uvs, &out->idx);
+    nv = uint32_t(out->verts.size() / 3);
+    vn.resize(nv);
+    for (size_t j = 0; j < size_t(nv); ++j)
+      vn[j] = Vec3{normals[j * 3], normals[j * 3 + 1], normals[j * 3 + 2]};
+    perVertexN = true;
+  } else {
   const lightusd::next::Value *val = prim.GetPropertyValue("points");
   if (!val) return false;
   const auto pts = val->as_float_array();
   if (!pts || pts->empty()) return false;
-  const uint32_t nv = uint32_t(pts->size() / 3);
+  nv = uint32_t(pts->size() / 3);
   out->verts.assign(pts.begin(), pts.end());
 
-  std::vector<Vec3> vn(nv, Vec3{0, 0, 0});
-  bool perVertexN = false;
+  vn.resize(nv, Vec3{0, 0, 0});
   val = prim.GetPropertyValue("normals");
   if (val) {
     const auto nrm = val->as_float_array();
@@ -737,6 +754,7 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
   } else {
     for (int v : *idx) out->idx.push_back(uint32_t(v));
   }
+  }
   // Drop any triangle that indexes a vertex out of range (the BLAS build sets
   // maxVertex = nv-1; an OOB index would corrupt traversal).
   for (size_t t = 0; t + 2 < out->idx.size(); t += 3)
@@ -752,7 +770,7 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
   // material's inputs:displacement (constant + scalar texture sampled with
   // primvars:st) and offset each vertex along its area-weighted smooth normal.
   if (opt.displace && opt.displace_scale != 0.0f) {
-    std::vector<float> uvs;
+    std::vector<float> uvs = std::move(generated_uvs);
     if (const lightusd::next::Value *uv = prim.GetPropertyValue("primvars:st")) {
       const auto u = uv->as_float_array();
       if (u && !u->empty()) uvs.assign(u.begin(), u.end());
@@ -1500,6 +1518,29 @@ int main(int argc, char **argv) {
         ResolveMeshMaterialCached(stage, prim, tc, material_cache, &job);
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
+        if (lightusd::tydra::next::IsAnalyticGeomTypeName(
+                prim.GetTypeName())) {
+          GeneratedMeshNext generated;
+          if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+            continue;
+          ExpandGeneratedMeshCornersNext(generated, &geo.positions,
+                                          &geo.normals, &geo.uvs, &geo.indices);
+          nv = uint32_t(geo.positions.size() / 3);
+          for (size_t j = 0; j < size_t(nv); ++j) {
+            const Vec3 point = TransformPoint(job.world, Vec3{
+                geo.positions[j * 3], geo.positions[j * 3 + 1],
+                geo.positions[j * 3 + 2]});
+            const Vec3 normal = TransformVector(job.world, Vec3{
+                geo.normals[j * 3], geo.normals[j * 3 + 1],
+                geo.normals[j * 3 + 2]});
+            geo.positions[j * 3] = point.x;
+            geo.positions[j * 3 + 1] = point.y;
+            geo.positions[j * 3 + 2] = point.z;
+            geo.normals[j * 3] = normal.x;
+            geo.normals[j * 3 + 1] = normal.y;
+            geo.normals[j * 3 + 2] = normal.z;
+          }
+        } else {
         const lightusd::next::Value *val = prim.GetPropertyValue("points");
         if (!val) continue;
         const auto pts = val->as_float_array();
@@ -1575,6 +1616,8 @@ int main(int argc, char **argv) {
               geo.indices.assign(idx->begin(), idx->end());
             }
           }
+        }
+
         }
 
         // Coarse displacement: resolve the bound material's inputs:displacement and

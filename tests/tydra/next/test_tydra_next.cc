@@ -1101,6 +1101,44 @@ class SelectiveStreamSink : public RetainedStreamSink {
   std::vector<GeometryInfo> inspected;
 };
 
+void TestAnalyticPrimitiveTime() {
+  std::cout << "Testing analytic primitive time evaluation...\n";
+  const char* usda = R"(#usda 1.0
+def Sphere "Ball" {
+    double radius = 0.75
+    double radius.timeSamples = {1: 0.5, 3: 1.5}
+}
+def Cube "Box" {
+    double size.timeSamples = {1: 2, 3: 4}
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  const double times[] = {std::numeric_limits<double>::quiet_NaN(), 1, 2, 3};
+  const double radii[] = {0.75, 0.5, 1, 1.5};
+  const double half_sizes[] = {1, 1, 1.5, 2};
+  for (size_t sample = 0; sample < 4; ++sample) {
+    ConverterConfig config;
+    config.time_code = times[sample];
+    config.mesh.sphere_subdivisions = 0;
+    RenderSceneConverter converter(config);
+    RenderMesh sphere, cube;
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Ball"), &sphere));
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Box"), &cube));
+    assert(!sphere.points.empty() && !cube.points.empty());
+    for (size_t i = 0; i + 2 < sphere.points.size(); i += 3) {
+      const double x = sphere.points[i], y = sphere.points[i + 1],
+                   z = sphere.points[i + 2];
+      assert(std::fabs(std::sqrt(x * x + y * y + z * z) - radii[sample]) < 1e-5);
+    }
+    for (float coordinate : cube.points)
+      assert(std::fabs(std::fabs(coordinate) - half_sizes[sample]) < 1e-5);
+  }
+  std::cout << "  Analytic primitive time evaluation: PASSED\n";
+}
+
 void TestRenderConverter() {
   std::cout << "Testing RenderConverter...\n";
 
@@ -8592,6 +8630,7 @@ int main() {
   std::cout << "\n";
 
   // Converter tests
+  TestAnalyticPrimitiveTime();
   TestRenderConverter();
   TestLowMemoryCustomPrimvarRetention();
   TestRenderConverterHalfGaussian();

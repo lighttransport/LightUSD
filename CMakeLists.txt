@@ -2457,6 +2457,15 @@ if(LIGHTUSD_BUILD_TESTS)
                          LABELS "lusdrender;cpu;gpu")
 
     add_test(
+      NAME tool-lusdrender-analytic-primitives
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_analytic_primitives.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/analytic-primitives)
+    set_tests_properties(tool-lusdrender-analytic-primitives PROPERTIES
+                         TIMEOUT 90 LABELS "lusdrender;cpu;geometry;regression")
+
+    add_test(
       NAME tool-lusdrender-materialx-cpu-graph
       COMMAND ${LUSDR_PYTHON}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_cpu_graph.py

@@ -17,6 +17,29 @@
   serialized LRTS BVH bit-for-bit identically to the Vulkan compute path
   (`-hip` ≈ `-vk`). Verified on AMD Radeon RX 9070 XT (gfx1201).
 
+## Analytic geometry regression
+
+The next-loader CPU and GPU paths tessellate Cube, Sphere, Cone, Cylinder,
+Capsule, and Plane primitives through the shared Tydra converter. Schema defaults,
+time-sampled dimensions, generated normals/UVs, payload transforms, and native
+and point instancing are preserved. Animated dimensions invalidate CPU geometry
+between frames.
+
+Run the bounded regression without loading external large scenes:
+
+```sh
+ctest --test-dir build_ninja -R '^tool-lusdrender-analytic-primitives$' --output-on-failure
+python3 tools/lusdrender/check_analytic_primitives.py \
+  build_ninja/lusdview_lightrt_c_build/lusdrender /tmp/analytic-gpu \
+  --backends vk,vkr --require-hardware
+```
+
+The hardware check requires GPU device access and runs without a display.
+Generated UV texture sampling is checked on CPU and compute. The descriptor
+ray-query path currently drops PreviewSurface texture connections, including on
+authored Meshes; its analytic regression checks geometry and constant materials
+but does not assert textured color parity.
+
 ## Shared lusdview RT materials (Vulkan, CUDA, and HIP)
 
 `-cuda`, `-vkr`, and the default `-hip` mode use the GUI-free RT core shared with

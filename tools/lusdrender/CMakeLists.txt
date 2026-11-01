@@ -160,6 +160,7 @@ add_executable(lusdrender
   lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
+  lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
@@ -297,6 +298,7 @@ set(LUSDRENDER_CXX_SOURCES
   lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
+  lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc

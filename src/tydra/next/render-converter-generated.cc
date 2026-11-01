@@ -14,9 +14,13 @@ using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
 namespace {
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
-                          double fallback) {
-  double d = fallback;
-  if (GetDouble(prim, name, &d)) return d;
+                          double fallback, double time) {
+  const Value* authored = prim.GetPropertyValue(name);
+  const Value value = std::isnan(time)
+      ? (authored ? *authored : Value())
+      : prim.GetInterpolatedValue(name, time);
+  if (const double* number = value.as_double()) return *number;
+  if (const float* number = value.as_float()) return *number;
   return fallback;
 }
 
@@ -195,21 +199,21 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
     }
   } else if (type == "Cube") {
     ::lightusd::tydra::GenerateCubeMesh(
-        ReadDoubleProperty(prim, "size", 2.0), points, face_counts,
+        ReadDoubleProperty(prim, "size", 2.0, config_.time_code), points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
     ::lightusd::tydra::GenerateIcosphereMesh(
         // USD's Sphere.radius default is 1 (Cube.size is 2). Normally the
         // schema registry supplies it and this fallback never fires.
-        ReadDoubleProperty(prim, "radius", 1.0),
+        ReadDoubleProperty(prim, "radius", 1.0, config_.time_code),
         std::max(0, std::min(config_.mesh.sphere_subdivisions, 6)), points,
         face_counts,
         face_indices, normals, uvs);
   } else if (type == "Cylinder" || type == "Cylinder_1") {
-    double radius = ReadDoubleProperty(prim, "radius", 1.0);
+    double radius = ReadDoubleProperty(prim, "radius", 1.0, config_.time_code);
     if (type == "Cylinder_1") {
-      const double rt = ReadDoubleProperty(prim, "radiusTop", 1.0);
-      const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0);
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 1.0, config_.time_code);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0, config_.time_code);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
         AddWarning("Cylinder_1 '" + prim.GetPath().str() +
@@ -217,19 +221,19 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
       }
     }
     ::lightusd::tydra::GenerateCylinderMesh(
-        radius, ReadDoubleProperty(prim, "height", 2.0), 24, 1, points,
+        radius, ReadDoubleProperty(prim, "height", 2.0, config_.time_code), 24, 1, points,
         face_counts, face_indices, normals, uvs);
   } else if (type == "Cone") {
     ::lightusd::tydra::GenerateConeMesh(
-        ReadDoubleProperty(prim, "radius", 1.0),
-        ReadDoubleProperty(prim, "height", 2.0), 24, points, face_counts,
+        ReadDoubleProperty(prim, "radius", 1.0, config_.time_code),
+        ReadDoubleProperty(prim, "height", 2.0, config_.time_code), 24, points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Capsule" || type == "Capsule_1") {
-    double radius = ReadDoubleProperty(prim, "radius", 0.5);
-    double height = ReadDoubleProperty(prim, "height", type == "Capsule_1" ? 1.0 : 2.0);
+    double radius = ReadDoubleProperty(prim, "radius", 0.5, config_.time_code);
+    double height = ReadDoubleProperty(prim, "height", type == "Capsule_1" ? 1.0 : 2.0, config_.time_code);
     if (type == "Capsule_1") {
-      const double rt = ReadDoubleProperty(prim, "radiusTop", 0.5);
-      const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5);
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 0.5, config_.time_code);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5, config_.time_code);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
         AddWarning("Capsule_1 '" + prim.GetPath().str() +
@@ -241,8 +245,8 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
                                            uvs);
   } else if (type == "Plane") {
     ::lightusd::tydra::GeneratePlaneMesh(
-        ReadDoubleProperty(prim, "width", 2.0),
-        ReadDoubleProperty(prim, "length", 2.0), 1, 1, points, face_counts,
+        ReadDoubleProperty(prim, "width", 2.0, config_.time_code),
+        ReadDoubleProperty(prim, "length", 2.0, config_.time_code), 1, 1, points, face_counts,
         face_indices, normals, uvs);
   } else {
     SetLastError("Unsupported analytic geom prim");

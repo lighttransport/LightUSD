@@ -36,6 +36,7 @@
 #include "tydra/vol/volume-field.hh"
 #include "usdVol.hh"
 #include "lusdr_context.hh"
+#include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
 
 namespace lusdr {
@@ -347,9 +348,22 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   lightusd::tydra::next::ValueArrayRead<float> points;
   lightusd::tydra::next::ValueArrayRead<int32_t> counts;
   lightusd::tydra::next::ValueArrayRead<int32_t> indices;
-  ReadFloatArrayViewLazy(prim, "points", time, &points);
-  ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
-  ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
+  GeneratedMeshNext generated;
+  const bool analytic = lightusd::tydra::next::IsAnalyticGeomTypeName(
+      prim.GetTypeName());
+  if (analytic) {
+    if (!stage || !GenerateAnalyticMeshNext(*stage, prim, time, &generated)) {
+      stats->skipped_meshes++;
+      return;
+    }
+    points.view = {generated.points.data(), generated.points.size(), false};
+    counts.view = {generated.counts.data(), generated.counts.size(), false};
+    indices.view = {generated.indices.data(), generated.indices.size(), false};
+  } else {
+    ReadFloatArrayViewLazy(prim, "points", time, &points);
+    ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
+    ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
+  }
   if (points.empty() || counts.empty() || indices.empty()) {
     stats->skipped_meshes++;
     return;
@@ -405,7 +419,11 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
         }
       }
     }
-    if (!st.empty()) {
+    if (st.empty() && analytic && !generated.uvs.empty()) {
+      st = generated.uvs;
+      st_facevarying = generated.uvs_facevarying;
+      have_st = true;
+    } else if (!st.empty()) {
       st_indices = ReadIntArrayLazy(
           prim, ("primvars:" + st_name + ":indices").c_str(), time);
       const size_t uv_count =
@@ -601,8 +619,12 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   if (want_normals && !do_displace) {
     nrm = ReadFloatArrayLazy(prim, "normals", time);
     if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
+    if (nrm.empty() && analytic) {
+      nrm = generated.normals;
+      nrm_mode = generated.normals_facevarying ? 2 : 1;
+    }
     const size_t nn = nrm.size() / 3;
-    if (nn == npts) nrm_mode = 1;
+    if (nrm_mode == 0 && nn == npts) nrm_mode = 1;
     else if (nn == indices.size()) nrm_mode = 2;
   }
   // World-space normal for face-vertex slot `fv` (point index `pi`); `geom` is the
@@ -2322,6 +2344,12 @@ bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim) {
 // active.
 bool GeometryPrimHasAnimatedData(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
+  if (lightusd::tydra::next::IsAnalyticGeomTypeName(type)) {
+    for (const char *name : {"size", "radius", "height", "width", "length",
+                             "radiusTop", "radiusBottom"}) {
+      if (prim.HasTimeSamples(name)) return true;
+    }
+  }
   if (type == "Mesh") {
     const std::vector<lightusd::next::Path> *blend_targets =
         prim.GetRelationship("skel:blendShapeTargets");
@@ -2359,7 +2387,7 @@ bool GeometryPrimHasAnimatedData(const lightusd::next::UsdPrim &prim) {
 
 bool IsRenderableGeometryPrim(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
-  return type == "Mesh" || type == "BasisCurves" ||
+  return IsTriangleMeshNext(prim) || type == "BasisCurves" ||
          type == "HermiteCurves" || type == "NurbsCurves" || type == "Points" ||
          type == "ParticleField3DGaussianSplat" || type == "ParticleField" ||
          type == "PointInstancer" || type == "UsdGeomPointInstancer";
@@ -2527,7 +2555,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
       return;
     }
   }
-  if (prim.GetTypeName() == "Mesh" &&
+  if (IsTriangleMeshNext(prim) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
@@ -2664,7 +2692,7 @@ static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
   static const std::vector<std::string> kNoMask;
   // A prototype root may itself be a Mesh (a PointInstancer/native prototype can
   // point straight at one); collect it at identity too.
-  if (proto.GetTypeName() == "Mesh") {
+  if (IsTriangleMeshNext(proto)) {
     MeshJobNext j;
     j.prim = proto;
     j.world = matrix4d::identity();
@@ -4366,7 +4394,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
     return;
   }
 
-  if (prim.GetTypeName() == "Mesh" &&
+  if (IsTriangleMeshNext(prim) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     MeshJobNext job;
     job.prim = prim;
@@ -4526,7 +4554,7 @@ void CollectProtoJobs(const lightusd::next::Stage &stage,
   // A prototype root is placed at identity (its own transform is replaced by the
   // instance transform), but if the prototype prim IS a Mesh (a PointInstancer
   // prototype can point straight at a Mesh) it must still be collected.
-  if (proto.GetTypeName() == "Mesh") {
+  if (IsTriangleMeshNext(proto)) {
     MeshJobNext job;
     job.prim = proto;
     job.world = matrix4d::identity();
@@ -4873,12 +4901,13 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
   return true;
 }
 
-// Upper bound on the triangles a mesh job emits: the fan-triangulation count
-// (sum of max(0, c-2) over faceVertexCounts). Invalid/degenerate/purpose-culled
-// triangles only reduce the actual count, so this never under-reserves -- used to
-// reserve the stream output up front so the chunked append never reallocates.
+// Estimate triangles before streaming. Authored meshes use their face counts;
+// common generated shapes have fixed topology. Other analytic shapes reserve
+// their exact per-job output after tessellation, rather than inventing Mesh arrays.
 inline size_t EstimateTrisForJob(const lightusd::next::UsdPrim &prim,
                                  double time) {
+  if (prim.GetTypeName() == "Cube") return 12;
+  if (prim.GetTypeName() == "Sphere") return 5120;  // shared subdivision level 4
   const std::vector<int32_t> counts =
       ReadIntArrayLazy(prim, "faceVertexCounts", time);
   size_t est = 0;

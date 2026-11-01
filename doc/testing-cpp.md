@@ -3187,3 +3187,13 @@ structured diagnostic codes; JSON summaries and HTML filters distinguish
 unsupported geometry, MaterialX failures, context/device failures and visual
 threshold failures. These details and the profile configuration rules are in
 the tool README.
+
+
+### Analytic primitive renderer coverage
+
+`tool-lusdrender-analytic-primitives` checks schema-default Cube/Sphere geometry,
+payload material bindings and transforms, native and point instances, masks,
+visibility/purpose, generated UVs, and animated radius/BVH invalidation. It uses
+small generated fixtures and requires no external assets. The Tydra next suite
+also checks default-time and interpolated analytic dimensions. See
+[headless GPU commands and the ray-query texture limitation](lusdrender.md#analytic-geometry-regression).
