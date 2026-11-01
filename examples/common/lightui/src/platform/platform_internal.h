@@ -22,6 +22,9 @@
  * larger struct, then casting to/from lui_window_t *.
  * ------------------------------------------------------------------------- */
 struct lui_window_s {
+    bool           external_render; /* caller owns the native surface */
+    uintptr_t      native_window;   /* HWND on Win32, 0 if unavailable */
+    int            native_kind;     /* lui_native_kind_t               */
     lvg_surface_t  surface;       /* backing pixel buffer               */
     int            logical_w;     /* logical (CSS-pixel) width          */
     int            logical_h;     /* logical height                     */
@@ -58,6 +61,9 @@ typedef struct {
                                           const lvg_rect_t *dirty);
     bool           (*window_poll_event)(lui_window_t *win, lui_event_t *ev);
     bool           (*window_wait_event)(lui_window_t *win, lui_event_t *ev);
+    /** Optional: file drag-and-drop from the OS (NULL => unsupported). */
+    void           (*window_set_file_drop)(lui_window_t *win, bool enabled);
+    char *         (*window_take_dropped_file)(lui_window_t *win);
 } lui_platform_ops_t;
 
 /*

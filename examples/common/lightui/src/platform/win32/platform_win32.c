@@ -31,6 +31,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,11 @@ typedef struct {
 
     int           last_mouse_x;
     int           last_mouse_y;
+
+    /* Dropped file paths (UTF-8) waiting for lui_window_take_dropped_file(). */
+    char        **drops;
+    int           drop_count;
+    int           drop_cap;
 } lui_window_win32_t;
 
 static void win32_push_event(lui_window_win32_t *ww, const lui_event_t *ev)
@@ -166,6 +172,10 @@ static LRESULT CALLBACK lui_wndproc(HWND hwnd, UINT msg,
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+        if (ww->base.external_render) {
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
         /* Present pixel buffer via DIB section */
         int w = ww->base.surface.width;
         int h = ww->base.surface.height;
@@ -282,6 +292,42 @@ static LRESULT CALLBACK lui_wndproc(HWND hwnd, UINT msg,
         return 0;
     }
 
+    case WM_DROPFILES: {
+        HDROP drop = (HDROP)wp;
+        UINT n = DragQueryFileW(drop, 0xFFFFFFFFu, NULL, 0);
+        for (UINT i = 0; i < n; ++i) {
+            UINT len = DragQueryFileW(drop, i, NULL, 0);
+            WCHAR *wide = (WCHAR *)malloc(((size_t)len + 1) * sizeof(WCHAR));
+            if (!wide)
+                break;
+            DragQueryFileW(drop, i, wide, len + 1);
+            int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, -1, NULL, 0, NULL, NULL);
+            char *utf8 = bytes > 0 ? (char *)malloc((size_t)bytes) : NULL;
+            if (utf8)
+                WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, bytes, NULL, NULL);
+            free(wide);
+            if (!utf8)
+                continue;
+            if (ww->drop_count == ww->drop_cap) {
+                int cap = ww->drop_cap ? ww->drop_cap * 2 : 4;
+                char **grown = (char **)realloc(ww->drops, (size_t)cap * sizeof(char *));
+                if (!grown) {
+                    free(utf8);
+                    continue;
+                }
+                ww->drops = grown;
+                ww->drop_cap = cap;
+            }
+            ww->drops[ww->drop_count++] = utf8;
+            lui_event_t drop_ev;
+            memset(&drop_ev, 0, sizeof(drop_ev));
+            drop_ev.type = LUI_EVENT_FILE_DROP;
+            win32_push_event(ww, &drop_ev);
+        }
+        DragFinish(drop);
+        return 0;
+    }
+
     case WM_SETFOCUS:
         memset(&ev, 0, sizeof(ev));
         ev.type = LUI_EVENT_WINDOW_FOCUS_IN;
@@ -378,6 +424,8 @@ static lui_window_t *win32_window_create(const char *title,
         return NULL;
     }
 
+    ww->base.native_kind = 3; /* LUI_NATIVE_WIN32 */
+    ww->base.native_window = (uintptr_t)ww->hwnd;
     SetWindowLongPtrW(ww->hwnd, GWLP_USERDATA, (LONG_PTR)ww);
     ww->hdc = GetDC(ww->hwnd);
 
@@ -393,6 +441,8 @@ static void win32_window_destroy(lui_window_t *win)
     if (!ww) return;
     if (ww->hdc)  ReleaseDC(ww->hwnd, ww->hdc);
     if (ww->hwnd) DestroyWindow(ww->hwnd);
+    for (int i = 0; i < ww->drop_count; ++i) free(ww->drops[i]);
+    free(ww->drops);
     free(ww->base.surface.pixels);
     ww->base.surface.pixels = NULL;
     free(ww);
@@ -501,6 +551,24 @@ static bool win32_window_wait_event(lui_window_t *win, lui_event_t *ev)
 /* -------------------------------------------------------------------------
  * Platform ops table
  * ------------------------------------------------------------------------- */
+static void win32_window_set_file_drop(lui_window_t *win, bool enabled)
+{
+    lui_window_win32_t *ww = (lui_window_win32_t *)win;
+    if (ww && ww->hwnd)
+        DragAcceptFiles(ww->hwnd, enabled ? TRUE : FALSE);
+}
+
+static char *win32_window_take_dropped_file(lui_window_t *win)
+{
+    lui_window_win32_t *ww = (lui_window_win32_t *)win;
+    if (!ww || ww->drop_count == 0)
+        return NULL;
+    char *first = ww->drops[0];
+    memmove(ww->drops, ww->drops + 1, (size_t)(ww->drop_count - 1) * sizeof(char *));
+    --ww->drop_count;
+    return first;
+}
+
 const lui_platform_ops_t lui_platform_ops = {
     .init                    = win32_init,
     .shutdown                = win32_shutdown,
@@ -516,6 +584,8 @@ const lui_platform_ops_t lui_platform_ops = {
     .window_present_rect     = win32_window_present_rect,
     .window_poll_event       = win32_window_poll_event,
     .window_wait_event       = win32_window_wait_event,
+    .window_set_file_drop    = win32_window_set_file_drop,
+    .window_take_dropped_file = win32_window_take_dropped_file,
 };
 
 #endif /* LUI_PLATFORM_WIN32 */
