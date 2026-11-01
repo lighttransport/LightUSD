@@ -1066,9 +1066,20 @@ endif()
 option(LIGHTUSD_NEXT_BUILD_LMETALVIEW
        "Build the native macOS Swift+Metal USD viewer example 'lmetalview'"
        ${LIGHTUSD_NEXT_BUILD_EXAMPLES})
-if(LIGHTUSD_NEXT_BUILD_LMETALVIEW AND LIGHTUSD_WITH_TYDRA AND
-   CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+# Native Windows Direct3D 12 viewer (lightui window, shares lmetalview's core).
+option(LIGHTUSD_NEXT_BUILD_LD3D12VIEW
+       "Build the native Windows Direct3D 12 USD viewer example 'ld3d12view'"
+       ${LIGHTUSD_NEXT_BUILD_EXAMPLES})
+
+# On Windows only the portable C++ core is built for lmetalview; it is also
+# what ld3d12view links, so build it when either viewer is requested.
+if((LIGHTUSD_NEXT_BUILD_LMETALVIEW OR
+    (LIGHTUSD_NEXT_BUILD_LD3D12VIEW AND WIN32)) AND LIGHTUSD_WITH_TYDRA AND
+   (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR WIN32))
     add_subdirectory(../../examples/lmetalview lmetalview_example)
+endif()
+if(LIGHTUSD_NEXT_BUILD_LD3D12VIEW AND LIGHTUSD_WITH_TYDRA AND WIN32)
+    add_subdirectory(../../examples/ld3d12view ld3d12view_example)
 endif()
 
 # Native MJCF -> USD converter on the next converter and writers (the same
