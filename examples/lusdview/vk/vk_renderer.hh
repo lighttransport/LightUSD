@@ -204,17 +204,25 @@ class VulkanRenderer final : public Renderer {
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
     VkDeviceMemory vboMem{VK_NULL_HANDLE};
+    // Persistent host mapping when the buffer is pool-suballocated (*Mem stays
+    // VK_NULL_HANDLE then): CPU skinning and the RT deform rewrite these
+    // vertices through the pointer instead of vkMapMemory, which also lets
+    // dynamic meshes join the shared pool instead of paying one allocation
+    // each.
+    void* vboMapped{nullptr};
     // Optional ray-tracing vertex buffer: the BLAS + ray-query hit read this
     // (via vboAddr) for displacement-baked or dynamically-skinned RT geometry,
     // while the raster path keeps using `vbo` as rest geometry.
     VkBuffer vboDisp{VK_NULL_HANDLE};
     VkDeviceMemory vboDispMem{VK_NULL_HANDLE};
+    void* vboDispMapped{nullptr};
     VkBuffer jointVbo{VK_NULL_HANDLE};
     VkDeviceMemory jointVboMem{VK_NULL_HANDLE};
     VkBuffer weightVbo{VK_NULL_HANDLE};
     VkDeviceMemory weightVboMem{VK_NULL_HANDLE};
     VkBuffer influenceVbo{VK_NULL_HANDLE};
     VkDeviceMemory influenceVboMem{VK_NULL_HANDLE};
+    void* influenceVboMapped{nullptr};
     VkBuffer uv1Vbo{VK_NULL_HANDLE};         // 2nd texcoord set (binding 4, vec2/vtx)
     VkDeviceMemory uv1VboMem{VK_NULL_HANDLE};
     VkBuffer morphInflVbo{VK_NULL_HANDLE};   // blendshape influence (binding 5, float/vtx)
@@ -518,6 +526,9 @@ class VulkanRenderer final : public Renderer {
   // populated slots untouched (std::vector::resize only fills NEW entries).
   void growTextureSlots(int textureCount);
 
+  const VkPhysicalDeviceMemoryProperties& memoryProperties() const;
+  mutable VkPhysicalDeviceMemoryProperties memProps_{};
+  mutable bool memPropsCached_{false};
   uint32_t findMemoryTypeOrInvalid(uint32_t typeBits,
                                   VkMemoryPropertyFlags props) const;
   // Latched once a device-local host-visible allocation fails (small BAR full),
@@ -577,13 +588,33 @@ class VulkanRenderer final : public Renderer {
   // so one submit per buffer would stall the streaming upload path once per mesh.
   // Flushed on a byte threshold, before any BLAS build, and before each frame.
   struct PendingBufferUpload {
+    // A null `staging` means the source is a slice of `stagingRing_` starting
+    // at `stagingOffset`; otherwise this upload owns a dedicated staging
+    // buffer.
     VkBuffer staging{VK_NULL_HANDLE};
     VkDeviceMemory stagingMem{VK_NULL_HANDLE};
+    VkDeviceSize stagingOffset{0};
     VkBuffer dst{VK_NULL_HANDLE};
     VkDeviceSize size{0};
   };
   std::vector<PendingBufferUpload> pendingUploads_;
   VkDeviceSize pendingUploadBytes_{0};
+  // One persistently mapped host ring feeds every staged copy. A dedicated
+  // VkBuffer + VkDeviceMemory per attribute buffer made the allocation storm
+  // the dominant cost of loading a scene built from many mid-sized meshes; the
+  // ring turns each upload into a memcpy into a mapped slice plus a recorded
+  // copy region, with a single vkAllocateMemory for the whole scene.
+  VkBuffer stagingRing_{VK_NULL_HANDLE};
+  VkDeviceMemory stagingRingMem_{VK_NULL_HANDLE};
+  VkDeviceSize stagingRingSize_{0};
+  VkDeviceSize stagingRingUsed_{0};
+  void* stagingRingMapped_{nullptr};
+  bool ensureStagingRing(VkDeviceSize need);
+  void destroyStagingRing();
+  // Copy `size` bytes into the ring and return its ring offset. False means the
+  // caller must stage the data itself (odd size or an oversized request).
+  bool stageInRing(VkDeviceSize size, const void* data,
+                   VkDeviceSize* outOffset);
   void flushPendingUploads();
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,

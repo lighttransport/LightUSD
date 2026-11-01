@@ -903,10 +903,23 @@ VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
 // Like findMemoryType, but reports "no such heap" instead of falling back to
 // type 0 -- the caller needs to know whether the properties were really met.
+//
+// The physical-device memory properties are invariant for the device's life,
+// and scene upload calls these once per attribute buffer. Re-querying them cost
+// ~25 us a call on RADV -- seconds across a scene with tens of thousands of
+// buffers -- so they are cached on first use.
+const VkPhysicalDeviceMemoryProperties& VulkanRenderer::memoryProperties()
+    const {
+  if (!memPropsCached_) {
+    vkGetPhysicalDeviceMemoryProperties(phys_, &memProps_);
+    memPropsCached_ = true;
+  }
+  return memProps_;
+}
+
 uint32_t VulkanRenderer::findMemoryTypeOrInvalid(uint32_t typeBits,
                                                 VkMemoryPropertyFlags props) const {
-  VkPhysicalDeviceMemoryProperties mp;
-  vkGetPhysicalDeviceMemoryProperties(phys_, &mp);
+  const VkPhysicalDeviceMemoryProperties& mp = memoryProperties();
   for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
     if ((typeBits & (1u << i)) &&
         (mp.memoryTypes[i].propertyFlags & props) == props) {
@@ -918,8 +931,7 @@ uint32_t VulkanRenderer::findMemoryTypeOrInvalid(uint32_t typeBits,
 
 uint32_t VulkanRenderer::findMemoryType(uint32_t typeBits,
                                         VkMemoryPropertyFlags props) const {
-  VkPhysicalDeviceMemoryProperties mp;
-  vkGetPhysicalDeviceMemoryProperties(phys_, &mp);
+  const VkPhysicalDeviceMemoryProperties& mp = memoryProperties();
   for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
     if ((typeBits & (1u << i)) &&
         (mp.memoryTypes[i].propertyFlags & props) == props) {
@@ -1118,6 +1130,7 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
   }
 
   phys_ = best->device;
+  memPropsCached_ = false;  // re-query for the chosen physical device
   queueFamily_ = best->queueFamily;
   caps_.gpu_name = best->props.deviceName;
   caps_.device_type = DeviceTypeName(best->props.deviceType);
@@ -6605,8 +6618,8 @@ void VulkanRenderer::flushPendingUploads() {
   if (pendingUploads_.empty()) return;
   VkCommandBuffer cb = beginOneShot();
   for (const PendingBufferUpload& u : pendingUploads_) {
-    VkBufferCopy c{0, 0, u.size};
-    vkCmdCopyBuffer(cb, u.staging, u.dst, 1, &c);
+    VkBufferCopy c{u.stagingOffset, 0, u.size};
+    vkCmdCopyBuffer(cb, u.staging ? u.staging : stagingRing_, u.dst, 1, &c);
   }
   endOneShot(cb);
   for (const PendingBufferUpload& u : pendingUploads_) {
@@ -6615,6 +6628,90 @@ void VulkanRenderer::flushPendingUploads() {
   }
   pendingUploads_.clear();
   pendingUploadBytes_ = 0;
+  // endOneShot waited for the copy to retire, so ring slices are free again.
+  stagingRingUsed_ = 0;
+}
+
+void VulkanRenderer::destroyStagingRing() {
+  if (stagingRingMapped_ && stagingRingMem_) {
+    vkUnmapMemory(device_, stagingRingMem_);
+  }
+  stagingRingMapped_ = nullptr;
+  if (stagingRing_) vkDestroyBuffer(device_, stagingRing_, nullptr);
+  stagingRing_ = VK_NULL_HANDLE;
+  if (stagingRingMem_) vkFreeMemory(device_, stagingRingMem_, nullptr);
+  stagingRingMem_ = VK_NULL_HANDLE;
+  stagingRingSize_ = 0;
+  stagingRingUsed_ = 0;
+}
+
+bool VulkanRenderer::ensureStagingRing(VkDeviceSize need) {
+  if (stagingRing_ && stagingRingSize_ >= need) return true;
+  destroyStagingRing();
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = need;
+  bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, &stagingRing_) != VK_SUCCESS) {
+    stagingRing_ = VK_NULL_HANDLE;
+    return false;
+  }
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(device_, stagingRing_, &req);
+  const uint32_t type = findMemoryTypeOrInvalid(
+      req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (type == UINT32_MAX) {
+    destroyStagingRing();
+    return false;
+  }
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = req.size;
+  ai.memoryTypeIndex = type;
+  if (vkAllocateMemory(device_, &ai, nullptr, &stagingRingMem_) != VK_SUCCESS) {
+    stagingRingMem_ = VK_NULL_HANDLE;
+    destroyStagingRing();
+    return false;
+  }
+  if (vkBindBufferMemory(device_, stagingRing_, stagingRingMem_, 0) !=
+      VK_SUCCESS) {
+    destroyStagingRing();
+    return false;
+  }
+  if (vkMapMemory(device_, stagingRingMem_, 0, VK_WHOLE_SIZE, 0,
+                  &stagingRingMapped_) != VK_SUCCESS) {
+    stagingRingMapped_ = nullptr;
+    destroyStagingRing();
+    return false;
+  }
+  stagingRingSize_ = need;
+  stagingRingUsed_ = 0;
+  return true;
+}
+
+bool VulkanRenderer::stageInRing(VkDeviceSize size, const void* data,
+                                 VkDeviceSize* outOffset) {
+  // Buffer copies are only guaranteed for 4-byte-multiple ranges, and one
+  // request larger than the ring would defeat its bounded footprint.
+  static constexpr VkDeviceSize kRingBytes = 64ull * 1024 * 1024;
+  static constexpr VkDeviceSize kMaxRequest = 256ull * 1024 * 1024;
+  if (!data || size == 0 || (size & 3u) != 0 || size > kMaxRequest)
+    return false;
+  if (!ensureStagingRing(kRingBytes)) return false;
+  constexpr VkDeviceSize kAlign = 16;
+  VkDeviceSize off = (stagingRingUsed_ + kAlign - 1) & ~(kAlign - 1);
+  if (off > stagingRingSize_ || size > stagingRingSize_ - off) {
+    // Retire the queued copies and start over at the front of the ring.
+    flushPendingUploads();
+    off = 0;
+  }
+  std::memcpy(static_cast<char*>(stagingRingMapped_) + off, data,
+              static_cast<size_t>(size));
+  stagingRingUsed_ = off + size;
+  if (outOffset) *outOffset = off;
+  return true;
 }
 
 // True DEVICE_LOCAL buffer, block-pooled, filled through a batched staging copy.
@@ -6647,18 +6744,22 @@ bool VulkanRenderer::createDeviceLocalPooledBuffer(VkDeviceSize size,
     return false;  // caller falls back to the host path
   }
   vkBindBufferMemory(device_, *buf, blockMem, off);
-  // Staging source: plain host memory (createHostBuffer keeps TRANSFER_SRC-only
-  // buffers off the device-local heap), queued for a batched copy.
+  // Staging source: the mapped host ring when the request fits, else a
+  // dedicated host buffer. Both are queued for one batched copy in
+  // flushPendingUploads.
   VkBuffer stg = VK_NULL_HANDLE;
   VkDeviceMemory stgMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg, &stgMem)) {
+  VkDeviceSize stgOff = 0;
+  if (!stageInRing(size, data, &stgOff) &&
+      !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg,
+                        &stgMem)) {
     vkDestroyBuffer(device_, *buf, nullptr);
     *buf = VK_NULL_HANDLE;
     return false;
   }
   ++devLocalBufCount_;
   devLocalBufBytes_ += size;
-  pendingUploads_.push_back({stg, stgMem, *buf, size});
+  pendingUploads_.push_back({stg, stgMem, stgOff, *buf, size});
   pendingUploadBytes_ += size;
   static constexpr VkDeviceSize kUploadFlushBytes = 64ull * 1024 * 1024;
   if (pendingUploadBytes_ >= kUploadFlushBytes) flushPendingUploads();
@@ -7127,6 +7228,7 @@ void VulkanRenderer::destroyScene() {
   // vkFreeMemory calls above were no-ops).
   freeHostPool();
   freeDevicePool();
+  destroyStagingRing();
   matColor_.clear();
   matLightRt_.clear();
   lightParams_.clear();
@@ -8590,18 +8692,24 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   if (gm.vbo == VK_NULL_HANDLE || verts.size() != gm.vertexCount) return;
   // RT skinning updates the RT-only vertex buffer when present, so raster keeps
   // its rest-pose VBO for shader skinning/morphing when RT is toggled off.
-  VkDeviceMemory targetMem = (rtActive_ && gm.vboDisp != VK_NULL_HANDLE)
-                                 ? gm.vboDispMem
-                                 : gm.vboMem;
-  if (targetMem == VK_NULL_HANDLE) return;
+  const bool displaced = rtActive_ && gm.vboDisp != VK_NULL_HANDLE;
+  VkDeviceMemory targetMem = displaced ? gm.vboDispMem : gm.vboMem;
+  // Pooled buffers carry a persistent mapping; only dedicated ones need a map.
+  void* persistent = displaced ? gm.vboDispMapped : gm.vboMapped;
+  if (targetMem == VK_NULL_HANDLE && !persistent) return;
   // GPU morph is gated to the non-RT path; RT updates are live BLAS input. Wait
   // idle (as uploadSkinningFrame does) before rewriting host-visible vertices.
   vkDeviceWaitIdle(device_);
-  void* mapped = nullptr;
   const VkDeviceSize bytes = verts.size() * sizeof(DrawVertex);
-  if (vkMapMemory(device_, targetMem, 0, bytes, 0, &mapped) != VK_SUCCESS) return;
-  std::memcpy(mapped, verts.data(), static_cast<size_t>(bytes));
-  vkUnmapMemory(device_, targetMem);
+  if (persistent) {
+    std::memcpy(persistent, verts.data(), static_cast<size_t>(bytes));
+  } else {
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, targetMem, 0, bytes, 0, &mapped) != VK_SUCCESS)
+      return;
+    std::memcpy(mapped, verts.data(), static_cast<size_t>(bytes));
+    vkUnmapMemory(device_, targetMem);
+  }
   finishMeshVertexUpdate(gm, verts);
 }
 
@@ -8653,6 +8761,7 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
     const std::vector<DrawVertex>* vertices{nullptr};
     VkDeviceMemory memory{VK_NULL_HANDLE};
     void* mapped{nullptr};
+    bool persistent{false};  // mapped points into the pool, not a vkMapMemory
     VkBuffer replacementBuffer{VK_NULL_HANDLE};
     VkDeviceMemory replacementMemory{VK_NULL_HANDLE};
   };
@@ -8733,7 +8842,8 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
   mdiInstPendingCol_.reserve(mdiInstPendingCol_.size() + mdi_color_updates);
   auto discard = [&]() {
     for (PendingMap& pending : maps) {
-      if (pending.mapped) vkUnmapMemory(device_, pending.memory);
+      if (pending.mapped && !pending.persistent)
+        vkUnmapMemory(device_, pending.memory);
       pending.mapped = nullptr;
       if (pending.replacementBuffer)
         vkDestroyBuffer(device_, pending.replacementBuffer, nullptr);
@@ -8748,11 +8858,17 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
     VkMeshGPU& mesh = meshes_[update.meshIndex];
     const bool displaced = rtActive_ && mesh.vboDisp != VK_NULL_HANDLE;
     const VkDeviceMemory memory = displaced ? mesh.vboDispMem : mesh.vboMem;
+    void* persistent = displaced ? mesh.vboDispMapped : mesh.vboMapped;
     PendingMap pending;
     pending.mesh = &mesh;
     pending.vertices = update.vertices;
     pending.memory = memory;
-    if (memory == VK_NULL_HANDLE) {
+    if (persistent) {
+      // Pool-suballocated: rewrite through the persistent mapping after the
+      // batch's single idle wait. No map/unmap and no replacement allocation.
+      pending.mapped = persistent;
+      pending.persistent = true;
+    } else if (memory == VK_NULL_HANDLE) {
       VkBufferUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
       if (rtSupported_) {
         usage |=
@@ -8773,7 +8889,7 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
 
   if (!maps.empty()) vkDeviceWaitIdle(device_);
   for (PendingMap& pending : maps) {
-    if (pending.replacementBuffer) continue;
+    if (pending.replacementBuffer || pending.persistent) continue;
     const VkDeviceSize bytes =
         pending.vertices->size() * sizeof(DrawVertex);
     if (vkMapMemory(device_, pending.memory, 0, bytes, 0,
@@ -8789,7 +8905,7 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
     if (pending.replacementBuffer) continue;
     std::memcpy(pending.mapped, pending.vertices->data(),
                 pending.vertices->size() * sizeof(DrawVertex));
-    vkUnmapMemory(device_, pending.memory);
+    if (!pending.persistent) vkUnmapMemory(device_, pending.memory);
     pending.mapped = nullptr;
   }
   for (PendingMap& pending : maps) {
@@ -8798,10 +8914,12 @@ bool VulkanRenderer::applyMeshSlotUpdatesTransactional(
       const bool displaced = rtActive_ && mesh.vboDisp != VK_NULL_HANDLE;
       VkBuffer& buffer = displaced ? mesh.vboDisp : mesh.vbo;
       VkDeviceMemory& memory = displaced ? mesh.vboDispMem : mesh.vboMem;
+      void*& mapped = displaced ? mesh.vboDispMapped : mesh.vboMapped;
       if (buffer) vkDestroyBuffer(device_, buffer, nullptr);
       if (memory) vkFreeMemory(device_, memory, nullptr);
       buffer = pending.replacementBuffer;
       memory = pending.replacementMemory;
+      mapped = nullptr;  // the replacement is a dedicated allocation
       pending.replacementBuffer = VK_NULL_HANDLE;
       pending.replacementMemory = VK_NULL_HANDLE;
       mesh.vboAddr = bufferDeviceAddress(displaced ? mesh.vboDisp : mesh.vbo);
@@ -9191,20 +9309,19 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       !sm.influenceTexels.empty() && sm.influenceTexWidth > 0 &&
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
 
-  // Pool the static per-mesh buffers (collapses the per-buffer vkAllocateMemory
-  // storm that makes huge assembled scenes -- Moana island's 83801 prototypes --
-  // stall for minutes; see createHostBuffer). Only when the mesh is NOT dynamically
-  // re-mapped after upload: CPU skinning refills the vbo (updateMeshVertices) and
-  // GPU morph re-maps coeff/delta buffers, so dynamic meshes keep per-buffer memory.
+  // Pool every per-mesh buffer (collapses the per-buffer vkAllocateMemory storm
+  // that makes huge assembled scenes -- Moana island's 83801 prototypes --
+  // stall for minutes; see createHostBuffer). Buffers rewritten after
+  // upload (vbo/vboDisp by CPU skinning and the RT deform, influenceVbo where
+  // it is filled) used to need a dedicated allocation because the update paths
+  // called vkMapMemory at offset 0. They now take the pool's persistent mapping
+  // (gm.vboMapped / vboDispMapped / influenceVboMapped) and write through it,
+  // so a dynamic mesh costs no more allocations than a static one -- on a scene
+  // with thousands of skinned meshes that was ~2 allocations per mesh, and the
+  // driver's vkAllocateMemory cost is what dominated scene upload.
   const bool dyn = gm.skinned || sm.morphChannelCount > 0;
-  // `pool` gates the buffers that are RE-MAPPED after upload (vkMapMemory at
-  // offset 0 needs a dedicated allocation, not a slice of a shared block):
-  // vbo/vboDisp, rewritten per pose by CPU skinning and the RT deform, and
-  // influenceVbo, mapped where it is filled.
-  const bool pool = !dyn;
-  // Every other per-mesh buffer is written once at upload and never mapped
-  // again, so it can be pooled even on a dynamic mesh. This used to follow
-  // `pool`, which made a skinned mesh give its INDEX buffer (and joints,
+  // Buffers written once at upload never need a mapping. This used to follow
+  // `!dyn`, which made a skinned mesh give its INDEX buffer (and joints,
   // weights, uv1, morph tables, ...) a dedicated vkAllocateMemory. Caldera is
   // 15612 skinned meshes, so that was ~10 allocations each and ~156k live
   // allocations; the driver's free path is O(live allocations), so teardown ran
@@ -9231,7 +9348,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
           : sm.vertices;
   if (!createHostBuffer(rasterVertices.size() * sizeof(DrawVertex), vboUsage,
                         rasterVertices.data(), &gm.vbo, &gm.vboMem,
-                        rtSupported_, pool)) {
+                        rtSupported_, /*poolable=*/true,
+                        dyn ? &gm.vboMapped : nullptr)) {
     LOGE("Vulkan mesh upload failed for '%s': vertex buffer allocation",
          sm.absPath.c_str());
     reportSceneUploadError("mesh '" + sm.absPath +
@@ -9291,7 +9409,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (!createHostBuffer(sm.vertices.size() * 2 * sizeof(uint32_t),
                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, influence,
-                        &gm.influenceVbo, &gm.influenceVboMem, false, pool)) {
+                        &gm.influenceVbo, &gm.influenceVboMem, false,
+                        /*poolable=*/true, &gm.influenceVboMapped)) {
     vkDestroyBuffer(device_, gm.weightVbo, nullptr);
     vkFreeMemory(device_, gm.weightVboMem, nullptr);
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
@@ -9399,11 +9518,18 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     }
     if (gm.influenceDesc == VK_NULL_HANDLE) {
       std::vector<uint32_t> zeros(sm.vertices.size() * 2, 0u);
-      void* mapped = nullptr;
       const VkDeviceSize bytes = zeros.size() * sizeof(uint32_t);
-      if (vkMapMemory(device_, gm.influenceVboMem, 0, bytes, 0, &mapped) == VK_SUCCESS) {
-        std::memcpy(mapped, zeros.data(), static_cast<size_t>(bytes));
-        vkUnmapMemory(device_, gm.influenceVboMem);
+      if (gm.influenceVboMapped) {
+        // Pool-suballocated: write through the persistent mapping.
+        std::memcpy(gm.influenceVboMapped, zeros.data(),
+                    static_cast<size_t>(bytes));
+      } else {
+        void* mapped = nullptr;
+        if (vkMapMemory(device_, gm.influenceVboMem, 0, bytes, 0, &mapped) ==
+            VK_SUCCESS) {
+          std::memcpy(mapped, zeros.data(), static_cast<size_t>(bytes));
+          vkUnmapMemory(device_, gm.influenceVboMem);
+        }
       }
       gm.extendedSkinned = false;
     }
@@ -9595,7 +9721,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (rtVerts &&
         createHostBuffer(rtVerts->size() * sizeof(DrawVertex), vboUsage,
                          rtVerts->data(), &gm.vboDisp, &gm.vboDispMem,
-                         /*deviceAddress=*/true, pool)) {
+                         /*deviceAddress=*/true, /*poolable=*/true,
+                         dyn ? &gm.vboDispMapped : nullptr)) {
       gm.vboAddr = bufferDeviceAddress(gm.vboDisp);
     } else {
       gm.vboAddr = bufferDeviceAddress(gm.vbo);
