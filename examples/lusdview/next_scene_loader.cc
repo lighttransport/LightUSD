@@ -1112,7 +1112,16 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     }
     const bool hasData = !pv.float_data.empty() || !pv.int_data.empty() ||
                          !pv.uint_data.empty();
-    if (components == 0 || !hasData ||
+    // Skip the streams that already have a dedicated lane. The two retained UV
+    // sets are selected by NAME at conversion time (RenderMesh::
+    // texcoords_0_name/1_name), so the generic list must not carry a second
+    // copy of them: on real content that duplicated every mesh's UVs into the
+    // RT-only geometry-property arrays, doubling UV memory and forcing one
+    // draw per mesh.
+    const bool isRetainedUv =
+        (!m.texcoords_0_name.empty() && pv.name == m.texcoords_0_name) ||
+        (!m.texcoords_1_name.empty() && pv.name == m.texcoords_1_name);
+    if (components == 0 || !hasData || isRetainedUv ||
         pv.name == "displayColor" || pv.name == "displayOpacity" ||
         pv.name == "normals" || pv.name == "tangents" ||
         pv.name == "binormals") {
@@ -8830,8 +8839,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  using BatchKey =
-      std::tuple<std::string, bool, bool, bool, int, int, int, int, int>;
+  // geomPropId groups meshes by the *signature* of their per-vertex generic
+  // primvar set (name + component count, in order) instead of isolating every
+  // mesh that carries one. Those streams only feed the RT geometry-property
+  // lookup, so raster batches never read them; keeping the signature in the key
+  // lets a scene where every mesh carries the same primvar set share one draw
+  // while a mesh with a different (or no) set keeps its own batch.
+  using BatchKey = std::tuple<std::string, bool, bool, bool, int, int, int, int,
+                              int, int>;
   struct BatchKeyHash {
     size_t operator()(const BatchKey& key) const {
       size_t h = std::hash<std::string>{}(std::get<0>(key));
@@ -8846,6 +8861,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       mix(std::hash<int>{}(std::get<6>(key)));
       mix(std::hash<int>{}(std::get<7>(key)));
       mix(std::hash<int>{}(std::get<8>(key)));
+      mix(std::hash<int>{}(std::get<9>(key)));
       return h;
     }
   };
@@ -8857,6 +8873,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     return result.first->second;
   };
   int nextMorphBatchId = 0;
+  int nextGeomPropBatchId = 0;
+  std::unordered_map<std::string, int> geomPropBatchIds;
   int nextLightLinkBatchId = 0;
   int nextAnimatedWorldBatchId = 0;
 
@@ -9076,11 +9094,35 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              opts.uploadStagingBytes / bytesPerBatchVertex)
           : (size_t(8) << 20);
   const size_t kBatchVtxCap =
-      std::min<size_t>(stream ? (size_t(512) << 10) : (size_t(8) << 20),
+      std::min<size_t>(stream ? (size_t(4) << 20) : (size_t(8) << 20),
                        stagingVertexCap);
+
+  // Grow a batch array for `vertsAdded` more vertices. A merged batch reaches
+  // the vertex cap, and growing a multi-hundred-megabyte array by repeated
+  // doubling is expensive: every step copies the whole array into freshly
+  // faulted pages and unmaps the old one, which on a large scene added tens of
+  // seconds of memmove. Once a batch is clearly a bulk batch the array is
+  // reserved to the cap in a single step instead; small (per-mesh isolated)
+  // batches keep the ordinary doubling growth so they never over-allocate.
+  auto reserveVerts = [&](auto& vec, size_t vertsNow, size_t vertsAdded,
+                          size_t elemsPerVert, size_t capElems) {
+    const size_t need = (vertsNow + vertsAdded) * elemsPerVert;
+    if (need <= vec.capacity()) return;
+    size_t want = std::max(need, vec.capacity() * 2);
+    if (vertsNow >= kBatchVtxCap / 8) want = std::max(want, capElems);
+    vec.reserve(want);
+  };
 
   static const bool timeBatch =
       std::getenv("LUSDVIEW_TIME_BATCH") != nullptr;
+  // Batch-key diagnostics (LUSDVIEW_DEBUG_BATCH): which per-mesh feature forces
+  // a draw of its own. A scene that emits one draw per mesh cannot be drawn at
+  // interactive rates, so this reports what the batching has to isolate.
+  static const bool debugBatch =
+      std::getenv("LUSDVIEW_DEBUG_BATCH") != nullptr;
+  size_t dbgPlain = 0, dbgSkin = 0, dbgGeomProps = 0, dbgPtex = 0,
+         dbgLightLink = 0, dbgAnimatedWorld = 0, dbgMultiMat = 0, dbgMorph = 0,
+         dbgInstanced = 0;
   using BatchClock = std::chrono::steady_clock;
   double batchLoopSeconds = 0.0;
   double batchStageSeconds = 0.0;
@@ -9235,7 +9277,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                const tydn::RenderMesh& sourceMesh,
                                const std::string& primPath) {
     Batch& b = getBatch({purpose, source.geometricNormal, proxyFallback,
-                         sourceMesh.double_sided, 0, -1, 0, 0, 0});
+                         sourceMesh.double_sided, 0, -1, 0, 0, 0, 0});
     if (!b.dm.vertices.empty() &&
         b.dm.vertices.size() + source.vertices.size() > kBatchVtxCap) {
       flushBatch(b);
@@ -9249,15 +9291,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.name = source.name;
     }
     const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
-    const size_t required = b.dm.vertices.size() + source.vertices.size();
-    if (required > b.dm.vertices.capacity()) {
-      b.dm.vertices.reserve(std::max(required, b.dm.vertices.capacity() * 2));
-    }
+    reserveVerts(b.dm.vertices, vbase, source.vertices.size(), 1,
+                 kBatchVtxCap);
     b.dm.vertices.insert(b.dm.vertices.end(), source.vertices.begin(),
                          source.vertices.end());
     const uint32_t indexOffset =
         static_cast<uint32_t>(b.dm.indices.size());
     const size_t indexCount = source.indices.size();
+    reserveVerts(b.dm.indices, vbase, source.vertices.size(), 4,
+                 kBatchVtxCap * 4);
     b.dm.indices.resize(indexOffset + indexCount);
     {
       uint32_t* dst = b.dm.indices.data() + indexOffset;
@@ -9270,6 +9312,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // submesh (the shaded pass disappears while the wire pass still shows it).
     appendLogicalSubmesh(&b, indexOffset,
                          static_cast<uint32_t>(indexCount), 0, -1);
+    reserveVerts(b.dm.sourceFaceId, vbase, source.vertices.size(), 1,
+                 kBatchVtxCap);
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
     uint32_t wireBase = 0;
@@ -9986,7 +10030,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.influenceOffsetCount.empty() && loc.influenceTexels.empty() &&
         loc.morphOffsetCount.empty() && loc.morphDeltaHalf.empty() &&
         loc.instanceCount() == 0;
+    if (debugBatch) {
+      if (loc.instanceCount() > 0) ++dbgInstanced;
+      if (m.has_skin()) ++dbgSkin;
+      if (m.has_blend_shapes()) ++dbgMorph;
+      if (!loc.geomProps.empty()) ++dbgGeomProps;
+      if (hasAuthoredLightLinks) ++dbgLightLink;
+      if (meshRecord.animatedWorld) ++dbgAnimatedWorld;
+      if (hasSubsetMaterialBindings) ++dbgMultiMat;
+    }
     if (plainStatic) {
+      if (debugBatch) ++dbgPlain;
       BatchScope plainTimer{BatchClock::now(), &batchPlainSeconds, timeBatch};
       ++convertedSourceMeshCount;
       weldedVertices += loc.vertices.size();
@@ -10307,6 +10361,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     const bool hasAlpha = loc.vertexAlpha.size() == loc.vertices.size();
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
     const bool hasGeomProps = !loc.geomProps.empty();
+    // Batch-group id for the generic primvar signature (see BatchKey): meshes
+    // carrying the same per-vertex primvar set still share a draw. 0 = none,
+    // which is a group of its own.
+    const int geomPropBatchId = [&]() -> int {
+      if (!hasGeomProps) return 0;
+      std::string sig;
+      for (const DrawGeomPropCPU& prop : loc.geomProps) {
+        sig += prop.name;
+        sig.push_back('\x1f');
+        sig += std::to_string(prop.components);
+        sig.push_back('\x1e');
+      }
+      auto it = geomPropBatchIds.find(sig);
+      if (it != geomPropBatchIds.end()) return it->second;
+      const int id = ++nextGeomPropBatchId;
+      geomPropBatchIds.emplace(std::move(sig), id);
+      return id;
+    }();
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
     const bool hasExtendedSkin =
@@ -10404,24 +10476,31 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // --- Single-material fast path: append the whole mesh to one batch. ---
       // A Ptex file's face ids are local to one source mesh. Isolate that mesh
       // from ordinary static batching so face ids are never rebased into a
-      // different texture's namespace.
+      // different texture's namespace. Skinned meshes need no isolation: their
+      // bone rows are absolute indices into the shared skinning palette, so a
+      // batch can mix them (unskinned vertices simply carry zero weights).
       const int batchIsolationId =
           morphBatchId != 0
               ? morphBatchId
-              : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
+              : (needsPtex ? ++nextMorphBatchId : 0);
       Batch& b = getBatch({purpose, loc.geometricNormal,
                            meshRecord.proxyFallback, m.double_sided,
                            canonicalMaterialId(wholeMat),
                            canonicalMaterialId(wholeBackMat), batchIsolationId,
-                           lightLinkBatchId, animatedWorldBatchId});
+                           lightLinkBatchId, animatedWorldBatchId,
+                           geomPropBatchId});
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
       }
       b.matId = wholeMat;
       b.backMatId = wholeBackMat;
-      if (hasGeomProps && b.dm.vertices.empty())
+      // Geometry-property descriptors only; the per-vertex values are appended
+      // with the vertices so a batch that already holds geometry stays parallel.
+      if (hasGeomProps && b.dm.geomProps.empty()) {
         b.dm.geomProps = loc.geomProps;
+        for (DrawGeomPropCPU& prop : b.dm.geomProps) prop.values.clear();
+      }
       b.dm.purpose = purpose;
       b.dm.proxyFallback = meshRecord.proxyFallback;
       b.dm.geometricNormal = loc.geometricNormal;
@@ -10470,7 +10549,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
       const bool plainBatch = !b.anySkin && !b.anyMorph && !b.anyColor &&
                                !b.anyAlpha && !b.anyUv1 && !hasSkin &&
-                               !hasMorph && !hasC && !hasAlpha && !hasUv1;
+                               !hasMorph && !hasC && !hasAlpha && !hasUv1 &&
+                               b.dm.geomProps.empty();
       if (plainBatch) {
         const size_t required = b.dm.vertices.size() + loc.vertices.size();
         if (required > b.dm.vertices.capacity()) {
@@ -10488,9 +10568,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // influence and morph streams still need a per-vertex loop.
         const size_t n = loc.vertices.size();
         const size_t vb = vbase;
+        // Reserve every dense per-vertex array this batch carries before the
+        // append: see reserveVerts (one allocation per array, not one per
+        // doubling).
+        reserveVerts(b.dm.vertices, vb, n, 1, kBatchVtxCap);
+        if (b.anySkin) {
+          reserveVerts(b.dm.jointIdx, vb, n, 4, kBatchVtxCap * 4);
+          reserveVerts(b.dm.jointWt, vb, n, 4, kBatchVtxCap * 4);
+        }
+        if (b.anyColor) reserveVerts(b.dm.vertexColors, vb, n, 3, kBatchVtxCap * 3);
+        if (b.anyAlpha) reserveVerts(b.dm.vertexAlpha, vb, n, 1, kBatchVtxCap);
+        if (b.anyUv1) reserveVerts(b.dm.uv1, vb, n, 2, kBatchVtxCap * 2);
+        reserveVerts(b.dm.indices, vb, n, 4, kBatchVtxCap * 4);
         b.dm.vertices.resize(vb + n);
         std::memcpy(b.dm.vertices.data() + vb, loc.vertices.data(),
                     n * sizeof(DrawVertex));
+        // Generic primvar (RT geometry-property) streams are per-vertex and
+        // parallel to the batch vertices, so they grow with the batch.
+        for (size_t pi = 0; pi < b.dm.geomProps.size(); ++pi) {
+          DrawGeomPropCPU& dst = b.dm.geomProps[pi];
+          const uint32_t comps = dst.components;
+          if (comps == 0) continue;
+          dst.values.resize((vb + n) * comps, 0.0f);
+          if (!hasGeomProps || pi >= loc.geomProps.size()) continue;
+          const DrawGeomPropCPU& src = loc.geomProps[pi];
+          if (src.components != comps || src.values.size() < n * comps) continue;
+          std::memcpy(dst.values.data() + vb * comps, src.values.data(),
+                      n * comps * sizeof(float));
+        }
         if (b.anySkin) {
           b.dm.jointIdx.resize((vb + n) * 4);
           b.dm.jointWt.resize((vb + n) * 4);
@@ -10540,22 +10645,41 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (b.anyExtendedSkin) {
           b.dm.influenceOffsetCount.resize((vb + n) * 2);
           if (hasExtendedSkin) {
-            b.dm.influenceTexels.reserve(b.dm.influenceTexels.size() +
-                                         loc.influenceTexels.size());
+            // Count the texels this mesh contributes (validating each vertex's
+            // range exactly as the copy below does), grow the batch array once,
+            // then write straight into it. Appending one influence at a time
+            // re-checked capacity and re-touched the batch buffer -- which can
+            // be gigabytes once batches are merged -- for every influence of
+            // every vertex, and that dominated load time on large skinned
+            // scenes.
+            size_t extra = 0;
             for (size_t i = 0; i < n; ++i) {
-              const uint32_t texelBase =
-                  static_cast<uint32_t>(b.dm.influenceTexels.size() / 4);
               const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
               const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
               for (uint32_t k = 0; k < count; ++k) {
                 const size_t e = static_cast<size_t>(src + k) * 4;
                 if (e + 3 >= loc.influenceTexels.size()) break;
-                b.dm.influenceTexels.insert(
-                    b.dm.influenceTexels.end(), loc.influenceTexels.begin() + e,
-                    loc.influenceTexels.begin() + e + 4);
+                ++extra;
               }
-              const uint32_t actual = static_cast<uint32_t>(
-                  b.dm.influenceTexels.size() / 4) - texelBase;
+            }
+            const size_t texelStart = b.dm.influenceTexels.size();
+            b.dm.influenceTexels.resize(texelStart + extra * 4);
+            float* dst = b.dm.influenceTexels.data() + texelStart;
+            size_t written = 0;
+            for (size_t i = 0; i < n; ++i) {
+              const uint32_t texelBase =
+                  static_cast<uint32_t>(texelStart / 4 + written);
+              const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
+              const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
+              uint32_t actual = 0;
+              for (uint32_t k = 0; k < count; ++k) {
+                const size_t e = static_cast<size_t>(src + k) * 4;
+                if (e + 3 >= loc.influenceTexels.size()) break;
+                std::memcpy(dst + written * 4, loc.influenceTexels.data() + e,
+                            4 * sizeof(float));
+                ++written;
+                ++actual;
+              }
               b.dm.influenceOffsetCount[(vb + i) * 2 + 0] = texelBase;
               b.dm.influenceOffsetCount[(vb + i) * 2 + 1] = actual;
               b.dm.maxInfluencesPerVertex = std::max(
@@ -10635,12 +10759,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         const int batchIsolationId =
             morphBatchId != 0
                 ? morphBatchId
-                : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
+                : (needsPtex ? ++nextMorphBatchId : 0);
         Batch& b = getBatch({purpose, loc.geometricNormal,
                              meshRecord.proxyFallback, m.double_sided,
                              canonicalMaterialId(gm.first),
                              canonicalMaterialId(gm.second), batchIsolationId,
-                             lightLinkBatchId, animatedWorldBatchId});
+                             lightLinkBatchId, animatedWorldBatchId,
+                             geomPropBatchId});
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
           flushBatch(b);
@@ -10681,6 +10806,27 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
         openSkin(b);
         openMorph(b);
+        // Upper bound for this group (groups only ever use a subset), so the
+        // per-vertex push_backs below do not reallocate repeatedly.
+        {
+          const size_t vb = b.dm.vertices.size();
+          reserveVerts(b.dm.vertices, vb, loc.vertices.size(), 1, kBatchVtxCap);
+          if (b.anySkin) {
+            reserveVerts(b.dm.jointIdx, vb, loc.vertices.size(), 4,
+                         kBatchVtxCap * 4);
+            reserveVerts(b.dm.jointWt, vb, loc.vertices.size(), 4,
+                         kBatchVtxCap * 4);
+          }
+          if (b.anyColor)
+            reserveVerts(b.dm.vertexColors, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
+          if (b.anyAlpha)
+            reserveVerts(b.dm.vertexAlpha, vb, loc.vertices.size(), 1,
+                         kBatchVtxCap);
+          if (b.anyUv1)
+            reserveVerts(b.dm.uv1, vb, loc.vertices.size(), 2,
+                         kBatchVtxCap * 2);
+        }
         const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
         std::vector<int> remap(loc.vertices.size(), -1);
         auto vtx = [&](uint32_t vi) -> uint32_t {
@@ -10868,6 +11014,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
            static_cast<double>(released.stage_bytes_after) /
                (1024.0 * 1024.0));
     }
+  }
+  if (debugBatch) {
+    LOGI("next: batch keys: plain=%zu skin=%zu morph=%zu geomProps=%zu "
+         "ptex=%zu lightLink=%zu animatedWorld=%zu multiMaterial=%zu "
+         "instanced=%zu -> %zu draws",
+         dbgPlain, dbgSkin, dbgMorph, dbgGeomProps, dbgPtex, dbgLightLink,
+         dbgAnimatedWorld, dbgMultiMat, dbgInstanced, draw->meshes.size());
   }
   if (parallelConvert) {
     LOGI("next: converted %zu meshes with %u workers in %.2f s "

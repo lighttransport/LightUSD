@@ -1065,6 +1065,41 @@ while a separate encounter-order list preserves deterministic draw ordering.
 The follow-up hardware run measured 6.83 s mesh conversion/batching, 27.35 s
 full CPU conversion, 27.60 s full upload/presentation, and 4.07 GiB peak RSS.
 
+#### Merged batches for skinned and geometry-property meshes
+
+The batch key used to isolate every mesh that was skinned or carried a generic
+primvar, which on open-world content degenerates to one draw per mesh: a
+476k-mesh, 39.4M-triangle map composed to 50,424 draws and spent ~70 ms per
+frame recording them on the CPU.
+
+Neither feature actually needs that isolation:
+
+* Bone rows are absolute indices into the shared skinning palette, and the
+  append path already zero-fills the joint/weight lanes for vertices of an
+  unskinned mesh, so a batch can mix skinned and unskinned geometry.
+* Generic primvars only feed the ray-traced geometry-property lookup; the raster
+  shader never reads them. They are now grouped by a name/component *signature*
+  in the batch key, and their per-vertex values are appended alongside the
+  vertices so a merged batch stays parallel. The retained UV sets are also
+  excluded from that generic list now; they were being duplicated into it,
+  which doubled UV memory for every textured mesh.
+
+Two append-path costs had to be fixed before merging was viable, both of which
+only appear once a batch holds gigabytes instead of one mesh:
+
+* Batch arrays are reserved to the vertex cap in a single step once a batch is
+  clearly a bulk batch (`reserveVerts`), instead of doubling a
+  multi-hundred-megabyte vector repeatedly.
+* Extended-skin influence texels are written into one pre-sized range rather
+  than appended one influence at a time with `insert()`, which re-checked
+  capacity and re-touched the whole batch buffer per influence.
+
+Result on that scene: 50,424 draws -> 3,615, CPU record+submit ~70 ms -> <1 ms
+(GPU-bound afterwards, 17.4 ms at 1280x720 versus 26 ms before), mesh
+convert/flatten/batch unchanged at ~23 s, and total load 59.4 s -> 55 s. Draw
+counts for other large maps drop from 31k/40k/6.4k to 3.2k/3.6k/0.6k. Fewer
+draws also cuts the per-frame visibility mask rebuild from 3.4 ms to 0.1 ms.
+
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
 collapsing to 39 guide-purpose draws. Its cold full-fidelity path is therefore
@@ -1479,7 +1514,16 @@ three are off unless set, and cost nothing when off.
 
 The `submitted:` line counts the non-instanced mesh loop only; geometry drawn by
 the instanced pass is not tallied, so an instanced scene can legitimately report
-very few triangles.
+very few triangles. `LUSDVIEW_DEBUG_MDI=1` adds the instanced-pass tally
+(`[mdi] supported= active= cmds= | instMeshes= submeshes= eligible= ...`), which
+distinguishes "the scene really has this many draws" from "the per-mesh
+fallback is running instead of the multi-draw-indirect batch".
+
+`LUSDVIEW_DEBUG_BATCH=1` explains the loader's draw count from the other side:
+it counts the per-mesh features that force a batch of their own and prints
+`next: batch keys: plain=... skin=... geomProps=... -> N draws`. A scene that
+reports one draw per mesh there is a batching regression, not a renderer
+problem.
 
 Mesh geometry must live in VRAM: per-frame vertex fetch from host memory crosses
 PCIe on every draw, which cost 86ms versus 2ms on a 3.8M triangle scene. Buffers

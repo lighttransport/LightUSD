@@ -15993,6 +15993,25 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   buildInstMdi();
   ensureDrawMeta();
   patchMdiIndirect();
+  if (std::getenv("LUSDVIEW_DEBUG_MDI")) {
+    size_t nInst = 0, nElig = 0, nTrans = 0, nSkin = 0, nMorph = 0, nDedicated = 0,
+           nSub = 0;
+    for (const auto& m : meshes_) {
+      if (m.instanceCount == 0) continue;
+      ++nInst;
+      nSub += m.submeshes.size();
+      if (m.mdiEligible) ++nElig;
+      if (m.hasTranslucentInstances) ++nTrans;
+      if (m.skinned) ++nSkin;
+      if (m.hasMorph) ++nMorph;
+      if (m.instVbo != VK_NULL_HANDLE && !m.mdiEligible) ++nDedicated;
+    }
+    std::fprintf(stderr,
+                 "[mdi] supported=%d active=%d cmds=%u | instMeshes=%zu submeshes=%zu "
+                 "eligible=%zu translucent=%zu skinned=%zu morph=%zu dedicated=%zu\n",
+                 mdiSupported_ ? 1 : 0, mdiActive_ ? 1 : 0, mdiDrawCount_, nInst,
+                 nSub, nElig, nTrans, nSkin, nMorph, nDedicated);
+  }
 
   VkCommandBuffer cb = cmd_[frame_];
   vkResetCommandBuffer(cb, 0);
