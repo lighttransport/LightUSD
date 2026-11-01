@@ -2253,6 +2253,8 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
 
 static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   CaptureMeshUploadIdentity(&m);
+  m.hasWireframe = m.hasWireframe || !m.wireframeIndices.empty() ||
+                   !m.wireframeVertices.empty();
   // Preserve enough geometry for pixel-accurate picking before dropping the
   // much wider render vertices. Static meshes never change shape, so a UNORM16
   // position copy is both stable and substantially smaller than DrawVertex.
@@ -2461,6 +2463,11 @@ void App::compactDeferredMeshAux(size_t meshIndex) {
     return;
   DrawMeshCPU& mesh = draw_.meshes[meshIndex];
   DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
+  // Remember whether the backend received a wireframe stream before the CPU
+  // index arrays are encoded/cleared. Selection rendering uses this to choose
+  // the GPU wire pass over rebuilding CPU edge lines every frame.
+  mesh.hasWireframe = mesh.hasWireframe || !mesh.wireframeIndices.empty() ||
+                      !mesh.wireframeVertices.empty();
   if (MeshIsDeformable(mesh)) return;
 
   aux.wireCount = mesh.wireframeIndices.size();
@@ -5347,22 +5354,14 @@ void App::updateNextDeformFrameIfNeeded() {
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
 
   // The load-time scene box is the REST box (the loader world-bakes and uploads
-  // rest vertices; the pose only happens downstream), so refresh it for the pose
-  // at this time code -- the ground grid is sized from it, `--mode depth` is
-  // normalized by it, and the initial auto-fit frames on it. Per-MESH boxes are
-  // left alone on purpose: a skinned batch keeps the conservative scene box so a
-  // moving rig cannot cull or LOD itself out of the frame.
-  {
-    float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
-                                  gui_.blendOverrides(), bmin, bmax)) {
-      for (int k = 0; k < 3; ++k) {
-        draw_.aabbMin[k] = bmin[k];
-        draw_.aabbMax[k] = bmax[k];
-      }
-      draw_.hasBounds = true;
-    }
-  }
+  // rest vertices; the pose only happens downstream). Raster playback refreshes
+  // it from the same bone rows as the skinning frame, using a conservative
+  // bone-box union -- skinning every vertex on the CPU just to bound the scene
+  // was the dominant per-frame cost. Ray tracing still uses the exact posed box
+  // below (from the uploads it already computes).
+  // Per-MESH boxes are left alone on purpose: a skinned batch keeps the
+  // conservative scene box so a moving rig cannot cull or LOD itself out of the
+  // frame.
 
   // Ray tracing traces the vertex buffers themselves, so the raster shader's
   // deform never reaches it: re-pose the retained rest vertices on the CPU and
@@ -5383,6 +5382,18 @@ void App::updateNextDeformFrameIfNeeded() {
                          std::chrono::steady_clock::now() - skinT0).count(),
                      uploads.size(), verts);
       }
+      // Reuse the uploads for the exact scene box instead of skinning a second
+      // time inside BuildNextPosedSceneBounds.
+      float bmin[3], bmax[3];
+      if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                    gui_.blendOverrides(), bmin, bmax,
+                                    &uploads)) {
+        for (int k = 0; k < 3; ++k) {
+          draw_.aabbMin[k] = bmin[k];
+          draw_.aabbMax[k] = bmax[k];
+        }
+        draw_.hasBounds = true;
+      }
       const auto upT0 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& up : uploads) {
         renderer_->updateMeshVertices(up.meshIndex, up.vertices);
@@ -5400,9 +5411,30 @@ void App::updateNextDeformFrameIfNeeded() {
   // Renderer uploads go through postGpu() so they run on the render thread when
   // it owns the context (threaded path); inline otherwise. See the note in
   // updateGpuSkinningFrameIfNeeded.
-  if (hasSkin && BuildNextSkinningFrame(nextStageSnapshot_.get(), &draw_,
-                                        animTime_, &skinFrame_)) {
-    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
+  if (hasSkin) {
+    float bmin[3], bmax[3];
+    if (BuildNextSkinningFrame(nextStageSnapshot_.get(), &draw_, animTime_,
+                               &skinFrame_, bmin, bmax)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+      postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
+    }
+  } else if (hasNextMorph_) {
+    // Morph-only scene: no bone rows to reuse, but the conservative path still
+    // avoids the full CPU vertex re-pose.
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                  gui_.blendOverrides(), bmin, bmax, nullptr,
+                                  /*conservative=*/true)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+    }
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
@@ -5832,6 +5864,8 @@ static std::uint64_t FrameSceneKey(const FramePacket& p) {
   bytes(&p.cameraLens, sizeof(p.cameraLens));
   bytes(&p.cameraShutter, sizeof(p.cameraShutter));
   bytes(&p.mode, sizeof(p.mode));
+  bytes(&p.wireMode, sizeof(p.wireMode));
+  bytes(&p.wireXray, sizeof(p.wireXray));
   bytes(p.clearColor, sizeof(p.clearColor));
   bytes(p.lightDir, sizeof(p.lightDir));
   bytes(p.lightColor, sizeof(p.lightColor));
@@ -7091,7 +7125,7 @@ void App::applyNavCommand(const StreamNav& c) {
         if (streamDragButton_ == 1 || (streamDragButton_ == 0 && streamDragShift_))
           camera_.pan(dx, dy);                       // middle / shift+left = pan
         else if (streamDragButton_ == 2)
-          camera_.dolly((dx - dy) * 0.05f);          // right = dolly
+          camera_.dolly((dx - dy) * 0.022f);         // right = dolly
         else
           camera_.orbit(dx, dy);                     // left = orbit
       }

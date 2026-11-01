@@ -1468,12 +1468,15 @@ json App::mcpScreenshot(const json& args, std::string& err) {
 json App::mcpInput(const json& args, std::string& err) {
   const std::string key = args.value("key", std::string());
   if (key.empty()) {
-    err = "input: 'key' is required (e.g. v|w|s|f|a|r|G|V|0|1|3|5|7)";
+    err = "input: 'key' is required (e.g. v|x|w|s|f|a|r|G|V|0|1|3|5|7)";
     return json::object();
   }
   std::string action;
   if (key == "v") {
     action = "wireframe=" + std::to_string(gui_.cycleWireframe());
+  } else if (key == "x") {
+    action = std::string("wireframe_xray=") +
+             (gui_.toggleWireXray() ? "1" : "0");
   } else if (key == "w") {
     camera_.moveForward(1.0f);
     action = "forward";
@@ -1527,7 +1530,7 @@ json App::mcpInput(const json& args, std::string& err) {
     applyTechniqueSwitch(want);
     action = std::string("technique=") + RenderTechniqueLabel(activeTechnique_);
   } else {
-    err = "input: unhandled key '" + key + "' (v|w|s|f|a|r|G|V|0|1|3|5|7)";
+    err = "input: unhandled key '" + key + "' (v|x|w|s|f|a|r|G|V|0|1|3|5|7)";
     return json::object();
   }
   return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};

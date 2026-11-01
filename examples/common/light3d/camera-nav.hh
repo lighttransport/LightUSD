@@ -153,9 +153,9 @@ class OrbitCamera {
   float orbitSensitivity_{1.0f};
   float panSensitivity_{1.0f};
   float dollySensitivity_{1.0f};
-  // Master interactive-motion multiplier. The 0.65 base below makes the
-  // historical 1.0 setting less twitchy; this remains a user-facing relative
-  // scale with convenient 0.25/0.5/1/1.5 presets.
+  // Master interactive-motion multiplier. Each gesture has its own tuned,
+  // Maya-like base response below; this remains a user-facing relative scale
+  // with convenient 0.25/0.5/1/1.5 presets.
   float navigationScale_{1.0f};
   bool invertYaw_{true};
   bool invertDolly_{false};

@@ -100,10 +100,11 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "input",
       "Synthesize a keyboard key as if pressed in the viewport. "
-      "key=v (cycle wireframe: off/wire/wire+shade) | w/s (forward/backward) | "
+      "key=v (cycle wireframe: off/wire/wire+shade) | x (toggle wireframe x-ray) | "
+      "w/s (forward/backward) | "
       "f or a (frame all) | i (show selected only) | u (show all) | "
       "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
-      {{"key", strProp("v | w | s | f | a | i | u | 0 | 1 | 3 | 5 | 7")}},
+      {{"key", strProp("v | x | w | s | f | a | i | u | 0 | 1 | 3 | 5 | 7")}},
       json::array({"key"})));
   tools.push_back(tool(
       "mouse",

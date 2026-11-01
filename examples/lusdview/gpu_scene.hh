@@ -292,6 +292,10 @@ struct DrawMeshCPU {
   // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)
   // meshes where a per-triangle approach fails. Empty => fall back to tri edges.
   std::vector<uint32_t> wireframeIndices;
+  // True when the backend has an authored/derived wireframe stream for this
+  // mesh. Retained after the CPU index arrays are freed so selection rendering
+  // can use the GPU wire pass instead of rebuilding CPU edge lines.
+  bool hasWireframe{false};
   // Authored control points used by wireframeIndices when subdivision rewrites
   // the render mesh. Empty means the main vertex buffer owns the indices.
   std::vector<DrawVertex> wireframeVertices;

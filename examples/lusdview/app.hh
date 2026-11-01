@@ -321,6 +321,7 @@ class App
     modeSweepPattern_ = pattern;
   }
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
+  void setWireframeXray(bool on) { gui_.setWireXray(on); }
   void setBlendWeight(const std::string& name, float w) {
     gui_.setBlendWeight(name, w);
   }

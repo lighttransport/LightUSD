@@ -182,7 +182,13 @@ void OrbitCamera::setClipPlanes(float nearPlaneValue, float farPlaneValue) {
 }
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
-  const float k = 0.008f * 0.65f * navigationScale_ * orbitSensitivity_;
+  // Maya-like tumble rate: roughly 0.18 degrees per pixel at the default
+  // sensitivity, so a full-viewport drag turns about half a revolution instead
+  // of whipping around after a short gesture. navigationScale_ and the
+  // user-facing sensitivity slider remain relative multipliers on top.
+  constexpr float kOrbitRadiansPerPixel = 0.0032f;  // ~0.183 deg/px
+  const float k =
+      kOrbitRadiansPerPixel * navigationScale_ * orbitSensitivity_;
   if (!std::isfinite(dxPix) || !std::isfinite(dyPix)) return;
 
   light3d::Vec3 viewFromTarget = eye() - target_;
@@ -242,9 +248,12 @@ void OrbitCamera::moveForward(float amount) {
   // bounds a large mouse delta. Keep enough headroom to move the navigation
   // pivot through the eye: a strict one-reference-distance cap asymptotically
   // approached the pivot but could never cross it.
+  // One wheel notch (amount 1) moves about 8% of the reference distance; a
+  // right-drag of ~100 px is scaled to roughly a fifth of the distance. The
+  // exponential keeps fine control for small gestures and bounds large ones.
   const float magnitude =
       1.25f *
-      (1.0f - std::exp(-std::abs(amount) * 0.12f * 0.65f *
+      (1.0f - std::exp(-std::abs(amount) * 0.065f *
                          navigationScale_ * dollySensitivity_));
   const float signedMagnitude = amount > 0.0f ? magnitude : -magnitude;
   const light3d::Vec3 forward = light3d::normalize(target_ - eye());

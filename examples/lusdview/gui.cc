@@ -351,6 +351,14 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
                          uint8_t{1});
   viewVisible_.clear();
   revealSelectionInHierarchy_ = false;
+  // Recompute the frozen grid/axes extent for the new scene on the next
+  // buildHelpers() call. Playback must not keep rescaling it from the animated
+  // scene bounds (that made the ground grid visibly wobble).
+  helperHalfExtentValid_ = false;
+  regionSelecting_ = false;
+  regionSelectionMoved_ = false;
+  pointSelecting_ = false;
+  pointSelectionMoved_ = false;
   // Start with nothing selected; the user selects via the viewport or hierarchy.
   // Drop any highlight geometry the previous scene's selection left behind --
   // it is in the OLD scene's world space, and the Vulkan backend would keep
@@ -720,6 +728,12 @@ void Gui::drawDockspaceAndMenu() {
         mode_ = RenderMode::Shaded;
         wireCycle_ = 2;
       }
+      ImGui::MenuItem("Wireframe X-ray (see through)", "X", &wireXray_);
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Off: hidden wireframe edges are occluded by surfaces.\n"
+            "On: draw every edge through geometry (x-ray).");
+      }
       ImGui::Separator();
       if (ImGui::BeginMenu("Selection display")) {
         static const char* labels[] = {"Off", "Bounds only",
@@ -1084,8 +1098,11 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
       ImGui::TextUnformatted("W / S  Move forward / backward (Shift = fast)");
       ImGui::TextUnformatted("V  Cycle wireframe (off / wire / wire+shade)");
+      ImGui::TextUnformatted("X  Toggle wireframe X-ray (see through)");
       ImGui::Separator();
       ImGui::TextDisabled("Selection");
+      ImGui::TextUnformatted("LMB / drag  Pick prim / surface");
+      ImGui::TextUnformatted("Shift+LMB drag  Region select");
       ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
       ImGui::TextUnformatted("Double-click hierarchy item  Frame subtree");
       ImGui::Separator();
@@ -1364,11 +1381,35 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
   rebuildSubsetHighlight();
 }
 
-// Build the selection-highlight geometry: the GL backend draws a polygon-mode
-// wireframe (whole mesh via highlightMeshIndex, or a GeomSubset's triangles via
-// highlightSubsetIndices_); the Vulkan backend, lacking a wireframe pass, draws
-// world-space orange edge lines (highlightLinesData_). A selected GeomSubset
-// outlines exactly its faces (mapped through the mesh's sourceFaceId).
+// True when a timeline change actually needs the CPU selection-highlight
+// geometry rebuilt. Whole-mesh raster selections are re-posed by the backend's
+// GPU wire/polygon pass; only GeomSubset selections and the ray-traced overlay
+// consume the CPU edge lines.
+bool Gui::selectionNeedsPoseRebuild() const {
+  if (!draw_ || selMeshIndex_ < 0 ||
+      static_cast<size_t>(selMeshIndex_) >= draw_->meshes.size()) {
+    return false;
+  }
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(selMeshIndex_)];
+  const bool animated = !m.jointIdx.empty() || !m.morphDeltaHalf.empty() ||
+                        m.animatedWorld;
+  if (!animated) return false;  // static selection never needs a re-pose
+  // A whole-mesh raster selection is re-posed by the backend's GPU wire /
+  // polygon pass (authored cage in the vertex shader); the CPU line copy is
+  // only consumed for GeomSubset selections and by the ray-traced overlay.
+  // Meshes without a GPU wire stream keep the CPU fallback.
+  if (highlightSubsetMesh_ < 0 && m.hasWireframe &&
+      !(renderer_ && renderer_->rayTracingActive())) {
+    return false;
+  }
+  return true;
+}
+
+// Build the selection-highlight geometry: GL draws a polygon-mode wireframe
+// (whole mesh via highlightMeshIndex, or a GeomSubset's triangles via
+// highlightSubsetIndices_); Vulkan draws whole-mesh selections through its
+// surface-wire pass and only needs these CPU edge lines for GeomSubset
+// selections (and for the ray-traced overlay).
 void Gui::rebuildSubsetHighlight() {
   highlightSubsetIndices_.clear();
   highlightSubsetMesh_ = -1;
@@ -1485,13 +1526,25 @@ void Gui::rebuildSubsetHighlight() {
     return;
   }
 
-  // World-space orange edge lines (for the Vulkan line-pipeline highlight).
+  // Whole-mesh raster selection: the backend re-poses the authored cage in the
+  // vertex shader (Vulkan surface wire) or draws the polygon overlay (GL), so
+  // the CPU line copy is only needed for GeomSubset selections, meshes without
+  // a GPU wire stream, or the ray-traced overlay. Building millions of
+  // HelperVertex every playback frame for a large selected mesh was pure waste.
+  if (highlightSubsetMesh_ < 0 && mi >= 0 &&
+      draw_->meshes[static_cast<size_t>(mi)].hasWireframe &&
+      !(renderer_ && renderer_->rayTracingActive())) {
+    return;
+  }
+
+  // World-space orange edge lines (for the Vulkan line-pipeline highlight and
+  // the ray-traced overlay). Whole-mesh raster selections returned above.
   const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
   const float* W = m.world;  // column-major
   // GL draws this mesh's highlight through the GPU-deformed polygon overlay
   // (gl_renderer.cc's highlightMeshIndex path), so it naturally follows
-  // skinning. Vulkan has no wireframe pass and relies entirely on these
-  // CPU-built lines (draw_'s m.vertices are always REST pose -- GPU skinning
+  // skinning. These CPU-built lines are for GeomSubset selections and the
+  // ray-traced overlay: draw_'s m.vertices are always REST pose (GPU skinning
   // deforms in the vertex shader without writing back to the CPU array), so
   // they must be posed here or a skinned selection shows its frozen rest-pose
   // silhouette over the moving mesh (visible as a mismatched wireframe net).
@@ -1573,10 +1626,8 @@ void Gui::clearSelection() {
   inspectorCacheRows_.clear();
   // Drop the highlight geometry too, exactly as selecting rebuilds it. The GL
   // backend keys its selection overlay off highlightMeshIndex (cleared to -1
-  // above), so it stops drawing on its own -- but the Vulkan backend has no
-  // wireframe pass and draws the CPU-built world-space edge lines instead, so
-  // without this the last selection's wireframe stayed on screen forever after
-  // deselecting.
+  // above), so it stops drawing on its own; Vulkan's surface-wire pass does the
+  // same. Subset/RT CPU line data is cleared here as well.
   rebuildSubsetHighlight();
 }
 
@@ -2802,7 +2853,7 @@ void Gui::drawSelectionList() {
   ImGui::Separator();
 
   if (selectionList_.empty()) {
-    HintWrapped("Drag a region in the viewport or click a prim/mesh.");
+    HintWrapped("Click or drag in the viewport to pick a prim/mesh; Shift+drag selects a region.");
     ImGui::End();
     return;
   }
@@ -4237,7 +4288,7 @@ void Gui::handleNavigation() {
     const ImVec2 d = io.MouseDelta;
     if (navMode_ == 1) cam_->orbit(d.x, d.y);
     else if (navMode_ == 2) cam_->pan(d.x, d.y);
-    else if (navMode_ == 3) cam_->dolly((d.x - d.y) * 0.05f);
+    else if (navMode_ == 3) cam_->dolly((d.x - d.y) * 0.022f);
     const bool anyDown = ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
                          ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
                          ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -4253,6 +4304,9 @@ void Gui::handleNavigation() {
     if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
       wireCycle_ = (wireCycle_ + 1) % 3;
       if (mode_ == RenderMode::Wireframe) mode_ = RenderMode::Shaded;
+    }
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X)) {
+      wireXray_ = !wireXray_;
     }
     if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
       static const float kScales[] = {0.25f, 0.5f, 1.0f, 1.5f};
@@ -5178,6 +5232,10 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* linePan = "Alt+MMB / Shift+Alt+LMB Pan";
   const char* lineDolly = "Alt+RMB / Wheel Dolly";
   const char* lineWalk = "W / S Move eye + pivot (Up/Down aliases, Shift = fast)";
+  const char* linePick = "LMB / drag Pick    Shift+LMB drag Region select";
+  const std::string lineWire =
+      std::string("V Wireframe   X Wireframe x-ray: ") +
+      (wireXray_ ? "on" : "off");
   const char* lineSelect = "[ / ] Prev/Next selection";
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
   const char* lineFrame = "F Frame selected   A Frame all   0 Home";
@@ -5192,6 +5250,8 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePan).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineDolly).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineWalk).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePick).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineWire.c_str()).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineSelect).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineHistory).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineFrame).x);
@@ -5202,7 +5262,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
 
   const float pad = ImGui::GetStyle().FramePadding.x * 1.2f;
   const float lineH = ImGui::GetTextLineHeightWithSpacing();
-  const int lines = full ? 11 : 2;
+  const int lines = full ? 14 : 2;
   const ImVec2 pos(imageMin.x + 12.0f, imageMin.y + 12.0f);
   const ImVec2 boxSize(maxWidth + pad * 2.0f, lineH * static_cast<float>(lines) + pad * 2.0f);
 
@@ -5229,6 +5289,10 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineDolly);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineWalk);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(200, 220, 255, 255), linePick);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineWire.c_str());
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineSelect);
     y += lineH;
@@ -5265,8 +5329,111 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   }
 }
 
+void Gui::buildPosedPickVertices(
+    std::unordered_map<int, std::vector<DrawVertex>>* out) const {
+  if (!out) return;
+  out->clear();
+  if (!draw_ || drawIsPosed_) return;  // draw_ already holds the displayed pose
+  if (std::getenv("LUSDVIEW_DEBUG_PICK")) {
+    std::fprintf(stderr,
+                 "[pick] pose applied=%.3f current=%.3f drawIsPosed=%d next=%d\n",
+                 timeline_.applied, timeline_.current, drawIsPosed_ ? 1 : 0,
+                 nextStage_ ? 1 : 0);
+  }
+  if (nextStage_) {
+    // --next loader: re-pose the retained rest vertices at the current time
+    // (morph then skin), exactly like the selection-highlight path.
+    std::vector<RtSkinnedMeshUpload> posed;
+    if (BuildNextRtDeformedVertices(nextStage_.get(), *draw_, timeline_.applied,
+                                    blendOverrides(), &posed)) {
+      for (RtSkinnedMeshUpload& upload : posed) {
+        if (upload.meshIndex >= 0)
+          (*out)[upload.meshIndex] = std::move(upload.vertices);
+      }
+    }
+    return;
+  }
+  if (!loaded_) return;
+  // Legacy/tydra scene: compose the current skinning matrices and skin each
+  // deformable mesh's rest vertices on the CPU.
+  std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.vertices.empty() ||
+        (m.jointIdx.empty() && m.morphDeltaHalf.empty())) {
+      continue;
+    }
+    std::vector<lightusd::value::matrix4d> composed;
+    if (!BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
+                                       &skinCache, &composed)) {
+      continue;
+    }
+    std::vector<DrawVertex> verts = m.vertices;
+    if (ApplySkinningToVertices(m, composed, &verts)) {
+      (*out)[static_cast<int>(mi)] = std::move(verts);
+    }
+  }
+}
+
 int Gui::pickMesh(float px, float py, int vpW, int vpH,
                   float* hitDistance) const {
+  if (hitDistance) *hitDistance = 1e30f;
+  if (!std::isfinite(px) || !std::isfinite(py)) return -1;
+
+  // The rasterizer evaluates coverage at pixel centers. A click's continuous
+  // cursor position can sit on a pixel corner/edge, where a thin foreground
+  // triangle covers the pixel center but not the exact cursor point. Trace both
+  // rays and keep the nearer exact hit; this makes picking match what is
+  // actually drawn without a large multi-sample aperture.
+  const float cx = std::floor(px) + 0.5f;
+  const float cy = std::floor(py) + 0.5f;
+  float centerT = 1e30f;
+  std::unordered_map<int, std::vector<DrawVertex>> posedCache;
+  bool posedBuilt = false;
+  const int center = pickMeshSingle(cx, cy, vpW, vpH, &centerT, &posedCache,
+                                    &posedBuilt);
+  float cursorT = 1e30f;
+  int cursor = center;
+  if (std::fabs(cx - px) > 1.0e-4f || std::fabs(cy - py) > 1.0e-4f) {
+    cursor = pickMeshSingle(px, py, vpW, vpH, &cursorT, &posedCache,
+                            &posedBuilt);
+  } else {
+    cursorT = centerT;
+  }
+
+  const bool centerExact = centerT > 0.0f && centerT < 1.0e29f;
+  const bool cursorExact = cursorT > 0.0f && cursorT < 1.0e29f;
+  if (centerExact) {
+    // The pixel-center ray is what the rasterizer actually displayed. Prefer it
+    // even when the continuous cursor ray grazes a different surface at a
+    // nearly identical depth (thin edges / overlapping shells).
+    if (hitDistance) *hitDistance = centerT;
+    return center;
+  }
+  if (cursorExact) {
+    // The center missed but the cursor is on a thin edge: keep the click usable.
+    if (hitDistance) *hitDistance = cursorT;
+    return cursor;
+  }
+
+  // No exact triangle hit: preserve the bounds-only fallback, choosing the
+  // nearer entry. Bounds-only distances are negative, so the larger value is
+  // closer.
+  const bool centerBounds = centerT <= 0.0f && centerT > -1.0e29f;
+  const bool cursorBounds = cursorT <= 0.0f && cursorT > -1.0e29f;
+  if (centerBounds || cursorBounds) {
+    const bool useCursor =
+        cursorBounds && (!centerBounds || cursorT > centerT);
+    if (hitDistance) *hitDistance = useCursor ? cursorT : centerT;
+    return useCursor ? cursor : center;
+  }
+  return -1;
+}
+
+int Gui::pickMeshSingle(
+    float px, float py, int vpW, int vpH, float* hitDistance,
+    std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
+    bool* posedBuilt) const {
   if (hitDistance) *hitDistance = 1e30f;
   if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
       vpH <= 0) {
@@ -5321,10 +5488,18 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     return true;
   };
 
-  // Moller-Trumbore ray/triangle in world space.
+  // Moller-Trumbore ray/triangle in world space. `cullBackfaces` mirrors the
+  // raster cull mode: a single-sided mesh's back-facing triangles are not
+  // visible, so they must not win a pick either (a single-sided shell otherwise
+  // hides a character standing inside it).
   auto rayTri = [&](const light3d::Vec3& a, const light3d::Vec3& b,
-                    const light3d::Vec3& c, float& tOut) -> bool {
+                    const light3d::Vec3& c, float& tOut,
+                    bool cullBackfaces) -> bool {
     const light3d::Vec3 e1 = b - a, e2 = c - a;
+    if (cullBackfaces &&
+        light3d::dot(light3d::cross(e1, e2), rd) >= 0.0f) {
+      return false;  // back-facing relative to the view ray
+    }
     const light3d::Vec3 pv = light3d::cross(rd, e2);
     const float det = light3d::dot(e1, pv);
     if (std::fabs(det) < 1e-9f) return false;  // parallel
@@ -5357,10 +5532,63 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
   float bestT = 1e30f;
   int bestBounds = -1;
   float bestBoundsT = 1e30f;
+  // Reject rays that miss the whole scene early. This also avoids posing every
+  // skinned mesh for a background click. The pad covers a conservative scene
+  // bound that can lag a fast animated pose by a frame (a wing tip can sit just
+  // outside the un-padded box).
+  if (draw_->hasBounds) {
+    float pmin[3], pmax[3];
+    for (int k = 0; k < 3; ++k) {
+      const float pad =
+          0.10f * std::max(0.0f, draw_->aabbMax[k] - draw_->aabbMin[k]);
+      pmin[k] = draw_->aabbMin[k] - pad;
+      pmax[k] = draw_->aabbMax[k] + pad;
+    }
+    float sceneT = 0.0f;
+    if (!hitAabb(pmin, pmax, 1.0e30f, &sceneT)) {
+      if (hitDistance) *hitDistance = 1.0e30f;
+      return -1;
+    }
+  }
+  const bool debugPick = std::getenv("LUSDVIEW_DEBUG_PICK") != nullptr;
+  if (debugPick) {
+    std::fprintf(stderr, "[pick] ray origin=(%.3f %.3f %.3f) dir=(%.3f %.3f %.3f)\n",
+                 ro.x, ro.y, ro.z, rd.x, rd.y, rd.z);
+    if (draw_->hasBounds) {
+      std::fprintf(stderr, "[pick] sceneAabb=[%.3f %.3f %.3f]-[%.3f %.3f %.3f]\n",
+                   draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2],
+                   draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]);
+    }
+  }
+  // Lazily posed vertices for animated meshes. The raster path deforms on the
+  // GPU, so `vertices` is the rest pose; ray/triangle tests against it select
+  // the wrong (or no) surface. Build the displayed pose once per pick, and only
+  // when a deformable mesh's bounds are actually hit.
+  std::unordered_map<int, std::vector<DrawVertex>> localPosed;
+  bool localPosedBuilt = false;
+  if (!posedCache) posedCache = &localPosed;
+  if (!posedBuilt) posedBuilt = &localPosedBuilt;
+  auto ensurePosedPickVerts = [&]() {
+    if (*posedBuilt) return;
+    *posedBuilt = true;
+    buildPosedPickVertices(posedCache);
+  };
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
     // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
     if (!meshVisibleForView(mi)) continue;
     const DrawMeshCPU& m = draw_->meshes[mi];
+    if (debugPick) {
+      std::fprintf(stderr,
+                   "[pick] scan mi=%zu path=%s deformed=%d verts=%zu "
+                   "aabb=[%.3f %.3f %.3f]-[%.3f %.3f %.3f] posedAabb=%d "
+                   "doubleSided=%d wire=%d\n",
+                   mi, m.absPath.c_str(),
+                   (!m.jointIdx.empty() || !m.morphDeltaHalf.empty()) ? 1 : 0,
+                   m.vertices.size(), m.aabbMin[0], m.aabbMin[1], m.aabbMin[2],
+                   m.aabbMax[0], m.aabbMax[1], m.aabbMax[2],
+                   m.hasPosedPickAabb ? 1 : 0, m.doubleSided ? 1 : 0,
+                   m.hasWireframe ? 1 : 0);
+    }
     // These are viewer-generated boxes, not authored USD mesh prims.  Picking
     // their scene-spanning bounds made a click on a tree select the large
     // composition/budget container instead of the actual source mesh.
@@ -5369,12 +5597,29 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
       continue;
     }
     const bool gpuDeformed = !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
+    const std::vector<DrawVertex>* pickVerts = nullptr;
+    auto resolvePickVerts = [&]() -> const std::vector<DrawVertex>* {
+      if (!gpuDeformed) return nullptr;
+      if (drawIsPosed_) return &m.vertices;
+      ensurePosedPickVerts();
+      auto it = posedCache->find(static_cast<int>(mi));
+      return (it != posedCache->end() && !it->second.empty())
+                 ? &it->second
+                 : nullptr;
+    };
+    const bool useSceneBound = gpuDeformed && draw_->hasBounds;
     const float* pickMin = m.hasPosedPickAabb
                                ? m.posedPickAabbMin
-                               : (gpuDeformed ? m.restAabbMin : m.aabbMin);
+                               : (m.instanceCount() > 0
+                                      ? m.protoAabbMin
+                                      : (useSceneBound ? draw_->aabbMin
+                                                       : m.aabbMin));
     const float* pickMax = m.hasPosedPickAabb
                                ? m.posedPickAabbMax
-                               : (gpuDeformed ? m.restAabbMax : m.aabbMax);
+                               : (m.instanceCount() > 0
+                                      ? m.protoAabbMax
+                                      : (useSceneBound ? draw_->aabbMax
+                                                       : m.aabbMax));
     bool boundsHit = false;
     if (m.instanceCount() > 0) {
       // aabbMin/Max is the union of all placements and is therefore much too
@@ -5399,11 +5644,16 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
         if (hitAabb(imn, imx, bestT, &instanceT)) {
           boundsHit = true;
           bool exactInstanceHit = false;
+          pickVerts = resolvePickVerts();
           const bool hasFullTriangles =
-              !m.vertices.empty() && m.indices.size() >= 3;
+              gpuDeformed
+                  ? (pickVerts && !pickVerts->empty() &&
+                     m.indices.size() >= 3)
+                  : (!m.vertices.empty() && m.indices.size() >= 3);
           const bool hasCompactTriangles =
-              !m.pickPositions.empty() && m.pickIndices.size() >= 3;
-          if (!gpuDeformed && (hasFullTriangles || hasCompactTriangles)) {
+              !gpuDeformed && !m.pickPositions.empty() &&
+              m.pickIndices.size() >= 3;
+          if (hasFullTriangles || hasCompactTriangles) {
             auto instancePoint = [&](const light3d::Vec3& v) {
               return light3d::Vec3{
                   x[0] * v.x + x[1] * v.y + x[2] * v.z + x[3],
@@ -5416,6 +5666,10 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
                                           ? m.vertices.size()
                                           : m.pickPositions.size() / 3;
             auto point = [&](uint32_t i) {
+              if (pickVerts)
+                return light3d::Vec3{(*pickVerts)[i].px,
+                                     (*pickVerts)[i].py,
+                                     (*pickVerts)[i].pz};
               return hasFullTriangles
                          ? light3d::Vec3{m.vertices[i].px, m.vertices[i].py,
                                          m.vertices[i].pz}
@@ -5427,7 +5681,8 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
                 continue;
               float triangleT = 0.0f;
               if (rayTri(instancePoint(point(ia)), instancePoint(point(ib)),
-                         instancePoint(point(ic)), triangleT) &&
+                         instancePoint(point(ic)), triangleT,
+                         !m.doubleSided) &&
                   triangleT < bestT) {
                 bestT = triangleT;
                 best = static_cast<int>(mi);
@@ -5438,8 +5693,7 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
           // Retain bounds-only picking for released/deformed prototype data,
           // but never let an exact miss on retained triangles turn the whole
           // instance box into a selectable solid.
-          if ((hasFullTriangles || hasCompactTriangles) && !gpuDeformed &&
-              !exactInstanceHit) {
+          if ((hasFullTriangles || hasCompactTriangles) && !exactInstanceHit) {
             continue;
           }
           if (!exactInstanceHit && instanceT < bestBoundsT) {
@@ -5449,12 +5703,22 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
         }
       }
     } else {
+      pickVerts = resolvePickVerts();
       float boundsT = 0.0f;
-      boundsHit = hitAabb(pickMin, pickMax, bestT, &boundsT);
+      if (gpuDeformed && pickVerts) {
+        // The exact posed triangle set is authoritative. A conservative AABB can
+        // lag a fast animated pose by a frame, so do not let it reject a valid
+        // wing/claw hit.
+        boundsHit = true;
+      } else {
+        boundsHit = hitAabb(pickMin, pickMax, bestT, &boundsT);
+      }
       const bool hasExactStatic =
-          !gpuDeformed && ((!m.vertices.empty() && m.indices.size() >= 3) ||
-                           (!m.pickPositions.empty() &&
-                            m.pickIndices.size() >= 3));
+          (gpuDeformed
+               ? (pickVerts && !pickVerts->empty() && m.indices.size() >= 3)
+               : (!m.vertices.empty() && m.indices.size() >= 3)) ||
+          (!gpuDeformed && !m.pickPositions.empty() &&
+           m.pickIndices.size() >= 3);
       if (boundsHit && !hasExactStatic && boundsT < bestBoundsT) {
         bestBoundsT = boundsT;
         bestBounds = static_cast<int>(mi);
@@ -5463,14 +5727,17 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     if (!boundsHit) continue;
 
     // Static next meshes normally arrive here after FreeMeshSurfaceCPU, so use
-    // their compact picking triangles. Only GPU-deformed meshes and legacy
-    // carriers without either triangle representation retain the bounds fallback:
-    // their CPU vertices are the rest pose, not necessarily the shape on screen.
-    const bool hasFullTriangles = !m.vertices.empty() && m.indices.size() >= 3;
+    // their compact picking triangles. Deformed meshes use the posed vertex
+    // copy built above (their `vertices` are the rest pose). Only meshes with
+    // neither representation retain the bounds fallback.
+    const bool hasFullTriangles =
+        gpuDeformed
+            ? (pickVerts && !pickVerts->empty() && m.indices.size() >= 3)
+            : (!m.vertices.empty() && m.indices.size() >= 3);
     const bool hasCompactTriangles =
-        !m.pickPositions.empty() && m.pickIndices.size() >= 3;
-    if (m.instanceCount() > 0 || (!hasFullTriangles && !hasCompactTriangles) ||
-        gpuDeformed)
+        !gpuDeformed && !m.pickPositions.empty() && m.pickIndices.size() >= 3;
+    if (m.instanceCount() > 0 ||
+        (!hasFullTriangles && !hasCompactTriangles))
       continue;
 
     light3d::Mat4 W;
@@ -5478,8 +5745,13 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     const std::vector<uint32_t>& pi =
         hasFullTriangles ? m.indices : m.pickIndices;
     const size_t pointCount =
-        hasFullTriangles ? m.vertices.size() : m.pickPositions.size() / 3;
+        pickVerts ? pickVerts->size()
+                  : (hasFullTriangles ? m.vertices.size()
+                                      : m.pickPositions.size() / 3);
     auto point = [&](uint32_t i) {
+      if (pickVerts)
+        return light3d::Vec3{(*pickVerts)[i].px, (*pickVerts)[i].py,
+                             (*pickVerts)[i].pz};
       return hasFullTriangles
                  ? light3d::Vec3{m.vertices[i].px, m.vertices[i].py,
                                  m.vertices[i].pz}
@@ -5493,13 +5765,22 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
       const light3d::Vec3 b = light3d::transformPoint(W, point(pi[i + 1]));
       const light3d::Vec3 c = light3d::transformPoint(W, point(pi[i + 2]));
       float t;
-      if (rayTri(a, b, c, t) && t < bestT) {
+      if (rayTri(a, b, c, t, !m.doubleSided) && t < bestT) {
         bestT = t;
         best = static_cast<int>(mi);
       }
     }
   }
   const int result = best >= 0 ? best : bestBounds;
+  if (std::getenv("LUSDVIEW_DEBUG_PICK")) {
+    std::fprintf(stderr,
+                 "[pick] result=%d path=%s exactT=%.3f bounds=%d boundsT=%.3f\n",
+                 result,
+                 result >= 0 && static_cast<size_t>(result) < draw_->meshes.size()
+                     ? draw_->meshes[static_cast<size_t>(result)].absPath.c_str()
+                     : "<none>",
+                 best >= 0 ? bestT : -1.0f, bestBounds, bestBoundsT);
+  }
   // A negative distance explicitly denotes a bounds-only fallback.  It is
   // useful to callers that have a real selection buffer for curves: a broad
   // cached mesh bound must not occlude a curve merely because the camera is
@@ -5932,6 +6213,8 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH,
 }
 
 void Gui::beginRegionSelection(const ImVec2& mouse) {
+  pointSelecting_ = false;
+  pointSelectionMoved_ = false;
   regionSelecting_ = true;
   regionSelectionMoved_ = false;
   regionStart_ = mouse;
@@ -5944,6 +6227,42 @@ void Gui::updateRegionSelection(const ImVec2& mouse) {
   const float dx = regionEnd_.x - regionStart_.x;
   const float dy = regionEnd_.y - regionStart_.y;
   if ((dx * dx + dy * dy) > 16.0f) regionSelectionMoved_ = true;
+}
+
+void Gui::beginPointSelection(const ImVec2& mouse) {
+  regionSelecting_ = false;
+  regionSelectionMoved_ = false;
+  pointSelecting_ = true;
+  pointSelectionMoved_ = false;
+  pointStart_ = mouse;
+  pointEnd_ = mouse;
+}
+
+void Gui::updatePointSelection(const ImVec2& mouse) {
+  if (!pointSelecting_) return;
+  pointEnd_ = mouse;
+  const float dx = pointEnd_.x - pointStart_.x;
+  const float dy = pointEnd_.y - pointStart_.y;
+  if ((dx * dx + dy * dy) > 16.0f) pointSelectionMoved_ = true;
+}
+
+void Gui::finishPointSelection(const ImVec2& imageMin) {
+  if (!pointSelecting_) return;
+  pointSelecting_ = false;
+  pointSelectionMoved_ = false;
+  if (!draw_) return;
+  // A plain click and a plain drag are both point picks: resolve the pixel under
+  // the cursor at release. Clamp so releasing just outside the image still
+  // resolves against the nearest viewport edge instead of clearing the
+  // selection.
+  const float maxX = static_cast<float>(std::max(0, viewportW_ - 1));
+  const float maxY = static_cast<float>(std::max(0, viewportH_ - 1));
+  const float px =
+      std::max(0.0f, std::min(pointEnd_.x - imageMin.x, maxX));
+  const float py =
+      std::max(0.0f, std::min(pointEnd_.y - imageMin.y, maxY));
+  const PickReport picked = pickViewportPixel(px, py, true);
+  if (picked.path.empty()) clearSelection();
 }
 
 bool Gui::meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
@@ -6216,8 +6535,10 @@ void Gui::drawViewport() {
           gizmoMouseStart_ = io.MousePos;
           gizmoStartPos_[0] = tx; gizmoStartPos_[1] = ty; gizmoStartPos_[2] = tz;
           gizmoActive_ = true;
-        } else {
+        } else if (io.KeyShift) {
           beginRegionSelection(io.MousePos);
+        } else {
+          beginPointSelection(io.MousePos);
         }
       } else if (vpHovered_ && !io.MouseDown[0]) {
         // Hover: update gizmoAxis_ for highlighting.
@@ -6240,15 +6561,17 @@ void Gui::drawViewport() {
       }
     }
 
-    // Plain left click picks one mesh; plain left drag selects all visible mesh
-    // prims whose projected bounds intersect the drag rectangle. Alt+drag stays
-    // reserved for camera navigation.
+    // Default LMB gesture (click or drag) is a point/surface pick. Region
+    // selection is opt-in: Shift+LMB drag draws the marquee and selects every
+    // visible mesh whose projected bounds intersect it. Alt+drag stays reserved
+    // for camera navigation.
     {
       ImGuiIO& io = ImGui::GetIO();
       const bool plainLeft = navMode_ == 0 && !io.KeyAlt;
       if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-          !gizmoActive_) {
-        beginRegionSelection(io.MousePos);
+          !gizmoActive_ && !regionSelecting_ && !pointSelecting_) {
+        if (io.KeyShift) beginRegionSelection(io.MousePos);
+        else beginPointSelection(io.MousePos);
       }
       if (regionSelecting_) {
         updateRegionSelection(io.MousePos);
@@ -6263,6 +6586,18 @@ void Gui::drawViewport() {
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
           finishRegionSelection(imageMin);
+        }
+      } else if (pointSelecting_) {
+        updatePointSelection(io.MousePos);
+        // Lightweight feedback: a small pick ring tracks the cursor while
+        // dragging. The actual selection resolves on release.
+        if (pointSelectionMoved_) {
+          ImDrawList* dl = ImGui::GetWindowDrawList();
+          dl->AddCircle(io.MousePos, 7.0f, IM_COL32(90, 150, 255, 80), 20, 3.0f);
+          dl->AddCircle(io.MousePos, 6.0f, IM_COL32(170, 205, 255, 230), 20, 1.5f);
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+          finishPointSelection(imageMin);
         }
       }
     }
@@ -6329,6 +6664,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   // Wireframe and helper/highlight overlays have no selection ID.
   p.wireMode = pickingAov ? 0
                           : (mode_ == RenderMode::Wireframe ? 1 : wireCycle_);
+  p.wireXray = wireXray_;
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;
@@ -6474,6 +6810,8 @@ void Gui::renderViewportScene(FramePacket* packet) {
             packet->clippingPlanes);
   packet->pathTrace = p.pathTrace;
   packet->mode = p.mode;
+  packet->wireMode = p.wireMode;
+  packet->wireXray = p.wireXray;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {
     packet->lightDir[i] = p.lightDir[i];
@@ -6543,13 +6881,22 @@ void Gui::buildHelpers() {
   // grid). Pad with a flat margin (proportionally large for small scenes,
   // a small fraction of a big one) and floor at 5 units so even a tiny scene
   // still shows a reasonable amount of ground.
-  float half = 10.0f;
-  if (draw_ && draw_->hasBounds) {
-    float ex = 0.0f;
-    for (int i = 0; i < 3; ++i)
-      ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
-    if (ex > 1e-3f) half = std::max(5.0f, std::ceil(ex) + 3.0f);
+  //
+  // Freeze the result for the lifetime of the scene. An animated pose updates
+  // draw_->aabb every frame; recomputing `half` from it rescaled the grid (and
+  // the axes) continuously, which reads as the ground wobbling during playback.
+  if (!helperHalfExtentValid_) {
+    float half = 10.0f;
+    if (draw_ && draw_->hasBounds) {
+      float ex = 0.0f;
+      for (int i = 0; i < 3; ++i)
+        ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
+      if (ex > 1e-3f) half = std::max(5.0f, std::ceil(ex) + 3.0f);
+    }
+    helperHalfExtent_ = half;
+    helperHalfExtentValid_ = true;
   }
+  const float half = helperHalfExtent_;
   // Auto-clip's far plane is derived from the SUBJECT's bounding sphere, which
   // on a small subject is much tighter than this (deliberately padded) helper
   // extent -- tell the camera how far the helpers actually reach so it does not

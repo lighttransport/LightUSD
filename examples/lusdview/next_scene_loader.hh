@@ -138,9 +138,14 @@ void BuildNextMorphWeights(
 // bounds are not refreshed: a skinned batch deliberately carries the conservative
 // scene box, so that a moving rig never culls itself out of view. The SCENE box is
 // refreshed separately -- see BuildNextPosedSceneBounds.
-// Returns false when the scene has no next-path skinning.
+// Returns false when the scene has no next-path skinning. When `outMin`/`outMax`
+// are provided, the conservative posed scene box (per-mesh padded rest boxes
+// transformed by the same bone rows) is written there and `draw`'s scene box is
+// refreshed. This avoids a second full CPU vertex re-pose just to bound the
+// scene during raster playback.
 bool BuildNextSkinningFrame(const lightusd_stage* stage, DrawScene* draw,
-                            double time, SkinningFrameCPU* frame);
+                            double time, SkinningFrameCPU* frame,
+                            float* outMin = nullptr, float* outMax = nullptr);
 
 // The scene's world box at `time`, with the skeleton posed. The load-time box is
 // the REST box, so an animated `--time` load otherwise frames, grids and depth-
@@ -151,10 +156,18 @@ bool BuildNextSkinningFrame(const lightusd_stage* stage, DrawScene* draw,
 // the same tight box the CPU bake and the Tydra path derive -- a conservative
 // bound would put the grid and the depth ramp somewhere else than those paths do,
 // on identical geometry. Returns false when nothing deformed.
+// `precomputedPosed` lets a caller that already ran BuildNextRtDeformedVertices
+// reuse those uploads instead of skinning every vertex a second time.
+// `conservative` skips the vertex pose entirely and bounds from the bone-box
+// union; raster playback uses that because the exact box is not worth a full
+// CPU re-pose every frame (the grid is frozen and the conservative box is safe
+// for auto-clip).
 bool BuildNextPosedSceneBounds(
     const lightusd_stage* stage, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
-    float outMin[3], float outMax[3]);
+    float outMin[3], float outMax[3],
+    const std::vector<RtSkinnedMeshUpload>* precomputedPosed = nullptr,
+    bool conservative = false);
 
 // Ray tracing cannot use the raster vertex shader's deform: the BLAS is built
 // from actual vertex buffers, so the geometry itself has to move. Re-pose the

@@ -231,7 +231,8 @@ class GLRenderer final : public Renderer {
   // non-instanced and instanced prototypes, in a flat color with a small NDC depth
   // bias so the lines sit just in front of the surface.
   void buildWireProgram();
-  void drawWireframe(const RenderFrameParams& params, const float wireColor[3]);
+  void drawWireframe(const RenderFrameParams& params, const float wireColor[3],
+                     bool xray);
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   void presentImpl(ImDrawData* drawData, int fbw, int fbh);
 #endif

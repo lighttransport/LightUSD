@@ -364,6 +364,7 @@ int main(int argc, char** argv) {
   std::optional<size_t> curvePreviewPrims;
   std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
+  bool wantWireframeXray = false;  // --wireframe-xray: draw edges through surfaces
   bool wantMaterialId = false;
   std::vector<std::pair<std::string, lusdview::RenderMode>> modeSweep;  // --mode-sweep
   std::optional<lusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -1136,6 +1137,9 @@ int main(int argc, char** argv) {
       if (rtMaxInstances < 0) rtMaxInstances = 0;
     } if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
+    } if (std::strcmp(argv[i], "--wireframe-xray") == 0) {
+      wantWireframe = true;
+      wantWireframeXray = true;
     } if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
     } if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
@@ -1380,6 +1384,8 @@ int main(int argc, char** argv) {
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
+          "  --wireframe-xray  Start in wireframe mode with x-ray edges (all "
+          "edges drawn through surfaces; hidden-line removal off).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
           "color per material; all backends).\n"
           "  --mode NAME   Start in a render mode: shaded, wireframe, normals, "
@@ -2220,6 +2226,7 @@ int main(int argc, char** argv) {
   app.setCameraConform(cameraConform);
   if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(lusdview::RenderMode::Wireframe);
+  if (wantWireframeXray) app.setWireframeXray(true);
   if (wantMaterialId) app.setRenderMode(lusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
   if (!modeSweep.empty()) {

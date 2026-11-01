@@ -699,7 +699,8 @@ bool HasPublicValueClipAncestor(const lightusd_stage* stage,
 
 void BuildAuthoredControlCage(const lightusd_stage* stage,
                               const std::string& primPath, double time,
-                              DrawMeshCPU* mesh) {
+                              const std::vector<uint32_t>& vertexToPoint,
+                              size_t numPoints, DrawMeshCPU* mesh) {
   if (!stage || !mesh) return;
   const lightusd_prim prim = lightusd_stage_prim_at_path(stage, primPath.c_str());
   const std::vector<float> points = ReadPublicArray<float>(
@@ -710,14 +711,13 @@ void BuildAuthoredControlCage(const lightusd_stage* stage,
       prim, "faceVertexIndices", time, LIGHTUSD_COMP_INT32);
   if (points.size() % 3u || points.empty() || counts.empty() || indices.empty())
     return;
-  mesh->wireframeVertices.assign(points.size() / 3u, DrawVertex{});
-  for (size_t i = 0; i < mesh->wireframeVertices.size(); ++i) {
-    mesh->wireframeVertices[i].px = points[i * 3u];
-    mesh->wireframeVertices[i].py = points[i * 3u + 1u];
-    mesh->wireframeVertices[i].pz = points[i * 3u + 2u];
-  }
-  mesh->wireframeIndices.clear();
+  const size_t pointCount = points.size() / 3u;
+
+  // Authored-point edge list (perimeter of each USD face, deduped).
+  std::vector<uint32_t> pointEdges;
+  pointEdges.reserve(indices.size() * 2u);
   std::unordered_set<uint64_t> seen;
+  seen.reserve(indices.size());
   size_t offset = 0;
   for (int32_t count : counts) {
     if (count < 2 || offset + size_t(count) > indices.size()) {
@@ -728,19 +728,71 @@ void BuildAuthoredControlCage(const lightusd_stage* stage,
     for (int32_t k = 0; k < count; ++k) {
       const int32_t ia = indices[offset + size_t(k)];
       const int32_t ib = indices[offset + size_t((k + 1) % count)];
-      if (ia < 0 || ib < 0 || ia == ib ||
-          size_t(ia) >= mesh->wireframeVertices.size() ||
-          size_t(ib) >= mesh->wireframeVertices.size()) continue;
-      uint32_t a = uint32_t(ia), b = uint32_t(ib);
+      if (ia < 0 || ib < 0 || ia == ib || size_t(ia) >= pointCount ||
+          size_t(ib) >= pointCount) continue;
+      const uint32_t a = uint32_t(ia), b = uint32_t(ib);
       const uint64_t key = a < b ? (uint64_t(a) << 32u) | b
                                  : (uint64_t(b) << 32u) | a;
       if (seen.insert(key).second) {
-        mesh->wireframeIndices.push_back(a);
-        mesh->wireframeIndices.push_back(b);
+        pointEdges.push_back(a);
+        pointEdges.push_back(b);
       }
     }
     offset += size_t(count);
   }
+
+  // When the render mesh still carries the authored points (a plain
+  // triangulated mesh, possibly welded into more vertices at UV/hard-normal
+  // seams), index the cage into the render vertex buffer instead of uploading a
+  // second, rest-pose-only vertex buffer. The render buffer is the one the
+  // vertex stage deforms (morph + skin) and the one world-baked static meshes
+  // were transformed into, so the active/highlight cage follows the displayed
+  // geometry. Refined subdivision meshes report more render points than authored
+  // points, so they keep the dedicated authored control-cage buffer.
+  std::vector<uint32_t> pointToVertex;
+  bool useRenderVertices = false;
+  if (numPoints == pointCount &&
+      vertexToPoint.size() == mesh->vertices.size()) {
+    pointToVertex.assign(pointCount, std::numeric_limits<uint32_t>::max());
+    for (size_t v = 0; v < vertexToPoint.size(); ++v) {
+      const size_t p = size_t(vertexToPoint[v]);
+      if (p < pointCount &&
+          pointToVertex[p] == std::numeric_limits<uint32_t>::max())
+        pointToVertex[p] = static_cast<uint32_t>(v);
+    }
+    useRenderVertices = true;
+  }
+
+  mesh->wireframeIndices.clear();
+  if (useRenderVertices) {
+    // Remap point indices -> their first welded render vertex and dedupe in that
+    // index space (a seam can make several vertices share one point).
+    mesh->wireframeVertices.clear();
+    std::unordered_set<uint64_t> seenRender;
+    seenRender.reserve(pointEdges.size() / 2u);
+    for (size_t i = 0; i + 1 < pointEdges.size(); i += 2) {
+      const uint32_t a = pointToVertex[pointEdges[i + 0u]];
+      const uint32_t b = pointToVertex[pointEdges[i + 1u]];
+      if (a == std::numeric_limits<uint32_t>::max() ||
+          b == std::numeric_limits<uint32_t>::max() || a == b)
+        continue;
+      const uint64_t key = a < b ? (uint64_t(a) << 32u) | b
+                                 : (uint64_t(b) << 32u) | a;
+      if (seenRender.insert(key).second) {
+        mesh->wireframeIndices.push_back(a);
+        mesh->wireframeIndices.push_back(b);
+      }
+    }
+    return;
+  }
+
+  mesh->wireframeVertices.assign(pointCount, DrawVertex{});
+  for (size_t i = 0; i < pointCount; ++i) {
+    mesh->wireframeVertices[i].px = points[i * 3u + 0u];
+    mesh->wireframeVertices[i].py = points[i * 3u + 1u];
+    mesh->wireframeVertices[i].pz = points[i * 3u + 2u];
+  }
+  mesh->wireframeIndices = std::move(pointEdges);
 }
 
 template <typename Ids>
@@ -2191,7 +2243,7 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
   // use animated translations as deformation samples. Their authored rotation
   // and scale channels are exporter bookkeeping, not bone rotations; applying
   // them to the rest local transforms produces the characteristic exploded
-  // mesh seen in AnimFinal_LowRes. Keep this in sync with the legacy/Tydra
+  // mesh seen on such rigs. Keep this in sync with the legacy/Tydra
   // IsPointJointSkeleton heuristic.
   bool translationOnly = false;
   if (nj >= 512) {
@@ -2420,8 +2472,8 @@ bool BakeSkinning(const lightusd_stage* stageHandle, const std::string& meshPath
 //
 // The GPU attribute path carries the four strongest influences for the fast
 // common case and also retains the complete variable-length influence list in
-// DrawMeshCPU's influence texture stream. The latter is required for rigs such
-// as AnimFinal_LowRes, where a vertex may have dozens of meaningful weights.
+// DrawMeshCPU's influence texture stream. The latter is required for rigs with
+// many meaningful influences per vertex.
 // Returns false when the mesh is not skinned (caller leaves it alone).
 bool SetupGpuSkinNext(const lightusd_stage* stageHandle, const std::string& meshPath,
                       double time, DrawMeshCPU* dm,
@@ -2748,8 +2800,11 @@ bool BuildProtoMesh(const lightusd_stage* stageHandle,
     rm.double_sided = true;
   std::vector<uint32_t> vertexToPoint;
   if (!FillFlatGeometry(rm, dm, &vertexToPoint)) return false;
-  BuildAuthoredControlCage(stageHandle, meshPath, time, dm);
   const size_t numPoints = rm.point_count();
+  BuildAuthoredControlCage(stageHandle, meshPath, time, vertexToPoint,
+                           numPoints, dm);
+  dm->hasWireframe = !dm->wireframeIndices.empty() ||
+                     !dm->wireframeVertices.empty();
   // Skinning is resolved by the CALLER (it alone knows the instance count, which
   // decides GPU-skin vs static bake), so hand the weld map back out.
   if (out_numPoints) *out_numPoints = numPoints;
@@ -5331,7 +5386,8 @@ static bool ComputeNextBoneRows(const lightusd_stage* stage, const DrawScene& dr
 }
 
 bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
-                            double time, SkinningFrameCPU* frame) {
+                            double time, SkinningFrameCPU* frame,
+                            float* outMin, float* outMax) {
   if (!draw || !frame) return false;
   std::vector<matrix4d> bones;
   if (!ComputeNextBoneRows(stageHandle, *draw, time, &bones)) return false;
@@ -5342,7 +5398,9 @@ bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
   // so the per-vertex skin attributes are no longer resident here -- only the GL
   // buffers hold them.
   frame->matrixCount = draw->boneMatrixCount;
-  frame->rgba32f.assign(rows * 16, 0.0f);
+  // resize (not assign) so the existing capacity is reused; every element is
+  // overwritten by the packing loop below, so the zero-fill is wasted work.
+  frame->rgba32f.resize(rows * 16);
   frame->enabled = true;
   for (size_t row = 0; row < rows; ++row) {
     for (int r = 0; r < 4; ++r) {
@@ -5353,13 +5411,100 @@ bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
       }
     }
   }
+  if (!outMin || !outMax) return true;
+
+  // Keep the caller's outputs defined even when no mesh contributed a box.
+  for (int k = 0; k < 3; ++k) {
+    outMin[k] = draw->aabbMin[k];
+    outMax[k] = draw->aabbMax[k];
+  }
+
+  // Conservative posed scene box from the SAME bone rows: transform each
+  // skinned mesh's padded rest box by every bone it references. This is orders
+  // of magnitude cheaper than skinning every vertex just to bound the scene,
+  // and is safe for auto-clip/grid sizing. The raster path uses it every frame;
+  // the exact (tight) box remains available for ray tracing via
+  // BuildNextPosedSceneBounds.
+  float mn[3] = {std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max()};
+  float mx[3] = {-std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max()};
+  bool has = false;
+  auto grow = [&](const float p[3]) {
+    for (int k = 0; k < 3; ++k) {
+      if (!has) { mn[k] = mx[k] = p[k]; continue; }
+      mn[k] = std::min(mn[k], p[k]);
+      mx[k] = std::max(mx[k], p[k]);
+    }
+    has = true;
+  };
+  for (DrawMeshCPU& m : draw->meshes) {
+    m.hasPosedPickAabb = false;
+    if (m.instanceCount() == 0 && m.boneLo >= 0 && m.boneHi >= m.boneLo &&
+        !bones.empty()) {
+      const float rlo[3] = {m.restAabbMin[0] - m.morphExtent[0],
+                            m.restAabbMin[1] - m.morphExtent[1],
+                            m.restAabbMin[2] - m.morphExtent[2]};
+      const float rhi[3] = {m.restAabbMax[0] + m.morphExtent[0],
+                            m.restAabbMax[1] + m.morphExtent[1],
+                            m.restAabbMax[2] + m.morphExtent[2]};
+      if (rlo[0] <= rhi[0]) {
+        bool meshHas = false;
+        for (int row = m.boneLo; row <= m.boneHi; ++row) {
+          if (static_cast<size_t>(row) >= bones.size()) break;
+          const matrix4d& B = bones[static_cast<size_t>(row)];
+          for (int c = 0; c < 8; ++c) {
+            const double p[3] = {(c & 1) ? rhi[0] : rlo[0],
+                                 (c & 2) ? rhi[1] : rlo[1],
+                                 (c & 4) ? rhi[2] : rlo[2]};
+            float q[3];  // row-vector p*B, as the vertex shader applies it
+            for (int k = 0; k < 3; ++k) {
+              q[k] = static_cast<float>(p[0] * B.m[0][k] +
+                                        p[1] * B.m[1][k] +
+                                        p[2] * B.m[2][k] + B.m[3][k]);
+            }
+            grow(q);
+            meshHas = true;
+          }
+        }
+        if (meshHas) {
+          // Deliberately do NOT publish this as `hasPosedPickAabb`: the
+          // bone-box union is a safe scene bound but can be looser/tighter
+          // than the actual posed mesh. Picking uses the conservative world
+          // box for deformed meshes and the exact posed triangles; the tight
+          // posed pick AABB remains the RT path's job.
+          continue;
+        }
+      }
+    }
+    // Static meshes, instanced prototypes and anything without a usable bone
+    // range already carry a world box (morph extent included).
+    if (m.aabbMax[0] >= m.aabbMin[0] && std::isfinite(m.aabbMin[0]) &&
+        std::isfinite(m.aabbMax[0])) {
+      grow(m.aabbMin);
+      grow(m.aabbMax);
+    }
+  }
+  if (has) {
+    for (int k = 0; k < 3; ++k) {
+      draw->aabbMin[k] = mn[k];
+      draw->aabbMax[k] = mx[k];
+      outMin[k] = mn[k];
+      outMax[k] = mx[k];
+    }
+    draw->hasBounds = true;
+  }
   return true;
 }
 
 bool BuildNextPosedSceneBounds(
     const lightusd_stage* stageHandle, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
-    float outMin[3], float outMax[3]) {
+    float outMin[3], float outMax[3],
+    const std::vector<RtSkinnedMeshUpload>* precomputedPosed,
+    bool conservative) {
   // The box is taken from the POSED VERTICES, and from the same deform the ray
   // tracer uploads -- not from a cheaper conservative bound. It has to be the
   // tight box: the Tydra/CPU-bake path derives its box from posed vertices too,
@@ -5367,14 +5512,25 @@ bool BuildNextPosedSceneBounds(
   // auto-fit, so a looser box here would make the two paths render the same
   // geometry differently. (A bone-box union -- 8 rest corners through each bone
   // -- was tried first and is ~10% loose on a 60-degree bend, which was visible.)
-  std::vector<RtSkinnedMeshUpload> posed;
-  if (!draw ||
-      !BuildNextRtDeformedVertices(stageHandle, *draw, time, blendOverride, &posed)) {
-    return false;
+  // Raster playback passes `conservative=true` instead: the grid is frozen and
+  // auto-clip only needs a safe bound, so a full CPU vertex re-pose per frame is
+  // wasted work.
+  std::vector<RtSkinnedMeshUpload> ownedPosed;
+  const std::vector<RtSkinnedMeshUpload>* posedPtr = precomputedPosed;
+  if (!posedPtr && !conservative) {
+    if (!draw ||
+        !BuildNextRtDeformedVertices(stageHandle, *draw, time, blendOverride,
+                                     &ownedPosed)) {
+      return false;
+    }
+    posedPtr = &ownedPosed;
   }
+  if (!draw) return false;
   std::unordered_map<int, const std::vector<DrawVertex>*> posedByMesh;
-  for (const RtSkinnedMeshUpload& up : posed)
-    posedByMesh[up.meshIndex] = &up.vertices;
+  if (posedPtr) {
+    for (const RtSkinnedMeshUpload& up : *posedPtr)
+      posedByMesh[up.meshIndex] = &up.vertices;
+  }
 
   bool has = false;
   float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
@@ -5443,7 +5599,8 @@ bool BuildNextPosedSceneBounds(
       }
       continue;
     }
-    if (m.boneLo >= 0 && m.boneHi >= m.boneLo && m.vertices.empty()) {
+    if (m.boneLo >= 0 && m.boneHi >= m.boneLo &&
+        (conservative || m.vertices.empty())) {
       if (!bonesReady) {
         bonesOk = ComputeNextBoneRows(stageHandle, *draw, time, &bones);
         bonesReady = true;
@@ -5455,6 +5612,21 @@ bool BuildNextPosedSceneBounds(
                             m.restAabbMax[1] + m.morphExtent[1],
                             m.restAabbMax[2] + m.morphExtent[2]};
       if (bonesOk && rlo[0] <= rhi[0]) {
+        bool meshHas = false;
+        float meshMn[3] = {std::numeric_limits<float>::max(),
+                           std::numeric_limits<float>::max(),
+                           std::numeric_limits<float>::max()};
+        float meshMx[3] = {-std::numeric_limits<float>::max(),
+                           -std::numeric_limits<float>::max(),
+                           -std::numeric_limits<float>::max()};
+        auto growMesh = [&](const float p[3]) {
+          for (int k = 0; k < 3; ++k) {
+            if (!meshHas) { meshMn[k] = meshMx[k] = p[k]; continue; }
+            meshMn[k] = std::min(meshMn[k], p[k]);
+            meshMx[k] = std::max(meshMx[k], p[k]);
+          }
+          meshHas = true;
+        };
         for (int row = m.boneLo; row <= m.boneHi; ++row) {
           if (static_cast<size_t>(row) >= bones.size()) break;
           const matrix4d& B = bones[static_cast<size_t>(row)];
@@ -5468,7 +5640,15 @@ bool BuildNextPosedSceneBounds(
                                         p[2] * B.m[2][k] + B.m[3][k]);
             }
             grow(q);
+            growMesh(q);
           }
+        }
+        if (meshHas) {
+          for (int k = 0; k < 3; ++k) {
+            m.posedPickAabbMin[k] = meshMn[k];
+            m.posedPickAabbMax[k] = meshMx[k];
+          }
+          m.hasPosedPickAabb = true;
         }
         continue;
       }
@@ -8860,6 +9040,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
     if (!source.wireframeIndices.empty()) {
+      b.dm.hasWireframe = true;
       b.dm.wireframeIndices.reserve(b.dm.wireframeIndices.size() +
                                     source.wireframeIndices.size());
       for (uint32_t index : source.wireframeIndices)
@@ -9452,7 +9633,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
       continue;
     }
-    BuildAuthoredControlCage(stage_owner.get(), meshPath, time, &loc);
+    BuildAuthoredControlCage(stage_owner.get(), meshPath, time, vertexToPoint,
+                             m.point_count(), &loc);
+    loc.hasWireframe = !loc.wireframeIndices.empty() ||
+                       !loc.wireframeVertices.empty();
     const std::string backMaterialPath = cachedBackMaterialPath(meshPath);
     bool hasSubsetMaterialBindings = false;
     const lightusd_prim meshPrim =
@@ -9988,8 +10172,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.sourceFaceId.push_back(faceBase + face);
       if (!needsPtex)
         b.nextFaceId += static_cast<uint32_t>(m.face_count());
-      for (uint32_t widx : loc.wireframeIndices)
+      for (uint32_t widx : loc.wireframeIndices) {
         b.dm.wireframeIndices.push_back(vbase + widx);
+        b.dm.hasWireframe = true;
+      }
     } else {
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
@@ -10108,8 +10294,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // Attach the mesh's wireframe once (to the first group's batch, mapped
         // through vtx so its vertices exist there) -- avoids cross-batch dupes.
         if (firstGroup) {
-          for (uint32_t widx : loc.wireframeIndices)
+          for (uint32_t widx : loc.wireframeIndices) {
             b.dm.wireframeIndices.push_back(vtx(widx));
+            b.dm.hasWireframe = true;
+          }
           firstGroup = false;
         }
         if (!needsPtex)

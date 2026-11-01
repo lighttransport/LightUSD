@@ -135,7 +135,7 @@ class Gui {
   void setTimeline(const TimelineInfo& t) {
     const bool poseChanged = t.applied != timeline_.applied;
     timeline_ = t;
-    if (poseChanged) rebuildSubsetHighlight();
+    if (poseChanged && selectionNeedsPoseRebuild()) rebuildSubsetHighlight();
   }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setCameraLens(const RtCameraLens& lens) {
@@ -318,6 +318,9 @@ class Gui {
   // the new state. Used by the MCP input tool.
   int cycleWireframe() { wireCycle_ = (wireCycle_ + 1) % 3; return wireCycle_; }
   int wireframeMode() const { return wireCycle_; }
+  bool wireXray() const { return wireXray_; }
+  void setWireXray(bool on) { wireXray_ = on; }
+  bool toggleWireXray() { wireXray_ = !wireXray_; return wireXray_; }
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
@@ -557,11 +560,26 @@ class Gui {
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
   void finishRegionSelection(const ImVec2& imageMin);
+  void beginPointSelection(const ImVec2& mouse);
+  void updatePointSelection(const ImVec2& mouse);
+  void finishPointSelection(const ImVec2& imageMin);
   std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH,
                float* hitDistance = nullptr) const;
+  // Single-ray implementation used by the pixel-center + cursor aperture in
+  // pickMesh(). Kept separate so both rays share the same mesh logic.
+  int pickMeshSingle(
+      float px, float py, int vpW, int vpH, float* hitDistance,
+      std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
+      bool* posedBuilt) const;
+  // Pose skinned/morphed meshes at the current timeline time for exact
+  // ray/triangle picking. The raster path deforms on the GPU, so draw_'s
+  // `vertices` are the rest pose; picking them directly would select the wrong
+  // surface (or miss entirely) on animated characters.
+  void buildPosedPickVertices(
+      std::unordered_map<int, std::vector<DrawVertex>>* out) const;
   std::string pickCarrierPath(float px, float py, int vpW, int vpH,
                               float* hitDistance = nullptr) const;
   void selectAdjacentMesh(int step);
@@ -627,6 +645,9 @@ class Gui {
   int selectionHighlightMode_{2};
   int selectionHighlightLastVisibleMode_{2};
   void rebuildSubsetHighlight();
+  // True when a timeline change actually needs the CPU selection-highlight
+  // geometry rebuilt (animated selection whose backend does not re-pose it).
+  bool selectionNeedsPoseRebuild() const;
 
   // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when
   // blendActive_ it overrides the SkelAnimation-driven weights in the morph pass.
@@ -641,6 +662,9 @@ class Gui {
   RenderMode mode_{RenderMode::Shaded};
   // Wireframe overlay state cycled by the 'v' key: 0 off / 1 wire-only / 2 wire+shaded.
   int wireCycle_{0};
+  // When false (default) scene wireframe is depth tested; when true it draws
+  // through surfaces (x-ray). Toggled with X / View > Wireframe X-ray.
+  bool wireXray_{false};
   int curveMaxSegments_{8};
   std::array<float, 16> lastCurveView_{};
   bool haveLastCurveView_{false};
@@ -874,6 +898,17 @@ class Gui {
   bool regionSelectionMoved_{false};
   ImVec2 regionStart_{0.0f, 0.0f};
   ImVec2 regionEnd_{0.0f, 0.0f};
+  // Plain LMB drag is a point/surface pick. Region (marquee) selection is
+  // reserved for Shift+LMB drag so the common gesture never turns into a
+  // rubber band by accident.
+  bool pointSelecting_{false};
+  bool pointSelectionMoved_{false};
+  ImVec2 pointStart_{0.0f, 0.0f};
+  ImVec2 pointEnd_{0.0f, 0.0f};
+  // Grid/axes half-extent frozen per scene so an animated pose changing the
+  // scene bounds during playback does not rescale (wobble) the ground grid.
+  float helperHalfExtent_{10.0f};
+  bool helperHalfExtentValid_{false};
 
   bool wantOpen_{false};
   bool wantOpenRecent_{false};

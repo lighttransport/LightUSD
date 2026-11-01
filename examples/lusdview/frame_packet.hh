@@ -32,6 +32,8 @@ struct FramePacket {
   int clippingPlaneCount{0};
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
+  int wireMode{0};       // 0 shaded, 1 wire only, 2 wire over shaded
+  bool wireXray{false};  // wireframe draws through surfaces
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor[3]{1.0f, 1.0f, 1.0f};
@@ -80,6 +82,8 @@ struct FramePacket {
               p.clippingPlanes);
     p.pathTrace = pathTrace;
     p.mode = mode;
+    p.wireMode = wireMode;
+    p.wireXray = wireXray;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor[i];
     for (int i = 0; i < 3; ++i) {
       p.lightDir[i] = lightDir[i];

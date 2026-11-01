@@ -304,13 +304,16 @@ struct RenderFrameParams {
   int clippingPlaneCount{0};
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
-  // Wireframe overlay state, cycled with the 'v' key (GL backend):
+  // Wireframe overlay state, cycled with the 'v' key:
   //   0 = off (shaded fill only)
   //   1 = wireframe only (hidden-line: depth-only fill, then polygon edges)
   //   2 = wireframe + shading (shaded fill, then polygon edges on top)
   // Edges are the ORIGINAL polygon edges of the base (pre-tessellation) mesh --
   // triangulation diagonals are dropped via per-triangle source face ids.
   int wireMode{0};
+  // false: wireframe obeys the depth buffer (hidden lines removed). true: draw
+  // every edge through surfaces (x-ray). Applies to modes 1 and 2.
+  bool wireXray{false};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor[3]{1.0f, 1.0f, 1.0f};

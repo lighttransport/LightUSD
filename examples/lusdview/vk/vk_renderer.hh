@@ -716,6 +716,11 @@ class VulkanRenderer final : public Renderer {
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
   VkPipeline wireOccludedPipeline_{VK_NULL_HANDLE};
+  // Color-write-disabled fill used as the hidden-line depth prepass in
+  // wireframe-only mode.
+  VkPipeline wireDepthPipeline_{VK_NULL_HANDLE};
+  // Wire pipeline with depth testing disabled (x-ray wireframe).
+  VkPipeline wireXrayPipeline_{VK_NULL_HANDLE};
   VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
@@ -744,6 +749,8 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
   VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
+  // Color-write-disabled instanced fill for the wireframe-only depth prepass.
+  VkPipeline instDepthPipeline_{VK_NULL_HANDLE};
   VkPipeline oitInstPipeline_{VK_NULL_HANDLE};
   VkPipeline instShadowPipeline_{VK_NULL_HANDLE};
 
@@ -1253,6 +1260,7 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   int wireMode_{0};           // 0 shaded, 1 wire only, 2 wire over shaded
+  bool wireXray_{false};      // draw wireframe through surfaces
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
   float displacementScale_{1.0f};  // global displacement multiplier

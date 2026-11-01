@@ -121,14 +121,18 @@ python3 examples/lusdview/render-motion.py \
     right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
     increases the step.
   - `V` cycles shaded, wireframe-only, and wireframe-with-shading views.
+    Wireframe is depth tested by default so hidden edges are occluded; `X`
+    toggles x-ray mode to draw every edge through surfaces.
   - `N` cycles the master navigation sensitivity through `0.25x`, `0.5x`,
     `1x`, and `1.5x`; the Camera panel also accepts a precise numeric scale.
-    Mouse orbit, pan, and dolly use a calmer 65% base response.
+    Orbit and dolly use a calmer, Maya-like per-pixel response.
   - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
     default and can be toggled with `F1`.
-  - **Click to pick** — a plain left click selects the nearest mesh under the
-    cursor (world-space ray vs. per-mesh AABB then ray/triangle), updating the
-    hierarchy highlight, inspector and selection bbox.
+  - **Click or drag to pick** — a plain left click or drag selects the nearest
+    mesh under the cursor (world-space ray vs. per-mesh AABB then
+    ray/triangle), updating the hierarchy highlight, inspector and selection
+    bbox. **`Shift` + left-drag** draws a marquee and selects every visible
+    mesh whose projected bounds intersect it.
   - **Hierarchy sync** — viewport or MCP selection auto-expands and scrolls the
     hierarchy to the focused prim when possible.
   - **Selection stepping** — `[` / `]` move to the previous/next visible

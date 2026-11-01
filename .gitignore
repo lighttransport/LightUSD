@@ -45,8 +45,7 @@ web/demo/dist/
 web/demo/assets-src/
 web/demo/public/assets/openchess/
 # The whole demo asset folder is ignored: it is a staging area for large
-# third-party sample downloads (AnimFinal_LowRes.usdz ~58 MB,
-# StandingRunForward.usdz ~29 MB, DamagedHelmet.usdz ~5 MB, ...), not source.
+# third-party sample downloads (several tens of MB each), not source.
 # The ~130 fixtures already tracked under it stay tracked -- .gitignore only
 # affects untracked paths. Anything new added here must be force-added:
 #   git add -f web/demo/public/assets/<file>

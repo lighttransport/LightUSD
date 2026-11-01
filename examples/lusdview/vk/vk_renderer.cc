@@ -2826,6 +2826,22 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                          &pipeline_);
   reportPipeline("opaque");
   if (r == VK_SUCCESS) {
+    // Wireframe-only hidden-line prepass: the opaque fill with color writes
+    // disabled. It populates depth so the authored-edge pass can reject edges
+    // behind nearer surfaces while leaving the background color untouched.
+    VkPipelineColorBlendAttachmentState depthCba = cba;
+    depthCba.colorWriteMask = 0;
+    VkPipelineColorBlendStateCreateInfo depthCb = cb;
+    depthCb.pAttachments = &depthCba;
+    VkGraphicsPipelineCreateInfo depthCi = ci;
+    depthCi.pColorBlendState = &depthCb;
+    if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &depthCi, nullptr,
+                                  &wireDepthPipeline_) != VK_SUCCESS) {
+      wireDepthPipeline_ = VK_NULL_HANDLE;
+    }
+    reportPipeline("wire depth prepass");
+  }
+  if (r == VK_SUCCESS) {
     VkShaderModule envVs = createShader(environment_vert_spv,
                                         sizeof(environment_vert_spv));
     VkShaderModule envFs = createShader(environment_frag_spv,
@@ -2866,9 +2882,12 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     wireDs.depthWriteEnable = VK_FALSE;
     wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     VkPipelineRasterizationStateCreateInfo wireRs = rs;
-    wireRs.depthBiasEnable = VK_TRUE;
-    wireRs.depthBiasConstantFactor = -1.0f;
-    wireRs.depthBiasSlopeFactor = -1.0f;
+    // The authored edges share the exact surface depth with the hidden-line
+    // prepass (or the shaded fill), so no bias is needed. A negative bias pulls
+    // occluded edges forward and makes them leak through the surface.
+    wireRs.depthBiasEnable = VK_FALSE;
+    wireRs.depthBiasConstantFactor = 0.0f;
+    wireRs.depthBiasSlopeFactor = 0.0f;
     VkGraphicsPipelineCreateInfo wireCi = ci;
     wireCi.pStages = wireStages;
     wireCi.pInputAssemblyState = &wireIa;
@@ -2877,6 +2896,18 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     if (!wireVs || !wireFs || vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
                                   &wirePipeline_) != VK_SUCCESS) {
       wirePipeline_ = VK_NULL_HANDLE;
+    }
+    if (wireVs && wireFs) {
+      // X-ray variant: same authored-edge pass with depth testing disabled so
+      // every edge draws through the surface.
+      VkPipelineDepthStencilStateCreateInfo xrayDs = wireDs;
+      xrayDs.depthTestEnable = VK_FALSE;
+      xrayDs.depthWriteEnable = VK_FALSE;
+      VkGraphicsPipelineCreateInfo xrayCi = wireCi;
+      xrayCi.pDepthStencilState = &xrayDs;
+      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &xrayCi, nullptr,
+                                    &wireXrayPipeline_) != VK_SUCCESS)
+        wireXrayPipeline_ = VK_NULL_HANDLE;
     }
     if (wireVs && wireFs) {
       VkPipelineDepthStencilStateCreateInfo hiddenDs = wireDs;
@@ -3281,6 +3312,24 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   VkResult tr = VK_SUCCESS;
   if (r == VK_SUCCESS) {
     tr = createInstVariant(/*translucent=*/true, &instTranslucentPipeline_);
+  }
+  if (r == VK_SUCCESS) {
+    // Color-write-disabled instanced fill for the wireframe-only depth prepass.
+    VkPipelineDepthStencilStateCreateInfo depthDs = ds;
+    depthDs.depthTestEnable = VK_TRUE;
+    depthDs.depthWriteEnable = VK_TRUE;
+    VkPipelineColorBlendAttachmentState depthCba = cba;
+    depthCba.blendEnable = VK_FALSE;
+    depthCba.colorWriteMask = 0;
+    VkPipelineColorBlendStateCreateInfo depthCb = cb;
+    depthCb.pAttachments = &depthCba;
+    VkGraphicsPipelineCreateInfo depthCi = ci;
+    depthCi.pDepthStencilState = &depthDs;
+    depthCi.pColorBlendState = &depthCb;
+    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &depthCi, nullptr,
+                                  &instDepthPipeline_) != VK_SUCCESS) {
+      instDepthPipeline_ = VK_NULL_HANDLE;
+    }
   }
   captureOitRecipe(1, ci, mesh_inst_vert_spv, sizeof(mesh_inst_vert_spv),
                    mesh_inst_frag_oit_spv, sizeof(mesh_inst_frag_oit_spv));
@@ -14643,6 +14692,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   hasParams_ = (params.view && params.proj);
   rtMode_ = static_cast<int>(params.mode);
   wireMode_ = params.wireMode;
+  wireXray_ = params.wireXray;
   depthScale_ = params.depthScale;
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
@@ -16413,21 +16463,34 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     };
     const bool useWeightedOit =
+        wireMode_ != 1 &&
         oitEffective_ &&
         weightedOitSupported_ && oitFb_ &&
         oitCompositePipeline_ && oitCompositeSet_ && rtMode_ == 0;
     caps_.usesWeightedOit = useWeightedOit;
-    if (wireMode_ != 1) drawMeshPass(/*apass=*/0, pipeline_);
-    if (!useWeightedOit && translucentPipeline_ != VK_NULL_HANDLE &&
-        rtMode_ == 0) {
+    if (wireMode_ == 1) {
+      // Hidden-line wireframe: populate depth with an unlit, color-write-
+      // disabled fill, then draw the authored edges. X-ray still runs this pass
+      // so the environment background is drawn; the edge pass ignores depth.
+      if (wireDepthPipeline_) drawMeshPass(/*apass=*/0, wireDepthPipeline_);
+    } else {
+      drawMeshPass(/*apass=*/0, pipeline_);
+    }
+    if (wireMode_ != 1 && !useWeightedOit &&
+        translucentPipeline_ != VK_NULL_HANDLE && rtMode_ == 0) {
       drawMeshPass(/*apass=*/1, translucentPipeline_);
     }
 
     // Draw authored polygon boundaries, not renderer triangulation or generated
     // tessellation edges. This matches usdview's control-cage overlay.
+    // X-ray only applies to the scene wireframe; the selection cage keeps its
+    // own selection-display depth mode when scene wireframe is off.
+    const bool wireXrayActive = wireXray_ && wireMode_ != 0;
+    const VkPipeline wirePl =
+        (wireXrayActive && wireXrayPipeline_) ? wireXrayPipeline_ : wirePipeline_;
     if ((wireMode_ != 0 || (highlightMeshIndex_ >= 0 && !highlightHasSubset_)) &&
-        wirePipeline_ != VK_NULL_HANDLE) {
-      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
+        wirePl != VK_NULL_HANDLE) {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePl);
       if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
       if (!materialSets_.empty() && materialSets_[0]) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -16473,8 +16536,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         pc.baseColor[2] = selected ? 0.04f : 0.23f;
         pc.baseColor[3] = 1.0f;
         pc.ids[2] = static_cast<int>(mi);
+        // Bit 0: the wire EBO addresses the render vertex buffer, whose per-
+        // vertex morph/skin attributes are valid. The dedicated authored cage
+        // buffer of a subdivided mesh has no deform data (see wire.vert).
+        pc.ids[3] = mesh.wireVbo == VK_NULL_HANDLE ? 1 : 0;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
-        if (selected && wireOccludedPipeline_) {
+        if (selected && !wireXrayActive && wireOccludedPipeline_) {
           // A subdivision control cage can lie inside its smooth limit surface.
           // Draw it faintly first, then redraw depth-visible edges at full
           // strength. This preserves occlusion cues without losing the cage.
@@ -16487,7 +16554,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           pc.baseColor[3] = 1.0f;
           vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
                              &pc);
-          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePl);
         }
         vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
         if (std::getenv("LUSDVIEW_DEBUG_WIRE"))
@@ -16501,8 +16568,14 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     for (const auto& m : meshes_) {
       if (m.instanceCount > 0) { anyInstanced = true; break; }
     }
-    if (anyInstanced && instPipeline_) {
-      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+    // Wireframe-only uses a color-write-disabled instanced fill so instanced
+    // prototypes contribute to the hidden-line depth prepass without painting
+    // shaded surfaces. If that variant is unavailable, skip the instanced pass
+    // rather than painting shaded geometry into wireframe-only output.
+    const VkPipeline instPl =
+        (wireMode_ == 1) ? instDepthPipeline_ : instPipeline_;
+    if (anyInstanced && instPl) {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPl);
       // The MDI batch draws every eligible prototype in a few indirect calls, so
       // cull mode cannot vary per mesh here: leave it off (the pre-dynamic-state
       // behavior). The per-mesh instanced loop below does cull single-sided
@@ -16608,7 +16681,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         const bool translucentInst = instPass == 1;
         if (useWeightedOit && translucentInst) continue;
         VkPipeline pipe =
-            translucentInst ? instTranslucentPipeline_ : instPipeline_;
+            translucentInst ? instTranslucentPipeline_ : instPl;
         if (pipe == VK_NULL_HANDLE) continue;
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
         int instCullState = -1;  // dedup vkCmdSetCullMode across prototypes
@@ -16671,9 +16744,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     // Raster LOD box proxies (optimization B): distant instances the cull collapsed
     // to a shared unit cube, drawn as one instanced pass.
-    drawBoxProxies(cb);
-    drawNativeCarriers(cb, nativeCarrierPipeline_,
-                       useWeightedOit ? 0 : -1);
+    // Wireframe-only shows authored mesh edges, not shaded proxies/carriers.
+    if (wireMode_ != 1) {
+      drawBoxProxies(cb);
+      drawNativeCarriers(cb, nativeCarrierPipeline_,
+                         useWeightedOit ? 0 : -1);
+    }
     // UsdVol volume raymarch (proxy-box, translucent "over" opaque geometry).
     if (!useWeightedOit) recordVolumePass(cb, volumePipeline_);
 
@@ -17422,6 +17498,8 @@ void VulkanRenderer::shutdown() {
   if (environmentPipeline_) { vkDestroyPipeline(device_, environmentPipeline_, nullptr); environmentPipeline_ = VK_NULL_HANDLE; }
   if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
   if (wireOccludedPipeline_) { vkDestroyPipeline(device_, wireOccludedPipeline_, nullptr); wireOccludedPipeline_ = VK_NULL_HANDLE; }
+  if (wireDepthPipeline_) { vkDestroyPipeline(device_, wireDepthPipeline_, nullptr); wireDepthPipeline_ = VK_NULL_HANDLE; }
+  if (wireXrayPipeline_) { vkDestroyPipeline(device_, wireXrayPipeline_, nullptr); wireXrayPipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }
@@ -17437,6 +17515,7 @@ void VulkanRenderer::shutdown() {
   if (nativeCarrierShadowPipeline_) { vkDestroyPipeline(device_, nativeCarrierShadowPipeline_, nullptr); nativeCarrierShadowPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
+  if (instDepthPipeline_) { vkDestroyPipeline(device_, instDepthPipeline_, nullptr); instDepthPipeline_ = VK_NULL_HANDLE; }
   if (instTranslucentPipeline_) { vkDestroyPipeline(device_, instTranslucentPipeline_, nullptr); instTranslucentPipeline_ = VK_NULL_HANDLE; }
   if (oitInstPipeline_) { vkDestroyPipeline(device_, oitInstPipeline_, nullptr); oitInstPipeline_ = VK_NULL_HANDLE; }
   if (instPipelineLayout_) { vkDestroyPipelineLayout(device_, instPipelineLayout_, nullptr); instPipelineLayout_ = VK_NULL_HANDLE; }

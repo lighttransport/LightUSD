@@ -3565,7 +3565,8 @@ void GLRenderer::buildWireProgram() {
   }
 }
 
-void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
+void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3],
+                               bool xray) {
   if (!wireProgram_ && !wireInstProgram_) return;
   // Do not apply a constant NDC lift: under perspective it can represent meters
   // of world-space pull at interior-scene distances and expose edges through
@@ -3575,6 +3576,11 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
+  // X-ray draws every edge regardless of the depth buffer. Otherwise keep the
+  // depth test on so hidden-line removal works against the depth prepass (wire
+  // only) or the shaded fill (wire over shaded).
+  if (xray) glDisable(GL_DEPTH_TEST);
+  else glEnable(GL_DEPTH_TEST);
   // The GS expands each edge into a thin screen-space quad and the FS feathers it
   // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
   // blend for the feathered edge; LEQUAL accepts the edge's exact surface depth,
@@ -3659,6 +3665,7 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   }
   glBindVertexArray(0);
   // Restore default state for the rest of the frame (ImGui / next passes).
+  glEnable(GL_DEPTH_TEST);
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
   glDisable(GL_BLEND);
@@ -5049,12 +5056,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   const float wireCol[3] = {0.04f, 0.24f, 0.10f};  // dark green
 
   if (wireMode == 1 && haveWire) {
-    // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so
-    // occluded edges are hidden, then draw the polygon edges over the background.
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    drawMeshes(params, /*wireframe=*/false, nullptr);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    drawWireframe(params, wireCol);
+    // Wireframe only. By default render the fill into DEPTH ONLY so occluded
+    // edges are hidden, then draw the polygon edges over the background. X-ray
+    // skips the depth fill and disables the depth test for the edges.
+    if (!params.wireXray) {
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+      drawMeshes(params, /*wireframe=*/false, nullptr);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    drawWireframe(params, wireCol, params.wireXray);
   } else {
     // Shaded fill. In the lit mode (RenderMode 0), draw opaque geometry first,
     // then translucent (Blend) materials in a separate back-to-front, blended,
@@ -5079,7 +5089,7 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     } else {
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);
     }
-    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
+    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol, params.wireXray);
   }
   if (wireMode != 1) drawNonMesh(params);
 
