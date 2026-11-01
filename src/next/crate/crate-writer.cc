@@ -153,6 +153,10 @@ class BufferedFileSink {
 }  // namespace
 
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #include "crate-writer-impl.inc"
 
 // Output file of a batched write (CrateWriter::BeginBatchedFile).

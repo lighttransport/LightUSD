@@ -8,6 +8,17 @@
   // Section writing
   // ============================================================
 
+  // Portable relaxed fetch-add for the parallel child-list scatter. GCC/Clang
+  // expose the __atomic builtins; MSVC only has the interlocked intrinsics.
+  static uint32_t FetchAddRelaxed(uint32_t* value, uint32_t add) {
+#if defined(_MSC_VER)
+    return static_cast<uint32_t>(::_InterlockedExchangeAdd(
+        reinterpret_cast<volatile long*>(value), static_cast<long>(add)));
+#else
+    return __atomic_fetch_add(value, add, __ATOMIC_RELAXED);
+#endif
+  }
+
   // Structural section payloads (TOKENS, FIELDS, FIELDSETS, SPECS) are built
   // into their own buffers -- independently, so the threaded writer prepares
   // them concurrently -- and appended to the output in fixed crate order, which
@@ -315,9 +326,9 @@
       ParallelRanges(N, 1000000, [&](size_t, size_t lo, size_t hi) {
         for (size_t i = lo; i < hi; ++i) {
           if (!(flags[i] & kEncoded)) continue;
-          __atomic_fetch_add(
+          FetchAddRelaxed(
               &child_off[(parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1) + 1],
-              1u, __ATOMIC_RELAXED);
+              1u);
         }
       });
       for (size_t k = 0; k + 1 < child_off.size(); ++k) {
@@ -330,7 +341,7 @@
           for (size_t i = lo; i < hi; ++i) {
             if (!(flags[i] & kEncoded)) continue;
             const size_t list = parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1;
-            children[__atomic_fetch_add(&cursor[list], 1u, __ATOMIC_RELAXED)] =
+            children[FetchAddRelaxed(&cursor[list], 1u)] =
                 static_cast<uint32_t>(i);
           }
         });
