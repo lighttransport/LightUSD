@@ -803,6 +803,9 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorPool lineDepthPool_{VK_NULL_HANDLE};
   VkDescriptorSet lineDepthSet_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
+  // Depth-tested selection-highlight lines (LESS_OR_EQUAL, no depth write) so
+  // coplanar cage edges stay visible over the shaded surface.
+  VkPipeline highlightLinePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
   VkPipeline lineDepthPipeline_{VK_NULL_HANDLE};
   // Camera-facing native Points/Curves raster carrier. The persistent Vulkan

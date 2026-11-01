@@ -301,6 +301,15 @@ struct DrawMeshCPU {
     std::string path;
   };
   std::vector<SourcePrimRange> sourcePrims;
+  // Lazy ray-picking acceleration: object-space bounds of fixed-size triangle
+  // runs. A merged static batch holds hundreds of thousands of triangles, and a
+  // pick used to test every one of them; with these boxes it tests only the runs
+  // the ray crosses. Built on first pick, 6 floats per run.
+  mutable std::vector<float> pickChunkBounds;
+  mutable uint32_t pickChunkTriangles{0};  // triangles per run (0 = not built)
+  // Time code the run bounds were built for when they came from posed vertices
+  // (skinned/morphed meshes); -1e30 = built from the static vertex array.
+  mutable double pickChunkPoseTime{-1.0e30};
   // Original-polygon wireframe edges as GL_LINES vertex-index pairs (perimeter of
   // each USD face, deduped). Built from the pre-triangulation topology so the
   // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)

@@ -374,6 +374,7 @@ class App
   nlohmann::json mcpInput(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpMouse(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpPick(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSelect(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpReloadLayer(const nlohmann::json& a,

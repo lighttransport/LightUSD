@@ -2600,6 +2600,10 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
     std::memcpy(p, copy.data(), static_cast<size_t>(bytes));
     vkUnmapMemory(device_, *mem);
   }
+  if (!*buf && std::getenv("LUSDVIEW_DEBUG_SELECTION")) {
+    std::fprintf(stderr, "[selection] vk line buffer null (%zu verts, %llu B)\n",
+                 copy.size(), static_cast<unsigned long long>(bytes));
+  }
   if (*buf) {
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     const bool rtDepth = pipeline == lineDepthPipeline_;
@@ -3507,6 +3511,33 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   ci.pDepthStencilState = &dsNo;
   VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                           &linePipelineNoDepth_);
+
+  // Selection-highlight variant: the CPU cage/edge lines share the exact depth
+  // of the shaded surface they outline, so LESS (the plain helper-line compare)
+  // hides every coplanar edge. Match the authored-wire pass: LESS_OR_EQUAL and
+  // no depth write.
+  {
+    VkPipelineDepthStencilStateCreateInfo dsHighlight = ds;
+    dsHighlight.depthTestEnable = VK_TRUE;
+    dsHighlight.depthWriteEnable = VK_FALSE;
+    dsHighlight.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkPipelineColorBlendAttachmentState hlAttachment = cba;
+    hlAttachment.blendEnable = VK_TRUE;
+    hlAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    hlAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    hlAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    hlAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    hlAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    hlAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendStateCreateInfo hlBlend = cb;
+    hlBlend.pAttachments = &hlAttachment;
+    VkGraphicsPipelineCreateInfo hlCi = ci;
+    hlCi.pDepthStencilState = &dsHighlight;
+    hlCi.pColorBlendState = &hlBlend;
+    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &hlCi, nullptr,
+                                  &highlightLinePipeline_) != VK_SUCCESS)
+      highlightLinePipeline_ = VK_NULL_HANDLE;
+  }
 
   stages[1].module = depthFs;
   ci.layout = lineDepthLayout_;
@@ -15216,14 +15247,11 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   // and displacement exactly and does not draw a coarse overlay afterward.
   highlightMeshIndex_ = params.highlightMeshIndex;
   highlightHasSubset_ = params.highlightIndices && params.highlightIndexCount > 0;
-  // Whole-mesh instanced selections have no GPU wire pass (it is a single-draw
-  // pass), so the GUI hands us per-placement CPU cage lines for them.
-  const bool highlightInstanced =
-      highlightMeshIndex_ >= 0 &&
-      static_cast<size_t>(highlightMeshIndex_) < meshes_.size() &&
-      meshes_[static_cast<size_t>(highlightMeshIndex_)].instanceCount > 0;
-  if (params.highlightLines && params.highlightLineVertexCount > 0 &&
-      (highlightHasSubset_ || rtActive_ || highlightInstanced)) {
+  // The GUI only supplies CPU highlight lines when the GPU surface-wire pass
+  // cannot represent the selection: GeomSubset outlines, the ray-traced overlay,
+  // instanced prims (the wire pass is single-draw) and multi-selections. Keep
+  // them whenever they are provided.
+  if (params.highlightLines && params.highlightLineVertexCount > 0) {
     highlightLineCopy_.assign(
         params.highlightLines,
         params.highlightLines + params.highlightLineVertexCount);
@@ -16952,12 +16980,24 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                 &nonMeshChunkUploads_[frame_]);
     drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                 &helperCap_[frame_], linePipeline_, VP.m);
+    if (std::getenv("LUSDVIEW_DEBUG_SELECTION")) {
+      std::fprintf(stderr,
+                   "[selection] vk draw oit=%d hlVerts=%zu hlMesh=%d subset=%d "
+                   "hlPipeline=%d xray=%d\n",
+                   useWeightedOit ? 1 : 0, highlightLineCopy_.size(),
+                   highlightMeshIndex_, highlightHasSubset_ ? 1 : 0,
+                   highlightLinePipeline_ != VK_NULL_HANDLE ? 1 : 0,
+                   highlightXray_ ? 1 : 0);
+    }
     if (!useWeightedOit) {
       drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
                   &overlayCap_[frame_], linePipelineNoDepth_, VP.m);
       drawLineSet(cb, highlightLineCopy_, &highlightLineBuf_[frame_],
                   &highlightLineMem_[frame_], &highlightLineCap_[frame_],
-                  highlightXray_ ? linePipelineNoDepth_ : linePipeline_, VP.m);
+                  highlightXray_ ? linePipelineNoDepth_
+                                 : (highlightLinePipeline_ ? highlightLinePipeline_
+                                                           : linePipeline_),
+                  VP.m);
     }
     vkCmdEndRenderPass(cb);
     if (useWeightedOit) {
@@ -17717,6 +17757,7 @@ void VulkanRenderer::shutdown() {
                             &boxRasterMorphMem_, &boxRasterInstMem_, &boxRasterTintMem_})
     if (*m) { vkFreeMemory(device_, *m, nullptr); *m = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
+  if (highlightLinePipeline_) { vkDestroyPipeline(device_, highlightLinePipeline_, nullptr); highlightLinePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (lineDepthPipeline_) { vkDestroyPipeline(device_, lineDepthPipeline_, nullptr); lineDepthPipeline_ = VK_NULL_HANDLE; }
   if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }

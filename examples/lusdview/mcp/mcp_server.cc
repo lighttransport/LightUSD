@@ -131,6 +131,15 @@ json MCPServer::buildToolsList() const {
        {"y1", numProp("optional opposite region corner y")},
        {"select", {{"type", "boolean"}, {"description", "update viewer selection (default true)"}}}},
       json::array({"x", "y"})));
+  tools.push_back(tool(
+      "select",
+      "Read or change the viewer's prim selection. op=list returns the current "
+      "selection; set/add/remove change it by prim path; group selects every "
+      "renderable prim at or below path (hierarchy group selection); clear "
+      "empties it.",
+      {{"op", strProp("list | set | add | remove | group | clear")},
+       {"path", strProp("prim path (set/add/remove/group)")}},
+      json::array({"op"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
   tools.push_back(tool(
@@ -401,6 +410,8 @@ void MCPServer::drain() {
         payload = host_->mcpMouse(cmd->args, err);
       } else if (t == "pick") {
         payload = host_->mcpPick(cmd->args, err);
+      } else if (t == "select") {
+        payload = host_->mcpSelect(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {

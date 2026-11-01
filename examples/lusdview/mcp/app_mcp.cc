@@ -1595,6 +1595,12 @@ json App::mcpPick(const json& args, std::string& err) {
   const Gui::PickReport report = region
       ? gui_.pickViewportRegion(x, y, x1, y1, args.value("select", true))
       : gui_.pickViewportPixel(x, y, args.value("select", true));
+  json paths = json::array();
+  for (const Gui::SelectionItem& item : report.items) {
+    paths.push_back({{"path", item.path},
+                     {"mesh_index", item.meshIndex},
+                     {"source_prim", item.sourcePrim}});
+  }
   return json{{"hit", !report.path.empty()},
               {"path", report.path},
               {"kind", report.kind},
@@ -1605,7 +1611,55 @@ json App::mcpPick(const json& args, std::string& err) {
               {"viewport_height", report.viewportHeight},
               {"covered_pixels", report.coveredPixels},
               {"hit_distance", report.hitDistance},
-              {"selected", args.value("select", true) && !report.path.empty()}};
+              {"selected", args.value("select", true) && !report.path.empty()},
+              {"selected_count", report.items.size()},
+              {"paths", paths}};
+}
+
+json App::mcpSelect(const json& args, std::string& err) {
+  const std::string op = args.value("op", std::string("list"));
+  const std::string path = args.value("path", std::string());
+  auto selectionJson = [&]() {
+    json items = json::array();
+    for (const Gui::SelectionItem& item : gui_.selectionItems()) {
+      items.push_back({{"path", item.path},
+                       {"mesh_index", item.meshIndex},
+                       {"source_prim", item.sourcePrim}});
+    }
+    return json{{"count", items.size()},
+                {"focused", gui_.selectedPath()},
+                {"items", items}};
+  };
+  if (op == "list") return selectionJson();
+  if (op == "clear") {
+    gui_.clearSelection();
+    return selectionJson();
+  }
+  if (path.empty()) {
+    err = "select: 'path' is required for op=" + op;
+    return json::object();
+  }
+  if (op == "group") {
+    gui_.selectDescendants(path, /*addToSelection=*/false);
+    if (gui_.selectionItems().empty()) {
+      err = "select: no renderable prims under " + path;
+      return json::object();
+    }
+    return selectionJson();
+  }
+  if (op == "set") {
+    gui_.selectByPath(path, -1);
+    return selectionJson();
+  }
+  if (op == "add" || op == "remove") {
+    const bool already = gui_.isPathSelected(path);
+    if ((op == "add" && already) || (op == "remove" && !already))
+      return selectionJson();
+    gui_.toggleSelectionItem({path, -1, -1});
+    return selectionJson();
+  }
+  err = "select: unknown op '" + op + "'";
+  return json::object();
 }
 
 json App::mcpListPrims(const json& args, std::string&) {

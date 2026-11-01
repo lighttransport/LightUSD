@@ -9286,11 +9286,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     // Record which source prim this vertex/cage range belongs to so a pick can
     // report the real prim instead of the batch's representative path.
-    b.dm.sourcePrims.push_back({vbase,
-                                static_cast<uint32_t>(source.vertices.size()),
-                                wireBase, wireCount,
-                                source.absPath.empty() ? primPath
-                                                       : source.absPath});
+    {
+      DrawMeshCPU::SourcePrimRange range;
+      range.vertexBase = vbase;
+      range.vertexCount = static_cast<uint32_t>(source.vertices.size());
+      range.wireBase = wireBase;
+      range.wireCount = wireCount;
+      range.path = source.absPath.empty() ? primPath : source.absPath;
+      b.dm.sourcePrims.push_back(std::move(range));
+    }
     b.nextFaceId += static_cast<uint32_t>(sourceMesh.face_count());
   };
 
@@ -10610,10 +10614,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.wireframeIndices.push_back(vbase + widx);
         b.dm.hasWireframe = true;
       }
-      b.dm.sourcePrims.push_back(
-          {vbase, static_cast<uint32_t>(loc.vertices.size()), wireBase,
-           static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase,
-           loc.absPath.empty() ? meshPath : loc.absPath});
+      {
+        DrawMeshCPU::SourcePrimRange range;
+        range.vertexBase = vbase;
+        range.vertexCount = static_cast<uint32_t>(loc.vertices.size());
+        range.wireBase = wireBase;
+        range.wireCount =
+            static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase;
+        range.path = loc.absPath.empty() ? meshPath : loc.absPath;
+        b.dm.sourcePrims.push_back(std::move(range));
+      }
     } else {
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
@@ -10749,11 +10759,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
         // Record the source prim for this group's vertex/cage range so a pick
         // can report the real prim instead of the batch's representative path.
-        b.dm.sourcePrims.push_back(
-            {groupVertexBase,
-             static_cast<uint32_t>(b.dm.vertices.size()) - groupVertexBase,
-             wireBase, wireCount,
-             loc.absPath.empty() ? meshPath : loc.absPath});
+        {
+          DrawMeshCPU::SourcePrimRange range;
+          range.vertexBase = groupVertexBase;
+          range.vertexCount =
+              static_cast<uint32_t>(b.dm.vertices.size()) - groupVertexBase;
+          range.wireBase = wireBase;
+          range.wireCount = wireCount;
+          range.path = loc.absPath.empty() ? meshPath : loc.absPath;
+          b.dm.sourcePrims.push_back(std::move(range));
+        }
         if (!needsPtex)
           b.nextFaceId += static_cast<uint32_t>(m.face_count());
       }

@@ -435,8 +435,34 @@ class Gui {
             statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
+  // One selected prim. A merged static/material batch collapses many prims into
+  // one draw, so `sourcePrim` (an index into DrawMeshCPU::sourcePrims) is what
+  // makes the selection resolve to the prim under the cursor; -1 means the whole
+  // draw is selected.
+  struct SelectionItem {
+    std::string path;
+    int meshIndex{-1};
+    int sourcePrim{-1};
+  };
   void selectByPath(const std::string& absPath, int meshIndex,
                     int sourcePrim = -1);
+  // Multi-selection. `selectionList_` holds every selected prim; the primary
+  // (selPath_/selMeshIndex_/selSourcePrim_) is the focused one, used by the
+  // inspector, framing and gizmo.
+  const std::vector<SelectionItem>& selectionItems() const {
+    return selectionList_;
+  }
+  bool isPathSelected(const std::string& path) const;
+  // Replace the whole multi-selection (region picks, hierarchy group). Focuses
+  // the first item.
+  void setSelectionItems(std::vector<SelectionItem> items, bool recordHistory);
+  // Ctrl+click in the hierarchy: add/remove one prim from the multi-selection.
+  void toggleSelectionItem(const SelectionItem& item);
+  // Hierarchy "select group": every renderable prim at or below `path`.
+  void selectDescendants(const std::string& path, bool addToSelection);
+  // Every prim visible inside the viewport rectangle.
+  std::vector<SelectionItem> pickViewportRegionItems(float x0, float y0,
+                                                     float x1, float y1) const;
   struct PickReport {
     std::string path;
     std::string kind;
@@ -447,6 +473,9 @@ class Gui {
     int viewportHeight{0};
     int coveredPixels{0};
     float hitDistance{0.0f};
+    // Region picks report every prim inside the marquee; `path`/`meshIndex`
+    // remain the focused (first) item for callers that only need one.
+    std::vector<SelectionItem> items;
   };
   PickReport pickViewportPixel(float x, float y, bool select);
   PickReport pickViewportRegion(float x0, float y0, float x1, float y1,
@@ -550,6 +579,7 @@ class Gui {
   bool meshVisibleForView(size_t meshIndex) const;
   bool carrierVisibleForView(size_t carrierIndex) const;
   size_t carrierIndexForPath(const std::string& path) const;
+  bool pathInSelection(const std::string& path) const;
   bool selectionHasRenderable() const;
   void isolateSelection();
   void setSelectionVisibility(bool visible);
@@ -575,14 +605,20 @@ class Gui {
   // pickMesh(). Kept separate so both rays share the same mesh logic.
   int pickMeshSingle(
       float px, float py, int vpW, int vpH, float* hitDistance,
-      std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
-      bool* posedBuilt, int* hitSourcePrim = nullptr) const;
+      const std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
+      int* hitSourcePrim = nullptr) const;
   // Pose skinned/morphed meshes at the current timeline time for exact
   // ray/triangle picking. The raster path deforms on the GPU, so draw_'s
   // `vertices` are the rest pose; picking them directly would select the wrong
   // surface (or miss entirely) on animated characters.
-  void buildPosedPickVertices(
-      std::unordered_map<int, std::vector<DrawVertex>>* out) const;
+  // Displayed-pose vertices for deformable meshes, cached until the time code or
+  // the scene changes. Re-posing every skinned mesh on every pick cost ~0.4 s a
+  // click on a scene with thousands of skinned meshes.
+  const std::unordered_map<int, std::vector<DrawVertex>>* posedPickVertices()
+      const;
+  mutable std::unordered_map<int, std::vector<DrawVertex>> posedPickCache_;
+  mutable double posedPickCacheTime_{-1.0e30};
+  mutable uint64_t posedPickCacheGen_{0};
   std::string pickCarrierPath(float px, float py, int vpW, int vpH,
                               float* hitDistance = nullptr,
                               int* hitMeshIndex = nullptr,
@@ -654,6 +690,14 @@ class Gui {
   int selectionHighlightMode_{2};
   int selectionHighlightLastVisibleMode_{2};
   void rebuildSubsetHighlight();
+  // Outline one draw with world-space orange edge lines (whole draw, one batched
+  // source prim, or an explicit triangle list). Shared by single and multi
+  // selection.
+  void appendMeshHighlightLines(
+      int meshIndex, const std::vector<uint32_t>* triOverride, int sourcePrim,
+      const std::unordered_map<int, std::vector<DrawVertex>>* posedCache);
+  // Outline a Points/Curves carrier selection.
+  void appendCarrierHighlightLines(const std::string& path);
   // True when a timeline change actually needs the CPU selection-highlight
   // geometry rebuilt (animated selection whose backend does not re-pose it).
   bool selectionNeedsPoseRebuild() const;
@@ -663,7 +707,7 @@ class Gui {
   std::unordered_map<std::string, float> blendWeights_;
   bool blendActive_{false};
   bool blendDirty_{false};
-  std::vector<std::pair<std::string, int>> selectionList_;
+  std::vector<SelectionItem> selectionList_;
   std::array<CameraBookmark, 3> cameraBookmarks_{};
   std::vector<std::string> selectionHistory_;
   int selectionHistoryIndex_{-1};

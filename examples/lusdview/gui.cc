@@ -1181,6 +1181,7 @@ Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
     if (draw_->points[i].absPath == report.path) report.kind = "points";
   }
   if (report.kind.empty()) report.kind = "prim";
+  report.items.push_back({report.path, report.meshIndex, hitSourcePrim});
   if (select) {
     // The source-prim index (when the hit landed inside a merged draw) lets the
     // highlight outline just that prim instead of the whole batch.
@@ -1197,13 +1198,23 @@ Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
   return report;
 }
 
-Gui::PickReport Gui::pickViewportRegion(float x0, float y0, float x1, float y1,
-                                        bool select) {
-  PickReport report;
-  report.viewportWidth = viewportW_;
-  report.viewportHeight = viewportH_;
-  if (!draw_ || !cam_ || !renderer_ || viewportW_ <= 0 || viewportH_ <= 0)
-    return report;
+// Every prim visible inside the viewport rectangle.
+//
+// A marquee selects what the user can see in the box, so it is resolved with the
+// same exact per-pixel ray test as a click, sampled on a bounded grid. Bounds
+// intersection was tried first and is unusable here: merged static batches carry
+// scene-spanning AABBs, and even with per-source-prim boxes a facade marquee
+// selected every interior object behind it. The sample grid keeps the cost
+// bounded (~18 ms per sample on a 6.3M-triangle scene) and the result
+// occlusion-correct; a prim smaller than a sample cell can be missed, and the
+// single-pixel picker still resolves it.
+std::vector<Gui::SelectionItem> Gui::pickViewportRegionItems(
+    float x0, float y0, float x1, float y1) const {
+  std::vector<SelectionItem> items;
+  if (!draw_ || !cam_ || !renderer_ || viewportW_ <= 0 || viewportH_ <= 0 ||
+      draw_->meshes.empty()) {
+    return items;
+  }
   const int rx0 = std::max(0, std::min(viewportW_ - 1,
       static_cast<int>(std::floor(std::min(x0, x1)))));
   const int ry0 = std::max(0, std::min(viewportH_ - 1,
@@ -1212,103 +1223,68 @@ Gui::PickReport Gui::pickViewportRegion(float x0, float y0, float x1, float y1,
       static_cast<int>(std::ceil(std::max(x0, x1)))));
   const int ry1 = std::max(ry0 + 1, std::min(viewportH_,
       static_cast<int>(std::ceil(std::max(y0, y1)))));
-  report.x = 0.5f * static_cast<float>(rx0 + rx1);
-  report.y = 0.5f * static_cast<float>(ry0 + ry1);
-  const int rw = rx1 - rx0, rh = ry1 - ry0;
-  const size_t pixels = static_cast<size_t>(rw) * static_cast<size_t>(rh);
-  constexpr size_t kMaxRegionPixels = size_t{16} * 1024 * 1024;
-  if (pixels > kMaxRegionPixels) return report;
+  const int rw = rx1 - rx0;
+  const int rh = ry1 - ry0;
+  if (rw < 1 || rh < 1) return items;
 
-  std::vector<uint32_t> ids(pixels, 0);
-  std::vector<float> depths(pixels, 1.0e30f);
-  const bool z01 = renderer_->caps().usesZeroToOneDepth;
-  const light3d::Mat4 VP = cam_->proj(z01) * cam_->view();
-  const light3d::Vec3 eye = cam_->eye();
-  const light3d::Mat4 view = cam_->view();
-  const light3d::Vec3 cameraRight{view.m[0], view.m[4], view.m[8]};
-  auto project = [&](const light3d::Vec3& p, float& sx, float& sy,
-                     float& depth) {
-    const float* m = VP.m;
-    const float cx=m[0]*p.x+m[4]*p.y+m[8]*p.z+m[12];
-    const float cy=m[1]*p.x+m[5]*p.y+m[9]*p.z+m[13];
-    const float cz=m[2]*p.x+m[6]*p.y+m[10]*p.z+m[14];
-    const float cw=m[3]*p.x+m[7]*p.y+m[11]*p.z+m[15];
-    if (!std::isfinite(cw) || cw <= 1.0e-7f) return false;
-    const float iw=1.0f/cw;
-    sx=(cx*iw*0.5f+0.5f)*viewportW_;
-    sy=(1.0f-(cy*iw*0.5f+0.5f))*viewportH_;
-    depth=cz*iw;
-    return std::isfinite(sx) && std::isfinite(sy) && std::isfinite(depth);
+  // One ray per pixel for small marquees; larger ones are sampled on a grid so
+  // the cost stays bounded.
+  constexpr int kMaxRegionSamples = 32;
+  const double area = static_cast<double>(rw) * static_cast<double>(rh);
+  const int stride = std::max(
+      1, static_cast<int>(std::ceil(std::sqrt(area / kMaxRegionSamples))));
+
+  const auto* posed = posedPickVertices();
+  std::unordered_set<std::string> seen;
+  auto sample = [&](float px, float py) {
+    float hitT = 0.0f;
+    int sourcePrim = -1;
+    const int mesh = pickMeshSingle(px, py, viewportW_, viewportH_, &hitT,
+                                    posed, &sourcePrim);
+    if (mesh < 0 || static_cast<size_t>(mesh) >= draw_->meshes.size()) return;
+    const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mesh)];
+    std::string path = m.absPath;
+    if (sourcePrim >= 0 &&
+        static_cast<size_t>(sourcePrim) < m.sourcePrims.size())
+      path = m.sourcePrims[static_cast<size_t>(sourcePrim)].path;
+    if (path.empty()) return;
+    const std::string key = path + "\n" + std::to_string(sourcePrim);
+    if (!seen.insert(key).second) return;
+    items.push_back({path, mesh, sourcePrim});
   };
-  for (size_t ci=0; ci<draw_->curves.size(); ++ci) {
-    const DrawCurvesCPU& c=draw_->curves[ci];
-    if (!carrierVisibleForView(draw_->points.size()+ci) || c.points.size()<6)
-      continue;
-    const size_t np=c.points.size()/3;
-    const std::vector<uint32_t> counts=c.vertexCounts.empty()
-        ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : c.vertexCounts;
-    const float sx=std::sqrt(c.world[0]*c.world[0]+c.world[1]*c.world[1]+c.world[2]*c.world[2]);
-    const float sy=std::sqrt(c.world[4]*c.world[4]+c.world[5]*c.world[5]+c.world[6]*c.world[6]);
-    const float sz=std::sqrt(c.world[8]*c.world[8]+c.world[9]*c.world[9]+c.world[10]*c.world[10]);
-    const float scale=std::max(sx,std::max(sy,sz));
-    auto point=[&](size_t i) {
-      const float x=c.points[i*3], y=c.points[i*3+1], z=c.points[i*3+2];
-      return light3d::Vec3{c.world[0]*x+c.world[4]*y+c.world[8]*z+c.world[12],
-        c.world[1]*x+c.world[5]*y+c.world[9]*z+c.world[13],
-        c.world[2]*x+c.world[6]*y+c.world[10]*z+c.world[14]};
-    };
-    size_t base=0;
-    for (uint32_t count:counts) {
-      const size_t end=base>=np?np:base+std::min(np-base,static_cast<size_t>(count));
-      const size_t strandPoints=end-base;
-      const size_t pickSegments=curveMaxSegments_>0&&strandPoints>1
-          ?std::min(strandPoints-1,static_cast<size_t>(curveMaxSegments_))
-          :(strandPoints>1?strandPoints-1:0);
-      for (size_t sj=0;sj<pickSegments;++sj) {
-        const size_t i=base+(sj*(strandPoints-1)+pickSegments/2)/pickSegments;
-        const size_t ni=base+((sj+1)*(strandPoints-1)+pickSegments/2)/pickSegments;
-        const light3d::Vec3 a=point(i), b=point(ni), mid=(a+b)*0.5f;
-        float ax,ay,az,bx,by,bz;
-        if (!project(a,ax,ay,az)||!project(b,bx,by,bz)) continue;
-        const float w0=c.widths.empty()?1.0f:(c.widths.size()==1?c.widths[0]:c.widths[std::min(i,c.widths.size()-1)]);
-        const float w1=c.widths.empty()?1.0f:(c.widths.size()==1?c.widths[0]:c.widths[std::min(ni,c.widths.size()-1)]);
-        const float width=0.5f*(w0+w1)*scale;
-        light3d::Vec3 side=light3d::cross(b-a,eye-mid);
-        side=light3d::dot(side,side)>1.0e-10f?light3d::normalize(side):cameraRight;
-        float ex,ey,ez; float radius=2.0f;
-        if (project(mid+side*(0.5f*width),ex,ey,ez))
-          radius=std::max(2.0f,std::min(64.0f,std::hypot(ex-(ax+bx)*0.5f,ey-(ay+by)*0.5f)));
-        const int ix0=std::max(rx0,static_cast<int>(std::floor(std::min(ax,bx)-radius)));
-        const int ix1=std::min(rx1-1,static_cast<int>(std::ceil(std::max(ax,bx)+radius)));
-        const int iy0=std::max(ry0,static_cast<int>(std::floor(std::min(ay,by)-radius)));
-        const int iy1=std::min(ry1-1,static_cast<int>(std::ceil(std::max(ay,by)+radius)));
-        const float dx=bx-ax,dy=by-ay,len2=dx*dx+dy*dy;
-        for(int y=iy0;y<=iy1;++y) for(int x=ix0;x<=ix1;++x) {
-          const float qx=x+0.5f,qy=y+0.5f;
-          const float u=len2>1.0e-8f?std::max(0.0f,std::min(1.0f,((qx-ax)*dx+(qy-ay)*dy)/len2)):0.0f;
-          const float ddx=ax+u*dx-qx,ddy=ay+u*dy-qy;
-          if(ddx*ddx+ddy*ddy>radius*radius) continue;
-          const float depth=az*(1.0f-u)+bz*u;
-          const size_t pi=static_cast<size_t>(y-ry0)*rw+static_cast<size_t>(x-rx0);
-          if(depth<depths[pi]) { depths[pi]=depth; ids[pi]=static_cast<uint32_t>(ci+1); }
-        }
-      }
-      base=end;
+  for (int y = ry0; y < ry1; y += stride) {
+    for (int x = rx0; x < rx1; x += stride) {
+      sample(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
     }
   }
-  std::vector<int> coverage(draw_->curves.size(),0);
-  for(uint32_t id:ids) if(id>0&&id<=coverage.size()) ++coverage[id-1];
-  const auto best=std::max_element(coverage.begin(),coverage.end());
-  if(best!=coverage.end()&&*best>0) {
-    const size_t ci=static_cast<size_t>(best-coverage.begin());
-    report.path=draw_->curves[ci].absPath;
-    report.kind="curve";
-    report.coveredPixels=*best;
-    if(select) selectByPath(report.path,-1);
+  return items;
+}
+
+Gui::PickReport Gui::pickViewportRegion(float x0, float y0, float x1, float y1,
+                                        bool select) {
+  PickReport report;
+  report.viewportWidth = viewportW_;
+  report.viewportHeight = viewportH_;
+  report.x = 0.5f * (x0 + x1);
+  report.y = 0.5f * (y0 + y1);
+  if (!draw_ || !cam_ || !renderer_ || viewportW_ <= 0 || viewportH_ <= 0)
     return report;
+  std::vector<SelectionItem> items = pickViewportRegionItems(x0, y0, x1, y1);
+  if (items.empty()) return report;
+  report.coveredPixels = static_cast<int>(items.size());
+  report.path = items.front().path;
+  report.meshIndex = items.front().meshIndex;
+  report.items = items;
+  if (report.meshIndex >= 0) report.kind = "mesh";
+  else {
+    for (const DrawCurvesCPU& c : draw_->curves)
+      if (c.absPath == report.path) report.kind = "curve";
+    for (const DrawPointsCPU& p : draw_->points)
+      if (p.absPath == report.path) report.kind = "points";
+    if (report.kind.empty()) report.kind = "prim";
   }
-  // No curve pixels: use the center pixel's exact mesh triangle picker.
-  return pickViewportPixel(report.x,report.y,select);
+  if (select) setSelectionItems(std::move(items), /*recordHistory=*/true);
+  return report;
 }
 
 void Gui::pushSelectionHistory(const std::string& absPath) {
@@ -1378,7 +1354,23 @@ void Gui::applySelection(const std::string& absPath, int meshIndex,
 // GPU wire/polygon pass; only GeomSubset selections and the ray-traced overlay
 // consume the CPU edge lines.
 bool Gui::selectionNeedsPoseRebuild() const {
-  if (!draw_ || selMeshIndex_ < 0 ||
+  if (!draw_) return false;
+  if (selectionList_.size() > 1) {
+    // A multi-selection is drawn with CPU lines for every item, so any animated
+    // item needs a re-pose (and the rebuild covers them all).
+    for (const SelectionItem& item : selectionList_) {
+      if (item.meshIndex < 0 ||
+          static_cast<size_t>(item.meshIndex) >= draw_->meshes.size())
+        continue;
+      const DrawMeshCPU& mesh =
+          draw_->meshes[static_cast<size_t>(item.meshIndex)];
+      if (!mesh.jointIdx.empty() || !mesh.morphDeltaHalf.empty() ||
+          mesh.animatedWorld)
+        return true;
+    }
+    return false;
+  }
+  if (selMeshIndex_ < 0 ||
       static_cast<size_t>(selMeshIndex_) >= draw_->meshes.size()) {
     return false;
   }
@@ -1402,11 +1394,238 @@ bool Gui::selectionNeedsPoseRebuild() const {
 // highlightSubsetIndices_); Vulkan draws whole-mesh selections through its
 // surface-wire pass and only needs these CPU edge lines for GeomSubset
 // selections (and for the ray-traced overlay).
+// World-space orange edge lines for one selected draw. `triOverride` outlines an
+// explicit triangle list (a GeomSubset), `sourcePrim` outlines one prim inside a
+// merged batch, and neither means the whole draw (its authored cage when it has
+// one). Split out of rebuildSubsetHighlight so a multi-selection can outline
+// every selected prim with the same rules.
+void Gui::appendMeshHighlightLines(
+    int meshIndex, const std::vector<uint32_t>* triOverride, int sourcePrim,
+    const std::unordered_map<int, std::vector<DrawVertex>>* posedCache) {
+  if (!draw_ || meshIndex < 0 ||
+      static_cast<size_t>(meshIndex) >= draw_->meshes.size())
+    return;
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(meshIndex)];
+  const float* W = m.world;  // column-major
+  // World-space orange edge lines (for the Vulkan line-pipeline highlight and
+  // the ray-traced overlay). Whole-mesh raster selections returned above.
+  // draw_'s m.vertices are the REST pose (GPU skinning deforms in the vertex
+  // shader without writing back), so a skinned selection must be posed here or
+  // the overlay shows a frozen rest-pose silhouette. The pose is built once per
+  // rebuild for every deformable mesh: doing it per selected item made a
+  // multi-selection re-pose the whole scene once per prim.
+  const std::vector<DrawVertex>* srcVerts = &m.vertices;
+  if (posedCache) {
+    auto it = posedCache->find(meshIndex);
+    if (it != posedCache->end() && !it->second.empty()) srcVerts = &it->second;
+  }
+  // Resolve the triangle list to outline: an explicit subset, one batched
+  // source prim, or every triangle of the draw. A batched prim outlines its
+  // recorded authored-cage range when it has one: that is O(edges) instead of a
+  // full scan of the batch's triangle list, which matters when a marquee selects
+  // hundreds of prims that share a few large batches.
+  std::vector<uint32_t> primTris;
+  const std::vector<uint32_t>& allTris =
+      m.indices.empty() ? m.pickIndices : m.indices;
+  const std::vector<uint32_t>* tri = triOverride;
+  const DrawMeshCPU::SourcePrimRange* primRange =
+      (sourcePrim >= 0 && static_cast<size_t>(sourcePrim) < m.sourcePrims.size())
+          ? &m.sourcePrims[static_cast<size_t>(sourcePrim)]
+          : nullptr;
+  const bool primCageEdges =
+      primRange != nullptr && primRange->wireCount >= 2 &&
+      m.wireframeVertices.empty();
+  if (!tri && primRange && !primCageEdges) {
+    const uint32_t vEnd = primRange->vertexBase + primRange->vertexCount;
+    for (size_t t = 0; t + 2 < allTris.size(); t += 3) {
+      const uint32_t a = allTris[t];
+      if (a < primRange->vertexBase || a >= vEnd) continue;
+      primTris.push_back(a);
+      primTris.push_back(allTris[t + 1]);
+      primTris.push_back(allTris[t + 2]);
+    }
+    if (!primTris.empty()) tri = &primTris;
+  }
+  if (!tri) tri = &allTris;
+  auto wpos = [&](const float* inst, const std::vector<DrawVertex>& verts,
+                  uint32_t vi, float o[3]) {
+    const DrawVertex& v = verts[vi];
+    if (inst) {
+      // instanceXforms are row-major 3x4 object-to-world transforms.
+      o[0] = inst[0] * v.px + inst[1] * v.py + inst[2] * v.pz + inst[3];
+      o[1] = inst[4] * v.px + inst[5] * v.py + inst[6] * v.pz + inst[7];
+      o[2] = inst[8] * v.px + inst[9] * v.py + inst[10] * v.pz + inst[11];
+    } else {
+      o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
+      o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
+      o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+    }
+  };
+  const float orange[3] = {1.0f, 0.55f, 0.1f};
+  // Authored polygon boundaries outline a whole-mesh selection more cheaply and
+  // more legibly than every triangle edge, and match the GPU cage the
+  // non-instanced path draws. Subdivision cages live in their own rest-space
+  // vertex buffer, so index whichever array the cage addresses.
+  const bool cageEdges = (triOverride == nullptr && sourcePrim < 0 &&
+                          !m.wireframeIndices.empty()) ||
+                         primCageEdges;
+  const std::vector<DrawVertex>& cageVerts =
+      m.wireframeVertices.empty() ? *srcVerts : m.wireframeVertices;
+  const std::vector<DrawVertex>& verts = cageEdges ? cageVerts : *srcVerts;
+  const size_t nv = verts.size();
+  // One placement for a plain mesh, one per instance placement otherwise.
+  const bool instancedSelection = m.instanceCount() > 0;
+  std::vector<const float*> placements;
+  if (instancedSelection) {
+    placements.reserve(m.instanceCount());
+    for (size_t ii = 0; ii < m.instanceCount(); ++ii)
+      placements.push_back(&m.instanceXforms[ii * 12]);
+  } else {
+    placements.push_back(nullptr);
+  }
+  // A pathological instanced selection (many placements of a dense mesh) must
+  // not build an unbounded line buffer; the cap is far above any normal
+  // selection, so only adversarial content is truncated.
+  constexpr size_t kMaxHighlightLineVerts = size_t{4} * 1024 * 1024;
+  highlightLinesData_.reserve(tri->size() * 2);
+  auto pushLine = [&](const float* inst, uint32_t a, uint32_t b) {
+    if (a >= nv || b >= nv) return;
+    HelperVertex va{}, vb{};
+    wpos(inst, verts, a, va.pos);
+    wpos(inst, verts, b, vb.pos);
+    for (int k = 0; k < 3; ++k) va.col[k] = vb.col[k] = orange[k];
+    highlightLinesData_.push_back(va);
+    highlightLinesData_.push_back(vb);
+  };
+  const size_t cageFirst = primCageEdges ? primRange->wireBase : 0;
+  const size_t cageLast = primCageEdges
+                              ? primRange->wireBase + primRange->wireCount
+                              : m.wireframeIndices.size();
+  for (const float* inst : placements) {
+    if (cageEdges) {
+      for (size_t e = cageFirst; e + 1 < cageLast; e += 2)
+        pushLine(inst, m.wireframeIndices[e], m.wireframeIndices[e + 1]);
+    } else {
+      for (size_t t = 0; t + 2 < tri->size(); t += 3) {
+        const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
+        pushLine(inst, a, b);
+        pushLine(inst, b, c);
+        pushLine(inst, c, a);
+      }
+    }
+    if (highlightLinesData_.size() >= kMaxHighlightLineVerts) break;
+  }
+}
+
+// World-space orange edge lines for a Points or Curves selection (a small cross
+// per point, or the sampled segments of each strand). Meshes go through
+// appendMeshHighlightLines instead.
+void Gui::appendCarrierHighlightLines(const std::string& path) {
+  if (!draw_ || path.empty()) return;
+    const float orange[3] = {1.0f, 0.55f, 0.1f};
+    auto addLine = [&](const float a[3], const float b[3]) {
+      HelperVertex va{}, vb{};
+      std::copy(a, a + 3, va.pos); std::copy(b, b + 3, vb.pos);
+      std::copy(orange, orange + 3, va.col); std::copy(orange, orange + 3, vb.col);
+      highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
+    };
+    auto wp = [](const auto& c, size_t i, float p[3]) {
+      const float x = c.points[i*3], y = c.points[i*3+1], z = c.points[i*3+2];
+      p[0] = c.world[0]*x + c.world[4]*y + c.world[8]*z + c.world[12];
+      p[1] = c.world[1]*x + c.world[5]*y + c.world[9]*z + c.world[13];
+      p[2] = c.world[2]*x + c.world[6]*y + c.world[10]*z + c.world[14];
+    };
+    for (const DrawPointsCPU& p : draw_->points) if (p.absPath == path) {
+      for (size_t i = 0; i < p.points.size()/3; ++i) {
+        float q[3]; wp(p, i, q);
+        const float w = p.widths.empty() ? 1.0f : p.widths.size() == 1 ? p.widths[0] : p.widths[std::min(i, p.widths.size()-1)];
+        float x[3] = {q[0] + w, q[1], q[2]}, y[3] = {q[0], q[1] + w, q[2]};
+        float xm[3] = {q[0] - w, q[1], q[2]}, ym[3] = {q[0], q[1] - w, q[2]};
+        addLine(xm, x); addLine(ym, y);
+      }
+      return;
+    }
+    for (const DrawCurvesCPU& c : draw_->curves) if (c.absPath == path) {
+      const size_t pointCount = c.points.size() / 3;
+      const std::vector<uint32_t> counts = c.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(pointCount)}
+          : c.vertexCounts;
+      size_t base = 0;
+      for (uint32_t count : counts) {
+        const size_t remaining = pointCount - std::min(base, pointCount);
+        const size_t end = base >= pointCount
+                               ? pointCount
+                               : base + std::min(remaining,
+                                                 static_cast<size_t>(count));
+        // Each curve is an independent strand. Never add an edge from the end
+        // of one strand to the start of the next: on XGen leaf bundles such as
+        // xgLeavesI those bogus edges span the whole plant as giant loops.
+        const size_t strandPoints = end - base;
+        const size_t segments = curveMaxSegments_ > 0 && strandPoints > 1
+            ? std::min(strandPoints - 1,
+                       static_cast<size_t>(curveMaxSegments_))
+            : (strandPoints > 1 ? strandPoints - 1 : 0);
+        for (size_t j = 0; j < segments; ++j) {
+          const size_t i = base +
+              (j * (strandPoints - 1) + segments / 2) / segments;
+          const size_t next = base +
+              ((j + 1) * (strandPoints - 1) + segments / 2) / segments;
+          float a[3], b[3];
+          wp(c, i, a);
+          wp(c, next, b);
+          addLine(a, b);
+        }
+        base = end;
+      }
+      return;
+    }
+    return;
+}
+
 void Gui::rebuildSubsetHighlight() {
   highlightSubsetIndices_.clear();
   highlightSubsetMesh_ = -1;
   highlightLinesData_.clear();
   if (!draw_) return;
+
+  // Multi-selection (region marquee, hierarchy group / ctrl+click): outline
+  // every selected prim with CPU world-space lines. The GPU surface-wire pass
+  // draws a single mesh, so it cannot represent a set; the line path already
+  // handles batched source prims, instanced placements and posed geometry.
+  if (selectionList_.size() > 1) {
+    // The overlay is re-uploaded every frame, so a huge marquee must not build
+    // an unbounded line buffer; the selection list still holds every prim.
+    constexpr size_t kMaxHighlightLineVerts = size_t{200} * 1024;
+    constexpr size_t kMaxOutlinedItems = size_t{96};
+    const auto* posedVerts = posedPickVertices();
+    size_t outlined = 0;
+    for (const SelectionItem& item : selectionList_) {
+      if (outlined >= kMaxOutlinedItems) break;
+      ++outlined;
+      int itemMesh = item.meshIndex;
+      if (itemMesh < 0) {
+        for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+          if (draw_->meshes[i].absPath == item.path) {
+            itemMesh = static_cast<int>(i);
+            break;
+          }
+        }
+      }
+      if (itemMesh >= 0)
+        appendMeshHighlightLines(itemMesh, nullptr, item.sourcePrim,
+                                 posedVerts);
+      else
+        appendCarrierHighlightLines(item.path);
+      if (highlightLinesData_.size() >= kMaxHighlightLineVerts) break;
+    }
+    if (std::getenv("LUSDVIEW_DEBUG_SELECTION")) {
+      std::fprintf(stderr,
+                   "[selection] multi: %zu items, %zu outline verts, %zu meshes\n",
+                   selectionList_.size(), highlightLinesData_.size(),
+                   draw_->meshes.size());
+    }
+    return;
+  }
 
   // Resolve the highlighted mesh + the triangle vertex-index list to outline.
   int mi = -1;
@@ -1484,66 +1703,9 @@ void Gui::rebuildSubsetHighlight() {
     tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
   }
   if (mi < 0 || !tri) {
-    const float orange[3] = {1.0f, 0.55f, 0.1f};
-    auto addLine = [&](const float a[3], const float b[3]) {
-      HelperVertex va{}, vb{};
-      std::copy(a, a + 3, va.pos); std::copy(b, b + 3, vb.pos);
-      std::copy(orange, orange + 3, va.col); std::copy(orange, orange + 3, vb.col);
-      highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
-    };
-    auto wp = [](const auto& c, size_t i, float p[3]) {
-      const float x = c.points[i*3], y = c.points[i*3+1], z = c.points[i*3+2];
-      p[0] = c.world[0]*x + c.world[4]*y + c.world[8]*z + c.world[12];
-      p[1] = c.world[1]*x + c.world[5]*y + c.world[9]*z + c.world[13];
-      p[2] = c.world[2]*x + c.world[6]*y + c.world[10]*z + c.world[14];
-    };
-    for (const DrawPointsCPU& p : draw_->points) if (p.absPath == selPath_) {
-      for (size_t i = 0; i < p.points.size()/3; ++i) {
-        float q[3]; wp(p, i, q);
-        const float w = p.widths.empty() ? 1.0f : p.widths.size() == 1 ? p.widths[0] : p.widths[std::min(i, p.widths.size()-1)];
-        float x[3] = {q[0] + w, q[1], q[2]}, y[3] = {q[0], q[1] + w, q[2]};
-        float xm[3] = {q[0] - w, q[1], q[2]}, ym[3] = {q[0], q[1] - w, q[2]};
-        addLine(xm, x); addLine(ym, y);
-      }
-      return;
-    }
-    for (const DrawCurvesCPU& c : draw_->curves) if (c.absPath == selPath_) {
-      const size_t pointCount = c.points.size() / 3;
-      const std::vector<uint32_t> counts = c.vertexCounts.empty()
-          ? std::vector<uint32_t>{static_cast<uint32_t>(pointCount)}
-          : c.vertexCounts;
-      size_t base = 0;
-      for (uint32_t count : counts) {
-        const size_t remaining = pointCount - std::min(base, pointCount);
-        const size_t end = base >= pointCount
-                               ? pointCount
-                               : base + std::min(remaining,
-                                                 static_cast<size_t>(count));
-        // Each curve is an independent strand. Never add an edge from the end
-        // of one strand to the start of the next: on XGen leaf bundles such as
-        // xgLeavesI those bogus edges span the whole plant as giant loops.
-        const size_t strandPoints = end - base;
-        const size_t segments = curveMaxSegments_ > 0 && strandPoints > 1
-            ? std::min(strandPoints - 1,
-                       static_cast<size_t>(curveMaxSegments_))
-            : (strandPoints > 1 ? strandPoints - 1 : 0);
-        for (size_t j = 0; j < segments; ++j) {
-          const size_t i = base +
-              (j * (strandPoints - 1) + segments / 2) / segments;
-          const size_t next = base +
-              ((j + 1) * (strandPoints - 1) + segments / 2) / segments;
-          float a[3], b[3];
-          wp(c, i, a);
-          wp(c, next, b);
-          addLine(a, b);
-        }
-        base = end;
-      }
-      return;
-    }
+    appendCarrierHighlightLines(selPath_);
     return;
   }
-
   // Whole-mesh raster selection: the backend re-poses the authored cage in the
   // vertex shader (Vulkan surface wire) or draws the polygon overlay (GL), so
   // the CPU line copy is only needed for GeomSubset selections, meshes without
@@ -1562,123 +1724,11 @@ void Gui::rebuildSubsetHighlight() {
       !(renderer_ && renderer_->rayTracingActive())) {
     return;
   }
-
-  // World-space orange edge lines (for the Vulkan line-pipeline highlight and
-  // the ray-traced overlay). Whole-mesh raster selections returned above.
-  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
-  const float* W = m.world;  // column-major
-  // GL draws this mesh's highlight through the GPU-deformed polygon overlay
-  // (gl_renderer.cc's highlightMeshIndex path), so it naturally follows
-  // skinning. These CPU-built lines are for GeomSubset selections and the
-  // ray-traced overlay: draw_'s m.vertices are always REST pose (GPU skinning
-  // deforms in the vertex shader without writing back to the CPU array), so
-  // they must be posed here or a skinned selection shows its frozen rest-pose
-  // silhouette over the moving mesh (visible as a mismatched wireframe net).
-  std::vector<DrawVertex> skinnedVerts;
-  const std::vector<DrawVertex>* srcVerts = &m.vertices;
-  // Both re-pose paths below produce OBJECT-space vertices that still need the
-  // normal `W *` multiply below -- confirmed empirically against
-  // BuildHostScene (rt_scene_build.cc), which needed the identical fix: its
-  // mesh flatten read draw_'s (already BuildNextRtDeformedVertices-posed)
-  // vertices directly with no world multiply, silently wrong for any mesh
-  // with a non-identity world (animatedWorld meshes: gpu_scene.hh's `world`
-  // field is a real per-frame transform, not just a load-time bake-in
-  // placeholder). Skipping the multiply here equally double-counts or
-  // under-counts depending on the mesh, visible as an oversized/offset or
-  // wrongly-shaped wireframe net relative to the correctly-posed shaded mesh.
-  if (drawIsPosed_) {
-    // App::poseNextDrawForTracer already wrote the pose at this time code
-    // straight into draw_ for a CUDA/HIP/CPU RT build, so m.vertices IS the
-    // posed geometry -- deforming it again below would double-deform it (the
-    // "wireframe breaks after an RT render" case: draw_ stays posed after the
-    // tracer runs, and every later highlight rebuild compounded another pose
-    // on top). Leave srcVerts pointing at m.vertices.
-  } else if (nextStage_) {
-    // --next loader: there is no tydra RenderScene to re-pose from (see
-    // gpu_scene.hh's NextSkelBinding comment) -- re-pose via the retained next
-    // Stage instead, the same mechanism the CUDA/HIP/CPU RT tracers already
-    // use (BuildNextRtDeformedVertices, next_scene_loader.hh).
-    std::vector<RtSkinnedMeshUpload> posed;
-    if (BuildNextRtDeformedVertices(nextStage_.get(), *draw_, timeline_.applied,
-                                    nullptr, &posed)) {
-      for (const RtSkinnedMeshUpload& u : posed) {
-        if (u.meshIndex == mi) {
-          skinnedVerts = u.vertices;
-          srcVerts = &skinnedVerts;
-          break;
-        }
-      }
-    }
-  } else if (m.skelId >= 0 && m.skinMatrixBase >= 0 && !m.jointIdx.empty() && loaded_) {
-    std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
-    std::vector<lightusd::value::matrix4d> composed;
-    if (BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
-                                      &skinCache, &composed)) {
-      skinnedVerts = m.vertices;
-      if (ApplySkinningToVertices(m, composed, &skinnedVerts)) srcVerts = &skinnedVerts;
-    }
-  }
-  auto wpos = [&](const float* inst, const std::vector<DrawVertex>& verts,
-                  uint32_t vi, float o[3]) {
-    const DrawVertex& v = verts[vi];
-    if (inst) {
-      // instanceXforms are row-major 3x4 object-to-world transforms.
-      o[0] = inst[0] * v.px + inst[1] * v.py + inst[2] * v.pz + inst[3];
-      o[1] = inst[4] * v.px + inst[5] * v.py + inst[6] * v.pz + inst[7];
-      o[2] = inst[8] * v.px + inst[9] * v.py + inst[10] * v.pz + inst[11];
-    } else {
-      o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
-      o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
-      o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
-    }
-  };
-  const float orange[3] = {1.0f, 0.55f, 0.1f};
-  // Authored polygon boundaries outline a whole-mesh selection more cheaply and
-  // more legibly than every triangle edge, and match the GPU cage the
-  // non-instanced path draws. Subdivision cages live in their own rest-space
-  // vertex buffer, so index whichever array the cage addresses.
-  const bool cageEdges =
-      highlightSubsetMesh_ < 0 && !m.wireframeIndices.empty();
-  const std::vector<DrawVertex>& cageVerts =
-      m.wireframeVertices.empty() ? *srcVerts : m.wireframeVertices;
-  const std::vector<DrawVertex>& verts = cageEdges ? cageVerts : *srcVerts;
-  const size_t nv = verts.size();
-  // One placement for a plain mesh, one per instance placement otherwise.
-  std::vector<const float*> placements;
-  if (instancedSelection) {
-    placements.reserve(m.instanceCount());
-    for (size_t ii = 0; ii < m.instanceCount(); ++ii)
-      placements.push_back(&m.instanceXforms[ii * 12]);
+  const auto* posedVerts = posedPickVertices();
+  if (highlightSubsetMesh_ >= 0 && mi >= 0) {
+    appendMeshHighlightLines(mi, tri, -1, posedVerts);
   } else {
-    placements.push_back(nullptr);
-  }
-  // A pathological instanced selection (many placements of a dense mesh) must
-  // not build an unbounded line buffer; the cap is far above any normal
-  // selection, so only adversarial content is truncated.
-  constexpr size_t kMaxHighlightLineVerts = size_t{4} * 1024 * 1024;
-  highlightLinesData_.reserve(tri->size() * 2);
-  auto pushLine = [&](const float* inst, uint32_t a, uint32_t b) {
-    if (a >= nv || b >= nv) return;
-    HelperVertex va{}, vb{};
-    wpos(inst, verts, a, va.pos);
-    wpos(inst, verts, b, vb.pos);
-    for (int k = 0; k < 3; ++k) va.col[k] = vb.col[k] = orange[k];
-    highlightLinesData_.push_back(va);
-    highlightLinesData_.push_back(vb);
-  };
-  for (const float* inst : placements) {
-    if (cageEdges) {
-      for (size_t e = 0; e + 1 < m.wireframeIndices.size(); e += 2)
-        pushLine(inst, m.wireframeIndices[e], m.wireframeIndices[e + 1]);
-    } else {
-      for (size_t t = 0; t + 2 < tri->size(); t += 3) {
-        const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
-        pushLine(inst, a, b);
-        pushLine(inst, b, c);
-        pushLine(inst, c, a);
-      }
-    }
-    if (highlightLinesData_.size() >= kMaxHighlightLineVerts) break;
+    appendMeshHighlightLines(mi, nullptr, selSourcePrim_, posedVerts);
   }
 }
 
@@ -1731,41 +1781,147 @@ void Gui::prepareSceneSwap() {
 
 void Gui::setSelectionListSingle(const std::string& absPath, int meshIndex) {
   selectionList_.clear();
-  if (!absPath.empty()) selectionList_.push_back({absPath, meshIndex});
+  if (!absPath.empty())
+    selectionList_.push_back({absPath, meshIndex, selSourcePrim_});
 }
 
 void Gui::setSelectionListFromMeshes(std::vector<int> meshIndices) {
-  selectionList_.clear();
-  if (!draw_) return;
-  selectionList_.reserve(meshIndices.size());
-  for (int meshIndex : meshIndices) {
-    if (meshIndex < 0 || static_cast<size_t>(meshIndex) >= draw_->meshes.size()) {
-      continue;
+  std::vector<SelectionItem> items;
+  items.reserve(meshIndices.size());
+  if (draw_) {
+    for (int meshIndex : meshIndices) {
+      if (meshIndex < 0 || static_cast<size_t>(meshIndex) >= draw_->meshes.size())
+        continue;
+      const DrawMeshCPU& mesh = draw_->meshes[static_cast<size_t>(meshIndex)];
+      if (mesh.absPath.empty()) continue;
+      items.push_back({mesh.absPath, meshIndex, -1});
     }
-    const DrawMeshCPU& mesh = draw_->meshes[static_cast<size_t>(meshIndex)];
-    if (mesh.absPath.empty()) continue;
-    selectionList_.push_back({mesh.absPath, meshIndex});
   }
-  if (!selectionList_.empty()) {
-    focusSelectionListItem(0);
-  } else {
-    clearSelection();
-  }
+  setSelectionItems(std::move(items), /*recordHistory=*/true);
 }
 
 void Gui::setSelectionListFromPaths(std::vector<std::string> paths) {
-  selectionList_.clear();
+  std::vector<SelectionItem> items;
+  items.reserve(paths.size());
   for (const std::string& path : paths) {
-    if (!path.empty()) selectionList_.push_back({path, -1});
+    if (!path.empty()) items.push_back({path, -1, -1});
   }
-  if (!selectionList_.empty()) focusSelectionListItem(0);
-  else clearSelection();
+  setSelectionItems(std::move(items), /*recordHistory=*/true);
+}
+
+// Replace the multi-selection. The first item becomes the focused selection so
+// the inspector, framing and gizmo keep working unchanged; the highlight covers
+// every item.
+void Gui::setSelectionItems(std::vector<SelectionItem> items,
+                            bool recordHistory) {
+  selectionList_ = std::move(items);
+  if (selectionList_.empty()) {
+    clearSelection();
+    return;
+  }
+  // Drop duplicate prims while keeping order (a region pick can hit the same
+  // batched prim through several pixels).
+  std::vector<SelectionItem> unique;
+  unique.reserve(selectionList_.size());
+  for (SelectionItem& item : selectionList_) {
+    bool seen = false;
+    for (const SelectionItem& kept : unique) {
+      if (kept.path == item.path && kept.sourcePrim == item.sourcePrim) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) unique.push_back(std::move(item));
+  }
+  selectionList_ = std::move(unique);
+  const SelectionItem& first = selectionList_.front();
+  applySelection(first.path, first.meshIndex, recordHistory, first.sourcePrim);
+}
+
+void Gui::toggleSelectionItem(const SelectionItem& item) {
+  if (item.path.empty()) return;
+  std::vector<SelectionItem> items;
+  items.reserve(selectionList_.size() + 1);
+  bool removed = false;
+  for (const SelectionItem& existing : selectionList_) {
+    if (existing.path == item.path && existing.sourcePrim == item.sourcePrim) {
+      removed = true;
+      continue;
+    }
+    items.push_back(existing);
+  }
+  if (!removed) items.push_back(item);
+  if (items.empty()) {
+    clearSelection();
+    return;
+  }
+  // Keep the focused item stable unless it was the one removed.
+  const std::string previousPath = selPath_;
+  setSelectionItems(std::move(items), /*recordHistory=*/false);
+  if (!removed) {
+    // Focus the newly added prim.
+    const SelectionItem& last = selectionList_.back();
+    applySelection(last.path, last.meshIndex, /*recordHistory=*/false,
+                   last.sourcePrim);
+  } else if (selPath_ != previousPath) {
+    // Focus fell back to the first remaining item; nothing else to do.
+  }
+  pushSelectionHistory(selPath_);
+}
+
+// Every renderable prim at or below `path` (a group selection in the
+// hierarchy). Renderable means the prim owns a draw, a points or a curves
+// carrier; group prims themselves have no drawable geometry.
+void Gui::selectDescendants(const std::string& path, bool addToSelection) {
+  if (!draw_ || path.empty()) return;
+  const std::string prefix = path + "/";
+  std::vector<SelectionItem> items;
+  auto matches = [&](const std::string& candidate) {
+    return candidate == path ||
+           candidate.compare(0, prefix.size(), prefix) == 0;
+  };
+  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+    const DrawMeshCPU& mesh = draw_->meshes[i];
+    if (mesh.absPath.empty() || !matches(mesh.absPath)) continue;
+    // A merged batch represents many prims; selecting the group selects each
+    // source prim that lives below it.
+    bool any = false;
+    for (size_t s = 0; s < mesh.sourcePrims.size(); ++s) {
+      if (!matches(mesh.sourcePrims[s].path)) continue;
+      items.push_back({mesh.sourcePrims[s].path, static_cast<int>(i),
+                       static_cast<int>(s)});
+      any = true;
+    }
+    if (!any) items.push_back({mesh.absPath, static_cast<int>(i), -1});
+  }
+  for (const DrawPointsCPU& p : draw_->points) {
+    if (!p.absPath.empty() && matches(p.absPath))
+      items.push_back({p.absPath, -1, -1});
+  }
+  for (const DrawCurvesCPU& c : draw_->curves) {
+    if (!c.absPath.empty() && matches(c.absPath))
+      items.push_back({c.absPath, -1, -1});
+  }
+  if (items.empty()) return;
+  if (addToSelection) {
+    items.insert(items.end(), selectionList_.begin(), selectionList_.end());
+  }
+  setSelectionItems(std::move(items), /*recordHistory=*/true);
+}
+
+bool Gui::isPathSelected(const std::string& path) const {
+  if (path.empty()) return false;
+  for (const SelectionItem& item : selectionList_) {
+    if (item.path == path) return true;
+  }
+  return false;
 }
 
 void Gui::focusSelectionListItem(size_t index) {
   if (index >= selectionList_.size()) return;
-  applySelection(selectionList_[index].first, selectionList_[index].second,
-                 /*recordHistory=*/true);
+  const SelectionItem& item = selectionList_[index];
+  applySelection(item.path, item.meshIndex, /*recordHistory=*/true,
+                 item.sourcePrim);
 }
 
 bool Gui::canGoSelectionBack() const {
@@ -1999,7 +2155,8 @@ bool Gui::drawPrimTree(const lightusd::Prim& prim) {
                              ImGuiTreeNodeFlags_SpanAvailWidth;
   const bool leaf = prim.children().empty();
   if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
-  if (selPrim_ == &prim) flags |= ImGuiTreeNodeFlags_Selected;
+  if (selPrim_ == &prim || isPathSelected(absPath))
+    flags |= ImGuiTreeNodeFlags_Selected;
 
   if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
   else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
@@ -2015,8 +2172,13 @@ bool Gui::drawPrimTree(const lightusd::Prim& prim) {
     revealSelectionInHierarchy_ = false;
   }
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-    selectByPath(absPath, -1);
-    selPrim_ = &prim;
+    if (ImGui::GetIO().KeyCtrl) {
+      toggleSelectionItem({absPath, -1, -1});
+      selPrim_ = &prim;
+    } else {
+      selectByPath(absPath, -1);
+      selPrim_ = &prim;
+    }
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       if (!framePath(absPath)) frameSelected();
     }
@@ -2024,6 +2186,14 @@ bool Gui::drawPrimTree(const lightusd::Prim& prim) {
   if (ImGui::BeginPopupContextItem()) {
     if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(absPath.c_str());
     if (ImGui::MenuItem("Frame selection")) { if (!framePath(absPath)) frameSelected(); }
+    if (ImGui::MenuItem("Select group (descendants)"))
+      selectDescendants(absPath, /*addToSelection=*/false);
+    if (ImGui::MenuItem("Select parent prim")) {
+      const size_t slash = absPath.find_last_of('/');
+      const std::string parent =
+          (slash == std::string::npos || slash == 0) ? "/" : absPath.substr(0, slash);
+      if (parent != absPath) selectByPath(parent, -1);
+    }
     // Hide/show
     bool hasDeferred = false;
     if (loaded_) {
@@ -2194,7 +2364,7 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth |
                              ImGuiTreeNodeFlags_OpenOnArrow;
   if (lightusd_prim_child_count(prim) == 0) flags |= ImGuiTreeNodeFlags_Leaf;
-  if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
+  if (isPathSelected(path)) flags |= ImGuiTreeNodeFlags_Selected;
   if (revealSelectionInHierarchy_ && !selPath_.empty() &&
       selPath_.compare(0, path.size(), path) == 0) {
     ImGui::SetNextItemOpen(true);
@@ -2202,7 +2372,13 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   ImGui::PushID(path.c_str());
   const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-    selectByPath(path, -1);
+    const bool additive = ImGui::GetIO().KeyCtrl;
+    if (additive) {
+      // Ctrl+click builds a multi-selection one prim at a time.
+      toggleSelectionItem({path, -1, -1});
+    } else {
+      selectByPath(path, -1);
+    }
   }
   if (!lightusd_prim_is_active(prim)) {
     ImGui::SameLine();
@@ -2214,6 +2390,21 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   if (ImGui::BeginPopupContextItem("next_prim_context")) {
     if (lightusd_prim_has_payload(prim) && ImGui::MenuItem("Load payload")) {
       payloadLoadRequests_.push_back(path);
+    }
+    // Grouped selection: everything renderable under this prim. Also offered on
+    // a renderable prim so "select this and its children" works uniformly.
+    if (ImGui::MenuItem("Select group (descendants)")) {
+      selectDescendants(path, /*addToSelection=*/false);
+    }
+    if (ImGui::GetIO().KeyShift &&
+        ImGui::MenuItem("Add group to selection")) {
+      selectDescendants(path, /*addToSelection=*/true);
+    }
+    if (path != "/" && ImGui::MenuItem("Select parent prim")) {
+      const size_t slash = path.find_last_of('/');
+      const std::string parent =
+          (slash == std::string::npos || slash == 0) ? "/" : path.substr(0, slash);
+      if (parent != path) selectByPath(parent, -1);
     }
     if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(path.c_str());
     ImGui::EndPopup();
@@ -2410,9 +2601,17 @@ void Gui::drawHierarchy() {
   ImGui::Begin("Hierarchy");
   if (loaded_ && loaded_->ok) {
     if (!selPath_.empty()) {
-      ImGui::TextDisabled("Selected");
+      if (selectionList_.size() > 1) {
+        ImGui::TextDisabled("Selected %zu prims (focused)", selectionList_.size());
+      } else {
+        ImGui::TextDisabled("Selected");
+      }
       drawSelectionBreadcrumbs("##hierarchy-breadcrumbs");
       ImGui::TextWrapped("%s", selPath_.c_str());
+      if (selectionList_.size() > 1) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(+%zu)", selectionList_.size() - 1);
+      }
       if (canGoSelectionBack()) {
         if (ImGui::Button("Back")) goSelectionBack();
       } else {
@@ -2914,7 +3113,7 @@ void Gui::drawSelectionList() {
     if (ImGui::SmallButton("Copy all")) {
       std::string text;
       for (const auto& item : selectionList_) {
-        text += item.first;
+        text += item.path;
         text += '\n';
       }
       ImGui::SetClipboardText(text.c_str());
@@ -2936,22 +3135,22 @@ void Gui::drawSelectionList() {
       for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
         const auto& item = selectionList_[static_cast<size_t>(i)];
         ImGui::PushID(i);
-        const bool focused = item.first == selPath_;
-        if (ImGui::Selectable(item.first.c_str(), focused,
+        const bool focused = item.path == selPath_;
+        if (ImGui::Selectable(item.path.c_str(), focused,
                               ImGuiSelectableFlags_SpanAvailWidth)) {
           focusSelectionListItem(static_cast<size_t>(i));
         }
         if (ImGui::BeginPopupContextItem("##selection-item-menu")) {
           if (ImGui::MenuItem("Copy path")) {
-            ImGui::SetClipboardText(item.first.c_str());
+            ImGui::SetClipboardText(item.path.c_str());
           }
           if (ImGui::MenuItem("Frame")) {
             focusSelectionListItem(static_cast<size_t>(i));
-            if (!framePath(item.first)) frameSelected();
+            if (!framePath(item.path)) frameSelected();
           }
           ImGui::EndPopup();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", item.first.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", item.path.c_str());
         ImGui::PopID();
       }
     }
@@ -4498,6 +4697,44 @@ void Gui::homeView() {
 
 void Gui::frameSelected() {
   if (!cam_ || !draw_) return;
+  // Multi-selection: frame the union of every selected prim's bounds.
+  if (selectionList_.size() > 1) {
+    float mn[3] = {1.0e30f, 1.0e30f, 1.0e30f};
+    float mx[3] = {-1.0e30f, -1.0e30f, -1.0e30f};
+    bool any = false;
+    auto include = [&](const float a[3], const float b[3]) {
+      for (int k = 0; k < 3; ++k) {
+        if (!std::isfinite(a[k]) || !std::isfinite(b[k])) return;
+        mn[k] = std::min(mn[k], a[k]);
+        mx[k] = std::max(mx[k], b[k]);
+      }
+      any = true;
+    };
+    for (const SelectionItem& item : selectionList_) {
+      int mesh = item.meshIndex;
+      if (mesh < 0) {
+        for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+          if (draw_->meshes[i].absPath == item.path) {
+            mesh = static_cast<int>(i);
+            break;
+          }
+        }
+      }
+      if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
+        const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mesh)];
+        include(m.aabbMin, m.aabbMax);
+        continue;
+      }
+      for (const DrawPointsCPU& p : draw_->points)
+        if (p.absPath == item.path) include(p.aabbMin, p.aabbMax);
+      for (const DrawCurvesCPU& c : draw_->curves)
+        if (c.absPath == item.path) include(c.aabbMin, c.aabbMax);
+    }
+    if (any) {
+      cam_->fitToScene(mn, mx);
+      return;
+    }
+  }
   const int sel = selMeshIndex_;
   if (sel >= 0 && static_cast<size_t>(sel) < draw_->meshes.size()) {
     const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(sel)];
@@ -4605,33 +4842,43 @@ bool Gui::isolateSelected() {
 
 void Gui::showAllRenderables() { unhideAll(); }
 
+// True when `path` is the focused selection, a member of the multi-selection, or
+// below one of them (so group selection and multi-selection hide/isolate work).
+bool Gui::pathInSelection(const std::string& path) const {
+  if (path.empty()) return false;
+  if (!selPath_.empty() && PathIsSameOrDescendant(path, selPath_)) return true;
+  for (const SelectionItem& item : selectionList_) {
+    if (PathIsSameOrDescendant(path, item.path)) return true;
+  }
+  return false;
+}
+
 bool Gui::selectionHasRenderable() const {
-  if (!draw_ || selPath_.empty()) return false;
+  if (!draw_ || selectionList_.empty()) return false;
   for (const DrawMeshCPU& mesh : draw_->meshes)
-    if (PathIsSameOrDescendant(mesh.absPath, selPath_)) return true;
+    if (pathInSelection(mesh.absPath)) return true;
   for (const DrawPointsCPU& points : draw_->points)
-    if (PathIsSameOrDescendant(points.absPath, selPath_)) return true;
+    if (pathInSelection(points.absPath)) return true;
   for (const DrawCurvesCPU& curves : draw_->curves)
-    if (PathIsSameOrDescendant(curves.absPath, selPath_)) return true;
+    if (pathInSelection(curves.absPath)) return true;
   return false;
 }
 
 void Gui::setSelectionVisibility(bool visible) {
-  if (!draw_ || selPath_.empty()) return;
+  if (!draw_ || selectionList_.empty()) return;
   const uint8_t value = visible ? uint8_t{1} : uint8_t{0};
   for (size_t i = 0; i < draw_->meshes.size() && i < meshVisible_.size(); ++i)
-    if (PathIsSameOrDescendant(draw_->meshes[i].absPath, selPath_))
-      meshVisible_[i] = value;
+    if (pathInSelection(draw_->meshes[i].absPath)) meshVisible_[i] = value;
   size_t carrier = 0;
   for (const DrawPointsCPU& points : draw_->points) {
     if (carrier < carrierVisible_.size() &&
-        PathIsSameOrDescendant(points.absPath, selPath_))
+        pathInSelection(points.absPath))
       carrierVisible_[carrier] = value;
     ++carrier;
   }
   for (const DrawCurvesCPU& curves : draw_->curves) {
     if (carrier < carrierVisible_.size() &&
-        PathIsSameOrDescendant(curves.absPath, selPath_))
+        pathInSelection(curves.absPath))
       carrierVisible_[carrier] = value;
     ++carrier;
   }
@@ -4640,16 +4887,16 @@ void Gui::setSelectionVisibility(bool visible) {
 void Gui::isolateSelection() {
   if (!selectionHasRenderable()) return;
   for (size_t i = 0; i < meshVisible_.size(); ++i)
-    meshVisible_[i] = PathIsSameOrDescendant(draw_->meshes[i].absPath, selPath_)
-                          ? uint8_t{1} : uint8_t{0};
+    meshVisible_[i] =
+        pathInSelection(draw_->meshes[i].absPath) ? uint8_t{1} : uint8_t{0};
   size_t carrier = 0;
   for (const DrawPointsCPU& points : draw_->points) {
-    carrierVisible_[carrier++] =
-        PathIsSameOrDescendant(points.absPath, selPath_) ? uint8_t{1} : uint8_t{0};
+    carrierVisible_[carrier++] = pathInSelection(points.absPath) ? uint8_t{1}
+                                                                : uint8_t{0};
   }
   for (const DrawCurvesCPU& curves : draw_->curves) {
-    carrierVisible_[carrier++] =
-        PathIsSameOrDescendant(curves.absPath, selPath_) ? uint8_t{1} : uint8_t{0};
+    carrierVisible_[carrier++] = pathInSelection(curves.absPath) ? uint8_t{1}
+                                                                : uint8_t{0};
   }
 }
 
@@ -5399,11 +5646,17 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   }
 }
 
-void Gui::buildPosedPickVertices(
-    std::unordered_map<int, std::vector<DrawVertex>>* out) const {
-  if (!out) return;
-  out->clear();
-  if (!draw_ || drawIsPosed_) return;  // draw_ already holds the displayed pose
+const std::unordered_map<int, std::vector<DrawVertex>>*
+Gui::posedPickVertices() const {
+  if (!draw_ || drawIsPosed_) return nullptr;  // draw_ already holds the pose
+  if (posedPickCacheTime_ == timeline_.applied &&
+      posedPickCacheGen_ == cullSceneGen_.load()) {
+    return &posedPickCache_;
+  }
+  posedPickCache_.clear();
+  posedPickCacheTime_ = timeline_.applied;
+  posedPickCacheGen_ = cullSceneGen_.load();
+  std::unordered_map<int, std::vector<DrawVertex>>* out = &posedPickCache_;
   if (std::getenv("LUSDVIEW_DEBUG_PICK")) {
     std::fprintf(stderr,
                  "[pick] pose applied=%.3f current=%.3f drawIsPosed=%d next=%d\n",
@@ -5421,9 +5674,9 @@ void Gui::buildPosedPickVertices(
           (*out)[upload.meshIndex] = std::move(upload.vertices);
       }
     }
-    return;
+    return out;
   }
-  if (!loaded_) return;
+  if (!loaded_) return out;
   // Legacy/tydra scene: compose the current skinning matrices and skin each
   // deformable mesh's rest vertices on the CPU.
   std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
@@ -5443,6 +5696,7 @@ void Gui::buildPosedPickVertices(
       (*out)[static_cast<int>(mi)] = std::move(verts);
     }
   }
+  return out;
 }
 
 int Gui::pickMesh(float px, float py, int vpW, int vpH,
@@ -5460,16 +5714,15 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
   const float cy = std::floor(py) + 0.5f;
   float centerT = 1e30f;
   int centerSourcePrim = -1;
-  std::unordered_map<int, std::vector<DrawVertex>> posedCache;
-  bool posedBuilt = false;
-  const int center = pickMeshSingle(cx, cy, vpW, vpH, &centerT, &posedCache,
-                                    &posedBuilt, &centerSourcePrim);
+  const auto* posedCache = posedPickVertices();
+  const int center = pickMeshSingle(cx, cy, vpW, vpH, &centerT, posedCache,
+                                    &centerSourcePrim);
   float cursorT = 1e30f;
   int cursor = center;
   int cursorSourcePrim = centerSourcePrim;
   if (std::fabs(cx - px) > 1.0e-4f || std::fabs(cy - py) > 1.0e-4f) {
-    cursor = pickMeshSingle(px, py, vpW, vpH, &cursorT, &posedCache,
-                            &posedBuilt, &cursorSourcePrim);
+    cursor = pickMeshSingle(px, py, vpW, vpH, &cursorT, posedCache,
+                            &cursorSourcePrim);
   } else {
     cursorT = centerT;
   }
@@ -5506,10 +5759,78 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
   return -1;
 }
 
+// Build the per-triangle-run bounds a pick uses to skip most of a merged batch's
+// triangles. Object space, from whichever static vertex array is retained.
+void BuildPickChunkBounds(const DrawMeshCPU& m,
+                         const std::vector<DrawVertex>& posed,
+                         const std::vector<uint32_t>& idx,
+                         std::vector<float>* out) {
+  constexpr uint32_t kTrianglesPerRun = 2048;
+  const size_t triCount = idx.size() / 3;
+  const size_t runs = (triCount + kTrianglesPerRun - 1) / kTrianglesPerRun;
+  out->assign(runs * 6, 0.0f);
+  constexpr float kInvU16 = 1.0f / 65535.0f;
+  auto vertex = [&](uint32_t i, float o[3]) {
+    if (i < posed.size()) {
+      o[0] = posed[i].px;
+      o[1] = posed[i].py;
+      o[2] = posed[i].pz;
+      return true;
+    }
+    if (i < m.vertices.size()) {
+      o[0] = m.vertices[i].px;
+      o[1] = m.vertices[i].py;
+      o[2] = m.vertices[i].pz;
+      return true;
+    }
+    if (size_t(i) * 3 + 2 < m.pickPositions.size()) {
+      o[0] = m.pickQuantMin[0] +
+             m.pickQuantExtent[0] * (float(m.pickPositions[size_t(i) * 3]) * kInvU16);
+      o[1] = m.pickQuantMin[1] +
+             m.pickQuantExtent[1] * (float(m.pickPositions[size_t(i) * 3 + 1]) * kInvU16);
+      o[2] = m.pickQuantMin[2] +
+             m.pickQuantExtent[2] * (float(m.pickPositions[size_t(i) * 3 + 2]) * kInvU16);
+      return true;
+    }
+    return false;
+  };
+  for (size_t run = 0; run < runs; ++run) {
+    float* box = &(*out)[run * 6];
+    box[0] = box[1] = box[2] = 1.0e30f;
+    box[3] = box[4] = box[5] = -1.0e30f;
+    const size_t first = run * kTrianglesPerRun;
+    const size_t last = std::min(triCount, first + kTrianglesPerRun);
+    for (size_t t = first; t < last; ++t) {
+      for (int k = 0; k < 3; ++k) {
+        float p[3];
+        if (!vertex(idx[t * 3 + size_t(k)], p)) continue;
+        for (int c = 0; c < 3; ++c) {
+          box[c] = std::min(box[c], p[c]);
+          box[c + 3] = std::max(box[c + 3], p[c]);
+        }
+      }
+    }
+    if (box[0] > box[3]) {  // no usable vertices: make the run empty
+      box[0] = box[1] = box[2] = 0.0f;
+      box[3] = box[4] = box[5] = -1.0f;
+    }
+  }
+  m.pickChunkTriangles = kTrianglesPerRun;
+}
+
+// Static-mesh run bounds (built once from the retained vertex array).
+void EnsurePickChunkBounds(const DrawMeshCPU& m) {
+  if (m.pickChunkTriangles != 0 && m.pickChunkPoseTime == -1.0e30) return;
+  const std::vector<uint32_t>& idx =
+      m.indices.empty() ? m.pickIndices : m.indices;
+  BuildPickChunkBounds(m, {}, idx, &m.pickChunkBounds);
+  m.pickChunkPoseTime = -1.0e30;
+}
+
 int Gui::pickMeshSingle(
     float px, float py, int vpW, int vpH, float* hitDistance,
-    std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
-    bool* posedBuilt, int* hitSourcePrim) const {
+    const std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
+    int* hitSourcePrim) const {
   if (hitDistance) *hitDistance = 1e30f;
   if (hitSourcePrim) *hitSourcePrim = -1;
   if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
@@ -5742,14 +6063,9 @@ int Gui::pickMeshSingle(
   // GPU, so `vertices` is the rest pose; ray/triangle tests against it select
   // the wrong (or no) surface. Build the displayed pose once per pick, and only
   // when a deformable mesh's bounds are actually hit.
-  std::unordered_map<int, std::vector<DrawVertex>> localPosed;
-  bool localPosedBuilt = false;
-  if (!posedCache) posedCache = &localPosed;
-  if (!posedBuilt) posedBuilt = &localPosedBuilt;
   auto ensurePosedPickVerts = [&]() {
-    if (*posedBuilt) return;
-    *posedBuilt = true;
-    buildPosedPickVertices(posedCache);
+    // The pose is built once per time code / scene by posedPickVertices().
+    if (!posedCache) posedCache = posedPickVertices();
   };
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
     // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
@@ -5784,6 +6100,7 @@ int Gui::pickMeshSingle(
       if (!gpuDeformed) return nullptr;
       if (drawIsPosed_) return &m.vertices;
       ensurePosedPickVerts();
+      if (!posedCache) return nullptr;
       auto it = posedCache->find(static_cast<int>(mi));
       return (it != posedCache->end() && !it->second.empty())
                  ? &it->second
@@ -5807,6 +6124,12 @@ int Gui::pickMeshSingle(
       // aabbMin/Max is the union of all placements and is therefore much too
       // large for picking an instanced prototype. Test each prototype-local
       // box after applying its authored 3x4 object-to-world transform.
+      //
+      // The union is still a cheap early-out: a ray that misses every placement
+      // skips the per-instance box transforms entirely, which dominated picks
+      // on scenes with tens of thousands of instances.
+      float unionT = 0.0f;
+      if (!hitAabb(m.aabbMin, m.aabbMax, bestT, &unionT)) continue;
       for (size_t ii = 0; ii < m.instanceCount(); ++ii) {
         const float* x = &m.instanceXforms[ii * 12];
         float imn[3] = {1e30f, 1e30f, 1e30f};
@@ -5951,25 +6274,86 @@ int Gui::pickMeshSingle(
                                  m.vertices[i].pz}
                  : compactPoint(m, i);
     };
-    for (size_t i = 0; i + 2 < pi.size(); i += 3) {
-      if (pi[i] >= pointCount || pi[i + 1] >= pointCount ||
-          pi[i + 2] >= pointCount)
-        continue;
-      const light3d::Vec3 a = light3d::transformPoint(W, point(pi[i]));
-      const light3d::Vec3 b = light3d::transformPoint(W, point(pi[i + 1]));
-      const light3d::Vec3 c = light3d::transformPoint(W, point(pi[i + 2]));
-      float t, bu, bv;
-      if (rayTri(a, b, c, t, bu, bv, !m.doubleSided) && t < bestT) {
-        if (hasFullTriangles) {
-          const bool backFacing =
-              light3d::dot(light3d::cross(b - a, c - a), rd) >= 0.0f;
-          if (alphaCutoutRejects(m, i, pi[i], pi[i + 1], pi[i + 2], bu, bv,
-                                 backFacing))
-            continue;
+    // Skip triangle runs the ray cannot reach. A merged static batch can hold
+    // hundreds of thousands of triangles; without this a single pick on a
+    // 6.3M-triangle scene took ~0.4 s. Posed meshes keep the plain loop: their
+    // run boxes would be built from the rest pose and could cull valid hits.
+    // Transform the pick ray into the draw's object space once, so the run
+    // boxes can be tested without transforming each box's eight corners. An
+    // affine transform preserves the ray parameter, so t stays comparable.
+    light3d::Vec3 localRo{ro.x, ro.y, ro.z};
+    light3d::Vec3 localRd{rd.x, rd.y, rd.z};
+    {
+      const light3d::Mat4 invW = W.inverse();
+      const float* m = invW.m;
+      localRo = light3d::Vec3{m[0] * ro.x + m[4] * ro.y + m[8] * ro.z + m[12],
+                             m[1] * ro.x + m[5] * ro.y + m[9] * ro.z + m[13],
+                             m[2] * ro.x + m[6] * ro.y + m[10] * ro.z + m[14]};
+      localRd = light3d::Vec3{m[0] * rd.x + m[4] * rd.y + m[8] * rd.z,
+                              m[1] * rd.x + m[5] * rd.y + m[9] * rd.z,
+                              m[2] * rd.x + m[6] * rd.y + m[10] * rd.z};
+    }
+    auto hitRunBox = [&](const float* box, float tMax) {
+      const float idx = (localRd.x != 0.0f) ? 1.0f / localRd.x : 1e30f;
+      const float idy = (localRd.y != 0.0f) ? 1.0f / localRd.y : 1e30f;
+      const float idz = (localRd.z != 0.0f) ? 1.0f / localRd.z : 1e30f;
+      float t1 = (box[0] - localRo.x) * idx, t2 = (box[3] - localRo.x) * idx;
+      float tmin = std::min(t1, t2), tmax = std::max(t1, t2);
+      t1 = (box[1] - localRo.y) * idy; t2 = (box[4] - localRo.y) * idy;
+      tmin = std::max(tmin, std::min(t1, t2));
+      tmax = std::min(tmax, std::max(t1, t2));
+      t1 = (box[2] - localRo.z) * idz; t2 = (box[5] - localRo.z) * idz;
+      tmin = std::max(tmin, std::min(t1, t2));
+      tmax = std::min(tmax, std::max(t1, t2));
+      const float entry = std::max(tmin, 0.0f);
+      return tmax >= entry && entry < tMax;
+    };
+    const bool useRuns = !pi.empty();
+    if (useRuns) {
+      if (pickVerts) {
+        // Run bounds from the posed vertices, rebuilt only when the time code
+        // changes: a skinned mesh's rest-pose boxes would cull valid hits.
+        if (m.pickChunkPoseTime != timeline_.applied ||
+            m.pickChunkTriangles == 0) {
+          BuildPickChunkBounds(m, *pickVerts, pi, &m.pickChunkBounds);
+          m.pickChunkPoseTime = timeline_.applied;
         }
-        bestT = t;
-        best = static_cast<int>(mi);
-        bestTri = i;
+      } else {
+        EnsurePickChunkBounds(m);
+      }
+    }
+    const size_t runTriangles =
+        useRuns ? std::max<uint32_t>(1u, m.pickChunkTriangles) : pi.size() / 3;
+    const size_t runs =
+        useRuns ? m.pickChunkBounds.size() / 6 : size_t{1};
+    for (size_t run = 0; run < runs; ++run) {
+      size_t first = run * runTriangles * 3;
+      size_t last = std::min(pi.size(), first + runTriangles * 3);
+      if (first >= pi.size()) break;
+      if (useRuns && run * 6 + 5 < m.pickChunkBounds.size() &&
+          !hitRunBox(&m.pickChunkBounds[run * 6], bestT)) {
+        continue;
+      }
+      for (size_t i = first; i + 2 < last; i += 3) {
+        if (pi[i] >= pointCount || pi[i + 1] >= pointCount ||
+            pi[i + 2] >= pointCount)
+          continue;
+        const light3d::Vec3 a = light3d::transformPoint(W, point(pi[i]));
+        const light3d::Vec3 b = light3d::transformPoint(W, point(pi[i + 1]));
+        const light3d::Vec3 c = light3d::transformPoint(W, point(pi[i + 2]));
+        float t, bu, bv;
+        if (rayTri(a, b, c, t, bu, bv, !m.doubleSided) && t < bestT) {
+          if (hasFullTriangles) {
+            const bool backFacing =
+                light3d::dot(light3d::cross(b - a, c - a), rd) >= 0.0f;
+            if (alphaCutoutRejects(m, i, pi[i], pi[i + 1], pi[i + 2], bu, bv,
+                                   backFacing))
+              continue;
+          }
+          bestT = t;
+          best = static_cast<int>(mi);
+          bestTri = i;
+        }
       }
     }
   }
@@ -6951,7 +7335,12 @@ void Gui::renderViewportScene(FramePacket* packet) {
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   const bool showHighlight = selectionHighlightMode_ >= 2 && !pickingAov;
-  p.highlightMeshIndex = !showHighlight || selHidden ? -1 : selMeshIndex_;
+  // A multi-selection is drawn entirely through the CPU line overlay: the
+  // backends' mesh-index overlay can only outline one draw.
+  p.highlightMeshIndex = (!showHighlight || selHidden ||
+                          selectionList_.size() > 1)
+                             ? -1
+                             : selMeshIndex_;
   // A selected GeomSubset highlights just its faces on the parent mesh (GL
   // polygon-mode path).
   if (showHighlight && highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
@@ -6964,6 +7353,16 @@ void Gui::renderViewportScene(FramePacket* packet) {
   if (showHighlight && !highlightLinesData_.empty()) {
     p.highlightLines = highlightLinesData_.data();
     p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
+  }
+  if (std::getenv("LUSDVIEW_DEBUG_SELECTION")) {
+    static int dbgFrames = 0;
+    if (++dbgFrames < 8 || (dbgFrames % 60) == 0)
+      std::fprintf(stderr,
+                   "[selection] frame %d show=%d items=%zu lines=%zu xray=%d "
+                   "meshIdx=%d\n",
+                   dbgFrames, showHighlight ? 1 : 0, selectionList_.size(),
+                   highlightLinesData_.size(), selectionHighlightMode_,
+                   p.highlightMeshIndex);
   }
   p.highlightXray = selectionHighlightMode_ == 3;
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
