@@ -44,7 +44,7 @@ mkdir -p "$OUT"
 # --- raster shaders (mesh / line) ------------------------------------------
 # --vn <sym> emits 'static const uint32_t <sym>[] = {...}', matching the names
 # vk_renderer.cc includes (mesh_vert.spv.h -> mesh_vert_spv, etc.).
-for sh in mesh.vert mesh.frag wire.vert wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
+for sh in mesh.vert mesh.frag wire.vert wire_inst.vert wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
   sym="${sh/./_}"          # mesh.vert -> mesh_vert
   echo "==> $sh -> embedded/${sym}.spv.h (${sym}_spv)"
   "$GLSLANG" -V --vn "${sym}_spv" -o "$OUT/${sym}.spv.h" "$HERE/$sh"

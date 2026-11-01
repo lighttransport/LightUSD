@@ -789,6 +789,9 @@ class VulkanRenderer final : public Renderer {
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
+  // Authored-cage wireframe for instanced prototypes (LINE_LIST, per-instance
+  // transform rows). Null when the shader/pipeline is unavailable.
+  VkPipeline wireInstPipeline_{VK_NULL_HANDLE};
   VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
   // Color-write-disabled instanced fill for the wireframe-only depth prepass.
   VkPipeline instDepthPipeline_{VK_NULL_HANDLE};

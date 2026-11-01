@@ -47,6 +47,7 @@
 #include "mesh_tess_vert.spv.h"
 #include "mesh_vert.spv.h"
 #include "wire_frag.spv.h"
+#include "wire_inst_vert.spv.h"
 #include "wire_vert.spv.h"
 #include "nonmesh_frag.spv.h"
 #include "nonmesh_frag_oit.spv.h"
@@ -3310,6 +3311,41 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
     tr = createInstVariant(/*translucent=*/true, &instTranslucentPipeline_);
   }
   if (r == VK_SUCCESS) {
+    // Instanced authored-cage wireframe: the single-draw wire program cannot
+    // serve instanced prototypes (their instance rows occupy the skin attribute
+    // slots), so 'V' showed no wireframe for instanced payload content. This
+    // variant reads the instance rows and reuses the wire fragment shader; it
+    // uses the mesh pipeline layout so the wire pass's push constants apply.
+    VkShaderModule wireInstVs =
+        createShader(wire_inst_vert_spv, sizeof(wire_inst_vert_spv));
+    VkShaderModule wireInstFs = createShader(wire_frag_spv, sizeof(wire_frag_spv));
+    VkPipelineShaderStageCreateInfo wiStages[2] = {stages[0], stages[1]};
+    if (wireInstVs) wiStages[0].module = wireInstVs;
+    if (wireInstFs) wiStages[1].module = wireInstFs;
+    VkPipelineInputAssemblyStateCreateInfo wiIa = ia;
+    wiIa.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    VkPipelineDepthStencilStateCreateInfo wiDs = ds;
+    wiDs.depthTestEnable = VK_TRUE;
+    wiDs.depthWriteEnable = VK_FALSE;
+    wiDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkPipelineColorBlendAttachmentState wiCba = cba;
+    wiCba.blendEnable = VK_FALSE;
+    VkPipelineColorBlendStateCreateInfo wiCb = cb;
+    wiCb.pAttachments = &wiCba;
+    VkGraphicsPipelineCreateInfo wiCi = ci;
+    wiCi.pStages = wiStages;
+    wiCi.pInputAssemblyState = &wiIa;
+    wiCi.pDepthStencilState = &wiDs;
+    wiCi.pColorBlendState = &wiCb;
+    wiCi.layout = pipelineLayout_;
+    if (!wireInstVs || !wireInstFs ||
+        vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &wiCi, nullptr,
+                                  &wireInstPipeline_) != VK_SUCCESS) {
+      wireInstPipeline_ = VK_NULL_HANDLE;
+    }
+    if (wireInstVs) vkDestroyShaderModule(device_, wireInstVs, nullptr);
+    if (wireInstFs) vkDestroyShaderModule(device_, wireInstFs, nullptr);
+
     // Color-write-disabled instanced fill for the wireframe-only depth prepass.
     VkPipelineDepthStencilStateCreateInfo depthDs = ds;
     depthDs.depthTestEnable = VK_TRUE;
@@ -16779,6 +16815,64 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (std::getenv("LUSDVIEW_DEBUG_WIRE"))
           LOGI("Vulkan authored cage draw: mesh=%zu indices=%u selected=%d",
                mi, mesh.wireIndexCount, selected ? 1 : 0);
+      }
+
+      // Instanced prototypes: draw their authored cage at every visible
+      // placement. The single-draw loop above skips them (the wire program's
+      // skin/morph attributes occupy the instance-row slots), which is why
+      // wireframe mode showed nothing for instanced payload content.
+      if (wireInstPipeline_) {
+        bool anyInstWire = false;
+        for (const VkMeshGPU& m : meshes_) {
+          if (m.instanceCount > 0 && m.wireEbo && m.wireIndexCount > 0) {
+            anyInstWire = true;
+            break;
+          }
+        }
+        if (anyInstWire) {
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            wireInstPipeline_);
+          if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
+          for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+            if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+            const VkMeshGPU& mesh = meshes_[mi];
+            if (mesh.instanceCount == 0 || !mesh.wireEbo ||
+                mesh.wireIndexCount == 0 || !mesh.vbo || !mesh.instVbo ||
+                !mesh.instColorBuf || !mesh.instVtxColorBuf)
+              continue;
+            const bool selected = static_cast<int>(mi) == highlightMeshIndex_ &&
+                                  !highlightHasSubset_;
+            if (wireMode_ == 0 && !selected) continue;
+            // Draw the visible instance range: MDI-eligible prototypes live in
+            // the shared instance buffer at mdiInstFirst; a runtime cull may
+            // have compacted the per-mesh buffer to drawInstanceCount.
+            const uint32_t instances = mesh.drawInstanceCount != 0
+                                           ? mesh.drawInstanceCount
+                                           : mesh.instanceCount;
+            const uint32_t firstInstance =
+                mesh.mdiEligible ? mesh.mdiInstFirst : 0u;
+            if (instances == 0) continue;
+            VkBuffer bufs[5] = {mesh.wireVbo ? mesh.wireVbo : mesh.vbo,
+                                mesh.instVbo, mesh.instColorBuf,
+                                mesh.instVtxColorBuf, mesh.morphOffsetVbo};
+            VkDeviceSize offsets[5]{};
+            vkCmdBindVertexBuffers(cb, 0, 5, bufs, offsets);
+            vkCmdBindIndexBuffer(cb, mesh.wireEbo, 0, VK_INDEX_TYPE_UINT32);
+            PushC pc{};
+            // Identity model: the per-instance rows already carry the placement.
+            pc.model[0] = pc.model[5] = pc.model[10] = pc.model[15] = 1.0f;
+            pc.baseColor[0] = selected ? 1.0f : 0.18f;
+            pc.baseColor[1] = selected ? 0.48f : 0.20f;
+            pc.baseColor[2] = selected ? 0.04f : 0.23f;
+            pc.baseColor[3] = 1.0f;
+            pc.ids[2] = static_cast<int>(mi);
+            pc.ids[3] = 0;  // cage addresses the render vbo; no deform here
+            vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
+                               &pc);
+            vkCmdDrawIndexed(cb, mesh.wireIndexCount, instances, 0, 0,
+                             firstInstance);
+          }
+        }
       }
     }
 
