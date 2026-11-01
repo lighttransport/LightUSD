@@ -287,6 +287,20 @@ struct DrawMeshCPU {
   // triangulated from), parallel to the triangles of `indices` (grouped order).
   // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
   std::vector<uint32_t> sourceFaceId;
+  // Merged static/material batches collapse many source prims into one draw.
+  // One entry per contributing source prim records the vertex range (and the
+  // authored-cage index range) it appended, so picking can report the prim
+  // actually under the cursor instead of the batch's representative path, and
+  // highlight only that prim's geometry. Vertex ranges never overlap: each
+  // source prim's vertices are appended as one contiguous block per batch.
+  struct SourcePrimRange {
+    uint32_t vertexBase{0};
+    uint32_t vertexCount{0};
+    uint32_t wireBase{0};
+    uint32_t wireCount{0};
+    std::string path;
+  };
+  std::vector<SourcePrimRange> sourcePrims;
   // Original-polygon wireframe edges as GL_LINES vertex-index pairs (perimeter of
   // each USD face, deduped). Built from the pre-triangulation topology so the
   // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)

@@ -435,7 +435,8 @@ class Gui {
             statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
-  void selectByPath(const std::string& absPath, int meshIndex);
+  void selectByPath(const std::string& absPath, int meshIndex,
+                    int sourcePrim = -1);
   struct PickReport {
     std::string path;
     std::string kind;
@@ -507,7 +508,8 @@ class Gui {
   }
 
  private:
-  void applySelection(const std::string& absPath, int meshIndex, bool recordHistory);
+  void applySelection(const std::string& absPath, int meshIndex,
+                      bool recordHistory, int sourcePrim = -1);
   void pushSelectionHistory(const std::string& absPath);
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
@@ -567,13 +569,14 @@ class Gui {
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH,
-               float* hitDistance = nullptr) const;
+               float* hitDistance = nullptr,
+               int* hitSourcePrim = nullptr) const;
   // Single-ray implementation used by the pixel-center + cursor aperture in
   // pickMesh(). Kept separate so both rays share the same mesh logic.
   int pickMeshSingle(
       float px, float py, int vpW, int vpH, float* hitDistance,
       std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
-      bool* posedBuilt) const;
+      bool* posedBuilt, int* hitSourcePrim = nullptr) const;
   // Pose skinned/morphed meshes at the current timeline time for exact
   // ray/triangle picking. The raster path deforms on the GPU, so draw_'s
   // `vertices` are the rest pose; picking them directly would select the wrong
@@ -581,7 +584,9 @@ class Gui {
   void buildPosedPickVertices(
       std::unordered_map<int, std::vector<DrawVertex>>* out) const;
   std::string pickCarrierPath(float px, float py, int vpW, int vpH,
-                              float* hitDistance = nullptr) const;
+                              float* hitDistance = nullptr,
+                              int* hitMeshIndex = nullptr,
+                              int* hitSourcePrim = nullptr) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -625,6 +630,10 @@ class Gui {
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
+  // When a viewport pick lands inside a merged batch, the index of the source
+  // prim (DrawMeshCPU::sourcePrims) that owns the hit triangle. The highlight
+  // then outlines just that prim instead of the whole batch. -1 = whole draw.
+  int selSourcePrim_{-1};
   int openPbrEditorMaterial_{-1};
   int openPbrEditorSelectionMesh_{-2};
   bool openPbrDockAttempted_{false};

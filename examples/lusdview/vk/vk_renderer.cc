@@ -15142,8 +15142,14 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   // and displacement exactly and does not draw a coarse overlay afterward.
   highlightMeshIndex_ = params.highlightMeshIndex;
   highlightHasSubset_ = params.highlightIndices && params.highlightIndexCount > 0;
+  // Whole-mesh instanced selections have no GPU wire pass (it is a single-draw
+  // pass), so the GUI hands us per-placement CPU cage lines for them.
+  const bool highlightInstanced =
+      highlightMeshIndex_ >= 0 &&
+      static_cast<size_t>(highlightMeshIndex_) < meshes_.size() &&
+      meshes_[static_cast<size_t>(highlightMeshIndex_)].instanceCount > 0;
   if (params.highlightLines && params.highlightLineVertexCount > 0 &&
-      (highlightHasSubset_ || rtActive_)) {
+      (highlightHasSubset_ || rtActive_ || highlightInstanced)) {
     highlightLineCopy_.assign(
         params.highlightLines,
         params.highlightLines + params.highlightLineVertexCount);

@@ -5094,8 +5094,14 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (wireMode != 1) drawNonMesh(params);
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
+  // Instanced selections are excluded: this overlay draws the prototype once at
+  // its mesh transform, not per placement, so the GUI provides world-space cage
+  // lines for every instance instead (drawn by the line path below).
   if (params.highlightMeshIndex >= 0 &&
-      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() && !wire) {
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      !wire &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount ==
+          0) {
     // drawNonMesh() leaves its own shader bound. Uniform locations below belong
     // to the material mesh program; without rebinding it the outline was drawn
     // by the helper shader from rest positions and all skin uniforms were
@@ -5251,8 +5257,14 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   // same params also carry CPU-built world-space lines for Vulkan (which lacks
   // that overlay); drawing them here duplicates the highlight in rest pose for
   // skinned/morphed meshes. Keep this line path only for native Points/Curves,
-  // represented by highlightMeshIndex < 0.
-  if (params.highlightMeshIndex < 0 && params.highlightLines &&
+  // represented by highlightMeshIndex < 0, and for instanced selections (which
+  // the polygon overlay cannot draw per placement).
+  const bool highlightMeshInstanced =
+      params.highlightMeshIndex >= 0 &&
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount > 0;
+  if ((params.highlightMeshIndex < 0 || highlightMeshInstanced) &&
+      params.highlightLines &&
       params.highlightLineVertexCount > 0 && lineProgram_) {
     glUseProgram(lineProgram_);
     const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);

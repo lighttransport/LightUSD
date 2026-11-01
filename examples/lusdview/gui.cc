@@ -1125,8 +1125,9 @@ void Gui::drawDockspaceAndMenu() {
   ImGui::End();
 }
 
-void Gui::selectByPath(const std::string& absPath, int meshIndex) {
-  applySelection(absPath, meshIndex, /*recordHistory=*/true);
+void Gui::selectByPath(const std::string& absPath, int meshIndex,
+                       int sourcePrim) {
+  applySelection(absPath, meshIndex, /*recordHistory=*/true, sourcePrim);
   setSelectionListSingle(selPath_, selMeshIndex_);
 }
 
@@ -1165,36 +1166,25 @@ Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
     return report;
   }
   float hitDistance = 0.0f;
-  report.path =
-      pickCarrierPath(x, y, viewportW_, viewportH_, &hitDistance);
+  int hitMeshIndex = -1;
+  int hitSourcePrim = -1;
+  report.path = pickCarrierPath(x, y, viewportW_, viewportH_, &hitDistance,
+                                &hitMeshIndex, &hitSourcePrim);
   if (report.path.empty()) return report;
   report.hitDistance = hitDistance;
-  for (size_t i = 0; i < draw_->curves.size(); ++i) {
-    if (draw_->curves[i].absPath == report.path) {
-      report.kind = "curve";
-      break;
-    }
+  report.meshIndex = hitMeshIndex;
+  if (report.meshIndex >= 0) report.kind = "mesh";
+  for (size_t i = 0; i < draw_->curves.size() && report.kind.empty(); ++i) {
+    if (draw_->curves[i].absPath == report.path) report.kind = "curve";
   }
-  if (report.kind.empty()) {
-    for (size_t i = 0; i < draw_->points.size(); ++i) {
-      if (draw_->points[i].absPath == report.path) {
-        report.kind = "points";
-        break;
-      }
-    }
-  }
-  if (report.kind.empty()) {
-    for (size_t i = 0; i < draw_->meshes.size(); ++i) {
-      if (draw_->meshes[i].absPath == report.path) {
-        report.kind = "mesh";
-        report.meshIndex = static_cast<int>(i);
-        break;
-      }
-    }
+  for (size_t i = 0; i < draw_->points.size() && report.kind.empty(); ++i) {
+    if (draw_->points[i].absPath == report.path) report.kind = "points";
   }
   if (report.kind.empty()) report.kind = "prim";
   if (select) {
-    selectByPath(report.path, report.meshIndex);
+    // The source-prim index (when the hit landed inside a merged draw) lets the
+    // highlight outline just that prim instead of the whole batch.
+    selectByPath(report.path, report.meshIndex, hitSourcePrim);
     light3d::Vec3 origin, direction;
     if (hitDistance > 0.0f && std::isfinite(hitDistance) &&
         ViewportRay(*cam_, renderer_->caps().usesZeroToOneDepth, x, y,
@@ -1337,7 +1327,8 @@ void Gui::pushSelectionHistory(const std::string& absPath) {
   selectionHistoryIndex_ = static_cast<int>(selectionHistory_.size()) - 1;
 }
 
-void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordHistory) {
+void Gui::applySelection(const std::string& absPath, int meshIndex,
+                         bool recordHistory, int sourcePrim) {
   // A hierarchy/history selection has no longer got the precise viewport hit
   // associated with the previous selection. A viewport pick restores it after
   // selectByPath() returns.
@@ -1345,6 +1336,7 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
   haveLastPickedFocusPoint_ = false;
   selPath_ = absPath;
   selMeshIndex_ = meshIndex;
+  selSourcePrim_ = sourcePrim;
   selPrim_ = nullptr;
   revealSelectionInHierarchy_ = !absPath.empty();
   if (loaded_) {
@@ -1459,6 +1451,32 @@ void Gui::rebuildSubsetHighlight() {
       }
     }
   }
+  // A viewport pick inside a merged batch resolves to one source prim. Outline
+  // only that prim's triangles so clicking a wall highlights the wall, not the
+  // hundreds of unrelated meshes that share its draw.
+  if (mi < 0 && selSourcePrim_ >= 0 && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    const DrawMeshCPU& bm = draw_->meshes[static_cast<size_t>(selMeshIndex_)];
+    if (static_cast<size_t>(selSourcePrim_) < bm.sourcePrims.size()) {
+      const DrawMeshCPU::SourcePrimRange& range =
+          bm.sourcePrims[static_cast<size_t>(selSourcePrim_)];
+      const std::vector<uint32_t>& srcIdx =
+          bm.indices.empty() ? bm.pickIndices : bm.indices;
+      const uint32_t vEnd = range.vertexBase + range.vertexCount;
+      for (size_t t = 0; t + 2 < srcIdx.size(); t += 3) {
+        const uint32_t a = srcIdx[t];
+        if (a < range.vertexBase || a >= vEnd) continue;
+        highlightSubsetIndices_.push_back(a);
+        highlightSubsetIndices_.push_back(srcIdx[t + 1]);
+        highlightSubsetIndices_.push_back(srcIdx[t + 2]);
+      }
+      if (!highlightSubsetIndices_.empty()) {
+        highlightSubsetMesh_ = selMeshIndex_;
+        mi = selMeshIndex_;
+        tri = &highlightSubsetIndices_;
+      }
+    }
+  }
   // No GeomSubset: a selected mesh highlights all its triangles.
   if (mi < 0 && selMeshIndex_ >= 0 &&
       static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
@@ -1531,7 +1549,15 @@ void Gui::rebuildSubsetHighlight() {
   // the CPU line copy is only needed for GeomSubset selections, meshes without
   // a GPU wire stream, or the ray-traced overlay. Building millions of
   // HelperVertex every playback frame for a large selected mesh was pure waste.
-  if (highlightSubsetMesh_ < 0 && mi >= 0 &&
+  //
+  // Instanced meshes are the exception: neither backend's GPU selection path
+  // draws instances (Vulkan's wire pass is a single-draw pass, and the GL
+  // polygon overlay draws the prototype once at its mesh transform), so a
+  // selected tree/lamp/foliage instance previously highlighted nothing at all.
+  // Build the world-space cage lines for every placement instead.
+  const bool instancedSelection = mi >= 0 &&
+      draw_->meshes[static_cast<size_t>(mi)].instanceCount() > 0;
+  if (highlightSubsetMesh_ < 0 && mi >= 0 && !instancedSelection &&
       draw_->meshes[static_cast<size_t>(mi)].hasWireframe &&
       !(renderer_ && renderer_->rayTracingActive())) {
     return;
@@ -1592,30 +1618,74 @@ void Gui::rebuildSubsetHighlight() {
       if (ApplySkinningToVertices(m, composed, &skinnedVerts)) srcVerts = &skinnedVerts;
     }
   }
-  auto wpos = [&](uint32_t vi, float o[3]) {
-    const DrawVertex& v = (*srcVerts)[vi];
-    o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
-    o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
-    o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+  auto wpos = [&](const float* inst, const std::vector<DrawVertex>& verts,
+                  uint32_t vi, float o[3]) {
+    const DrawVertex& v = verts[vi];
+    if (inst) {
+      // instanceXforms are row-major 3x4 object-to-world transforms.
+      o[0] = inst[0] * v.px + inst[1] * v.py + inst[2] * v.pz + inst[3];
+      o[1] = inst[4] * v.px + inst[5] * v.py + inst[6] * v.pz + inst[7];
+      o[2] = inst[8] * v.px + inst[9] * v.py + inst[10] * v.pz + inst[11];
+    } else {
+      o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
+      o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
+      o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+    }
   };
   const float orange[3] = {1.0f, 0.55f, 0.1f};
+  // Authored polygon boundaries outline a whole-mesh selection more cheaply and
+  // more legibly than every triangle edge, and match the GPU cage the
+  // non-instanced path draws. Subdivision cages live in their own rest-space
+  // vertex buffer, so index whichever array the cage addresses.
+  const bool cageEdges =
+      highlightSubsetMesh_ < 0 && !m.wireframeIndices.empty();
+  const std::vector<DrawVertex>& cageVerts =
+      m.wireframeVertices.empty() ? *srcVerts : m.wireframeVertices;
+  const std::vector<DrawVertex>& verts = cageEdges ? cageVerts : *srcVerts;
+  const size_t nv = verts.size();
+  // One placement for a plain mesh, one per instance placement otherwise.
+  std::vector<const float*> placements;
+  if (instancedSelection) {
+    placements.reserve(m.instanceCount());
+    for (size_t ii = 0; ii < m.instanceCount(); ++ii)
+      placements.push_back(&m.instanceXforms[ii * 12]);
+  } else {
+    placements.push_back(nullptr);
+  }
+  // A pathological instanced selection (many placements of a dense mesh) must
+  // not build an unbounded line buffer; the cap is far above any normal
+  // selection, so only adversarial content is truncated.
+  constexpr size_t kMaxHighlightLineVerts = size_t{4} * 1024 * 1024;
   highlightLinesData_.reserve(tri->size() * 2);
-  const size_t nv = srcVerts->size();
-  for (size_t t = 0; t + 2 < tri->size(); t += 3) {
-    const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
-    if (a >= nv || b >= nv || c >= nv) continue;
-    HelperVertex va{}, vb{}, vc{};
-    wpos(a, va.pos); wpos(b, vb.pos); wpos(c, vc.pos);
-    for (int k = 0; k < 3; ++k) { va.col[k] = vb.col[k] = vc.col[k] = orange[k]; }
-    highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
-    highlightLinesData_.push_back(vb); highlightLinesData_.push_back(vc);
-    highlightLinesData_.push_back(vc); highlightLinesData_.push_back(va);
+  auto pushLine = [&](const float* inst, uint32_t a, uint32_t b) {
+    if (a >= nv || b >= nv) return;
+    HelperVertex va{}, vb{};
+    wpos(inst, verts, a, va.pos);
+    wpos(inst, verts, b, vb.pos);
+    for (int k = 0; k < 3; ++k) va.col[k] = vb.col[k] = orange[k];
+    highlightLinesData_.push_back(va);
+    highlightLinesData_.push_back(vb);
+  };
+  for (const float* inst : placements) {
+    if (cageEdges) {
+      for (size_t e = 0; e + 1 < m.wireframeIndices.size(); e += 2)
+        pushLine(inst, m.wireframeIndices[e], m.wireframeIndices[e + 1]);
+    } else {
+      for (size_t t = 0; t + 2 < tri->size(); t += 3) {
+        const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
+        pushLine(inst, a, b);
+        pushLine(inst, b, c);
+        pushLine(inst, c, a);
+      }
+    }
+    if (highlightLinesData_.size() >= kMaxHighlightLineVerts) break;
   }
 }
 
 void Gui::clearSelection() {
   selPath_.clear();
   selMeshIndex_ = -1;
+  selSourcePrim_ = -1;
   selPrim_ = nullptr;
   lastPickedFocusPath_.clear();
   haveLastPickedFocusPoint_ = false;
@@ -5376,8 +5446,9 @@ void Gui::buildPosedPickVertices(
 }
 
 int Gui::pickMesh(float px, float py, int vpW, int vpH,
-                  float* hitDistance) const {
+                  float* hitDistance, int* hitSourcePrim) const {
   if (hitDistance) *hitDistance = 1e30f;
+  if (hitSourcePrim) *hitSourcePrim = -1;
   if (!std::isfinite(px) || !std::isfinite(py)) return -1;
 
   // The rasterizer evaluates coverage at pixel centers. A click's continuous
@@ -5388,15 +5459,17 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
   const float cx = std::floor(px) + 0.5f;
   const float cy = std::floor(py) + 0.5f;
   float centerT = 1e30f;
+  int centerSourcePrim = -1;
   std::unordered_map<int, std::vector<DrawVertex>> posedCache;
   bool posedBuilt = false;
   const int center = pickMeshSingle(cx, cy, vpW, vpH, &centerT, &posedCache,
-                                    &posedBuilt);
+                                    &posedBuilt, &centerSourcePrim);
   float cursorT = 1e30f;
   int cursor = center;
+  int cursorSourcePrim = centerSourcePrim;
   if (std::fabs(cx - px) > 1.0e-4f || std::fabs(cy - py) > 1.0e-4f) {
     cursor = pickMeshSingle(px, py, vpW, vpH, &cursorT, &posedCache,
-                            &posedBuilt);
+                            &posedBuilt, &cursorSourcePrim);
   } else {
     cursorT = centerT;
   }
@@ -5408,11 +5481,13 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     // even when the continuous cursor ray grazes a different surface at a
     // nearly identical depth (thin edges / overlapping shells).
     if (hitDistance) *hitDistance = centerT;
+    if (hitSourcePrim) *hitSourcePrim = centerSourcePrim;
     return center;
   }
   if (cursorExact) {
     // The center missed but the cursor is on a thin edge: keep the click usable.
     if (hitDistance) *hitDistance = cursorT;
+    if (hitSourcePrim) *hitSourcePrim = cursorSourcePrim;
     return cursor;
   }
 
@@ -5425,6 +5500,7 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     const bool useCursor =
         cursorBounds && (!centerBounds || cursorT > centerT);
     if (hitDistance) *hitDistance = useCursor ? cursorT : centerT;
+    if (hitSourcePrim) *hitSourcePrim = -1;
     return useCursor ? cursor : center;
   }
   return -1;
@@ -5433,8 +5509,9 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
 int Gui::pickMeshSingle(
     float px, float py, int vpW, int vpH, float* hitDistance,
     std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
-    bool* posedBuilt) const {
+    bool* posedBuilt, int* hitSourcePrim) const {
   if (hitDistance) *hitDistance = 1e30f;
+  if (hitSourcePrim) *hitSourcePrim = -1;
   if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
       vpH <= 0) {
     return -1;
@@ -5491,10 +5568,11 @@ int Gui::pickMeshSingle(
   // Moller-Trumbore ray/triangle in world space. `cullBackfaces` mirrors the
   // raster cull mode: a single-sided mesh's back-facing triangles are not
   // visible, so they must not win a pick either (a single-sided shell otherwise
-  // hides a character standing inside it).
+  // hides a character standing inside it). Returns the barycentric weights of
+  // the hit (bu, bv) so callers can sample per-corner attributes there.
   auto rayTri = [&](const light3d::Vec3& a, const light3d::Vec3& b,
-                    const light3d::Vec3& c, float& tOut,
-                    bool cullBackfaces) -> bool {
+                    const light3d::Vec3& c, float& tOut, float& bu,
+                    float& bv, bool cullBackfaces) -> bool {
     const light3d::Vec3 e1 = b - a, e2 = c - a;
     if (cullBackfaces &&
         light3d::dot(light3d::cross(e1, e2), rd) >= 0.0f) {
@@ -5513,7 +5591,104 @@ int Gui::pickMeshSingle(
     const float t = light3d::dot(e2, qv) * invDet;
     if (t <= 1e-5f) return false;  // behind the ray origin
     tOut = t;
+    bu = u;
+    bv = vv;
     return true;
+  };
+
+  // Alpha-masked foliage is drawn only where its opacity texture is above the
+  // cutoff, but the leaf-card quads still cover the transparent texels around
+  // the visible fronds. Testing the cards alone makes a click aimed through a
+  // hole between leaves select the plant in front of the surface the user
+  // actually aimed at. Sample the bound material's opacity at the hit point
+  // exactly like the raster's alpha test and reject hits it never drew.
+  auto alphaCutoutRejects = [&](const DrawMeshCPU& m, size_t indexOffset,
+                                uint32_t ia, uint32_t ib, uint32_t ic,
+                                float bu, float bv, bool backFacing) -> bool {
+    if (m.submeshes.empty() || m.vertices.empty()) return false;
+    int matId = -1;
+    for (const DrawSubmesh& sub : m.submeshes) {
+      const size_t first = sub.indexOffset;
+      if (indexOffset >= first && indexOffset < first + sub.indexCount) {
+        matId = (backFacing && sub.backfaceMaterialId >= 0)
+                    ? sub.backfaceMaterialId
+                    : sub.materialId;
+        break;
+      }
+    }
+    if (matId < 0 || static_cast<size_t>(matId) >= draw_->materials.size())
+      return false;
+    const DrawMaterialCPU& dm = draw_->materials[static_cast<size_t>(matId)];
+    if (dm.alphaMode != static_cast<int>(AlphaMode::Mask)) return false;
+    if (dm.opacityTex < 0 ||
+        static_cast<size_t>(dm.opacityTex) >= draw_->textures.size())
+      return false;
+    const light3d::Image& img =
+        draw_->textures[static_cast<size_t>(dm.opacityTex)].image;
+    if (img.width <= 0 || img.height <= 0 || img.channels <= 0 ||
+        img.data.empty())
+      return false;
+    if (ia >= m.vertices.size() || ib >= m.vertices.size() ||
+        ic >= m.vertices.size())
+      return false;
+    float ua, va, ub, vb, uc, vc;
+    if (dm.opacitySample.uvSet == 1) {
+      if (m.uv1.size() != m.vertices.size() * 2) return false;
+      ua = m.uv1[ia * 2 + 0]; va = m.uv1[ia * 2 + 1];
+      ub = m.uv1[ib * 2 + 0]; vb = m.uv1[ib * 2 + 1];
+      uc = m.uv1[ic * 2 + 0]; vc = m.uv1[ic * 2 + 1];
+    } else {
+      ua = m.vertices[ia].u; va = m.vertices[ia].v;
+      ub = m.vertices[ib].u; vb = m.vertices[ib].v;
+      uc = m.vertices[ic].u; vc = m.vertices[ic].v;
+    }
+    const float wa = 1.0f - bu - bv;
+    const float u = ua * wa + ub * bu + uc * bv;
+    const float v = va * wa + vb * bu + vc * bv;
+    const DrawUvXformCPU& xf = dm.opacitySample.uv;
+    auto wrapCoord = [](float t, WrapMode mode) {
+      switch (mode) {
+        case WrapMode::ClampToEdge:
+          return std::min(1.0f, std::max(0.0f, t));
+        case WrapMode::Mirror: {
+          const float a = std::fabs(t);
+          const float f = a - std::floor(a);
+          return (static_cast<int>(std::floor(a)) & 1) ? 1.0f - f : f;
+        }
+        case WrapMode::Repeat:
+        default:
+          return t - std::floor(t);
+      }
+    };
+    const float su =
+        wrapCoord(xf.m00 * u + xf.m01 * v + xf.tx, dm.opacitySample.wrapS);
+    const float sv =
+        wrapCoord(xf.m10 * u + xf.m11 * v + xf.ty, dm.opacitySample.wrapT);
+    const int px =
+        std::min(img.width - 1, std::max(0, static_cast<int>(su * img.width)));
+    const int py = std::min(img.height - 1,
+                            std::max(0, static_cast<int>(sv * img.height)));
+    const int channel =
+        std::max(0, std::min(dm.opacityChannel, img.channels - 1));
+    const size_t texel =
+        (static_cast<size_t>(py) * static_cast<size_t>(img.width) +
+         static_cast<size_t>(px)) *
+            static_cast<size_t>(img.channels) +
+        static_cast<size_t>(channel);
+    if (texel >= img.data.size()) return false;
+    const float alpha =
+        img.data[texel] / 255.0f * dm.opacityTexScale + dm.opacityTexBias;
+    if (std::getenv("LUSDVIEW_DEBUG_PICK_ALPHA")) {
+      std::fprintf(stderr,
+                   "[pick-alpha] mesh=%s mat=%d mode=%d tex=%d uvSet=%d "
+                   "uv=(%.4f %.4f) px=(%d %d) ch=%d texel=%d alpha=%.3f "
+                   "cutoff=%.2f reject=%d\n",
+                   m.absPath.c_str(), matId, dm.alphaMode, dm.opacityTex,
+                   dm.opacitySample.uvSet, su, sv, px, py, channel,
+                   static_cast<int>(img.data[texel]), alpha, dm.alphaCutoff,
+                   alpha < dm.alphaCutoff ? 1 : 0);
+    }
+    return alpha < dm.alphaCutoff;
   };
 
   auto compactPoint = [](const DrawMeshCPU& m, uint32_t i) {
@@ -5530,6 +5705,9 @@ int Gui::pickMeshSingle(
 
   int best = -1;
   float bestT = 1e30f;
+  // Index-list offset of the winning triangle, used to resolve which source
+  // prim inside a merged batch was actually hit.
+  size_t bestTri = 0;
   int bestBounds = -1;
   float bestBoundsT = 1e30f;
   // Reject rays that miss the whole scene early. This also avoids posing every
@@ -5581,13 +5759,17 @@ int Gui::pickMeshSingle(
       std::fprintf(stderr,
                    "[pick] scan mi=%zu path=%s deformed=%d verts=%zu "
                    "aabb=[%.3f %.3f %.3f]-[%.3f %.3f %.3f] posedAabb=%d "
-                   "doubleSided=%d wire=%d\n",
+                   "doubleSided=%d wire=%d inst=%zu protoAabb=[%.3f %.3f "
+                   "%.3f]-[%.3f %.3f %.3f] pickPos=%zu pickIdx=%zu\n",
                    mi, m.absPath.c_str(),
                    (!m.jointIdx.empty() || !m.morphDeltaHalf.empty()) ? 1 : 0,
                    m.vertices.size(), m.aabbMin[0], m.aabbMin[1], m.aabbMin[2],
                    m.aabbMax[0], m.aabbMax[1], m.aabbMax[2],
                    m.hasPosedPickAabb ? 1 : 0, m.doubleSided ? 1 : 0,
-                   m.hasWireframe ? 1 : 0);
+                   m.hasWireframe ? 1 : 0, m.instanceCount(),
+                   m.protoAabbMin[0], m.protoAabbMin[1], m.protoAabbMin[2],
+                   m.protoAabbMax[0], m.protoAabbMax[1], m.protoAabbMax[2],
+                   m.pickPositions.size() / 3, m.pickIndices.size() / 3);
     }
     // These are viewer-generated boxes, not authored USD mesh prims.  Picking
     // their scene-spanning bounds made a click on a tree select the large
@@ -5679,13 +5861,25 @@ int Gui::pickMeshSingle(
               const uint32_t ia = pi[ti + 0], ib = pi[ti + 1], ic = pi[ti + 2];
               if (ia >= pointCount || ib >= pointCount || ic >= pointCount)
                 continue;
-              float triangleT = 0.0f;
-              if (rayTri(instancePoint(point(ia)), instancePoint(point(ib)),
-                         instancePoint(point(ic)), triangleT,
-                         !m.doubleSided) &&
+              float triangleT = 0.0f, bu = 0.0f, bv = 0.0f;
+              const light3d::Vec3 pa = instancePoint(point(ia));
+              const light3d::Vec3 pb = instancePoint(point(ib));
+              const light3d::Vec3 pc = instancePoint(point(ic));
+              if (rayTri(pa, pb, pc, triangleT, bu, bv, !m.doubleSided) &&
                   triangleT < bestT) {
+                // Only the render vertex array carries UVs; compact pick
+                // triangles have none, so skip the cutout test for those.
+                if (hasFullTriangles) {
+                  const bool backFacing =
+                      light3d::dot(light3d::cross(pb - pa, pc - pa), rd) >=
+                      0.0f;
+                  if (alphaCutoutRejects(m, ti, ia, ib, ic, bu, bv,
+                                         backFacing))
+                    continue;
+                }
                 bestT = triangleT;
                 best = static_cast<int>(mi);
+                bestTri = ti;
                 exactInstanceHit = true;
               }
             }
@@ -5764,22 +5958,60 @@ int Gui::pickMeshSingle(
       const light3d::Vec3 a = light3d::transformPoint(W, point(pi[i]));
       const light3d::Vec3 b = light3d::transformPoint(W, point(pi[i + 1]));
       const light3d::Vec3 c = light3d::transformPoint(W, point(pi[i + 2]));
-      float t;
-      if (rayTri(a, b, c, t, !m.doubleSided) && t < bestT) {
+      float t, bu, bv;
+      if (rayTri(a, b, c, t, bu, bv, !m.doubleSided) && t < bestT) {
+        if (hasFullTriangles) {
+          const bool backFacing =
+              light3d::dot(light3d::cross(b - a, c - a), rd) >= 0.0f;
+          if (alphaCutoutRejects(m, i, pi[i], pi[i + 1], pi[i + 2], bu, bv,
+                                 backFacing))
+            continue;
+        }
         bestT = t;
         best = static_cast<int>(mi);
+        bestTri = i;
       }
     }
   }
   const int result = best >= 0 ? best : bestBounds;
+  // Merged static/material batches answer with the prim that contributed the
+  // winning triangle, not the batch's representative path. Source prims append
+  // one contiguous vertex block each, so the triangle's vertex index identifies
+  // it (the blocks never overlap).
+  if (hitSourcePrim) {
+    *hitSourcePrim = -1;
+    if (best >= 0 && static_cast<size_t>(best) < draw_->meshes.size()) {
+      const DrawMeshCPU& hm = draw_->meshes[static_cast<size_t>(best)];
+      const bool usedFull = !hm.vertices.empty() && hm.indices.size() >= 3;
+      const std::vector<uint32_t>& idx = usedFull ? hm.indices : hm.pickIndices;
+      if (hm.sourcePrims.size() > 1 && bestTri < idx.size()) {
+        const uint32_t vertexIndex = idx[bestTri];
+        size_t lo = 0, hi = hm.sourcePrims.size();
+        while (lo < hi) {
+          const size_t mid = (lo + hi) / 2;
+          const DrawMeshCPU::SourcePrimRange& r = hm.sourcePrims[mid];
+          if (vertexIndex < r.vertexBase) {
+            hi = mid;
+          } else if (vertexIndex >= r.vertexBase + r.vertexCount) {
+            lo = mid + 1;
+          } else {
+            *hitSourcePrim = static_cast<int>(mid);
+            break;
+          }
+        }
+      }
+    }
+  }
   if (std::getenv("LUSDVIEW_DEBUG_PICK")) {
     std::fprintf(stderr,
-                 "[pick] result=%d path=%s exactT=%.3f bounds=%d boundsT=%.3f\n",
+                 "[pick] result=%d path=%s exactT=%.3f bounds=%d boundsT=%.3f "
+                 "sourcePrim=%d\n",
                  result,
                  result >= 0 && static_cast<size_t>(result) < draw_->meshes.size()
                      ? draw_->meshes[static_cast<size_t>(result)].absPath.c_str()
                      : "<none>",
-                 best >= 0 ? bestT : -1.0f, bestBounds, bestBoundsT);
+                 best >= 0 ? bestT : -1.0f, bestBounds, bestBoundsT,
+                 hitSourcePrim ? *hitSourcePrim : -1);
   }
   // A negative distance explicitly denotes a bounds-only fallback.  It is
   // useful to callers that have a real selection buffer for curves: a broad
@@ -5790,15 +6022,34 @@ int Gui::pickMeshSingle(
 }
 
 std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH,
-                                 float* hitDistance) const {
+                                 float* hitDistance, int* hitMeshIndex,
+                                 int* hitSourcePrim) const {
   if (hitDistance) *hitDistance = 0.0f;
+  if (hitMeshIndex) *hitMeshIndex = -1;
+  if (hitSourcePrim) *hitSourcePrim = -1;
   if (!draw_ || !cam_ || !renderer_ || vpW <= 0 || vpH <= 0) return {};
   // This is deliberately renderer-independent.  Both the GL and Vulkan
   // raster backends retain the same tessellated carrier data; only the depth
   // convention used to unproject/project the local ID/depth buffer differs
   // (GL [-1,1], Vulkan [0,1]).
   float meshT = 1.0e30f;
-  const int mesh = pickMesh(px, py, vpW, vpH, &meshT);
+  int meshSourcePrim = -1;
+  const int mesh = pickMesh(px, py, vpW, vpH, &meshT, &meshSourcePrim);
+  // Report the source prim inside a merged batch, not the batch's
+  // representative path: the batch path belongs to whichever mesh happened to
+  // be appended first, which is almost never the surface the user clicked.
+  const bool hasSourcePrim =
+      mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size() &&
+      meshSourcePrim >= 0 &&
+      static_cast<size_t>(meshSourcePrim) <
+          draw_->meshes[static_cast<size_t>(mesh)].sourcePrims.size();
+  std::string meshPath;
+  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
+    const DrawMeshCPU& hm = draw_->meshes[static_cast<size_t>(mesh)];
+    meshPath = hasSourcePrim
+                   ? hm.sourcePrims[static_cast<size_t>(meshSourcePrim)].path
+                   : hm.absPath;
+  }
 
   const bool z01 = renderer_->caps().usesZeroToOneDepth;
   const light3d::Mat4 invVP =
@@ -6200,12 +6451,14 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH,
       *hitDistance = (std::isfinite(bestT) && bestT > 0.0f) ? bestT : 0.0f;
     return bestPath;
   }
-  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
+  if (!meshPath.empty()) {
     if (hitDistance) {
       const float t = std::fabs(meshT);
       *hitDistance = (std::isfinite(t) && t > 0.0f) ? t : 0.0f;
     }
-    return draw_->meshes[static_cast<size_t>(mesh)].absPath;
+    if (hitMeshIndex) *hitMeshIndex = mesh;
+    if (hitSourcePrim) *hitSourcePrim = hasSourcePrim ? meshSourcePrim : -1;
+    return meshPath;
   }
   if (hitDistance)
     *hitDistance = (std::isfinite(bestT) && bestT > 0.0f) ? bestT : 0.0f;

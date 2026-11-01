@@ -9175,15 +9175,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                          static_cast<uint32_t>(indexCount), 0, -1);
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
+    uint32_t wireBase = 0;
+    uint32_t wireCount = 0;
     if (!source.wireframeIndices.empty()) {
       b.dm.hasWireframe = true;
       const size_t wireOffset = b.dm.wireframeIndices.size();
-      const size_t wireCount = source.wireframeIndices.size();
+      wireBase = static_cast<uint32_t>(wireOffset);
+      wireCount = static_cast<uint32_t>(source.wireframeIndices.size());
       b.dm.wireframeIndices.resize(wireOffset + wireCount);
       uint32_t* dst = b.dm.wireframeIndices.data() + wireOffset;
       for (size_t i = 0; i < wireCount; ++i)
         dst[i] = vbase + source.wireframeIndices[i];
     }
+    // Record which source prim this vertex/cage range belongs to so a pick can
+    // report the real prim instead of the batch's representative path.
+    b.dm.sourcePrims.push_back({vbase,
+                                static_cast<uint32_t>(source.vertices.size()),
+                                wireBase, wireCount,
+                                source.absPath.empty() ? primPath
+                                                       : source.absPath});
     b.nextFaceId += static_cast<uint32_t>(sourceMesh.face_count());
   };
 
@@ -10333,10 +10343,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.sourceFaceId.push_back(faceBase + face);
       if (!needsPtex)
         b.nextFaceId += static_cast<uint32_t>(m.face_count());
+      const uint32_t wireBase =
+          static_cast<uint32_t>(b.dm.wireframeIndices.size());
       for (uint32_t widx : loc.wireframeIndices) {
         b.dm.wireframeIndices.push_back(vbase + widx);
         b.dm.hasWireframe = true;
       }
+      b.dm.sourcePrims.push_back(
+          {vbase, static_cast<uint32_t>(loc.vertices.size()), wireBase,
+           static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase,
+           loc.absPath.empty() ? meshPath : loc.absPath});
     } else {
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
@@ -10438,6 +10454,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         };
         const uint32_t logicalIndexOffset =
             static_cast<uint32_t>(b.dm.indices.size());
+        // vtx() appends each group's vertices contiguously into this batch, so
+        // the range is just the growth of the vertex array over this loop.
+        const uint32_t groupVertexBase =
+            static_cast<uint32_t>(b.dm.vertices.size());
         for (size_t t = 0; t < numTris; ++t) {
           if (triMat[t] != gm) continue;
           b.dm.indices.push_back(vtx(loc.indices[3 * t + 0]));
@@ -10454,13 +10474,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             gm.first, gm.second);
         // Attach the mesh's wireframe once (to the first group's batch, mapped
         // through vtx so its vertices exist there) -- avoids cross-batch dupes.
+        uint32_t wireBase = 0;
+        uint32_t wireCount = 0;
         if (firstGroup) {
+          wireBase = static_cast<uint32_t>(b.dm.wireframeIndices.size());
           for (uint32_t widx : loc.wireframeIndices) {
             b.dm.wireframeIndices.push_back(vtx(widx));
             b.dm.hasWireframe = true;
           }
+          wireCount =
+              static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase;
           firstGroup = false;
         }
+        // Record the source prim for this group's vertex/cage range so a pick
+        // can report the real prim instead of the batch's representative path.
+        b.dm.sourcePrims.push_back(
+            {groupVertexBase,
+             static_cast<uint32_t>(b.dm.vertices.size()) - groupVertexBase,
+             wireBase, wireCount,
+             loc.absPath.empty() ? meshPath : loc.absPath});
         if (!needsPtex)
           b.nextFaceId += static_cast<uint32_t>(m.face_count());
       }
