@@ -535,6 +535,105 @@ void CollectPreviewBounds(const lightusd_stage* stage, lightusd_prim prim,
   }
 }
 
+// Drop optional per-vertex/per-instance streams whose size does not match the
+// mesh. A malformed optional primvar (e.g. a UV1 array that lost its
+// face-varying mapping) must not reject an otherwise valid scene at upload
+// time; the renderer simply falls back to the defaults for that stream.
+static void SanitizeOptionalMeshArrays(DrawMeshCPU* mesh) {
+  if (!mesh) return;
+  const size_t nv = mesh->vertices.size();
+  const char* meshName =
+      mesh->absPath.empty() ? mesh->name.c_str() : mesh->absPath.c_str();
+  auto mismatch = [&](size_t size, size_t components, const char* name) {
+    if (size == 0) return false;
+    size_t expected = 0;
+    bool bad = components == 0 ||
+               nv > std::numeric_limits<size_t>::max() / components;
+    if (!bad) {
+      expected = nv * components;
+      bad = size != expected;
+    }
+    if (bad) {
+      LOGW("next: mesh '%s': dropping malformed %s (%zu values, expected %zu)",
+           meshName, name, size, expected);
+    }
+    return bad;
+  };
+  if (mismatch(mesh->vertexColors.size(), 3, "vertexColors"))
+    mesh->vertexColors.clear();
+  if (mismatch(mesh->vertexAlpha.size(), 1, "vertexAlpha"))
+    mesh->vertexAlpha.clear();
+  if (mismatch(mesh->tangents.size(), 3, "tangents")) mesh->tangents.clear();
+  if (mismatch(mesh->binormals.size(), 3, "binormals")) mesh->binormals.clear();
+  if (mismatch(mesh->uv1.size(), 2, "uv1")) mesh->uv1.clear();
+  if (mismatch(mesh->morphInfluence.size(), 1, "morphInfluence"))
+    mesh->morphInfluence.clear();
+
+  const bool jointsOk = !mismatch(mesh->jointIdx.size(), 4, "jointIdx") &&
+                        !mismatch(mesh->jointWt.size(), 4, "jointWt");
+  if (!jointsOk) {
+    mesh->jointIdx.clear();
+    mesh->jointWt.clear();
+    mesh->influenceOffsetCount.clear();
+    mesh->influenceTexels.clear();
+  } else if (mismatch(mesh->influenceOffsetCount.size(), 2,
+                      "influenceOffsetCount")) {
+    mesh->influenceOffsetCount.clear();
+    mesh->influenceTexels.clear();
+  }
+
+  if (mismatch(mesh->morphOffsetCount.size(), 2, "morphOffsetCount") ||
+      (mesh->morphDeltaHalf.size() % 4) != 0 ||
+      (!mesh->morphChannelId.empty() &&
+       mesh->morphChannelId.size() != mesh->morphDeltaHalf.size() / 4)) {
+    if (mesh->morphOffsetCount.size() != 0 ||
+        mesh->morphDeltaHalf.size() != 0 ||
+        mesh->morphChannelId.size() != 0) {
+      LOGW("next: mesh '%s': dropping malformed morph arrays", meshName);
+    }
+    mesh->morphOffsetCount.clear();
+    mesh->morphDeltaHalf.clear();
+    mesh->morphChannelId.clear();
+  }
+  if (!mesh->sourceFaceId.empty() &&
+      mesh->sourceFaceId.size() != mesh->indices.size() / 3) {
+    LOGW("next: mesh '%s': dropping malformed sourceFaceId (%zu values, "
+         "expected %zu)",
+         meshName, mesh->sourceFaceId.size(), mesh->indices.size() / 3);
+    mesh->sourceFaceId.clear();
+  }
+  bool geomPropsOk = true;
+  for (const DrawGeomPropCPU& prop : mesh->geomProps) {
+    if (prop.components == 0 || mismatch(prop.values.size(), prop.components,
+                                         "geomProps")) {
+      geomPropsOk = false;
+      break;
+    }
+  }
+  if (!geomPropsOk) mesh->geomProps.clear();
+
+  const size_t ni = mesh->instanceCount();
+  auto instMismatch = [&](size_t size, size_t components, const char* name) {
+    if (size == 0) return false;
+    size_t expected = 0;
+    bool bad = components == 0 ||
+               ni > std::numeric_limits<size_t>::max() / components;
+    if (!bad) {
+      expected = ni * components;
+      bad = size != expected;
+    }
+    if (bad) {
+      LOGW("next: mesh '%s': dropping malformed %s (%zu values, expected %zu)",
+           meshName, name, size, expected);
+    }
+    return bad;
+  };
+  if (instMismatch(mesh->instanceColors.size(), 3, "instanceColors"))
+    mesh->instanceColors.clear();
+  if (instMismatch(mesh->instanceOpacities.size(), 1, "instanceOpacities"))
+    mesh->instanceOpacities.clear();
+}
+
 DrawScene BuildCheckpointPreview(const lightusd_stage* stageHandle, double time,
                                  size_t maxBoxes,
                                  const std::string& cameraName) {
@@ -616,6 +715,7 @@ DrawScene BuildCheckpointPreview(const lightusd_stage* stageHandle, double time,
   }
   draw.vertexCount = mesh.vertices.size();
   draw.triangleCount = mesh.indices.size() / 3;
+  SanitizeOptionalMeshArrays(&mesh);
   draw.meshes.push_back(std::move(mesh));
   return draw;
 }
@@ -3097,6 +3197,7 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
     std::memset(dm.world, 0, sizeof(dm.world));
     dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
     draw->triangleCount += dm.indices.size() / 3;
+    SanitizeOptionalMeshArrays(&dm);
     draw->meshes.push_back(std::move(dm));
   }
 
@@ -4985,6 +5086,7 @@ static void AddNextBackPlates(const lightusd_stage* stage,
     mesh.submeshes.push_back(
         DrawSubmesh{0, static_cast<uint32_t>(mesh.indices.size()), materialId,
                     materialId});
+    SanitizeOptionalMeshArrays(&mesh);
     draw->meshes.push_back(std::move(mesh));
   }
 }
@@ -6742,6 +6844,7 @@ bool BuildNextVolumes(
           FinalizeGeneratedMesh(&dm);
           if (draw) {
             draw->triangleCount += dm.indices.size() / 3;
+            SanitizeOptionalMeshArrays(&dm);
             draw->meshes.push_back(std::move(dm));
           }
           // Without field:density the first usable field is the medium.
@@ -8999,6 +9102,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
     }
     draw->triangleCount += b.dm.indices.size() / 3;
+    SanitizeOptionalMeshArrays(&b.dm);
     draw->meshes.push_back(std::move(b.dm));
     b = Batch();
     publishAvailableMeshes();
@@ -10770,6 +10874,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                       loadBegin).count());
     LogProcessMemory("after finalize");
   }
+  for (DrawMeshCPU& mesh : draw->meshes) SanitizeOptionalMeshArrays(&mesh);
   if (stream) {
     publishAvailableMeshes(/*force=*/true);
     publishAvailableNonMeshes();
