@@ -1122,12 +1122,20 @@ changes give the static side its granularity and its vertex bandwidth back:
   drops those inputs (the pipeline keeps the bindings; unused ones cost nothing)
   and skips the deform include.
 
-On the same scene at 1280x720 that takes the frame from 17.4 ms to 15.8 ms with
+On the same scene at 1280x720 that takes the frame from 17.4 ms to 15.7 ms with
 no visual change at all (the render is pixel-identical), 10.5 ms to 7.7 ms from a
-close camera, and 9.7 ms to 7.6 ms under `--raster-lod`. What is left is vertex
-bandwidth: the static pass streams ~3 GB/frame of vertices and indices at 1.5
-vertices per triangle, so the next step would be a packed static vertex format
-rather than more culling.
+close camera, and 9.7 ms to 7.6 ms under `--raster-lod`.
+
+Two things still keep the static pass above that: it streams ~3 GB/frame of
+vertices and indices at 1.5 vertices per triangle, and **GPU skinning**. A batch
+that carries joint/weight attributes cannot use the lean vertex stage or the
+chunk cull, and on that scene 77 % of the static triangles sit in such batches
+(24.9 M of 32.4 M) even though the pose never changes. `LUSDVIEW_DEBUG_STATIC=1`
+prints the per-batch breakdown (`tris / chunked / skinned`). Loading with
+`--skinning cpu` bakes the pose and drops those streams, which takes the same
+frame to 11.5 ms (87 fps); making that the automatic choice for skins whose
+SkelAnimation has no time samples is the obvious next step, followed by a packed
+static vertex format.
 
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately

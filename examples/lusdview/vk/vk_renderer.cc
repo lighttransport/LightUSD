@@ -15876,79 +15876,85 @@ void VulkanRenderer::buildStaticChunks(const DrawMeshCPU& sm, VkMeshGPU* gm) {
   // patch), large enough that the command list stays tiny: a 39 M-triangle scene
   // is ~10 k commands.
   constexpr uint32_t kChunkTris = 4096;
-  if (!gm || gm->ebo == VK_NULL_HANDLE || sm.submeshes.size() != 1) return;
-  const DrawSubmesh& sub = sm.submeshes[0];
-  const uint32_t tris = sub.indexCount / 3;
-  if (tris < kChunkTris * 2) return;  // one or two chunks buys nothing
-  const size_t idxBegin = static_cast<size_t>(sub.indexOffset);
-  const size_t idxEnd =
-      std::min(sm.indices.size(), idxBegin + static_cast<size_t>(sub.indexCount));
   // A run of `kChunkTris` triangles in prim order can span a whole district (a
   // batch mixes prims), and then neither the frustum nor the size test can reject
   // it. Cap each chunk's world AABB at a fraction of the batch's own extent so a
   // chunk stays a local culling unit; the cap is scene-relative, so it works at
   // any scale. `kMinChunkTris` bounds the command count.
   constexpr uint32_t kMinChunkTris = 1024;
+  if (!gm || gm->ebo == VK_NULL_HANDLE || sm.submeshes.empty()) return;
   float batchExt[3] = {sm.aabbMax[0] - sm.aabbMin[0],
                        sm.aabbMax[1] - sm.aabbMin[1],
                        sm.aabbMax[2] - sm.aabbMin[2]};
   const float batchDiag = std::sqrt(batchExt[0] * batchExt[0] +
                                     batchExt[1] * batchExt[1] +
                                     batchExt[2] * batchExt[2]);
-  const float maxRadius = batchDiag > 0.0f ? batchDiag * 0.02f : 0.0f;
-  const float maxRadius2 = maxRadius * maxRadius;
+  const float maxRadius2 = (batchDiag * 0.02f) * (batchDiag * 0.02f);
+
   std::vector<VkDrawIndexedIndirectCommand> cmds;
   std::vector<float> bounds;
-  cmds.reserve(tris / kChunkTris + 1u);
-  bounds.reserve(cmds.capacity() * 6u);
-  float lo[3] = {0.0f, 0.0f, 0.0f};
-  float hi[3] = {0.0f, 0.0f, 0.0f};
-  uint32_t chunkFirstTri = 0;
-  uint32_t chunkTris = 0;
-  auto closeChunk = [&]() {
-    if (chunkTris == 0) return;
-    const size_t i0 = idxBegin + static_cast<size_t>(chunkFirstTri) * 3;
-    VkDrawIndexedIndirectCommand cmd{};
-    cmd.indexCount = chunkTris * 3;
-    cmd.instanceCount = 1;
-    cmd.firstIndex = static_cast<uint32_t>(i0);
-    cmd.vertexOffset = 0;
-    cmd.firstInstance = 0;
-    cmds.push_back(cmd);
-    bounds.insert(bounds.end(), lo, lo + 3);
-    bounds.insert(bounds.end(), hi, hi + 3);
-    chunkFirstTri += chunkTris;
-    chunkTris = 0;
-  };
-  for (uint32_t t = 0; t < tris; ++t) {
-    const size_t i0 = idxBegin + static_cast<size_t>(t) * 3;
-    if (i0 + 2 >= idxEnd) break;
-    for (int c = 0; c < 3; ++c) {
-      const uint32_t vi = sm.indices[i0 + c];
-      if (vi >= sm.vertices.size()) continue;
-      const DrawVertex& v = sm.vertices[vi];
-      const float p[3] = {v.px, v.py, v.pz};
-      if (chunkTris == 0 && c == 0) {
-        for (int k = 0; k < 3; ++k) lo[k] = hi[k] = p[k];
+  std::vector<uint32_t> firstPerSub(sm.submeshes.size(), 0u);
+  std::vector<uint32_t> countPerSub(sm.submeshes.size(), 0u);
+
+  for (size_t si = 0; si < sm.submeshes.size(); ++si) {
+    const DrawSubmesh& sub = sm.submeshes[si];
+    const uint32_t tris = sub.indexCount / 3;
+    if (tris < kMinChunkTris * 2) continue;  // too small to split usefully
+    const size_t idxBegin = static_cast<size_t>(sub.indexOffset);
+    const size_t idxEnd = std::min(
+        sm.indices.size(), idxBegin + static_cast<size_t>(sub.indexCount));
+    firstPerSub[si] = static_cast<uint32_t>(cmds.size());
+    float lo[3] = {0.0f, 0.0f, 0.0f};
+    float hi[3] = {0.0f, 0.0f, 0.0f};
+    uint32_t chunkFirstTri = 0;
+    uint32_t chunkTris = 0;
+    auto closeChunk = [&]() {
+      if (chunkTris == 0) return;
+      VkDrawIndexedIndirectCommand cmd{};
+      cmd.indexCount = chunkTris * 3;
+      cmd.instanceCount = 1;
+      cmd.firstIndex = static_cast<uint32_t>(
+          idxBegin + static_cast<size_t>(chunkFirstTri) * 3);
+      cmd.vertexOffset = 0;
+      cmd.firstInstance = 0;
+      cmds.push_back(cmd);
+      bounds.insert(bounds.end(), lo, lo + 3);
+      bounds.insert(bounds.end(), hi, hi + 3);
+      chunkFirstTri += chunkTris;
+      chunkTris = 0;
+    };
+    for (uint32_t t = 0; t < tris; ++t) {
+      const size_t i0 = idxBegin + static_cast<size_t>(t) * 3;
+      if (i0 + 2 >= idxEnd) break;
+      for (int c = 0; c < 3; ++c) {
+        const uint32_t vi = sm.indices[i0 + c];
+        if (vi >= sm.vertices.size()) continue;
+        const DrawVertex& v = sm.vertices[vi];
+        const float p[3] = {v.px, v.py, v.pz};
+        if (chunkTris == 0 && c == 0) {
+          for (int k = 0; k < 3; ++k) lo[k] = hi[k] = p[k];
+        }
+        for (int k = 0; k < 3; ++k) {
+          lo[k] = std::min(lo[k], p[k]);
+          hi[k] = std::max(hi[k], p[k]);
+        }
       }
-      for (int k = 0; k < 3; ++k) {
-        lo[k] = std::min(lo[k], p[k]);
-        hi[k] = std::max(hi[k], p[k]);
+      ++chunkTris;
+      if (chunkTris >= kChunkTris) {
+        closeChunk();
+        continue;
+      }
+      if (chunkTris >= kMinChunkTris && maxRadius2 > 0.0f) {
+        const float ex = 0.5f * (hi[0] - lo[0]);
+        const float ey = 0.5f * (hi[1] - lo[1]);
+        const float ez = 0.5f * (hi[2] - lo[2]);
+        if (ex * ex + ey * ey + ez * ez > maxRadius2) closeChunk();
       }
     }
-    ++chunkTris;
-    if (chunkTris >= kChunkTris) {
-      closeChunk();
-      continue;
-    }
-    if (chunkTris >= kMinChunkTris && maxRadius2 > 0.0f) {
-      const float ex = 0.5f * (hi[0] - lo[0]);
-      const float ey = 0.5f * (hi[1] - lo[1]);
-      const float ez = 0.5f * (hi[2] - lo[2]);
-      if (ex * ex + ey * ey + ez * ez > maxRadius2) closeChunk();
-    }
+    closeChunk();
+    countPerSub[si] = static_cast<uint32_t>(cmds.size()) - firstPerSub[si];
   }
-  closeChunk();
+
   const uint32_t nChunks = static_cast<uint32_t>(cmds.size());
   if (nChunks < 2) return;
   const VkDeviceSize bytes =
@@ -15962,9 +15968,13 @@ void VulkanRenderer::buildStaticChunks(const DrawMeshCPU& sm, VkMeshGPU* gm) {
     return;
   }
   gm->staticChunkBounds = std::move(bounds);
-  gm->staticChunkCount = nChunks;
+  gm->staticChunkFirst = std::move(firstPerSub);
+  gm->staticChunkCount = std::move(countPerSub);
+  gm->staticChunkTotal = nChunks;
   gm->staticVisibleChunks = nChunks;
-  gm->staticVisibleTris = tris;
+  uint32_t totalTris = 0;
+  for (const DrawSubmesh& sub : sm.submeshes) totalTris += sub.indexCount / 3;
+  gm->staticVisibleTris = totalTris;
   gm->staticChunked = true;
 }
 
@@ -16024,7 +16034,7 @@ void VulkanRenderer::patchStaticChunks() {
     auto* dst =
         static_cast<VkDrawIndexedIndirectCommand*>(m.staticIndirectMapped);
     uint32_t visible = 0, visibleTris = 0;
-    for (uint32_t c = 0; c < m.staticChunkCount; ++c) {
+    for (uint32_t c = 0; c < m.staticChunkTotal; ++c) {
       const float* b = &m.staticChunkBounds[static_cast<size_t>(c) * 6];
       bool vis = true;
       for (int p = 0; vis && p < 5; ++p) {
@@ -16244,7 +16254,20 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     for (const auto& m : meshes_) {
       if (!m.staticChunked) continue;
       ++chunked;
-      chunks += m.staticChunkCount;
+      chunks += m.staticChunkTotal;
+    }
+    if (std::getenv("LUSDVIEW_DEBUG_STATIC")) {
+      for (const auto& m : meshes_) {
+        if (m.instanceCount > 0) continue;
+        uint32_t t = 0;
+        for (const auto& sub : m.submeshes) t += sub.indexCount / 3;
+        std::fprintf(stderr,
+                     "[static] tris=%u submeshes=%zu chunked=%d chunks=%u "
+                     "skinned=%d morph=%d doubleSided=%d\n",
+                     t, m.submeshes.size(), m.staticChunked ? 1 : 0,
+                     m.staticChunkTotal, m.skinned ? 1 : 0, m.hasMorph ? 1 : 0,
+                     m.doubleSided ? 1 : 0);
+      }
     }
     std::fprintf(stderr,
                  "[mdi] supported=%d active=%d cmds=%u leanPl=%d | instMeshes=%zu "
@@ -16849,7 +16872,15 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                           mesh.morphOffsetVbo};
       vkCmdBindVertexBuffers(cb, 0, 7, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
+      size_t subIndex = 0;
       for (const auto& sub : mesh.submeshes) {
+        const size_t subChunkFirst =
+            subIndex < mesh.staticChunkFirst.size()
+                ? mesh.staticChunkFirst[subIndex] : 0u;
+        const size_t subChunkCount =
+            subIndex < mesh.staticChunkCount.size()
+                ? mesh.staticChunkCount[subIndex] : 0u;
+        ++subIndex;
         const bool splitBack =
             dynCullSupported_ && sub.backfaceMaterialId >= 0 &&
             sub.backfaceMaterialId != sub.materialId;
@@ -17000,15 +17031,16 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // set up above for this submesh, exactly as the direct draw would use.
         const bool chunkDraw =
             apass == 0 && mesh.staticChunked && sideCount == 1 &&
-            mesh.staticChunkCount > 0 && !mixedOpacity && !displaced &&
-            opSlot < 0 && mesh.submeshes.size() == 1;
+            subChunkCount > 0 && !mixedOpacity && !displaced && opSlot < 0;
         if (useTess) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wantMeshPl);
         } else if (chunkDraw) {
           vkCmdDrawIndexedIndirect(
-              cb, mesh.staticIndirectBuf, 0, mesh.staticChunkCount,
+              cb, mesh.staticIndirectBuf,
+              VkDeviceSize(subChunkFirst) * sizeof(VkDrawIndexedIndirectCommand),
+              subChunkCount,
               static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
         } else {
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);

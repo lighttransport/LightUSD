@@ -405,7 +405,12 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory staticIndirectMem{VK_NULL_HANDLE};
     void* staticIndirectMapped{nullptr};
     std::vector<float> staticChunkBounds;  // 6 floats/chunk: world AABB
-    uint32_t staticChunkCount{0};
+    // Chunk command ranges, parallel to `submeshes` (each submesh has its own
+    // material, so it needs its own indirect call over its own range). Entries are
+    // empty for submeshes too small to split.
+    std::vector<uint32_t> staticChunkFirst;
+    std::vector<uint32_t> staticChunkCount;
+    uint32_t staticChunkTotal{0};
     uint32_t staticVisibleChunks{0};  // chunks the last cull kept
     uint32_t staticVisibleTris{0};    // triangles those chunks cover
     bool staticChunked{false};
