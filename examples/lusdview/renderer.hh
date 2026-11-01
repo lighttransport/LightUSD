@@ -457,6 +457,12 @@ class Renderer {
   // Progressive surface-first upload. The default preserves existing behavior;
   // GL defers wireframe/source-face buffers until uploadMeshAux.
   virtual void appendMeshSurface(const DrawMeshCPU& mesh) { appendMesh(mesh); }
+  // Cull merged static batches at triangle-run granularity. `cullPx` 0 keeps the
+  // frustum test only (visually identical to the per-batch test it replaces);
+  // > 0 additionally drops chunks whose projected radius is below that many
+  // pixels, matching the raster-LOD policy applied to unmerged meshes. Backends
+  // that draw per source mesh have nothing to gain and keep the default.
+  virtual void setStaticChunkCullPx(float /*cullPx*/) {}
   virtual void uploadMeshAux(size_t /*meshIndex*/, const DrawMeshCPU& /*mesh*/) {}
   // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
   // support yet; GL implements raymarching, VK/CUDA are placeholders).

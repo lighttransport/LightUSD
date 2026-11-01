@@ -50,6 +50,12 @@ for sh in mesh.vert mesh.frag wire.vert wire_inst.vert wire.frag environment.ver
   "$GLSLANG" -V --vn "${sym}_spv" -o "$OUT/${sym}.spv.h" "$HERE/$sh"
 done
 
+# mesh.vert (static-batch variant): same shader without the joint/weight/
+# influence/morph vertex streams (see LUSDVIEW_STATIC_BATCH in mesh.vert).
+echo "==> mesh.vert (static batch) -> embedded/mesh_static_vert.spv.h"
+"$GLSLANG" -V -DLUSDVIEW_STATIC_BATCH=1 --vn mesh_static_vert_spv \
+  -o "$OUT/mesh_static_vert.spv.h" "$HERE/mesh.vert"
+
 echo "==> mesh.frag (weighted OIT) -> embedded/mesh_oit_frag.spv.h"
 "$GLSLANG" -V -DLUSDVIEW_OIT=1 --vn mesh_oit_frag_spv \
   -o "$OUT/mesh_oit_frag.spv.h" "$HERE/mesh.frag"

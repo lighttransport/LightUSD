@@ -4966,6 +4966,13 @@ void Gui::buildViewVisibilityMask() {
   // only ordinary frustum culling while a wire mode is active.
   const bool lodOn = (rasterLodEnabled_ || dynamicRasterLodEnabled_) &&
                      !wireActive && cam_ && renderer_;
+  // Merged static batches are culled per triangle-run chunk inside the renderer.
+  // Frustum culling is always on; the projected-size threshold follows the same
+  // raster-LOD policy as the per-mesh test below, so default rendering stays
+  // full-fidelity and `--raster-lod` (or a large-scene profile) also covers the
+  // static geometry that batching merged.
+  if (renderer_)
+    renderer_->setStaticChunkCullPx(lodOn ? rasterLodCullPx_ : 0.0f);
   RtLodCamera lodCam;
   if (lodOn) lodCam = buildRasterLodCam();
   // Backends without the shared box-proxy draw (VK) still size-cull; they just

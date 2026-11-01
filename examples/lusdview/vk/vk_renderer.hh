@@ -75,6 +75,7 @@ class VulkanRenderer final : public Renderer {
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void setStaticChunkCullPx(float cullPx) override;
   void appendPoints(const DrawPointsCPU& points) override;
   void appendCurves(const DrawCurvesCPU& curves) override;
   void appendPoints(DrawPointsCPU&& points) override;
@@ -393,6 +394,21 @@ class VulkanRenderer final : public Renderer {
     // lazily on the first LOD-enabled rebuild; instance transforms are static.
     RtLodGrid lodGrid;
     bool lodGridTried{false};
+    // Chunked static draw. A merged static/material batch spans the whole scene,
+    // so a per-mesh frustum/size test can only answer "all" or "nothing" for it.
+    // Splitting its index range into fixed-size triangle runs, each with its own
+    // world AABB, restores culling at chunk granularity: the static pass issues
+    // ONE vkCmdDrawIndexedIndirect over staticIndirectBuf and the renderer sets a
+    // culled chunk's instanceCount to 0. Only single-submesh, world-baked,
+    // undeformed meshes are chunked (everything else keeps the per-submesh loop).
+    VkBuffer staticIndirectBuf{VK_NULL_HANDLE};
+    VkDeviceMemory staticIndirectMem{VK_NULL_HANDLE};
+    void* staticIndirectMapped{nullptr};
+    std::vector<float> staticChunkBounds;  // 6 floats/chunk: world AABB
+    uint32_t staticChunkCount{0};
+    uint32_t staticVisibleChunks{0};  // chunks the last cull kept
+    uint32_t staticVisibleTris{0};    // triangles those chunks cover
+    bool staticChunked{false};
   };
 
   // setup helpers
@@ -543,6 +559,13 @@ class VulkanRenderer final : public Renderer {
   // through `mappedOut` (a persistent host pointer to the sub-allocation); never for
   // buffers whose *mem is later vkMapMemory'd/updated. Pool blocks are freed in
   // destroyScene() after every per-buffer vkDestroyBuffer.
+  // Build the chunk table + indirect command buffer for one static batch (see
+  // VkMeshGPU::staticIndirectBuf). No-op unless the mesh is a single-submesh,
+  // world-baked, undeformed, non-instanced batch big enough to split.
+  void buildStaticChunks(const DrawMeshCPU& sm, VkMeshGPU* gm);
+  // Refresh the per-chunk instanceCount of every chunked batch from the current
+  // camera (frustum, plus projected-size culling when the LOD policy is on).
+  void patchStaticChunks();
   bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
                         VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false,
                         bool poolable = false, void** mappedOut = nullptr);
@@ -755,6 +778,10 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  // Same as pipeline_ but with the static-batch vertex shader (no joint/weight/
+  // influence/morph streams). Null when the variant failed to build; the draw
+  // loop then falls back to pipeline_.
+  VkPipeline meshStaticPipeline_{VK_NULL_HANDLE};
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
   // Color-write-disabled fill used as the hidden-line depth prepass in
@@ -1255,6 +1282,13 @@ class VulkanRenderer final : public Renderer {
   float view_[16];
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
+  // Projected-size cull threshold for merged static batches (0 = frustum only).
+  // Written from the GUI thread each frame, read while recording, hence atomic.
+  std::atomic<float> staticChunkCullPx_{0.0f};
+  // Last camera the chunk cull ran for, so a still camera costs nothing.
+  float staticCullVP_[16]{};
+  float staticCullPxLast_{-1.0f};
+  bool staticCullValid_{false};
   float exposure_{0.0f};
   float materialXTime_{0.0f};
   float materialXFrame_{0.0f};

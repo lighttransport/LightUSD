@@ -1100,6 +1100,35 @@ convert/flatten/batch unchanged at ~23 s, and total load 59.4 s -> 55 s. Draw
 counts for other large maps drop from 31k/40k/6.4k to 3.2k/3.6k/0.6k. Fewer
 draws also cuts the per-frame visibility mask rebuild from 3.4 ms to 0.1 ms.
 
+#### Chunked static culling and the lean static vertex stage
+
+Merging is a culling trade-off: one batch per scene has a scene-spanning AABB,
+so the per-mesh frustum/size test can only answer "all" or "nothing". Two
+changes give the static side its granularity and its vertex bandwidth back:
+
+* **Chunked indirect draws.** Each single-submesh, world-baked, undeformed batch
+  is split into triangle runs of at most 4096 triangles (further bounded by a
+  world-AABB radius cap of 2 % of the batch extent, so a run stays a local
+  culling unit instead of spanning a district). The runs become one
+  `vkCmdDrawIndexedIndirect` list whose per-chunk `instanceCount` the renderer
+  zeroes for chunks the camera rejects. Frustum culling is always on; the
+  projected-size threshold follows the raster-LOD policy, so `--raster-lod` and
+  the large-scene profiles now also reach static geometry. The patch is skipped
+  entirely while the camera and the policy are unchanged.
+* **A lean vertex stage for static batches** (`mesh.vert` with
+  `LUSDVIEW_STATIC_BATCH`). The deform shader read the joint, weight, influence,
+  morph-offset and morph-influence vertex streams unconditionally, so every
+  static vertex fetched ~52 B of zeros on top of its 32 B vertex. The variant
+  drops those inputs (the pipeline keeps the bindings; unused ones cost nothing)
+  and skips the deform include.
+
+On the same scene at 1280x720 that takes the frame from 17.4 ms to 15.8 ms with
+no visual change at all (the render is pixel-identical), 10.5 ms to 7.7 ms from a
+close camera, and 9.7 ms to 7.6 ms under `--raster-lod`. What is left is vertex
+bandwidth: the static pass streams ~3 GB/frame of vertices and indices at 1.5
+vertices per triangle, so the next step would be a packed static vertex format
+rather than more culling.
+
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
 collapsing to 39 guide-purpose draws. Its cold full-fidelity path is therefore

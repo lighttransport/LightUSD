@@ -45,6 +45,7 @@
 #include "mesh_tess_tesc.spv.h"
 #include "mesh_tess_tese.spv.h"
 #include "mesh_tess_vert.spv.h"
+#include "mesh_static_vert.spv.h"
 #include "mesh_vert.spv.h"
 #include "wire_frag.spv.h"
 #include "wire_inst_vert.spv.h"
@@ -2716,9 +2717,15 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkShaderModule vs = createShader(mesh_vert_spv, sizeof(mesh_vert_spv));
   VkShaderModule fs = createShader(mesh_frag_spv, sizeof(mesh_frag_spv));
+  // Static-batch vertex variant (see LUSDVIEW_STATIC_BATCH in mesh.vert): the
+  // same pipeline without the joint/weight/influence/morph vertex streams, for
+  // world-baked merged batches that can never use them.
+  VkShaderModule staticVs =
+      createShader(mesh_static_vert_spv, sizeof(mesh_static_vert_spv));
   if (!vs || !fs) {
     if (vs) vkDestroyShaderModule(device_, vs, nullptr);
     if (fs) vkDestroyShaderModule(device_, fs, nullptr);
+    if (staticVs) vkDestroyShaderModule(device_, staticVs, nullptr);
     if (pipelineCache) vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) *err = "shader module creation failed";
     return false;
@@ -2843,6 +2850,17 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache, 1, &ci, nullptr,
                                          &pipeline_);
   reportPipeline("opaque");
+  if (r == VK_SUCCESS && staticVs) {
+    VkPipelineShaderStageCreateInfo staticStages[2] = {stages[0], stages[1]};
+    staticStages[0].module = staticVs;
+    VkGraphicsPipelineCreateInfo staticCi = ci;
+    staticCi.pStages = staticStages;
+    if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &staticCi, nullptr,
+                                  &meshStaticPipeline_) != VK_SUCCESS) {
+      meshStaticPipeline_ = VK_NULL_HANDLE;
+    }
+    reportPipeline("static batch");
+  }
   if (r == VK_SUCCESS) {
     // Wireframe-only hidden-line prepass: the opaque fill with color writes
     // disabled. It populates depth so the authored-edge pass can reject edges
@@ -2996,6 +3014,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
+  if (staticVs) vkDestroyShaderModule(device_, staticVs, nullptr);
   if (r != VK_SUCCESS) {
     if (pipelineCache) vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) *err = "vkCreateGraphicsPipelines failed";
@@ -7206,6 +7225,8 @@ void VulkanRenderer::destroyMeshResources(VkMeshGPU& m) {
   if (m.geomPropDescMem) vkFreeMemory(device_, m.geomPropDescMem, nullptr);
   if (m.geomPropValueBuf) vkDestroyBuffer(device_, m.geomPropValueBuf, nullptr);
   if (m.geomPropValueMem) vkFreeMemory(device_, m.geomPropValueMem, nullptr);
+  if (m.staticIndirectBuf) vkDestroyBuffer(device_, m.staticIndirectBuf, nullptr);
+  if (m.staticIndirectMem) vkFreeMemory(device_, m.staticIndirectMem, nullptr);
   if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
   if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
   if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
@@ -10044,6 +10065,19 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       createHostBuffer(vcol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                        vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem, false,
                        /*poolable=*/true);
+    }
+  }
+  // Chunked static culling: single-submesh, world-baked, undeformed batches get
+  // one indirect command per triangle run so the static pass can cull at chunk
+  // granularity instead of all-or-nothing per batch (see patchStaticChunks).
+  {
+    bool identityWorld = true;
+    for (int k = 0; k < 16 && identityWorld; ++k)
+      identityWorld = gm.world[k] == (k % 5 == 0 ? 1.0f : 0.0f);
+    if (gm.instanceCount == 0 && !gm.skinned && sm.morphChannelCount == 0 &&
+        !sm.animatedWorld && identityWorld && !sm.rasterDisplacementBaked &&
+        sm.rtDisplacedVertices.empty()) {
+      buildStaticChunks(sm, &gm);
     }
   }
   gm.deformDesc = allocDeformDescriptor(gm);
@@ -15827,6 +15861,205 @@ void VulkanRenderer::buildInstMdi() {
   std::vector<uint32_t>().swap(mdiIdxStage_);
 }
 
+void VulkanRenderer::setStaticChunkCullPx(float cullPx) {
+  staticChunkCullPx_.store(cullPx > 0.0f ? cullPx : 0.0f,
+                           std::memory_order_relaxed);
+}
+
+// Build the per-chunk table for a merged static batch: one indirect command per
+// run of `kChunkTris` triangles plus that run's world AABB. A merged batch spans
+// the scene, so the per-mesh test in the GUI can only keep or drop all of it;
+// these runs give the static pass something it can cull. Vertices of a batch are
+// already world-baked (identity world), so the AABBs are world space.
+void VulkanRenderer::buildStaticChunks(const DrawMeshCPU& sm, VkMeshGPU* gm) {
+  // Small enough that a chunk is a useful culling unit (a building, a terrain
+  // patch), large enough that the command list stays tiny: a 39 M-triangle scene
+  // is ~10 k commands.
+  constexpr uint32_t kChunkTris = 4096;
+  if (!gm || gm->ebo == VK_NULL_HANDLE || sm.submeshes.size() != 1) return;
+  const DrawSubmesh& sub = sm.submeshes[0];
+  const uint32_t tris = sub.indexCount / 3;
+  if (tris < kChunkTris * 2) return;  // one or two chunks buys nothing
+  const size_t idxBegin = static_cast<size_t>(sub.indexOffset);
+  const size_t idxEnd =
+      std::min(sm.indices.size(), idxBegin + static_cast<size_t>(sub.indexCount));
+  // A run of `kChunkTris` triangles in prim order can span a whole district (a
+  // batch mixes prims), and then neither the frustum nor the size test can reject
+  // it. Cap each chunk's world AABB at a fraction of the batch's own extent so a
+  // chunk stays a local culling unit; the cap is scene-relative, so it works at
+  // any scale. `kMinChunkTris` bounds the command count.
+  constexpr uint32_t kMinChunkTris = 1024;
+  float batchExt[3] = {sm.aabbMax[0] - sm.aabbMin[0],
+                       sm.aabbMax[1] - sm.aabbMin[1],
+                       sm.aabbMax[2] - sm.aabbMin[2]};
+  const float batchDiag = std::sqrt(batchExt[0] * batchExt[0] +
+                                    batchExt[1] * batchExt[1] +
+                                    batchExt[2] * batchExt[2]);
+  const float maxRadius = batchDiag > 0.0f ? batchDiag * 0.02f : 0.0f;
+  const float maxRadius2 = maxRadius * maxRadius;
+  std::vector<VkDrawIndexedIndirectCommand> cmds;
+  std::vector<float> bounds;
+  cmds.reserve(tris / kChunkTris + 1u);
+  bounds.reserve(cmds.capacity() * 6u);
+  float lo[3] = {0.0f, 0.0f, 0.0f};
+  float hi[3] = {0.0f, 0.0f, 0.0f};
+  uint32_t chunkFirstTri = 0;
+  uint32_t chunkTris = 0;
+  auto closeChunk = [&]() {
+    if (chunkTris == 0) return;
+    const size_t i0 = idxBegin + static_cast<size_t>(chunkFirstTri) * 3;
+    VkDrawIndexedIndirectCommand cmd{};
+    cmd.indexCount = chunkTris * 3;
+    cmd.instanceCount = 1;
+    cmd.firstIndex = static_cast<uint32_t>(i0);
+    cmd.vertexOffset = 0;
+    cmd.firstInstance = 0;
+    cmds.push_back(cmd);
+    bounds.insert(bounds.end(), lo, lo + 3);
+    bounds.insert(bounds.end(), hi, hi + 3);
+    chunkFirstTri += chunkTris;
+    chunkTris = 0;
+  };
+  for (uint32_t t = 0; t < tris; ++t) {
+    const size_t i0 = idxBegin + static_cast<size_t>(t) * 3;
+    if (i0 + 2 >= idxEnd) break;
+    for (int c = 0; c < 3; ++c) {
+      const uint32_t vi = sm.indices[i0 + c];
+      if (vi >= sm.vertices.size()) continue;
+      const DrawVertex& v = sm.vertices[vi];
+      const float p[3] = {v.px, v.py, v.pz};
+      if (chunkTris == 0 && c == 0) {
+        for (int k = 0; k < 3; ++k) lo[k] = hi[k] = p[k];
+      }
+      for (int k = 0; k < 3; ++k) {
+        lo[k] = std::min(lo[k], p[k]);
+        hi[k] = std::max(hi[k], p[k]);
+      }
+    }
+    ++chunkTris;
+    if (chunkTris >= kChunkTris) {
+      closeChunk();
+      continue;
+    }
+    if (chunkTris >= kMinChunkTris && maxRadius2 > 0.0f) {
+      const float ex = 0.5f * (hi[0] - lo[0]);
+      const float ey = 0.5f * (hi[1] - lo[1]);
+      const float ez = 0.5f * (hi[2] - lo[2]);
+      if (ex * ex + ey * ey + ez * ez > maxRadius2) closeChunk();
+    }
+  }
+  closeChunk();
+  const uint32_t nChunks = static_cast<uint32_t>(cmds.size());
+  if (nChunks < 2) return;
+  const VkDeviceSize bytes =
+      VkDeviceSize(nChunks) * sizeof(VkDrawIndexedIndirectCommand);
+  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, cmds.data(),
+                        &gm->staticIndirectBuf, &gm->staticIndirectMem, false,
+                        /*poolable=*/true, &gm->staticIndirectMapped)) {
+    gm->staticIndirectBuf = VK_NULL_HANDLE;
+    gm->staticIndirectMem = VK_NULL_HANDLE;
+    gm->staticIndirectMapped = nullptr;
+    return;
+  }
+  gm->staticChunkBounds = std::move(bounds);
+  gm->staticChunkCount = nChunks;
+  gm->staticVisibleChunks = nChunks;
+  gm->staticVisibleTris = tris;
+  gm->staticChunked = true;
+}
+
+// Refresh every chunked batch's per-chunk instanceCount from the current camera.
+// A few × 10^4 AABB tests, done every frame (the GUI-side per-mesh mask can change
+// at any time, so this is not gated on the view matrix alone).
+void VulkanRenderer::patchStaticChunks() {
+  bool anyChunked = false;
+  for (const auto& m : meshes_) {
+    if (m.staticChunked) {
+      anyChunked = true;
+      break;
+    }
+  }
+  if (!anyChunked) return;
+  // Frustum planes from the same column-major VP the mesh pass uses. The near
+  // plane is deliberately omitted: its clip-space form depends on the backend's
+  // depth range (GL [-1,1] vs VK [0,1]), and the GPU clips near geometry anyway.
+  const float cullPx = staticChunkCullPx_.load(std::memory_order_relaxed);
+  const light3d::Mat4 vp = ToMat4(proj_) * ToMat4(view_);
+  const float* M = vp.m;
+  // Nothing to redo while the camera and the LOD policy are unchanged.
+  bool sameView = staticCullValid_ && staticCullPxLast_ == cullPx;
+  if (sameView) {
+    for (int i = 0; i < 16; ++i) {
+      if (M[i] != staticCullVP_[i]) {
+        sameView = false;
+        break;
+      }
+    }
+  }
+  if (sameView) return;
+  std::memcpy(staticCullVP_, M, sizeof(staticCullVP_));
+  staticCullPxLast_ = cullPx;
+  staticCullValid_ = true;
+  float planes[5][4];
+  {
+    float r0[4], r1[4], r2[4], r3[4];
+    for (int k = 0; k < 4; ++k) {
+      r0[k] = M[k * 4 + 0];
+      r1[k] = M[k * 4 + 1];
+      r2[k] = M[k * 4 + 2];
+      r3[k] = M[k * 4 + 3];
+    }
+    for (int k = 0; k < 4; ++k) {
+      planes[0][k] = r3[k] + r0[k];  // left
+      planes[1][k] = r3[k] - r0[k];  // right
+      planes[2][k] = r3[k] + r1[k];  // bottom
+      planes[3][k] = r3[k] - r1[k];  // top
+      planes[4][k] = r3[k] - r2[k];  // far
+    }
+  }
+  const float focalPx =
+      0.5f * static_cast<float>(vpH_) * (proj_[5] != 0.0f ? proj_[5] : 1.0f);
+  for (auto& m : meshes_) {
+    if (!m.staticChunked || !m.staticIndirectMapped) continue;
+    auto* dst =
+        static_cast<VkDrawIndexedIndirectCommand*>(m.staticIndirectMapped);
+    uint32_t visible = 0, visibleTris = 0;
+    for (uint32_t c = 0; c < m.staticChunkCount; ++c) {
+      const float* b = &m.staticChunkBounds[static_cast<size_t>(c) * 6];
+      bool vis = true;
+      for (int p = 0; vis && p < 5; ++p) {
+        const float* pl = planes[p];
+        const float x = pl[0] >= 0.0f ? b[3] : b[0];
+        const float y = pl[1] >= 0.0f ? b[4] : b[1];
+        const float z = pl[2] >= 0.0f ? b[5] : b[2];
+        if (pl[0] * x + pl[1] * y + pl[2] * z + pl[3] < 0.0f) vis = false;
+      }
+      if (vis && cullPx > 0.0f) {
+        const float cx = 0.5f * (b[0] + b[3]);
+        const float cy = 0.5f * (b[1] + b[4]);
+        const float cz = 0.5f * (b[2] + b[5]);
+        const float ex = 0.5f * (b[3] - b[0]);
+        const float ey = 0.5f * (b[4] - b[1]);
+        const float ez = 0.5f * (b[5] - b[2]);
+        const float radius = std::sqrt(ex * ex + ey * ey + ez * ez);
+        const float dx = cx - cameraPos_[0];
+        const float dy = cy - cameraPos_[1];
+        const float dz = cz - cameraPos_[2];
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // Camera inside the chunk's sphere: it fills the view, never cull it.
+        if (dist > radius && radius * focalPx / dist < cullPx) vis = false;
+      }
+      dst[c].instanceCount = vis ? 1u : 0u;
+      if (vis) {
+        ++visible;
+        visibleTris += dst[c].indexCount / 3;
+      }
+    }
+    m.staticVisibleChunks = visible;
+    m.staticVisibleTris = visibleTris;
+  }
+}
+
 // Refresh the per-command instanceCount from the latest cull result + per-mesh
 // visibility mask. Cheap (a few × 10^4 struct writes) and done every frame.
 void VulkanRenderer::patchMdiIndirect() {
@@ -15993,6 +16226,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   buildInstMdi();
   ensureDrawMeta();
   patchMdiIndirect();
+  patchStaticChunks();
   if (std::getenv("LUSDVIEW_DEBUG_MDI")) {
     size_t nInst = 0, nElig = 0, nTrans = 0, nSkin = 0, nMorph = 0, nDedicated = 0,
            nSub = 0;
@@ -16006,11 +16240,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       if (m.hasMorph) ++nMorph;
       if (m.instVbo != VK_NULL_HANDLE && !m.mdiEligible) ++nDedicated;
     }
+    size_t chunked = 0, chunks = 0;
+    for (const auto& m : meshes_) {
+      if (!m.staticChunked) continue;
+      ++chunked;
+      chunks += m.staticChunkCount;
+    }
     std::fprintf(stderr,
-                 "[mdi] supported=%d active=%d cmds=%u | instMeshes=%zu submeshes=%zu "
-                 "eligible=%zu translucent=%zu skinned=%zu morph=%zu dedicated=%zu\n",
-                 mdiSupported_ ? 1 : 0, mdiActive_ ? 1 : 0, mdiDrawCount_, nInst,
-                 nSub, nElig, nTrans, nSkin, nMorph, nDedicated);
+                 "[mdi] supported=%d active=%d cmds=%u leanPl=%d | instMeshes=%zu "
+                 "submeshes=%zu eligible=%zu translucent=%zu skinned=%zu morph=%zu "
+                 "dedicated=%zu | chunkedMeshes=%zu chunks=%zu\n",
+                 mdiSupported_ ? 1 : 0, mdiActive_ ? 1 : 0, mdiDrawCount_,
+                 meshStaticPipeline_ != VK_NULL_HANDLE ? 1 : 0, nInst, nSub,
+                 nElig, nTrans, nSkin, nMorph, nDedicated, chunked, chunks);
   }
 
   VkCommandBuffer cb = cmd_[frame_];
@@ -16435,6 +16677,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // A native-only scene need not compile a mesh OIT variant.
     if (!meshPl) return;
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
+    VkPipeline boundMeshPl = meshPl;  // current mesh pipeline (lean variant aware)
     int cullState = -1;  // -1 unknown; dedup vkCmdSetCullMode across meshes
     // Sets 2 and 3 are frame-constant and shared by the coarse/tess pipelines.
     if (dispParamsSet_ != VK_NULL_HANDLE) {
@@ -16567,6 +16810,17 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       const auto& mesh = meshes_[mi];
       // Empty-mesh placeholder (slot kept for index sync): nothing to draw.
       if (mesh.vbo == VK_NULL_HANDLE || mesh.submeshes.empty()) continue;
+      // World-baked, unskinned, unmorphed geometry can use the lean vertex stage,
+      // which never fetches the joint/weight/influence/morph streams. That is the
+      // bulk of a merged static scene, and those fetches were ~52 B/vertex of dead
+      // weight (see mesh.vert LUSDVIEW_STATIC_BATCH).
+      const bool leanVertex = apass == 0 && meshStaticPipeline_ != VK_NULL_HANDLE &&
+                              !mesh.skinned && !mesh.hasMorph;
+      VkPipeline wantMeshPl = leanVertex ? meshStaticPipeline_ : meshPl;
+      if (wantMeshPl != boundMeshPl) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wantMeshPl);
+        boundMeshPl = wantMeshPl;
+      }
       // Back-face cull single-sided meshes, exactly like the GL backend
       // (gl_renderer's wantCull). Dynamic state, so it persists across the
       // tess-pipeline switch below; only touched on a transition.
@@ -16739,16 +16993,35 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                              maxTessLevel_ > 1 && rtMode_ == 0 && apass == 0 &&
                              pc.matAux[2] < 0.5f && opSlot < 0 &&
                              mesh.vtxColorDesc == VK_NULL_HANDLE;
+        // Chunked batches draw through their indirect list: the per-chunk
+        // instanceCount was already set to 0 for chunks the cull rejected, so one
+        // call covers the whole (single-submesh) batch. Everything the draw needs
+        // -- material set, push constants, vertex/index binding, cull mode -- was
+        // set up above for this submesh, exactly as the direct draw would use.
+        const bool chunkDraw =
+            apass == 0 && mesh.staticChunked && sideCount == 1 &&
+            mesh.staticChunkCount > 0 && !mixedOpacity && !displaced &&
+            opSlot < 0 && mesh.submeshes.size() == 1;
         if (useTess) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
-          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wantMeshPl);
+        } else if (chunkDraw) {
+          vkCmdDrawIndexedIndirect(
+              cb, mesh.staticIndirectBuf, 0, mesh.staticChunkCount,
+              static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
         } else {
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
         }
         if (apass == 1) ++oitDrawCalls;
-        ++dbgDraws;
-        dbgIndices += sub.indexCount;
+        if (chunkDraw) {
+          // Report what the indirect list actually draws, not the batch total.
+          ++dbgDraws;
+          dbgIndices += static_cast<uint64_t>(mesh.staticVisibleTris) * 3u;
+        } else {
+          ++dbgDraws;
+          dbgIndices += sub.indexCount;
+        }
         }
       }
     }
@@ -17842,6 +18115,7 @@ void VulkanRenderer::shutdown() {
     materialSampler = VK_NULL_HANDLE;
   }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+  if (meshStaticPipeline_) { vkDestroyPipeline(device_, meshStaticPipeline_, nullptr); meshStaticPipeline_ = VK_NULL_HANDLE; }
   if (environmentPipeline_) { vkDestroyPipeline(device_, environmentPipeline_, nullptr); environmentPipeline_ = VK_NULL_HANDLE; }
   if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
   if (wireDepthPipeline_) { vkDestroyPipeline(device_, wireDepthPipeline_, nullptr); wireDepthPipeline_ = VK_NULL_HANDLE; }
