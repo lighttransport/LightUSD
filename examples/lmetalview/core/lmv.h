@@ -58,7 +58,12 @@ typedef struct lmv_progress {
   const char* message; /* borrowed; valid for the duration of the callback */
 } lmv_progress;
 
-/* Return 0 to cancel the load / conversion. Must be cheap and thread-safe. */
+/* Return 0 to cancel the load / conversion. Must be cheap and thread-safe.
+ *
+ * The scene keeps a copy of the load options, so lmv_scene_set_time() calls this
+ * callback again (and passes the same `progress_user`) for as long as the scene
+ * lives. `progress_user` must therefore stay valid until lmv_scene_free(), or the
+ * callback must ignore it once the original load is over. */
 typedef int (*lmv_progress_fn)(void* user, const lmv_progress* progress);
 
 /* ------------------------------------------------------------------------- */
@@ -461,6 +466,9 @@ typedef struct lmv_light_view {
   float param1;
   /* Dome lights: texture id of the environment map, -1 = none. */
   int32_t dome_texture_id;
+  /* Dome lights: image id (lmv_scene_image) of the environment map, -1 = none.
+   * Prefer this over dome_texture_id, which tydra reports as an image id. */
+  int32_t dome_image_id;
 } lmv_light_view;
 
 lmv_status lmv_scene_light(const lmv_scene* scene, uint32_t index,

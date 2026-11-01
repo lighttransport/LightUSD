@@ -91,7 +91,7 @@ std::string Sv(lightusd_sv s) {
 }
 
 std::string DirName(const std::string& path) {
-  const size_t slash = path.find_last_of('/');
+  const size_t slash = path.find_last_of("/\\");
   if (slash == std::string::npos) return std::string();
   if (slash == 0) return "/";
   return path.substr(0, slash);
@@ -292,6 +292,10 @@ struct LightData {
   float param0 = 0.0f;
   float param1 = 0.0f;
   int32_t dome_texture_id = -1;
+  // tydra stores an *image* id in the dome light params (despite the C API
+  // comment that says texture index); keep it so the environment image is
+  // decoded and viewers can find it.
+  int32_t dome_image_id = -1;
 };
 
 struct CameraData {
@@ -2789,7 +2793,7 @@ std::string ReplaceUdimToken(const std::string& pattern, uint32_t udim) {
 }
 
 std::string BaseName(const std::string& path) {
-  const size_t slash = path.find_last_of('/');
+  const size_t slash = path.find_last_of("/\\");
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
@@ -3833,12 +3837,10 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
                                               &dome_texture) == LIGHTUSD_OK) {
       light.dome_texture_id = dome_texture;
       if (dome_texture >= 0 &&
-          static_cast<size_t>(dome_texture) < out->textures.size() &&
-          out->textures[static_cast<size_t>(dome_texture)].image_id >= 0) {
-        const int32_t image_id =
-            out->textures[static_cast<size_t>(dome_texture)].image_id;
-        used_images.insert(image_id);
-        env_images.insert(image_id);
+          static_cast<size_t>(dome_texture) < out->images.size()) {
+        light.dome_image_id = dome_texture;
+        used_images.insert(dome_texture);
+        env_images.insert(dome_texture);
       }
     }
   }
@@ -4858,6 +4860,7 @@ lmv_status lmv_scene_light(const lmv_scene* scene, uint32_t index,
   out->param0 = light.param0;
   out->param1 = light.param1;
   out->dome_texture_id = light.dome_texture_id;
+  out->dome_image_id = light.dome_image_id;
   return LMV_OK;
 }
 
