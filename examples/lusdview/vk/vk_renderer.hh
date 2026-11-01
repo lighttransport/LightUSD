@@ -599,6 +599,17 @@ class VulkanRenderer final : public Renderer {
   };
   std::vector<PendingBufferUpload> pendingUploads_;
   VkDeviceSize pendingUploadBytes_{0};
+  // Staged texture uploads, flushed with the buffer copies above in one submit.
+  // Per-image one-shot submits (each ending in vkQueueWaitIdle) dominated scene
+  // upload on scenes with hundreds of textures.
+  struct PendingImageUpload {
+    VkImage image{VK_NULL_HANDLE};
+    VkBuffer staging{VK_NULL_HANDLE};  // null => stagingRing_ + stagingOffset
+    VkDeviceMemory stagingMem{VK_NULL_HANDLE};
+    VkDeviceSize stagingOffset{0};
+    std::vector<VkBufferImageCopy> regions;
+  };
+  std::vector<PendingImageUpload> pendingImageUploads_;
   // One persistently mapped host ring feeds every staged copy. A dedicated
   // VkBuffer + VkDeviceMemory per attribute buffer made the allocation storm
   // the dominant cost of loading a scene built from many mid-sized meshes; the
@@ -620,7 +631,7 @@ class VulkanRenderer final : public Renderer {
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
                           const std::vector<light3d::Image>* mips = nullptr,
-                          bool srgb = false);
+                          bool srgb = false, bool deferUpload = false);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);

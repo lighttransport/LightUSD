@@ -3964,8 +3964,8 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
   toDst.subresourceRange.layerCount = 1;
   toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                       &toDst);
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
@@ -3978,8 +3978,8 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
   toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
-                       1, &toRead);
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
   endOneShot(cb);
   vkDestroyBuffer(device_, staging, nullptr);
   vkFreeMemory(device_, stagingMem, nullptr);
@@ -5027,7 +5027,7 @@ VkDescriptorSet VulkanRenderer::allocFaceDescriptor(VkBuffer buffer,
 bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outImg,
                                         VkDeviceMemory* outMem, VkImageView* outView,
                                         const std::vector<light3d::Image>* mips,
-                                        bool srgb) {
+                                        bool srgb, bool deferUpload) {
   if (!outImg || !outMem || !outView || img.width <= 0 || img.height <= 0)
     return false;
   const bool allocateOnly = img.data.empty();
@@ -5088,10 +5088,16 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
 
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-  if (!allocateOnly &&
-      !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
-                        &staging, &stagingMem)) {
-    return false;
+  VkDeviceSize stagingOffset = 0;
+  if (!allocateOnly) {
+    // Prefer the shared staging ring; a dedicated buffer is only needed for an
+    // image whose payload does not fit the ring.
+    const bool inRing = stageInRing(size, stagingSrc, &stagingOffset);
+    if (!inRing &&
+        !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
+                          &staging, &stagingMem)) {
+      return false;
+    }
   }
 
   VkImageCreateInfo ici{};
@@ -5129,23 +5135,10 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
     return false;
   }
 
-  VkCommandBuffer cb = beginOneShot();
-  VkImageMemoryBarrier toDst{};
-  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toDst.image = *outImg;
-  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  toDst.subresourceRange.levelCount = mipLevels;
-  toDst.subresourceRange.layerCount = 1;
-  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                       &toDst);
+  // Mip copy regions relative to the staging buffer.
+  std::vector<VkBufferImageCopy> regions;
   if (!allocateOnly) {
-    std::vector<VkBufferImageCopy> regions(mipLevels);
+    regions.resize(mipLevels);
     VkDeviceSize offset = 0;
     int lw = img.width, lh = img.height;
     for (uint32_t l = 0; l < mipLevels; ++l) {
@@ -5162,7 +5155,40 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
       lw = std::max(1, lw / 2);
       lh = std::max(1, lh / 2);
     }
-    vkCmdCopyBufferToImage(cb, staging, *outImg,
+    // Offsets are relative to the staging source: the ring slice when the
+    // payload fit there, otherwise the dedicated buffer at offset 0.
+    for (VkBufferImageCopy& region : regions)
+      region.bufferOffset += stagingOffset;
+  }
+  const VkBuffer stagingSrcBuf = staging ? staging : stagingRing_;
+  if (deferUpload) {
+    // Queue the transfer with the other staged uploads: one submit for the
+    // whole scene instead of a queue-idle stall per texture.
+    PendingImageUpload pending;
+    pending.image = *outImg;
+    pending.staging = staging;
+    pending.stagingMem = stagingMem;
+    pending.stagingOffset = stagingOffset;
+    pending.regions = std::move(regions);
+    pendingImageUploads_.push_back(std::move(pending));
+  } else {
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = mipLevels;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  if (!regions.empty()) {
+    vkCmdCopyBufferToImage(cb, stagingSrcBuf, *outImg,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            static_cast<uint32_t>(regions.size()),
                            regions.data());
@@ -5173,12 +5199,13 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
-                       1, &toRead);
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
   endOneShot(cb);
 
   if (staging) vkDestroyBuffer(device_, staging, nullptr);
   if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
+  }
 
   VkImageViewCreateInfo vci{};
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -5945,8 +5972,8 @@ bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
   toDst.subresourceRange.layerCount = 1;
   toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                       &toDst);
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
@@ -6613,20 +6640,56 @@ bool VulkanRenderer::deviceSubAlloc(VkDeviceSize size, VkDeviceSize align,
 }
 
 // Submit every queued staging copy as ONE command buffer. endOneShot stalls the
-// queue, so batching is what keeps per-mesh uploads off the critical path.
+// queue, so batching is what keeps per-mesh and per-texture uploads off the
+// critical path.
 void VulkanRenderer::flushPendingUploads() {
-  if (pendingUploads_.empty()) return;
+  if (pendingUploads_.empty() && pendingImageUploads_.empty()) return;
   VkCommandBuffer cb = beginOneShot();
   for (const PendingBufferUpload& u : pendingUploads_) {
     VkBufferCopy c{u.stagingOffset, 0, u.size};
     vkCmdCopyBuffer(cb, u.staging ? u.staging : stagingRing_, u.dst, 1, &c);
+  }
+  for (const PendingImageUpload& u : pendingImageUploads_) {
+    VkImageMemoryBarrier toDst{};
+    toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.image = u.image;
+    toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toDst.subresourceRange.levelCount = static_cast<uint32_t>(u.regions.size());
+    toDst.subresourceRange.layerCount = 1;
+    toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &toDst);
+    if (!u.regions.empty()) {
+      vkCmdCopyBufferToImage(cb, u.staging ? u.staging : stagingRing_,
+                             u.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             static_cast<uint32_t>(u.regions.size()),
+                             u.regions.data());
+    }
+    VkImageMemoryBarrier toRead = toDst;
+    toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &toRead);
   }
   endOneShot(cb);
   for (const PendingBufferUpload& u : pendingUploads_) {
     if (u.staging) vkDestroyBuffer(device_, u.staging, nullptr);
     if (u.stagingMem) vkFreeMemory(device_, u.stagingMem, nullptr);
   }
+  for (const PendingImageUpload& u : pendingImageUploads_) {
+    if (u.staging) vkDestroyBuffer(device_, u.staging, nullptr);
+    if (u.stagingMem) vkFreeMemory(device_, u.stagingMem, nullptr);
+  }
   pendingUploads_.clear();
+  pendingImageUploads_.clear();
   pendingUploadBytes_ = 0;
   // endOneShot waited for the copy to retire, so ring slices are free again.
   stagingRingUsed_ = 0;
@@ -7025,22 +7088,26 @@ bool VulkanRenderer::createDeviceLocalBuffer(VkDeviceSize size,
     return false;
   }
   vkBindBufferMemory(device_, *buf, *mem, 0);
-  // Stage the data through a host-visible scratch buffer and copy on the queue.
+  // Stage through the shared host ring and queue the copy with the other
+  // pending uploads. A dedicated staging buffer plus its own one-shot submit
+  // (which waits for the queue to idle) per buffer stalled scene upload once
+  // for every large device-local allocation, e.g. six MDI buffers.
   VkBuffer stg = VK_NULL_HANDLE;
   VkDeviceMemory stgMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg, &stgMem)) {
+  VkDeviceSize stgOff = 0;
+  if (!stageInRing(size, data, &stgOff) &&
+      !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg,
+                        &stgMem)) {
     vkDestroyBuffer(device_, *buf, nullptr);
     vkFreeMemory(device_, *mem, nullptr);
     *buf = VK_NULL_HANDLE;
     *mem = VK_NULL_HANDLE;
     return false;
   }
-  VkCommandBuffer cb = beginOneShot();
-  VkBufferCopy c{0, 0, size};
-  vkCmdCopyBuffer(cb, stg, *buf, 1, &c);
-  endOneShot(cb);
-  vkDestroyBuffer(device_, stg, nullptr);
-  vkFreeMemory(device_, stgMem, nullptr);
+  pendingUploads_.push_back({stg, stgMem, stgOff, *buf, size});
+  pendingUploadBytes_ += size;
+  static constexpr VkDeviceSize kUploadFlushBytes = 64ull * 1024 * 1024;
+  if (pendingUploadBytes_ >= kUploadFlushBytes) flushPendingUploads();
   return true;
 }
 
@@ -7494,6 +7561,9 @@ bool VulkanRenderer::applyMaterialUpdatesTransactional(
 bool VulkanRenderer::replaceTextureSlotsTransactional(
     const std::vector<TextureSlotReplacement>& replacements,
     std::string* error) {
+  // The initial scene upload defers its texture copies; retire them before any
+  // slot image can be replaced (and destroyed) below.
+  flushPendingUploads();
   struct Staged {
     size_t index{0};
     const DrawTextureCPU* source{nullptr};
@@ -8226,8 +8296,12 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     ok = createCompressedTextureImage(t.compressed, t.srgb, &img, &mem, &view);
   }
   if (!ok) {
+    // Initial scene upload: queue the copy with the rest of the staged
+    // uploads (flushed before the first frame) instead of stalling the queue
+    // once per texture.
     ok = createTextureImage(t.image, &img, &mem, &view,
-                            t.mipImages.empty() ? nullptr : &t.mipImages, t.srgb);
+                            t.mipImages.empty() ? nullptr : &t.mipImages,
+                            t.srgb, /*deferUpload=*/true);
   }
   if (ok) {
     VkMemoryRequirements requirements{};
@@ -15487,6 +15561,9 @@ void VulkanRenderer::refreshMdiDrawMeta() {
 // instVbo/instColorBuf are aliases into these, so they must NOT be destroyed by the
 // per-mesh scene teardown -- destroyScene skips buffers of mdiEligible meshes.
 void VulkanRenderer::destroyMdiBuffers() {
+  // A rebuild can destroy these buffers before the first frame flushed their
+  // staged copies; submit them while the destinations still exist.
+  flushPendingUploads();
   if (mdiInstMapped_) { vkUnmapMemory(device_, mdiInstMem_); mdiInstMapped_ = nullptr; }
   if (mdiInstColMapped_) { vkUnmapMemory(device_, mdiInstColMem_); mdiInstColMapped_ = nullptr; }
   auto kill = [&](VkBuffer& b, VkDeviceMemory& m) {
@@ -15516,6 +15593,8 @@ void VulkanRenderer::buildInstMdi() {
   if (mdiBuilt_) return;
   mdiBuilt_ = true;
   if (!mdiSupported_ || mdiInstTotal_ == 0) { mdiActive_ = false; return; }
+  const bool mdiTime = std::getenv("LUSDVIEW_TIME_UPLOAD") != nullptr;
+  const auto mdiT0 = std::chrono::steady_clock::now();
   destroyMdiBuffers();
 
   // Shared geometry (positions/normals/uv, per-vertex color, zero morph, indices).
@@ -15610,6 +15689,20 @@ void VulkanRenderer::buildInstMdi() {
     return;
   }
 
+  if (mdiTime) {
+    const double mdiSeconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - mdiT0)
+            .count();
+    std::fprintf(stderr,
+                 "[mdi] buffer build %.3fs (%.1f MiB geom + %.1f MiB inst)\n",
+                 mdiSeconds,
+                 double(mdiVtxStage_.size() * sizeof(float) +
+                        mdiIdxStage_.size() * sizeof(uint32_t)) /
+                     (1024.0 * 1024.0),
+                 double(mdiInstXfStage_.size() * sizeof(float) +
+                        mdiInstColStage_.size() * sizeof(float)) /
+                     (1024.0 * 1024.0));
+  }
   // Point each eligible mesh's instance buffers at its slice of the global buffers.
   for (auto& m : meshes_) {
     if (!m.mdiEligible) continue;
@@ -17154,8 +17247,8 @@ bool VulkanRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
   toDst.subresourceRange.layerCount = 1;
   toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                       &toDst);
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
@@ -17168,8 +17261,8 @@ bool VulkanRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
   toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
-                       1, &toRead);
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
   endOneShot(cb);
 
   externalColorValid_ = true;  // presentImpl skips the 3D pass and consumes this

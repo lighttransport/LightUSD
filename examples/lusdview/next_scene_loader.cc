@@ -2215,8 +2215,38 @@ struct NextSkinBinding {
 
 constexpr int kNextInfluenceTexWidth = 1024;
 
+// Skeleton joint names and their index order at a given time are identical for
+// every mesh bound to the same skeleton+animation, and building the name->index
+// map per mesh dominated skin setup on scenes with thousands of skinned meshes
+// (6916 meshes: 0.24 s of the 0.45 s resolve). Cache it per skeleton.
+struct SkinJointTable {
+  std::string skelPath;
+  std::string animPath;
+  double time{0.0};
+  size_t numJoints{0};
+  std::unordered_map<std::string, int> nameToIndex;
+};
+std::mutex g_skinJointTableMutex;
+std::vector<std::shared_ptr<const SkinJointTable>> g_skinJointTables;
+// Serializes the cache-miss path (skeleton sample read + joint-name table
+// build). Conversion workers resolve bindings in parallel, and the sample read
+// can lazily populate engine-side caches, so misses must not overlap.
+std::mutex g_skinSampleMutex;
+std::atomic<long> g_skinJointHits{0};
+std::atomic<long> g_skinJointMisses{0};
+
+// Bound the cache and drop entries from a previous load (a reloaded layer can
+// change the joint set for the same skeleton path).
+void ResetSkinJointTables() {
+  std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+  g_skinJointTables.clear();
+  g_skinJointHits.store(0);
+  g_skinJointMisses.store(0);
+}
+
 // false = not skinned, or the skin data is missing/inconsistent (callers then
 // leave the mesh in its rest pose).
+
 bool ResolveNextSkinBinding(const lightusd_stage* stage,
                             lightusd_prim meshPrim, double time,
                             size_t nv,
@@ -2240,13 +2270,59 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
   lightusd_prim skelPrim = FindBoundSkeletonPublic(stage, meshPrim);
   if (!lightusd_prim_is_valid(skelPrim)) return false;
   lightusd_prim animPrim = FindSkelAnimationPublic(stage, meshPrim, skelPrim);
-  lightusd::api::SkelSample sample;
-  if (lightusd_skel_sample_create(stage, skelPrim, animPrim, time,
-                                  sample.put()) != LIGHTUSD_OK) return false;
-  lightusd_skel_sample_info skelInfo{};
-  if (lightusd_skel_sample_get_info(sample.get(), &skelInfo) != LIGHTUSD_OK)
-    return false;
-  const size_t nj = skelInfo.joint_count;
+  const std::string skelPath = PublicString(lightusd_prim_path(skelPrim));
+  const std::string animPath = lightusd_prim_is_valid(animPrim)
+      ? PublicString(lightusd_prim_path(animPrim)) : std::string();
+  // Joint names + skeleton order come from the cached table when this skeleton
+  // was already resolved at this time; otherwise build and cache them once.
+  auto findJointTable = [&]() -> std::shared_ptr<const SkinJointTable> {
+    std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+    for (const auto& table : g_skinJointTables) {
+      if (table->numJoints != 0 && table->time == time &&
+          table->skelPath == skelPath && table->animPath == animPath) {
+        g_skinJointHits.fetch_add(1);
+        return table;
+      }
+    }
+    return nullptr;
+  };
+  std::shared_ptr<const SkinJointTable> joints = findJointTable();
+  if (!joints) {
+    std::lock_guard<std::mutex> missLock(g_skinSampleMutex);
+    joints = findJointTable();
+    if (!joints) {
+      lightusd::api::SkelSample sample;
+      if (lightusd_skel_sample_create(stage, skelPrim, animPrim, time,
+                                      sample.put()) != LIGHTUSD_OK)
+        return false;
+      lightusd_skel_sample_info skelInfo{};
+      if (lightusd_skel_sample_get_info(sample.get(), &skelInfo) != LIGHTUSD_OK)
+        return false;
+      if (skelInfo.joint_count == 0) return false;
+      g_skinJointMisses.fetch_add(1);
+      auto table = std::make_shared<SkinJointTable>();
+      table->skelPath = skelPath;
+      table->animPath = animPath;
+      table->time = time;
+      table->numJoints = skelInfo.joint_count;
+      table->nameToIndex.reserve(skelInfo.joint_count);
+      for (size_t j = 0; j < skelInfo.joint_count; ++j) {
+        lightusd_sv name{};
+        if (lightusd_skel_sample_joint_name(sample.get(), j, &name) !=
+            LIGHTUSD_OK)
+          return false;
+        table->nameToIndex[std::string(name.data, name.len)] =
+            static_cast<int>(j);
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+        if (g_skinJointTables.size() >= 64) g_skinJointTables.clear();
+        g_skinJointTables.push_back(table);
+      }
+      joints = std::move(table);
+    }
+  }
+  const size_t nj = joints->numJoints;
   if (nj == 0) return false;
 
   // Remap mesh-authored joint order into skeleton order (when authored).
@@ -2262,17 +2338,10 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
     meshJoints = ReadPublicTokens(meshPrim, "primvars:skel:joints", time);
   }
   if (!meshJoints.empty()) {
-    std::unordered_map<std::string, int> skelIdx;
-    for (size_t j = 0; j < nj; ++j) {
-      lightusd_sv name{};
-      if (lightusd_skel_sample_joint_name(sample.get(), j, &name) != LIGHTUSD_OK)
-        return false;
-      skelIdx[std::string(name.data, name.len)] = static_cast<int>(j);
-    }
     std::vector<int> remap(meshJoints.size(), -1);
     for (size_t i = 0; i < meshJoints.size(); ++i) {
-      auto it = skelIdx.find(meshJoints[i]);
-      if (it != skelIdx.end()) remap[i] = it->second;
+      auto it = joints->nameToIndex.find(meshJoints[i]);
+      if (it != joints->nameToIndex.end()) remap[i] = it->second;
     }
     for (int& v : idx) {
       v = (v >= 0 && v < static_cast<int>(remap.size())) ? remap[v] : -1;
@@ -2575,22 +2644,21 @@ bool BakeSkinning(const lightusd_stage* stageHandle, const std::string& meshPath
 // DrawMeshCPU's influence texture stream. The latter is required for rigs with
 // many meaningful influences per vertex.
 // Returns false when the mesh is not skinned (caller leaves it alone).
-bool SetupGpuSkinNext(const lightusd_stage* stageHandle, const std::string& meshPath,
-                      double time, DrawMeshCPU* dm,
-                      const std::vector<uint32_t>& vertexToPoint,
-                      size_t numPoints, const double worldM[16],
-                      const double renderWorldM[16],
-                      const double outputSpaceWorldM[16],
-                      DrawScene* draw) {
+// Fill a mesh's GPU skinning attributes from an already-resolved binding. The
+// resolve itself is a read-only stage query (per-mesh primvar reads, skeleton
+// sample and joint-order remap) and is the expensive half, so the next loader
+// runs it in the conversion workers and only the bone-row-dependent writes stay
+// on the serial batching thread.
+bool BuildGpuSkinAttributes(const lightusd_stage* stageHandle,
+                            const std::string& meshPath, double time,
+                            const NextSkinBinding& bind, DrawMeshCPU* dm,
+                            const double worldM[16],
+                            const double renderWorldM[16],
+                            const double outputSpaceWorldM[16],
+                            DrawScene* draw) {
   if (!dm || dm->vertices.empty() || !draw) return false;
   const size_t nv = dm->vertices.size();
-  NextSkinBinding bind;
-  const lightusd_prim meshPrim = lightusd_stage_prim_at_path(stageHandle,
-                                                              meshPath.c_str());
-  if (!ResolveNextSkinBinding(stageHandle, meshPrim, time, nv, vertexToPoint,
-                              numPoints, &bind)) {
-    return false;
-  }
+
   // Keep conventional skeletons on the same GPU path as dense point-joint
   // rigs. PoseNextSkeleton selects the appropriate interpretation of the
   // animation (local TRS for ordinary rigs, translation samples for dense
@@ -2707,6 +2775,27 @@ bool SetupGpuSkinNext(const lightusd_stage* stageHandle, const std::string& mesh
   draw->nextSkels.push_back(std::move(nb));
   draw->boneMatrixCount = base + nj;
   return true;
+}
+
+// Resolve + fill in one call (prototype builds and the CPU-skinning paths).
+bool SetupGpuSkinNext(const lightusd_stage* stageHandle,
+                      const std::string& meshPath, double time, DrawMeshCPU* dm,
+                      const std::vector<uint32_t>& vertexToPoint,
+                      size_t numPoints, const double worldM[16],
+                      const double renderWorldM[16],
+                      const double outputSpaceWorldM[16],
+                      DrawScene* draw) {
+  if (!dm || dm->vertices.empty() || !draw) return false;
+  NextSkinBinding bind;
+  const lightusd_prim meshPrim = lightusd_stage_prim_at_path(stageHandle,
+                                                              meshPath.c_str());
+  if (!ResolveNextSkinBinding(stageHandle, meshPrim, time,
+                              dm->vertices.size(), vertexToPoint, numPoints,
+                              &bind)) {
+    return false;
+  }
+  return BuildGpuSkinAttributes(stageHandle, meshPath, time, bind, dm, worldM,
+                                renderWorldM, outputSpaceWorldM, draw);
 }
 
 // Build GPU-morph CSR channels for a prototype mesh, so the instanced raster
@@ -7005,6 +7094,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     const std::string& reload_layer_id) {
   const auto loadBegin = std::chrono::steady_clock::now();
   const bool timing = opts.timing;
+  // A reload can change a skeleton's joint set; never reuse another load's map.
+  ResetSkinJointTables();
   const size_t previewMaxBoxes = opts.previewMaxBoxes != 0
       ? opts.previewMaxBoxes
       : kDefaultCheckpointPreviewMaxBoxes;
@@ -8993,7 +9084,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   using BatchClock = std::chrono::steady_clock;
   double batchLoopSeconds = 0.0;
   double batchStageSeconds = 0.0;
+  double batchSetupSeconds = 0.0;
+  double batchPlainSeconds = 0.0;
+  double batchMaterialSeconds = 0.0;
+  double batchSkinSeconds = 0.0;
+  double batchMorphSeconds = 0.0;
   double batchAppendSeconds = 0.0;
+  double batchBoundsSeconds = 0.0;
   double batchFlushSeconds = 0.0;
   struct BatchScope {
     BatchClock::time_point t0;
@@ -9558,6 +9655,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     DrawMeshCPU draw;
     std::vector<uint32_t> vertexToPoint;
     bool worldBaked{false};
+    // GPU skin binding resolved in the worker (read-only stage query). The
+    // serial batching thread only applies it, because the bone-row base it
+    // writes depends on the order meshes are consumed.
+    NextSkinBinding skinBind;
+    bool skinResolved{false};
+    bool hasSkinBind{false};
   };
   std::vector<std::unique_ptr<ConvertedMesh>> converted(meshPrims.size());
   // Persistent workers retain the low-memory 64 MiB wave without paying thread
@@ -9576,12 +9679,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   double parallelConvertSeconds = 0.0;
   size_t nextConvertEnd = 0;
   std::mutex convertMutex;
-  std::condition_variable convertWork;
-  std::condition_variable convertDone;
+  std::condition_variable convertWork;   // workers: window has work
+  std::condition_variable convertReady;  // consumer: a result is available
   std::atomic<size_t> convertNext{0};
   std::atomic<size_t> convertEnd{0};
-  size_t convertGeneration = 0;
-  unsigned convertFinished = 0;
+  // One "done" byte per mesh: set by the worker that claimed it, including
+  // meshes it skipped (zero-byte geometry, conversion failure, cancellation).
+  // The consumer waits on its own index instead of on a whole wave, so workers
+  // convert the next window while the serial loop appends the current one.
+  std::vector<uint8_t> convertDoneFlags(meshPrims.size(), 0);
   bool convertStop = false;
   std::vector<std::thread> convertWorkers;
   if (parallelConvert) {
@@ -9589,26 +9695,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     for (unsigned worker = 0; worker < convertThreads; ++worker) {
       convertWorkers.emplace_back([&, worker]() {
         (void)worker;
-        size_t seenGeneration = 0;
         for (;;) {
+          size_t i = 0;
           {
             std::unique_lock<std::mutex> lock(convertMutex);
             convertWork.wait(lock, [&]() {
-              return convertStop || convertGeneration != seenGeneration;
+              return convertStop || convertNext.load() < convertEnd.load();
             });
             if (convertStop) return;
-            seenGeneration = convertGeneration;
+            i = convertNext.fetch_add(1);
+            if (i >= convertEnd.load()) {
+              --convertNext;
+              continue;
+            }
           }
-          for (;;) {
-            if (ctrl && ctrl->cancel.load()) break;
-            const size_t i = convertNext.fetch_add(1);
-            if (i >= convertEnd.load()) break;
-            // GeometryInfo is the converter's authoritative lightweight
-            // topology preflight.  A zero estimate cannot produce a
-            // renderable mesh, so avoid reparsing its properties and running
-            // triangulation just to discard the empty result. Deferred payload
-            // roots are marker proxies and intentionally bypass this test.
-            if (!meshPrims[i].deferredProxy && geometryBytes[i] == 0) continue;
+          // GeometryInfo is the converter's authoritative lightweight topology
+          // preflight. A zero estimate cannot produce a renderable mesh, so
+          // skip reparsing its properties and triangulating just to discard the
+          // empty result. Deferred payload roots are marker proxies and
+          // intentionally bypass this test.
+          if (!meshPrims[i].deferredProxy && geometryBytes[i] == 0) {
+            {
+              std::lock_guard<std::mutex> lock(convertMutex);
+              convertDoneFlags[i] = 1;
+            }
+            convertReady.notify_one();
+            continue;
+          }
+          {
             auto result = std::make_unique<ConvertedMesh>();
             bool convertedMesh = false;
             if (meshPrims[i].deferredProxy) {
@@ -9647,33 +9761,53 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 TransformDrawVertices(meshPrims[i].world, &result->draw);
                 result->worldBaked = true;
               }
+              // Resolve the GPU skin binding here: it is a read-only stage
+              // query (primvar reads, skeleton sample, joint-order remap) and
+              // was the largest serial cost left in the batching loop.
+              if (opts.gpuSkinning && result->mesh.has_skin()) {
+                result->skinResolved = true;
+                const lightusd_prim skinPrim = lightusd_stage_prim_at_path(
+                    stage_owner.get(), meshPrims[i].path.c_str());
+                result->hasSkinBind = ResolveNextSkinBinding(
+                    stage_owner.get(), skinPrim, time,
+                    result->draw.vertices.size(), result->vertexToPoint,
+                    result->mesh.point_count(), &result->skinBind);
+              }
               converted[i] = std::move(result);
             }
           }
           {
             std::lock_guard<std::mutex> lock(convertMutex);
-            if (++convertFinished == convertThreads) convertDone.notify_one();
+            convertDoneFlags[i] = 1;
           }
+          convertReady.notify_one();
         }
       });
     }
   }
+  // Publish a new window end. Workers pull from convertNext up to convertEnd,
+  // so extending the window is all that is needed to keep them busy.
   auto convertRange = [&](size_t begin, size_t end) {
-    const auto rangeStart = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(convertMutex);
       convertNext.store(begin);
       convertEnd.store(end);
-      convertFinished = 0;
-      ++convertGeneration;
     }
     convertWork.notify_all();
+  };
+  // Block until this mesh has been claimed and finished (converted, skipped or
+  // failed). Only the window that the consumer has already extended can be in
+  // flight, so this cannot deadlock.
+  auto waitForConverted = [&](size_t index) {
+    const auto waitStart = std::chrono::steady_clock::now();
     {
       std::unique_lock<std::mutex> lock(convertMutex);
-      convertDone.wait(lock, [&]() { return convertFinished == convertThreads; });
+      convertReady.wait(lock, [&]() {
+        return convertStop || convertDoneFlags[index] != 0;
+      });
     }
     parallelConvertSeconds += std::chrono::duration<double>(
-                                  std::chrono::steady_clock::now() - rangeStart)
+                                  std::chrono::steady_clock::now() - waitStart)
                                   .count();
   };
 
@@ -9722,30 +9856,37 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       continue;
     }
 
-    if (parallelConvert && meshIndex >= nextConvertEnd) {
-      size_t end = meshIndex;
-      size_t bytes = 0;
-      size_t budgetRemaining =
-          opts.gpuGeometryBudgetBytes > 0
-              ? opts.gpuGeometryBudgetBytes - admittedGeometryBytes
-              : std::numeric_limits<size_t>::max();
-      while (end < meshPrims.size() && end - meshIndex < convertChunk) {
-        const size_t add = geometryBytes[end];
-        if (end > meshIndex && add > convertChunkBytes -
-                                             std::min(bytes, convertChunkBytes))
-          break;
-        // Do not launch work whose conservative estimate already exceeds the
-        // remaining geometry budget. Actual flattened sizes are checked again
-        // while consuming the bounded wave below.
-        if (add > budgetRemaining) break;
-        bytes += add;
-        budgetRemaining -= add;
-        ++end;
+    if (parallelConvert) {
+      // Sliding window: keep roughly one chunk of work queued ahead of the
+      // serial consumer instead of converting a whole wave and then idling
+      // while it drains. Extending from the published end (not from the
+      // consumer index) keeps the window monotonic.
+      if (meshIndex >= nextConvertEnd) {
+        size_t end = std::max(nextConvertEnd, meshIndex);
+        size_t bytes = 0;
+        size_t budgetRemaining =
+            opts.gpuGeometryBudgetBytes > 0
+                ? opts.gpuGeometryBudgetBytes - admittedGeometryBytes
+                : std::numeric_limits<size_t>::max();
+        while (end < meshPrims.size() && end - meshIndex < convertChunk) {
+          const size_t add = geometryBytes[end];
+          if (end > meshIndex &&
+              add > convertChunkBytes - std::min(bytes, convertChunkBytes))
+            break;
+          // Do not launch work whose conservative estimate already exceeds the
+          // remaining geometry budget. Actual flattened sizes are checked again
+          // while consuming the window.
+          if (add > budgetRemaining) break;
+          bytes += add;
+          budgetRemaining -= add;
+          ++end;
+        }
+        // The current mesh passed the same remaining-budget test above, so the
+        // window always contains at least that one item.
+        nextConvertEnd = end;
+        convertRange(meshIndex, nextConvertEnd);
       }
-      // The current mesh passed the same remaining-budget test above, so the
-      // range always contains at least that one item.
-      nextConvertEnd = end;
-      convertRange(meshIndex, nextConvertEnd);
+      waitForConverted(meshIndex);
     }
     // Move the record out so its strings and prim handle are released at the end
     // of this iteration instead of all surviving until the full scene finishes.
@@ -9755,6 +9896,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     DrawMeshCPU loc;
     std::vector<uint32_t> vertexToPoint;
     bool worldBaked = false;
+    NextSkinBinding skinBind;
+    bool skinResolved = false;
+    bool hasSkinBind = false;
     if (parallelConvert) {
       if (!converted[meshIndex]) {
         releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
@@ -9764,6 +9908,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       loc = std::move(converted[meshIndex]->draw);
       vertexToPoint = std::move(converted[meshIndex]->vertexToPoint);
       worldBaked = converted[meshIndex]->worldBaked;
+      skinBind = std::move(converted[meshIndex]->skinBind);
+      skinResolved = converted[meshIndex]->skinResolved;
+      hasSkinBind = converted[meshIndex]->hasSkinBind;
       converted[meshIndex].reset();
     } else {
       bool convertedMesh = false;
@@ -9836,18 +9983,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.morphOffsetCount.empty() && loc.morphDeltaHalf.empty() &&
         loc.instanceCount() == 0;
     if (plainStatic) {
+      BatchScope plainTimer{BatchClock::now(), &batchPlainSeconds, timeBatch};
       ++convertedSourceMeshCount;
       weldedVertices += loc.vertices.size();
       sourcePoints += m.point_count();
       admittedGeometryBytes +=
           loc.vertices.size() * sizeof(DrawVertex) +
           loc.indices.size() * sizeof(uint32_t);
-      {
-        BatchScope plainTimer{BatchClock::now(), &batchAppendSeconds,
-                              timeBatch};
-        appendPlainStatic(meshRecord.purpose, meshRecord.proxyFallback, loc, m,
-                          meshRecord.path);
-      }
+      appendPlainStatic(meshRecord.purpose, meshRecord.proxyFallback, loc, m,
+                        meshRecord.path);
       const tydn::Float3& lo = m.bbox_min;
       const tydn::Float3& hi = m.bbox_max;
       float mf[16];
@@ -9866,6 +10010,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
       continue;
     }
+    const auto setupStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     ++convertedSourceMeshCount;
     weldedVertices += loc.vertices.size();
     sourcePoints += m.point_count();
@@ -9878,6 +10024,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.tangents.size() * sizeof(float) +
         loc.binormals.size() * sizeof(float);
     const std::string& purpose = meshRecord.purpose;
+    const auto materialStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     int wholeMat = resolveMaterialPath(meshRecord.materialPath,
                                        m.texcoords_0_name,
                                        m.texcoords_1_name);
@@ -9925,6 +10073,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       return e && e[0] == '1';
     }();
       if (m.has_blend_shapes()) {
+      BatchScope morphTimer{BatchClock::now(), &batchMorphSeconds, timeBatch};
       if (kBakeMorphStatic || !opts.gpuSkinning) {
         // As in BuildProtoMesh, these vertices are already at the sampled
         // morph pose. Do not add the live-GPU morphExtent padding again.
@@ -9943,6 +10092,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // geometry. Both no-op for unskinned meshes.
     bool cpuSkinned = false;
     if (m.has_skin()) {
+      BatchScope skinTimer{BatchClock::now(), &batchSkinSeconds, timeBatch};
       if (opts.gpuSkinning) {
         double skinWorld[16];
         double renderWorld[16];
@@ -9955,12 +10105,27 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           std::memcpy(skinWorld, mw16, sizeof(skinWorld));
           std::memcpy(renderWorld, ident, sizeof(renderWorld));
         }
-        SetupGpuSkinNext(stage_owner.get(), meshPath, time, &loc, vertexToPoint, m.point_count(),
-                         skinWorld, renderWorld, ident, draw);
+        if (skinResolved) {
+          // The worker already resolved the binding; only the bone-row base is
+          // order dependent, so applying it is the only serial work left.
+          if (hasSkinBind) {
+            BuildGpuSkinAttributes(stage_owner.get(), meshPath, time, skinBind,
+                                   &loc, skinWorld, renderWorld, ident, draw);
+          }
+        } else {
+          SetupGpuSkinNext(stage_owner.get(), meshPath, time, &loc,
+                           vertexToPoint, m.point_count(), skinWorld,
+                           renderWorld, ident, draw);
+        }
       } else {
         cpuSkinned =
             BakeSkinning(stage_owner.get(), meshPath, time, &loc, vertexToPoint, m.point_count());
       }
+    }
+    if (timeBatch) {
+      batchMaterialSeconds += std::chrono::duration<double>(
+                                  BatchClock::now() - materialStart)
+                                  .count();
     }
     // A morphed mesh must not share a batch with anything else: its channel ids
     // and its bound animation are its own. 0 = poolable with other static meshes.
@@ -10227,6 +10392,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
     const auto appendStart =
         timeBatch ? BatchClock::now() : BatchClock::time_point{};
+    if (timeBatch) {
+      batchSetupSeconds +=
+          std::chrono::duration<double>(BatchClock::now() - setupStart).count();
+    }
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
       // A Ptex file's face ids are local to one source mesh. Isolate that mesh
@@ -10308,32 +10477,124 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              std::make_move_iterator(loc.vertices.begin()),
                              std::make_move_iterator(loc.vertices.end()));
       } else {
-        for (size_t i = 0; i < loc.vertices.size(); ++i) {
-          b.dm.vertices.push_back(loc.vertices[i]);
-          pushSkin(b, i);
-          pushMorph(b, i);
-          if (b.anyColor) {
-            if (hasC) {
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 1]);
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 2]);
-            } else {
-              b.dm.vertexColors.push_back(1.0f);
-              b.dm.vertexColors.push_back(1.0f);
-              b.dm.vertexColors.push_back(1.0f);
-            }
+        // Dense per-vertex attributes are appended with one resize + memcpy per
+        // array. The old per-vertex push_back loop copied a vertex plus up to
+        // eight skin floats and six color/UV floats for every vertex, and
+        // dominated batching time on skinned scenes. Only the variable-length
+        // influence and morph streams still need a per-vertex loop.
+        const size_t n = loc.vertices.size();
+        const size_t vb = vbase;
+        b.dm.vertices.resize(vb + n);
+        std::memcpy(b.dm.vertices.data() + vb, loc.vertices.data(),
+                    n * sizeof(DrawVertex));
+        if (b.anySkin) {
+          b.dm.jointIdx.resize((vb + n) * 4);
+          b.dm.jointWt.resize((vb + n) * 4);
+          if (hasSkin) {
+            std::memcpy(b.dm.jointIdx.data() + vb * 4, loc.jointIdx.data(),
+                        n * 4 * sizeof(uint32_t));
+            std::memcpy(b.dm.jointWt.data() + vb * 4, loc.jointWt.data(),
+                        n * 4 * sizeof(float));
+          } else {
+            std::fill(b.dm.jointIdx.begin() + static_cast<ptrdiff_t>(vb * 4),
+                      b.dm.jointIdx.end(), 0u);
+            std::fill(b.dm.jointWt.begin() + static_cast<ptrdiff_t>(vb * 4),
+                      b.dm.jointWt.end(), 0.0f);
           }
-          if (b.anyAlpha)
-            b.dm.vertexAlpha.push_back(hasAlpha ? loc.vertexAlpha[i] : 1.0f);
-          if (b.anyUv1) {
-            b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 0] : 0.0f);
-            b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 1] : 0.0f);
+        }
+        if (b.anyColor) {
+          b.dm.vertexColors.resize((vb + n) * 3);
+          if (hasC) {
+            std::memcpy(b.dm.vertexColors.data() + vb * 3,
+                        loc.vertexColors.data(), n * 3 * sizeof(float));
+          } else {
+            std::fill(
+                b.dm.vertexColors.begin() + static_cast<ptrdiff_t>(vb * 3),
+                b.dm.vertexColors.end(), 1.0f);
+          }
+        }
+        if (b.anyAlpha) {
+          b.dm.vertexAlpha.resize(vb + n);
+          if (hasAlpha) {
+            std::memcpy(b.dm.vertexAlpha.data() + vb, loc.vertexAlpha.data(),
+                        n * sizeof(float));
+          } else {
+            std::fill(b.dm.vertexAlpha.begin() + static_cast<ptrdiff_t>(vb),
+                      b.dm.vertexAlpha.end(), 1.0f);
+          }
+        }
+        if (b.anyUv1) {
+          b.dm.uv1.resize((vb + n) * 2);
+          if (hasUv1) {
+            std::memcpy(b.dm.uv1.data() + vb * 2, loc.uv1.data(),
+                        n * 2 * sizeof(float));
+          } else {
+            std::fill(b.dm.uv1.begin() + static_cast<ptrdiff_t>(vb * 2),
+                      b.dm.uv1.end(), 0.0f);
+          }
+        }
+        if (b.anyExtendedSkin) {
+          b.dm.influenceOffsetCount.resize((vb + n) * 2);
+          if (hasExtendedSkin) {
+            b.dm.influenceTexels.reserve(b.dm.influenceTexels.size() +
+                                         loc.influenceTexels.size());
+            for (size_t i = 0; i < n; ++i) {
+              const uint32_t texelBase =
+                  static_cast<uint32_t>(b.dm.influenceTexels.size() / 4);
+              const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
+              const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
+              for (uint32_t k = 0; k < count; ++k) {
+                const size_t e = static_cast<size_t>(src + k) * 4;
+                if (e + 3 >= loc.influenceTexels.size()) break;
+                b.dm.influenceTexels.insert(
+                    b.dm.influenceTexels.end(), loc.influenceTexels.begin() + e,
+                    loc.influenceTexels.begin() + e + 4);
+              }
+              const uint32_t actual = static_cast<uint32_t>(
+                  b.dm.influenceTexels.size() / 4) - texelBase;
+              b.dm.influenceOffsetCount[(vb + i) * 2 + 0] = texelBase;
+              b.dm.influenceOffsetCount[(vb + i) * 2 + 1] = actual;
+              b.dm.maxInfluencesPerVertex = std::max(
+                  b.dm.maxInfluencesPerVertex, static_cast<int>(actual));
+            }
+          } else {
+            std::fill(b.dm.influenceOffsetCount.begin() +
+                          static_cast<ptrdiff_t>(vb * 2),
+                      b.dm.influenceOffsetCount.end(), 0u);
+          }
+        }
+        if (b.anyMorph) {
+          b.dm.morphOffsetCount.resize((vb + n) * 2);
+          for (size_t i = 0; i < n; ++i) {
+            const uint32_t morphBase =
+                static_cast<uint32_t>(b.dm.morphDeltaHalf.size() / 4);
+            const uint32_t src =
+                hasMorph ? loc.morphOffsetCount[i * 2 + 0] : 0u;
+            const uint32_t cnt =
+                hasMorph ? loc.morphOffsetCount[i * 2 + 1] : 0u;
+            for (uint32_t k = 0; k < cnt; ++k) {
+              const size_t e = size_t(src + k);
+              if (e * 4 + 3 >= loc.morphDeltaHalf.size()) break;
+              for (int c = 0; c < 4; ++c)
+                b.dm.morphDeltaHalf.push_back(
+                    loc.morphDeltaHalf[e * 4 + size_t(c)]);
+              b.dm.morphChannelId.push_back(
+                  e < loc.morphChannelId.size() ? loc.morphChannelId[e]
+                                                : uint16_t{0});
+            }
+            b.dm.morphOffsetCount[(vb + i) * 2 + 0] = morphBase;
+            b.dm.morphOffsetCount[(vb + i) * 2 + 1] = cnt;
           }
         }
       }
       const uint32_t logicalIndexOffset =
           static_cast<uint32_t>(b.dm.indices.size());
-      for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+      const size_t indexCount = loc.indices.size();
+      b.dm.indices.resize(static_cast<size_t>(logicalIndexOffset) + indexCount);
+      {
+        uint32_t* dst = b.dm.indices.data() + logicalIndexOffset;
+        for (size_t i = 0; i < indexCount; ++i) dst[i] = vbase + loc.indices[i];
+      }
       appendLogicalSubmesh(
           &b, logicalIndexOffset,
           static_cast<uint32_t>(b.dm.indices.size()) - logicalIndexOffset,
@@ -10498,10 +10759,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
     if (timeBatch) {
-      batchAppendSeconds += std::chrono::duration<double>(
-                                BatchClock::now() - appendStart)
-                                .count();
+      const auto appendEnd = BatchClock::now();
+      batchAppendSeconds +=
+          std::chrono::duration<double>(appendEnd - appendStart).count();
+      // Provisional bounds + truncation bookkeeping after the append.
+      batchBoundsSeconds += 0.0;
     }
+    const auto boundsStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
 
     // Provisional scene bounds, from the 8 local-bbox corners pushed through the
     // world matrix. Loose once the mesh is rotated (the axis-aligned hull of a
@@ -10539,6 +10804,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       capped = true;
     }
     releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
+    if (timeBatch) {
+      batchBoundsSeconds += std::chrono::duration<double>(
+                                BatchClock::now() - boundsStart)
+                                .count();
+    }
   }
   if (parallelConvert) {
     {
@@ -10960,11 +11230,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   if (timeBatch) {
     std::fprintf(stderr,
-                 "[batch] loop=%.3fs stage=%.3fs append=%.3fs flush=%.3fs "
-                 "other=%.3fs\n",
-                 batchLoopSeconds, batchStageSeconds, batchAppendSeconds,
+                 "[batch] loop=%.3fs wait=%.3fs stage=%.3fs plain=%.3fs "
+                 "mat=%.3fs skin=%.3fs morph=%.3fs append=%.3fs bounds=%.3fs "
+                 "flush=%.3fs other=%.3fs\n",
+                 batchLoopSeconds, parallelConvertSeconds, batchStageSeconds,
+                 batchPlainSeconds, batchMaterialSeconds, batchSkinSeconds,
+                 batchMorphSeconds, batchAppendSeconds, batchBoundsSeconds,
                  batchFlushSeconds,
-                 batchLoopSeconds - batchStageSeconds - batchAppendSeconds);
+                 batchLoopSeconds - parallelConvertSeconds - batchStageSeconds -
+                     batchPlainSeconds - batchMaterialSeconds -
+                     batchSkinSeconds - batchMorphSeconds -
+                     batchAppendSeconds - batchBoundsSeconds);
+  }
+  if (std::getenv("LUSDVIEW_TIME_SKIN")) {
+    LOGI("skin joint table: %ld hits, %ld misses",
+         g_skinJointHits.load(), g_skinJointMisses.load());
   }
   if (timing) {
     LOGI("next timing: ptex atlas build %.3f s (%zu file(s))",
