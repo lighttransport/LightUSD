@@ -6823,13 +6823,16 @@ bool VulkanRenderer::ensureStagingRing(VkDeviceSize need) {
 
 bool VulkanRenderer::stageInRing(VkDeviceSize size, const void* data,
                                  VkDeviceSize* outOffset) {
-  // Buffer copies are only guaranteed for 4-byte-multiple ranges, and one
-  // request larger than the ring would defeat its bounded footprint.
+  // Buffer copies are only guaranteed for 4-byte-multiple ranges.
   static constexpr VkDeviceSize kRingBytes = 64ull * 1024 * 1024;
-  static constexpr VkDeviceSize kMaxRequest = 256ull * 1024 * 1024;
-  if (!data || size == 0 || (size & 3u) != 0 || size > kMaxRequest)
-    return false;
+  if (!data || size == 0 || (size & 3u) != 0) return false;
   if (!ensureStagingRing(kRingBytes)) return false;
+  // A single request bigger than the whole ring cannot be staged here: the
+  // caller falls back to its own staging buffer. This has to be checked BEFORE
+  // the wrap/flush below -- flushing resets the ring to offset 0, so a request
+  // larger than the ring would still not fit and the memcpy would run off the
+  // end of the mapping (a segfault on scenes with >64 MiB vertex buffers).
+  if (size > stagingRingSize_) return false;
   constexpr VkDeviceSize kAlign = 16;
   VkDeviceSize off = (stagingRingUsed_ + kAlign - 1) & ~(kAlign - 1);
   if (off > stagingRingSize_ || size > stagingRingSize_ - off) {
