@@ -1133,9 +1133,11 @@ chunk cull, and on that scene 77 % of the static triangles sit in such batches
 (24.9 M of 32.4 M) even though the pose never changes. `LUSDVIEW_DEBUG_STATIC=1`
 prints the per-batch breakdown (`tris / chunked / skinned`). Loading with
 `--skinning cpu` bakes the pose and drops those streams, which takes the same
-frame to 11.5 ms (87 fps); making that the automatic choice for skins whose
-SkelAnimation has no time samples is the obvious next step, followed by a packed
-static vertex format.
+frame to 11.4 ms (88 fps). The baked geometry is identical to the GPU-skinned
+one (verified pixel-for-pixel from a fixed camera); only the auto-fit framing
+differs, because a skinned batch keeps a conservative scene box on purpose.
+Making that the automatic choice for skins whose SkelAnimation has no time
+samples is the obvious next step, followed by a packed static vertex format.
 
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
