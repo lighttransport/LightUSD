@@ -2156,6 +2156,9 @@ if(LIGHTUSD_BUILD_EXAMPLES)
     add_subdirectory(examples/urdf-to-usd)
 
     if (LIGHTUSD_BUILD_GUI_VIEWER)
+      if(APPLE)
+        enable_language(OBJC OBJCXX)
+      endif()
       add_subdirectory(examples/lusdview)
     endif()
 

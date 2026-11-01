@@ -49,6 +49,36 @@ jobs:
       - name: Ctest
         run: cd build_next && ctest --output-on-failure
 
+  # Native macOS viewer example: Swift UI + Metal renderer over the next C API.
+  # The headless smoke test compiles the MSL at runtime and skips itself (77) on
+  # a runner without a Metal device.
+  build-lmetalview-macos:
+    runs-on: macos-latest
+    name: Build lmetalview (Swift + Metal)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-lmetalview
+          max-size: 500M
+      - name: Configure
+        run: |
+            cmake -B build_lmv -S . -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DLIGHTUSD_NATIVE_PRODUCT=next \
+              -DLIGHTUSD_BUILD_EXAMPLES=ON \
+              -DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON \
+              -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+      - name: Build
+        run: |
+            cmake --build build_lmv -j $(sysctl -n hw.ncpu) \
+              --target lmetalview lmetalview_core_test
+      - name: Ctest
+        run: ctest --test-dir build_lmv -R lmetalview --output-on-failure
+
   # Legacy AddressSanitizer build (scripts/bootstrap-cmake-macos.sh) plus the
   # OpenUSD interop check. Disabled: it was added for debugging and is no
   # longer required; the next-backend job above covers the macOS build.

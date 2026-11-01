@@ -1,7 +1,7 @@
 # lusdview
 
-An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3** and
-**Vulkan** behind a common backend interface. It loads a USD file
+An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3**,
+**Vulkan** and native **Metal** on macOS behind a common backend interface. It loads a USD file
 (`.usd/.usda/.usdc/.usdz`), converts it with the Tydra `RenderScene` API and
 displays it with an ImGui docking UI.
 
@@ -787,3 +787,13 @@ quality** (8/16/32/64), or choose full tessellation for comparison. Set
   procedural-node parity remain open. Simple untextured Preview materials use
   a compact graph-free Vulkan RT shader; textured/OpenPBR materials retain the
   full-fidelity shader variant.
+
+### Native Metal on macOS
+
+macOS builds enable `LUSDVIEW_WITH_METAL` and select Metal by default. Use
+`--backend metal` (or `mtl`) for native Metal.hpp rendering, or `--backend gl`
+for OpenGL. Metal also supports `--headless --frames 4 --screenshot out.ppm`
+and the View → Render Technique menu. The initial backend is a mesh raster
+preview with instancing, basic materials/textures and ImGui; advanced
+GL/Vulkan rendering features remain separate. See the build commands, feature
+limits and GPU test in [Native Metal on macOS](../../doc/lusdview.md#native-metal-on-macos).

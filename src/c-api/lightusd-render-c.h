@@ -667,6 +667,21 @@ LIGHTUSD_API lightusd_status lightusd_render_mesh_get_extra_info(
     const lightusd_render_scene* scene, int32_t id,
     lightusd_render_mesh_extra_info* out);
 
+/* Skinning binding of a mesh (UsdSkel). `geom_bind_transform` is the authored
+ * row-vector matrix4d (row-major, translation in the last row), identity when
+ * unauthored. `influences_per_vertex` is the stride of the JOINT_INDICES /
+ * JOINT_WEIGHTS buffers. */
+typedef struct lightusd_render_mesh_skin_info {
+  int32_t skeleton_id; /* -1 when the skeleton could not be resolved */
+  uint32_t influences_per_vertex;
+  uint8_t _pad[8];
+  double geom_bind_transform[16];
+} lightusd_render_mesh_skin_info;
+
+LIGHTUSD_API lightusd_status lightusd_render_mesh_skin_binding(
+    const lightusd_render_scene* scene, int32_t mesh_id,
+    lightusd_render_mesh_skin_info* out);
+
 LIGHTUSD_API lightusd_status lightusd_render_mesh_subset(const lightusd_render_scene* scene,
                                              int32_t mesh_id, size_t index,
                                              uint32_t* face_start,
@@ -749,6 +764,11 @@ LIGHTUSD_API lightusd_status lightusd_render_mesh_primvar_buffer(lightusd_render
 LIGHTUSD_API lightusd_status lightusd_render_mesh_blendshape(
     lightusd_render_scene* scene, int32_t mesh_id, size_t bs_index, uint8_t which,
     lightusd_sv* name, float* weight, lightusd_buffer_view* out);
+/* Sparse blend-shape target point indices (u32 x1). An empty view means the
+ * point_offsets array is dense and parallel to the mesh points. */
+LIGHTUSD_API lightusd_status lightusd_render_mesh_blendshape_indices(
+    lightusd_render_scene* scene, int32_t mesh_id, size_t bs_index,
+    lightusd_buffer_view* out);
 
 typedef enum lightusd_points_buffer_kind {
   LIGHTUSD_POINTS_BUF_POSITIONS = 0, /* f32 x3 */
@@ -841,6 +861,13 @@ typedef struct lightusd_render_material_diagnostic {
   lightusd_sv shader_id;
   lightusd_sv message;
 } lightusd_render_material_diagnostic;
+
+/* Auxiliary OpenPBR/MaterialX controls that have no named ShaderParam.
+ * `normal_map_scale` and `coat_normal_map_scale` are 1 when unauthored; the
+ * coat normal texture itself is queryable as param "coat_normal". */
+LIGHTUSD_API lightusd_status lightusd_render_material_normal_scales(
+    const lightusd_render_scene* scene, int32_t id, float* normal_map_scale,
+    float* coat_normal_map_scale);
 
 LIGHTUSD_API size_t lightusd_render_material_diagnostic_count(
     const lightusd_render_scene* scene, int32_t id);
@@ -949,6 +976,12 @@ typedef struct lightusd_render_light_info {
 LIGHTUSD_API lightusd_status lightusd_render_light_get_info(const lightusd_render_scene* scene,
                                                 int32_t id,
                                                 lightusd_render_light_info* out);
+/* DomeLight environment texture id (index into LIGHTUSD_RENDER_TEXTURE), or -1
+ * for non-dome lights and domes without an authored texture. Kept out of
+ * lightusd_render_light_info so that POD block's layout stays stable for
+ * already-compiled callers. */
+LIGHTUSD_API lightusd_status lightusd_render_light_dome_texture_id(
+    const lightusd_render_scene* scene, int32_t id, int32_t* out);
 /* `which`: 0=light links, 1=shadow links, 2=filter targets. */
 LIGHTUSD_API size_t lightusd_render_light_link_count(
     const lightusd_render_scene* scene, int32_t id, uint8_t which);

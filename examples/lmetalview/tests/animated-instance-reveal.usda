@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "lmetalview animation test: PointInstancer instance revealed from invisibleIds."
+    endTimeCode = 48
+    startTimeCode = 0
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Camera "Cam"
+    {
+        float2 clippingRange = (0.1, 1000)
+        float focalLength = 50
+        float horizontalAperture = 36
+        float verticalAperture = 24
+        double3 xformOp:translate = (1.2, 1.4, 7)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def PointInstancer "Inst"
+    {
+        int[] protoIndices = [0, 0, 0]
+        int64[] ids = [0, 1, 2]
+        int64[] invisibleIds.timeSamples = {
+            0: [1],
+            24: [],
+            48: [1],
+        }
+        point3f[] positions = [(0, 0, 0), (1.2, 0, 0), (2.4, 0, 0)]
+        rel prototypes = [</Root/Inst/Prototypes/Cube>]
+
+        def Scope "Prototypes"
+        {
+            def Mesh "Cube"
+            {
+                uniform bool doubleSided = 0
+                float3[] extent = [(-0.4, -0.4, -0.4), (0.4, 0.4, 0.4)]
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                int[] faceVertexIndices = [0, 1, 2, 3, 4, 7, 6, 5, 0, 4, 5, 1, 1, 5, 6, 2, 2, 6, 7, 3, 3, 7, 4, 0]
+                point3f[] points = [(-0.4, -0.4, 0.4), (0.4, -0.4, 0.4), (0.4, 0.4, 0.4), (-0.4, 0.4, 0.4), (-0.4, -0.4, -0.4), (0.4, -0.4, -0.4), (0.4, 0.4, -0.4), (-0.4, 0.4, -0.4)]
+            }
+        }
+    }
+}

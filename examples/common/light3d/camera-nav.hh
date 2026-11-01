@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// lusdview - orbit camera with Maya-style navigation and fit-to-scene.
+// Shared orbit camera with Maya-style navigation and fit-to-scene.
+// Used by lusdview and lmetalview (examples/lmetalview).
 #pragma once
 
 #include "light3d/math.h"
 
-namespace lusdview {
+namespace light3d {
 
 enum class CameraViewPreset {
   Isometric,
@@ -65,7 +66,7 @@ class OrbitCamera {
   // orbit pivot move together, so it never stalls at or turns around an origin.
   void dolly(float amount);
   // Scene-radius-clamped reference distance used to scale pan speed (keeps the
-  // feel usable across the zoom range; see camera_nav.cc).
+  // feel usable across the zoom range; see camera-nav.cc).
   float moveRefDistance() const;
   void setPreset(CameraViewPreset preset);
   void setOrbitSensitivity(float s) {
@@ -160,4 +161,4 @@ class OrbitCamera {
   bool invertDolly_{false};
 };
 
-}  // namespace lusdview
+}  // namespace light3d

@@ -1933,7 +1933,13 @@ void App::autoDetectUiScale() {
   // Use 2x only on genuinely high-density / large panels: a HiDPI content scale,
   // or a native width of at least 2K (2560). Standard 1080p/1920 stays at 1x, so
   // the font/widgets are not oversized on a normal-DPI display.
+#ifdef __APPLE__
+  // Cocoa/GLFW window sizes are in points. ImGui applies the Retina framebuffer
+  // scale itself; multiplying font/widget sizes here would scale them twice.
+  const float scale = 1.0f;
+#else
   const float scale = (xs >= 1.5f || mw >= 2560) ? 2.0f : 1.0f;
+#endif
   uiScale_ = scale;
   // A first run on a 4K-class display starts at 2560x1600. A normal 2560-wide
   // monitor still gets crisp 2x UI metrics without nearly filling its workarea.
@@ -5987,8 +5993,13 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
     renderer_ = CreateGLRenderer();
   }
 #if defined(HAVE_VULKAN)
-  else {
+  else if (backend == Backend::Vulkan) {
     renderer_ = CreateVulkanRenderer();
+  }
+#endif
+#if defined(HAVE_METAL)
+  else if (backend == Backend::Metal) {
+    renderer_ = CreateMetalRenderer();
   }
 #endif
   if (!renderer_) {
@@ -6290,7 +6301,7 @@ bool App::renderHipViewport() {
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
     LOGI("HIP offscreen presentation: %s compute -> primary %s viewport blit",
-         hipTracer_.deviceName(), backend_ == Backend::Vulkan ? "Vulkan" : "OpenGL");
+         hipTracer_.deviceName(), BackendName(backend_));
     // A deformable scene keeps its CPU geometry: the timeline re-poses it and
     // rebuilds the BVH below, so draw_ is read again on every new time code.
     if (sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_)) return true;
@@ -7477,7 +7488,7 @@ void App::captureModeSweepFrame(const std::string& modeName) {
 void App::logCapabilities() const {
   if (!renderer_) return;
   const RendererCaps& c = renderer_->caps();
-  const char* backend = (backend_ == Backend::Vulkan) ? "vulkan" : "gl";
+  const char* backend = BackendName(backend_);
   const bool rtOn = renderer_->rayTracingActive();
   const char* rt = !rtOn ? "off"
                          : (renderer_->rayTracingIsHardware() ? "hardware"
@@ -7551,8 +7562,7 @@ int App::run(const std::string& initialFile, int maxFrames,
                            ? (pathTrace_.enabled ? RenderTechnique::HipPathTrace
                                                  : RenderTechnique::HipRT)
                                          : RenderTechnique::CpuRT;
-    previousTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : RenderTechnique::VulkanRaster;
+    previousTechnique_ = RasterTechnique(backend_);
   }
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   if (hipInteractive_ || cudaInteractive_ || cpuInteractive_) renderThreadActive_ = false;
@@ -7591,8 +7601,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   if (headless_) {
-    if (backend_ != Backend::Vulkan) {
-      LOGE("--headless requires the Vulkan backend (pass --backend vk)");
+    if (backend_ != Backend::Vulkan && backend_ != Backend::Metal) {
+      LOGE("--headless requires Metal or Vulkan (pass --backend metal or vk)");
       return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
@@ -7679,11 +7689,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
-      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? (pathTrace_.enabled
-                                                        ? RenderTechnique::VulkanPathTrace
-                                                        : RenderTechnique::VulkanRT)
-                                                               : RenderTechnique::VulkanRaster);
+      activeTechnique_ = backend_ == Backend::Vulkan && rtPath_
+                             ? (pathTrace_.enabled ? RenderTechnique::VulkanPathTrace
+                                                   : RenderTechnique::VulkanRT)
+                             : RasterTechnique(backend_);
       activeOverlay_ = rtPath_ ? (pathTrace_.enabled
                                       ? OverlayKind::VulkanPathTrace
                                       : OverlayKind::VulkanRT)
@@ -7717,11 +7726,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
-      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? (pathTrace_.enabled
-                                                        ? RenderTechnique::VulkanPathTrace
-                                                        : RenderTechnique::VulkanRT)
-                                                               : RenderTechnique::VulkanRaster);
+      activeTechnique_ = backend_ == Backend::Vulkan && rtPath_
+                             ? (pathTrace_.enabled ? RenderTechnique::VulkanPathTrace
+                                                   : RenderTechnique::VulkanRT)
+                             : RasterTechnique(backend_);
       activeOverlay_ = rtPath_ ? (pathTrace_.enabled
                                       ? OverlayKind::VulkanPathTrace
                                       : OverlayKind::VulkanRT)
@@ -8763,21 +8771,18 @@ int App::run(const std::string& initialFile, int maxFrames,
           // cache) so this doesn't keep getting offered/retried.
           hipProbe_ = ProbeState::Unavailable;
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (cudaInteractive_) {
         if (!renderCudaViewport()) {
           cudaProbe_ = ProbeState::Unavailable;
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (cpuInteractive_) {
         if (!renderCpuViewport()) {
           activeOverlay_ = OverlayKind::None;
-          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                        : RenderTechnique::VulkanRaster;
+          activeTechnique_ = RasterTechnique(backend_);
         }
       } else if (rasterMotionHold) {
         renderer_->uploadViewportImage(rasterMotionAccum_.lastRgba.data(),

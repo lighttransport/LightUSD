@@ -515,6 +515,33 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-area-light-vulkan` | Vulkan RT finite-light soft-shadow response | Hardware Vulkan RT |
 | `lusdview-area-light-cuda` | CUDA finite-light soft-shadow response | CUDA device |
 
+The `lmetalview` example (native macOS Swift + Metal viewer, `next` product
+only) registers its own tests. Configure with
+`-DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON
+-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
+
+| Name | What it tests | Skip condition |
+|------|---------------|----------------|
+| `lmetalview_core_test` | Preview-scene ABI constants, mesh/material/texture extraction, UsdSkel skinning/blend shapes, retained-stage time scrubbing, in-place node/light/PointInstancer/visibility/skin/morph updates (including animated light intensity/color, instance visibility, prototype switching and count growth), and fallback detection for baked animation channels, shared camera controller, UDIM/Ptex/EXR/KTX2 fixtures | None (compiled unit) |
+| `lmetalview-headless-smoke` | Runtime MSL compilation, offscreen render, PNG output | No Metal device (`77`) |
+| `lmetalview-headless-{udim,ptex,exr,ktx2,ktx2bc1}` | The corresponding texture path through the Metal shader (texture arrays, Ptex atlas + face ids, EXR/KTX2 decode, block-compressed BC upload) | No Metal device (`77`) |
+| `lmetalview-headless-{instanced,pointinstancer,nonmesh}` | Native/point instancing expansion and the point-splat/curve-ribbon pipelines | No Metal device (`77`) |
+| `lmetalview-headless-animated-fast` | In-place GPU playback: load a skinned/blend-shape asset at frame 1, update node transforms/palettes/weights to frame 2, render | No Metal device (`77`) |
+| `lmetalview-headless-animated-light` | In-place playback of an animated distant-light transform | No Metal device (`77`) |
+| `lmetalview-headless-animated-pointinstancer` | In-place playback of animated PointInstancer positions/orientations/scales | No Metal device (`77`) |
+| `lmetalview-headless-animated-camera` | In-place playback of an animated authored camera | No Metal device (`77`) |
+| `lmetalview-headless-animated-visibility` | In-place playback of time-sampled mesh visibility | No Metal device (`77`) |
+| `lmetalview-headless-animated-material` | Animated material inputs force the re-conversion fallback | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-visibility` | In-place playback of PointInstancer `invisibleIds` | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-reveal` | Reveals a PointInstancer instance hidden at load | No Metal device (`77`) |
+| `lmetalview-headless-animated-proto-index` | In-place PointInstancer prototype switching | No Metal device (`77`) |
+| `lmetalview-headless-animated-instance-count` | In-place PointInstancer instance-count growth/shrink | No Metal device (`77`) |
+
+```bash
+# lmetalview only
+ctest -R '^lmetalview' --output-on-failure
+```
+
 ```bash
 # Run every test whose name belongs to the lusdview matrix. The name filter
 # includes tests that do not carry the lusdview label.
@@ -550,6 +577,18 @@ ctest -R roundtrip --output-on-failure
 # Exclude benchmark-labeled tests
 ctest --output-on-failure -LE benchmark
 ```
+
+## Native Metal viewer regression (macOS)
+
+With the GUI viewer and tests enabled, build `lusdview_metal_renderer_test` and
+run `ctest --test-dir build_ninja -R '^lusdview-metal-'
+--output-on-failure`. This windowless GPU test checks depth, transforms,
+instancing, visibility, sampled textures and streaming bounds, eviction,
+clipping, resize and ImGui composition with a dynamic font atlas. The Python integration test also verifies default/explicit backend selection, USD
+loading, capability reporting and scene/UI captures. No Metal device
+returns skip code 77; shader or pixel failures fail. Run with GPU access when a
+sandbox hides Metal devices. See [Native Metal on macOS](lusdview.md#native-metal-on-macos)
+for configuration, CLI screenshots and current feature limits.
 
 ## Regression Test Procedure
 

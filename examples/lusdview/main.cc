@@ -251,7 +251,9 @@ int main(int argc, char** argv) {
                             : std::string();
   const bool virtualHumanProfile = executableName == "vchar" ||
                                    executableName == "vchar.exe";
-#if defined(HAVE_VULKAN)
+#if defined(HAVE_METAL)
+  lusdview::Backend backend = lusdview::Backend::Metal;
+#elif defined(HAVE_VULKAN)
   lusdview::Backend backend = lusdview::Backend::Vulkan;
 #else
   lusdview::Backend backend = lusdview::Backend::GL;
@@ -379,7 +381,7 @@ int main(int argc, char** argv) {
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   int streamIdleMs = 350;            // ms of input quiet before the lossless refine
-  bool headless = false;      // windowless offscreen rendering (Vulkan only)
+  bool headless = false;      // windowless offscreen rendering (Metal/Vulkan)
   bool threaded = false;
   bool threadedExplicit = false;
   bool adaptiveQuality = true;
@@ -455,8 +457,11 @@ int main(int argc, char** argv) {
       } else if (std::strcmp(argv[i], "gl") == 0 ||
                  std::strcmp(argv[i], "opengl") == 0) {
         backend = lusdview::Backend::GL;
+      } else if (std::strcmp(argv[i], "metal") == 0 ||
+                 std::strcmp(argv[i], "mtl") == 0) {
+        backend = lusdview::Backend::Metal;
       } else {
-        LOGE("--backend must be gl, opengl, vk, or vulkan");
+        LOGE("--backend must be gl, opengl, vk, vulkan, metal, or mtl");
         return 1;
       }
       backendExplicit = true;
@@ -1235,7 +1240,7 @@ int main(int argc, char** argv) {
       streamMotionQuality = std::atoi(argv[++i]);
     } if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
-          "Usage: lusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
+          "Usage: lusdview [--config PATH] [--backend gl|vk|metal] [--rt] [--frames N] "
           "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
@@ -1244,8 +1249,8 @@ int main(int argc, char** argv) {
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
           "default config path).\n"
-          "  --backend gl|vk Select renderer backend (default: Vulkan when built "
-          "and available, otherwise OpenGL).\n"
+          "  --backend gl|vk|metal Select renderer backend (default: Metal on macOS, "
+          "otherwise Vulkan when built, then OpenGL).\n"
           "  --vk-device INDEX|NAME  Select a Vulkan physical device by index or "
           "case-insensitive device/driver substring (e.g. 0, nvidia, rtx, llvmpipe). "
           "Also available in config as vulkan_device.\n"
@@ -1396,7 +1401,7 @@ int main(int argc, char** argv) {
           "overriding the SkelAnimation; honors in-between shapes. Also editable "
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
-          "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
+          "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Use the default next-core + tydra-next loader "
           "(compatibility flag).\n"
           "  --legacy-load Use the legacy eager loader.\n"
@@ -1509,6 +1514,13 @@ int main(int argc, char** argv) {
     LOGE("--view-dir cannot be combined with --camera");
     return 1;
   }
+
+#if !defined(HAVE_METAL)
+  if (backend == lusdview::Backend::Metal) {
+    LOGE("Metal backend not compiled in (requires macOS and LUSDVIEW_WITH_METAL=ON)");
+    return 1;
+  }
+#endif
 
   if ((quitAfterFullUpload || quitAfterConvert) && maxFrames >= 0) {
     LOGE("--quit-after-full-upload/--quit-after-convert cannot be combined with --frames");
@@ -1663,7 +1675,7 @@ int main(int argc, char** argv) {
   }
   if (effectiveProfile != LargeSceneProfile::Off) {
     if (!useNextExplicit) useNextLoader = true;
-    if (!backendExplicit) {
+    if (!backendExplicit && backend != lusdview::Backend::Metal) {
       backend = lusdview::Backend::Vulkan;
       backendExplicit = true;
     }
@@ -1780,19 +1792,19 @@ int main(int argc, char** argv) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
-  // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  // Metal and Vulkan support windowless rendering; GL needs a window/context.
   if (viewDirExplicit && !cameraName.empty()) {
     LOGE("--view-dir cannot be combined with the selected --camera/profile camera");
     return 1;
   }
 
-  if (headless) {
+  if (headless && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
   // The `next` loader is the OpenGL large-scene mesh preview; default it to the
   // GL backend unless the user picked one explicitly (it feeds either backend).
-  if (useNextLoader && !backendExplicit) {
+  if (useNextLoader && !backendExplicit && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::GL;
   }
 
@@ -1825,7 +1837,7 @@ int main(int argc, char** argv) {
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
          ProfileName(effectiveProfile),
-         backend == lusdview::Backend::Vulkan ? "vk" : "gl",
+         lusdview::BackendName(backend),
          useNextLoader ? "on" : "off",
          rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
          rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,

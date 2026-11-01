@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "lightusd-cpp.hh"
-#include "camera_nav.hh"
+#include "light3d/camera-nav.hh"
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
 #include "light3d/camera.h"  // light3d::Frustum (cull worker)
@@ -33,6 +33,13 @@ struct Node;
 }  // namespace lightusd
 
 namespace lusdview {
+
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
 
 class Gui {
  public:

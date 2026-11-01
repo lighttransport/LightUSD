@@ -794,7 +794,10 @@ void Gui::drawDockspaceAndMenu() {
 #else
         const bool vulkanCompiled = false;
 #endif
-        const bool vkOwner = activeTechnique_ != RenderTechnique::GLRaster;
+        Backend techniqueOwner = Backend::GL;
+        const bool vkOwner =
+            TechniqueRequiresOwner(activeTechnique_, &techniqueOwner) &&
+            techniqueOwner == Backend::Vulkan;
         const bool rtAvail = vkOwner && renderer_ && renderer_->rayTracingAvailable();
         auto item = [&](RenderTechnique t, bool enabled) {
           if (ImGui::MenuItem(RenderTechniqueLabel(t), nullptr,
@@ -804,6 +807,9 @@ void Gui::drawDockspaceAndMenu() {
           }
         };
         item(RenderTechnique::GLRaster, true);
+#if defined(HAVE_METAL)
+        item(RenderTechnique::MetalRaster, true);
+#endif
         item(RenderTechnique::VulkanRaster, vulkanCompiled && vulkanAvailable_);
         item(RenderTechnique::VulkanRT,
              vulkanCompiled && vulkanRtAvailable_ && (vkOwner ? rtAvail : true));
@@ -6055,8 +6061,11 @@ void Gui::drawViewport() {
     // here on the UI thread. gpu() routes it to the op-queue (inline when single
     // threaded). viewportTexture()'s id is stable across resizes, so ImGui::Image
     // can reference it now and the render thread fills it.
-    const int rw = std::max(1, static_cast<int>(std::lround(w * renderScale_)));
-    const int rh = std::max(1, static_cast<int>(std::lround(h * renderScale_)));
+    // ImGui layout/input use logical coordinates. Raster targets use physical
+    // pixels so Retina viewports are as sharp as the surrounding UI.
+    const ImVec2 fbScale = ImGui::GetIO().DisplayFramebufferScale;
+    const int rw = std::max(1, static_cast<int>(std::lround(w * renderScale_ * fbScale.x)));
+    const int rh = std::max(1, static_cast<int>(std::lround(h * renderScale_ * fbScale.y)));
     gpu([this, rw, rh] { renderer_->resizeViewport(rw, rh); });
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
@@ -6282,10 +6291,11 @@ void Gui::renderViewportScene(FramePacket* packet) {
                       : viewportW_;
   cam_->setAspect(static_cast<float>(vpW) / static_cast<float>(viewportH_));
   const int vpH = viewportH_;
+  const ImVec2 fbScale = ImGui::GetIO().DisplayFramebufferScale;
   const int renderW = std::max(
-      1, static_cast<int>(std::lround(vpW * renderScale_)));
+      1, static_cast<int>(std::lround(vpW * renderScale_ * fbScale.x)));
   const int renderH = std::max(
-      1, static_cast<int>(std::lround(vpH * renderScale_)));
+      1, static_cast<int>(std::lround(vpH * renderScale_ * fbScale.y)));
   gpu([this, renderW, renderH] { renderer_->resizeViewport(renderW, renderH); });
 
   const light3d::Mat4 viewM = cam_->view();

@@ -113,7 +113,12 @@ examples/                  Standalone example apps (separate builds):
                            `src/next`; this directory is the legacy fallback),
                            api_tutorial, asset_resolution,
                            c_api_example, mcp_server, file_format,
-                           js-script, progressive_composition, etc.
+                           js-script, progressive_composition,
+                           lmetalview (native macOS Swift + Metal viewer,
+                           next product only; build with
+                           `-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`), etc.
+examples/common/light3d/   Shared example math + camera (`camera-nav.*` is
+                           used by both lusdview and lmetalview)
 models/                    Test USD files for development
  doc/                       Documentation (index: doc/README.md;
                             testing-cpp.md,
@@ -175,6 +180,7 @@ cd python && python3 -m pytest tests/ -q
 - `LIGHTUSD_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
 - `LIGHTUSD_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
 - `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `lusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
+- `LIGHTUSD_NEXT_BUILD_LMETALVIEW=ON` - Build the native macOS Swift + Metal viewer example `lmetalview` (next product only; requires a Swift toolchain).
   - `LUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
 
 ### GUI viewer (`lusdview`) + Vulkan debugging
