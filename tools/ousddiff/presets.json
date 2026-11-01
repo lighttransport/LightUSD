@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "openusd": {"dist": "~/work/tinyusdz/OpenUSD/dist", "python": "~/work/tinyusdz/OpenUSD/.venv/bin/python3"},
+  "converter": "{repo}/build_ninja/examples/urdf-to-usd/urdf-to-usd",
+  "resources": {"timeout_s": 1800, "max_rss_mib": 30720, "reserve_mib": 4096},
+  "render": {"width": 512, "height": 512, "complexity": "low", "purposes": ["default", "render"], "repeat": 1, "warmups": 0},
+  "datasets": [
+    {"name": "caldera", "root": "/mnt/disk1/data/caldera", "full_scene_roots": ["caldera.usda", "map_source/mp_wz_island.usd"], "full_variants": [{"set": "districtLod", "selection": "full"}]},
+    {"name": "island", "root": "/mnt/disk1/data/island/usd", "full_scene_roots": ["island.usda", "islandPrman.usda"]},
+    {"name": "alab", "root": "/mnt/disk1/data/alab/usd/_merged_ALab", "full_scene_roots": ["entry.usda"], "full_variants": [{"set": "geo", "selection": "render_high"}]},
+    {"name": "usd-assets", "root": "~/work/tinyusdz/usd-assets"},
+    {"name": "menagerie", "root": "~/work/mujoco_menagerie", "kind": "menagerie"}
+  ],
+  "renderers": [
+    {"name": "embree", "kind": "usdrecord", "executable": "~/work/tinyusdz/OpenUSD/dist/bin/usdrecord", "backend": "Embree", "required": true, "env": {"HDEMBREE_RANDOM_NUMBER_SEED": "0"}},
+    {"name": "cpu", "kind": "lusdrender", "executable": "{repo}/build_ninja/lusdview_lightrt_c_build/lusdrender", "backend": "cpu", "required": true},
+    {"name": "storm", "kind": "usdrecord", "executable": "~/work/tinyusdz/OpenUSD/dist/bin/usdrecord", "backend": "Storm", "required": true, "require_hardware": true},
+    {"name": "vk", "kind": "lusdrender", "executable": "{repo}/build_ninja/lusdview_lightrt_c_build/lusdrender", "backend": "vk", "required": true, "require_hardware": true}
+  ],
+  "pairs": [{"renderers": ["embree", "cpu"]}, {"renderers": ["storm", "vk"]}]
+}

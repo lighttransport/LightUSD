@@ -11,6 +11,8 @@ set(LIGHTUSD_BENCHMARK_TARGET "benchmark_lightusd")
 
 project(${LIGHTUSD_TARGET} C CXX)
 
+include(${PROJECT_SOURCE_DIR}/tools/ousddiff/tests.cmake)
+
 # PROJECT_IS_TOP_LEVEL is available from cmake 3.21
 if (CMAKE_VERSION VERSION_LESS 3.21)
   if ("${CMAKE_PROJECT_NAME}" STREQUAL "${LIGHTUSD_TARGET}")

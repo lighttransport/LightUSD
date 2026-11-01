@@ -3135,3 +3135,42 @@ a conservative medium in a unit environment checks radiance conservation.
 The shared scalar kernel runs on CPU and Mesa lavapipe only for current goal
 qualification. See `doc/preview-lighting-goal.md` for the mandatory no-hardware
 constraint and completion audit.
+
+## OpenUSD / lusdrender offscreen comparison
+
+[`tools/ousddiff`](../tools/ousddiff/README.md) provides JSON-configured external
+corpus inventory, deterministic probe/full selection, shared camera/frame/variant
+preparation, process time/RSS measurements, image comparison, historical gates,
+and offline JSON/HTML reports. Presets cover Caldera, Island, merged ALab,
+USD WG assets, and MJCF-to-USD Menagerie inputs. Dataset and executable paths
+remain configurable; generated inputs and reports stay outside tracked files.
+
+For a bounded 1% CPU validation probe without complete large scene roots:
+
+```sh
+python3 tools/ousddiff/runner.py run --preset usd-assets \
+  --mode probe --sample-percent 1 --no-full-scenes --max-input-mib 16 \
+  --renderers embree,cpu --out /tmp/ousddiff-probe
+```
+
+Sampling rounds up per stratum; inspect `selection.json` for effective coverage.
+An entry layer's small file size does not bound its composed dependencies.
+Cross-renderer image metrics are informational until reviewed thresholds are
+configured. Crashes, timeouts, resource limits, required-backend failures,
+invalid images and configured threshold failures fail the run. Hardware checks
+reject software GPU fallbacks. The complete measurement definitions, baseline
+compatibility rules and exit codes are documented in the tool README.
+
+The `tool-ousddiff-harness` CTest is available in both native product
+configurations with `LIGHTUSD_BUILD_TESTS=ON` and Pillow in the configured Python
+interpreter. Use `-DPython3_EXECUTABLE=/path/to/python3` if CMake selects another
+Python. Real-renderer integration is opt-in:
+
+```sh
+OUSDDIFF_RUN_INTEGRATION=1 python3 -m unittest discover -s tools/ousddiff -v
+ctest --test-dir build_ninja -R '^tool-ousddiff-harness$' --output-on-failure
+```
+
+`LIGHTUSD_OUSDDIFF_EXTERNAL_TESTS=ON` additionally registers an optional 1% CPU
+USD-assets probe; absent datasets return CTest skip code 77. Full-corpus and
+complete large-scene runs require explicit invocation.
