@@ -1,0 +1,3 @@
+# Radiance HDR has no NUL in its first 8000 bytes, so git would treat it as
+# text and CRLF-convert pixel data on Windows checkouts (autocrlf=true).
+*.hdr binary
