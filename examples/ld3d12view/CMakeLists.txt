@@ -43,7 +43,8 @@ target_include_directories(ld3d12view PRIVATE
 target_compile_definitions(ld3d12view PRIVATE
     NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(ld3d12view PRIVATE
-    lmetalview_core lightui d3d12 dxgi d3dcompiler user32 gdi32)
+    lmetalview_core lmetalview_textools lightui d3d12 dxgi d3dcompiler user32
+    gdi32)
 if(MSVC)
   target_compile_options(ld3d12view PRIVATE /W4 /utf-8)
   # Console subsystem on purpose: diagnostics go to stderr; main() is the entry.
@@ -140,6 +141,23 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Load-time BC7 compression of large 8-bit textures (default on) and its
+  # opt-out.
+  add_test(NAME ld3d12view-bc7-warp
+      COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3 --no-hud
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-bc7.png
+              ${LD3D_REPO_ROOT}/models/cube-mtlx-texture.usda)
+  add_test(NAME ld3d12view-bc7-off-warp
+      COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3 --no-hud
+              --no-compress-textures
+              ${LD3D_REPO_ROOT}/models/cube-mtlx-texture.usda)
+  set_tests_properties(ld3d12view-bc7-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "1 texture\\(s\\) compressed to BC7")
+  set_tests_properties(ld3d12view-bc7-off-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "1 texture\\(s\\) uploaded"
+                 FAIL_REGULAR_EXPRESSION "compressed to BC7")
+  set_tests_properties(ld3d12view-bc7-warp ld3d12view-bc7-off-warp
+      PROPERTIES LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Metal spheres, roughness 0..1, under the HDR dome: GGX-prefiltered IBL.
   add_test(NAME ld3d12view-ibl-warp
       COMMAND ld3d12view --hidden --warp --size 640x240 --frames 3 --no-hud

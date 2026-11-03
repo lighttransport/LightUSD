@@ -4,7 +4,10 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <thread>
 #include <type_traits>
+
+#include "texcomp.h"
 
 namespace ld3d12 {
 namespace {
@@ -316,12 +319,76 @@ struct PreparedImage {
   UINT width = 0, height = 0;
   std::vector<std::vector<uint8_t>> owned;
   std::vector<Uploader::Level> levels;
+  bool compressed_here = false;  // BC7-encoded by us (not a prebuilt KTX2)
+  size_t raw_bytes = 0;          // uncompressed RGBA8 size of the whole chain
   PreparedImage() = default;
   PreparedImage(const PreparedImage&) = delete;
   PreparedImage& operator=(const PreparedImage&) = delete;
 };
 
-bool PrepareImage(const lmv_image_view& iv, PreparedImage* out) {
+// Images at least this large (both sides) are BC7-compressed at load time.
+constexpr UINT kCompressMinSide = 512;
+
+// Encodes every mip of an RGBA8 chain to BC7 (4x smaller). Levels whose size
+// is not a multiple of 4 are edge-padded; big levels are split into row strips
+// encoded on parallel threads. Returns false (chain untouched) on any failure.
+bool CompressChainBC7(PreparedImage* img, const std::vector<UINT>& ws,
+                      const std::vector<UINT>& hs, bool srgb) {
+  tc_bc7_options opt;
+  tc_bc7_options_init(&opt);
+  opt.quality = TC_BC7_QUALITY_FAST;
+  opt.srgb = srgb ? 1 : 0;
+  opt.threads = 1;  // we parallelize across strips ourselves
+  const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+  std::vector<std::vector<uint8_t>> out(img->owned.size());
+  for (size_t m = 0; m < img->owned.size(); ++m) {
+    const UINT w = ws[m], h = hs[m];
+    const UINT pw = (w + 3) & ~3u, ph = (h + 3) & ~3u;
+    std::vector<uint8_t> padded;
+    const uint8_t* src = img->owned[m].data();
+    size_t stride = size_t(w) * 4;
+    if (pw != w || ph != h) {
+      padded.resize(size_t(pw) * ph * 4);
+      for (UINT y = 0; y < ph; ++y)
+        for (UINT x = 0; x < pw; ++x)
+          std::memcpy(&padded[(size_t(y) * pw + x) * 4],
+                      src + (size_t(std::min(y, h - 1)) * w + std::min(x, w - 1)) * 4, 4);
+      src = padded.data();
+      stride = size_t(pw) * 4;
+    }
+    const UINT bx = pw / 4, by = ph / 4;
+    out[m].resize(size_t(bx) * by * 16);
+    const UINT strips = (pw * ph < 128u * 128u)
+                            ? 1u
+                            : std::min<UINT>(by, std::min<UINT>(hw, 32u));
+    std::vector<int> ok(strips, 1);
+    auto encode = [&](UINT s) {
+      const UINT y0 = by * s / strips, y1 = by * (s + 1) / strips;
+      if (y1 <= y0) return;
+      const size_t out_off = size_t(y0) * bx * 16;
+      ok[s] = tc_bc7_compress_rgba8(src + size_t(y0) * 4 * stride, pw,
+                                    (y1 - y0) * 4, stride, &opt,
+                                    out[m].data() + out_off,
+                                    size_t(y1 - y0) * bx * 16) == TC_SUCCESS;
+    };
+    if (strips == 1) {
+      encode(0);
+    } else {
+      std::vector<std::thread> pool;
+      for (UINT s = 0; s < strips; ++s) pool.emplace_back(encode, s);
+      for (auto& t : pool) t.join();
+    }
+    for (int r : ok)
+      if (!r) return false;
+  }
+  img->owned = std::move(out);
+  img->format = srgb ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
+  img->compressed_here = true;
+  return true;
+}
+
+bool PrepareImage(const lmv_image_view& iv, PreparedImage* out,
+                  bool compress = false) {
   if (iv.width == 0 || iv.height == 0) return false;
   out->width = iv.width;
   out->height = iv.height;
@@ -347,6 +414,10 @@ bool PrepareImage(const lmv_image_view& iv, PreparedImage* out) {
                         iv.height, &out->owned, &ws, &hs);
     out->format = iv.srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
                           : DXGI_FORMAT_R8G8B8A8_UNORM;
+    for (const auto& c : out->owned) out->raw_bytes += c.size();
+    if (compress && iv.width >= kCompressMinSide && iv.height >= kCompressMinSide &&
+        iv.width % 4 == 0 && iv.height % 4 == 0)
+      CompressChainBC7(out, ws, hs, iv.srgb != 0);  // on failure: stays RGBA8
   } else {
     return false;
   }
@@ -357,6 +428,15 @@ bool PrepareImage(const lmv_image_view& iv, PreparedImage* out) {
 // Texture images -> shader-visible SRV heap (bindless descriptor indices).
 class ImageTable {
  public:
+  // Texture memory accounting (images uploaded through this table).
+  struct Stats {
+    uint32_t bc7_encoded = 0;   // images we compressed to BC7
+    size_t rgba8_bytes = 0;     // what those would have cost uncompressed
+    size_t bc7_bytes = 0;       // what they cost compressed
+  };
+  Stats stats;
+  bool compress = false;  // BC7-encode large 8-bit images
+
   ImageTable(Device& device, Uploader* up, const lmv_scene* scene,
              ID3D12DescriptorHeap* heap, std::vector<ComPtr<ID3D12Resource>>* tex)
       : device_(device), up_(up), scene_(scene), heap_(heap), tex_(tex),
@@ -372,7 +452,9 @@ class ImageTable {
 
   // Returns the descriptor index for an lmv image, uploading it on first use;
   // -1 when the image cannot be shown (it is then treated as unbound).
-  int32_t Get(int32_t image_id, std::string* err) {
+  // `allow_compress` is false for images whose texels are addressed by exact
+  // rectangles (Ptex atlases).
+  int32_t Get(int32_t image_id, std::string* err, bool allow_compress = true) {
     if (image_id < 0 || static_cast<size_t>(image_id) >= cache_.size())
       return -1;
     int32_t& slot = cache_[static_cast<size_t>(image_id)];
@@ -381,8 +463,9 @@ class ImageTable {
     lmv_image_view iv = {};
     PreparedImage prep;
     if (lmv_scene_image(scene_, static_cast<uint32_t>(image_id), &iv) != LMV_OK ||
-        !PrepareImage(iv, &prep))
+        !PrepareImage(iv, &prep, compress && allow_compress))
       return slot;
+    Account(prep);
     std::string local;
     const int idx = Add(prep.format, prep.width, prep.height, prep.levels, &local);
     if (idx < 0) {
@@ -402,8 +485,9 @@ class ImageTable {
       lmv_image_view iv = {};
       auto p = std::make_unique<PreparedImage>();
       if (id < 0 || lmv_scene_image(scene_, static_cast<uint32_t>(id), &iv) != LMV_OK ||
-          !PrepareImage(iv, p.get()))
+          !PrepareImage(iv, p.get(), compress))
         return -1;
+      Account(*p);
       if (!tiles.empty() &&
           (p->format != tiles[0]->format || p->width != tiles[0]->width ||
            p->height != tiles[0]->height ||
@@ -448,6 +532,13 @@ class ImageTable {
   uint32_t count() const { return next_ - 1; }  // excluding the white texel
 
  private:
+  void Account(const PreparedImage& p) {
+    if (!p.compressed_here) return;
+    ++stats.bc7_encoded;
+    stats.rgba8_bytes += p.raw_bytes;
+    for (const auto& l : p.levels) stats.bc7_bytes += l.bytes;
+  }
+
   int Add(DXGI_FORMAT format, UINT w, UINT h,
           const std::vector<Uploader::Level>& levels, std::string* err) {
     ComPtr<ID3D12Resource> res;
@@ -538,6 +629,7 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
   HRESULT hr = d3d->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srv_heap));
   if (FAILED(hr)) return Fail(err, "CreateDescriptorHeap(SRV)", hr);
   ImageTable images(device, &up, scene, srv_heap.Get(), &textures_);
+  images.compress = compress_textures;
   if (!images.AddWhite(err)) return false;
 
   // UDIM texture arrays and Ptex rect tables, indexed by texture id.
@@ -568,7 +660,7 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
       }
       tex_aux[t] = {index, lut_offset, kSlotKindUdim};
     } else if (tv.is_ptex && tv.ptex_rects && tv.ptex_face_count > 0) {
-      const int32_t index = images.Get(tv.image_id, err);
+      const int32_t index = images.Get(tv.image_id, err, /*allow_compress=*/false);
       if (index < 0) continue;
       tex_aux[t] = {index, static_cast<int32_t>(ptex_rects.size() / 4), kSlotKindPtex};
       ptex_rects.insert(ptex_rects.end(),
@@ -761,6 +853,8 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
   }
 
   texture_count = images.count();
+  bc7_textures = images.stats.bc7_encoded;
+  bc7_saved_bytes = images.stats.rgba8_bytes - std::min(images.stats.rgba8_bytes, images.stats.bc7_bytes);
   if (!up.Buffer(materials.data(), materials.size() * sizeof(MaterialGPU),
                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &material_buffer,
                  err))

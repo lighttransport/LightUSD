@@ -146,6 +146,11 @@ class SceneGPU {
   uint32_t splat_count = 0;
   ComPtr<ID3D12Resource> line_buffer;
   uint32_t line_count = 0;
+  // Load-time BC7 compression of large 8-bit images (4x less VRAM). Set before
+  // Build().
+  bool compress_textures = true;
+  uint32_t bc7_textures = 0;      // images encoded to BC7 by Build()
+  size_t bc7_saved_bytes = 0;     // VRAM saved versus uncompressed RGBA8
   uint32_t texture_count = 0;       // uploaded images
   uint32_t unsupported_textures = 0;  // UDIM / Ptex / unsupported formats
 

@@ -57,6 +57,7 @@ struct Options {
   bool wireframe = false;
   bool grid = true;
   bool shadows = true;
+  bool compress_textures = true;  // BC7-encode large 8-bit images at load
   bool has_time = false;
   double time = 0.0;
   bool has_from = false;
@@ -83,7 +84,7 @@ struct Options {
 void Usage() {
   std::fprintf(stderr,
                "usage: ld3d12view [--size WxH] [--frames N] [--debug] "
-               "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--preset 0-6]\n"
+               "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--no-compress-textures] [--preset 0-6]\n"
                "                   [--time T] [--animate-from T] [--play] [--paused] [--no-hud] [--no-background] [--load-delay-ms N] [--simulate-cancel] [--capture-loading] [--no-loop] "
                "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-resize WxH] "
                "[--screenshot out.png] [file.usd]\n");
@@ -147,6 +148,8 @@ bool ParseArgs(int argc, char** argv, Options* o) {
       o->simulate_drop = argv[++i];
     } else if (a == "--authored-camera") {
       o->authored_camera = true;
+    } else if (a == "--no-compress-textures") {
+      o->compress_textures = false;
     } else if (a == "--no-shadows") {
       o->shadows = false;
     } else if (a == "--no-grid") {
@@ -347,6 +350,7 @@ int main(int argc, char** argv) {
     ld3d12::AsyncLoader loader;
     loader.set_test_delay_ms(opt.load_delay_ms);
     ld3d12::SceneGPU scene_gpu;
+    scene_gpu.compress_textures = opt.compress_textures;
     std::string err;
     ld3d12::DeviceDesc dd;
     dd.hwnd = reinterpret_cast<HWND>(handle);
@@ -501,6 +505,7 @@ int main(int argc, char** argv) {
         MakeSceneView(scene, &next);
         device.WaitIdle();  // the old scene's buffers may still be in flight
         ld3d12::SceneGPU fresh;
+        fresh.compress_textures = opt.compress_textures;
         if (!fresh.Build(device, next.scene, &err)) {
           std::fprintf(stderr, "ld3d12view: %s\n", err.c_str());
           lmv_scene_free(next.scene);
@@ -518,6 +523,13 @@ int main(int argc, char** argv) {
                        scene_gpu.authored_lights ? "authored" : "studio",
                        scene_gpu.env_index >= 0 ? ", dome environment" : "",
                        scene_gpu.shadow_light >= 0 ? ", shadows" : "");
+        if (scene_gpu.bc7_textures > 0) {
+          std::fprintf(stderr,
+                       "ld3d12view: %u texture(s) compressed to BC7, saved "
+                       "%.1f MB of video memory\n",
+                       scene_gpu.bc7_textures,
+                       static_cast<double>(scene_gpu.bc7_saved_bytes) / 1048576.0);
+        }
         refresh_scene_info();
         enter_clip(initial);
         bool ok = true;
