@@ -161,6 +161,20 @@ def _enumerate_composition(limit=CAP):
     return cases[:limit] if limit else cases
 
 
+# Expected `Composing` paths that this bridge cannot confirm, each with the
+# reason. The set is asserted exactly: a fixed case must remove its entry.
+KNOWN_COMPOSING_EXCEPTIONS = {
+    ("BasicInstancingAndNestedInstances_root", "/Set_1/PropInstance2/geom"):
+        "instance-proxy path; prim_at resolves physical prim paths, not proxies",
+    ("BasicNestedVariants_root", "/DirectlyNestedVariants/anim_spooky_anim_sphere"):
+        "bridge forces standin=render, so the anim outer variant is intentionally "
+        "not selected",
+    ("BasicNestedVariants_root", "/DirectlyNestedVariants/anim_spooky_sphere"):
+        "bridge forces standin=render, so the anim outer variant is intentionally "
+        "not selected",
+}
+
+
 def test_aousd_composition_load():
     cases = _enumerate_composition()
     assert cases, "no composition cases"
@@ -168,6 +182,8 @@ def test_aousd_composition_load():
     rejected = []
     unexpected = []
     missing_entry = []
+    unresolved = set()
+    path_checks = 0
     for pcp_json in cases:
         data = json.loads(pcp_json.read_text())
         case_dir = pcp_json.parent
@@ -194,14 +210,31 @@ def test_aousd_composition_load():
             continue
         # basic sanity
         assert st.stats["prim_count"] >= 0
+        # Every prim the corpus says must compose has to be addressable, not
+        # merely "some prims loaded".
+        for prim_path in data.get("Composing") or {}:
+            path_checks += 1
+            try:
+                prim = st.prim_at(prim_path)
+                resolved = prim is not None and prim.path == prim_path
+            except Exception:  # KeyError for an uncomposed path
+                resolved = False
+            if not resolved:
+                unresolved.add((case_dir.name, prim_path))
         ok += 1
+    known = set(KNOWN_COMPOSING_EXCEPTIONS)
     print(f"[aousd] composition ok {ok}/{len(cases)}; "
+          f"composing paths {path_checks - len(unresolved)}/{path_checks} resolved; "
           f"rejected-as-authored {sorted(rejected)}; "
           f"missing entry {sorted(missing_entry)}")
     assert not unexpected, "\n".join(
         f"{name}: {err}" for name, err in unexpected)
     assert not missing_entry, f"cases without an entry file: {missing_entry}"
     assert ok + len(rejected) == len(cases)
+    assert unresolved <= known, "unexpected unresolved composing paths:\n" + "\n".join(
+        f"{name} {path}" for name, path in sorted(unresolved - known))
+    assert unresolved >= known, "known composing exceptions no longer fail:\n" + "\n".join(
+        f"{name} {path}" for name, path in sorted(known - unresolved))
 
 
 # USD value types the corpus names but the current value/type model has no
