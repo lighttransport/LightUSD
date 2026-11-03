@@ -22,6 +22,7 @@ namespace next {
 class AssetResolver;
 struct LoadUSDOptions;
 struct ImportedAssets;
+struct ValueClipStageCache;
 }
 }  // namespace lightusd
 
@@ -81,6 +82,10 @@ struct lightusd_stage {
   // File-backed clip evaluation must retain the caller's finite load limits.
   // Custom resolvers remain borrowed only during the original load call.
   std::shared_ptr<const lightusd::next::LoadUSDOptions> file_eval_options;
+  // Value-clip stages are parsed on demand. Keep one stage-lifetime cache so
+  // repeated time queries reuse them instead of reloading per attribute.
+  mutable std::mutex clip_cache_mutex;
+  mutable std::shared_ptr<lightusd::next::ValueClipStageCache> clip_stage_cache;
   // Bumped by structural mutations (define/remove prim) so bindings can
   // detect stale lightusd_prim handles.
   std::atomic<uint64_t> generation{0};

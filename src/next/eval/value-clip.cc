@@ -12,10 +12,43 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#if !defined(__EMSCRIPTEN__)
+#include <filesystem>
+#endif
 
 namespace lightusd {
 namespace next {
+
 namespace {
+
+/// File identity used to decide whether a cached clip stage is still current.
+struct FileStamp {
+  bool valid = false;
+  int64_t mtime_ticks = 0;
+  uint64_t size_bytes = 0;
+  bool matches(const FileStamp& other) const {
+    return valid && other.valid && mtime_ticks == other.mtime_ticks &&
+           size_bytes == other.size_bytes;
+  }
+};
+
+FileStamp StampFile(const std::string& path) {
+  FileStamp stamp;
+#if !defined(__EMSCRIPTEN__)
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(path, ec) || ec) return stamp;
+  const auto mtime = std::filesystem::last_write_time(path, ec);
+  if (ec) return stamp;
+  const auto size = std::filesystem::file_size(path, ec);
+  if (ec) return stamp;
+  stamp.valid = true;
+  stamp.mtime_ticks = static_cast<int64_t>(mtime.time_since_epoch().count());
+  stamp.size_bytes = static_cast<uint64_t>(size);
+#else
+  (void)path;
+#endif
+  return stamp;
+}
 
 constexpr size_t kMaxTemplateClipCount = 1000000;
 
@@ -398,30 +431,72 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
   }
   ValueClipStageCache query_cache;
   ValueClipStageCache* cache = stage_cache ? stage_cache : &query_cache;
-  auto load_stage = [&](const std::string& asset) -> const Stage* {
-    auto found = cache->entries.find(asset);
-    if (found != cache->entries.end()) {
-      if (!found->second.stage && error && error->empty()) {
-        *error = found->second.error;
+  // Nested-resolution state is per call path, so it cannot live in a cache that
+  // concurrent queries may share.
+  thread_local std::vector<std::string> resolution_stack;
+  // A cache may opt into file-stamp revalidation so a rewritten clip is
+  // observed by the next query, matching the per-query loader the cache
+  // replaces. Without it the caller owns freshness. Entries without a stamp are
+  // always trusted: pre-seeded caches (tydra's bake) loaded them themselves.
+  const bool revalidate = cache->revalidate_file_stamps;
+  auto load_stage = [&](const std::string& asset) -> std::shared_ptr<Stage> {
+    const FileStamp before = revalidate ? StampFile(asset) : FileStamp{};
+    {
+      std::lock_guard<std::mutex> lock(cache->mutex);
+      auto found = cache->entries.find(asset);
+      if (found != cache->entries.end()) {
+        const ValueClipStageCache::Entry& entry = found->second;
+        if (!entry.stamped || !revalidate ||
+            (before.valid && entry.mtime_ticks == before.mtime_ticks &&
+             entry.size_bytes == before.size_bytes)) {
+          if (!entry.stage && error && error->empty()) {
+            *error = entry.error;
+          }
+          return entry.stage;
+        }
       }
-      return found->second.stage.get();
     }
     std::shared_ptr<Stage> stage = std::make_shared<Stage>();
     std::string warn, load_error;
     if (!loader(asset, stage.get(), &warn, &load_error)) {
       std::string message = "Failed to load value-clip asset `" + asset + "`";
       if (!load_error.empty()) message += ": " + load_error;
-      ValueClipStageCache::Entry entry;
-      entry.error = message;
-      cache->entries.emplace(asset, std::move(entry));
+      // A revalidating cache only records a failure it can later invalidate.
+      const bool cacheable = !revalidate || before.valid;
+      if (cacheable) {
+        std::lock_guard<std::mutex> lock(cache->mutex);
+        if (cache->entries.count(asset) ||
+            cache->entries.size() < cache->max_entries) {
+          ValueClipStageCache::Entry entry;
+          entry.error = message;
+          entry.stamped = revalidate;
+          entry.mtime_ticks = before.mtime_ticks;
+          entry.size_bytes = before.size_bytes;
+          cache->entries[asset] = std::move(entry);
+        }
+      }
       if (error && error->empty()) *error = std::move(message);
       return nullptr;
     }
-    const Stage* result = stage.get();
-    ValueClipStageCache::Entry entry;
-    entry.stage = std::move(stage);
-    cache->entries.emplace(asset, std::move(entry));
-    return result;
+    bool cacheable = true;
+    FileStamp after;
+    if (revalidate) {
+      after = StampFile(asset);
+      cacheable = before.valid && after.valid && before.matches(after);
+    }
+    if (cacheable) {
+      std::lock_guard<std::mutex> lock(cache->mutex);
+      if (cache->entries.count(asset) ||
+          cache->entries.size() < cache->max_entries) {
+        ValueClipStageCache::Entry entry;
+        entry.stage = stage;
+        entry.stamped = revalidate;
+        entry.mtime_ticks = after.mtime_ticks;
+        entry.size_bytes = after.size_bytes;
+        cache->entries[asset] = std::move(entry);
+      }
+    }
+    return stage;
   };
   for (const ValueClipSet& set : sets) {
     const int index = ActiveIndex(set, stage_time);
@@ -442,7 +517,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
     // here — it also reports schema-fallback properties (visibility, radius,
     // ...) that are not in the manifest, which would leak them into clips.
     if (!set.manifest_asset_path.empty()) {
-      if (const Stage* manifest_stage = load_stage(set.manifest_asset_path)) {
+      if (const std::shared_ptr<Stage> manifest_stage =
+              load_stage(set.manifest_asset_path)) {
         const UsdPrim mprim = manifest_stage->GetPrimAtPath(clip_path);
         const PrimSpec* mspec = mprim.GetPrimSpec();
         if (!mspec || !mspec->property(property)) continue;
@@ -459,7 +535,7 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       Value none;
       if (clip_index >= set.asset_paths.size()) return none;
       const std::string& asset = set.asset_paths[clip_index];
-      const Stage* clip_stage = load_stage(asset);
+      const std::shared_ptr<Stage> clip_stage = load_stage(asset);
       if (!clip_stage) return none;
       const UsdPrim clip_prim = clip_stage->GetPrimAtPath(clip_path);
       if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) {
@@ -474,25 +550,24 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       if ((v.is_empty() || v.is_block()) && clip_prim.GetPrimSpec() &&
           clip_prim.GetPrimSpec()->meta().clips().is_dictionary()) {
         const std::string key = asset + "|" + clip_path + "." + property;
-        if (std::find(cache->resolution_stack.begin(),
-                      cache->resolution_stack.end(), key) !=
-            cache->resolution_stack.end()) {
+        if (std::find(resolution_stack.begin(), resolution_stack.end(), key) !=
+            resolution_stack.end()) {
           if (error && error->empty())
             *error = "Value-clip cycle detected at `" + key + "`";
           return none;
         }
-        if (cache->resolution_stack.size() >= cache->max_recursion_depth) {
+        if (resolution_stack.size() >= cache->max_recursion_depth) {
           if (error && error->empty())
             *error = "Value-clip recursion depth exceeded at `" + key + "`";
           return none;
         }
-        cache->resolution_stack.push_back(key);
+        resolution_stack.push_back(key);
         Value nested;
         std::string nested_asset;
         const bool resolved = ResolveValueClip(
             clip_prim, property, ClipTime(set, at_time), loader, &nested,
             &nested_asset, error, nullptr, cache, nullptr, interpolation);
-        cache->resolution_stack.pop_back();
+        resolution_stack.pop_back();
         if (resolved) {
           if (asset_out)
             *asset_out = nested_asset.empty() ? asset : nested_asset;
@@ -535,7 +610,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
             });
         const bool jumps_at_end = mapping_at_end != mapping_after_end &&
             mapping_at_end->second != std::prev(mapping_after_end)->second;
-        const Stage* active_stage = load_stage(set.asset_paths[size_t(index)]);
+        const std::shared_ptr<Stage> active_stage =
+            load_stage(set.asset_paths[size_t(index)]);
         const UsdPrim active_prim = active_stage
             ? active_stage->GetPrimAtPath(clip_path) : UsdPrim();
         double lower = start;

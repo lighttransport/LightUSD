@@ -28,6 +28,7 @@
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/eval/xform-eval.hh"
+#include "next/eval/value-clip.hh"
 #include "next/eval/property-trace.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -1844,6 +1845,22 @@ lightusd_status lightusd_attr_eval(const lightusd_stage* stage, lightusd_prim p,
   return lightusd_attr_eval_ex(stage, p, name, time, 1, 1, out);
 }
 
+// Value-clip stages are expensive to parse, and a scene can query the same
+// clip set for thousands of attributes. Share one bounded cache per stage; it
+// is created on first use so stages that never consult clips pay nothing.
+static std::shared_ptr<n::ValueClipStageCache> ClipStageCacheFor(
+    const lightusd_stage* stage) {
+  std::lock_guard<std::mutex> lock(stage->clip_cache_mutex);
+  if (!stage->clip_stage_cache) {
+    auto cache = std::make_shared<n::ValueClipStageCache>();
+    // Clip files may be rewritten while the stage is alive (the Python API
+    // documents lazy re-reads), so validate each hit against the file stamp.
+    cache->revalidate_file_stamps = true;
+    stage->clip_stage_cache = std::move(cache);
+  }
+  return stage->clip_stage_cache;
+}
+
 lightusd_status lightusd_attr_eval_ex(const lightusd_stage* stage, lightusd_prim p,
                                       const char* name, double time,
                                       uint8_t interp_mode,
@@ -1869,8 +1886,10 @@ lightusd_status lightusd_attr_eval_ex(const lightusd_stage* stage, lightusd_prim
           stage->file_eval_options->input_policy == n::InputPolicy::Untrusted;
     // Most queries never consult clips. Defer resolver/options construction
     // until resolution actually requests an asset; otherwise every ordinary
-    // mesh array read pays allocations and a getcwd syscall. ResolveValueClip
-    // supplies its own bounded-lifetime per-query cache when none is provided.
+    // mesh array read pays allocations and a getcwd syscall. The stage-owned
+    // cache is what keeps clip-consulting queries from re-parsing the same
+    // clip layers for every attribute.
+    options.clip_stage_cache = ClipStageCacheFor(stage);
     options.clip_stage_loader = [stage](const std::string& asset,
                                        n::Stage* clip, std::string* warning,
                                        std::string* error) {

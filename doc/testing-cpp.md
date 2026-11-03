@@ -3378,6 +3378,13 @@ untrusted document sessions fail on rejected/unreadable references; trusted
 compatibility sessions can still explicitly request partial composition.
 `test_attribute_resolution.py` checks linear normal/scalar interpolation across
 one-sample clip files without `interpolateMissingClipValues`, plus held mode.
+`test_connection_to_clip_keeps_lazy_file_loader` requires the C API's stage-level
+value-clip stage cache to revalidate each cached clip against its file stamp, so a
+rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance test
+(`next_test_aousd_conformance`) separately requires a caller-owned
+`ValueClipStageCache` to keep reusing stages across queries (`clip_load_count ==
+1`), which is why file-stamp revalidation is an opt-in cache property rather than
+unconditional.
 The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
 strength against direct child reference/payload/inherit arcs and a weaker
 referenced ancestor, in serial/parallel and expanded/native-instance modes.
