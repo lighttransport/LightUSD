@@ -135,17 +135,19 @@ def test_aousd_value_resolution_load():
     if not entries:
         pytest.skip("no value_resolution entries")
     ok = 0
+    failures = []
     for e in entries:
         try:
             st = lightusd.load(str(e))
         except lightusd.UsdError as e2:
-            # Some value_resolution cases intentionally use features beyond
-            # lightusd coverage; treat as non-blocking but print
-            print(f"[aousd] value_resolution skip {e}: {e2}")
+            failures.append(f"{e.name}: {e2}")
             continue
         assert st.stats["prim_count"] >= 0
         ok += 1
     print(f"[aousd] value_resolution ok {ok}/{len(entries)}")
+    # Every shipped value-resolution case loads today; keep it a hard ratchet
+    # so a newly unsupported case is visible instead of silently skipped.
+    assert not failures, "\n".join(failures)
 
 
 def _enumerate_composition(limit=CAP):
