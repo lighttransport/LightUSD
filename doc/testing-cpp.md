@@ -566,6 +566,18 @@ with a regular expression.
 | `ld3d12view-hud-{play-click,timeline-click,resize,hidden}-warp` | HUD button and timeline clicks, window resize (swapchain + HUD texture), `--no-hud` |
 | `ld3d12view-load-{async,progress,cancel,supersede,missing}-warp` | Worker-thread loading: phases, Esc cancel, a drop superseding a running load, a missing command-line file (expected to fail) |
 | `ld3d12view-drop-{open,replace,bad}-warp` | Drag and drop through `WM_DROPFILES`: open into an empty viewer, replace a scene, a bad file keeps the old scene |
+| `ld3d12view-ibl-warp` | Metal spheres, roughness 0 to 1, under the HDR dome: the GGX-prefiltered specular environment |
+| `ld3d12view-bc7{,-off}-warp` | Load-time BC7 compression of large 8-bit textures (log: `compressed to BC7`) and `--no-compress-textures` |
+| `ld3d12view-shadow-cascades-warp` | 3-cascade shadows on a 240 m ground plane with boxes at increasing distance, seen from an authored camera |
+| `ld3d12view-pick-{hit,miss,material}-warp` | Click picking through a synthetic left click: prim path, a miss, material lookup (log: `picked /World/...`) |
+| `ld3d12view-{outliner,variant-click,variant-cli,outline-select}-warp` | Outliner rows, variant switching by click and by `--variant` (reload with the next variant), selecting a prim row |
+| `ld3d12view-camera-{cycle,index}-warp` | `C` stepping through authored cameras and back to the free view; `--camera N` |
+| `ld3d12view-bookmark-{save,load}-warp` | Camera bookmarks: store/disturb/recall round trip, then reload from the persisted file (the pair shares a bookmark file under the build directory) |
+| `ld3d12view-capture-setup`, `ld3d12view-shot-warp`, `ld3d12view-turntable-{warp,files}` | `P` screenshot, and a headless 8-frame turntable whose files are checked by `tests/check_turntable.cmake` (frame count, non-empty, first and middle frame differ) |
+| `ld3d12view-hw-*` (only with `-DLD3D12VIEW_HW_TESTS=ON`) | The same viewer on the real GPU; fails if the adapter is WARP |
+
+Every `ld3d12view-*` test runs with `LD3D12VIEW_DEBUG=1` (the D3D12 debug layer,
+when Graphics Tools is installed) and also fails on any `D3D12 ERROR` line.
 
 ```bat
 :: ld3d12view only

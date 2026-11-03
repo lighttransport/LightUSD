@@ -3,8 +3,9 @@
 A native Windows **Direct3D 12** USD viewer: the Windows counterpart of
 [`lmetalview`](../lmetalview/README.md). Drag a `.usd` / `.usda` / `.usdc` /
 `.usdz` file onto the window (or pass it on the command line) and get a shaded,
-framed preview with a timeline, shadows, image-based lighting, skinning and
-playback.
+framed preview with a timeline, cascaded shadows, image-based lighting,
+skinning and playback, plus click-to-inspect, an outliner with variant
+switching, camera bookmarks and screenshot / turntable capture.
 
 It reuses lmetalview's portable C++ core (USD load, conversion to a flat preview
 scene, orbit camera) and replaces the Swift/Metal side with a small C++
@@ -38,8 +39,11 @@ shaders are compiled at startup with `D3DCompile` (no `dxc`/`fxc` step).
   desktop GPU from the last decade qualifies. `--warp` selects the WARP software
   adapter, which also qualifies and needs no GPU at all (this is what CTest
   uses).
-* `--debug` enables the D3D12 debug layer. That needs the "Graphics Tools"
-  optional Windows feature; without it the flag is silently ignored.
+* `--debug` enables the D3D12 debug layer (needs the "Graphics Tools" optional
+  Windows feature; the log says "debug layer unavailable" without it). Warnings
+  and errors are printed, and the process exits with status 1 if any validation
+  *error* was reported. Setting `LD3D12VIEW_DEBUG=1` does the same without the
+  flag; every CTest test runs that way.
 
 ## Controls
 
@@ -55,14 +59,27 @@ shaders are compiled at startup with `D3DCompile` (no `dxc`/`fxc` step).
 | Space | Play / pause (animated scenes start playing) |
 | `L` | Toggle looping |
 | ← → / Home | Step one frame / back to the start |
-| `C` | Switch to the scene's authored camera (any mouse navigation switches back) |
-| Esc | Cancel a running load; otherwise quit |
+| `C` | Step through the scene's authored cameras (the status panel shows `cam i/n`), then back to the free view you left; mouse navigation also returns to the free view |
+| Left click (no drag) | Pick: outlines the object's bounding box and shows an inspector card with prim path, mesh, triangle, material and OpenPBR values, and the hit point |
+| `O` | Show or hide the outliner panel (prim tree and variant sets) |
+| `Ctrl`+`1`–`9` / `Shift`+`1`–`9` | Store / recall a camera bookmark (kept per scene file across restarts) |
+| `P` / `Shift`+`P` | Save a PNG screenshot without / with the HUD into `--output-dir` |
+| `T` | Record a 360° turntable as a PNG sequence in a new `turntable-<time>` folder under `--output-dir`; playback pauses meanwhile |
+| Esc | Cancel a running load or turntable; otherwise clear the selection; otherwise quit |
 | Drag and drop | Open the dropped file (the first one if several) |
 
 The HUD's bottom bar (animated scenes only) has a play/pause button, a timeline
 you can click or drag to scrub, and a time readout. The top-left panel shows the
 file name, mesh count, time codes per second and frame rate. While a file loads,
 a centred card shows its name, the current phase and a progress bar.
+
+**Outliner (`O`).** A panel on the right lists the stage's *variant sets* (from
+the root layer; click a row to reload with the next variant, the camera stays
+where it is) and the prim tree built from the drawable meshes' paths (click a
+group to expand it, a leaf to select it; the mouse wheel scrolls). Picking in the
+viewport highlights the matching row. Variant overrides are applied to every
+prim that defines a set of that name; sets that exist only in referenced or
+payloaded layers are not listed, because composition resolves them away.
 
 ## Command line
 
@@ -82,7 +99,13 @@ ld3d12view [options] [file.usd]
 | `--wireframe`, `--no-grid`, `--no-shadows`, `--no-hud`, `--no-background` | Start with that feature off |
 | `--time T`, `--animate-from T0` | Show the scene at time T (optionally after first evaluating T0) instead of playing |
 | `--play`, `--paused`, `--no-loop`, `--speed X` | Playback control (speed multiplies real time) |
-| `--authored-camera` | Start on the scene's first authored camera |
+| `--authored-camera`, `--camera N` | Start on the scene's first (or N-th, from 0) authored camera |
+| `--no-compress-textures` | Keep large 8-bit textures uncompressed (see below) |
+| `--outliner` | Start with the outliner open |
+| `--variant set=name` | Start with a variant override (repeatable) |
+| `--output-dir DIR` | Where `P` and `T` write (default: the current directory) |
+| `--turntable N` | Record an N-frame turntable headlessly into `--output-dir`, then exit |
+| `--turntable-frames N` | Frames per 360° for the `T` key (default 120) |
 
 Playback runs in real time: one second of wall clock advances the scene by
 `timeCodesPerSecond` time codes (24 for most files), times `--speed`.
@@ -106,6 +129,16 @@ interactive use.
 | `--load-delay-ms N` | Holds each load in flight for N ms so progress and cancellation can be observed |
 | `--simulate-cancel` | Posts Esc while a load is running |
 | `--capture-loading` | With `--screenshot`: capture while the load is still running |
+| `--simulate-pick fx,fy` | Posts a left click at fractions (fx, fy) of the window |
+| `--simulate-variant-click N`, `--simulate-outline-click N` | Clicks variant row N / visible prim row N of the outliner |
+| `--simulate-camera-cycle N` | Presses `C` N times |
+| `--simulate-bookmark N`, `--simulate-bookmark-load N` | Stores slot N, disturbs the view and recalls it (checks the round trip) / recalls a slot persisted by an earlier run |
+| `--simulate-shot` | Presses `P` |
+
+Environment: `LD3D12VIEW_DEBUG=1` (debug layer, see above),
+`LD3D12VIEW_BOOKMARKS=file` (bookmark file; default
+`%LOCALAPPDATA%\ld3d12view\bookmarks.txt`), `LD3D12VIEW_NO_PREFILTER=1` (skip the
+specular environment prefilter, for A/B comparisons).
 
 ## How it works
 
@@ -116,14 +149,17 @@ interactive use.
 | Window, input, HUD | vendored `examples/common/lightui` | `lui_window_native_handle()` gives the `HWND`; `lui_window_set_external_render()` stops lightui painting over D3D12 |
 | Device + swapchain | `d3d12/device.*` | One direct queue, flip-model swapchain, 3 buffers, per-buffer allocators and fences, resize, synchronous capture |
 | Scene upload | `d3d12/scene_gpu.*` | Vertex/index buffers, materials (structured buffer), lights, textures, shadow map, skin/morph data |
-| Mesh shading | `d3d12/mesh_renderer.*` | One HLSL source compiled at startup: lit pass, shadow pass, blend pass |
+| Mesh shading | `d3d12/mesh_renderer.*` | One HLSL source compiled at startup: lit pass, cascaded shadow passes, blend pass |
+| Lighting setup | `d3d12/lighting.*` | Authored lights or the studio rig, SH9 irradiance, GGX-prefiltered environment chain, shadow cascade fitting |
+| Picking and inspector | `pick.*` | CPU ray cast (bounding box slab, then Möller–Trumbore) and the material/prim description |
 | Points and curves | `d3d12/points_lines.*` | Camera-facing splats and line ribbons |
 | Background | `d3d12/background.*` | Dome environment or a gradient |
-| HUD | `hud.*`, `d3d12/hud_renderer.*` | lightui widgets drawn into a CPU surface, composited by one fullscreen pass |
+| HUD | `hud.*`, `hud_outline.cc`, `d3d12/hud_renderer.*` | lightui widgets, the inspector card and the outliner drawn into a CPU surface, composited by one fullscreen pass |
 | Loading | `loader.*` | Worker thread around `lmv_load` with progress and cancel |
 
-**Frame order:** background → shadow pass (one directional caster) → opaque and
-masked meshes → points/curves → blended meshes sorted back to front → grid → HUD.
+**Frame order:** background → shadow passes (3 cascades of the one directional
+caster) → opaque and masked meshes → points/curves → blended meshes sorted back
+to front → grid → selection box → HUD.
 
 **Resources are bindless.** Every texture lives in one shader-visible descriptor
 heap and a material refers to it by index (`NonUniformResourceIndex`). Materials
@@ -150,13 +186,14 @@ scene.
 | --- | --- |
 | Base colour/weight, metalness, roughness, emission, opacity, normal maps | yes |
 | Specular colour/weight, coat (own normal map), sheen, subsurface, transmission, thin film, anisotropy | yes, approximated (same model as lmetalview; no volumetric absorption or scattering) |
-| Textures: 8-bit sRGB/linear, float EXR, KTX2 BC1/BC3/BC5/BC6H/BC7 | yes, with a full mip chain (generated on the CPU for uncompressed images) |
+| Textures: 8-bit sRGB/linear, float EXR, KTX2 BC1/BC3/BC5/BC6H/BC7 | yes, with a full mip chain (generated on the CPU for uncompressed images). 8-bit images of at least 512×512 (multiples of 4) are **BC7-compressed at load** (4× less video memory, ~58 dB PSNR on a photo texture; the load log reports the saving). Ptex atlases and float images are never compressed. `--no-compress-textures` opts out |
 | UDIM | yes: one texture array per UDIM texture plus a 10x10 tile table; missing tiles render magenta |
 | Ptex | yes: atlas image plus per-face rectangles and per-vertex face ids |
 | Wrap modes (repeat, clamp, mirror, black), UV offset/scale/rotation, channel select, value scale/bias | yes |
 | Authored lights (distant, spot, point; rect/disk/sphere as point lights) or a three-point studio rig | yes |
-| Dome light: SH9 diffuse + roughness-blurred reflections + background | yes |
-| Directional shadow map (2048², 3×3 PCF), alpha-tested for cutouts | one caster (first directional light) |
+| Dome light: SH9 diffuse + GGX-prefiltered specular + background | yes. The environment is resampled to 512×256 and convolved on the CPU into a 6-mip chain (mip *i* = roughness *i*/5), then combined with the split-sum environment BRDF and multiple-scattering compensation (also applied to direct lights) |
+| Dielectric reflectance and diffuse | F0 from `specular_ior`; Oren–Nayar diffuse from `base_diffuse_roughness` |
+| Directional shadows: 3 cascades of 2048², texel-snapped, 3×3 PCF, normal-offset and slope bias, alpha-tested for cutouts | one caster (first directional light); cascades are fitted to the view frustum clipped to the scene bounds |
 | Alpha: opaque, mask (cutout), blend | yes; blended draws are sorted per draw, not per triangle |
 | Skinning (4 influences) and blend shapes | yes, in the vertex shader |
 | PointInstancer / native instances | yes (expanded by the core) |
@@ -169,7 +206,13 @@ darken every textured material.
 
 ## Limitations
 
-* One shadow caster, no cascades; blended surfaces do not cast shadows.
+* One shadow caster (the first directional light); spot and point lights cast no
+  shadows, and blended surfaces do not cast shadows either.
+* Picking tests the rest pose of skinned meshes and the bounding box is not
+  refit to blend shapes. Selecting from the outliner picks a mesh's first draw
+  (instances are not listed separately).
+* The outliner lists drawable meshes only (no lights, cameras or empty prims),
+  and variant sets come from the root layer.
 * Blending is in encoded (sRGB) space and sorted per draw by the bounding-box
   centre, so overlapping or very large blended meshes can order wrongly. There
   is no order-independent transparency.
@@ -177,7 +220,7 @@ darken every textured material.
 * Float textures are uploaded as 32-bit floats and mips are box-filtered in
   encoded space.
 * BC textures whose size is not a multiple of 4 are not uploaded (treated as
-  unbound).
+  unbound), and images that are not multiples of 4 are never compressed.
 * HDR environment images are mapped as Y-up equirectangular regardless of the
   scene's up axis (same as lmetalview).
 * The HUD does not scale with display DPI and renders Latin text only (the
@@ -208,6 +251,11 @@ window procedure, not just the viewer logic.
 ctest --test-dir build -R "ld3d12view|lmetalview" --output-on-failure
 ```
 
+Every test runs with the D3D12 debug layer on (when Graphics Tools is installed)
+and fails on any `D3D12 ERROR` line. To also run a few scenes on the machine's
+real GPU, configure with `-DLD3D12VIEW_HW_TESTS=ON`: this adds `ld3d12view-hw-*`
+tests (label `hardware`) that fail if they land on WARP.
+
 See [doc/testing-cpp.md](../../doc/testing-cpp.md) for the list.
 
 ## Relationship to lmetalview
@@ -227,4 +275,8 @@ Changes made to the shared core while building this viewer: it now also builds o
 Windows (`lmetalview_core`), `lmv_light_view` gained `dome_image_id` (tydra
 stores an image id in the dome light, not a texture index), and `lmv.h` documents
 that a scene calls the load-time progress callback again from
-`lmv_scene_set_time`, so `progress_user` must outlive the scene.
+`lmv_scene_set_time`, so `progress_user` must outlive the scene. Later additions:
+`lmv_load_options.extra_variant_*` (several variant overrides at once) and
+`lmv_scene_variant_set_count/_variant_set` (the root layer's variant sets), and a
+fix that ignores UsdPreviewSurface's default black `specularColor` (it zeroed F0
+and made default metals render black in both viewers).
