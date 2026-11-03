@@ -233,7 +233,14 @@ static std::string GetTerminalShaderPath(const UsdPrim& material,
 
 std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-  return GetTerminalShaderPath(material, "outputs:surface");
+  std::string path = GetTerminalShaderPath(material, "outputs:surface");
+  if (path.empty()) {
+    // RenderMan-authored production layers commonly expose only the ri render
+    // context. Preserve that terminal so renderer adapters can translate a
+    // supported PxrDisney graph instead of treating the material as unbound.
+    path = GetTerminalShaderPath(material, "outputs:ri:surface");
+  }
+  return path;
 }
 
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {

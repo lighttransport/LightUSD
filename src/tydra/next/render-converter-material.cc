@@ -389,6 +389,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
 bool IsStandardSurfaceShaderId(const std::string& id) { return id == "ND_standard_surface_surfaceshader" || id == "standard_surface" || id == "AutodeskStandardSurface" || id == "MtlxAutodeskStandardSurface"; }
 bool IsOpenPBRShaderId(const std::string& id) { return id == "ND_open_pbr_surface_surfaceshader" || id == "open_pbr_surface" || id == "OpenPBRSurface" || id == "MtlxOpenPBRSurface"; }
 bool IsSurfaceUnlitShaderId(const std::string& id) { return id == "ND_surface_unlit_surfaceshader" || id == "surface_unlit" || id == "SurfaceUnlit" || id == "MtlxSurfaceUnlit"; }
+bool IsPxrDisneyShaderId(const std::string& id) { return id == "PxrDisneyBsdf" || id == "PxrDisney"; }
 
 bool ReadStringLikeProperty(const UsdPrim& prim, const char* name,
                             std::string* out) {
@@ -688,6 +689,21 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         out->shader_type = RenderMaterial::ShaderType::OpenPBR;
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
+        out->openpbr->nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, child);
+        if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        found_shader = true;
+      } else if (IsPxrDisneyShaderId(shader_id)) {
+        // RenderMan layers that expose only `outputs:ri:surface` would other-
+        // wise degrade to the default material. Map the Disney lobes that have
+        // an OpenPBR preview counterpart; the conversion is documented as an
+        // approximation, not a RenderMan-compatible evaluation.
+        out->shader_type = RenderMaterial::ShaderType::OpenPBR;
+        out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
+        ExtractPxrDisneyAsOpenPBR(stage, child, out->openpbr.get(), scene);
         out->openpbr->nodegraph_json =
             BuildNextMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||

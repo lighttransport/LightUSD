@@ -3300,6 +3300,100 @@ def Xform "Scene"
   std::cout << "  Forwarded texture asset anchoring: PASSED\n";
 }
 
+void TestPxrDisneyRiSurfaceMaterial() {
+  std::cout << "Testing PxrDisney ri:surface material mapping...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "DisneyOnly"
+    {
+        token outputs:ri:surface.connect = </World/DisneyOnly/PxrDisney.outputs:bxdf_out>
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metallic = 0.35
+            float inputs:roughness = 0.45
+            float inputs:ior = 1.7
+            float inputs:clearcoat = 0.25
+            float inputs:clearcoatGloss = 0.8
+            float inputs:opacity = 0.9
+            token outputs:bxdf_out
+        }
+    }
+
+    def Material "Both"
+    {
+        token outputs:surface.connect = </World/Both/Preview.outputs:surface>
+        token outputs:ri:surface.connect = </World/Both/PxrDisney.outputs:bxdf_out>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.3)
+            token outputs:surface
+        }
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.9, 0.8, 0.7)
+            token outputs:bxdf_out
+        }
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse material USDA: "
+              << load_result.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+
+  // A material that only exposes the RenderMan terminal is mapped onto the
+  // OpenPBR preview instead of degrading to the default material.
+  auto disney_it = result.scene.material_by_path.find("/World/DisneyOnly");
+  assert(disney_it != result.scene.material_by_path.end());
+  const RenderMaterial& disney =
+      result.scene.materials[static_cast<size_t>(disney_it->second)];
+  assert(disney.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(disney.openpbr);
+  assert(std::fabs(disney.openpbr->base_color.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.y - 0.4f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.z - 0.6f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_metalness.value.x - 0.35f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_roughness.value.x - 0.45f) <
+         1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_ior.value.x - 1.7f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->coat_weight.value.x - 0.25f) < 1.0e-6f);
+  // clearcoatGloss 0.8 (sharp) becomes coat roughness 0.2.
+  assert(std::fabs(disney.openpbr->coat_roughness.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->opacity.value.x - 0.9f) < 1.0e-6f);
+  assert(disney.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  // The universal surface terminal still wins when both render contexts are
+  // authored (the Island material shape), so previews do not change.
+  auto both_it = result.scene.material_by_path.find("/World/Both");
+  assert(both_it != result.scene.material_by_path.end());
+  const RenderMaterial& both =
+      result.scene.materials[static_cast<size_t>(both_it->second)];
+  assert(both.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(both.preview_surface);
+  assert(std::fabs(both.preview_surface->diffuse_color.value.x - 0.1f) <
+         1.0e-6f);
+
+  std::cout << "  PxrDisney ri:surface mapping: PASSED\n";
+}
+
 void TestAudit2026_07() {
   std::cout << "TestAudit2026_07..." << std::endl;
 
@@ -8920,6 +9014,7 @@ int main() {
   TestMaterialXUtilities();
   TestExternalMaterialXImageGraph();
   TestForwardedTextureAssetAnchor();
+  TestPxrDisneyRiSurfaceMaterial();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();

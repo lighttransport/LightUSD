@@ -3431,10 +3431,14 @@ covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
 `bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
 `bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
-The next-tydra converter also carries a unit check that a texture asset
+The next-tydra converter also carries unit checks that (a) a texture asset
 forwarded through a referenced material interface (`inputs:file.connect =
 </Mat.inputs:surfaceMap>`) resolves against the layer that authors the value,
-not the referenced look layer (`TestForwardedTextureAssetAnchor`).
+not the referenced look layer (`TestForwardedTextureAssetAnchor`), and (b) a
+material exposing only the RenderMan `outputs:ri:surface` terminal maps its
+PxrDisney inputs onto the OpenPBR preview while a universal `outputs:surface`
+terminal still wins when both exist (`TestPxrDisneyRiSurfaceMaterial`, see
+[the mapping](validation/island-pxrdisney-2026-11-04.md)).
 
 `lusdview-cpu-uv-transform` covers the packed per-slot UV transform and UV-set
 selector for the lanes the CPU samples (base colour, normal map including its
