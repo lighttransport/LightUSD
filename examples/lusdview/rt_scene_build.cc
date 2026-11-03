@@ -152,7 +152,7 @@ void AppendMove(std::vector<T>& dst, std::vector<T>& src) {
 // Per-mesh build result (leaf-order geometry + a LOCAL-ref BLAS + placements).
 struct MeshBuild {
   bool valid = false;
-  std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  std::vector<float> tris, nrms, cols, uv, uv1, infl, domw, tan, bin;
   std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo, emask;
   std::vector<int> mat, backMat, face, domj;
@@ -173,6 +173,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
   const bool hasVtxAlpha = m.vertexAlpha.size() == m.vertices.size();
   const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
+  const bool hasTangents = m.tangents.size() == m.vertices.size() * 3;
+  const bool hasBinormals = m.binormals.size() == m.vertices.size() * 3;
   const bool hasInfl = m.morphInfluence.size() == m.vertices.size();
   const bool hasSkin = m.jointIdx.size() == m.vertices.size() * 4 &&
                        m.jointWt.size() == m.vertices.size() * 4;
@@ -221,7 +223,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       wireSet.insert(edgeKey(m.wireframeIndices[e], m.wireframeIndices[e + 1]));
   }
 
-  std::vector<float> lt, ln, lc, luv, luv1, linfl, ldomw;
+  std::vector<float> lt, ln, lc, luv, luv1, ltan, lbin, linfl, ldomw;
   std::vector<uint8_t> lg, le;
   std::vector<int> lm, lmb, lf, ldomj;
   bool anyBackMaterial = false;
@@ -250,7 +252,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   const bool worldNormalInvertible = !worldIsIdentity &&
       (Mat4ToO2W(W, worldO2W), Affine3x4Inverse(worldO2W, worldW2O));
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
-    float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
+    float wp[9], wn[9], wc[12], wuv[6], wuv1[6], wtan[9], wbin[9];
+    float winfl[3], wdomw[3];
     int domJoint = -1;
     for (int k = 0; k < 3; ++k) {
       const uint32_t vidx = m.indices[t + k];
@@ -282,6 +285,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       wuv[k * 2 + 0] = vtx.u; wuv[k * 2 + 1] = vtx.v;
       wuv1[k * 2 + 0] = hasUV1 ? m.uv1[vidx * 2 + 0] : 0.0f;
       wuv1[k * 2 + 1] = hasUV1 ? m.uv1[vidx * 2 + 1] : 0.0f;
+      for (int c = 0; c < 3; ++c) {
+        wtan[k * 3 + c] = hasTangents ? m.tangents[vidx * 3 + c] : 0.0f;
+        wbin[k * 3 + c] = hasBinormals ? m.binormals[vidx * 3 + c] : 0.0f;
+      }
       winfl[k] = hasInfl ? m.morphInfluence[vidx] : 0.0f;
       int dj = -1; float dw = 0.0f;
       if (hasSkin)
@@ -340,6 +347,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     lc.insert(lc.end(), wc, wc + 12);
     luv.insert(luv.end(), wuv, wuv + 6);
     luv1.insert(luv1.end(), wuv1, wuv1 + 6);
+    ltan.insert(ltan.end(), wtan, wtan + 9);
+    lbin.insert(lbin.end(), wbin, wbin + 9);
     linfl.insert(linfl.end(), winfl, winfl + 3);
     ldomw.insert(ldomw.end(), wdomw, wdomw + 3);
     ldomj.push_back(domJoint);
@@ -409,6 +418,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   // Emit per-tri arrays in BVH leaf order (so the local blas leaf refs are valid).
   mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 12);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
+  mb.tan.reserve(ltc * 9); mb.bin.reserve(ltc * 9);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
   if (anyBackMaterial) mb.backMat.reserve(ltc);
   mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
@@ -419,6 +429,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.cols.insert(mb.cols.end(), &lc[s * 12], &lc[s * 12] + 12);
     mb.uv.insert(mb.uv.end(), &luv[s * 6], &luv[s * 6] + 6);
     mb.uv1.insert(mb.uv1.end(), &luv1[s * 6], &luv1[s * 6] + 6);
+    mb.tan.insert(mb.tan.end(), &ltan[s * 9], &ltan[s * 9] + 9);
+    mb.bin.insert(mb.bin.end(), &lbin[s * 9], &lbin[s * 9] + 9);
     mb.infl.insert(mb.infl.end(), &linfl[s * 3], &linfl[s * 3] + 3);
     mb.domw.insert(mb.domw.end(), &ldomw[s * 3], &ldomw[s * 3] + 3);
     mb.geo.push_back(lg[s]);
@@ -1793,6 +1805,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     const int blasRoot = static_cast<int>(nodeOff);
     AppendMove(out->tris, mb.tris);
     AppendMove(out->nrms, mb.nrms);
+    AppendMove(out->tan, mb.tan);
+    AppendMove(out->bin, mb.bin);
     AppendMove(out->cols, mb.cols);
     AppendMove(out->uv, mb.uv);
     AppendMove(out->uv1, mb.uv1);

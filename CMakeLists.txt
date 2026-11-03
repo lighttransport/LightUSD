@@ -4153,6 +4153,18 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # CPU authored tangent basis: a rotated primvars:tangents must shade the
+    # same tangent-space normal like the equivalent geometry normal.
+    add_test(
+      NAME lusdview-cpu-authored-tangent
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-authored-tangent.sh"
+      )
+    set_tests_properties(lusdview-cpu-authored-tangent PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     # CPU OpenPBR coat-normal lane: a tilted coat map must shade exactly like
     # the same world normal authored as geometry normals and must not change
     # the image at coat weight 0; a flat map is neutral.

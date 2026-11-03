@@ -513,6 +513,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
 | `lusdview-cpu-material-lanes` | CPU metallic/roughness/emissive/specular/coat/occlusion lanes match constant equivalents | `xvfb-run` when headless |
 | `lusdview-cpu-coat-normal` | CPU OpenPBR coat normal uses its own map/frame and affects only the coat lobe | `xvfb-run` when headless |
+| `lusdview-cpu-authored-tangent` | CPU normal-map shading uses `primvars:tangents` and its handedness | `xvfb-run` when headless |
 | `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
 | `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
 | `lusdview-cpu-ptex-element` | Real quad-topology element pixels match the independent OpenPtex decoder; no fallback | Island corpus, OpenPtex build, `xvfb-run` |
@@ -3462,6 +3463,12 @@ OpenPtex 2.4.3 raw texels byte-for-byte (fixtures and provenance in
 `tests/usdc/ptex-mip/`), checks mip selection and a byte-bounded eviction, and
 `lusdview-cpu-ptex-routing` requires a minified quad to report non-base mip
 samples under `LIGHTUSD_CPU_PTEX_STATS=1`.
+
+`lusdview-cpu-authored-tangent` authors a tangent basis rotated 90 degrees from
+the triangle-derived frame and requires the same tangent-space normal to shade
+like its equivalent geometry normal, while the derived-frame render differs;
+a flat map stays neutral. `lusdview_shading_normal_test` covers authored-frame
+projection, flipped handedness and rejection of a degenerate tangent.
 
 `lusdview-cpu-coat-normal` isolates the OpenPBR coat lobe (black base and
 specular weight zero) and renders a plane with a coat normal map. A flat coat

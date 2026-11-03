@@ -213,6 +213,25 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
                          hs_.uv1.begin() + static_cast<ptrdiff_t>(src * 6 + 6));
         else
           cpuUv1_.insert(cpuUv1_.end(), 6, 0.0f);
+        // Authored tangent frame (xyz per corner), transformed like normals.
+        if (src * 9 + 9 <= hs_.tan.size()) {
+          for (int v = 0; v < 3; ++v) {
+            float t[3];
+            TransformNormal(inst.w2o, &hs_.tan[src * 9 + v * 3], t);
+            cpuTan_.insert(cpuTan_.end(), t, t + 3);
+          }
+        } else {
+          cpuTan_.insert(cpuTan_.end(), 9, 0.0f);
+        }
+        if (src * 9 + 9 <= hs_.bin.size()) {
+          for (int v = 0; v < 3; ++v) {
+            float t[3];
+            TransformNormal(inst.w2o, &hs_.bin[src * 9 + v * 3], t);
+            cpuBin_.insert(cpuBin_.end(), t, t + 3);
+          }
+        } else {
+          cpuBin_.insert(cpuBin_.end(), 9, 0.0f);
+        }
         cpuMat_.push_back(src < hs_.mat.size() ? hs_.mat[src] : -1);
         cpuInstance_.push_back(static_cast<int>(instanceIndex));
         cpuSourceTri_.push_back(static_cast<int>(src));
@@ -2162,6 +2181,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // material normal map. Only pay for it when either could be used.
           ShadingTangentFrame shading_frame;
           bool have_shading_frame = false;
+          bool authored_tangent_frame = false;
           if (matId >= 0 &&
               static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
             const size_t graph_base =
@@ -2173,13 +2193,28 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                     hs_.matTex.size() &&
                 hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3] >= 0;
             if (has_graph || has_normal_tex) {
-              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
-              const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
-              const float uv0[2] = {tuv[0], tuv[1]};
-              const float uv1[2] = {tuv[2], tuv[3]};
-              const float uv2[2] = {tuv[4], tuv[5]};
-              BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
-                                       &shading_frame);
+              // Authored primvars:tangents take precedence when present; the
+              // triangle-derived frame remains the fallback (and the shader's
+              // behavior for meshes without authored tangents).
+              if (static_cast<size_t>(tri) * 9 + 8 < cpuTan_.size() &&
+                  static_cast<size_t>(tri) * 9 + 8 < cpuBin_.size()) {
+                float at[3], ab[3];
+                Interp9(&cpuTan_[static_cast<size_t>(tri) * 9], hit.u, hit.v,
+                        at);
+                Interp9(&cpuBin_[static_cast<size_t>(tri) * 9], hit.u, hit.v,
+                        ab);
+                authored_tangent_frame =
+                    BuildAuthoredShadingFrame(at, ab, nrm, &shading_frame);
+              }
+              if (!authored_tangent_frame) {
+                const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+                const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
+                const float uv0[2] = {tuv[0], tuv[1]};
+                const float uv1[2] = {tuv[2], tuv[3]};
+                const float uv2[2] = {tuv[4], tuv[5]};
+                BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
+                                         &shading_frame);
+              }
               have_shading_frame = true;
             }
           }
@@ -2342,10 +2377,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 frame_uv[c * 2] = corner[0];
                 frame_uv[c * 2 + 1] = corner[1];
               }
-              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
-              BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
-                                       frame_uv + 2, frame_uv + 4, nrm,
-                                       &normal_frame);
+              if (!authored_tangent_frame) {
+                const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+                BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
+                                         frame_uv + 2, frame_uv + 4, nrm,
+                                         &normal_frame);
+              }
             }
             if (have_normal) {
               float world[3];

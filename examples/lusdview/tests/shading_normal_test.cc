@@ -174,6 +174,44 @@ int main() {
     Check(NearVec(out, 0, 0.8f, -0.6f), "renormalization keeps the direction");
   }
 
+  // 5. Authored tangent basis: projection, handedness and degenerate fallback.
+  {
+    const float n[3] = {0, 1, 0};
+    ShadingTangentFrame f;
+    const float t[3] = {0, 0, 1};
+    const float b[3] = {1, 0, 0};
+    Check(BuildAuthoredShadingFrame(t, b, n, &f),
+          "authored frame accepted");
+    Check(NearVec(f.tangent, 0, 0, 1), "authored tangent kept");
+    Check(NearVec(f.bitangent, 1, 0, 0), "authored bitangent kept");
+    Check(NearVec(f.normal, 0, 1, 0), "authored normal is the surface normal");
+
+    float out[3];
+    const float tilt[3] = {0.6f, 0, 0.8f};
+    ApplyShadingTangentNormal(f, tilt, out);
+    Check(NearVec(out, 0, 0.8f, 0.6f),
+          "authored tilt maps through the +Z/+X/+Y frame");
+
+    const float neg[3] = {-1, 0, 0};
+    Check(BuildAuthoredShadingFrame(t, neg, n, &f),
+          "authored frame with flipped handedness");
+    Check(NearVec(f.bitangent, -1, 0, 0),
+          "flipped authored bitangent is preserved");
+
+    const float sheared[3] = {0.4f, 0.9f, 0.8f};
+    Check(BuildAuthoredShadingFrame(sheared, b, n, &f),
+          "authored tangent with a normal component");
+    Check(Unit(f.tangent) &&
+              Near(f.tangent[0] * f.normal[0] + f.tangent[1] * f.normal[1] +
+                       f.tangent[2] * f.normal[2],
+                   0.0f),
+          "authored tangent is projected onto the normal plane");
+
+    const float parallel[3] = {0, 1, 0};
+    Check(!BuildAuthoredShadingFrame(parallel, b, n, &f),
+          "degenerate authored tangent is rejected");
+  }
+
   if (failures) {
     std::fprintf(stderr, "shading normal: %d failure(s)\n", failures);
     return 1;

@@ -8916,6 +8916,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // up with an EMPTY uv1 -- and every texture routed to the second UV set then
     // samples a constant instead of the crop it asked for.
     bool anyUv1 = false;
+    // Authored tangent basis (parallel arrays, like uv1). A batch gains them
+    // the first time a mesh with primvars:tangents joins; earlier vertices get
+    // zeros so the CPU/GPU can fall back to the derived frame per triangle.
+    bool anyTangent = false;
+    bool anyBinormal = false;
     // A batch gains skin attributes the first time a SKINNED mesh joins it; the
     // vertices already in it (and every unskinned mesh that joins later) get
     // zero weights, which the vertex shader passes through unskinned. Joint
@@ -10662,14 +10667,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
         b.anyUv1 = true;
       }
+      if (!loc.tangents.empty() && !b.anyTangent) {
+        b.dm.tangents.assign(b.dm.vertices.size() * 3, 0.0f);
+        b.anyTangent = true;
+      }
+      if (!loc.binormals.empty() && !b.anyBinormal) {
+        b.dm.binormals.assign(b.dm.vertices.size() * 3, 0.0f);
+        b.anyBinormal = true;
+      }
       openSkin(b);
       openMorph(b);
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
       // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
       const bool plainBatch = !b.anySkin && !b.anyMorph && !b.anyColor &&
-                               !b.anyAlpha && !b.anyUv1 && !hasSkin &&
-                               !hasMorph && !hasC && !hasAlpha && !hasUv1 &&
+                               !b.anyAlpha && !b.anyUv1 && !b.anyTangent &&
+                               !b.anyBinormal && !hasSkin && !hasMorph &&
+                               !hasC && !hasAlpha && !hasUv1 &&
+                               loc.tangents.empty() && loc.binormals.empty() &&
                                b.dm.geomProps.empty();
       if (plainBatch) {
         const size_t required = b.dm.vertices.size() + loc.vertices.size();
@@ -10699,6 +10714,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (b.anyColor) reserveVerts(b.dm.vertexColors, vb, n, 3, kBatchVtxCap * 3);
         if (b.anyAlpha) reserveVerts(b.dm.vertexAlpha, vb, n, 1, kBatchVtxCap);
         if (b.anyUv1) reserveVerts(b.dm.uv1, vb, n, 2, kBatchVtxCap * 2);
+        if (b.anyTangent) reserveVerts(b.dm.tangents, vb, n, 3, kBatchVtxCap * 3);
+        if (b.anyBinormal)
+          reserveVerts(b.dm.binormals, vb, n, 3, kBatchVtxCap * 3);
         reserveVerts(b.dm.indices, vb, n, 4, kBatchVtxCap * 4);
         b.dm.vertices.resize(vb + n);
         std::memcpy(b.dm.vertices.data() + vb, loc.vertices.data(),
@@ -10740,6 +10758,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             std::fill(
                 b.dm.vertexColors.begin() + static_cast<ptrdiff_t>(vb * 3),
                 b.dm.vertexColors.end(), 1.0f);
+          }
+        }
+        if (b.anyTangent) {
+          b.dm.tangents.resize((vb + n) * 3);
+          if (loc.tangents.size() == n * 3) {
+            std::memcpy(b.dm.tangents.data() + vb * 3, loc.tangents.data(),
+                        n * 3 * sizeof(float));
+          } else {
+            std::fill(b.dm.tangents.begin() + static_cast<ptrdiff_t>(vb * 3),
+                      b.dm.tangents.end(), 0.0f);
+          }
+        }
+        if (b.anyBinormal) {
+          b.dm.binormals.resize((vb + n) * 3);
+          if (loc.binormals.size() == n * 3) {
+            std::memcpy(b.dm.binormals.data() + vb * 3, loc.binormals.data(),
+                        n * 3 * sizeof(float));
+          } else {
+            std::fill(b.dm.binormals.begin() + static_cast<ptrdiff_t>(vb * 3),
+                      b.dm.binormals.end(), 0.0f);
           }
         }
         if (b.anyAlpha) {
@@ -10920,6 +10958,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
           b.anyUv1 = true;
         }
+        if (!loc.tangents.empty() && !b.anyTangent) {
+          b.dm.tangents.assign(b.dm.vertices.size() * 3, 0.0f);
+          b.anyTangent = true;
+        }
+        if (!loc.binormals.empty() && !b.anyBinormal) {
+          b.dm.binormals.assign(b.dm.vertices.size() * 3, 0.0f);
+          b.anyBinormal = true;
+        }
         if (hasGeomProps && b.dm.geomProps.empty()) {
           b.dm.geomProps = loc.geomProps;
           for (DrawGeomPropCPU& prop : b.dm.geomProps) prop.values.clear();
@@ -10946,6 +10992,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           if (b.anyUv1)
             reserveVerts(b.dm.uv1, vb, loc.vertices.size(), 2,
                          kBatchVtxCap * 2);
+          if (b.anyTangent)
+            reserveVerts(b.dm.tangents, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
+          if (b.anyBinormal)
+            reserveVerts(b.dm.binormals, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
         }
         const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
         std::vector<int> remap(loc.vertices.size(), -1);
@@ -10971,6 +11023,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             if (b.anyUv1) {
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
+            }
+            if (b.anyTangent) {
+              const bool have = loc.tangents.size() == loc.vertices.size() * 3;
+              for (int c = 0; c < 3; ++c)
+                b.dm.tangents.push_back(have ? loc.tangents[3 * vi + c] : 0.0f);
+            }
+            if (b.anyBinormal) {
+              const bool have =
+                  loc.binormals.size() == loc.vertices.size() * 3;
+              for (int c = 0; c < 3; ++c)
+                b.dm.binormals.push_back(have ? loc.binormals[3 * vi + c]
+                                              : 0.0f);
             }
             for (size_t pi = 0; pi < b.dm.geomProps.size(); ++pi) {
               const DrawGeomPropCPU& source = loc.geomProps[pi];

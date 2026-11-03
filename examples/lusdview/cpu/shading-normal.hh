@@ -37,6 +37,41 @@ inline void ShadingCross(const float a[3], const float b[3], float out[3]) {
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
+// Build an orthonormal shading frame from an authored tangent basis. The
+// tangent is projected onto the geometric normal's plane; the bitangent keeps
+// the authored handedness (its sign relative to N x T) so mirrored tangent
+// spaces stay mirrored. Returns false when the authored tangent is degenerate
+// (parallel to N or zero), in which case the caller derives the frame from the
+// triangle UVs.
+inline bool BuildAuthoredShadingFrame(const float tangent[3],
+                                      const float bitangent[3],
+                                      const float geometric_normal[3],
+                                      ShadingTangentFrame* frame) {
+  if (!frame) return false;
+  float n[3] = {geometric_normal[0], geometric_normal[1], geometric_normal[2]};
+  ShadingNormalize(n);
+  if (n[0] == 0.0f && n[1] == 0.0f && n[2] == 0.0f) return false;
+  float t[3] = {tangent[0], tangent[1], tangent[2]};
+  const float tn = t[0] * n[0] + t[1] * n[1] + t[2] * n[2];
+  for (int c = 0; c < 3; ++c) t[c] -= tn * n[c];
+  ShadingNormalize(t);
+  if (t[0] == 0.0f && t[1] == 0.0f && t[2] == 0.0f) return false;
+  float b[3];
+  ShadingCross(n, t, b);
+  ShadingNormalize(b);
+  const float authored =
+      b[0] * bitangent[0] + b[1] * bitangent[1] + b[2] * bitangent[2];
+  if (authored < 0.0f) {
+    b[0] = -b[0]; b[1] = -b[1]; b[2] = -b[2];
+  }
+  for (int c = 0; c < 3; ++c) {
+    frame->tangent[c] = t[c];
+    frame->bitangent[c] = b[c];
+    frame->normal[c] = n[c];
+  }
+  return true;
+}
+
 // Build an orthonormal shading frame from one triangle. `geometric_normal` is
 // used when the UV parametrization is degenerate (zero determinant), matching
 // the Vulkan RT shader's fallback tangent. `n` always equals the normalized

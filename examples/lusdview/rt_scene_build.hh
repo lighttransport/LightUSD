@@ -179,6 +179,9 @@ struct HostScene {
   size_t pointCount{0};
   // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  // Optional authored tangent frame (3 floats/triangle corner), world space.
+  // Empty when the mesh has no authored primvars:tangents.
+  std::vector<float> tan, bin;
   std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo;
   // Per-triangle wireframe edge mask (bit0: edge v1v2, bit1: edge v2v0, bit2: edge
