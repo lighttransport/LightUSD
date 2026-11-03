@@ -3390,7 +3390,9 @@ rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance tes
 (`next_test_aousd_conformance`) separately requires a caller-owned
 `ValueClipStageCache` to keep reusing stages across queries (`clip_load_count ==
 1`), which is why file-stamp revalidation is an opt-in cache property rather than
-unconditional.
+unconditional. `TestConcurrentValueClipCache` runs eight threads against one
+shared cache and `AttributeEval`: all threads must resolve the same value, and a
+warmed cache must not load the clip again.
 The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
 strength against direct child reference/payload/inherit arcs and a weaker
 referenced ancestor, in serial/parallel and expanded/native-instance modes.

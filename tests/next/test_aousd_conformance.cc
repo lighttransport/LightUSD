@@ -14,6 +14,7 @@
 #include "next/writer/usdc-writer.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -22,6 +23,9 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
 #include "next/schema/schema-registry.hh"
 
 using namespace lightusd::next;
@@ -3313,6 +3317,72 @@ void TestCrateVersionMatrix() {
   }
 }
 
+// One shared caller-owned cache, many threads: clip stages must be loaded at
+// most once per asset after the first wave, every thread must resolve the same
+// sampled value, and the nested-resolution stack must be per-thread. The
+// caller-owned cache keeps its "caller owns freshness" contract, so a warm
+// entry is reused instead of re-parsed per query.
+void TestConcurrentValueClipCache() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  LoadResult root_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clips = { dictionary default = {\n"
+      "    double2[] active = [(0, 0)]\n"
+      "    asset[] assetPaths = [@clip.usda@]\n"
+      "    string primPath = \"/Root\"\n"
+      "    double2[] times = [(0, 0), (1, 1)]\n"
+      "  } }\n"
+      ") { float x }\n");
+  assert(root_result.success);
+  AttributeEval eval(&root_result.stage);
+  EvalOptions options;
+  options.time = 0.5;
+  options.strict_aousd_conformance = true;
+  options.clip_stage_cache = std::make_shared<ValueClipStageCache>();
+  std::atomic<int> load_count{0};
+  options.clip_stage_loader =
+      [&load_count](const std::string& asset, Stage* out, std::string*,
+                    std::string*) {
+        load_count.fetch_add(1);
+        if (asset != "clip.usda" || !out) return false;
+        LoadResult clip = Parse(
+            "def Xform \"Root\" {\n"
+            "  float x.timeSamples = { 0: 2, 1: 4 }\n"
+            "}\n");
+        if (!clip.success) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  const UsdPrim root = root_result.stage.GetPrimAtPath("/Root");
+  std::atomic<int> failures{0};
+  const int kThreads = 8;
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    threads.emplace_back([&]() {
+      for (int j = 0; j < 32; ++j) {
+        EvalResult r = eval.EvalWith(root, "x", options);
+        if (!r.success || !r.value.as_float() ||
+            std::fabs(*r.value.as_float() - 3.0f) > 1e-6f) {
+          failures.fetch_add(1);
+        }
+      }
+    });
+  }
+  for (std::thread& t : threads) t.join();
+  assert(failures.load() == 0 && "concurrent clip resolve disagreed");
+  // Threads may race the very first load, but the warmed cache must reuse the
+  // winning entry instead of parsing the clip again.
+  const int warmed = load_count.load();
+  assert(warmed >= 1);
+  EvalResult after = eval.EvalWith(root, "x", options);
+  assert(after.success && after.value.as_float() &&
+         std::fabs(*after.value.as_float() - 3.0f) < 1e-6f);
+  assert(load_count.load() == warmed &&
+         "warmed shared cache reloaded a clip stage");
+#endif
+}
+
 int main() {
   TestUnicodeAndPaths();
   TestPathGrammarProductions();
@@ -3336,6 +3406,7 @@ int main() {
   TestStageQueryAncestry();
   TestInterpolationMatrix();
   TestSchemaFallbackAndValueClips();
+  TestConcurrentValueClipCache();
   TestSchemaRegistryBreadth();
   TestRelationshipVariabilityFidelity();
   TestLayerOwnerFidelity();
