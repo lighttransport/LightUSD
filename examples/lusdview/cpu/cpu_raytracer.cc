@@ -30,6 +30,36 @@ inline float FresnelDielectric(float cosThetaI, float etaI, float etaT) {
                    std::max(etaT * ci + etaI * ct, 1.0e-6f);
   return 0.5f * (rs * rs + rp * rp);
 }
+
+// Packed per-material texture parameters (`PackRtMaterialTextureParams`):
+// slots 0-5 carry six floats of UV transform each (m00, m01, tx, m10, m11, ty),
+// and float 69 bit-packs which slot samples the second UV set.
+const float* CpuTextureParams(const HostScene& scene, int material_id) {
+  if (material_id < 0) return nullptr;
+  const size_t base =
+      static_cast<size_t>(material_id) * kRtMaterialTextureParamFloats;
+  if (base + kRtMaterialTextureParamFloats > scene.matTexParam.size()) {
+    return nullptr;
+  }
+  return &scene.matTexParam[base];
+}
+
+bool CpuSlotUsesSecondUvSet(const float* params, int slot) {
+  if (!params) return false;
+  return (static_cast<int>(params[69] + 0.5f) & (1 << slot)) != 0;
+}
+
+void CpuXformSlotUv(const float* params, int slot, float u, float v,
+                    float* out) {
+  if (!params) {
+    out[0] = u;
+    out[1] = v;
+    return;
+  }
+  const float* p = params + slot * 6;
+  out[0] = p[0] * u + p[1] * v + p[2];
+  out[1] = p[3] * u + p[4] * v + p[5];
+}
 }
 
 CpuRayTracer::~CpuRayTracer() { freeScene(); }
@@ -1307,22 +1337,27 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       opacityTex = hs_.matTex[static_cast<size_t>(mid) *
                               kRtMaterialTexSlots + 5];
       if (opacityTex >= 0) {
+        const float* param = CpuTextureParams(hs_, mid);
+        const bool uv_set1 = CpuSlotUsesSecondUvSet(param, 5) &&
+                             static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+        const float* src_uv = uv_set1
+            ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+            : &cpuUv_[static_cast<size_t>(tri) * 6];
         float uv[2];
-        Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], bu, bv, uv);
+        Interp6(src_uv, bu, bv, uv);
+        float slot_uv[2];
+        CpuXformSlotUv(param, 5, uv[0], uv[1], slot_uv);
         int channel = 0;
         float scale = 1.0f;
         float bias = 0.0f;
-        const size_t paramBase = static_cast<size_t>(mid) *
-                                 kRtMaterialTextureParamFloats;
-        if (paramBase + 68 < hs_.matTexParam.size()) {
-          const float* param = &hs_.matTexParam[paramBase];
+        if (param) {
           channel = static_cast<int>(param[66] + 0.5f);
           scale = param[67];
           bias = param[68];
         }
         alpha *= SampleTextureBilinearChannel(
-            hs_.textures, hs_.texels, opacityTex, uv[0], uv[1], channel) *
-                      scale + bias;
+            hs_.textures, hs_.texels, opacityTex, slot_uv[0], slot_uv[1],
+            channel) * scale + bias;
       }
     }
     alpha = std::clamp(alpha, 0.0f, 1.0f);
@@ -1885,10 +1920,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               static_cast<size_t>(matId) * kRtMaterialTexSlots < hs_.matTex.size()) {
             const int baseTex = hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 0];
             if (baseTex >= 0 && tri * 6 + 5 < cpuUv_.size()) {
+              const float* tex_params = CpuTextureParams(hs_, matId);
+              const bool uv_set1 =
+                  CpuSlotUsesSecondUvSet(tex_params, 0) &&
+                  static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
               float uv[2];
-              Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv);
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformSlotUv(tex_params, 0, uv[0], uv[1], slot_uv);
               float texCol[3];
-              SampleTextureBilinear(hs_.textures, hs_.texels, baseTex, uv[0], uv[1], texCol);
+              SampleTextureBilinear(hs_.textures, hs_.texels, baseTex,
+                                    slot_uv[0], slot_uv[1], texCol);
               base[0] *= texCol[0]; base[1] *= texCol[1]; base[2] *= texCol[2];
             }
           }
@@ -1936,12 +1981,14 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // Perturb the shading normal from the material's normal map. The
           // Vulkan RT shader already rebuilds a tangent frame from the
           // triangle's UVs; the CPU preview used to shade with the geometric
-          // normal, which silently ignored normal maps.
+          // normal, which silently ignored normal maps. The frame is rebuilt
+          // from the lane's own UV set/transform when the map is sampled.
           if (have_shading_frame) {
             float tangent_normal[3] = {0.0f, 0.0f, 1.0f};
             float map_uv[2];
             Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, map_uv);
             bool have_normal = false;
+            ShadingTangentFrame normal_frame = shading_frame;
             const size_t graph_base =
                 static_cast<size_t>(matId) * kRtMaterialGraphFloats;
             const float graphPosition[3] = {hitP[0], hitP[1], hitP[2]};
@@ -1963,22 +2010,47 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               tangent_normal[2] = gn[2] * 2.0f - 1.0f;
               have_normal = true;
             } else if (static_cast<size_t>(matId) * kRtMaterialTexSlots + 3 <
-                       hs_.matTex.size()) {
+                           hs_.matTex.size() &&
+                       hs_.matTex[static_cast<size_t>(matId) *
+                                      kRtMaterialTexSlots + 3] >= 0) {
               const int normal_tex =
                   hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3];
-              if (normal_tex >= 0) {
-                float rgb[3];
-                SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
-                                      map_uv[0], map_uv[1], rgb);
-                tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
-                tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
-                tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
-                have_normal = true;
+              const float* tex_params = CpuTextureParams(hs_, matId);
+              const bool uv_set1 =
+                  CpuSlotUsesSecondUvSet(tex_params, 3) &&
+                  static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
+              float uv[2];
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformSlotUv(tex_params, 3, uv[0], uv[1], slot_uv);
+              float rgb[3];
+              SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
+                                    slot_uv[0], slot_uv[1], rgb);
+              tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
+              tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
+              tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
+              have_normal = true;
+              // The frame must use the same UV set and transformed
+              // coordinates as the normal sample, matching the shaders.
+              float frame_uv[6];
+              for (int c = 0; c < 3; ++c) {
+                float corner[2];
+                CpuXformSlotUv(tex_params, 3, src_uv[c * 2],
+                               src_uv[c * 2 + 1], corner);
+                frame_uv[c * 2] = corner[0];
+                frame_uv[c * 2 + 1] = corner[1];
               }
+              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+              BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
+                                       frame_uv + 2, frame_uv + 4, nrm,
+                                       &normal_frame);
             }
             if (have_normal) {
               float world[3];
-              ApplyShadingTangentNormal(shading_frame, tangent_normal, world);
+              ApplyShadingTangentNormal(normal_frame, tangent_normal, world);
               nrm[0] = world[0];
               nrm[1] = world[1];
               nrm[2] = world[2];

@@ -4140,6 +4140,19 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # Per-slot texture UV transforms and UV-set routing on the CPU path. A
+    # transformed slot must shade exactly like the same texture sampled with
+    # pre-transformed `st`, including the normal-map tangent frame.
+    add_test(
+      NAME lusdview-cpu-uv-transform
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-uv-transform.sh"
+      )
+    set_tests_properties(lusdview-cpu-uv-transform PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     add_test(
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env

@@ -510,6 +510,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview_shading_normal_test` | Analytic tangent-frame / normal-map transform | No GPU |
 | `lusdview-cpu-normal-map` | CPU normal map shades like the equivalent geometric normal | `xvfb-run` when headless |
 | `lusdview-cpu-graph-tangent` | MaterialX tangent/bitangent nodes use the hit triangle frame | `xvfb-run` when headless |
+| `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
@@ -3420,7 +3421,12 @@ covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
 `bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
 `bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
-None of these replaces calibrated beauty illumination or SDK material parity.
+`lusdview-cpu-uv-transform` covers the packed per-slot UV transform and UV-set
+selector for the lanes the CPU samples (base colour, normal map including its
+tangent frame, opacity): each must shade byte-identically to the same texture
+sampled with pre-transformed `st`, with a no-normal control proving the normal
+rows are not vacuous. None of these replaces calibrated beauty illumination or
+SDK material parity.
 
 The emissive diagnostic opacity regression now covers PreviewSurface
 `transparent` (full emission), `presence` (attenuated emission), and masked
