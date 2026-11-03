@@ -86,7 +86,16 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   if (!anchor.empty() && ::lightusd::next::AssetResolver::IsPackagePath(anchor)) {
     return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
   }
-  if (base.empty()) return file;
+  if (base.empty()) {
+    // No anchor and no configured base directory: a resolver may still find
+    // the asset through its search paths.
+    if (config_.asset_resolver) {
+      bool exists = false;
+      const std::string candidate = resolve_against(std::string(), &exists);
+      if (exists) return candidate;
+    }
+    return file;
+  }
   return resolve_against(base, nullptr);
 }
 
