@@ -30,6 +30,10 @@ struct PickResult {
 PickResult PickScene(const lmv_scene* scene, const float origin[3],
                      const float dir[3]);
 
+// Describes `draw` as if it had been picked, without a hit point (the outliner
+// uses this). hit is false for an invalid draw.
+PickResult DescribeDraw(const lmv_scene* scene, int draw);
+
 // World-space corners of `draw`'s bounding box at the scene's current pose
 // (corner index bits: 1 = +x, 2 = +y, 4 = +z). False if the draw is invalid.
 bool DrawWorldBox(const lmv_scene* scene, int draw, float corners[8][3]);

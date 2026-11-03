@@ -87,6 +87,53 @@ const char* ShaderName(uint32_t type) {
   }
 }
 
+
+// Fills prim path, material and the inspector lines for best.draw / best.mesh
+// (and the hit triangle / point when `with_hit`).
+void Describe(const lmv_scene* scene, PickResult* best, bool with_hit) {
+  lmv_draw_view dv = {};
+  lmv_mesh_view mv = {};
+  lmv_scene_draw(scene, static_cast<uint32_t>(best->draw), &dv);
+  lmv_scene_mesh(scene, static_cast<uint32_t>(best->mesh), &mv);
+  best->prim_path = mv.prim_path ? mv.prim_path : "";
+  best->material = MaterialOf(mv, dv, with_hit ? best->triangle : 0);
+
+  best->lines.push_back(!best->prim_path.empty()
+                            ? best->prim_path
+                            : std::string(mv.name ? mv.name : "(unnamed)"));
+  if (with_hit) {
+    best->lines.push_back(Format("mesh %d   triangle %u   %u verts, %u tris%s",
+                                 best->mesh, best->triangle, mv.vertex_count,
+                                 mv.index_count / 3,
+                                 mv.skinned ? "   skinned (rest pose)" : ""));
+  } else {
+    best->lines.push_back(Format("mesh %d   %u verts, %u tris%s", best->mesh,
+                                 mv.vertex_count, mv.index_count / 3,
+                                 mv.skinned ? "   skinned (rest pose)" : ""));
+  }
+  lmv_material_view mat = {};
+  if (best->material >= 0 &&
+      lmv_scene_material(scene, static_cast<uint32_t>(best->material), &mat) == LMV_OK &&
+      mat.pbr) {
+    const char* label = (mat.prim_path && *mat.prim_path)
+                            ? mat.prim_path
+                            : (mat.name && *mat.name ? mat.name : "(unnamed)");
+    best->lines.push_back(Format("material %s  [%s]", label, ShaderName(mat.shader_type)));
+    best->lines.push_back(Format(
+        "base (%.2f %.2f %.2f)  metal %.2f  rough %.2f%s",
+        mat.pbr[LMV_PBR_BASE_COLOR], mat.pbr[LMV_PBR_BASE_COLOR + 1],
+        mat.pbr[LMV_PBR_BASE_COLOR + 2], mat.pbr[LMV_PBR_METALNESS],
+        mat.pbr[LMV_PBR_SPECULAR_ROUGHNESS],
+        mat.alpha_mode == 2 ? "  blended" : (mat.alpha_mode == 1 ? "  masked" : "")));
+  } else {
+    best->lines.push_back("material (none: default surface)");
+  }
+  if (with_hit)
+    best->lines.push_back(Format("hit (%.3f, %.3f, %.3f)   distance %.3f",
+                                 best->point[0], best->point[1], best->point[2],
+                                 best->distance));
+}
+
 }  // namespace
 
 PickResult PickScene(const lmv_scene* scene, const float origin[3],
@@ -129,40 +176,22 @@ PickResult PickScene(const lmv_scene* scene, const float origin[3],
 
   best.distance = best_t;
   for (int i = 0; i < 3; ++i) best.point[i] = origin[i] + dir[i] * best_t;
-
-  lmv_draw_view dv = {};
-  lmv_mesh_view mv = {};
-  lmv_scene_draw(scene, static_cast<uint32_t>(best.draw), &dv);
-  lmv_scene_mesh(scene, static_cast<uint32_t>(best.mesh), &mv);
-  best.prim_path = mv.prim_path ? mv.prim_path : "";
-  best.material = MaterialOf(mv, dv, best.triangle);
-
-  best.lines.push_back(!best.prim_path.empty() ? best.prim_path
-                                               : std::string(mv.name ? mv.name : "(unnamed)"));
-  best.lines.push_back(Format("mesh %d   triangle %u   %u verts, %u tris%s",
-                              best.mesh, best.triangle, mv.vertex_count,
-                              mv.index_count / 3,
-                              mv.skinned ? "   skinned (rest pose)" : ""));
-  lmv_material_view mat = {};
-  if (best.material >= 0 &&
-      lmv_scene_material(scene, static_cast<uint32_t>(best.material), &mat) == LMV_OK &&
-      mat.pbr) {
-    const char* label = (mat.prim_path && *mat.prim_path)
-                            ? mat.prim_path
-                            : (mat.name && *mat.name ? mat.name : "(unnamed)");
-    best.lines.push_back(Format("material %s  [%s]", label, ShaderName(mat.shader_type)));
-    best.lines.push_back(Format(
-        "base (%.2f %.2f %.2f)  metal %.2f  rough %.2f%s",
-        mat.pbr[LMV_PBR_BASE_COLOR], mat.pbr[LMV_PBR_BASE_COLOR + 1],
-        mat.pbr[LMV_PBR_BASE_COLOR + 2], mat.pbr[LMV_PBR_METALNESS],
-        mat.pbr[LMV_PBR_SPECULAR_ROUGHNESS],
-        mat.alpha_mode == 2 ? "  blended" : (mat.alpha_mode == 1 ? "  masked" : "")));
-  } else {
-    best.lines.push_back("material (none: default surface)");
-  }
-  best.lines.push_back(Format("hit (%.3f, %.3f, %.3f)   distance %.3f", best.point[0],
-                              best.point[1], best.point[2], best.distance));
+  Describe(scene, &best, /*with_hit=*/true);
   return best;
+}
+
+PickResult DescribeDraw(const lmv_scene* scene, int draw) {
+  PickResult r;
+  lmv_draw_view dv = {};
+  if (!scene || draw < 0 ||
+      lmv_scene_draw(scene, static_cast<uint32_t>(draw), &dv) != LMV_OK ||
+      dv.mesh_id < 0)
+    return r;
+  r.hit = true;
+  r.draw = draw;
+  r.mesh = dv.mesh_id;
+  Describe(scene, &r, /*with_hit=*/false);
+  return r;
 }
 
 bool DrawWorldBox(const lmv_scene* scene, int draw, float corners[8][3]) {

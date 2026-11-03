@@ -38,6 +38,14 @@ struct HudLoading {
   float progress = 0.0f;  // 0..1
 };
 
+// One prim of the outliner tree (a path component). `draw` is the first draw of
+// the prim's mesh for drawable leaves, -1 for plain groups.
+struct HudOutlineNode {
+  std::string name;
+  int parent = -1;  // index into the node list, -1 = top level
+  int draw = -1;
+};
+
 struct HudRows {
   int y0 = 0;  // rows [y0, y1), full width
   int y1 = 0;
@@ -71,6 +79,21 @@ class Hud {
   std::function<void()> on_toggle_play;
   std::function<void(double)> on_seek;  // seconds in scene time codes
 
+  // Outliner panel (right side): the prim tree and the stage's variant sets.
+  // `variant_rows` are display strings ("look = red"); clicking one asks the
+  // owner to switch to the next variant.
+  void SetOutline(const std::vector<HudOutlineNode>& nodes,
+                  const std::vector<std::string>& variant_rows);
+  void SetOutlineVisible(bool visible);
+  bool outline_visible() const { return outline_visible_; }
+  void SetOutlineSelection(int draw);  // highlighted prim, -1 = none
+  std::function<void(int draw)> on_outline_select;
+  std::function<void(int row)> on_variant_choose;
+  // Window point of a variant row / visible prim row; false when not shown.
+  // Used by input tests.
+  bool VariantRowPoint(int row, int* x, int* y) const;
+  bool PrimRowPoint(int visible_row, int* x, int* y) const;
+
   // Redraws dirty regions and returns the row ranges to upload.
   std::vector<HudRows> Render();
   const lvg_surface_t* surface() const { return surface_; }
@@ -84,6 +107,13 @@ class Hud {
   void DrawSelection();
   void DrawBar();
   void DrawLoading();
+  // Outliner internals (hud_outline.cc).
+  bool HandleOutlineEvent(const lui_event_t& event);
+  void DrawOutline();
+  lvg_rect_t OutlineRect() const;
+  void RebuildOutlineRows();
+  int OutlineRowHeight() const;
+  bool OutlineHit(int x, int y, int* kind, int* index) const;
   bool BarActive() const { return visible_ && status_.animated; }
   lvg_rect_t BarRect() const;
 
@@ -102,6 +132,19 @@ class Hud {
   bool bar_dirty_ = true;
   bool bar_was_drawn_ = false;
   bool full_ = true;
+
+  // Outliner state.
+  std::vector<HudOutlineNode> outline_nodes_;
+  std::vector<bool> outline_expanded_;
+  std::vector<int> outline_depth_;
+  std::vector<bool> outline_has_children_;
+  std::vector<int> outline_rows_;        // visible node indices, top to bottom
+  std::vector<std::string> variant_rows_;
+  bool outline_visible_ = false;
+  bool outline_dirty_ = false;
+  int outline_scroll_ = 0;               // first visible prim row
+  int outline_selected_draw_ = -1;
+  lvg_rect_t outline_rect_ = {0, 0, 0, 0};  // last drawn
 
   HudLoading loading_;
   lvg_rect_t loading_rect_ = {0, 0, 0, 0};  // last drawn

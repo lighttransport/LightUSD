@@ -54,6 +54,7 @@ void Hud::Resize(int width, int height) {
   height_ = height;
   full_ = true;
   LayoutBar();
+  RebuildOutlineRows();
 }
 
 lvg_rect_t Hud::BarRect() const {
@@ -105,7 +106,10 @@ void Hud::SetStatus(const HudStatus& s) {
   status_ = s;
   slider_.min_val = static_cast<float>(s.t_start);
   slider_.max_val = static_cast<float>(std::max(s.t_end, s.t_start));
-  if (bar_changed) bar_dirty_ = true;
+  if (bar_changed) {
+    bar_dirty_ = true;
+    outline_dirty_ = outline_visible_;  // the panel stops above the bar
+  }
 
   char text[64];
   std::snprintf(text, sizeof(text), "%.2f / %.2f", s.time, s.t_end);
@@ -138,6 +142,7 @@ bool Hud::TimelinePoint(double fraction, int* x, int* y) const {
 }
 
 bool Hud::HandleEvent(const lui_event_t& ev) {
+  if (HandleOutlineEvent(ev)) return true;
   if (!BarActive() || !surface_) return false;
   int x = 0, y = 0;
   bool left_button = false;
@@ -319,6 +324,8 @@ std::vector<HudRows> Hud::Render() {
     top_rect_ = lvg_rect_make(0, 0, 0, 0);
     sel_rect_ = lvg_rect_make(0, 0, 0, 0);
     sel_dirty_ = true;
+    outline_rect_ = lvg_rect_make(0, 0, 0, 0);
+    outline_dirty_ = outline_visible_;
     bar_was_drawn_ = false;
     top_dirty_ = bar_dirty_ = true;
     loading_rect_ = lvg_rect_make(0, 0, 0, 0);
@@ -335,6 +342,16 @@ std::vector<HudRows> Hud::Render() {
     if (!whole) {
       const int y0 = std::min(prev.width > 0 ? prev.y : top_rect_.y, top_rect_.y);
       const int y1 = std::max(prev.y + prev.height, top_rect_.y + top_rect_.height);
+      if (y1 > y0) rows.push_back({y0, y1});
+    }
+  }
+  if (outline_dirty_) {
+    const lvg_rect_t prev = outline_rect_;
+    DrawOutline();
+    outline_dirty_ = false;
+    if (!whole) {
+      const int y0 = std::min(prev.width > 0 ? prev.y : outline_rect_.y, outline_rect_.y);
+      const int y1 = std::max(prev.y + prev.height, outline_rect_.y + outline_rect_.height);
       if (y1 > y0) rows.push_back({y0, y1});
     }
   }

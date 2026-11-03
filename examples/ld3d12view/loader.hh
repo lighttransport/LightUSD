@@ -22,9 +22,13 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace ld3d12 {
+
+// (variant set name, variant name) pairs applied while composing the stage.
+using VariantOverrides = std::vector<std::pair<std::string, std::string>>;
 
 struct LoadProgress {
   bool active = false;
@@ -39,6 +43,7 @@ struct LoadProgress {
 
 struct LoadResult {
   std::string path;
+  VariantOverrides variants;   // the overrides this load was requested with
   lmv_scene* scene = nullptr;  // owned by the caller on success
   lmv_status status = LMV_OK;
   std::string error;
@@ -53,7 +58,7 @@ class AsyncLoader {
   AsyncLoader& operator=(const AsyncLoader&) = delete;
 
   // Main thread only.
-  void Request(const std::string& path);
+  void Request(const std::string& path, const VariantOverrides& variants = {});
   // Cancels the running load and drops any queued request.
   void Cancel();
   // A load is running (or finishing) and its result has not been polled yet.
@@ -90,13 +95,14 @@ class AsyncLoader {
     State* state = nullptr;
     Hook* hook = nullptr;
     std::string path;
+    VariantOverrides variants;
     int delay_ms = 0;
   };
 
-  void Launch(const std::string& path);
+  void Launch(const std::string& path, const VariantOverrides& variants);
   void Worker();
   static void Run(State* state, Hook* hook, const std::string& path,
-                  int delay_ms);
+                  const VariantOverrides& variants, int delay_ms);
 
   std::unique_ptr<State> state_;
   std::vector<std::unique_ptr<Hook>> hooks_;  // never shrinks; tiny
@@ -107,6 +113,7 @@ class AsyncLoader {
   bool has_job_ = false;
   bool stop_ = false;
   std::string pending_;
+  VariantOverrides pending_variants_;
   int delay_ms_ = 0;
 };
 

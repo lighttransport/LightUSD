@@ -93,6 +93,14 @@ typedef struct lmv_load_options {
 
   lmv_progress_fn progress;
   void* progress_user;
+
+  /* Further variant overrides, applied together with variant_set/variant_name:
+   * extra_variant_count entries of (set name -> variant name). A set name
+   * applies to every prim that defines such a set. Borrowed for the call. */
+  const char* const* extra_variant_sets;
+  const char* const* extra_variant_names;
+  uint32_t extra_variant_count;
+  uint32_t _pad2;
 } lmv_load_options;
 
 /* Fills every field with the defaults. */
@@ -148,6 +156,26 @@ uint32_t lmv_scene_camera_count(const lmv_scene* scene);
 /* Conversion / load diagnostics ("3 meshes skipped: ..."). */
 uint32_t lmv_scene_warning_count(const lmv_scene* scene);
 const char* lmv_scene_warning(const lmv_scene* scene, uint32_t index);
+
+/* ------------------------------------------------------------------------- */
+/* Variant sets                                                              */
+/* ------------------------------------------------------------------------- */
+
+/* One variant set found on a prim of the composed stage. Reload the scene with
+ * lmv_load_options.variant_set/variant_name (or extra_variant_*) to switch. */
+typedef struct lmv_variant_set_view {
+  const char* prim_path;
+  const char* set_name;
+  const char* selection;   /* current selection, "" when none */
+  uint32_t variant_count;
+  const char* const* variants;
+} lmv_variant_set_view;
+
+/* Collected from the stage on first use (a traversal of every prim) and cached
+ * with the scene. Not thread safe against itself; call from one thread. */
+uint32_t lmv_scene_variant_set_count(const lmv_scene* scene);
+lmv_status lmv_scene_variant_set(const lmv_scene* scene, uint32_t index,
+                                 lmv_variant_set_view* out);
 
 /* ------------------------------------------------------------------------- */
 /* Geometry                                                                  */

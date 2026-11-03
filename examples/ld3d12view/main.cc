@@ -41,6 +41,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <cstdlib>
 #include <algorithm>
 #include <chrono>
@@ -78,6 +79,10 @@ struct Options {
   int resize_w = 0, resize_h = 0;  // test hook: resize the window at frame 2
   std::string simulate_click;  // test hook: "play" or "timeline=F"
   std::string simulate_pick;   // test hook: click at "fx,fy" (window fractions)
+  bool outliner = false;       // start with the outliner panel open
+  ld3d12::VariantOverrides variants;  // --variant set=name (repeatable)
+  int simulate_variant_click = -1;    // test hook: click variant row N
+  int simulate_outline_click = -1;    // test hook: click prim row N
   std::string simulate_drop;  // test hook: post WM_DROPFILES for this path
   int preset = -1;  // 0..6 = iso, front, back, right, left, top, bottom
   std::string screenshot;
@@ -89,7 +94,7 @@ void Usage() {
                "usage: ld3d12view [--size WxH] [--frames N] [--debug] "
                "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--no-compress-textures] [--preset 0-6]\n"
                "                   [--time T] [--animate-from T] [--play] [--paused] [--no-hud] [--no-background] [--load-delay-ms N] [--simulate-cancel] [--capture-loading] [--no-loop] "
-               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--simulate-resize WxH] "
+               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--outliner] [--variant set=name] [--simulate-resize WxH] "
                "[--screenshot out.png] [file.usd]\n");
 }
 
@@ -141,6 +146,17 @@ bool ParseArgs(int argc, char** argv, Options* o) {
         return false;
     } else if (a == "--simulate-click" && i + 1 < argc) {
       o->simulate_click = argv[++i];
+    } else if (a == "--outliner") {
+      o->outliner = true;
+    } else if (a == "--variant" && i + 1 < argc) {
+      const std::string kv = argv[++i];
+      const size_t eq = kv.find('=');
+      if (eq == std::string::npos || eq == 0 || eq + 1 >= kv.size()) return false;
+      o->variants.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
+    } else if (a == "--simulate-variant-click" && i + 1 < argc) {
+      o->simulate_variant_click = std::atoi(argv[++i]);
+    } else if (a == "--simulate-outline-click" && i + 1 < argc) {
+      o->simulate_outline_click = std::atoi(argv[++i]);
     } else if (a == "--simulate-pick" && i + 1 < argc) {
       o->simulate_pick = argv[++i];
     } else if (a == "--simulate-space") {
@@ -505,9 +521,108 @@ int main(int argc, char** argv) {
       // command-line scene, which also gets the --time/--preset/camera options.
       bool initial_pending = !opt.path.empty();
       ld3d12::PickResult selection;  // the clicked draw, shown in the inspector
+      std::string current_path;                  // the open file
+      ld3d12::VariantOverrides active_variants;  // overrides it was loaded with
+      // Outliner data for the open scene (built on first show).
+      struct VariantRow {
+        std::string prim_path, set_name, selection;
+        std::vector<std::string> variants;
+      };
+      std::vector<VariantRow> variant_data;
+      std::vector<int> mesh_first_draw;  // mesh id -> first draw, for highlighting
+      bool outline_built = false;
+      auto rebuild_outline = [&] {
+        outline_built = true;
+        variant_data.clear();
+        std::vector<ld3d12::HudOutlineNode> nodes;
+        std::vector<std::string> rows;
+        mesh_first_draw.clear();
+        if (sv.scene) {
+          const uint32_t mesh_count = lmv_scene_mesh_count(sv.scene);
+          mesh_first_draw.assign(mesh_count, -1);
+          const uint32_t draws = lmv_scene_draw_count(sv.scene);
+          for (uint32_t d = 0; d < draws; ++d) {
+            lmv_draw_view dv = {};
+            if (lmv_scene_draw(sv.scene, d, &dv) == LMV_OK && dv.mesh_id >= 0 &&
+                static_cast<uint32_t>(dv.mesh_id) < mesh_count &&
+                mesh_first_draw[static_cast<size_t>(dv.mesh_id)] < 0)
+              mesh_first_draw[static_cast<size_t>(dv.mesh_id)] = static_cast<int>(d);
+          }
+          // Prim tree from the meshes' paths, ordered component-wise so every
+          // parent precedes (and groups) its children.
+          struct Item {
+            std::vector<std::string> parts;
+            int draw;
+          };
+          std::vector<Item> items;
+          for (uint32_t m = 0; m < mesh_count; ++m) {
+            lmv_mesh_view mv = {};
+            if (mesh_first_draw[m] < 0 || lmv_scene_mesh(sv.scene, m, &mv) != LMV_OK ||
+                !mv.prim_path || !*mv.prim_path)
+              continue;
+            Item it;
+            it.draw = mesh_first_draw[m];
+            std::string part;
+            for (const char* c = mv.prim_path;; ++c) {
+              if (*c == '/' || *c == '\0') {
+                if (!part.empty()) it.parts.push_back(part);
+                part.clear();
+                if (*c == '\0') break;
+              } else {
+                part.push_back(*c);
+              }
+            }
+            if (!it.parts.empty()) items.push_back(std::move(it));
+          }
+          std::sort(items.begin(), items.end(),
+                    [](const Item& a, const Item& b) { return a.parts < b.parts; });
+          std::map<std::string, int> index_by_path;
+          for (const Item& item : items) {
+            std::string path;
+            int parent = -1;
+            for (const std::string& part : item.parts) {
+              path += "/" + part;
+              auto found = index_by_path.find(path);
+              if (found == index_by_path.end()) {
+                ld3d12::HudOutlineNode n;
+                n.name = part;
+                n.parent = parent;
+                nodes.push_back(n);
+                found = index_by_path.emplace(path, static_cast<int>(nodes.size()) - 1).first;
+              }
+              parent = found->second;
+            }
+            nodes[static_cast<size_t>(parent)].draw = item.draw;
+          }
+          // Variant sets of the composed stage.
+          const uint32_t vsets = lmv_scene_variant_set_count(sv.scene);
+          for (uint32_t i = 0; i < vsets; ++i) {
+            lmv_variant_set_view v = {};
+            if (lmv_scene_variant_set(sv.scene, i, &v) != LMV_OK) continue;
+            VariantRow r;
+            r.prim_path = v.prim_path ? v.prim_path : "";
+            r.set_name = v.set_name ? v.set_name : "";
+            r.selection = v.selection ? v.selection : "";
+            for (uint32_t k = 0; k < v.variant_count; ++k)
+              r.variants.push_back(v.variants[k] ? v.variants[k] : "");
+            for (const auto& ov : active_variants)
+              if (ov.first == r.set_name) r.selection = ov.second;
+            rows.push_back(r.set_name + " = " +
+                           (r.selection.empty() ? "(none)" : r.selection) + "   " +
+                           r.prim_path);
+            variant_data.push_back(std::move(r));
+          }
+        }
+        hud.SetOutline(nodes, rows);
+        std::fprintf(stderr, "ld3d12view: outliner: %zu prim node(s), %zu variant set(s)\n",
+                     nodes.size(), rows.size());
+      };
       auto install_scene = [&](lmv_scene* scene, const std::string& path,
-                               bool initial) -> bool {
+                               bool initial,
+                               const ld3d12::VariantOverrides& variants) -> bool {
         selection = ld3d12::PickResult();  // draw indices belong to the old scene
+        // Re-opening the same file (a variant switch) keeps the camera.
+        const bool keep_view = !initial && sv.scene && path == current_path;
         SceneView next;
         MakeSceneView(scene, &next);
         device.WaitIdle();  // the old scene's buffers may still be in flight
@@ -548,22 +663,55 @@ int main(int argc, char** argv) {
         play_wall = wall();
         play_t0 = cur_time;
         lmv_camera_set_up_axis(camera, sv.up_axis);
-        FrameScene(camera, sv);
+        if (!keep_view) FrameScene(camera, sv);
         if (initial && opt.preset >= 0) lmv_camera_set_preset(camera, opt.preset);
         if (initial && opt.authored_camera && camera_count > 0) {
           use_authored = true;
           sync_authored_camera();
         }
         title_name = base_name(path);
+        current_path = path;
+        active_variants = variants;
+        outline_built = false;
+        if (hud.outline_visible()) rebuild_outline();
         update_info();
         lui_window_set_title(window, title_name.c_str());
         std::fprintf(stderr, "ld3d12view: opened %s\n", path.c_str());
         return ok;
       };
-      auto request_load = [&](const std::string& path) {
+      auto request_load = [&](const std::string& path,
+                              const ld3d12::VariantOverrides& variants = {}) {
         std::fprintf(stderr, "ld3d12view: loading %s\n", path.c_str());
-        loader.Request(path);
+        loader.Request(path, variants);
         update_info();
+      };
+      hud.on_variant_choose = [&](int row) {
+        if (row < 0 || static_cast<size_t>(row) >= variant_data.size() ||
+            current_path.empty())
+          return;
+        const VariantRow& v = variant_data[static_cast<size_t>(row)];
+        if (v.variants.size() < 2) return;
+        size_t cur = v.variants.size();
+        for (size_t i = 0; i < v.variants.size(); ++i)
+          if (v.variants[i] == v.selection) cur = i;
+        const std::string next = v.variants[(cur + 1) % v.variants.size()];
+        ld3d12::VariantOverrides overrides = active_variants;
+        bool replaced = false;
+        for (auto& ov : overrides)
+          if (ov.first == v.set_name) {
+            ov.second = next;
+            replaced = true;
+          }
+        if (!replaced) overrides.emplace_back(v.set_name, next);
+        std::fprintf(stderr, "ld3d12view: variant %s -> %s\n", v.set_name.c_str(),
+                     next.c_str());
+        request_load(current_path, overrides);
+      };
+      hud.on_outline_select = [&](int draw) {
+        selection = ld3d12::DescribeDraw(sv.scene, draw);
+        if (selection.hit)
+          std::fprintf(stderr, "ld3d12view: outline select %s\n",
+                       selection.prim_path.c_str());
       };
       auto toggle_play = [&] {
         if (!animated) {
@@ -627,7 +775,8 @@ int main(int argc, char** argv) {
       int frames = 0;
       int iteration = 0;
       int logged_phase = -1;
-      if (!opt.path.empty()) request_load(opt.path);
+      if (opt.outliner) hud.SetOutlineVisible(true);
+      if (!opt.path.empty()) request_load(opt.path, opt.variants);
       const float clear[4] = {0.10f, 0.11f, 0.13f, 1.0f};
 
       while (!quit) {
@@ -685,6 +834,10 @@ int main(int argc, char** argv) {
               if (ev.data.key.key == ' ') toggle_play();
               if (ev.data.key.key == 'h' || ev.data.key.key == 'H')
                 hud.SetVisible(!hud.visible());
+              if (ev.data.key.key == 'o' || ev.data.key.key == 'O') {
+                hud.SetOutlineVisible(!hud.outline_visible());
+                if (hud.outline_visible() && !outline_built) rebuild_outline();
+              }
               if (ev.data.key.key == LUI_KEY_RIGHT && animated)
                 seek(cur_time + 1.0);
               if (ev.data.key.key == LUI_KEY_LEFT && animated)
@@ -705,7 +858,7 @@ int main(int argc, char** argv) {
                 if (first.empty()) first = dropped;
                 std::free(dropped);
               }
-              if (!first.empty()) request_load(first);
+              if (!first.empty()) request_load(first, {});
               break;
             }
             case LUI_EVENT_MOUSE_DOWN:
@@ -773,7 +926,7 @@ int main(int argc, char** argv) {
               exit_code = 1;
               quit = true;
             }
-          } else if (!install_scene(lr.scene, lr.path, initial) && initial) {
+          } else if (!install_scene(lr.scene, lr.path, initial, lr.variants) && initial) {
             exit_code = 1;
             quit = true;
           }
@@ -907,6 +1060,11 @@ int main(int argc, char** argv) {
           hs.t_end = t_end;
           hs.tps = tps;
           hs.selection = selection.hit ? selection.lines : std::vector<std::string>();
+          hud.SetOutlineSelection(
+              selection.hit && selection.mesh >= 0 &&
+                      static_cast<size_t>(selection.mesh) < mesh_first_draw.size()
+                  ? mesh_first_draw[static_cast<size_t>(selection.mesh)]
+                  : -1);
           hud.SetStatus(hs);
           const std::vector<ld3d12::HudRows> rows = hud.Render();
           hud_renderer.Upload(list, device.frame_index(), hud.surface()->pixels,
@@ -936,6 +1094,19 @@ int main(int argc, char** argv) {
             PostSyntheticClick(reinterpret_cast<HWND>(handle), cx, cy);
           } else {
             std::fprintf(stderr, "ld3d12view: no HUD bar to click\n");
+            exit_code = 1;
+          }
+        }
+        if (frames == 3 &&
+            (opt.simulate_variant_click >= 0 || opt.simulate_outline_click >= 0)) {
+          int cx = 0, cy = 0;
+          const bool ok = opt.simulate_variant_click >= 0
+                              ? hud.VariantRowPoint(opt.simulate_variant_click, &cx, &cy)
+                              : hud.PrimRowPoint(opt.simulate_outline_click, &cx, &cy);
+          if (ok) {
+            PostSyntheticClick(reinterpret_cast<HWND>(handle), cx, cy);
+          } else {
+            std::fprintf(stderr, "ld3d12view: no outliner row to click\n");
             exit_code = 1;
           }
         }

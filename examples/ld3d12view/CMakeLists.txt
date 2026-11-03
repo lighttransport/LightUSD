@@ -35,6 +35,7 @@ add_executable(ld3d12view
     d3d12/hud_renderer.cc
     d3d12/background.cc
     hud.cc
+    hud_outline.cc
     loader.cc
     pick.cc)
 target_compile_features(ld3d12view PRIVATE cxx_std_17)
@@ -142,6 +143,39 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Outliner + variants: the panel lists the prim tree and the root layer's
+  # variant sets; clicking a variant row reloads with the next variant (same
+  # camera), --variant starts from an override, and clicking a prim row selects.
+  add_test(NAME ld3d12view-outliner-warp
+      COMMAND ld3d12view --hidden --warp --size 900x540 --frames 6 --outliner
+              --preset 0
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-outliner.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/variants.usda)
+  add_test(NAME ld3d12view-variant-click-warp
+      COMMAND ld3d12view --hidden --warp --size 900x540 --frames 10 --outliner
+              --simulate-variant-click 0
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-variant.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/variants.usda)
+  add_test(NAME ld3d12view-variant-cli-warp
+      COMMAND ld3d12view --hidden --warp --size 640x400 --frames 6 --outliner
+              --variant look=blue --variant shape=tall
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/variants.usda)
+  add_test(NAME ld3d12view-outline-select-warp
+      COMMAND ld3d12view --hidden --warp --size 900x540 --frames 8 --outliner
+              --simulate-outline-click 1
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/variants.usda)
+  set_tests_properties(ld3d12view-outliner-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "outliner: 3 prim node\\(s\\), 2 variant set\\(s\\)")
+  set_tests_properties(ld3d12view-variant-click-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "variant look -> green.*outliner: 3 prim node.*opened .*variants.usda")
+  set_tests_properties(ld3d12view-variant-cli-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "look = blue.*shape = tall|opened .*variants.usda"
+                 FAIL_REGULAR_EXPRESSION "cannot load")
+  set_tests_properties(ld3d12view-outline-select-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "outline select /Model/Body")
+  set_tests_properties(ld3d12view-outliner-warp ld3d12view-variant-click-warp
+      ld3d12view-variant-cli-warp ld3d12view-outline-select-warp PROPERTIES
+      LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Click picking: a synthetic left click casts a ray; the hit is logged and
   # shown in the inspector with its selection box.
   add_test(NAME ld3d12view-pick-hit-warp
