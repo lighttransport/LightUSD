@@ -4127,6 +4127,19 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # MaterialX `tangent`/`bitangent` graph nodes must report the hit
+    # triangle's frame, not fixed constants; the CPU graph evaluator now takes
+    # both from the same frame the normal map uses.
+    add_test(
+      NAME lusdview-cpu-graph-tangent
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-graph-tangent.sh"
+      )
+    set_tests_properties(lusdview-cpu-graph-tangent PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     add_test(
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env

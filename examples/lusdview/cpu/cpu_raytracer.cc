@@ -581,7 +581,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
     float u1, float v1, const float* normal = nullptr,
     const float* position = nullptr, const float* viewDirection = nullptr,
-    float time = 0.0f, float frame = 0.0f, int geomPropTri = -1) {
+    float time = 0.0f, float frame = 0.0f, int geomPropTri = -1,
+    const float* tangent = nullptr, const float* bitangent = nullptr) {
   constexpr int kStride = kRtMaterialGraphFloats;
   std::array<float, 4> zero{0.0f, 0.0f, 0.0f, 0.0f};
   const size_t base = static_cast<size_t>(materialId) * kStride;
@@ -777,7 +778,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = normal ? std::array<float, 4>{normal[0], normal[1], normal[2], 1.0f}
                      : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeometricTangent)) {
-        dst = {1.0f, 0.0f, 0.0f, 1.0f};
+        dst = tangent ? std::array<float, 4>{tangent[0], tangent[1], tangent[2], 1.0f}
+                      : std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Rotate3D)) {
         const float al = a[0] * 0.0174532925199433f;
         const float alen = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
@@ -1029,7 +1031,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeomColor)) {
         dst={1,1,1,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Bitangent)) {
-        dst={0,1,0,1};
+        dst = bitangent
+                  ? std::array<float, 4>{bitangent[0], bitangent[1],
+                                         bitangent[2], 1.0f}
+                  : std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::SetAlpha)) {
         dst = {a[0], a[1], a[2], b[0]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::CellNoise2D) ||
@@ -1841,6 +1846,31 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           outCol[0] = outCol[1] = outCol[2] = d;
         } else {  // Shaded (default) -- flat Lambertian, one directional light + ambient
           const int matId = (tri < cpuMat_.size()) ? cpuMat_[tri] : -1;
+          // One hit frame serves the graph's tangent/bitangent nodes and the
+          // material normal map. Only pay for it when either could be used.
+          ShadingTangentFrame shading_frame;
+          bool have_shading_frame = false;
+          if (matId >= 0 &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
+            const size_t graph_base =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            const bool has_graph =
+                graph_base + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size();
+            const bool has_normal_tex =
+                static_cast<size_t>(matId) * kRtMaterialTexSlots + 3 <
+                    hs_.matTex.size() &&
+                hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3] >= 0;
+            if (has_graph || has_normal_tex) {
+              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+              const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
+              const float uv0[2] = {tuv[0], tuv[1]};
+              const float uv1[2] = {tuv[2], tuv[3]};
+              const float uv2[2] = {tuv[4], tuv[5]};
+              BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
+                                       &shading_frame);
+              have_shading_frame = true;
+            }
+          }
           float base[3] = {0.8f, 0.8f, 0.8f};
           if (matId >= 0 && static_cast<size_t>(matId) * 3 + 3 <= hs_.matBase.size()) {
             base[0] = hs_.matBase[static_cast<size_t>(matId) * 3 + 0];
@@ -1883,7 +1913,9 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                                                   0.0f, 0.0f,
                                                                   (static_cast<size_t>(tri) < cpuSourceTri_.size())
                                                                       ? cpuSourceTri_[static_cast<size_t>(tri)]
-                                                                      : -1);
+                                                                      : -1,
+                                                                  have_shading_frame ? shading_frame.tangent : nullptr,
+                                                                  have_shading_frame ? shading_frame.bitangent : nullptr);
               base[0] = graphBaseColor[0];
               base[1] = graphBaseColor[1];
               base[2] = graphBaseColor[2];
@@ -1905,8 +1937,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // Vulkan RT shader already rebuilds a tangent frame from the
           // triangle's UVs; the CPU preview used to shade with the geometric
           // normal, which silently ignored normal maps.
-          if (matId >= 0 &&
-              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
+          if (have_shading_frame) {
             float tangent_normal[3] = {0.0f, 0.0f, 1.0f};
             float map_uv[2];
             Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, map_uv);
@@ -1925,7 +1956,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                   graphPosition, graphViewDirection, 0.0f, 0.0f,
                   (static_cast<size_t>(tri) < cpuSourceTri_.size())
                       ? cpuSourceTri_[static_cast<size_t>(tri)]
-                      : -1);
+                      : -1,
+                  shading_frame.tangent, shading_frame.bitangent);
               tangent_normal[0] = gn[0] * 2.0f - 1.0f;
               tangent_normal[1] = gn[1] * 2.0f - 1.0f;
               tangent_normal[2] = gn[2] * 2.0f - 1.0f;
@@ -1945,16 +1977,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               }
             }
             if (have_normal) {
-              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
-              const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
-              const float uv0[2] = {tuv[0], tuv[1]};
-              const float uv1[2] = {tuv[2], tuv[3]};
-              const float uv2[2] = {tuv[4], tuv[5]};
-              ShadingTangentFrame frame;
-              BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
-                                       &frame);
               float world[3];
-              ApplyShadingTangentNormal(frame, tangent_normal, world);
+              ApplyShadingTangentNormal(shading_frame, tangent_normal, world);
               nrm[0] = world[0];
               nrm[1] = world[1];
               nrm[2] = world[2];
