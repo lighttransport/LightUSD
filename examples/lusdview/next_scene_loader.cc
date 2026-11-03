@@ -1184,19 +1184,30 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     return a && a.interp == tydn::Interpolation::Uniform;
   };
   std::vector<uint32_t> cornerToFace;
-  if (usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
+  // Authored corner id -> face index. Uniform attributes need the full table;
+  // `sourceFaceId` (Ptex intrinsic faces and the source-face AOV) only needs the
+  // per-face corner starts, which is cheaper on very large meshes.
+  std::vector<uint32_t> faceOffsets;
+  const bool needCornerToFace =
+      usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
       usesUniform(col) || usesUniform(opacity) || usesUniform(tan) ||
       std::any_of(genericProps.begin(), genericProps.end(),
-                  [&](const GenericGeomProp& p) { return usesUniform(p.attr); })) {
+                  [&](const GenericGeomProp& p) { return usesUniform(p.attr); });
+  if (haveCornerMap) {
     const size_t nfaces = m.face_vertex_counts.size();
-    size_t authoredCorners = 0;
-    for (size_t f = 0; f < nfaces; ++f) authoredCorners += m.face_vertex_counts[f];
-    cornerToFace.resize(authoredCorners);
+    faceOffsets.resize(nfaces + 1);
     size_t off = 0;
     for (size_t f = 0; f < nfaces; ++f) {
-      const uint32_t c = m.face_vertex_counts[f];
-      for (uint32_t k = 0; k < c && off < authoredCorners; ++k, ++off) {
-        cornerToFace[off] = static_cast<uint32_t>(f);
+      faceOffsets[f] = static_cast<uint32_t>(off);
+      off += m.face_vertex_counts[f];
+    }
+    faceOffsets[nfaces] = static_cast<uint32_t>(off);
+    if (needCornerToFace) {
+      cornerToFace.resize(off);
+      for (size_t f = 0; f < nfaces; ++f) {
+        for (uint32_t k = faceOffsets[f]; k < faceOffsets[f + 1]; ++k) {
+          cornerToFace[k] = static_cast<uint32_t>(f);
+        }
       }
     }
   }
@@ -1247,9 +1258,16 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     }
     const uint32_t cornerId =
         haveCornerMap ? m.triangulated_face_vertex_indices[c] : pid;
-    const uint32_t faceId = (cornerToFace.empty() || cornerId >= cornerToFace.size())
-                                ? 0u
-                                : cornerToFace[cornerId];
+    uint32_t faceId = 0u;
+    if (!cornerToFace.empty() && cornerId < cornerToFace.size()) {
+      faceId = cornerToFace[cornerId];
+    } else if (faceOffsets.size() >= 2) {
+      const auto it = std::upper_bound(faceOffsets.begin(), faceOffsets.end(),
+                                       cornerId);
+      faceId = it == faceOffsets.begin()
+                   ? 0u
+                   : static_cast<uint32_t>(it - faceOffsets.begin() - 1);
+    }
     const uint32_t sourceFaceId =
         faceId < m.subdivision_face_source.size()
             ? m.subdivision_face_source[faceId]
@@ -1605,19 +1623,84 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
     return false;
   }
   const std::vector<uint32_t> counts = source.face_vertex_counts.flatten();
-  size_t authoredCorners = 0;
-  for (uint32_t count : counts) authoredCorners += count;
-  std::vector<uint8_t> cornerOrdinal(authoredCorners, 0);
-  std::vector<uint32_t> cornerFace(authoredCorners, 0);
-  size_t corner = 0;
-  for (size_t face = 0; face < counts.size(); ++face) {
-    if (counts[face] != 4) return false;
-    for (uint32_t ordinal = 0; ordinal < counts[face]; ++ordinal, ++corner) {
-      cornerOrdinal[corner] = static_cast<uint8_t>(ordinal);
-      cornerFace[corner] = static_cast<uint32_t>(face);
+  const size_t refinedFaces = counts.size();
+  if (refinedFaces == 0) return false;
+  for (uint32_t count : counts) {
+    if (count != 4) return false;
+  }
+
+  // Ptex faces are the authored level-0 quads. A subdivided mesh keeps one
+  // `subdivision_face_source` entry per refined face; each refined child covers
+  // a sub-rectangle of its base face's intrinsic UV square. Without the
+  // sub-rectangle every child would sample the whole face.
+  std::vector<uint32_t> baseFace(refinedFaces);
+  size_t baseFaces = refinedFaces;
+  size_t cells = 1;
+  if (source.subdivision_face_source.size() == refinedFaces) {
+    uint32_t maxBase = 0;
+    for (uint32_t b : source.subdivision_face_source) {
+      maxBase = std::max(maxBase, b);
+    }
+    baseFace.assign(source.subdivision_face_source.begin(),
+                    source.subdivision_face_source.end());
+    baseFaces = size_t(maxBase) + 1;
+    if (baseFaces == 0 || refinedFaces % baseFaces != 0) return false;
+    cells = refinedFaces / baseFaces;
+  } else {
+    for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+  }
+  uint32_t levels = 0;
+  while ((size_t(1) << (2 * levels)) < cells) ++levels;
+  if ((size_t(1) << (2 * levels)) != cells) {
+    // Non-uniform refinement cannot be expressed as a quadtree sub-rectangle;
+    // keep the full face and let the atlas clamp rather than sample wrong UVs.
+    levels = 0;
+    cells = 1;
+    for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+  }
+  // Ascending base ids with contiguous children (the refine driver emits the
+  // children of one parent together). Fall back to a scan if that is not true.
+  if (levels > 0) {
+    for (size_t b = 0; b < baseFaces; ++b) {
+      if (source.subdivision_face_source[b * cells] != b) {
+        levels = 0;
+        cells = 1;
+        for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+        break;
+      }
     }
   }
-  if (corner != authoredCorners) return false;
+  std::vector<uint32_t> localIndex(refinedFaces, 0);
+  if (levels > 0) {
+    for (size_t f = 0; f < refinedFaces; ++f) {
+      localIndex[f] = uint32_t(f - baseFace[f] * cells);
+    }
+  }
+
+  std::vector<uint8_t> cornerOrdinal(refinedFaces * 4, 0);
+  std::vector<uint32_t> cornerBaseFace(refinedFaces * 4, 0);
+  std::vector<float> faceU0(refinedFaces, 0.0f), faceV0(refinedFaces, 0.0f);
+  std::vector<float> faceU1(refinedFaces, 1.0f), faceV1(refinedFaces, 1.0f);
+  size_t corner = 0;
+  for (size_t face = 0; face < refinedFaces; ++face) {
+    float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+    uint32_t local = localIndex[face];
+    for (int level = int(levels) - 1; level >= 0; --level) {
+      const uint32_t digit = (local >> (2 * level)) & 3u;
+      const float um = (u0 + u1) * 0.5f;
+      const float vm = (v0 + v1) * 0.5f;
+      if (digit == 0) { u1 = um; v0 = vm; }        // top-left
+      else if (digit == 1) { u0 = um; v0 = vm; }   // top-right
+      else if (digit == 2) { u0 = um; v1 = vm; }   // bottom-right
+      else { u1 = um; v1 = vm; }                   // bottom-left
+    }
+    faceU0[face] = u0; faceV0[face] = v0;
+    faceU1[face] = u1; faceV1[face] = v1;
+    for (uint32_t ordinal = 0; ordinal < 4; ++ordinal, ++corner) {
+      cornerOrdinal[corner] = static_cast<uint8_t>(ordinal);
+      cornerBaseFace[corner] = baseFace[face];
+    }
+  }
 
   const size_t oldVertexCount = mesh->vertices.size();
   const bool hasColor = mesh->vertexColors.size() == oldVertexCount * 3;
@@ -1652,8 +1735,6 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
   expanded.vertices.reserve(corners);
   expanded.indices.reserve(corners);
 
-  const float intrinsic[4][2] = {
-      {0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}};
   std::vector<uint32_t> newToOld;
   newToOld.reserve(corners);
   for (size_t i = 0; i < corners; ++i) {
@@ -1662,18 +1743,24 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
     const uint32_t authored = source.triangulated_face_vertex_indices[i];
     if (authored >= cornerOrdinal.size()) return false;
     const uint8_t ordinal = cornerOrdinal[authored];
-    const uint32_t face = cornerFace[authored];
+    const uint32_t face = cornerBaseFace[authored];
     if (i / 3 >= mesh->sourceFaceId.size() ||
         face != mesh->sourceFaceId[i / 3]) {
       return false;
     }
+    // Map the refined face's corner into its sub-rectangle of the base face.
+    const size_t refinedFace = size_t(authored) / 4u;
+    const float su0 = faceU0[refinedFace], sv0 = faceV0[refinedFace];
+    const float su1 = faceU1[refinedFace], sv1 = faceV1[refinedFace];
+    const float corners[4][2] = {
+        {su0, sv1}, {su1, sv1}, {su1, sv0}, {su0, sv0}};
     expanded.indices.push_back(static_cast<uint32_t>(i));
     expanded.vertices.push_back(mesh->vertices[old]);
     // Ptex materials use intrinsic face coordinates, not an authored primvar.
     // Isolated Ptex batches therefore carry these in the ordinary UV0 lane so
     // every existing raster and RT interpolation path sees the same values.
-    expanded.vertices.back().u = intrinsic[ordinal][0];
-    expanded.vertices.back().v = intrinsic[ordinal][1];
+    expanded.vertices.back().u = corners[ordinal][0];
+    expanded.vertices.back().v = corners[ordinal][1];
     newToOld.push_back(old);
     if (hasColor) {
       for (size_t k = 0; k < 3; ++k)

@@ -4185,6 +4185,19 @@ if(LIGHTUSD_BUILD_TESTS)
                            LABELS "lusdview;rt;cpu-rt")
     endforeach()
 
+    # Element-scale Island PTex routing: a real quad-topology element must not
+    # fall back to the representative face, and every visible PTex sample must
+    # match the independent OpenPtex decoder. Skips without the corpus/OpenPtex.
+    add_test(
+      NAME lusdview-cpu-ptex-element
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-element.sh"
+      )
+    set_tests_properties(lusdview-cpu-ptex-element PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 1800
+                         LABELS "lusdview;rt;cpu-rt;ptex")
+
     # Visible Island PTex material routing: the CPU tracer must map intrinsic
     # Ptex face coordinates through the atlas face rectangles and show the
     # decoded face colour. Skips when the pinned Island texture is unavailable.

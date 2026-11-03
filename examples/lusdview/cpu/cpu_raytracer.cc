@@ -105,6 +105,8 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   // a bounded on-demand page cache.
   ptex_.clear();
   ptex_.resize(hs_.textures.size());
+  ptexAsset_.clear();
+  ptexAsset_.resize(hs_.textures.size());
   for (size_t src = 0; src < hs_.sourceToTable.size() &&
                        src < scene.textures.size(); ++src) {
     const int tid = hs_.sourceToTable[src];
@@ -122,7 +124,10 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
     } else if (!dt.assetIdentifier.empty()) {
       ok = sampler->OpenFile(dt.assetIdentifier, &ptexErr);
     }
-    if (ok) ptex_[static_cast<size_t>(tid)] = std::move(sampler);
+    if (ok) {
+      ptex_[static_cast<size_t>(tid)] = std::move(sampler);
+      ptexAsset_[static_cast<size_t>(tid)] = dt.assetIdentifier;
+    }
   }
   if (hs_.triCount == 0 || hs_.instances.empty()) {
     if (err) *err = "no triangles";
@@ -473,6 +478,17 @@ inline void LogCpuPtexStats(
     std::fprintf(stderr, "\n");
   }
 }
+
+// Per-pixel diagnostic of the PTex base-colour sample: an element-scale
+// oracle can decode the same (face, mip, u, v) with an independent decoder.
+struct CpuPtexProbe {
+  uint32_t tex{~0u};
+  uint32_t face{~0u};
+  int mip{0};
+  int srgb{0};
+  float u{0.0f}, v{0.0f};
+  float rgb[3]{0.0f, 0.0f, 0.0f};
+};
 
 inline uint32_t HashColor(uint32_t id) {
   uint32_t x = id * 2654435761u + 1u;
@@ -1496,6 +1512,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   const unsigned nThreads = std::max(1u, std::thread::hardware_concurrency());
   std::atomic<int> nextRow{0};
   uint8_t* pixels = rgba->data();
+  const char* probe_path = std::getenv("LIGHTUSD_CPU_PTEX_PROBE");
+  const bool probe_enabled = probe_path && probe_path[0] &&
+                             sampleX == 0.0f && sampleY == 0.0f;
+  std::vector<CpuPtexProbe> probes(
+      probe_enabled ? static_cast<size_t>(w) * static_cast<size_t>(h)
+                    : 0);
   // Ptex face id for a triangle in the expanded CPU stream. The source face id
   // is texture-local, so instance expansion reuses it unchanged.
   auto ptexFaceFor = [&](int t) -> int {
@@ -2189,9 +2211,24 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               float texCol[3];
               const int base_face = ptexFaceFor(static_cast<int>(tri));
               const CpuPtexSampler* base_src = ptexAt(baseTex);
+              const uint32_t base_mip = ptexMipOf(base_src, base_face);
               SampleTextureBilinear(hs_.textures, hs_.texels, baseTex,
                                     slot_uv[0], slot_uv[1], texCol, base_face,
-                                    base_src, ptexMipOf(base_src, base_face));
+                                    base_src, base_mip);
+              if (probe_enabled && base_src && base_face >= 0) {
+                CpuPtexProbe& probe =
+                    probes[static_cast<size_t>(y) * static_cast<size_t>(w) +
+                           static_cast<size_t>(x)];
+                probe.tex = static_cast<uint32_t>(baseTex);
+                probe.face = static_cast<uint32_t>(base_face);
+                probe.mip = static_cast<int>(base_mip);
+                probe.srgb = hs_.textures[static_cast<size_t>(baseTex)].srgb;
+                probe.u = slot_uv[0];
+                probe.v = slot_uv[1];
+                probe.rgb[0] = texCol[0];
+                probe.rgb[1] = texCol[1];
+                probe.rgb[2] = texCol[2];
+              }
               base[0] *= texCol[0]; base[1] *= texCol[1]; base[2] *= texCol[2];
             }
           }
@@ -3059,7 +3096,30 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   for (unsigned i = 1; i < nThreads; ++i) pool.emplace_back(worker);
   worker();
   for (auto& t : pool) t.join();
-  return true;
+  if (probe_enabled) {
+    std::FILE* out = std::fopen(probe_path, "w");
+    if (out) {
+      for (size_t i = 0; i < ptexAsset_.size(); ++i) {
+        if (!ptex_[i]) continue;
+        std::fprintf(out, "# texture %zu %s\n", i,
+                     ptexAsset_[i].empty() ? "<memory>" : ptexAsset_[i].c_str());
+      }
+      std::fprintf(out, "# x y tex face mip srgb u v r g b\n");
+      for (int py = 0; py < h; ++py) {
+        for (int px = 0; px < w; ++px) {
+          const CpuPtexProbe& probe =
+              probes[static_cast<size_t>(py) * static_cast<size_t>(w) +
+                     static_cast<size_t>(px)];
+          if (probe.face == ~0u) continue;
+          std::fprintf(out, "%d %d %u %u %d %d %.9g %.9g %.9g %.9g %.9g\n",
+                       px, py, probe.tex, probe.face, probe.mip, probe.srgb,
+                       probe.u, probe.v, probe.rgb[0], probe.rgb[1],
+                       probe.rgb[2]);
+        }
+      }
+      std::fclose(out);
+    }
+  }  return true;
 }
 
 }  // namespace lusdview

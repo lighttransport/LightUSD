@@ -515,6 +515,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-cpu-coat-normal` | CPU OpenPBR coat normal uses its own map/frame and affects only the coat lobe | `xvfb-run` when headless |
 | `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
 | `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
+| `lusdview-cpu-ptex-element` | Real quad-topology element pixels match the independent OpenPtex decoder; no fallback | Island corpus, OpenPtex build, `xvfb-run` |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
@@ -3446,6 +3447,14 @@ selector for the lanes the CPU samples (base colour, normal map including its
 tangent frame, opacity): each must shade byte-identically to the same texture
 sampled with pre-transformed `st`, with a no-normal control proving the normal
 rows are not vacuous.
+
+`lusdview-cpu-ptex-element` renders the real `isGardeniaA` bonsai element
+(quad topology, 53 meshes, 53 PTex maps), requires no representative-face
+fallback, and verifies every visible base-colour sample with a probe dump
+against OpenPtex 2.4.3 (`pixels=471 textures=11 faces=166 max_error=0`). The
+loader fix behind it also computes per-face source ids without a Uniform
+attribute and maps subdivided children into their quadtree sub-rectangle of the
+base Ptex face.
 
 The CPU preview's PTex path now streams per-face pages and selects a mip from
 the pixel footprint. `lusdview_ptex_atlas_test` compares face 0 mips 1-2 against

@@ -78,6 +78,8 @@ class CpuRayTracer {
   std::vector<int> cpuMat_, cpuInstance_, cpuSourceTri_;
   // Per-table-texture streamed PTex sources (nullptr for non-Ptex/atlas-only).
   std::vector<std::unique_ptr<CpuPtexSampler>> ptex_;
+  // Resolved source path per table texture, for the diagnostic probe dump.
+  std::vector<std::string> ptexAsset_;
   lrt_tri_scene* scene_{nullptr};
   size_t triCount_{0};
   bool truncated_{false};
