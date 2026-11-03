@@ -143,6 +143,43 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Authored cameras: C steps through them (then back to the free view), --camera
+  # N starts on one; bookmarks store/recall free views per scene.
+  add_test(NAME ld3d12view-camera-cycle-warp
+      COMMAND ld3d12view --hidden --warp --size 480x300 --frames 6
+              --simulate-camera-cycle 4
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/cameras.usda)
+  add_test(NAME ld3d12view-camera-index-warp
+      COMMAND ld3d12view --hidden --warp --size 480x300 --frames 4 --camera 2
+              --no-grid
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-camera-top.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/cameras.usda)
+  add_test(NAME ld3d12view-bookmark-save-warp
+      COMMAND ld3d12view --hidden --warp --size 480x300 --frames 6
+              --simulate-bookmark 2
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/cameras.usda)
+  add_test(NAME ld3d12view-bookmark-load-warp
+      COMMAND ld3d12view --hidden --warp --size 480x300 --frames 6
+              --simulate-bookmark-load 2
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/cameras.usda)
+  set_tests_properties(ld3d12view-camera-cycle-warp PROPERTIES
+      PASS_REGULAR_EXPRESSION "camera 1/3 /World/CamFront.*camera 2/3 /World/CamSide.*camera 3/3 /World/CamTop.*camera free view")
+  set_tests_properties(ld3d12view-camera-index-warp PROPERTIES
+      PASS_REGULAR_EXPRESSION "3 authored camera")
+  set_tests_properties(ld3d12view-bookmark-save-warp PROPERTIES
+      PASS_REGULAR_EXPRESSION "bookmark 2 saved.*bookmark 2 recalled.*bookmark 2 round-trip ok"
+      FAIL_REGULAR_EXPRESSION "mismatch")
+  # Runs after the save test: the slot must have been persisted to the file.
+  set_tests_properties(ld3d12view-bookmark-load-warp PROPERTIES
+      PASS_REGULAR_EXPRESSION "1 camera bookmark\\(s\\) loaded.*bookmark 2 recalled"
+      DEPENDS ld3d12view-bookmark-save-warp)
+  # Keep the bookmark file out of the user's profile; run the pair serially.
+  set_tests_properties(ld3d12view-bookmark-save-warp ld3d12view-bookmark-load-warp
+      PROPERTIES ENVIRONMENT "LD3D12VIEW_BOOKMARKS=${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-test-bookmarks.txt"
+                 RESOURCE_LOCK ld3d12view_bookmarks)
+  set_tests_properties(ld3d12view-camera-cycle-warp ld3d12view-camera-index-warp
+      ld3d12view-bookmark-save-warp ld3d12view-bookmark-load-warp PROPERTIES
+      LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Outliner + variants: the panel lists the prim tree and the root layer's
   # variant sets; clicking a variant row reloads with the next variant (same
   # camera), --variant starts from an override, and clicking a prim row selects.

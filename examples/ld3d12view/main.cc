@@ -41,6 +41,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <cstdlib>
 #include <algorithm>
@@ -80,6 +82,10 @@ struct Options {
   std::string simulate_click;  // test hook: "play" or "timeline=F"
   std::string simulate_pick;   // test hook: click at "fx,fy" (window fractions)
   bool outliner = false;       // start with the outliner panel open
+  int camera_index = 0;        // --camera N: authored camera for --authored-camera
+  int simulate_camera_cycle = 0;   // test hook: press C this many times
+  int simulate_bookmark = 0;       // test hook: save, disturb and recall slot N
+  int simulate_bookmark_load = 0;  // test hook: recall slot N (persisted)
   ld3d12::VariantOverrides variants;  // --variant set=name (repeatable)
   int simulate_variant_click = -1;    // test hook: click variant row N
   int simulate_outline_click = -1;    // test hook: click prim row N
@@ -94,7 +100,7 @@ void Usage() {
                "usage: ld3d12view [--size WxH] [--frames N] [--debug] "
                "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--no-compress-textures] [--preset 0-6]\n"
                "                   [--time T] [--animate-from T] [--play] [--paused] [--no-hud] [--no-background] [--load-delay-ms N] [--simulate-cancel] [--capture-loading] [--no-loop] "
-               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--outliner] [--variant set=name] [--simulate-resize WxH] "
+               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--outliner] [--variant set=name] [--camera N] [--simulate-resize WxH] "
                "[--screenshot out.png] [file.usd]\n");
 }
 
@@ -146,6 +152,15 @@ bool ParseArgs(int argc, char** argv, Options* o) {
         return false;
     } else if (a == "--simulate-click" && i + 1 < argc) {
       o->simulate_click = argv[++i];
+    } else if (a == "--camera" && i + 1 < argc) {
+      o->authored_camera = true;
+      o->camera_index = std::max(0, std::atoi(argv[++i]));
+    } else if (a == "--simulate-camera-cycle" && i + 1 < argc) {
+      o->simulate_camera_cycle = std::atoi(argv[++i]);
+    } else if (a == "--simulate-bookmark" && i + 1 < argc) {
+      o->simulate_bookmark = std::atoi(argv[++i]);
+    } else if (a == "--simulate-bookmark-load" && i + 1 < argc) {
+      o->simulate_bookmark_load = std::atoi(argv[++i]);
     } else if (a == "--outliner") {
       o->outliner = true;
     } else if (a == "--variant" && i + 1 < argc) {
@@ -307,6 +322,67 @@ bool PostSyntheticDrop(HWND hwnd, const std::string& utf8_path) {
   return true;
 }
 
+// ---- Camera bookmarks -------------------------------------------------------
+// Ctrl+1..9 stores the current view in a slot, Shift+1..9 recalls it. Slots are
+// kept per scene file in a small text file (one line per slot: scene path, slot,
+// then target xyz, yaw, pitch, distance) so they survive restarts.
+struct CameraBookmark {
+  bool set = false;
+  float v[6] = {};  // target xyz, yaw, pitch, distance
+};
+
+std::string BookmarkFilePath() {
+  if (const char* env = std::getenv("LD3D12VIEW_BOOKMARKS"); env && *env) return env;
+  char base[MAX_PATH] = {};
+  const DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", base, sizeof(base));
+  if (n == 0 || n >= sizeof(base)) return std::string();
+  const std::string dir = std::string(base) + "\\ld3d12view";
+  CreateDirectoryA(dir.c_str(), nullptr);
+  return dir + "\\bookmarks.txt";
+}
+
+void LoadBookmarks(const std::string& scene, CameraBookmark out[10]) {
+  for (int i = 0; i < 10; ++i) out[i] = CameraBookmark();
+  const std::string file = BookmarkFilePath();
+  if (file.empty()) return;
+  std::ifstream in(file);
+  std::string line;
+  while (std::getline(in, line)) {
+    const size_t t1 = line.find('\t');
+    const size_t t2 = t1 == std::string::npos ? t1 : line.find('\t', t1 + 1);
+    if (t2 == std::string::npos || line.compare(0, t1, scene) != 0) continue;
+    const int slot = std::atoi(line.substr(t1 + 1, t2 - t1 - 1).c_str());
+    CameraBookmark b;
+    std::istringstream values(line.substr(t2 + 1));
+    if (slot < 1 || slot > 9 ||
+        !(values >> b.v[0] >> b.v[1] >> b.v[2] >> b.v[3] >> b.v[4] >> b.v[5]))
+      continue;
+    b.set = true;
+    out[slot] = b;
+  }
+}
+
+void SaveBookmarks(const std::string& scene, const CameraBookmark in[10]) {
+  const std::string file = BookmarkFilePath();
+  if (file.empty() || scene.empty()) return;
+  std::vector<std::string> keep;  // other scenes' lines
+  {
+    std::ifstream old(file);
+    std::string line;
+    while (std::getline(old, line)) {
+      const size_t t1 = line.find('\t');
+      if (t1 != std::string::npos && line.compare(0, t1, scene) != 0) keep.push_back(line);
+    }
+  }
+  std::ofstream out(file, std::ios::trunc);
+  for (const std::string& line : keep) out << line << '\n';
+  for (int slot = 1; slot <= 9; ++slot) {
+    if (!in[slot].set) continue;
+    out << scene << '\t' << slot << '\t';
+    for (int i = 0; i < 6; ++i) out << in[slot].v[i] << (i < 5 ? ' ' : '\n');
+  }
+}
+
 // Posts key down/up messages (what the keyboard driver sends) to `hwnd`.
 void PostSyntheticClick(HWND hwnd, int x, int y) {
   const LPARAM pos = MAKELPARAM(static_cast<WORD>(x), static_cast<WORD>(y));
@@ -432,6 +508,10 @@ int main(int argc, char** argv) {
                      (opt.play || (!opt.has_time && !opt.has_from));
       bool looping = opt.loop;
       bool use_authored = false;
+      int authored_index = -1;  // which authored camera is active (-1 = free view)
+      float free_target[3] = {0, 0, 0};  // the free view, restored when C wraps
+      float free_yaw = 0, free_pitch = 0, free_dist = 1;
+      bool have_free_view = false;
       auto wall = [] {
         return std::chrono::duration<double>(
                    std::chrono::steady_clock::now().time_since_epoch())
@@ -454,6 +534,7 @@ int main(int argc, char** argv) {
           }
           device.WaitIdle();
           scene_gpu = ld3d12::SceneGPU();
+          scene_gpu.compress_textures = opt.compress_textures;
           if (!scene_gpu.Build(device, sv.scene, &err)) {
             std::fprintf(stderr, "ld3d12view: %s\n", err.c_str());
             return false;
@@ -465,10 +546,17 @@ int main(int argc, char** argv) {
       auto sync_authored_camera = [&] {
         if (!use_authored || !sv.scene || camera_count == 0) return;
         lmv_camera_view cv = {};
-        if (lmv_scene_camera(sv.scene, 0, &cv) == LMV_OK)
+        const uint32_t idx = authored_index < 0
+                                 ? 0u
+                                 : std::min<uint32_t>(static_cast<uint32_t>(authored_index),
+                                                      camera_count - 1);
+        if (lmv_scene_camera(sv.scene, idx, &cv) == LMV_OK)
           lmv_camera_set_from_camera(camera, &cv);
       };
-      auto leave_authored_camera = [&] { use_authored = false; };
+      auto leave_authored_camera = [&] {
+        use_authored = false;
+        authored_index = -1;
+      };
       // The core loads at time code 0, which can lie outside the authored clip
       // (e.g. 1..48); move into the clip so playback and the first frame are
       // valid. Skipped when the caller asked for explicit times.
@@ -513,6 +601,10 @@ int main(int argc, char** argv) {
           std::snprintf(b, sizeof(b), "%u mesh(es)", lmv_scene_mesh_count(sv.scene));
           info_text = b;
         }
+        if (use_authored && sv.scene && camera_count > 0 && info_text.find("cam ") == std::string::npos) {
+          info_text += "  cam " + std::to_string(authored_index + 1) + "/" +
+                       std::to_string(camera_count);
+        }
       };
       update_info();
 
@@ -521,6 +613,7 @@ int main(int argc, char** argv) {
       // command-line scene, which also gets the --time/--preset/camera options.
       bool initial_pending = !opt.path.empty();
       ld3d12::PickResult selection;  // the clicked draw, shown in the inspector
+      CameraBookmark bookmarks[10];  // slots 1..9 of the open scene
       std::string current_path;                  // the open file
       ld3d12::VariantOverrides active_variants;  // overrides it was loaded with
       // Outliner data for the open scene (built on first show).
@@ -665,13 +758,24 @@ int main(int argc, char** argv) {
         lmv_camera_set_up_axis(camera, sv.up_axis);
         if (!keep_view) FrameScene(camera, sv);
         if (initial && opt.preset >= 0) lmv_camera_set_preset(camera, opt.preset);
+        lmv_camera_get_orbit(camera, free_target, &free_yaw, &free_pitch, &free_dist);
+        have_free_view = true;
+        authored_index = -1;
         if (initial && opt.authored_camera && camera_count > 0) {
           use_authored = true;
+          authored_index = std::min<int>(opt.camera_index, static_cast<int>(camera_count) - 1);
           sync_authored_camera();
         }
         title_name = base_name(path);
         current_path = path;
         active_variants = variants;
+        LoadBookmarks(current_path, bookmarks);
+        {
+          int stored = 0;
+          for (int i = 1; i <= 9; ++i) stored += bookmarks[i].set ? 1 : 0;
+          if (stored > 0)
+            std::fprintf(stderr, "ld3d12view: %d camera bookmark(s) loaded\n", stored);
+        }
         outline_built = false;
         if (hud.outline_visible()) rebuild_outline();
         update_info();
@@ -706,6 +810,60 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "ld3d12view: variant %s -> %s\n", v.set_name.c_str(),
                      next.c_str());
         request_load(current_path, overrides);
+      };
+      // C: step through the authored cameras, then back to the free view.
+      auto cycle_camera = [&] {
+        if (camera_count == 0) {
+          std::fprintf(stderr, "ld3d12view: no authored cameras in this scene\n");
+          return;
+        }
+        if (!use_authored) {
+          lmv_camera_get_orbit(camera, free_target, &free_yaw, &free_pitch, &free_dist);
+          have_free_view = true;
+          authored_index = 0;
+          use_authored = true;
+        } else if (authored_index + 1 < static_cast<int>(camera_count)) {
+          ++authored_index;
+        } else {
+          authored_index = -1;
+          use_authored = false;
+          if (have_free_view)
+            lmv_camera_set_orbit(camera, free_target, free_yaw, free_pitch, free_dist);
+        }
+        if (use_authored) {
+          sync_authored_camera();
+          lmv_camera_view cv = {};
+          const uint32_t idx = static_cast<uint32_t>(authored_index);
+          const char* name = "";
+          if (lmv_scene_camera(sv.scene, idx, &cv) == LMV_OK && cv.prim_path) name = cv.prim_path;
+          std::fprintf(stderr, "ld3d12view: camera %d/%u %s\n", authored_index + 1,
+                       camera_count, name);
+        } else {
+          std::fprintf(stderr, "ld3d12view: camera free view\n");
+        }
+        info_text.clear();
+        update_info();
+      };
+      auto save_bookmark = [&](int slot) {
+        if (slot < 1 || slot > 9) return;
+        CameraBookmark& b = bookmarks[slot];
+        lmv_camera_get_orbit(camera, b.v, &b.v[3], &b.v[4], &b.v[5]);
+        b.set = true;
+        SaveBookmarks(current_path, bookmarks);
+        std::fprintf(stderr, "ld3d12view: bookmark %d saved\n", slot);
+      };
+      auto recall_bookmark = [&](int slot) {
+        if (slot < 1 || slot > 9) return;
+        const CameraBookmark& b = bookmarks[slot];
+        if (!b.set) {
+          std::fprintf(stderr, "ld3d12view: bookmark %d is empty\n", slot);
+          return;
+        }
+        leave_authored_camera();
+        lmv_camera_set_orbit(camera, b.v, b.v[3], b.v[4], b.v[5]);
+        std::fprintf(stderr, "ld3d12view: bookmark %d recalled\n", slot);
+        info_text.clear();
+        update_info();
       };
       hud.on_outline_select = [&](int draw) {
         selection = ld3d12::DescribeDraw(sv.scene, draw);
@@ -823,8 +981,16 @@ int main(int argc, char** argv) {
                 FrameScene(camera, sv);
               if (ev.data.key.key == 'w' || ev.data.key.key == 'W')
                 wireframe = !wireframe;
-              if (ev.data.key.key >= '1' && ev.data.key.key <= '7')
+              if (ev.data.key.key >= '1' && ev.data.key.key <= '9' &&
+                  (ev.data.key.mods & (LUI_MOD_CTRL | LUI_MOD_SHIFT))) {
+                const int slot = ev.data.key.key - '0';
+                if (ev.data.key.mods & LUI_MOD_CTRL)
+                  save_bookmark(slot);
+                else
+                  recall_bookmark(slot);
+              } else if (ev.data.key.key >= '1' && ev.data.key.key <= '7') {
                 lmv_camera_set_preset(camera, ev.data.key.key - '1');
+              }
               if (ev.data.key.key == 's' || ev.data.key.key == 'S')
                 shadows = !shadows;
               if (ev.data.key.key == 'g' || ev.data.key.key == 'G')
@@ -846,10 +1012,8 @@ int main(int argc, char** argv) {
               if (ev.data.key.key == 'l' || ev.data.key.key == 'L')
                 looping = !looping;
               if ((ev.data.key.key == 'c' || ev.data.key.key == 'C') &&
-                  camera_count > 0) {
-                use_authored = !use_authored;
-                sync_authored_camera();
-              }
+                  !(ev.data.key.mods & LUI_MOD_CTRL))
+                cycle_camera();
               break;
             case LUI_EVENT_FILE_DROP: {
               // One event per dropped file; open the first, discard the rest.
@@ -1110,6 +1274,30 @@ int main(int argc, char** argv) {
             exit_code = 1;
           }
         }
+        if (frames == 3 && opt.simulate_camera_cycle > 0)
+          for (int i = 0; i < opt.simulate_camera_cycle; ++i) cycle_camera();
+        if (frames == 3 && opt.simulate_bookmark > 0) {
+          float t0[3], y0, p0, d0, t1[3], y1, p1, d1;
+          lmv_camera_get_orbit(camera, t0, &y0, &p0, &d0);
+          save_bookmark(opt.simulate_bookmark);
+          lmv_camera_orbit(camera, 60.0f, 40.0f);  // disturb the view...
+          lmv_camera_dolly(camera, 2.0f);
+          recall_bookmark(opt.simulate_bookmark);  // ...and bring it back
+          lmv_camera_get_orbit(camera, t1, &y1, &p1, &d1);
+          const float err = std::fabs(t0[0] - t1[0]) + std::fabs(t0[1] - t1[1]) +
+                            std::fabs(t0[2] - t1[2]) + std::fabs(y0 - y1) +
+                            std::fabs(p0 - p1) + std::fabs(d0 - d1);
+          if (err < 1e-3f) {
+            std::fprintf(stderr, "ld3d12view: bookmark %d round-trip ok\n",
+                         opt.simulate_bookmark);
+          } else {
+            std::fprintf(stderr, "ld3d12view: bookmark %d round-trip mismatch (%g)\n",
+                         opt.simulate_bookmark, err);
+            exit_code = 1;
+          }
+        }
+        if (frames == 3 && opt.simulate_bookmark_load > 0)
+          recall_bookmark(opt.simulate_bookmark_load);
         if (frames == 3 && !opt.simulate_pick.empty()) {
           float fx = 0.5f, fy = 0.5f;
           if (std::sscanf(opt.simulate_pick.c_str(), "%f,%f", &fx, &fy) != 2) {
