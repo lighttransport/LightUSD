@@ -161,6 +161,146 @@ def _enumerate_composition(limit=CAP):
     return cases[:limit] if limit else cases
 
 
+# Deprecated layer fields the spec reserves but does not give stage semantics.
+# The baselines record them as authored text; they are not compared.
+_DEPRECATED_ROOT_FIELDS = {"framePrecision", "startFrame", "endFrame"}
+
+
+def _plain_type_value(value):
+    """Turn lightusd Array / numpy values into nested Python lists."""
+    if isinstance(value, (list, tuple)):
+        return [_plain_type_value(v) for v in value]
+    if type(value).__name__ == "Array" or hasattr(value, "__array_interface__"):
+        return _plain_type_value(np.asarray(value).tolist())
+    return value
+
+
+def _type_value_equal(got, want):
+    got = _plain_type_value(got)
+    want = _plain_type_value(want)
+    # Matrices are authored as 4x4 rows but exposed as a flat 16-tuple.
+    if (isinstance(want, list) and len(want) == 4 and
+            isinstance(want[0], list) and len(want[0]) == 4 and
+            isinstance(got, list) and len(got) == 16 and
+            not isinstance(got[0], list)):
+        got = [got[i * 4:(i + 1) * 4] for i in range(4)]
+    if isinstance(got, bool) or isinstance(want, bool):
+        return got == want
+    if isinstance(got, (int, float)) and isinstance(want, (int, float)):
+        return abs(float(got) - float(want)) <= 1e-6 * max(1.0, abs(float(want)))
+    if isinstance(got, list) and isinstance(want, list):
+        return len(got) == len(want) and all(
+            _type_value_equal(g, w) for g, w in zip(got, want))
+    return got == want
+
+
+def test_aousd_file_format_baselines():
+    """Compare authored content against the corpus' own baseline JSON.
+
+    The `file_formats` suites ship `text/usda/*.usda` with a matching
+    `text/baseline/*.json` describing the expected prim stack, specifiers, type
+    names, child/property lists and default values. Loading a file is not
+    evidence of parsing it correctly; this walks the baseline.
+    """
+    usda_dir = AOUSD_ROOT / "file_formats" / "tests" / "assets" / "text" / "usda"
+    base_dir = AOUSD_ROOT / "file_formats" / "tests" / "assets" / "text" / "baseline"
+    if not usda_dir.is_dir() or not base_dir.is_dir():
+        pytest.skip("no text baselines")
+    cases = sorted(p.stem for p in base_dir.glob("*.json")
+                   if (usda_dir / (p.stem + ".usda")).is_file())
+    assert cases, "no baseline/usda pairs"
+    checked = variant_paths = 0
+    failures = []
+    for name in cases:
+        baseline = json.loads((base_dir / (name + ".json")).read_text())
+        stage = lightusd.load(str(usda_dir / (name + ".usda")), composed=False)
+        root = baseline.get("/", {})
+        if ("framesPerSecond" in root and
+                not _type_value_equal(stage.frames_per_second,
+                                      root["framesPerSecond"])):
+            failures.append(
+                f"{name}: framesPerSecond {stage.frames_per_second} != "
+                f"{root['framesPerSecond']}")
+        prims = {p.path: p for p in stage.traverse(all_prims=True)}
+        for path, want in baseline.items():
+            if path == "/":
+                if "primChildren" in want:
+                    got = [c.name for c in stage.root_prims]
+                    if got != want["primChildren"]:
+                        failures.append(
+                            f"{name} / primChildren {got} != {want['primChildren']}")
+                continue
+            # Variant spec paths (`{foo=bar}`) are not addressable prim paths.
+            if "{" in path or "}" in path:
+                variant_paths += 1
+                continue
+            prim_path, _, prop = path.partition(".")
+            prim = prims.get(prim_path)
+            if prim is None:
+                failures.append(f"{name} {path}: prim missing")
+                continue
+            checked += 1
+            if prop:
+                try:
+                    attr = prim.attribute(prop)
+                except KeyError:
+                    try:
+                        rel = prim.relationship(prop)
+                    except KeyError:
+                        failures.append(f"{name} {path}: property missing")
+                        continue
+                    if "targets" in want and list(rel.targets) != want["targets"]:
+                        failures.append(
+                            f"{name} {path} targets {list(rel.targets)} != "
+                            f"{want['targets']}")
+                    continue
+                if "typeName" in want and attr.type_name != want["typeName"]:
+                    failures.append(
+                        f"{name} {path} typeName {attr.type_name} != {want['typeName']}")
+                if "custom" in want and bool(attr.is_custom) != bool(want["custom"]):
+                    failures.append(
+                        f"{name} {path} custom {attr.is_custom} != {want['custom']}")
+                if "default" in want:
+                    if want["default"] is None:
+                        # `= None` is a value block, not a missing default.
+                        if not attr.is_default_blocked:
+                            failures.append(
+                                f"{name} {path}: expected blocked default")
+                    else:
+                        try:
+                            got = attr.get()
+                        except Exception as exc:  # noqa: BLE001 - report, keep walking
+                            failures.append(
+                                f"{name} {path}: default read failed: {exc}")
+                        else:
+                            if not _type_value_equal(got, want["default"]):
+                                failures.append(
+                                    f"{name} {path} default "
+                                    f"{_plain_type_value(got)} != {want['default']}")
+                continue
+            if "specifier" in want and prim.specifier != want["specifier"]:
+                failures.append(
+                    f"{name} {path} specifier {prim.specifier} != {want['specifier']}")
+            if "typeName" in want and prim.type_name != want["typeName"]:
+                failures.append(
+                    f"{name} {path} typeName {prim.type_name} != {want['typeName']}")
+            if "primChildren" in want:
+                got = [c.name for c in prim.children]
+                if got != want["primChildren"]:
+                    failures.append(
+                        f"{name} {path} primChildren {got} != {want['primChildren']}")
+            if "propertyChildren" in want:
+                got = sorted(list(prim.attributes) + list(prim.relationships))
+                exp = sorted(want["propertyChildren"])
+                if got != exp:
+                    failures.append(
+                        f"{name} {path} propertyChildren {got} != {exp}")
+    print(f"[aousd] baselines {len(cases)} files, {checked} prim/property checks, "
+          f"{variant_paths} variant-spec paths skipped")
+    assert checked >= 50, f"baseline coverage unexpectedly small: {checked}"
+    assert not failures, "\n".join(failures[:40])
+
+
 # Expected `Composing` paths that this bridge cannot confirm, each with the
 # reason. The set is asserted exactly: a fixed case must remove its entry.
 KNOWN_COMPOSING_EXCEPTIONS = {
