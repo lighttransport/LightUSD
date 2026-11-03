@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "next/layer/asset-anchor.hh"   // AssetAnchorPath

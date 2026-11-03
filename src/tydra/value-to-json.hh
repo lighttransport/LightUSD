@@ -6,7 +6,7 @@
 #include "../value-types.hh"
 #include "../core/prim-metas.hh"
 #include "../core/prim-spec.hh"
-#include "../minijson.hh"
+#include "core/minijson.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push

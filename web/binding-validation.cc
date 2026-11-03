@@ -3,7 +3,7 @@
 #include "next/validation/usd-validation.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/load-usd.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <cstdlib>
 #include <cstring>
 namespace lightusd { namespace web_next {

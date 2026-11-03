@@ -17,7 +17,7 @@
 #include "image-loader.hh"
 #include "ptx-loader.hh"
 #include "next/reader/usdz-reader.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/resize-image.hh"  // ResizeImage / ResizeFilter only
 #include "next/crate/crate-format.hh"  // HalfToFloat
 

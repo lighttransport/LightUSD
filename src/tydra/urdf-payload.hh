@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 namespace lightusd {
 namespace tydra {

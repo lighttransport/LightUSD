@@ -46,7 +46,7 @@
 #include "../prim/path.hh"
 #include "../types/type-id.hh"
 #include "../types/value.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 
 namespace lightusd {
 namespace next {

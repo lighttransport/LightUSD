@@ -39,7 +39,7 @@
 #include "next/pipeline/flatten.hh"
 #include "next/crate/crate-reader.hh"
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "binding-next-scene.hh"
 #include "next/load-usd.hh"
 #include "next/resolver/asset-resolver.hh"

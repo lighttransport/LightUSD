@@ -5,7 +5,7 @@
 
 #include "crate-reader-internal.hh"
 #include "lazy-array.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../strfmt.hh"
 #include "../execution.hh"
 #include "crate-timing.hh"

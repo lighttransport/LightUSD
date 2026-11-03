@@ -6,10 +6,10 @@
 #include <climits>
 #include <limits>
 #include "layer.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "lightusd.hh"
 #include "io-util.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #if defined(LIGHTUSD_WITH_JSON)
 

@@ -1,5 +1,5 @@
 #include "texture-util.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <algorithm>
 #include <cctype>

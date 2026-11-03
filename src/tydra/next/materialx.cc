@@ -5,7 +5,7 @@
 
 #include "materialx.hh"
 #include "render-converter.hh"
-#include "../../mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "../../next/schema/usd-shade.hh"
 #include <cmath>
 #include <algorithm>

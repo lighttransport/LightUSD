@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 namespace lightusd {
 namespace tydra {

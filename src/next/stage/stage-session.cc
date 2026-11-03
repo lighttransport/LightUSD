@@ -7,8 +7,8 @@
 #include "../load-usd-internal.hh"
 #include "../format-detect.hh"
 #include "../next-util.hh"
-#include "../../safe-arithmetic.hh"
-#include "../../logger.hh"
+#include "core/safe-arithmetic.hh"
+#include "core/logger.hh"
 #include <algorithm>
 #include <chrono>
 #include <memory>

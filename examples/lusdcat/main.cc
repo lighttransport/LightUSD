@@ -21,7 +21,7 @@
 #include "usd-to-json.hh"
 #include "usd-dump.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 #include "crate-dump.hh"
 #include "usdc-reader.hh"
 #include "usdc-writer.hh"

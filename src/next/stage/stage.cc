@@ -7,7 +7,7 @@
 #include "../layer/layer.hh"
 #include "../composition/composition.hh"
 #include "../schema/schema-registry.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
 

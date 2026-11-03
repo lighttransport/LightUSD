@@ -35,7 +35,7 @@
 
 #include "image-util.hh"
 #include "value-types.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "common-macros.inc"
 #include "tiny-format.hh"
 #include "imageproc/simd.hh"  // SIMD Mat3MulRGBf row kernel

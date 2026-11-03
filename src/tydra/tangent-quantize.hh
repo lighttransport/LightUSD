@@ -50,7 +50,7 @@ namespace value {
 using float3 = std::array<float, 3>;
 }  // namespace value
 }  // namespace lightusd
-#include "../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../nonstd/expected.hpp"
 
 namespace lightusd {

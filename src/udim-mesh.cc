@@ -18,7 +18,7 @@
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace udim {

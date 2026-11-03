@@ -22,7 +22,7 @@
 #include "core/relationship.hh"
 #include "core/xform-op.hh"
 #include "mjcPhysics.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "tydra/urdf-payload.hh"
 #include "nonstd/optional.hpp"
 #include "stage.hh"

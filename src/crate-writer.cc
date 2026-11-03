@@ -38,7 +38,7 @@
 // Direct LZ4 API for OpenUSD compatibility
 #include "lz4/lz4.h"
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "spline-binary.hh"  // SplineBinaryFormatVersion
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 

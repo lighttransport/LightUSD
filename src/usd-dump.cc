@@ -17,7 +17,7 @@
 #include "value-pprint.hh"
 #include "pprint-enum.hh"
 #include "usd-to-json.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 namespace lightusd {
 

@@ -13,8 +13,8 @@
 #include "../layer/layer.hh"
 #include "../parser/parse-options.hh"
 #include "../resolver/asset-resolver.hh"
-#include "../../security-policy.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/security-policy.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <cstddef>
 #include <functional>

@@ -22,7 +22,7 @@
 #include <memory>
 #include <vector>
 
-#include "logger.hh"  // lightusd::logging (next routes diagnostics through it)
+#include "core/logger.hh"  // lightusd::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
 #include "next/pcp/batched-compose.hh"
 #include "next/pcp/layer-registry.hh"

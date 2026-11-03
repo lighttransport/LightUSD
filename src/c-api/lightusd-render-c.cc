@@ -26,7 +26,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-session.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/next/render-data.hh"
 #include "tydra/next/resource-budget.hh"
 

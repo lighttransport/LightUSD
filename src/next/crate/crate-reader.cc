@@ -6,7 +6,7 @@
 #include "crate-reader-internal.hh"
 #include "../layer/array-edit.hh"
 #include "../writer/value-printer.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <cmath>
 #include <cstdint>

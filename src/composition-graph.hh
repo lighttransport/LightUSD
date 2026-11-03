@@ -30,7 +30,7 @@
 #include "nonstd/expected.hpp"
 
 #include "asset-resolution.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "core/composition-types.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"

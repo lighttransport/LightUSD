@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "lusdr_math.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "lightusd.hh"
 #include "value-types.hh"
 #include "xform.hh"

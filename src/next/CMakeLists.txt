@@ -67,8 +67,8 @@ set(LIGHTUSD_NEXT_SOURCES
     stage/change-set-diff.cc
     stage/stage-session.cc
     # Shared bounded JSON parser used by the next-generation URDF bridge.
-    ../minijson.cc
-    ../color-transform.cc
+    ../core/minijson.cc
+    ../core/color-transform.cc
     # C11 core: SdfPathExpression parsing / serialization / matching.
     # next owns this module; the legacy src/core/path-expression*.cc pair is
     # deliberately NOT part of this product (it would drag the legacy
@@ -121,7 +121,7 @@ set(LIGHTUSD_NEXT_SOURCES
     # /MaterialX layers from referenced .mtlx documents.
     ../mtlx-xml-tokenizer.cc
     ../mtlx-xml-parser.cc
-    ../mtlx-dom.cc
+    ../core/mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -178,7 +178,7 @@ set(LIGHTUSD_NEXT_HEADERS
     stage/stage-session.hh
 
     # Color management shared with render consumers
-    ../color-transform.hh
+    ../core/color-transform.hh
     schema/color-space.hh
 
     # ASCII parser

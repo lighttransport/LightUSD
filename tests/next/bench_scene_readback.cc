@@ -6,7 +6,7 @@
 #include "next/crate/crate-reader.hh"
 #include "next/layer/layer.hh"
 #include "tydra/next/render-converter.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 
 #include <charconv>
 #include <chrono>

@@ -15,7 +15,7 @@
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
-#include "../../mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "../../external/filesystem/include/ghc/filesystem.hpp"
 
 #include <algorithm>

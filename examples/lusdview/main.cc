@@ -27,7 +27,7 @@
 #include <system_error>
 #include <utility>
 
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 #include "app.hh"
 #include "config.hh"

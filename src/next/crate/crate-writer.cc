@@ -33,7 +33,7 @@
 #include "variant-holders.hh"
 #include "crate-writer-types.hh"
 #include "lazy-array.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../layer/property-index.hh"
 #include "../parser/ascii-parser.hh"

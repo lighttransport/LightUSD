@@ -25,7 +25,7 @@
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"

@@ -5,7 +5,7 @@
 
 #include "crate-reader-internal.hh"
 #include "../layer/int64-listop.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../execution.hh"
 #include "../writer/dtoa.hh"
 #include "../writer/value-printer.hh"

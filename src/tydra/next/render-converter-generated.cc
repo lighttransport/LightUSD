@@ -2,7 +2,7 @@
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
 #include "render-extract.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/shape-to-mesh.hh"
 #include <algorithm>
 #include <array>

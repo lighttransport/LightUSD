@@ -29,7 +29,7 @@
 #if defined(__EMSCRIPTEN__) && defined(LIGHTUSD_FLATTEN_MEMLOG)
 #include <emscripten/heap.h>
 #include "../strfmt.hh"     // AppendUInt
-#include "../../logger.hh"  // LIGHTUSD_LOG_I (only pulled in for this opt-in diag)
+#include "core/logger.hh"  // LIGHTUSD_LOG_I (only pulled in for this opt-in diag)
 #endif
 
 namespace lightusd {

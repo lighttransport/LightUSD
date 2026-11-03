@@ -4,7 +4,7 @@
 // Tydra Next - Mesh tangent conversion
 
 #include "render-converter-internal.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <cstring>
 #include "mem-budget.hh"
 #include "tydra/fast-mikktspace.hh"

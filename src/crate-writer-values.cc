@@ -21,7 +21,7 @@
 #include <unordered_map>
 
 #include "common-macros.inc"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "primvar.hh"
 #include "spline-binary.hh"
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)

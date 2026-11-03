@@ -6,7 +6,7 @@
 #include "../layer/asset-anchor.hh"
 #include "../pcp/cache.hh"
 #include "../reader/usdz-reader.hh"
-#include "../../minijson.hh"
+#include "core/minijson.hh"
 #include <algorithm>
 #include <cctype>
 #include <limits>

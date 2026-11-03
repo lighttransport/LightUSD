@@ -6,7 +6,7 @@
 #include "prim-spec.hh"
 #include "int64-listop.hh"
 #include "../prim/identifier.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <cstring>
 #include <list>

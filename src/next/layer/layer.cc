@@ -7,7 +7,7 @@
 #include "layer.hh"
 #include "../memory-trim.hh"
 #include "../prim/identifier.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
 #if defined(LIGHTUSD_ENABLE_THREAD)

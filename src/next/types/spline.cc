@@ -12,7 +12,7 @@
 #include <cstring>
 #include <limits>
 
-#include "../../spline-eval.hh"  // shared header-only evaluator (std-only)
+#include "core/spline-eval.hh"  // shared header-only evaluator (std-only)
 #include "../c/lightusd-core-c.h"
 #include "../crate/crate-format.hh"  // FloatToHalf/HalfToFloat (round-to-even)
 #include "../writer/dtoa.hh"

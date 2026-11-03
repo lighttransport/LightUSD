@@ -19,7 +19,7 @@
 #include "../reader/usdz-reader.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../resource-limits.hh"
-#include "../../security-policy.hh"
+#include "core/security-policy.hh"
 #include "change-set.hh"
 #include "stage.hh"
 

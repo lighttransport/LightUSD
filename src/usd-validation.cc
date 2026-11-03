@@ -22,7 +22,7 @@
 #include "core/path.hh"
 #include "core/prim-enums.hh"
 #include "core/prim-spec.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "enum-handlers.hh"
 #include "io-util.hh"
 #include "path-util.hh"
