@@ -59,15 +59,34 @@ def sample_times(config,start,end):
     return sorted(rng.uniform(start,end) for _ in range(count))
 
 
+def beauty_lighting_rig(value):
+    """Validate the opt-in shared beauty rig (see validation_stage.beauty_lighting)."""
+    if value is None:return None
+    if not isinstance(value,dict) or set(value)-{'key','fill','dome','key_rotate','fill_rotate','force'}:
+        raise ValueError('invalid beauty_lighting fields')
+    rig={}
+    if type(value.get('force',False)) is not bool:raise ValueError('beauty_lighting force must be boolean')
+    rig['force']=value.get('force',False)
+    for name,default,low,high in (('key',1.0,0,100),('fill',0.25,0,100),('dome',0.0,0,100)):
+        item=value.get(name,default);number(item,'beauty_lighting '+name,low,high);rig[name]=item
+    for name,default in (('key_rotate',[-45.,0.,0.]),('fill_rotate',[30.,0.,160.])):
+        item=value.get(name,default)
+        if not isinstance(item,(list,tuple)) or len(item)!=3:raise ValueError('beauty_lighting '+name+' must have 3 values')
+        for part in item:number(part,'beauty_lighting '+name)
+        rig[name]=[float(part) for part in item]
+    return rig
+
+
 def load_config(path):
     if path.stat().st_size>1024*1024:raise ValueError('job config exceeds 1 MiB')
     config=json.loads(path.read_text())
-    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity'}
+    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting'}
     if not isinstance(config,dict) or set(config)-allowed or config.get('version')!=1:raise ValueError('invalid version 1 job config')
     scenes=config.get('scenes')
     if not isinstance(scenes,list) or not 1<=len(scenes)<=128:raise ValueError('scenes must contain 1..128 jobs')
     for scene in scenes:
-        if not isinstance(scene,dict) or set(scene)-{'path','time_sampling','aovs','camera_path','state','isolate','native_load_limits','process_limits','reference_population_mask','reference_complexity'} or not isinstance(scene.get('path'),str):raise ValueError('invalid scene job')
+        if not isinstance(scene,dict) or set(scene)-{'path','time_sampling','aovs','camera_path','state','isolate','native_load_limits','process_limits','reference_population_mask','reference_complexity','beauty_lighting'} or not isinstance(scene.get('path'),str):raise ValueError('invalid scene job')
+        beauty_lighting_rig(scene.get('beauty_lighting'))
         from headless import native_load_arguments,process_limits,reference_complexity
         reference_complexity(config.get('reference_complexity','low'))
         reference_complexity(scene.get('reference_complexity',config.get('reference_complexity','low')))
@@ -98,6 +117,7 @@ def load_config(path):
     for gate_name,value in gates.items():
         number(value,gate_name,0,180 if gate_name=='normal_p95_degrees_max' else 1)
     config['thresholds']=gates
+    beauty_lighting_rig(config.get('beauty_lighting'))
     return config
 
 
@@ -160,6 +180,16 @@ def _run(args):
             if scene.get('isolate'):
                 isolated=worker({'operation':'isolate','scene':str(source),'output':str(directory/'isolated.usda'),'paths':scene['isolate']},'isolate')
                 entry['isolation']=isolated;source=Path(isolated['wrapper']);session.state['scene']=str(source)
+            rig=scene.get('beauty_lighting',config.get('beauty_lighting'))
+            if rig is not None:
+                rig=beauty_lighting_rig(rig)
+                lighting=worker({'operation':'lighting','scene':str(source),'output':str(directory/'beauty-lighting.usda'),
+                                 'key':rig['key'],'fill':rig['fill'],'dome':rig['dome'],
+                                 'key_rotate':rig['key_rotate'],'fill_rotate':rig['fill_rotate'],
+                                 'force':rig['force']},'beauty-lighting')
+                entry['beauty_lighting']=lighting
+                if lighting.get('applied',True):
+                    source=Path(lighting['wrapper']);session.state['scene']=str(source)
             inventory=worker({'operation':'probe','scene':str(source)},'inventory');entry['inventory']=inventory
             times=sample_times(scene.get('time_sampling',config.get('time_sampling',{})),inventory['start'],inventory['end']);entry['sampled_times']=times
             if scene.get('state'):

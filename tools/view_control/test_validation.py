@@ -79,6 +79,21 @@ class ValidationTests(unittest.TestCase):
                 'scenes':[{'path':'sphere.usda','reference_complexity':'high'}]}))
             self.assertEqual(load_config(path)['scenes'][0]['reference_complexity'],'high')
 
+    def test_beauty_lighting_contract_is_explicit_and_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'job.json'
+            base={'version':1,'scenes':[{'path':'scene.usda'}]}
+            path.write_text(json.dumps(dict(base,beauty_lighting={'key':1.0,'fill':0.25,
+                'dome':0.1,'key_rotate':[-45,0,0]})))
+            self.assertEqual(load_config(path)['beauty_lighting']['key'],1.0)
+            path.write_text(json.dumps(dict(base,beauty_lighting={'key':1.0},
+                scenes=[{'path':'scene.usda','beauty_lighting':{'key':2.0,'fill':0.5}}])))
+            self.assertEqual(load_config(path)['scenes'][0]['beauty_lighting']['fill'],0.5)
+            for bad in ({'key':-1},{'fill':'x'},{'dome':True},{'force':1},
+                        {'key_rotate':[1,2]},{'fill_rotate':'up'},{'typo':1}):
+                path.write_text(json.dumps(dict(base,beauty_lighting=bad)))
+                with self.assertRaises(ValueError):load_config(path)
+
     def test_config_rejects_unknown_and_unbounded_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'job.json';base={'version':1,'scenes':[{'path':'scene.usda'}]}

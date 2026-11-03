@@ -290,6 +290,60 @@ def material_aov(scene,output,time,aov,purposes=None):
             'material_binding_purpose':'preview','semantics':'Preview-purpose (with all-purpose fallback) shared UsdPreviewSurface emissive diagnostic, sRGB output; source opacity retained. Not native albedo/BRDF integration.'}
 
 
+def beauty_lighting(scene,output,key=1.0,fill=0.25,dome=0.0,
+                    key_rotate=(-45.0,0.0,0.0),fill_rotate=(30.0,0.0,160.0),
+                    force=False):
+    """Author a shared two-light beauty rig over an unlit source.
+
+    USD-WG assets frequently author no lights, so Storm and the native preview
+    each substitute their own default rig, exposure and display transform and
+    the beauty AOV cannot be compared. This wrapper attaches the source
+    unchanged and authors the same two distant lights for both renderers. It is
+    an explicit beauty contract, not a claim about the source's intended
+    lighting.
+    """
+    from pxr import Gf,Sdf,Usd,UsdGeom,UsdLux
+    source=Usd.Stage.Open(scene)
+    if not source:raise ValueError('cannot open beauty lighting source')
+    layer=Sdf.Layer.CreateNew(str(output))
+    stage=Usd.Stage.Open(layer)
+    for name in ('upAxis','metersPerUnit','timeCodesPerSecond','framesPerSecond',
+                 'startTimeCode','endTimeCode','defaultPrim'):
+        if source.HasAuthoredMetadata(name):stage.SetMetadata(name,source.GetMetadata(name))
+    # A scene that authors its own lights already defines the lighting contract;
+    # stacking a diagnostic rig on top would change what both renderers are
+    # asked to evaluate. Only unlit scenes receive the shared rig.
+    authored=[]
+    for prim in source.Traverse():
+        if prim.HasAPI(UsdLux.LightAPI):authored.append(str(prim.GetPath()))
+    if authored and not force:
+        return {'beauty_lighting_revision':1,'wrapper':str(Path(scene).resolve()),
+                'source':str(Path(scene).resolve()),'applied':False,
+                'authored_lights':authored,'lights':[],'supported':True,
+                'semantics':'Source authors its own lights; the shared beauty rig is not applied. The authored lighting contract is used unchanged.'}
+    root=Sdf.Path('/__ViewControlBeautyLights')
+    if source.GetPrimAtPath(root):raise ValueError('beauty lighting namespace collision')
+    layer.subLayerPaths=[str(Path(scene).resolve())]
+    lights=[]
+    rigs=(('Key',float(key),key_rotate),('Fill',float(fill),fill_rotate))
+    for name,intensity,rotate in rigs:
+        prim=UsdLux.DistantLight.Define(stage,root.AppendChild(name))
+        prim.CreateIntensityAttr(intensity)
+        prim.CreateColorAttr(Gf.Vec3f(1.0,1.0,1.0))
+        UsdGeom.Xformable(prim.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(*rotate))
+        lights.append({'path':str(prim.GetPath()),'kind':'distant','intensity':intensity,
+                       'rotate':list(rotate)})
+    if dome>0:
+        prim=UsdLux.DomeLight.Define(stage,root.AppendChild('Dome'))
+        prim.CreateIntensityAttr(float(dome))
+        prim.CreateColorAttr(Gf.Vec3f(1.0,1.0,1.0))
+        lights.append({'path':str(prim.GetPath()),'kind':'dome','intensity':float(dome)})
+    layer.Save()
+    return {'beauty_lighting_revision':1,'wrapper':str(output),'source':str(Path(scene).resolve()),
+            'applied':True,'authored_lights':[],'lights':lights,'supported':True,
+            'semantics':'Shared distant-light (plus optional dome) beauty contract: the source is sublayered unchanged and both renderers evaluate the same authored rig. Intended for unlit assets whose beauty AOV would otherwise compare two unrelated default rigs. Not a claim about the source author intent.'}
+
+
 def isolate(scene,output,paths):
     """Hide unrelated imageable prims without removing shared USD resources."""
     from pxr import Usd,Sdf,UsdGeom
@@ -367,6 +421,13 @@ if __name__=='__main__':
     request=json.loads(Path(sys.argv[1]).read_text())
     if request['operation']=='probe':result=probe(request['scene'])
     elif request['operation']=='isolate':result=isolate(request['scene'],Path(request['output']),request['paths'])
+    elif request['operation']=='lighting':
+        result=beauty_lighting(request['scene'],Path(request['output']),
+                               request.get('key',1.0),request.get('fill',0.25),
+                               request.get('dome',0.0),
+                               request.get('key_rotate',(-45.,0.,0.)),
+                               request.get('fill_rotate',(30.,0.,160.)),
+                               request.get('force',False))
     elif request['operation']=='snapshot':result=evaluated_snapshot(request['scene'],Path(request['output']),request['time'])
     elif request['operation']=='geometry':result=geometry_aov(request['scene'],Path(request['output']))
     elif request['operation']=='normal':result=normal_aov(request['scene'],Path(request['output']),request.get('time',0),request.get('purposes'))

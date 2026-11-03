@@ -3186,6 +3186,120 @@ def Xform "Scene"
 // winding, holeIndices, GeomSubset material bindings, NodeGraph texture
 // indirection, UsdTransform2d + primvar-reader varname, purpose bindings,
 // surface-output shader selection, spot lights, generic/indexed primvars.
+void TestForwardedTextureAssetAnchor() {
+  std::cout << "Testing forwarded texture asset anchoring...\n";
+
+  // A look layer owns the texture shader; the referencing material owns the
+  // asset value. The relative path must anchor to the layer that authored the
+  // value, not to the referenced look layer. This is the Island PTex material
+  // shape (`inputs:file.connect = </Mat.inputs:surfaceMap>`).
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_forwarded_anchor_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  fs::create_directories(fixture / "looks", ec);
+  fs::create_directories(fixture / "textures", ec);
+  assert(!ec);
+
+  const char* look = R"(#usda 1.0
+(
+    defaultPrim = "BaseMaterial"
+)
+def Material "BaseMaterial"
+{
+    token outputs:surface.connect = </BaseMaterial/Surface.outputs:surface>
+
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </BaseMaterial/Tex.outputs:rgb>
+        token outputs:surface
+    }
+
+    def Shader "Tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file.connect = </BaseMaterial.inputs:surfaceMap>
+        float3 outputs:rgb
+    }
+}
+)";
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def Material "M" (
+        prepend references = @looks/material.usda@</BaseMaterial>
+    )
+    {
+        asset inputs:surfaceMap = @./textures/albedo.png@
+    }
+}
+)";
+  {
+    std::ofstream ofs(fixture / "looks" / "material.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << look;
+  }
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+  }
+  {
+    std::ofstream ofs(fixture / "textures" / "albedo.png",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << "x";
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  const bool composed = pcp::ComposeStageFromFile(
+      (fixture / "root.usda").string(), resolver, &stage, {}, &warn, &err);
+  if (!composed) std::abort();
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/M");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(material.preview_surface);
+  assert(material.preview_surface->diffuse_color.is_texture());
+  const int32_t texture_id = material.preview_surface->diffuse_color.texture_id;
+  assert(texture_id >= 0);
+  assert(static_cast<size_t>(texture_id) < result.scene.textures.size());
+  const RenderTexture& texture =
+      result.scene.textures[static_cast<size_t>(texture_id)];
+  assert(texture.image_id >= 0);
+  assert(static_cast<size_t>(texture.image_id) < result.scene.images.size());
+  const std::string resolved =
+      result.scene.images[static_cast<size_t>(texture.image_id)].resolved_path;
+  const std::string expected = (fixture / "textures" / "albedo.png").string();
+  if (resolved != expected) {
+    std::cout << "  resolved=" << resolved << " expected=" << expected << "\n";
+  }
+  assert(resolved == expected);
+  assert(texture.asset_path == "./textures/albedo.png");
+
+  std::cout << "  Forwarded texture asset anchoring: PASSED\n";
+}
+
 void TestAudit2026_07() {
   std::cout << "TestAudit2026_07..." << std::endl;
 
@@ -8805,6 +8919,7 @@ int main() {
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
   TestExternalMaterialXImageGraph();
+  TestForwardedTextureAssetAnchor();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();

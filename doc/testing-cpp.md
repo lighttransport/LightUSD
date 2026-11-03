@@ -3278,6 +3278,12 @@ Every sampled time renders both tools at the same resolved camera and exact time
 Failures and unsupported captures remain explicit in the manifest; the command
 returns nonzero unless all requested comparisons pass.
 
+For unlit assets, `beauty_lighting` in the job (`{"key":1.0,"fill":0.25}`)
+authors one shared two-light rig over the unchanged source so both renderers
+evaluate the same lighting; scenes that author their own lights keep their rig.
+The [beauty contract](validation/usd-assets-beauty-contract-2026-11-04.md)
+records the 5/5 rigged-asset result and the retained mid-pose near miss.
+
 The [Caldera AMD measurement](validation/caldera-amd-2026-11-02.md) records the
 original geometry failure separately from temporary pose-baked diagnostic controls.
 The [USD-WG sampled-time/AOV report](validation/usd-assets-amd-2026-11-02.md)
@@ -3425,6 +3431,11 @@ covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
 `bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
 `bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
+The next-tydra converter also carries a unit check that a texture asset
+forwarded through a referenced material interface (`inputs:file.connect =
+</Mat.inputs:surfaceMap>`) resolves against the layer that authors the value,
+not the referenced look layer (`TestForwardedTextureAssetAnchor`).
+
 `lusdview-cpu-uv-transform` covers the packed per-slot UV transform and UV-set
 selector for the lanes the CPU samples (base colour, normal map including its
 tangent frame, opacity): each must shade byte-identically to the same texture

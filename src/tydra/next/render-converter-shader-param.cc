@@ -475,7 +475,9 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
-      const uint32_t asset_anchor = AssetAnchorOf(texture_prim);
+      const uint32_t asset_anchor =
+          tex_data.file_asset_anchor_valid ? tex_data.file_asset_anchor
+                                           : AssetAnchorOf(texture_prim);
       const std::string authored_anchor =
           ::lightusd::next::AssetAnchorPath(asset_anchor);
       std::vector<RenderUDIMTexture::Tile> udim_tiles;

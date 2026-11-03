@@ -202,8 +202,18 @@ The version 1 JSON example in [jobs/usd-assets.json](jobs/usd-assets.json) inclu
 - `camera_policy`: `fixed_first` (default) freezes the first resolved camera over
   the sequence. `per_frame` fits each frame independently while keeping each
   renderer pair identical. A fixed view can clip later animation; inspect images.
+- `beauty_lighting`: optional opt-in shared beauty contract, for example
+  `{"key":1.0,"fill":0.25}` (optional `dome`, `key_rotate`, `fill_rotate`,
+  `force`). A wrapper layer sublayers the source unchanged, copies its stage
+  metadata and authors two `DistantLight`s (plus an optional `DomeLight`) so
+  both tools evaluate the same rig. Scenes that author their own `UsdLux`
+  lights keep their authored rig and the wrapper is recorded as not applied
+  unless `force` is true. It is a diagnostic contract for unlit assets, not a
+  claim about author intent. See
+  [jobs/usd-assets-beauty.json](jobs/usd-assets-beauty.json).
 - `scenes`: objects with `path`, optional per-scene `time_sampling`, `aovs`,
-  `camera_path`, or an inline headless `state` for a hand-picked view.
+  `camera_path`, `beauty_lighting`, or an inline headless `state` for a
+  hand-picked view.
 
 Every frame records the exact time and resolved camera. The animation probe
 records skeleton-root and animated-attribute counts. Both tools receive the
@@ -213,7 +223,7 @@ Available AOV comparisons:
 
 | AOV | Capture and comparison semantics |
 |---|---|
-| `color` | Emitted beauty RGB, normalized MAE and SSIM; requested native backend versus Storm EGL. Lighting/BRDF differences can legitimately fail. |
+| `color` | Emitted beauty RGB, normalized MAE and SSIM; requested native backend versus Storm EGL. Lighting/BRDF differences can legitimately fail. Use `beauty_lighting` when comparing unlit assets, so both renderers share one authored rig instead of two different default rigs. |
 | `depth` | Raw Float32 PFM: SDK OpenGL window depth converted using the frozen lens and clipping planes to native primary-ray distance. Coverage IoU plus 95th percentile relative depth error on common coverage eroded one pixel. |
 | `worldNormal` | SDK signed Float32 `Neye` eye normals, rotated into world space; compared with native geometric triangle world normals. Coverage IoU and 95th percentile angular error. This is geometric/interpolated normal validation, not a normal-map shading AOV. |
 | `baseColor` | Shared UsdPreviewSurface emissive diagnostic connected to the original diffuse color/texture network; sRGB images. |

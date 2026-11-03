@@ -23,6 +23,14 @@ struct TextureNodeData {
   float scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float bias[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   std::string source_color_space = "auto";
+  // Anchor of the prim that actually authors `inputs:file`. Ptex/material
+  // interface forwarding (`inputs:file.connect = </Mat.inputs:surfaceMap>`)
+  // puts the asset value on the material prim, whose layer is not necessarily
+  // the texture shader's layer; resolving against the shader's layer silently
+  // drops the texture.
+  uint32_t file_asset_anchor = 0;
+  // 0 is also the root-layer anchor, so validity needs its own flag.
+  bool file_asset_anchor_valid = false;
   // From the inputs:st chain (UsdTransform2d -> UsdPrimvarReader_float2):
   std::string uv_primvar;               // varname of the primvar reader
   float uv_translation[2] = {0.0f, 0.0f};

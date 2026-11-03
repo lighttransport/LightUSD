@@ -4,6 +4,7 @@
 #include "next/layer/asset-anchor.hh"
 #include "next/resolver/asset-resolver.hh"
 #include <cstdint>
+#include <filesystem>
 #include <string>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
@@ -41,23 +42,52 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
 
   // A configured AssetResolver owns resolution (anchor/search paths + suffix
   // fallback). Anchor it at the AUTHORING layer's directory, same as above.
-  if (config_.asset_resolver) {
-    ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
-        file, base.empty() ? std::string() :
-              ::lightusd::next::AssetResolver::IsPackagePath(base) ? base : base + "/");
-    if (resolved.exists && !resolved.resolved_path.empty()) {
+  auto resolve_against = [&](const std::string& dir,
+                             bool* exists) -> std::string {
+    if (config_.asset_resolver) {
+      ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
+          file, dir.empty() ? std::string()
+                            : (::lightusd::next::AssetResolver::IsPackagePath(dir)
+                                   ? dir : dir + "/"));
+      if (exists) *exists = resolved.exists && !resolved.resolved_path.empty();
       return resolved.resolved_path;
     }
-    return file;
+    if (exists) {
+      const std::string candidate = ::lightusd::next::AssetResolver::NormalizePath(
+          ::lightusd::next::AssetResolver::JoinPath(dir, file));
+      std::error_code ec;
+      *exists = std::filesystem::exists(candidate, ec);
+      return candidate;
+    }
+    return ::lightusd::next::AssetResolver::NormalizePath(
+        ::lightusd::next::AssetResolver::JoinPath(dir, file));
+  };
+
+  // The prim's spec anchor is the best first guess, but a flattened prim merges
+  // opinions from several layers and the surviving spec may be the referenced
+  // one. When the anchored candidate does not exist, the root/scene directory
+  // that authored the value is the next candidate. Both Island (authoring layer
+  // is a look-scope element layer) and root-layer overlays need this.
+  const std::string& fallback = config_.asset_base_dir;
+
+  if (!base.empty() && !::lightusd::next::AssetResolver::IsPackagePath(base)) {
+    bool anchored_exists = false;
+    const std::string anchored = resolve_against(base, &anchored_exists);
+    if (anchored_exists) return anchored;
+    if (!fallback.empty() && fallback != base &&
+        !::lightusd::next::AssetResolver::IsPackagePath(fallback)) {
+      bool fallback_exists = false;
+      const std::string candidate = resolve_against(fallback, &fallback_exists);
+      if (fallback_exists) return candidate;
+    }
+    if (config_.asset_resolver) return file;
+    return anchored;
   }
-
-  if (!anchor.empty()) return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
+  if (!anchor.empty() && ::lightusd::next::AssetResolver::IsPackagePath(anchor)) {
+    return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
+  }
   if (base.empty()) return file;
-
-  // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
-  // an un-collapsed path would also defeat the `resolved_path` image dedup below.
-  return ::lightusd::next::AssetResolver::NormalizePath(
-      ::lightusd::next::AssetResolver::JoinPath(base, file));
+  return resolve_against(base, nullptr);
 }
 
 uint32_t RenderSceneConverter::Impl::AssetAnchorOf(const UsdPrim& prim) {

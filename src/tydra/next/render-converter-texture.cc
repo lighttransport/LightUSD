@@ -259,6 +259,37 @@ bool ExtractTextureNodeData(const Stage& stage,
     }
   };
 
+  ::lightusd::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+
+  // Anchor of the prim that authors the selected property value. A texture
+  // shader reached through a material interface holds only the connection, so
+  // its own layer is the wrong base for a relative asset path.
+  auto authoring_anchor = [&](const char* property) -> uint32_t {
+    UsdPrim owner = texture_prim;
+    std::string name = property;
+    std::set<std::string> visited;
+    for (int depth = 0; depth <= kMaxMtlxConstantDepth && owner.IsValid();
+         ++depth) {
+      const std::string visit_key = owner.GetPath().str() + "." + name;
+      if (!visited.insert(visit_key).second) break;
+      // Follow the connection chain to the property that authors the value.
+      // (EvalAssetPath itself resolves connections, so asking it here would
+      // stop at the first prim and return the shader's layer.)
+      if (!eval.HasConnection(owner, name)) break;
+      std::string prim_path;
+      std::string next_property;
+      if (!SplitConnectionPath(eval.GetConnectionPath(owner, name),
+                               &prim_path, &next_property)) {
+        break;
+      }
+      owner = stage.GetPrimAtPath(prim_path);
+      name = std::move(next_property);
+    }
+    const auto* spec = owner.GetPrimSpec();
+    return spec ? spec->asset_anchor_id() : 0u;
+  };
+
   ::lightusd::next::UVTextureData uv;
   if (::lightusd::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
     out->file = uv.file;
@@ -268,12 +299,11 @@ bool ExtractTextureNodeData(const Stage& stage,
     std::memcpy(out->scale, uv.scale, sizeof(out->scale));
     std::memcpy(out->bias, uv.bias, sizeof(out->bias));
     apply_file_metadata(texture_prim, "inputs:file");
+    out->file_asset_anchor = authoring_anchor("inputs:file");
+    out->file_asset_anchor_valid = true;
     TraceTextureStChain(stage, texture_prim, out);
     return !out->file.empty();
   }
-
-  ::lightusd::next::AttributeEval eval(&stage);
-  eval.SetTime(time_code);
 
   std::string shader_id;
   GetToken(texture_prim, "info:id", &shader_id);
@@ -368,6 +398,11 @@ bool ExtractTextureNodeData(const Stage& stage,
     out->source_color_space = *cs;
   }
   apply_file_metadata(fileOwner, fileAttribute);
+  // Follow the interface connection to the prim that authors the value; its
+  // layer, not the texture shader's, anchors a relative asset path.
+  out->file_asset_anchor = authoring_anchor(
+      fileAttribute.empty() ? "inputs:filename" : fileAttribute.c_str());
+  out->file_asset_anchor_valid = true;
   TraceTextureStChain(stage, texture_prim, out);
 
   return true;

@@ -11,6 +11,13 @@
 # independently decoded face mean. A flat material control proves the colour
 # difference comes from the texture.
 #
+# Island binds PTex through a referenced look layer: the texture shader lives in
+# `looks/material.usda` but the `inputs:surfaceMap` asset value is authored by
+# the *referencing* material. A relative path must anchor to that authoring
+# layer, not to the referenced look layer. The generated layout reproduces that
+# shape (`looks/`, `textures/`, `scene.usda`) so the test also guards the
+# anchor-through-material-interface fix.
+#
 # The asset is pinned by hash and the test SKIPs when the Island corpus is not
 # available, so CI without the dataset stays green.
 #
@@ -58,7 +65,7 @@ def Material "BaseMaterial"
     float inputs:roughness = 0.8
     float inputs:metallic = 0
     float inputs:ior = 1.5
-    asset inputs:surfaceMap = @{ptx}@
+    asset inputs:surfaceMap
     token outputs:ri:surface.connect = </BaseMaterial/PxrDisneyBsdf.outputs:bxdf_out>
     token outputs:surface.connect = </BaseMaterial/UsdPreviewSurface.outputs:surface>
 
@@ -192,9 +199,22 @@ def Xform "World"
 }
 """
 
-(out / 'mat.usda').write_text(MATERIAL)
-(out / 'scene.usda').write_text(SCENE)
+import shutil
+
+(out / 'looks').mkdir()
+(out / 'textures').mkdir()
+(out / 'looks' / 'material.usda').write_text(MATERIAL)
+# Relative texture binding authored by the referencing material, exactly like
+# the Island element layers: `looks/` is not the anchor directory.
+scene = SCENE.replace('@./mat.usda@</BaseMaterial>',
+                      '@./looks/material.usda@</BaseMaterial>')
+scene = scene.replace(
+    'references = @./looks/material.usda@</BaseMaterial>\n        )\n        {',
+    'references = @./looks/material.usda@</BaseMaterial>\n        )\n        {\n'
+    '            asset inputs:surfaceMap = @./textures/mountain.ptx@', 1)
+(out / 'scene.usda').write_text(scene)
 (out / 'flat.usda').write_text(FLAT)
+shutil.copyfile(ptx, out / 'textures' / 'mountain.ptx')
 PY
 
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
