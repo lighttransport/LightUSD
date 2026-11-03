@@ -2182,7 +2182,66 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               nrm[2] = world[2];
             }
           }
+          // OpenPBR applies a separate coat normal (matTex slot 11) with its
+          // own UV set/transform and tangent frame. The CPU preview shaded the
+          // coat lobe with the surface normal, so an authored coat map was
+          // silently ignored. Sample it here; without one the coat lobe uses
+          // the surface normal.
+          float coatNrm[3] = {nrm[0], nrm[1], nrm[2]};
+          if (matId >= 0 &&
+              static_cast<size_t>(matId) * kRtMaterialTexSlots + 11 <
+                  hs_.matTex.size()) {
+            const int coat_tex =
+                hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots +
+                           11];
+            if (coat_tex >= 0 && static_cast<size_t>(tri) * 6 + 5 <
+                                     cpuUv_.size()) {
+              const float* tp = CpuTextureParams(hs_, matId);
+              const bool uv_set1 = tp != nullptr &&
+                                   static_cast<int>(tp[146] + 0.5f) == 1 &&
+                                   static_cast<size_t>(tri) * 6 + 5 <
+                                       cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
+              float uv[2];
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformUvAt(tp, 140, uv[0], uv[1], slot_uv);
+              float rgb[3];
+              SampleTextureBilinear(hs_.textures, hs_.texels, coat_tex,
+                                    slot_uv[0], slot_uv[1], rgb,
+                                    ptexFaceFor(static_cast<int>(tri)));
+              // Packed coat-normal scale/bias (147/151); the loader stores the
+              // usual 2/-1 when the texture authors defaults.
+              float co_n[3];
+              for (int c = 0; c < 3; ++c) {
+                const float scale = tp ? tp[147 + c] : 2.0f;
+                const float bias = tp ? tp[151 + c] : -1.0f;
+                co_n[c] = rgb[c] * scale + bias;
+              }
+              float frame_uv[6];
+              for (int c = 0; c < 3; ++c) {
+                float corner[2];
+                CpuXformUvAt(tp, 140, src_uv[c * 2], src_uv[c * 2 + 1],
+                             corner);
+                frame_uv[c * 2] = corner[0];
+                frame_uv[c * 2 + 1] = corner[1];
+              }
+              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+              ShadingTangentFrame coat_frame;
+              BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
+                                       frame_uv + 2, frame_uv + 4, nrm,
+                                       &coat_frame);
+              float world[3];
+              ApplyShadingTangentNormal(coat_frame, co_n, world);
+              coatNrm[0] = world[0];
+              coatNrm[1] = world[1];
+              coatNrm[2] = world[2];
+            }
+          }
           float direct = 0.0f;
+          float directCoat = 0.0f;
           bool hadDirectLight = false;
           const int lightCount = hs_.numLights;
           for (int li = 0; li < lightCount; ++li) {
@@ -2246,7 +2305,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                       emitterN[1] * -L[1] + emitterN[2] * -L[2]);
             }
             const float nl = std::max(0.0f, nrm[0] * L[0] + nrm[1] * L[1] + nrm[2] * L[2]);
-            if (nl <= 0.0f || shape <= 0.0f) continue;
+            const float nlCoat = std::max(0.0f, coatNrm[0] * L[0] +
+                                                    coatNrm[1] * L[1] +
+                                                    coatNrm[2] * L[2]);
+            if ((nl <= 0.0f && nlCoat <= 0.0f) || shape <= 0.0f) continue;
             float shadow = 1.0f;
             if ((static_cast<int>(lp[1] + 0.5f) & (1 << 1)) != 0) {
               lrt_ray shadowRay{};
@@ -2375,12 +2437,18 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             const float radiance = std::max(0.0f, emitter[0]) * 0.3333333f +
                                    std::max(0.0f, emitter[1]) * 0.3333333f +
                                    std::max(0.0f, emitter[2]) * 0.3333333f;
-            direct += nl * attenuation * shape * shadow * radiance *
-                      PackedIesFactor(lp, lightToPoint) * lp[29];
+            const float lightTerm = attenuation * shape * shadow * radiance *
+                                    PackedIesFactor(lp, lightToPoint) * lp[29];
+            direct += nl * lightTerm;
+            directCoat += nlCoat * lightTerm;
           }
           const float diff = hadDirectLight ? direct :
               std::max(0.0f, nrm[0] * lightDirN[0] + nrm[1] * lightDirN[1] +
                              nrm[2] * lightDirN[2]);
+          const float diffCoat = hadDirectLight ? directCoat :
+              std::max(0.0f, coatNrm[0] * lightDirN[0] +
+                             coatNrm[1] * lightDirN[1] +
+                             coatNrm[2] * lightDirN[2]);
           // Keep the CPU preview on the same compact OpenPBR material lanes
           // as the CUDA/Vulkan paths.  It remains a single-light preview, but
           // no longer collapses metallic, transmission, coat, and subsurface
@@ -2681,7 +2749,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               (0.25f + 0.75f * (1.0f - diff) * radiusGain);
           const float specular = specWeight * (fresnel + metallic) *
               diff / std::max(0.08f, directionalRoughness * directionalRoughness * 4.0f);
-          const float coat = coatWeight * 0.04f * diff /
+          const float coat = coatWeight * 0.04f * diffCoat /
                              std::max(0.08f, lobeRoughness * lobeRoughness);
           const float sheen = sheenWeight *
               (0.5f + 0.5f * sheenRoughness) *

@@ -512,6 +512,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-cpu-graph-tangent` | MaterialX tangent/bitangent nodes use the hit triangle frame | `xvfb-run` when headless |
 | `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
 | `lusdview-cpu-material-lanes` | CPU metallic/roughness/emissive/specular/coat/occlusion lanes match constant equivalents | `xvfb-run` when headless |
+| `lusdview-cpu-coat-normal` | CPU OpenPBR coat normal uses its own map/frame and affects only the coat lobe | `xvfb-run` when headless |
 | `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
 | `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
@@ -3444,8 +3445,17 @@ terminal still wins when both exist (`TestPxrDisneyRiSurfaceMaterial`, see
 selector for the lanes the CPU samples (base colour, normal map including its
 tangent frame, opacity): each must shade byte-identically to the same texture
 sampled with pre-transformed `st`, with a no-normal control proving the normal
-rows are not vacuous. None of these replaces calibrated beauty illumination or
-SDK material parity.
+rows are not vacuous.
+
+`lusdview-cpu-coat-normal` isolates the OpenPBR coat lobe (black base and
+specular weight zero) and renders a plane with a coat normal map. A flat coat
+map must be neutral, a map decoding to `(0.6, 0, 0.8)` must shade
+byte-identically to the same world normal authored as geometry normals, the
+`+X` and `-X` maps must differ, and both maps must be inert at coat weight
+zero. The lane uses `matTex` slot 11 with its own packed UV set/transform and
+scale/bias and a tangent frame rebuilt from that lane's UVs; disabling it makes
+the `+X`/`-X` pair identical (0) and the geometry control diverge (53/255).
+None of these replaces calibrated beauty illumination or SDK material parity.
 
 The emissive diagnostic opacity regression now covers PreviewSurface
 `transparent` (full emission), `presence` (attenuated emission), and masked

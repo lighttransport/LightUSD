@@ -4153,6 +4153,19 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # CPU OpenPBR coat-normal lane: a tilted coat map must shade exactly like
+    # the same world normal authored as geometry normals and must not change
+    # the image at coat weight 0; a flat map is neutral.
+    add_test(
+      NAME lusdview-cpu-coat-normal
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-coat-normal.sh"
+      )
+    set_tests_properties(lusdview-cpu-coat-normal PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     # CPU preview semantic material lanes: a uniform texture lane must shade
     # exactly like the equivalent constant lane, and MaterialX metallic/
     # roughness/emission graph routes must affect the render.
