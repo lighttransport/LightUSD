@@ -41,6 +41,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <map>
@@ -83,6 +84,10 @@ struct Options {
   std::string simulate_pick;   // test hook: click at "fx,fy" (window fractions)
   bool outliner = false;       // start with the outliner panel open
   int camera_index = 0;        // --camera N: authored camera for --authored-camera
+  std::string output_dir = ".";  // where P / T write their files
+  int turntable = 0;           // --turntable N: record N frames headlessly, then exit
+  int turntable_frames = 120;  // frames per 360 degrees for the T key
+  bool simulate_shot = false;  // test hook: press P
   int simulate_camera_cycle = 0;   // test hook: press C this many times
   int simulate_bookmark = 0;       // test hook: save, disturb and recall slot N
   int simulate_bookmark_load = 0;  // test hook: recall slot N (persisted)
@@ -100,7 +105,7 @@ void Usage() {
                "usage: ld3d12view [--size WxH] [--frames N] [--debug] "
                "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--no-compress-textures] [--preset 0-6]\n"
                "                   [--time T] [--animate-from T] [--play] [--paused] [--no-hud] [--no-background] [--load-delay-ms N] [--simulate-cancel] [--capture-loading] [--no-loop] "
-               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--outliner] [--variant set=name] [--camera N] [--simulate-resize WxH] "
+               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--outliner] [--variant set=name] [--camera N] [--output-dir DIR] [--turntable N] [--turntable-frames N] [--simulate-resize WxH] "
                "[--screenshot out.png] [file.usd]\n");
 }
 
@@ -152,6 +157,15 @@ bool ParseArgs(int argc, char** argv, Options* o) {
         return false;
     } else if (a == "--simulate-click" && i + 1 < argc) {
       o->simulate_click = argv[++i];
+    } else if (a == "--output-dir" && i + 1 < argc) {
+      o->output_dir = argv[++i];
+    } else if (a == "--turntable" && i + 1 < argc) {
+      o->turntable = std::max(2, std::atoi(argv[++i]));
+      o->turntable_frames = o->turntable;
+    } else if (a == "--turntable-frames" && i + 1 < argc) {
+      o->turntable_frames = std::max(2, std::atoi(argv[++i]));
+    } else if (a == "--simulate-shot") {
+      o->simulate_shot = true;
     } else if (a == "--camera" && i + 1 < argc) {
       o->authored_camera = true;
       o->camera_index = std::max(0, std::atoi(argv[++i]));
@@ -320,6 +334,39 @@ bool PostSyntheticDrop(HWND hwnd, const std::string& utf8_path) {
     return false;
   }
   return true;
+}
+
+// ---- Screenshots and turntable output -----------------------------------------
+std::string Timestamp() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local = {};
+  localtime_s(&local, &now);
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &local);
+  return buf;
+}
+
+// Creates `dir` (one level) when missing; false if it cannot be used.
+bool EnsureDir(const std::string& dir) {
+  if (dir.empty()) return false;
+  if (CreateDirectoryA(dir.c_str(), nullptr)) return true;
+  const DWORD attrs = GetFileAttributesA(dir.c_str());
+  return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// dir\stem.ext, or dir\stem-N.ext when that exists already.
+std::string UniquePath(const std::string& dir, const std::string& stem,
+                       const std::string& ext) {
+  std::string path = dir + "\\" + stem + ext;
+  for (int n = 2; GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES && n < 1000; ++n)
+    path = dir + "\\" + stem + "-" + std::to_string(n) + ext;
+  return path;
+}
+
+bool WritePngImage(const std::string& path, const ld3d12::Image& img) {
+  return stbi_write_png(path.c_str(), static_cast<int>(img.width),
+                        static_cast<int>(img.height), 4, img.rgba.data(),
+                        static_cast<int>(img.width) * 4) != 0;
 }
 
 // ---- Camera bookmarks -------------------------------------------------------
@@ -937,6 +984,70 @@ int main(int argc, char** argv) {
       if (!opt.path.empty()) request_load(opt.path, opt.variants);
       const float clear[4] = {0.10f, 0.11f, 0.13f, 1.0f};
 
+      // P saves a screenshot (without the HUD; Shift+P keeps it). T records a
+      // turntable: a full 360 degree orbit as a PNG sequence, one fixed yaw step
+      // per rendered frame (playback is frozen meanwhile; Esc cancels).
+      bool shot_pending = false, shot_with_hud = false;
+      int turntable_request = 0;  // >0 start with that many frames, -1 cancel
+      bool turntable_cli_pending = opt.turntable > 0;
+      struct Turntable {
+        bool active = false;
+        int frame = 0, total = 0;
+        std::string dir;
+        float target[3] = {0, 0, 0};
+        float yaw0 = 0, pitch = 0, dist = 1;
+        bool was_playing = false;
+      } turntable;
+      auto start_turntable = [&](int total) {
+        if (!sv.scene) {
+          std::fprintf(stderr, "ld3d12view: no scene to record\n");
+          return;
+        }
+        if (!EnsureDir(opt.output_dir)) {
+          std::fprintf(stderr, "ld3d12view: cannot use output directory %s\n",
+                       opt.output_dir.c_str());
+          exit_code = 1;
+          turntable_cli_pending = false;
+          return;
+        }
+        turntable.dir = UniquePath(opt.output_dir, "turntable-" + Timestamp(), "");
+        if (!EnsureDir(turntable.dir)) {
+          std::fprintf(stderr, "ld3d12view: cannot create %s\n", turntable.dir.c_str());
+          exit_code = 1;
+          turntable_cli_pending = false;
+          return;
+        }
+        leave_authored_camera();
+        lmv_camera_get_orbit(camera, turntable.target, &turntable.yaw0, &turntable.pitch,
+                             &turntable.dist);
+        turntable.total = total;
+        turntable.frame = 0;
+        turntable.was_playing = playing;
+        playing = false;
+        turntable.active = true;
+        std::fprintf(stderr, "ld3d12view: turntable: %d frame(s) -> %s\n", total,
+                     turntable.dir.c_str());
+      };
+      auto stop_turntable = [&](bool finished) {
+        if (!turntable.active) return;
+        turntable.active = false;
+        lmv_camera_set_orbit(camera, turntable.target, turntable.yaw0, turntable.pitch,
+                             turntable.dist);
+        if (turntable.was_playing && animated) {
+          playing = true;
+          play_wall = wall();
+          play_t0 = cur_time;
+        }
+        std::fprintf(stderr, finished ? "ld3d12view: turntable done: %d frame(s) in %s\n"
+                                      : "ld3d12view: turntable cancelled after %d frame(s) in %s\n",
+                     turntable.frame, turntable.dir.c_str());
+        if (opt.turntable > 0) {  // command-line recording: leave when done
+          turntable_cli_pending = false;
+          quit = true;
+          if (!finished) exit_code = 1;
+        }
+      };
+
       while (!quit) {
         lui_event_t ev;
         while (lui_window_poll_event(window, &ev)) {
@@ -971,6 +1082,8 @@ int main(int argc, char** argv) {
                 if (loader.Busy()) {
                   loader.Cancel();
                   std::fprintf(stderr, "ld3d12view: cancelling load\n");
+                } else if (turntable.active) {
+                  turntable_request = -1;
                 } else if (selection.hit) {
                   selection = ld3d12::PickResult();  // first Esc clears the selection
                 } else {
@@ -1000,6 +1113,12 @@ int main(int argc, char** argv) {
               if (ev.data.key.key == ' ') toggle_play();
               if (ev.data.key.key == 'h' || ev.data.key.key == 'H')
                 hud.SetVisible(!hud.visible());
+              if (ev.data.key.key == 'p' || ev.data.key.key == 'P') {
+                shot_pending = true;
+                shot_with_hud = (ev.data.key.mods & LUI_MOD_SHIFT) != 0;
+              }
+              if (ev.data.key.key == 't' || ev.data.key.key == 'T')
+                turntable_request = turntable.active ? -1 : opt.turntable_frames;
               if (ev.data.key.key == 'o' || ev.data.key.key == 'O') {
                 hud.SetOutlineVisible(!hud.outline_visible());
                 if (hud.outline_visible() && !outline_built) rebuild_outline();
@@ -1120,7 +1239,20 @@ int main(int argc, char** argv) {
             break;
           }
         }
-        sync_authored_camera();
+        if (turntable_request < 0) {
+          stop_turntable(false);
+        } else if (turntable_request > 0 && !turntable.active) {
+          start_turntable(turntable_request);
+        }
+        turntable_request = 0;
+        if (turntable.active) {
+          const float yaw = turntable.yaw0 + 6.2831853f * static_cast<float>(turntable.frame) /
+                                                 static_cast<float>(turntable.total);
+          lmv_camera_set_orbit(camera, turntable.target, yaw, turntable.pitch, turntable.dist);
+        } else {
+          sync_authored_camera();
+        }
+        const bool hide_hud = turntable.active || (shot_pending && !shot_with_hud);
 
         lmv_camera_frame cf = {};
         lmv_camera_get_frame(camera, &cf);
@@ -1233,7 +1365,7 @@ int main(int argc, char** argv) {
           const std::vector<ld3d12::HudRows> rows = hud.Render();
           hud_renderer.Upload(list, device.frame_index(), hud.surface()->pixels,
                               hud.surface()->stride, rows);
-          if (hud.visible()) hud_renderer.Draw(list, 0.92f);
+          if (hud.visible() && !hide_hud) hud_renderer.Draw(list, 0.92f);
         }
 
         if (iteration == 3 && !opt.simulate_drop.empty() &&
@@ -1274,6 +1406,9 @@ int main(int argc, char** argv) {
             exit_code = 1;
           }
         }
+        if (frames == 3 && opt.simulate_shot) shot_pending = true;
+        if (frames == 3 && turntable_cli_pending && !turntable.active)
+          turntable_request = opt.turntable;
         if (frames == 3 && opt.simulate_camera_cycle > 0)
           for (int i = 0; i < opt.simulate_camera_cycle; ++i) cycle_camera();
         if (frames == 3 && opt.simulate_bookmark > 0) {
@@ -1331,23 +1466,52 @@ int main(int argc, char** argv) {
           fps_frames = 0;
         }
         const bool mid_load = opt.capture_loading && loader.Busy() && iteration >= 12;
-        const bool last = mid_load || (opt.frames > 0 && frames >= opt.frames);
+        const bool recording = turntable.active || turntable_cli_pending;
+        const bool last =
+            mid_load || (opt.frames > 0 && frames >= opt.frames && !recording);
         ld3d12::Image shot;
-        const bool capture = last && !opt.screenshot.empty();
+        const bool want_shot = shot_pending || turntable.active;
+        const bool capture = (last && !opt.screenshot.empty()) || want_shot;
         if (!device.EndFrame(capture ? &shot : nullptr, &err)) {
           std::fprintf(stderr, "ld3d12view: %s\n", err.c_str());
           exit_code = 1;
           break;
         }
         if (capture) {
-          if (!stbi_write_png(opt.screenshot.c_str(),
-                              static_cast<int>(shot.width),
-                              static_cast<int>(shot.height), 4,
-                              shot.rgba.data(),
+          if (last && !opt.screenshot.empty() &&
+              !stbi_write_png(opt.screenshot.c_str(), static_cast<int>(shot.width),
+                              static_cast<int>(shot.height), 4, shot.rgba.data(),
                               static_cast<int>(shot.width) * 4)) {
             std::fprintf(stderr, "ld3d12view: cannot write %s\n",
                          opt.screenshot.c_str());
             exit_code = 1;
+          }
+          if (shot_pending) {
+            shot_pending = false;
+            std::string path;
+            if (EnsureDir(opt.output_dir)) {
+              path = UniquePath(opt.output_dir, "ld3d12view-" + Timestamp(), ".png");
+            }
+            if (!path.empty() && WritePngImage(path, shot)) {
+              std::fprintf(stderr, "ld3d12view: screenshot saved %s (%ux%u)\n",
+                           path.c_str(), shot.width, shot.height);
+            } else {
+              std::fprintf(stderr, "ld3d12view: cannot save a screenshot in %s\n",
+                           opt.output_dir.c_str());
+              exit_code = 1;
+            }
+          }
+          if (turntable.active) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "frame-%04d", turntable.frame + 1);
+            const std::string path = UniquePath(turntable.dir, name, ".png");
+            if (!WritePngImage(path, shot)) {
+              std::fprintf(stderr, "ld3d12view: cannot write %s\n", path.c_str());
+              exit_code = 1;
+              stop_turntable(false);
+            } else if (++turntable.frame >= turntable.total) {
+              stop_turntable(true);
+            }
           }
         }
         if (last) break;

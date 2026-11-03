@@ -143,6 +143,38 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Screenshot (P) and turntable (T) output. The turntable test records a full
+  # orbit headlessly; a follow-up test checks the frame files.
+  set(LD3D_SHOT_DIR ${CMAKE_CURRENT_BINARY_DIR}/capture-output)
+  add_test(NAME ld3d12view-capture-setup
+      COMMAND ${CMAKE_COMMAND} -E remove_directory ${LD3D_SHOT_DIR})
+  add_test(NAME ld3d12view-shot-warp
+      COMMAND ld3d12view --hidden --warp --size 480x300 --frames 6 --simulate-shot
+              --output-dir ${LD3D_SHOT_DIR}
+              ${LD3D_REPO_ROOT}/models/suzanne-pbr.usda)
+  add_test(NAME ld3d12view-turntable-warp
+      COMMAND ld3d12view --hidden --warp --size 320x200 --frames 4 --turntable 8
+              --output-dir ${LD3D_SHOT_DIR} --no-grid
+              ${LD3D_REPO_ROOT}/models/suzanne-pbr.usda)
+  add_test(NAME ld3d12view-turntable-files
+      COMMAND ${CMAKE_COMMAND} -DDIR=${LD3D_SHOT_DIR} -DEXPECT=8
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_turntable.cmake)
+  set_tests_properties(ld3d12view-capture-setup PROPERTIES FIXTURES_SETUP ld3d12view_capture)
+  set_tests_properties(ld3d12view-shot-warp PROPERTIES
+      FIXTURES_REQUIRED ld3d12view_capture
+      PASS_REGULAR_EXPRESSION "screenshot saved .*ld3d12view-[0-9-]+\\.png \\(480x300\\)")
+  set_tests_properties(ld3d12view-turntable-warp PROPERTIES
+      FIXTURES_REQUIRED ld3d12view_capture
+      FIXTURES_SETUP ld3d12view_turntable
+      PASS_REGULAR_EXPRESSION "turntable: 8 frame.*turntable done: 8 frame")
+  set_tests_properties(ld3d12view-turntable-files PROPERTIES
+      FIXTURES_REQUIRED ld3d12view_turntable)
+  # The three share one output folder: never run them concurrently.
+  set_tests_properties(ld3d12view-shot-warp ld3d12view-turntable-warp
+      ld3d12view-turntable-files PROPERTIES RESOURCE_LOCK ld3d12view_capture_dir)
+  set_tests_properties(ld3d12view-capture-setup ld3d12view-shot-warp
+      ld3d12view-turntable-warp ld3d12view-turntable-files PROPERTIES
+      LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Authored cameras: C steps through them (then back to the free view), --camera
   # N starts on one; bookmarks store/recall free views per scene.
   add_test(NAME ld3d12view-camera-cycle-warp
