@@ -16,6 +16,30 @@ namespace next {
 
 namespace {
 
+// Instance flattening (InstanceFlattenMode::ExtractedPrototypes) rewrites each
+// instance member as `instanceable = true` + an internal reference to the
+// de-instanced prototype holder, and clears `instance_prototype`. The member's
+// subtree is not duplicated in the flattened layer, so child enumeration and
+// proxy lookup must resolve that holder. Only treat the reference as a
+// prototype source when the prim has no children of its own; a normally
+// composed internal reference already carries the referenced children.
+bool FlattenedInstanceHolder(const Layer& layer, const PrimSpec& spec,
+                             std::string* holder) {
+  if (!holder || !layer.instance_holder_links() ||
+      !spec.meta().instanceable ||
+      !spec.meta().instance_prototype().empty() || spec.child_count() != 0) {
+    return false;
+  }
+  for (const std::string& ref : spec.meta().references) {
+    if (ref.size() < 3 || ref.front() != '<' || ref.back() != '>') continue;
+    std::string path = ref.substr(1, ref.size() - 2);
+    if (path.size() < 2 || path.front() != '/') continue;
+    *holder = std::move(path);
+    return true;
+  }
+  return false;
+}
+
 bool IsStaticGeometryArray(const std::string& type,
                           const PropNameId property_id) {
   const auto& names = GetPropNameTable();
@@ -687,10 +711,17 @@ UsdPrim UsdPrim::GetParent() const {
 
 // For instance proxies, children are provided by the prototype prim's subtree.
 const PrimSpec* UsdPrim::ChildSourceSpec() const {
-  if (spec_ && layer_ && !spec_->meta().instance_prototype().empty()) {
-    const PrimSpec* proto =
-        layer_->prim_at_path(Path(spec_->meta().instance_prototype()));
-    if (proto) return proto;
+  if (!spec_ || !layer_) return spec_;
+  if (!spec_->meta().instance_prototype().empty()) {
+    if (const PrimSpec* proto =
+            layer_->prim_at_path(Path(spec_->meta().instance_prototype()))) {
+      return proto;
+    }
+    return spec_;
+  }
+  std::string holder;
+  if (FlattenedInstanceHolder(*layer_, *spec_, &holder)) {
+    if (const PrimSpec* proto = layer_->prim_at_path(Path(holder))) return proto;
   }
   return spec_;
 }
@@ -705,6 +736,16 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
   if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
     prototype_root = spec_->meta().instance_prototype();
     instance_root = spec_->path().str();
+  }
+  if (prototype_root.empty() && src != spec_) {
+    // Flattened instance member: remap from its holder into this prim's
+    // (possibly already proxied) public path.
+    std::string holder;
+    if (FlattenedInstanceHolder(*layer_, *spec_, &holder) &&
+        holder == src->path().str()) {
+      prototype_root = std::move(holder);
+      instance_root = GetPath().str();
+    }
   }
   const auto& indices = src->child_indices();
   children.reserve(indices.size());
@@ -732,7 +773,8 @@ size_t UsdPrim::GetChildCount() const {
 
 UsdPrim UsdPrim::GetChildAt(size_t index) const {
   if (!spec_ || !layer_) return UsdPrim();
-  const auto& indices = ChildSourceSpec()->child_indices();
+  const PrimSpec* src = ChildSourceSpec();
+  const auto& indices = src->child_indices();
   if (index >= indices.size()) return UsdPrim();
   uint32_t idx = indices[index];
   const PrimSpec* child = layer_->prim(idx);
@@ -742,6 +784,14 @@ UsdPrim UsdPrim::GetChildAt(size_t index) const {
   if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
     prototype_root = spec_->meta().instance_prototype();
     instance_root = spec_->path().str();
+  }
+  if (prototype_root.empty() && src != spec_) {
+    std::string holder;
+    if (FlattenedInstanceHolder(*layer_, *spec_, &holder) &&
+        holder == src->path().str()) {
+      prototype_root = std::move(holder);
+      instance_root = GetPath().str();
+    }
   }
   if (!prototype_root.empty()) {
     return UsdPrim(
@@ -755,7 +805,8 @@ UsdPrim UsdPrim::GetChildAt(size_t index) const {
 UsdPrim UsdPrim::GetChild(const std::string& name) const {
   if (!spec_ || !layer_) return UsdPrim();
 
-  for (uint32_t idx : ChildSourceSpec()->child_indices()) {
+  const PrimSpec* src = ChildSourceSpec();
+  for (uint32_t idx : src->child_indices()) {
     const PrimSpec* child = layer_->prim(idx);
     if (child && child->name() == name) {
       std::string prototype_root = prototype_root_;
@@ -763,6 +814,14 @@ UsdPrim UsdPrim::GetChild(const std::string& name) const {
       if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
         prototype_root = spec_->meta().instance_prototype();
         instance_root = spec_->path().str();
+      }
+      if (prototype_root.empty() && src != spec_) {
+        std::string holder;
+        if (FlattenedInstanceHolder(*layer_, *spec_, &holder) &&
+            holder == src->path().str()) {
+          prototype_root = std::move(holder);
+          instance_root = GetPath().str();
+        }
       }
       if (!prototype_root.empty()) {
         return UsdPrim(
@@ -917,9 +976,13 @@ UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
     const uint32_t instance_idx = root_layer_->index_at_path(instance_root);
     if (instance_idx == UINT32_MAX) continue;
     const PrimSpec* instance = root_layer_->prim(instance_idx);
-    if (!instance || instance->meta().instance_prototype().empty()) continue;
-    const std::string& prototype_root =
-        instance->meta().instance_prototype();
+    if (!instance) continue;
+    std::string prototype_root = instance->meta().instance_prototype();
+    if (prototype_root.empty()) {
+      // Flattened instance member: its subtree lives under the de-instanced
+      // holder it references.
+      if (!FlattenedInstanceHolder(*root_layer_, *instance, &prototype_root)) continue;
+    }
     const std::string prototype_path = prototype_root + path.substr(slash);
     const uint32_t prototype_idx = root_layer_->index_at_path(prototype_path);
     if (prototype_idx == UINT32_MAX) continue;

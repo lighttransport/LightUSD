@@ -352,8 +352,6 @@ def test_aousd_file_format_baselines():
 # Expected `Composing` paths that this bridge cannot confirm, each with the
 # reason. The set is asserted exactly: a fixed case must remove its entry.
 KNOWN_COMPOSING_EXCEPTIONS = {
-    ("BasicInstancingAndNestedInstances_root", "/Set_1/PropInstance2/geom"):
-        "instance-proxy path; prim_at resolves physical prim paths, not proxies",
     ("BasicNestedVariants_root", "/DirectlyNestedVariants/anim_spooky_anim_sphere"):
         "bridge forces standin=render, so the anim outer variant is intentionally "
         "not selected",

@@ -294,6 +294,56 @@ def test_native_instance_proxy_paths_and_parents(tmp_path):
         _ = stale.path
 
 
+def test_flattened_instance_members_keep_their_subtree(tmp_path):
+    """Default (flattened) loads must expose shared and nested instance content.
+
+    Extracted-prototype flattening rewrites an instance member as
+    `instanceable` + an internal reference to the de-instanced prototype holder
+    and clears `instance_prototype`. Traversal and proxy lookup must still
+    resolve the holder's subtree, otherwise a default load silently drops every
+    shared instance after the first (and every nested one).
+    """
+    flat = tmp_path / "flat_instances.usda"
+    flat.write_text('#usda 1.0\n'
+                    'def Xform "Source" {\n'
+                    '    def Mesh "Mesh" { point3f[] points = [(1,2,3)] }\n'
+                    '}\n'
+                    'def Xform "A" ( prepend references = </Source> '
+                    'instanceable = true ) {}\n'
+                    'def Xform "B" ( prepend references = </Source> '
+                    'instanceable = true ) {}\n')
+    for native in (False, True):
+        stage = lightusd.load(str(flat), preserve_native_instances=native)
+        meshes = sorted(p.path for p in stage.traverse(all_prims=True)
+                        if "points" in p)
+        assert meshes == ["/A/Mesh", "/B/Mesh", "/Source/Mesh"], (native, meshes)
+        assert stage.prim_at("/B/Mesh").get("points").tolist() == [(1, 2, 3)]
+
+    nested = tmp_path / "nested_instances.usda"
+    nested.write_text('#usda 1.0\n'
+                      'def Xform "Prop" {\n'
+                      '    def Mesh "geom" { point3f[] points = [(0,0,0)] }\n'
+                      '}\n'
+                      'def Xform "Set" {\n'
+                      '    def Xform "PropA" ( prepend references = </Prop> '
+                      'instanceable = true ) {}\n'
+                      '    def Xform "PropB" ( prepend references = </Prop> '
+                      'instanceable = true ) {}\n'
+                      '    def Xform "PropC" ( prepend references = </Prop> ) {}\n'
+                      '}\n'
+                      'def Xform "Top" ( prepend references = </Set> '
+                      'instanceable = true ) {}\n')
+    expected = ["/Prop/geom", "/Set/PropA/geom", "/Set/PropB/geom",
+                "/Set/PropC/geom", "/Top/PropA/geom", "/Top/PropB/geom",
+                "/Top/PropC/geom"]
+    for native in (False, True):
+        stage = lightusd.load(str(nested), preserve_native_instances=native)
+        meshes = sorted(p.path for p in stage.traverse(all_prims=True)
+                        if "points" in p)
+        assert meshes == expected, (native, meshes)
+        assert stage.prim_at("/Top/PropB/geom").get("points").tolist() == [(0, 0, 0)]
+
+
 def test_leaf_prim_truthiness_is_validity_not_child_count():
     stage = lightusd.Stage.create()
     prim = stage.define_prim("/Leaf", "Xform")

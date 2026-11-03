@@ -1952,6 +1952,11 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // its path->index map to the first path lookup instead of hashing every
     // prim path here.
     out->set_lazy_path_index(true);
+    // Holder flattening keeps instance content under the de-instanced holder
+    // and leaves members referencing it; consumers must expand that link or
+    // every shared/nested instance after the first loses its subtree.
+    out->set_instance_holder_links(options.instance_flatten_mode ==
+                                   InstanceFlattenMode::Holder);
     out->finalize();
     const FaultCounters fault_finalize1 = ReadFaultCounters();
     const auto finalize_t1 = std::chrono::steady_clock::now();

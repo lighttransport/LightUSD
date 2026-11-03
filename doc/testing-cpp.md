@@ -3396,6 +3396,11 @@ rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance tes
 unconditional. `TestConcurrentValueClipCache` runs eight threads against one
 shared cache and `AttributeEval`: all threads must resolve the same value, and a
 warmed cache must not load the clip again.
+`test_p0_stage_prim.py::test_flattened_instance_members_keep_their_subtree`
+requires a default (holder-flattened) load to expose the same mesh set as a
+native-instance load for shared and nested instances; the extracted-prototype
+writer representation keeps its deliberately orphaned members
+(`next_test_pcp`).
 The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
 strength against direct child reference/payload/inherit arcs and a weaker
 referenced ancestor, in serial/parallel and expanded/native-instance modes.

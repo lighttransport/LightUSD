@@ -150,6 +150,8 @@ constexpr size_t kKeptGroupPrims = 65536;
 // batches' spine flags and full child lists.
 class BatchMerger {
  public:
+  void set_holder_links(bool enabled) { holder_links_ = enabled; }
+
   size_t prims() const { return out_.layer ? out_.layer->prims().size() : 0; }
 
   void Add(ComposedBatch &batch) {
@@ -193,6 +195,7 @@ class BatchMerger {
   ComposedBatch Take() {
     if (out_.layer) {
       out_.layer->set_lazy_path_index(true);
+      out_.layer->set_instance_holder_links(holder_links_);
       out_.layer->finalize();
     }
     spine_index_.clear();
@@ -204,6 +207,7 @@ class BatchMerger {
  private:
   ComposedBatch out_;
   std::unordered_map<std::string, uint32_t> spine_index_;
+  bool holder_links_ = false;
 };
 
 }  // namespace
@@ -618,6 +622,8 @@ bool BatchedComposer::Impl::Pass(
   std::function<bool(ComposedBatch &)> fn = on_batch;
   if (keeping) {
     merger.reset(new BatchMerger());
+    merger->set_holder_links(options.instance_flatten_mode ==
+                             InstanceFlattenMode::Holder);
     fn = [&](ComposedBatch &batch) {
       if (on_batch && !on_batch(batch)) return false;
       if (!keeping) return true;
@@ -997,6 +1003,8 @@ bool ComposeStageBatched(const std::string &filename, AssetResolver &resolver,
                    " plan_batches=" + std::to_string(composer.batch_count()));
   std::unique_ptr<Layer> whole;
   BatchMerger merger;
+  merger.set_holder_links(options.instance_flatten_mode ==
+                          InstanceFlattenMode::Holder);
   const bool ok = composer.Run(
       [&](ComposedBatch &batch) {
         if (composer.whole()) whole = std::move(batch.layer);

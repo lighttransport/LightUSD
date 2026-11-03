@@ -182,6 +182,10 @@ public:
   /// 10M-entry string map is never built. Default off: ordinary layers keep
   /// the eager index (their lookups run inside parallel compose workers).
   void set_lazy_path_index(bool lazy) { lazy_path_index_ = lazy; }
+  void set_instance_holder_links(bool enabled) {
+    instance_holder_links_ = enabled;
+  }
+  bool instance_holder_links() const { return instance_holder_links_; }
 
   /// Deferred-fill hook (see PrimFiller); null for an ordinary layer.
   PrimFiller* prim_filler() const { return prim_filler_.get(); }
@@ -333,6 +337,12 @@ private:
   LayerMeta meta_;
   bool finalized_ = false;
   bool lazy_path_index_ = false;
+  // Holder-mode instance flattening leaves instance members referencing the
+  // de-instanced holder prim instead of duplicating its subtree. Child
+  // enumeration and proxy lookup expand that link. ExtractedPrototypes keeps
+  // members orphaned on purpose so a writer preserves explicit prototype
+  // references, so this is a per-layer runtime flag, not model metadata.
+  bool instance_holder_links_ = false;
   uint32_t source_asset_anchor_id_ = 0;
   // Set by finalize() when the index was deferred; cleared by the build.
   mutable std::atomic<bool> path_index_dirty_{false};
