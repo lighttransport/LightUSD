@@ -332,7 +332,29 @@ float3 EvalSpecular(float3 n, float3 v, float3 l, float3 f0, float roughness) {
   float d = GgxDistribution(n_dot_h, roughness);
   float g = SmithG1(n_dot_l, roughness) * SmithG1(n_dot_v, roughness);
   float3 f = FresnelSchlick(v_dot_h, f0);
-  return d * g * f / max(4.0 * n_dot_l * n_dot_v, 1e-5) * n_dot_l;
+  // N.L is applied by LightRadiance; not repeated here.
+  return d * g * f / max(4.0 * n_dot_l * n_dot_v, 1e-5);
+}
+
+// Split-sum environment BRDF scale/bias (Karis, "Physically Based Shading on
+// Mobile"): specular IBL = prefiltered radiance * (f0 * A + B).
+float2 EnvBrdfAB(float roughness, float n_dot_v) {
+  const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+  const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+  float4 r = roughness * c0 + c1;
+  float a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+  return float2(-1.04, 1.04) * a004 + r.zw;
+}
+// Oren-Nayar diffuse (qualitative model) relative to Lambert.
+float OrenNayarFactor(float3 n, float3 v, float3 l, float roughness) {
+  if (roughness <= 0.0) return 1.0;
+  float s2 = roughness * roughness;
+  float a = 1.0 - 0.5 * s2 / (s2 + 0.33);
+  float b = 0.45 * s2 / (s2 + 0.09);
+  float nl = saturate(dot(n, l)), nv = saturate(dot(n, v));
+  float s = dot(l, v) - nl * nv;
+  float t = s > 0.0 ? max(max(nl, nv), 1e-4) : 1.0;
+  return a + b * s / t;
 }
 
 float ShadowFactor(float3 wpos, float3 n, float3 to_light) {
@@ -394,7 +416,7 @@ float3 EvalSpecularAniso(float3 n, float3 v, float3 l, float3 f0, float roughnes
   float d = GgxAniso(n_dot_h, dot(t, h), dot(b, h), at, ab);
   float g = SmithG1(n_dot_l, roughness) * SmithG1(n_dot_v, roughness);
   float3 f = FresnelSchlick(v_dot_h, f0);
-  return d * g * f / max(4.0 * n_dot_l * n_dot_v, 1e-5) * n_dot_l;
+  return d * g * f / max(4.0 * n_dot_l * n_dot_v, 1e-5);
 }
 
 // Irradiance-like term of one light at `wpos` for normal `n` (includes N.L).
@@ -483,14 +505,27 @@ R"hlsl(float4 PSMain(VSOut i) : SV_Target {
   float3 emission = (m.slots[4].index >= 0 ? tv[4].rgb : m.emission.rgb) * m.emission.w;
 
   float n_dot_v = max(saturate(dot(N, V)), 1e-4);
-  float3 f0 = lerp(float3(0.04, 0.04, 0.04) * m.specular.w, base_color, metal) *
-              m.specular.rgb;
+  // Dielectric reflectance from the material's IOR (1.5 -> 0.04).
+  float ior_f0 = (m.extra.w - 1.0) / (m.extra.w + 1.0);
+  ior_f0 *= ior_f0;
+  float3 f0 = saturate(lerp(float3(ior_f0, ior_f0, ior_f0) * m.specular.w,
+                            base_color, metal) *
+                       m.specular.rgb);
   if (m.thin.x > 0.0) f0 *= ThinFilmScale(n_dot_v, m.thin.z, m.thin.y, f0);
   // A tinted coat darkens what is underneath it.
   base_color *= lerp(float3(1.0, 1.0, 1.0), m.coat.rgb,
                      saturate(m.coat.w * m.misc.z));
   float3 diffuse_color = base_color * (1.0 - metal) * (1.0 - m.transmission.w);
   bool aniso = abs(m.thin.w) > 0.01;
+
+  // Energy compensation for the multiple scattering a single-scatter GGX loses
+  // on rough surfaces (Fdez-Aguera 2019); also scales direct specular.
+  float2 env_ab = EnvBrdfAB(rough, n_dot_v);
+  float3 spec_ss = f0 * env_ab.x + env_ab.y;                 // single scatter
+  float ms_ems = 1.0 - (env_ab.x + env_ab.y);
+  float3 ms_favg = f0 + (1.0 - f0) / 21.0;
+  float3 spec_ms = ms_ems * spec_ss * ms_favg / (1.0 - ms_ems * ms_favg);
+  float3 ms_scale = 1.0 + f0 * (1.0 / max(env_ab.x + env_ab.y, 1e-3) - 1.0);
 
   float3 color = float3(0.0, 0.0, 0.0);
   for (int li = 0; li < idx.x; ++li) {
@@ -504,7 +539,9 @@ R"hlsl(float4 PSMain(VSOut i) : SV_Target {
     float3 spec = aniso ? EvalSpecularAniso(N, V, to_light, f0, rough, m.thin.w,
                                             tangent, bitangent)
                         : EvalSpecular(N, V, to_light, f0, rough);
-    color += (diffuse_color / PI + spec) * radiance * shadow;
+    float3 diffuse = diffuse_color / PI *
+                     OrenNayarFactor(N, V, to_light, m.misc.w);
+    color += (diffuse + spec * ms_scale) * radiance * shadow;
   }
 
   // Image-based lighting: SH diffuse + environment specular.
@@ -512,10 +549,7 @@ R"hlsl(float4 PSMain(VSOut i) : SV_Target {
   color += diffuse_color * irradiance * 0.5;
   float3 refl = reflect(-V, N);
   float3 env_spec = ApplyColorMatrix(EnvironmentRadiance(refl, rough));
-  color += env_spec *
-           (f0 + (max(float3(1.0, 1.0, 1.0) - rough, f0) - f0) *
-                     pow(1.0 - n_dot_v, 5.0)) *
-           0.6;
+  color += env_spec * (spec_ss + spec_ms);
 
   // Coat: a second, smoother dielectric lobe with its own normal.
   if (m.coat.w > 0.0) {

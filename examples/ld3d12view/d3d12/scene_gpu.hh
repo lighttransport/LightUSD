@@ -76,7 +76,8 @@ struct MaterialGPU {
                                                      // sheen roughness, thin walled
   float subsurface[4] = {1.0f, 1.0f, 1.0f, 0.0f};    // rgb colour, weight
   float misc[4] = {0.0f, 1.0f, 1.0f, 0.0f};  // transmission depth, subsurface
-                                             // scale, coat affects colour, -
+                                             // scale, coat affects colour,
+                                             // diffuse roughness
   float thin[4] = {0.0f, 0.0f, 1.0f, 0.0f};  // thin film weight, thickness nm,
                                              // thin film ior, anisotropy
   SlotGPU slots[kSlotCount];

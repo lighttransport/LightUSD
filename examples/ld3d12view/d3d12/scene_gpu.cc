@@ -726,6 +726,7 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
     g.misc[0] = p[LMV_PBR_TRANSMISSION_DEPTH];
     g.misc[1] = p[23];
     g.misc[2] = p[67];
+    g.misc[3] = Clamp01(p[LMV_PBR_DIFFUSE_ROUGHNESS]);
     g.thin[0] = p[48];
     g.thin[1] = p[49];
     g.thin[2] = std::max(p[50], 1.0f);
