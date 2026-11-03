@@ -464,6 +464,10 @@ struct PreviewLight {
   float power{0.0f};
   float cdf{0.0f};
   bool shadow_enable{true};
+  // UsdAppUtilsFrameRecorder's camera light uses GlfSimpleLight attenuation
+  // (1,0,0): constant, no inverse-square falloff. Only the reference camera
+  // light mode sets this.
+  bool constant_attenuation{false};
   int tri_id{-1};
   int texture_id{-1};
   std::string texture_file;
@@ -664,6 +668,9 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  // -referenceCameraLight: ignore authored lights and use only the
+  // UsdAppUtilsFrameRecorder camera light (constant attenuation, radiance 1).
+  bool reference_camera_light{false};
   int vulkan_device{-1};           // -vkDevice: physical-device index (-1 = auto)
   enum class GpuShadeMode { Auto, Cpu, Preview };
   GpuShadeMode gpu_shade{GpuShadeMode::Auto};  // -gpuShade cpu|preview

@@ -393,6 +393,10 @@ class HeadlessSession:
             '-camera',prepared['camera_path'],'-w',str(width),'-height',str(height),'-timecode',str(prepared['time']),
             '-purpose','default'+(','+purposes if purposes else ''),'-bg',('0,0,0' if display['background']=='black' else '1,1,1'),
             '-largeSceneProfile','off','-smooth','-stats']
+        # Opt-in default-contract capture: usdrecord uses only its camera light,
+        # so make the native candidate evaluate that same light.
+        if self.state.get('reference_camera_light'):
+            candidate.append('-referenceCameraLight')
         if prepared.get('reference_population_mask'):
             reference+=['--mask',','.join(prepared['reference_population_mask']['paths'])]
         if self.diagnostic_emission:candidate.append('-diagnosticEmission')

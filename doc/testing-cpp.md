@@ -3281,11 +3281,16 @@ Every sampled time renders both tools at the same resolved camera and exact time
 Failures and unsupported captures remain explicit in the manifest; the command
 returns nonzero unless all requested comparisons pass.
 
-For unlit assets, `beauty_lighting` in the job (`{"key":1.0,"fill":0.25}`)
-authors one shared two-light rig over the unchanged source so both renderers
-evaluate the same lighting; scenes that author their own lights keep their rig.
-The [beauty contract](validation/usd-assets-beauty-contract-2026-11-04.md)
-records the 5/5 rigged-asset result and the retained mid-pose near miss.
+For unlit assets, the default beauty contract is `reference_camera_light: true`
+in the job: `lusdrender` ignores authored lights and uses the same
+camera-attached constant-attenuation light as `UsdAppUtilsFrameRecorder`.
+[jobs/usd-assets-beauty-refcam.json](../tools/view_control/jobs/usd-assets-beauty-refcam.json)
+passes 8/9 frames (RiggedSimple 0.9879, mid-pose 0.9859, RiggedFigure
+0.981-0.984, TextureCoordinateTest 0.9575, NormalsTextureBiasAndScale 0.9652;
+RoughnessTest 0.8730 is a BRDF/material residual). `beauty_lighting`
+(`{"key":1.0,"fill":0.25}`) remains as an explicitly named camera-light
+approximation for the older wrapper runs. See
+[the default-contract report](validation/beauty-default-contract-2026-11-04.md).
 
 The [Caldera AMD measurement](validation/caldera-amd-2026-11-02.md) records the
 original geometry failure separately from temporary pose-baked diagnostic controls.

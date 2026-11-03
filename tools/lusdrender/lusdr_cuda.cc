@@ -192,6 +192,9 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       dst.geometryTriCount = src.tri_id >= 0 ? 1 : 0;
     }
     dst.shadowEnable = src.shadow_enable;
+    // angle is unused for point lights; -1 marks constant (no 1/d^2) falloff
+    // for the reference camera light.
+    dst.angle = src.constant_attenuation ? -1.0f : 0.0f;
     scene->lights.push_back(std::move(dst));
   };
   for (const PreviewLight &light : lights.finite) append_light(light);

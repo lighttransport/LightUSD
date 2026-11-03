@@ -2382,6 +2382,25 @@ int main(int argc, char **argv) {
       }
     }
 
+    if (opt.reference_camera_light) {
+      // UsdAppUtilsFrameRecorder replaces the stage lighting with a single
+      // camera-attached GlfSimpleLight (diffuse/specular 1, attenuation
+      // (1,0,0) = constant) plus SCENE_AMBIENT. Reproduce that light here so
+      // the paired usdrecord capture compares one lighting model. Authored
+      // lights are deliberately ignored because the SDK capture ignores them.
+      gpu_lights = LightCache{};
+      PreviewLight camera_light;
+      camera_light.kind = PreviewLight::Kind::Point;
+      camera_light.position = camera.origin;
+      camera_light.direction = camera.forward;
+      camera_light.radiance.x = 1.0f;
+      camera_light.radiance.y = 1.0f;
+      camera_light.radiance.z = 1.0f;
+      camera_light.constant_attenuation = true;
+      camera_light.shadow_enable = false;
+      gpu_lights.finite.push_back(camera_light);
+    }
+
 #ifdef HAVE_D3D11
     if (opt.use_d3d) {
       if (!RunD3D11LightRT(opt, base_colors, geos, camera, out_height)) {

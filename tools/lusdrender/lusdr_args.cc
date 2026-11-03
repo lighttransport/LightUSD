@@ -232,6 +232,10 @@ void PrintUsage(const char *prog) {
       << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -referenceCameraLight Use only UsdAppUtilsFrameRecorder's camera\n"
+      << "                        light (constant attenuation, radiance 1),\n"
+      << "                        ignoring authored lights; for paired\n"
+      << "                        usdrecord beauty captures.\n"
       << "  -vkDevice <N>         Select Vulkan physical-device index (default auto).\n"
       << "  -curveSegments <1..64> Spline samples per span for instanced GPU tubes (default 8)\n"
       << "  -vkInstancedStream    Offline instancing with one TLAS slice resident (all placements)\n"
@@ -843,6 +847,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     OPT_MATCH(a == "-vk" || a == "--vk") {
       opt->vulkan = true;
       opt->backend_explicit = true;
+    }
+    OPT_MATCH(a == "-referenceCameraLight" ||
+              a == "--referenceCameraLight") {
+      opt->reference_camera_light = true;
+      continue;
     }
     OPT_MATCH(a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;

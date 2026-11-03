@@ -94,6 +94,19 @@ class ValidationTests(unittest.TestCase):
                 path.write_text(json.dumps(dict(base,beauty_lighting=bad)))
                 with self.assertRaises(ValueError):load_config(path)
 
+    def test_reference_camera_light_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'job.json'
+            base={'version':1,'scenes':[{'path':'scene.usda'}]}
+            path.write_text(json.dumps(dict(base,reference_camera_light=True)))
+            self.assertTrue(load_config(path)['reference_camera_light'])
+            for bad in ({'reference_camera_light':1},{'reference_camera_light':'yes'}):
+                path.write_text(json.dumps(dict(base,**bad)))
+                with self.assertRaises(ValueError):load_config(path)
+            path.write_text(json.dumps(dict(base,reference_camera_light=True,
+                beauty_lighting={'key':1.0})))
+            with self.assertRaises(ValueError):load_config(path)
+
     def test_config_rejects_unknown_and_unbounded_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'job.json';base={'version':1,'scenes':[{'path':'scene.usda'}]}

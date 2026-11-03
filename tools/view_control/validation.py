@@ -80,7 +80,7 @@ def beauty_lighting_rig(value):
 def load_config(path):
     if path.stat().st_size>1024*1024:raise ValueError('job config exceeds 1 MiB')
     config=json.loads(path.read_text())
-    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting'}
+    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light'}
     if not isinstance(config,dict) or set(config)-allowed or config.get('version')!=1:raise ValueError('invalid version 1 job config')
     scenes=config.get('scenes')
     if not isinstance(scenes,list) or not 1<=len(scenes)<=128:raise ValueError('scenes must contain 1..128 jobs')
@@ -118,6 +118,10 @@ def load_config(path):
         number(value,gate_name,0,180 if gate_name=='normal_p95_degrees_max' else 1)
     config['thresholds']=gates
     beauty_lighting_rig(config.get('beauty_lighting'))
+    if type(config.get('reference_camera_light',False)) is not bool:
+        raise ValueError('reference_camera_light must be boolean')
+    if config.get('reference_camera_light') and config.get('beauty_lighting'):
+        raise ValueError('reference_camera_light and beauty_lighting are alternative beauty contracts')
     return config
 
 
@@ -168,12 +172,18 @@ def _run(args):
         ns.reference_population_roots=scene.get('isolate') if scene.get('reference_population_mask') else None
         ns.reference_complexity=scene.get('reference_complexity',config.get('reference_complexity','low'))
         session=HeadlessSession(ns)
+        if config.get('reference_camera_light'):
+            # usdrecord only evaluates its camera light; both tools then share
+            # that one light model for the beauty AOV.
+            session.state['reference_camera_light']=True
         def worker(request,name):
             (directory/(name+'-request.json')).write_text(json.dumps(request)+'\n')
             output=directory/(name+'.json')
             session._run([str(args.usd_python.absolute()),str(Path(__file__).with_name('validation_stage.py')),str(directory/(name+'-request.json')),str(output)],directory,name,session.environment)
             return json.loads(output.read_text())
         entry={'scene':scene['path'],'frames':[]};result['scenes'].append(entry)
+        if config.get('reference_camera_light'):
+            entry['reference_camera_light']=True
         try:
             if session.toolchain!=toolchain:
                 raise RuntimeError('toolchain changed during validation job; start a new job')

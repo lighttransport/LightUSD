@@ -311,7 +311,12 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
   }
   vec3 deltaP=samplePos-p;float d2=dot(deltaP,deltaP);if(d2<1e-8)return false;
   l=deltaP*inversesqrt(d2);tmax=sqrt(d2)-1e-4;
-  if(delta){radiance/=max(d2,1e-6);}
+  // The UsdAppUtilsFrameRecorder camera light uses GlfSimpleLight attenuation
+  // (1,0,0): constant, flagged by angle=-1 on point lights.
+  if(delta){
+    if(type==0&&lights[lb+14u]<-0.5) { /* constant attenuation */ }
+    else radiance/=max(d2,1e-6);
+  }
   else{float cosine=abs(dot(lightNormal,-l));if(cosine<1e-6)return false;
     conditionalPdf=d2/max(cosine*area,1e-8);}
   return true;
