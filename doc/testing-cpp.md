@@ -1125,9 +1125,15 @@ ctest --test-dir build_ninja/next-debug -L aousd -V
 This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
 The supplemental bridge loads 54 file-format fixtures, checks expected prim
 population across 138 composition cases, and checks resolved samples in eight
-value-resolution cases. Its data-type bridge runs the library's AOUSD type
-checks; it does not execute the upstream Python/OpenUSD test runner or compare
-every PCP field. Keep these coverage limits separate from full spec conformance.
+value-resolution cases. Composition cases whose `pcp.json` authors an `Errors`
+list are negative dependency cases: the secure loader must reject them (exactly
+one case, `ErrorInvalidPayload_root`, does), and any case without authored errors
+must load — a silent skip is a failure. Run the full corpus instead of the
+default 50-case cap with `LIGHTUSD_AOUSD_CAP=0`. Its data-type bridge runs the
+library's AOUSD type checks; it does not execute the upstream Python/OpenUSD test
+runner or compare every PCP field. Keep these coverage limits separate from full
+spec conformance. The 2026-11-03 run is recorded in
+[the supplemental report](validation/aousd-supplemental-2026-11-03.md).
 
 Reference `customData` tests now require strict USDC loads, typed nested-value
 retention, qualified list-op identity, and memory/streaming writer roundtrips.

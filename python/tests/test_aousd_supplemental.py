@@ -163,6 +163,9 @@ def test_aousd_composition_load():
     cases = _enumerate_composition()
     assert cases, "no composition cases"
     ok = 0
+    rejected = []
+    unexpected = []
+    missing_entry = []
     for pcp_json in cases:
         data = json.loads(pcp_json.read_text())
         case_dir = pcp_json.parent
@@ -172,24 +175,31 @@ def test_aousd_composition_load():
         if text_entry.is_file():
             entry = text_entry
         if not entry.is_file():
+            missing_entry.append(case_dir.name)
             continue
+        # A case whose pcp.json authors "Errors" is a negative dependency case:
+        # the corpus itself expects composition diagnostics, so the secure
+        # (default) loader may reject it. Any other rejection is a regression.
+        authored_errors = data.get("Errors") or []
         try:
             # next default is now fallback-free; corpus expects standin=render fallback for some cases (e.g. /FergusCloak)
             st = lightusd.load(str(entry), variants={"standin": "render"})
         except lightusd.UsdError as e:
-            # Composition gaps are expected for a small ratchet; print and continue
-            print(f"[aousd] composition skip {case_dir.name}: {e}")
+            if authored_errors:
+                rejected.append(case_dir.name)
+            else:
+                unexpected.append((case_dir.name, str(e)))
             continue
         # basic sanity
         assert st.stats["prim_count"] >= 0
-        # verify composing prims exist when expected
-        for prim_path in data.get("Composing", {}):
-            # path may be instance proxy; just verify stage has some prims
-            pass
         ok += 1
-    print(f"[aousd] composition ok {ok}/{len(cases)}")
-    # Allow small ratchet: at least 80% should load
-    assert ok >= len(cases) * 0.5, f"too many composition failures {ok}/{len(cases)}"
+    print(f"[aousd] composition ok {ok}/{len(cases)}; "
+          f"rejected-as-authored {sorted(rejected)}; "
+          f"missing entry {sorted(missing_entry)}")
+    assert not unexpected, "\n".join(
+        f"{name}: {err}" for name, err in unexpected)
+    assert not missing_entry, f"cases without an entry file: {missing_entry}"
+    assert ok + len(rejected) == len(cases)
 
 
 def test_aousd_data_types_types():
