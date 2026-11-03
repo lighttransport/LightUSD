@@ -138,9 +138,12 @@ class SceneGPU {
 
   // Directional shadow map (first directional light casts).
   static constexpr UINT kShadowSize = 2048;
+  static constexpr UINT kShadowCascades = 3;
   int32_t shadow_light = -1;
   int32_t shadow_srv_index = -1;
-  ComPtr<ID3D12Resource> shadow_map;  // R32_TYPELESS, rests in SRV state
+  // kShadowCascades-slice R32_TYPELESS array (one cascade per slice), resting in
+  // the SRV state; shadow_dsv_heap holds one DSV per slice.
+  ComPtr<ID3D12Resource> shadow_map;
   ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap;
   // UsdGeomPoints splats and curve segments (raw lmv_splat / lmv_line_segment).
   ComPtr<ID3D12Resource> splat_buffer;

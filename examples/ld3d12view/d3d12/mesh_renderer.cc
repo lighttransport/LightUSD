@@ -11,15 +11,23 @@
 namespace ld3d12 {
 namespace {
 
-constexpr UINT kFrameCbStride = 512;  // >= sizeof(FrameCB), 256-aligned
+constexpr UINT kFrameCbStride = 1024;  // >= sizeof(FrameCB), 256-aligned
+// Constant-buffer entries per swapchain slot: the main pass, then one per
+// shadow cascade (whose shadow_vp[0] is that cascade's matrix).
+constexpr UINT kCbPerSlot = 1 + SceneGPU::kShadowCascades;
 
 // Mirrors `cbuffer Frame` in the shader.
 struct FrameCB {
   float view_proj[16];
-  float shadow_vp[16];
+  float shadow_vp[3][16];  // one per cascade (kShadowCascades == 3)
   float eye[4];
   int32_t idx[4];         // light count, env SRV, shadow SRV (<0 off), shadow light
-  float shadow_params[4]; // texel, bias, strength
+  float shadow_params[4]; // texel (uv), bias (texels), normal offset (texels), strength
+  float cascade_end[4];   // far edge of each cascade (depth along view axis), w = count
+  float cascade_texel[4]; // world size of one shadow texel per cascade
+  float cascade_range[4]; // light-space depth range per cascade (world)
+  float shadow_origin[4]; // view-frustum near-plane centre
+  float shadow_dir[4];    // view forward axis
   float env_params[4];    // intensity
   float tone[4];          // exposure stops
   float cm[3][4];         // working -> display-linear rows
@@ -67,10 +75,15 @@ struct Light {
 };
 cbuffer Frame : register(b0) {
   float4x4 view_proj;
-  float4x4 shadow_vp;
+  float4x4 shadow_vp[3];
   float4 eye;
   int4 idx;             // light count, env SRV, shadow SRV, shadow light
-  float4 shadow_params; // texel, bias, strength
+  float4 shadow_params; // texel (uv), bias (texels), normal offset (texels), strength
+  float4 cascade_end;   // far edge of each cascade (view-axis depth), w = count
+  float4 cascade_texel; // world size of one shadow texel per cascade
+  float4 cascade_range; // light-space depth range per cascade
+  float4 shadow_origin; // view-frustum near-plane centre
+  float4 shadow_dir;    // view forward axis
   float4 env_params;    // intensity
   float4 tone;          // exposure stops
   float4 cm0; float4 cm1; float4 cm2;
@@ -96,7 +109,7 @@ Texture2DArray g_array[] : register(t0, space3);  // UDIM tiles
 StructuredBuffer<int> udim_lut : register(t7);        // 100 per UDIM texture
 StructuredBuffer<float4> ptex_rects : register(t8);   // header + one per face
 StructuredBuffer<uint> face_ids : register(t9);       // per vertex (vertex stage)
-Texture2D<float> g_shadow : register(t0, space2);
+Texture2DArray<float> g_shadow : register(t0, space2);  // one slice per cascade
 SamplerState s_wrap   : register(s0);
 SamplerState s_clamp  : register(s1);
 SamplerState s_mirror : register(s2);
@@ -178,7 +191,7 @@ ShadowOut ShadowVS(VSIn i, uint vid : SV_VertexID) {
   float3 wn;
   Deform(i, vid, wp, wn);
   ShadowOut o;
-  o.pos = mul(shadow_vp, wp);
+  o.pos = mul(shadow_vp[0], wp);  // the cascade being rendered
   o.uv0 = i.uv0;
   o.uv1 = i.uv1;
   o.col = i.col;
@@ -357,23 +370,51 @@ float OrenNayarFactor(float3 n, float3 v, float3 l, float roughness) {
   return a + b * s / t;
 }
 
-float ShadowFactor(float3 wpos, float3 n, float3 to_light) {
-  float4 clip = mul(shadow_vp, float4(wpos, 1.0));
+// Lit fraction (1 = fully lit) of `wpos` in one cascade; -1 outside its map.
+// Bias is expressed in shadow texels: a constant part, a slope-scaled part and
+// a normal-offset of the lookup position.
+float CascadeShadow(int c, float3 wpos, float3 n, float n_dot_l) {
+  float texel_w = cascade_texel[c];
+  float3 p = wpos + n * (shadow_params.z * texel_w * (1.0 - n_dot_l));
+  float4 clip = mul(shadow_vp[c], float4(p, 1.0));
   float3 ndc = clip.xyz / clip.w;
   float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-  if (uv.x <= 0.001 || uv.x >= 0.999 || uv.y <= 0.001 || uv.y >= 0.999 ||
+  if (uv.x <= 0.002 || uv.x >= 0.998 || uv.y <= 0.002 || uv.y >= 0.998 ||
       ndc.z <= 0.0 || ndc.z >= 1.0)
-    return 1.0;
+    return -1.0;
+  float tan_theta = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0)) / max(n_dot_l, 0.05);
+  float bias = texel_w * (shadow_params.y + min(tan_theta, 4.0)) / cascade_range[c];
   float texel = shadow_params.x;
-  float bias = shadow_params.y + 0.004 * (1.0 - saturate(dot(n, to_light)));
   float acc = 0.0;
   [unroll] for (int oy = -1; oy <= 1; ++oy) {
     [unroll] for (int ox = -1; ox <= 1; ++ox) {
       acc += g_shadow.SampleCmpLevelZero(
-          s_shadow, uv + float2(ox, oy) * texel, ndc.z - bias);
+          s_shadow, float3(uv + float2(ox, oy) * texel, (float)c), ndc.z - bias);
     }
   }
-  return lerp(1.0, acc / 9.0, shadow_params.z);
+  return acc / 9.0;
+}
+
+float ShadowFactor(float3 wpos, float3 n, float3 to_light) {
+  int count = int(cascade_end.w + 0.5);
+  float d = dot(wpos - shadow_origin.xyz, shadow_dir.xyz);
+  if (count <= 0 || d > cascade_end[count - 1]) return 1.0;
+  int c = 0;
+  if (count > 1 && d > cascade_end.x) c = 1;
+  if (count > 2 && d > cascade_end.y) c = 2;
+  float n_dot_l = saturate(dot(n, to_light));
+  float lit = CascadeShadow(c, wpos, n, n_dot_l);
+  if (lit < 0.0) return 1.0;
+  // Cross-fade into the next cascade over the last 10% of this one.
+  if (c + 1 < count) {
+    float start = c > 0 ? cascade_end[c - 1] : 0.0;
+    float blend = saturate((cascade_end[c] - d) / max(0.1 * (cascade_end[c] - start), 1e-4));
+    if (blend < 1.0) {
+      float next = CascadeShadow(c + 1, wpos, n, n_dot_l);
+      if (next >= 0.0) lit = lerp(next, lit, blend);
+    }
+  }  // (the last cascade ends at the scene bounds: nothing lies beyond it)
+  return lerp(1.0, lit, shadow_params.w);
 }
 
 )hlsl"
@@ -851,7 +892,7 @@ bool MeshRenderer::Init(ID3D12Device* device, std::string* err) {
   hp.Type = D3D12_HEAP_TYPE_UPLOAD;
   D3D12_RESOURCE_DESC rd = {};
   rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-  rd.Width = UINT64(kFrameCbStride) * kFrameCount;
+  rd.Width = UINT64(kFrameCbStride) * kCbPerSlot * kFrameCount;
   rd.Height = 1;
   rd.DepthOrArraySize = 1;
   rd.MipLevels = 1;
@@ -1009,7 +1050,16 @@ void MeshRenderer::DrawMeshes(ID3D12GraphicsCommandList* list,
 void MeshRenderer::Draw(Device& device, ID3D12GraphicsCommandList* list,
                         const FrameParams& frame, const lmv_scene* scene,
                         const SceneGPU& gpu) {
-  const bool shadows = frame.shadows && gpu.shadow_light >= 0 && gpu.shadow_map;
+  bool shadows = frame.shadows && gpu.shadow_light >= 0 && gpu.shadow_map;
+  ShadowCascades cascades;
+  if (shadows) {
+    const LightGPU& l = gpu.lights[static_cast<size_t>(gpu.shadow_light)];
+    // False when the scene is out of view: skip the shadow pass entirely.
+    shadows = ComputeShadowCascades(frame.view_proj, l.direction, gpu.bounds_min,
+                                    gpu.bounds_max, SceneGPU::kShadowCascades,
+                                    static_cast<int>(SceneGPU::kShadowSize),
+                                    &cascades);
+  }
 
   FrameCB cb = {};
   std::memcpy(cb.view_proj, frame.view_proj, sizeof(cb.view_proj));
@@ -1022,26 +1072,46 @@ void MeshRenderer::Draw(Device& device, ID3D12GraphicsCommandList* list,
   cb.idx[2] = shadows ? gpu.shadow_srv_index : -1;
   cb.idx[3] = gpu.shadow_light;
   cb.shadow_params[0] = 1.0f / static_cast<float>(SceneGPU::kShadowSize);
-  cb.shadow_params[1] = 0.0015f;
-  cb.shadow_params[2] = 0.65f;
+  cb.shadow_params[1] = 1.5f;   // constant bias, in shadow texels
+  cb.shadow_params[2] = 2.0f;   // normal offset, in shadow texels
+  cb.shadow_params[3] = 0.65f;  // shadow strength
   cb.env_params[0] = 1.0f;
   cb.tone[0] = frame.exposure_stops;
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c) cb.cm[r][c] = gpu.color_matrix[r * 3 + c];
   std::memcpy(cb.sh, gpu.sh, sizeof(cb.sh));
   if (shadows) {
-    const LightGPU& l = gpu.lights[static_cast<size_t>(gpu.shadow_light)];
-    DirectionalShadowMatrix(l.direction, gpu.bounds_min, gpu.bounds_max,
-                            cb.shadow_vp);
+    for (UINT c = 0; c < SceneGPU::kShadowCascades; ++c)
+      std::memcpy(cb.shadow_vp[c], cascades.view_proj[c], sizeof(cb.shadow_vp[c]));
+    for (int c = 0; c < 3; ++c) {
+      cb.cascade_end[c] = cascades.cascade_end[c];
+      cb.cascade_texel[c] = cascades.texel_world[c];
+      cb.cascade_range[c] = cascades.depth_range[c];
+    }
+    cb.cascade_end[3] = static_cast<float>(cascades.count);
+    for (int i = 0; i < 3; ++i) {
+      cb.shadow_origin[i] = cascades.origin[i];
+      cb.shadow_dir[i] = cascades.dir[i];
+    }
   }
   const UINT slot = device.frame_index();
-  std::memcpy(frame_cb_mapped_ + size_t(slot) * kFrameCbStride, &cb, sizeof(cb));
+  uint8_t* slot_base = frame_cb_mapped_ + size_t(slot) * kCbPerSlot * kFrameCbStride;
+  const D3D12_GPU_VIRTUAL_ADDRESS slot_va =
+      frame_cb_->GetGPUVirtualAddress() + UINT64(slot) * kCbPerSlot * kFrameCbStride;
+  std::memcpy(slot_base, &cb, sizeof(cb));
+  if (shadows) {
+    // One constant block per cascade pass: ShadowVS reads shadow_vp[0].
+    for (UINT c = 0; c < SceneGPU::kShadowCascades; ++c) {
+      FrameCB pass = cb;
+      std::memcpy(pass.shadow_vp[0], cascades.view_proj[c], sizeof(pass.shadow_vp[0]));
+      std::memcpy(slot_base + size_t(1 + c) * kFrameCbStride, &pass, sizeof(pass));
+    }
+  }
 
   ID3D12DescriptorHeap* heaps[] = {gpu.srv_heap.Get()};
   list->SetDescriptorHeaps(1, heaps);
   list->SetGraphicsRootSignature(root_signature_.Get());
-  list->SetGraphicsRootConstantBufferView(
-      0, frame_cb_->GetGPUVirtualAddress() + UINT64(slot) * kFrameCbStride);
+  list->SetGraphicsRootConstantBufferView(0, slot_va);
   list->SetGraphicsRootShaderResourceView(
       2, gpu.material_buffer->GetGPUVirtualAddress());
   list->SetGraphicsRootShaderResourceView(
@@ -1069,18 +1139,26 @@ void MeshRenderer::Draw(Device& device, ID3D12GraphicsCommandList* list,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_DEPTH_WRITE);
     list->ResourceBarrier(1, &to_depth);
-    const D3D12_CPU_DESCRIPTOR_HANDLE dsv =
-        gpu.shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
-    list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
-    list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0,
-                                nullptr);
+    const UINT dsv_stride = device.device()->GetDescriptorHandleIncrementSize(
+        D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
     const float size = static_cast<float>(SceneGPU::kShadowSize);
     const D3D12_VIEWPORT vp = {0.0f, 0.0f, size, size, 0.0f, 1.0f};
     const D3D12_RECT sc = {0, 0, static_cast<LONG>(SceneGPU::kShadowSize),
                            static_cast<LONG>(SceneGPU::kShadowSize)};
-    list->RSSetViewports(1, &vp);
-    list->RSSetScissorRects(1, &sc);
-    DrawMeshes(list, scene, gpu, slot, Pass::Shadow, frame.eye);
+    for (UINT c = 0; c < SceneGPU::kShadowCascades; ++c) {
+      D3D12_CPU_DESCRIPTOR_HANDLE dsv =
+          gpu.shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+      dsv.ptr += static_cast<SIZE_T>(c) * dsv_stride;
+      list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
+      list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0,
+                                  nullptr);
+      list->RSSetViewports(1, &vp);
+      list->RSSetScissorRects(1, &sc);
+      list->SetGraphicsRootConstantBufferView(
+          0, slot_va + UINT64(1 + c) * kFrameCbStride);
+      DrawMeshes(list, scene, gpu, slot, Pass::Shadow, frame.eye);
+    }
+    list->SetGraphicsRootConstantBufferView(0, slot_va);  // back to the main pass
     const D3D12_RESOURCE_BARRIER to_srv =
         Transition(gpu.shadow_map.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

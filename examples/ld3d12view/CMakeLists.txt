@@ -141,6 +141,16 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Cascaded shadow maps: large ground plane, boxes from 0 to ~90 m away, seen
+  # from an authored camera next to the nearest one.
+  add_test(NAME ld3d12view-shadow-cascades-warp
+      COMMAND ld3d12view --hidden --warp --size 480x270 --frames 3 --no-hud
+              --no-grid --authored-camera
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-shadow-cascades.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/shadow-cascades.usda)
+  set_tests_properties(ld3d12view-shadow-cascades-warp PROPERTIES
+      PASS_REGULAR_EXPRESSION "5 mesh.*shadows"
+      LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Load-time BC7 compression of large 8-bit textures (default on) and its
   # opt-out.
   add_test(NAME ld3d12view-bc7-warp

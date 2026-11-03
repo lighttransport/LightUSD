@@ -45,9 +45,25 @@ struct PrefilteredEnv {
 bool BuildPrefilteredEnvironment(const lmv_scene* scene, int32_t image_id,
                                  PrefilteredEnv* out);
 
-// Orthographic shadow view-projection (column-major, 0..1 depth) for a
-// directional light towards `light_dir`, fitted to the scene bounds.
-void DirectionalShadowMatrix(const float light_dir[3], const float bmin[3],
-                             const float bmax[3], float out[16]);
+// Cascaded directional shadow maps. The camera's view frustum, clipped to the
+// scene bounds, is split along the view axis; each slice gets an orthographic
+// light-space projection fitted to its bounding sphere (centre snapped to shadow
+// texels, so shadows do not shimmer while the camera moves).
+constexpr int kMaxShadowCascades = 4;
+struct ShadowCascades {
+  int count = 0;
+  float view_proj[kMaxShadowCascades][16] = {};  // column-major, 0..1 depth
+  float cascade_end[4] = {};   // far edge of each slice, as depth along `dir`
+  float texel_world[4] = {};   // world-space size of one shadow texel
+  float depth_range[4] = {};   // light-space depth range (world units)
+  float origin[3] = {};        // near-plane centre of the view frustum
+  float dir[3] = {};           // view forward axis (unit)
+};
+// Returns false when the scene is outside the view (nothing to shadow).
+// `view_proj` is the camera's column-major projection * view, `light_dir` points
+// towards the light, `map_size` is the cascade texture size in texels.
+bool ComputeShadowCascades(const float view_proj[16], const float light_dir[3],
+                           const float bmin[3], const float bmax[3], int count,
+                           int map_size, ShadowCascades* out);
 
 }  // namespace ld3d12

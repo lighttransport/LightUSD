@@ -406,18 +406,106 @@ bool BuildPrefilteredEnvironment(const lmv_scene* scene, int32_t image_id,
   return true;
 }
 
-void DirectionalShadowMatrix(const float light_dir[3], const float bmin[3],
-                             const float bmax[3], float out[16]) {
-  float center[3], ext[3];
-  for (int i = 0; i < 3; ++i) {
-    center[i] = 0.5f * (bmin[i] + bmax[i]);
-    ext[i] = bmax[i] - bmin[i];
+namespace {
+
+// Gauss-Jordan inverse of a general column-major 4x4 matrix.
+bool Invert4x4(const float m[16], float out[16]) {
+  double a[4][8];
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) a[r][c] = m[c * 4 + r];
+    for (int c = 0; c < 4; ++c) a[r][4 + c] = r == c ? 1.0 : 0.0;
   }
-  const float radius =
-      std::max(std::sqrt(ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]) *
-                   0.5f,
-               0.01f) *
-      1.25f;
+  for (int col = 0; col < 4; ++col) {
+    int pivot = col;
+    for (int r = col + 1; r < 4; ++r)
+      if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
+    if (std::fabs(a[pivot][col]) < 1e-30) return false;
+    if (pivot != col)
+      for (int c = 0; c < 8; ++c) std::swap(a[pivot][c], a[col][c]);
+    const double inv = 1.0 / a[col][col];
+    for (int c = 0; c < 8; ++c) a[col][c] *= inv;
+    for (int r = 0; r < 4; ++r) {
+      if (r == col) continue;
+      const double f = a[r][col];
+      if (f == 0.0) continue;
+      for (int c = 0; c < 8; ++c) a[r][c] -= f * a[col][c];
+    }
+  }
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c) out[c * 4 + r] = static_cast<float>(a[r][4 + c]);
+  return true;
+}
+
+void Unproject(const float inv[16], float x, float y, float z, float out[3]) {
+  float p[4];
+  const float in[4] = {x, y, z, 1.0f};
+  for (int r = 0; r < 4; ++r) {
+    p[r] = 0.0f;
+    for (int c = 0; c < 4; ++c) p[r] += inv[c * 4 + r] * in[c];
+  }
+  const float w = std::fabs(p[3]) > 1e-20f ? p[3] : 1e-20f;
+  for (int i = 0; i < 3; ++i) out[i] = p[i] / w;
+}
+
+}  // namespace
+
+bool ComputeShadowCascades(const float view_proj[16], const float light_dir[3],
+                           const float bmin[3], const float bmax[3], int count,
+                           int map_size, ShadowCascades* out) {
+  count = std::max(1, std::min(count, kMaxShadowCascades));
+  *out = ShadowCascades();
+  float inv[16];
+  if (!Invert4x4(view_proj, inv)) return false;
+
+  // View frustum corners (NDC x,y in {-1,1}; D3D depth 0 = near, 1 = far).
+  const float xs[4] = {-1, 1, -1, 1}, ys[4] = {-1, -1, 1, 1};
+  float nc[4][3], fc[4][3];
+  float near_c[3] = {0, 0, 0}, far_c[3] = {0, 0, 0};
+  for (int k = 0; k < 4; ++k) {
+    Unproject(inv, xs[k], ys[k], 0.0f, nc[k]);
+    Unproject(inv, xs[k], ys[k], 1.0f, fc[k]);
+    for (int i = 0; i < 3; ++i) {
+      near_c[i] += nc[k][i] * 0.25f;
+      far_c[i] += fc[k][i] * 0.25f;
+    }
+  }
+  float fwd[3] = {far_c[0] - near_c[0], far_c[1] - near_c[1], far_c[2] - near_c[2]};
+  const float depth_len = std::sqrt(Dot(fwd, fwd));
+  if (!(depth_len > 1e-8f)) return false;
+  for (int i = 0; i < 3; ++i) fwd[i] /= depth_len;
+
+  // Depth (along the view axis, from the near plane) covered by scene bounds.
+  float d_min = 1e30f, d_max = -1e30f;
+  for (int c = 0; c < 8; ++c) {
+    const float p[3] = {(c & 1) ? bmax[0] : bmin[0], (c & 2) ? bmax[1] : bmin[1],
+                        (c & 4) ? bmax[2] : bmin[2]};
+    const float d = (p[0] - near_c[0]) * fwd[0] + (p[1] - near_c[1]) * fwd[1] +
+                    (p[2] - near_c[2]) * fwd[2];
+    d_min = std::min(d_min, d);
+    d_max = std::max(d_max, d);
+  }
+  const float range_a = std::max(d_min, 0.0f);
+  const float range_b = std::min(d_max, depth_len);
+  for (int i = 0; i < 3; ++i) {
+    out->origin[i] = near_c[i];
+    out->dir[i] = fwd[i];
+  }
+  if (!(range_b > range_a + 1e-6f)) return false;  // scene is not in view
+
+  // Practical split scheme: blend of uniform and logarithmic splits.
+  const float lambda = 0.6f;
+  const float log_a = std::max(range_a, range_b * 1e-3f);
+  float ends[kMaxShadowCascades + 1];
+  ends[0] = range_a;
+  for (int i = 1; i <= count; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(count);
+    const float uni = range_a + (range_b - range_a) * t;
+    const float lg = log_a * std::pow(range_b / log_a, t);
+    ends[i] = lambda * lg + (1.0f - lambda) * uni;
+  }
+  ends[count] = range_b;
+
+  // Light basis (towards the light is +dir).
   float dir[3] = {light_dir[0], light_dir[1], light_dir[2]};
   Normalize(dir);
   float up[3] = {0, 1, 0};
@@ -425,36 +513,82 @@ void DirectionalShadowMatrix(const float light_dir[3], const float bmin[3],
     up[1] = 0;
     up[2] = 1;
   }
-  float eye[3];
-  for (int i = 0; i < 3; ++i) eye[i] = center[i] + dir[i] * radius * 2.0f;
-
-  // Right-handed look-at (camera looks down -Z), column-major.
-  float f[3] = {center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]};
-  Normalize(f);
-  float s[3];
+  const float f[3] = {-dir[0], -dir[1], -dir[2]};
+  float s[3], u[3];
   Cross(f, up, s);
   Normalize(s);
-  float u[3];
   Cross(s, f, u);
-  float view[16] = {s[0], u[0], -f[0], 0, s[1], u[1], -f[1], 0,
-                    s[2], u[2], -f[2], 0, -Dot(s, eye), -Dot(u, eye),
-                    Dot(f, eye), 1};
 
-  // Orthographic, 0..1 depth: view z in [-near, -far] maps to [0, 1].
-  const float near_z = 0.0f, far_z = radius * 4.0f;
-  float proj[16] = {};
-  proj[0] = 1.0f / radius;
-  proj[5] = 1.0f / radius;
-  proj[10] = 1.0f / (near_z - far_z);
-  proj[14] = near_z / (near_z - far_z);
-  proj[15] = 1.0f;
+  float bcorner[8][3];
+  for (int c = 0; c < 8; ++c) {
+    bcorner[c][0] = (c & 1) ? bmax[0] : bmin[0];
+    bcorner[c][1] = (c & 2) ? bmax[1] : bmin[1];
+    bcorner[c][2] = (c & 4) ? bmax[2] : bmin[2];
+  }
 
-  for (int col = 0; col < 4; ++col)
-    for (int row = 0; row < 4; ++row) {
-      float sum = 0.0f;
-      for (int k = 0; k < 4; ++k) sum += proj[k * 4 + row] * view[col * 4 + k];
-      out[col * 4 + row] = sum;
+  out->count = count;
+  for (int ci = 0; ci < count; ++ci) {
+    const float t0 = ends[ci] / depth_len, t1 = ends[ci + 1] / depth_len;
+    // Slice corners and their bounding sphere (rotation-stable fit).
+    float corners[8][3];
+    float center[3] = {0, 0, 0};
+    for (int k = 0; k < 4; ++k)
+      for (int i = 0; i < 3; ++i) {
+        corners[k][i] = nc[k][i] + (fc[k][i] - nc[k][i]) * t0;
+        corners[4 + k][i] = nc[k][i] + (fc[k][i] - nc[k][i]) * t1;
+      }
+    for (int k = 0; k < 8; ++k)
+      for (int i = 0; i < 3; ++i) center[i] += corners[k][i] * 0.125f;
+    float radius = 0.0f;
+    for (int k = 0; k < 8; ++k) {
+      const float d[3] = {corners[k][0] - center[0], corners[k][1] - center[1],
+                          corners[k][2] - center[2]};
+      radius = std::max(radius, std::sqrt(Dot(d, d)));
     }
+    radius = std::max(std::ceil(radius * 16.0f) / 16.0f, 0.01f);
+
+    // Snap the centre to whole shadow texels in light space (no shimmering).
+    const float texel = 2.0f * radius / static_cast<float>(map_size);
+    const float cs = Dot(center, s), cu = Dot(center, u);
+    const float ds = std::floor(cs / texel) * texel - cs;
+    const float du = std::floor(cu / texel) * texel - cu;
+    for (int i = 0; i < 3; ++i) center[i] += s[i] * ds + u[i] * du;
+
+    // Depth extent along the light: casters anywhere up to the scene bounds.
+    float t_max = radius, t_min = -radius;
+    for (int c = 0; c < 8; ++c) {
+      const float d[3] = {bcorner[c][0] - center[0], bcorner[c][1] - center[1],
+                          bcorner[c][2] - center[2]};
+      const float t = Dot(d, dir);
+      t_max = std::max(t_max, t);
+      t_min = std::min(t_min, t);
+    }
+    const float pad = 0.02f * (t_max - t_min);
+    const float eye_dist = t_max + pad;
+    const float far_z = eye_dist - t_min + pad;
+    float eye[3];
+    for (int i = 0; i < 3; ++i) eye[i] = center[i] + dir[i] * eye_dist;
+
+    const float view[16] = {s[0], u[0], -f[0], 0, s[1], u[1], -f[1], 0,
+                            s[2], u[2], -f[2], 0, -Dot(s, eye), -Dot(u, eye),
+                            Dot(f, eye), 1};
+    float proj[16] = {};
+    proj[0] = 1.0f / radius;
+    proj[5] = 1.0f / radius;
+    proj[10] = -1.0f / far_z;  // near = 0
+    proj[15] = 1.0f;
+    float* dst = out->view_proj[ci];
+    for (int col = 0; col < 4; ++col)
+      for (int row = 0; row < 4; ++row) {
+        float sum = 0.0f;
+        for (int k = 0; k < 4; ++k) sum += proj[k * 4 + row] * view[col * 4 + k];
+        dst[col * 4 + row] = sum;
+      }
+    out->cascade_end[ci] = ends[ci + 1];
+    out->texel_world[ci] = texel;
+    out->depth_range[ci] = far_z;
+  }
+  return true;
 }
 
 }  // namespace ld3d12

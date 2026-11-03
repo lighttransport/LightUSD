@@ -814,7 +814,7 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
     D3D12_RESOURCE_DESC rd = {};
     rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     rd.Width = rd.Height = kShadowSize;
-    rd.DepthOrArraySize = 1;
+    rd.DepthOrArraySize = kShadowCascades;
     rd.MipLevels = 1;
     rd.Format = DXGI_FORMAT_R32_TYPELESS;
     rd.SampleDesc.Count = 1;
@@ -831,21 +831,29 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
     if (FAILED(hr)) return Fail(err, "CreateCommittedResource(shadow)", hr);
     D3D12_DESCRIPTOR_HEAP_DESC dh = {};
     dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-    dh.NumDescriptors = 1;
+    dh.NumDescriptors = kShadowCascades;
     hr = d3d->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&shadow_dsv_heap));
     if (FAILED(hr)) return Fail(err, "CreateDescriptorHeap(shadow DSV)", hr);
-    D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
-    dv.Format = DXGI_FORMAT_D32_FLOAT;
-    dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-    d3d->CreateDepthStencilView(
-        shadow_map.Get(), &dv,
-        shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart());
+    const UINT dsv_stride =
+        d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    for (UINT c = 0; c < kShadowCascades; ++c) {
+      D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
+      dv.Format = DXGI_FORMAT_D32_FLOAT;
+      dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+      dv.Texture2DArray.FirstArraySlice = c;
+      dv.Texture2DArray.ArraySize = 1;
+      D3D12_CPU_DESCRIPTOR_HANDLE dh_cpu =
+          shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+      dh_cpu.ptr += static_cast<SIZE_T>(c) * dsv_stride;
+      d3d->CreateDepthStencilView(shadow_map.Get(), &dv, dh_cpu);
+    }
     shadow_srv_index = static_cast<int32_t>(hd.NumDescriptors) - 1;
     D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
     sv.Format = DXGI_FORMAT_R32_FLOAT;
-    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
     sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    sv.Texture2D.MipLevels = 1;
+    sv.Texture2DArray.MipLevels = 1;
+    sv.Texture2DArray.ArraySize = kShadowCascades;
     D3D12_CPU_DESCRIPTOR_HANDLE h = srv_heap->GetCPUDescriptorHandleForHeapStart();
     h.ptr += static_cast<SIZE_T>(shadow_srv_index) *
              d3d->GetDescriptorHandleIncrementSize(
