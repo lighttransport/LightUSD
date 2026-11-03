@@ -1,5 +1,7 @@
 #include "lighting.hh"
 
+#include "mathutil.hh"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -407,34 +409,6 @@ bool BuildPrefilteredEnvironment(const lmv_scene* scene, int32_t image_id,
 }
 
 namespace {
-
-// Gauss-Jordan inverse of a general column-major 4x4 matrix.
-bool Invert4x4(const float m[16], float out[16]) {
-  double a[4][8];
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) a[r][c] = m[c * 4 + r];
-    for (int c = 0; c < 4; ++c) a[r][4 + c] = r == c ? 1.0 : 0.0;
-  }
-  for (int col = 0; col < 4; ++col) {
-    int pivot = col;
-    for (int r = col + 1; r < 4; ++r)
-      if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
-    if (std::fabs(a[pivot][col]) < 1e-30) return false;
-    if (pivot != col)
-      for (int c = 0; c < 8; ++c) std::swap(a[pivot][c], a[col][c]);
-    const double inv = 1.0 / a[col][col];
-    for (int c = 0; c < 8; ++c) a[col][c] *= inv;
-    for (int r = 0; r < 4; ++r) {
-      if (r == col) continue;
-      const double f = a[r][col];
-      if (f == 0.0) continue;
-      for (int c = 0; c < 8; ++c) a[r][c] -= f * a[col][c];
-    }
-  }
-  for (int r = 0; r < 4; ++r)
-    for (int c = 0; c < 4; ++c) out[c * 4 + r] = static_cast<float>(a[r][4 + c]);
-  return true;
-}
 
 void Unproject(const float inv[16], float x, float y, float z, float out[3]) {
   float p[4];

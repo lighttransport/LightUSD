@@ -18,14 +18,26 @@ struct PointLineParams {
 
 class PointLineRenderer {
  public:
+  // Segments per frame that DrawOverlay can show.
+  static constexpr uint32_t kMaxOverlaySegments = 256;
+
   bool Init(ID3D12Device* device, std::string* err);
   void Draw(ID3D12GraphicsCommandList* list, const PointLineParams& params,
             const SceneGPU& gpu);
+  // Draws UI line segments (raw lmv_line_segment floats: 11 per segment) on top
+  // of the scene, without depth testing. `slot` is the swapchain buffer index
+  // (one upload region each). Extra segments beyond kMaxOverlaySegments are
+  // dropped.
+  void DrawOverlay(ID3D12GraphicsCommandList* list, const PointLineParams& params,
+                   UINT slot, const std::vector<float>& segments);
 
  private:
   ComPtr<ID3D12RootSignature> root_signature_;
   ComPtr<ID3D12PipelineState> pso_splat_;
   ComPtr<ID3D12PipelineState> pso_line_;
+  ComPtr<ID3D12PipelineState> pso_overlay_;  // lines, no depth test
+  ComPtr<ID3D12Resource> overlay_ring_;       // kFrameCount slots, persistently mapped
+  uint8_t* overlay_mapped_ = nullptr;
 };
 
 }  // namespace ld3d12

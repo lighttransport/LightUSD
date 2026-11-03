@@ -35,7 +35,8 @@ add_executable(ld3d12view
     d3d12/hud_renderer.cc
     d3d12/background.cc
     hud.cc
-    loader.cc)
+    loader.cc
+    pick.cc)
 target_compile_features(ld3d12view PRIVATE cxx_std_17)
 target_include_directories(ld3d12view PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -141,6 +142,31 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Click picking: a synthetic left click casts a ray; the hit is logged and
+  # shown in the inspector with its selection box.
+  add_test(NAME ld3d12view-pick-hit-warp
+      COMMAND ld3d12view --hidden --warp --size 800x500 --frames 8 --preset 0
+              --simulate-pick 0.5,0.48
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-pick.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/shadow-box.usda)
+  add_test(NAME ld3d12view-pick-miss-warp
+      COMMAND ld3d12view --hidden --warp --size 800x500 --frames 8 --preset 5
+              --simulate-pick 0.03,0.97
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/shadow-box.usda)
+  add_test(NAME ld3d12view-pick-material-warp
+      COMMAND ld3d12view --hidden --warp --size 800x500 --frames 8 --preset 0
+              --simulate-pick 0.5,0.5
+              ${LD3D_REPO_ROOT}/models/openpbr-coated-cube.usda)
+  set_tests_properties(ld3d12view-pick-hit-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "picked /World/Box \\(mesh 1")
+  set_tests_properties(ld3d12view-pick-miss-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "pick: nothing hit"
+                 FAIL_REGULAR_EXPRESSION "picked /")
+  set_tests_properties(ld3d12view-pick-material-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "picked /World/CoatedCube \\(mesh 0, triangle [0-9]+, material 0\\)")
+  set_tests_properties(ld3d12view-pick-hit-warp ld3d12view-pick-miss-warp
+      ld3d12view-pick-material-warp PROPERTIES
+      LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Cascaded shadow maps: large ground plane, boxes from 0 to ~90 m away, seen
   # from an authored camera next to the nearest one.
   add_test(NAME ld3d12view-shadow-cascades-warp

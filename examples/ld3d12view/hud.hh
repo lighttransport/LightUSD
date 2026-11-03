@@ -25,6 +25,8 @@ struct HudStatus {
   double t_start = 0.0;
   double t_end = 0.0;
   double tps = 24.0;
+  // Inspector for the picked object, one line each (empty = no selection).
+  std::vector<std::string> selection;
 };
 
 // Loading card shown in the middle of the window while a scene is read.
@@ -79,6 +81,7 @@ class Hud {
   void LayoutBar();
   void ClearRect(int x, int y, int w, int h);
   void DrawTop();
+  void DrawSelection();
   void DrawBar();
   void DrawLoading();
   bool BarActive() const { return visible_ && status_.animated; }
@@ -93,6 +96,9 @@ class Hud {
   std::string top_text_;
   lvg_rect_t top_rect_ = {0, 0, 0, 0};   // last drawn
   bool top_dirty_ = true;
+  std::vector<std::string> sel_lines_;
+  lvg_rect_t sel_rect_ = {0, 0, 0, 0};   // last drawn
+  bool sel_dirty_ = false;
   bool bar_dirty_ = true;
   bool bar_was_drawn_ = false;
   bool full_ = true;

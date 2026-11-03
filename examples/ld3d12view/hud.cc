@@ -16,6 +16,7 @@ constexpr lvg_color_t kPanelEdge = LVG_COLOR_RGB(0x3A, 0x3F, 0x4B);
 constexpr lvg_color_t kAccent = LVG_COLOR_RGB(0x58, 0x9C, 0xE0);
 constexpr lvg_color_t kTrack = LVG_COLOR_RGB(0x40, 0x44, 0x4B);
 constexpr lvg_color_t kText = LVG_COLOR_RGB(0xDD, 0xE1, 0xEA);
+constexpr lvg_color_t kSelectionTitle = LVG_COLOR_RGB(0xFF, 0xD6, 0x5A);
 constexpr lvg_color_t kTextDim = LVG_COLOR_RGB(0x9A, 0xA1, 0xB0);
 
 }  // namespace
@@ -90,6 +91,11 @@ void Hud::SetStatus(const HudStatus& s) {
   if (top != top_text_) {
     top_text_ = top;
     top_dirty_ = true;
+  }
+
+  if (s.selection != sel_lines_) {
+    sel_lines_ = s.selection;
+    sel_dirty_ = true;
   }
 
   const bool bar_changed = s.animated != status_.animated ||
@@ -201,6 +207,36 @@ void Hud::DrawTop() {
   lvg_canvas_destroy(&canvas);
 }
 
+// Inspector card under the status panel: one text line per entry; the first
+// (the prim path) is drawn in the accent colour.
+void Hud::DrawSelection() {
+  lvg_canvas_t canvas;
+  lvg_canvas_init(&canvas, surface_);
+  const lvg_rect_t prev = sel_rect_;
+  if (prev.width > 0) ClearRect(prev.x, prev.y, prev.width, prev.height);
+  sel_rect_ = lvg_rect_make(0, 0, 0, 0);
+  if (visible_ && !sel_lines_.empty()) {
+    const int lh = lui_font_line_height(font_);
+    int text_w = 0;
+    for (const std::string& line : sel_lines_)
+      text_w = std::max(text_w, lui_font_measure_text(font_, line.c_str(), -1));
+    const int top_h = lh + 10;  // status panel above
+    const int h = static_cast<int>(sel_lines_.size()) * (lh + 2) + 10;
+    sel_rect_ = lvg_rect_make(8, 8 + top_h + 6, std::min(width_ - 16, text_w + 20), h);
+    lvg_canvas_fill_rounded_rect(&canvas, sel_rect_.x, sel_rect_.y, sel_rect_.width,
+                                 sel_rect_.height, 5, kPanel);
+    lvg_canvas_stroke_rounded_rect(&canvas, sel_rect_.x, sel_rect_.y,
+                                   sel_rect_.width, sel_rect_.height, 5, kPanelEdge, 1);
+    int y = sel_rect_.y + 5 + lui_font_ascent(font_);
+    for (size_t i = 0; i < sel_lines_.size(); ++i) {
+      lui_canvas_draw_text(&canvas, sel_rect_.x + 10, y, sel_lines_[i].c_str(), -1,
+                           font_, i == 0 ? kSelectionTitle : kText);
+      y += lh + 2;
+    }
+  }
+  lvg_canvas_destroy(&canvas);
+}
+
 void Hud::DrawLoading() {
   lvg_canvas_t canvas;
   lvg_canvas_init(&canvas, surface_);
@@ -281,6 +317,8 @@ std::vector<HudRows> Hud::Render() {
   if (full_) {
     ClearRect(0, 0, width_, height_);
     top_rect_ = lvg_rect_make(0, 0, 0, 0);
+    sel_rect_ = lvg_rect_make(0, 0, 0, 0);
+    sel_dirty_ = true;
     bar_was_drawn_ = false;
     top_dirty_ = bar_dirty_ = true;
     loading_rect_ = lvg_rect_make(0, 0, 0, 0);
@@ -297,6 +335,16 @@ std::vector<HudRows> Hud::Render() {
     if (!whole) {
       const int y0 = std::min(prev.width > 0 ? prev.y : top_rect_.y, top_rect_.y);
       const int y1 = std::max(prev.y + prev.height, top_rect_.y + top_rect_.height);
+      if (y1 > y0) rows.push_back({y0, y1});
+    }
+  }
+  if (sel_dirty_) {
+    const lvg_rect_t prev = sel_rect_;
+    DrawSelection();
+    sel_dirty_ = false;
+    if (!whole) {
+      const int y0 = std::min(prev.width > 0 ? prev.y : sel_rect_.y, sel_rect_.y);
+      const int y1 = std::max(prev.y + prev.height, sel_rect_.y + sel_rect_.height);
       if (y1 > y0) rows.push_back({y0, y1});
     }
   }

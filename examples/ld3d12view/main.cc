@@ -30,12 +30,14 @@
 #include <shellapi.h>  // after windows.h (via device.hh)
 #include "d3d12/grid.hh"
 #include "d3d12/hud_renderer.hh"
+#include "d3d12/mathutil.hh"
 #include "d3d12/mesh_renderer.hh"
 #include "d3d12/points_lines.hh"
 #include "d3d12/scene_gpu.hh"
 #include "hud.hh"
 #include "loader.hh"
 #include "lmv.h"
+#include "pick.hh"
 
 #include <cmath>
 #include <cstdio>
@@ -75,6 +77,7 @@ struct Options {
   bool simulate_space = false;  // test hook: post a Space key press
   int resize_w = 0, resize_h = 0;  // test hook: resize the window at frame 2
   std::string simulate_click;  // test hook: "play" or "timeline=F"
+  std::string simulate_pick;   // test hook: click at "fx,fy" (window fractions)
   std::string simulate_drop;  // test hook: post WM_DROPFILES for this path
   int preset = -1;  // 0..6 = iso, front, back, right, left, top, bottom
   std::string screenshot;
@@ -86,7 +89,7 @@ void Usage() {
                "usage: ld3d12view [--size WxH] [--frames N] [--debug] "
                "[--warp] [--hidden] [--wireframe] [--no-grid] [--no-shadows] [--no-compress-textures] [--preset 0-6]\n"
                "                   [--time T] [--animate-from T] [--play] [--paused] [--no-hud] [--no-background] [--load-delay-ms N] [--simulate-cancel] [--capture-loading] [--no-loop] "
-               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-resize WxH] "
+               "[--speed X] [--authored-camera] [--simulate-drop file] [--simulate-space] [--simulate-click play|timeline=F] [--simulate-pick fx,fy] [--simulate-resize WxH] "
                "[--screenshot out.png] [file.usd]\n");
 }
 
@@ -138,6 +141,8 @@ bool ParseArgs(int argc, char** argv, Options* o) {
         return false;
     } else if (a == "--simulate-click" && i + 1 < argc) {
       o->simulate_click = argv[++i];
+    } else if (a == "--simulate-pick" && i + 1 < argc) {
+      o->simulate_pick = argv[++i];
     } else if (a == "--simulate-space") {
       o->simulate_space = true;
     } else if (a == "--no-loop") {
@@ -499,8 +504,10 @@ int main(int argc, char** argv) {
       // failed upload leaves the current scene alone. `initial` marks the
       // command-line scene, which also gets the --time/--preset/camera options.
       bool initial_pending = !opt.path.empty();
+      ld3d12::PickResult selection;  // the clicked draw, shown in the inspector
       auto install_scene = [&](lmv_scene* scene, const std::string& path,
                                bool initial) -> bool {
+        selection = ld3d12::PickResult();  // draw indices belong to the old scene
         SceneView next;
         MakeSceneView(scene, &next);
         device.WaitIdle();  // the old scene's buffers may still be in flight
@@ -578,6 +585,40 @@ int main(int argc, char** argv) {
       hud.SetVisible(opt.hud);
 
       bool left = false, right = false, middle = false;
+      // A left press that moves less than a few pixels is a click: it picks.
+      bool press_active = false;
+      int press_travel = 0;
+      std::vector<float> overlay;  // selection box edges (lmv_line_segment floats)
+      // Casts a ray through the window point (logical pixels) into the scene.
+      auto do_pick = [&](int lx, int ly) {
+        int lw = 0, lh = 0;
+        lui_window_get_size(window, &lw, &lh);
+        if (!sv.scene || lw <= 0 || lh <= 0) return;
+        const float nx = (static_cast<float>(lx) + 0.5f) / static_cast<float>(lw) * 2.0f - 1.0f;
+        const float ny = 1.0f - (static_cast<float>(ly) + 0.5f) / static_cast<float>(lh) * 2.0f;
+        lmv_camera_frame pcf = {};
+        lmv_camera_get_frame(camera, &pcf);
+        float vp[16], inv[16];
+        Mul(pcf.proj, pcf.view, vp);
+        if (!Invert4(vp, inv)) return;
+        const float near_ndc[3] = {nx, ny, 0.0f}, far_ndc[3] = {nx, ny, 1.0f};
+        float a[3], b[3];
+        ld3d12::TransformPoint(inv, near_ndc, a);
+        ld3d12::TransformPoint(inv, far_ndc, b);
+        float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (!(len > 1e-12f)) return;
+        for (float& c : d) c /= len;
+        selection = ld3d12::PickScene(sv.scene, a, d);
+        if (selection.hit) {
+          std::fprintf(stderr,
+                       "ld3d12view: picked %s (mesh %d, triangle %u, material %d)\n",
+                       selection.prim_path.c_str(), selection.mesh,
+                       selection.triangle, selection.material);
+        } else {
+          std::fprintf(stderr, "ld3d12view: pick: nothing hit\n");
+        }
+      };
       bool wireframe = opt.wireframe;
       bool show_grid = opt.grid;
       bool show_background = opt.background;
@@ -623,6 +664,8 @@ int main(int argc, char** argv) {
                 if (loader.Busy()) {
                   loader.Cancel();
                   std::fprintf(stderr, "ld3d12view: cancelling load\n");
+                } else if (selection.hit) {
+                  selection = ld3d12::PickResult();  // first Esc clears the selection
                 } else {
                   quit = true;
                 }
@@ -673,7 +716,17 @@ int main(int argc, char** argv) {
               // ends one, wherever the pointer is.
               if (down && hud_took) break;
               const auto b = ev.data.mouse_button.button;
-              if (b == LUI_MOUSE_LEFT) left = down;
+              if (b == LUI_MOUSE_LEFT) {
+                left = down;
+                if (down) {
+                  press_active = true;
+                  press_travel = 0;
+                } else if (press_active) {
+                  press_active = false;
+                  if (press_travel <= 4 && !hud_took)
+                    do_pick(ev.data.mouse_button.x, ev.data.mouse_button.y);
+                }
+              }
               if (b == LUI_MOUSE_RIGHT) right = down;
               if (b == LUI_MOUSE_MIDDLE) middle = down;
               break;
@@ -683,6 +736,8 @@ int main(int argc, char** argv) {
               const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
               const float dx = static_cast<float>(ev.data.mouse_move.dx);
               const float dy = static_cast<float>(ev.data.mouse_move.dy);
+              if (left)
+                press_travel += static_cast<int>(std::fabs(dx) + std::fabs(dy));
               if (right || middle || (left && shift)) {
                 leave_authored_camera();
                 lmv_camera_pan(camera, dx, dy);
@@ -782,21 +837,38 @@ int main(int argc, char** argv) {
           scene_gpu.UpdateDeform(sv.scene, device.frame_index());
           meshes.Draw(device, list, fp, sv.scene, scene_gpu);
         }
-        if (sv.scene && (scene_gpu.splat_count || scene_gpu.line_count)) {
-          ld3d12::PointLineParams pl;
-          std::memcpy(pl.view_proj, fp.view_proj, sizeof(pl.view_proj));
-          std::memcpy(pl.view, cf.view, sizeof(pl.view));
-          std::memcpy(pl.eye, cf.eye, sizeof(pl.eye));
-          pl.pixel_scale = cf.orthographic
-                               ? 0.0f
-                               : 2.0f * std::tan(0.5f * cf.fov_y) /
-                                     static_cast<float>(ph);
+        ld3d12::PointLineParams pl;
+        std::memcpy(pl.view_proj, fp.view_proj, sizeof(pl.view_proj));
+        std::memcpy(pl.view, cf.view, sizeof(pl.view));
+        std::memcpy(pl.eye, cf.eye, sizeof(pl.eye));
+        pl.pixel_scale = cf.orthographic
+                             ? 0.0f
+                             : 2.0f * std::tan(0.5f * cf.fov_y) /
+                                   static_cast<float>(ph);
+        if (sv.scene && (scene_gpu.splat_count || scene_gpu.line_count))
           points_lines.Draw(list, pl, scene_gpu);
-        }
         if (show_grid) {
           float grid_vp[16];
           Mul(fp.view_proj, sv.grid_model, grid_vp);
           grid.Draw(list, grid_vp);
+        }
+        // Selection: the picked draw's world-space bounding box, re-evaluated
+        // each frame so it follows animation.
+        if (sv.scene && selection.hit) {
+          float corners[8][3];
+          if (ld3d12::DrawWorldBox(sv.scene, selection.draw, corners)) {
+            float centre[3] = {0, 0, 0};
+            for (const auto& c : corners)
+              for (int i = 0; i < 3; ++i) centre[i] += c[i] * 0.125f;
+            const float dx = centre[0] - cf.eye[0], dy = centre[1] - cf.eye[1],
+                        dz = centre[2] - cf.eye[2];
+            const float width = 2.0f * pl.pixel_scale *
+                                std::sqrt(dx * dx + dy * dy + dz * dz);  // ~2 px
+            const float colour[4] = {1.0f, 0.84f, 0.2f, 1.0f};
+            overlay.clear();
+            ld3d12::AppendBoxEdges(corners, width, colour, &overlay);
+            points_lines.DrawOverlay(list, pl, device.frame_index(), overlay);
+          }
         }
 
         {
@@ -834,6 +906,7 @@ int main(int argc, char** argv) {
           hs.t_start = t_start;
           hs.t_end = t_end;
           hs.tps = tps;
+          hs.selection = selection.hit ? selection.lines : std::vector<std::string>();
           hud.SetStatus(hs);
           const std::vector<ld3d12::HudRows> rows = hud.Render();
           hud_renderer.Upload(list, device.frame_index(), hud.surface()->pixels,
@@ -864,6 +937,17 @@ int main(int argc, char** argv) {
           } else {
             std::fprintf(stderr, "ld3d12view: no HUD bar to click\n");
             exit_code = 1;
+          }
+        }
+        if (frames == 3 && !opt.simulate_pick.empty()) {
+          float fx = 0.5f, fy = 0.5f;
+          if (std::sscanf(opt.simulate_pick.c_str(), "%f,%f", &fx, &fy) != 2) {
+            std::fprintf(stderr, "ld3d12view: bad --simulate-pick value\n");
+            exit_code = 1;
+          } else {
+            PostSyntheticClick(reinterpret_cast<HWND>(handle),
+                               static_cast<int>(fx * static_cast<float>(pw)),
+                               static_cast<int>(fy * static_cast<float>(ph)));
           }
         }
         if (frames == 3 && opt.simulate_space)

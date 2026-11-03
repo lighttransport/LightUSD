@@ -2,6 +2,7 @@
 
 #include <d3dcompiler.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -170,7 +171,60 @@ bool PointLineRenderer::Init(ID3D12Device* device, std::string* err) {
   pd.PS = {line_ps->GetBufferPointer(), line_ps->GetBufferSize()};
   hr = device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso_line_));
   if (FAILED(hr)) return Fail(err, "CreateGraphicsPipelineState(line)", hr);
+
+  // UI overlay: the same line shader, drawn over everything.
+  pd.DepthStencilState.DepthEnable = FALSE;
+  hr = device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso_overlay_));
+  if (FAILED(hr)) return Fail(err, "CreateGraphicsPipelineState(overlay)", hr);
+
+  constexpr UINT64 kSlotBytes = UINT64(kMaxOverlaySegments) * 11 * sizeof(float);
+  D3D12_HEAP_PROPERTIES hp = {};
+  hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+  D3D12_RESOURCE_DESC rd = {};
+  rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  rd.Width = kSlotBytes * kFrameCount;
+  rd.Height = 1;
+  rd.DepthOrArraySize = 1;
+  rd.MipLevels = 1;
+  rd.SampleDesc.Count = 1;
+  rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+                                       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                       IID_PPV_ARGS(&overlay_ring_));
+  if (FAILED(hr)) return Fail(err, "CreateCommittedResource(overlay)", hr);
+  const D3D12_RANGE none = {0, 0};
+  void* mapped = nullptr;
+  hr = overlay_ring_->Map(0, &none, &mapped);
+  if (FAILED(hr)) return Fail(err, "Map(overlay)", hr);
+  overlay_mapped_ = static_cast<uint8_t*>(mapped);
   return true;
+}
+
+void PointLineRenderer::DrawOverlay(ID3D12GraphicsCommandList* list,
+                                    const PointLineParams& params, UINT slot,
+                                    const std::vector<float>& segments) {
+  const uint32_t count = static_cast<uint32_t>(
+      std::min<size_t>(segments.size() / 11, kMaxOverlaySegments));
+  if (count == 0 || !overlay_mapped_) return;
+  constexpr UINT64 kSlotBytes = UINT64(kMaxOverlaySegments) * 11 * sizeof(float);
+  std::memcpy(overlay_mapped_ + UINT64(slot) * kSlotBytes, segments.data(),
+              size_t(count) * 11 * sizeof(float));
+
+  float constants[32] = {};
+  std::memcpy(constants, params.view_proj, sizeof(params.view_proj));
+  for (int i = 0; i < 3; ++i) {
+    constants[16 + i] = params.view[i * 4 + 0];
+    constants[20 + i] = params.view[i * 4 + 1];
+    constants[24 + i] = params.eye[i];
+  }
+  constants[28] = params.pixel_scale;
+  list->SetGraphicsRootSignature(root_signature_.Get());
+  list->SetGraphicsRoot32BitConstants(0, 32, constants, 0);
+  list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+  list->SetPipelineState(pso_overlay_.Get());
+  list->SetGraphicsRootShaderResourceView(
+      1, overlay_ring_->GetGPUVirtualAddress() + UINT64(slot) * kSlotBytes);
+  list->DrawInstanced(4, count, 0, 0);
 }
 
 void PointLineRenderer::Draw(ID3D12GraphicsCommandList* list,
