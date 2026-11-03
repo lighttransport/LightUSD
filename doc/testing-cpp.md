@@ -507,6 +507,8 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-camera-motion-raster-gl` | Native/companion OpenGL shutter accumulation and closed shutter | `xvfb-run` |
 | `lusdview-camera-motion-vulkan` | Vulkan RT temporal poses retain progressive accumulation | Vulkan RT adapter |
 | `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
+| `lusdview_shading_normal_test` | Analytic tangent-frame / normal-map transform | No GPU |
+| `lusdview-cpu-normal-map` | CPU normal map shades like the equivalent geometric normal | `xvfb-run` when headless |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
@@ -3402,6 +3404,14 @@ budgets and invalid `-maxArrayElements` values, and fails on missing referenced
 geometry. Dataset jobs retain explicit `native_load_limits` in their replay JSON
 and renderer commands. Complete-scene acceptance requires successful dependency
 loading as well as screenshot coverage and resource budgets.
+
+The CPU reference renderer now applies tangent-space normal maps. Its oracle
+(`lusdview-cpu-normal-map`) renders a plane whose MaterialX `normalmap` decodes
+to `(0.6, 0, 0.8)` next to the same world normal authored as geometry normals;
+the two images must be byte-identical, and a flat map must be neutral. The
+transform itself has an analytic unit test (`lusdview_shading_normal_test`)
+covering sheared UVs, degenerate parametrizations and malformed vectors.
+Neither check replaces calibrated beauty illumination or SDK material parity.
 
 The emissive diagnostic opacity regression now covers PreviewSurface
 `transparent` (full emission), `presence` (attenuated emission), and masked

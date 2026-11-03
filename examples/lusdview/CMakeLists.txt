@@ -592,6 +592,16 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endforeach()
 
+  add_executable(lusdview_shading_normal_test
+      tests/shading_normal_test.cc)
+  target_compile_features(lusdview_shading_normal_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_shading_normal_test)
+  target_include_directories(lusdview_shading_normal_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+
   add_executable(lusdview_camera_nav_test
       tests/camera_nav_test.cc
       ${COMMON_DIR}/light3d/camera-nav.cc
@@ -741,6 +751,7 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_lightrt_mtlx_graph_evaluation_test
       lusdview_camera_nav_test
       lusdview_camera_stereo_test
+      lusdview_shading_normal_test
       lusdview_preview_cache_test
       lusdview_vchar_control_map_test
       lusdview_document_test

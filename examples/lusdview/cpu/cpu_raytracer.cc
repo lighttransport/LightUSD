@@ -10,6 +10,7 @@
 
 #include "lightrt_c_tri.h"
 #include "lightrt_mtlx_bridge.hh"  // kRtMaterialTexSlots
+#include "shading-normal.hh"
 
 namespace lusdview {
 
@@ -1900,6 +1901,65 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           const float hitP[3] = {rayOrg[0] + dir[0] * hit.t,
                                  rayOrg[1] + dir[1] * hit.t,
                                  rayOrg[2] + dir[2] * hit.t};
+          // Perturb the shading normal from the material's normal map. The
+          // Vulkan RT shader already rebuilds a tangent frame from the
+          // triangle's UVs; the CPU preview used to shade with the geometric
+          // normal, which silently ignored normal maps.
+          if (matId >= 0 &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
+            float tangent_normal[3] = {0.0f, 0.0f, 1.0f};
+            float map_uv[2];
+            Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, map_uv);
+            bool have_normal = false;
+            const size_t graph_base =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            const float graphPosition[3] = {hitP[0], hitP[1], hitP[2]};
+            const float graphViewDirection[3] = {-dir[0], -dir[1], -dir[2]};
+            if (graph_base + kRtMaterialGraphHeaderFloats <=
+                    hs_.matGraph.size() &&
+                hs_.matGraph[graph_base + 1 + 5] >= 0.0f) {
+              // Route 5 is the MaterialX normal output: a unit tangent-space
+              // normal encoded in [0,1].
+              const auto gn = EvalCpuMaterialXGraph(
+                  hs_, matId, 5, map_uv[0], map_uv[1], map_uv[0], map_uv[1], nrm,
+                  graphPosition, graphViewDirection, 0.0f, 0.0f,
+                  (static_cast<size_t>(tri) < cpuSourceTri_.size())
+                      ? cpuSourceTri_[static_cast<size_t>(tri)]
+                      : -1);
+              tangent_normal[0] = gn[0] * 2.0f - 1.0f;
+              tangent_normal[1] = gn[1] * 2.0f - 1.0f;
+              tangent_normal[2] = gn[2] * 2.0f - 1.0f;
+              have_normal = true;
+            } else if (static_cast<size_t>(matId) * kRtMaterialTexSlots + 3 <
+                       hs_.matTex.size()) {
+              const int normal_tex =
+                  hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3];
+              if (normal_tex >= 0) {
+                float rgb[3];
+                SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
+                                      map_uv[0], map_uv[1], rgb);
+                tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
+                tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
+                tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
+                have_normal = true;
+              }
+            }
+            if (have_normal) {
+              const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+              const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
+              const float uv0[2] = {tuv[0], tuv[1]};
+              const float uv1[2] = {tuv[2], tuv[3]};
+              const float uv2[2] = {tuv[4], tuv[5]};
+              ShadingTangentFrame frame;
+              BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
+                                       &frame);
+              float world[3];
+              ApplyShadingTangentNormal(frame, tangent_normal, world);
+              nrm[0] = world[0];
+              nrm[1] = world[1];
+              nrm[2] = world[2];
+            }
+          }
           float direct = 0.0f;
           bool hadDirectLight = false;
           const int lightCount = hs_.numLights;

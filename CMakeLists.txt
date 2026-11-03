@@ -4113,6 +4113,20 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-cpu-rt-headless PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180)
 
+    # A tangent-space normal map must shade exactly like the same world normal
+    # authored as geometry normals, and a flat map must be neutral. Uses the
+    # CPU tracer so no GPU ray-query support is required beyond the headless
+    # presentation context.
+    add_test(
+      NAME lusdview-cpu-normal-map
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-normal-map.sh"
+      )
+    set_tests_properties(lusdview-cpu-normal-map PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     add_test(
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
