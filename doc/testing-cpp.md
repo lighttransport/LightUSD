@@ -3452,10 +3452,13 @@ rows are not vacuous.
 `lusdview-cpu-ptex-element` renders the real `isGardeniaA` bonsai element
 (quad topology, 53 meshes, 53 PTex maps), requires no representative-face
 fallback, and verifies every visible base-colour sample with a probe dump
-against OpenPtex 2.4.3 (`pixels=471 textures=11 faces=166 max_error=0`). The
-loader fix behind it also computes per-face source ids without a Uniform
-attribute and maps subdivided children into their quadtree sub-rectangle of the
-base Ptex face.
+against OpenPtex 2.4.3 (`pixels=471 textures=11 faces=166 max_error=0`). A
+second 16x16 minified render makes the filter footprint span face boundaries
+and requires the independently decoded neighbouring-face blend
+(`pixels=29 faces=28 cross_face_taps=29 max_error=0`); the test fails if no tap
+crosses an edge. The loader fix behind it also computes per-face source ids
+without a Uniform attribute and maps subdivided children into their quadtree
+sub-rectangle of the base Ptex face.
 
 The CPU preview's PTex path now streams per-face pages and selects a mip from
 the pixel footprint. `lusdview_ptex_atlas_test` compares face 0 mips 1-2 against

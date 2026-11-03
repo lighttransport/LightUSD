@@ -39,19 +39,27 @@ struct RefTexture {
   int channels{0};
 };
 
-bool SampleReference(RefTexture* ref, int face, int mip, float srgb, float u,
-                     float v, float out[3]) {
-  if (!ref || !ref->texture) return false;
+// Decode one (face, mip) page into a top-down RGB byte buffer (rows follow the
+// Ptex v=0-at-bottom convention, so no flip is needed for the sampled UVs).
+bool FetchPage(RefTexture* ref, int face, int mip, std::vector<uint8_t>* data,
+               int* w, int* h) {
+  if (!ref || !ref->texture || mip < 0) return false;
   Ptex::FaceInfo fi = ref->texture->getFaceInfo(face);
-  Ptex::Res res(std::max(0, fi.res.ulog2 - mip),
-                std::max(0, fi.res.vlog2 - mip));
-  const int w = 1 << res.ulog2;
-  const int h = 1 << res.vlog2;
-  const int ch = ref->channels;
-  if (w <= 0 || h <= 0 || ch <= 0) return false;
-  std::vector<uint8_t> data(size_t(w) * h * ch, 0);
-  ref->texture->getData(face, data.data(), w * ch, res);
+  const int level =
+      std::min(mip, std::max<int>(fi.res.ulog2, fi.res.vlog2));
+  Ptex::Res res(std::max(0, fi.res.ulog2 - level),
+                std::max(0, fi.res.vlog2 - level));
+  *w = 1 << res.ulog2;
+  *h = 1 << res.vlog2;
+  if (*w <= 0 || *h <= 0 || ref->channels <= 0) return false;
+  data->assign(size_t(*w) * *h * ref->channels, 0);
+  ref->texture->getData(face, data->data(), *w * ref->channels, res);
+  return true;
+}
 
+// One bilinear sample of a page (UV in [0,1]).
+void SamplePage(const std::vector<uint8_t>& data, int w, int h, int ch,
+                float u, float v, float rgb[3]) {
   const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
   const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
   const int x0 = std::clamp(int(std::floor(fx)), 0, w - 1);
@@ -60,16 +68,100 @@ bool SampleReference(RefTexture* ref, int face, int mip, float srgb, float u,
   const int y1 = std::min(y0 + 1, h - 1);
   const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
   const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
-  auto texel = [&](int x, int y, float rgb[3]) {
+  auto texel = [&](int x, int y, float out[3]) {
     const size_t i = (size_t(y) * w + size_t(x)) * ch;
     const float r = float(data[i]) / 255.0f;
     const float g = ch > 1 ? float(data[i + 1]) / 255.0f : r;
     const float b = ch > 2 ? float(data[i + 2]) / 255.0f : r;
-    rgb[0] = r; rgb[1] = g; rgb[2] = b;
+    out[0] = r; out[1] = g; out[2] = b;
   };
   float c00[3], c10[3], c01[3], c11[3];
   texel(x0, y0, c00); texel(x1, y0, c10);
   texel(x0, y1, c01); texel(x1, y1, c11);
+  for (int c = 0; c < 3; ++c) {
+    const float top = c00[c] * (1.0f - tx) + c10[c] * tx;
+    const float bot = c01[c] * (1.0f - tx) + c11[c] * tx;
+    rgb[c] = top * (1.0f - ty) + bot * ty;
+  }
+}
+
+// Map a UV that left `face` across one edge using Ptex adjacency. Mirrors
+// PtexSeparableFilter::applyAcrossEdge: shift across the edge, then rotate by
+// (edge - adjacentEdge + 2) to the neighbour's UV frame.
+bool CrossEdge(RefTexture* ref, int* face, float* u, float* v) {
+  if (!ref || !ref->texture || !face || !u || !v) return false;
+  Ptex::FaceInfo fi = ref->texture->getFaceInfo(*face);
+  if (fi.isSubface()) return false;
+  int edge = -1;
+  if (*u < 0.0f) edge = Ptex::e_left;
+  else if (*u > 1.0f) edge = Ptex::e_right;
+  else if (*v < 0.0f) edge = Ptex::e_bottom;
+  else if (*v > 1.0f) edge = Ptex::e_top;
+  else return false;
+  const int adjacent = fi.adjface(edge);
+  if (adjacent < 0) return false;
+  const int adj_edge = int(fi.adjedge(edge));
+  float uu = *u;
+  float vv = *v;
+  if (edge == Ptex::e_left) uu += 1.0f;
+  else if (edge == Ptex::e_right) uu -= 1.0f;
+  else if (edge == Ptex::e_bottom) vv += 1.0f;
+  else vv -= 1.0f;
+  const int rot = (edge - adj_edge + 2) & 3;
+  float ru = uu;
+  float rv = vv;
+  if (rot == 1) {
+    ru = vv;
+    rv = 1.0f - uu;
+  } else if (rot == 2) {
+    ru = 1.0f - uu;
+    rv = 1.0f - vv;
+  } else if (rot == 3) {
+    ru = 1.0f - vv;
+    rv = uu;
+  }
+  *face = adjacent;
+  *u = std::clamp(ru, 0.0f, 1.0f);
+  *v = std::clamp(rv, 0.0f, 1.0f);
+  return true;
+}
+
+bool SampleReference(RefTexture* ref, int face, int mip, float srgb, float u,
+                     float v, float out[3], uint64_t* crossed) {
+  if (!ref || !ref->texture) return false;
+  // Page dimensions come from the sampled face; tap coordinates are expressed
+  // in that face's texel centers.
+  std::vector<uint8_t> page;
+  int w = 0, h = 0;
+  if (!FetchPage(ref, face, mip, &page, &w, &h)) return false;
+  const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
+  const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
+  const int ix0 = int(std::floor(fx));
+  const int iy0 = int(std::floor(fy));
+  const int ix1 = ix0 + 1;
+  const int iy1 = iy0 + 1;
+  const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
+  const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
+  auto tap_value = [&](int ix, int iy, float rgb[3]) {
+    int tap_face = face;
+    float tu = (float(ix) + 0.5f) / float(w);
+    float tv = (float(iy) + 0.5f) / float(h);
+    for (int hop = 0; hop < 2; ++hop) {
+      if (tu >= 0.0f && tu <= 1.0f && tv >= 0.0f && tv <= 1.0f) break;
+      if (!CrossEdge(ref, &tap_face, &tu, &tv)) break;
+      if (crossed) ++*crossed;
+    }
+    std::vector<uint8_t> tap_page;
+    int tw = 0, th = 0;
+    if (!FetchPage(ref, tap_face, mip, &tap_page, &tw, &th)) {
+      rgb[0] = rgb[1] = rgb[2] = 0.0f;
+      return;
+    }
+    SamplePage(tap_page, tw, th, ref->channels, tu, tv, rgb);
+  };
+  float c00[3], c10[3], c01[3], c11[3];
+  tap_value(ix0, iy0, c00); tap_value(ix1, iy0, c10);
+  tap_value(ix0, iy1, c01); tap_value(ix1, iy1, c11);
   for (int c = 0; c < 3; ++c) {
     const float top = c00[c] * (1.0f - tx) + c10[c] * tx;
     const float bot = c01[c] * (1.0f - tx) + c11[c] * tx;
@@ -127,6 +219,7 @@ int main(int argc, char** argv) {
 
   double max_error = 0.0, sum_error = 0.0;
   size_t compared = 0, failed = 0;
+  uint64_t crossed_taps = 0;
   std::map<int, size_t> face_count;
   std::map<int, size_t> tex_count;
   for (const Record& r : records) {
@@ -145,7 +238,7 @@ int main(int argc, char** argv) {
     }
     float expected[3];
     if (!SampleReference(&ref, r.face, r.mip, float(r.srgb), r.u, r.v,
-                         expected)) {
+                         expected, &crossed_taps)) {
       ++failed;
       continue;
     }
@@ -177,8 +270,10 @@ int main(int argc, char** argv) {
     return 1;
   }
   const double mean_error = sum_error / double(compared);
-  std::printf("pixels=%zu textures=%zu faces=%zu max_error=%.6g mean=%.6g\n",
-              compared, tex_count.size(), face_count.size(), max_error,
+  std::printf("pixels=%zu textures=%zu faces=%zu cross_face_taps=%llu "
+              "max_error=%.6g mean=%.6g\n",
+              compared, tex_count.size(), face_count.size(),
+              static_cast<unsigned long long>(crossed_taps), max_error,
               mean_error);
   if (failed > 0) {
     std::fprintf(stderr, "FAIL: %zu/%zu samples exceed tolerance %.6g\n",
@@ -189,6 +284,12 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,
                  "FAIL: element coverage too small (need >=2 textures and "
                  ">=16 distinct faces)\n");
+    return 1;
+  }
+  if (crossed_taps == 0) {
+    std::fprintf(stderr,
+                 "FAIL: no filter tap crossed a Ptex face edge; the "
+                 "cross-face path was not exercised\n");
     return 1;
   }
   std::printf("PASS: CPU element pixels match the independent Ptex decoder\n");

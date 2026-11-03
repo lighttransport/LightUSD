@@ -44,34 +44,44 @@ else
   XVFB_PREFIX=""
 fi
 
-LOG="$OUT/render.log"
-# shellcheck disable=SC2086
-LIGHTUSD_CPU_PTEX_PROBE="$OUT/probe.txt" \
-  timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-1800s}" \
-  ${XVFB_PREFIX} "$BIN" --headless --backend vk --cpu-rt --frames 1 \
-  --size 64x64 --screenshot "$OUT/element.ppm" "$ELEMENT" >"$LOG" 2>&1
-status=$?
-if grep -Eiq 'renderer init failed: no Vulkan|no Vulkan physical device|Vulkan.*unavailable' "$LOG"; then
-  echo "SKIP: Vulkan unavailable"; exit "$SKIP"
-fi
-[ "$status" -eq 0 ] || { echo "FAIL: render exited $status"; tail -40 "$LOG"; exit 1; }
-grep -q 'CPU RT wrote' "$LOG" || {
-  echo "FAIL: CPU RT did not own the screenshot"; tail -40 "$LOG"; exit 1; }
-if grep -q 'unsupported non-quad or mismatched topology' "$LOG"; then
-  echo "FAIL: the real element fell back to the representative-face path"
-  grep 'unsupported non-quad' "$LOG" | head -3
-  exit 1
-fi
-[ -s "$OUT/probe.txt" ] || {
-  echo "FAIL: no PTex probe dump (the element has no PTex base colour?)"
-  tail -40 "$LOG"
-  exit 1
+render_probe() {
+  local name="$1" size="$2" log="$OUT/$1.log"
+  # shellcheck disable=SC2086
+  LIGHTUSD_CPU_PTEX_PROBE="$OUT/$name-probe.txt" \
+    timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-1800s}" \
+    ${XVFB_PREFIX} "$BIN" --headless --backend vk --cpu-rt --frames 1 \
+    --size "$size" --screenshot "$OUT/$name.ppm" "$ELEMENT" >"$log" 2>&1
+  local status=$?
+  if grep -Eiq 'renderer init failed: no Vulkan|no Vulkan physical device|Vulkan.*unavailable' "$log"; then
+    echo "SKIP: Vulkan unavailable"; exit "$SKIP"
+  fi
+  [ "$status" -eq 0 ] || { echo "FAIL: render exited $status"; tail -40 "$log"; exit 1; }
+  grep -q 'CPU RT wrote' "$log" || {
+    echo "FAIL: CPU RT did not own the screenshot for $name"; tail -40 "$log"; exit 1; }
+  if grep -q 'unsupported non-quad or mismatched topology' "$log"; then
+    echo "FAIL: the real element fell back to the representative-face path"
+    grep 'unsupported non-quad' "$log" | head -3
+    exit 1
+  fi
+  [ -s "$OUT/$name-probe.txt" ] || {
+    echo "FAIL: no PTex probe dump for $name"
+    tail -40 "$log"
+    exit 1
+  }
+  [ -s "$OUT/$name.ppm" ] || { echo "FAIL: missing screenshot for $name"; exit 1; }
 }
-[ -s "$OUT/element.ppm" ] || { echo "FAIL: missing screenshot"; exit 1; }
+
+# 64x64 keeps visible detail; 16x16 makes each pixel's footprint span several
+# Ptex faces, so the filter taps cross face boundaries (the seam oracle).
+render_probe detail 64x64
+render_probe seam 16x16
 
 "$CXX" -std=c++17 -O2 -I"$PTEX_SRC/src/ptex" \
   "$REPO_ROOT/tests/verification/repros/ptex-element-probe-verify.cc" \
   -L"$PTEX_LIB" -lPtex -lz -o "$OUT/ptex-element-verify" || {
   echo "FAIL: could not build the OpenPtex verifier"; exit 1; }
-LD_LIBRARY_PATH="$PTEX_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  "$OUT/ptex-element-verify" "$OUT/probe.txt"
+for name in detail seam; do
+  echo "[$name]"
+  LD_LIBRARY_PATH="$PTEX_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$OUT/ptex-element-verify" "$OUT/$name-probe.txt" || exit 1
+done

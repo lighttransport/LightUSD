@@ -85,19 +85,25 @@ class CpuPtexSampler {
     if (!page || page->dataType != lightusd::ptx::DataType::UInt8) return false;
     const uint32_t w = page->width, h = page->height;
     if (!w || !h || page->channels == 0) return false;
-    const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
-    const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
-    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, int(w) - 1);
-    const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, int(h) - 1);
-    const int x1 = std::min<int>(x0 + 1, int(w) - 1);
-    const int y1 = std::min<int>(y0 + 1, int(h) - 1);
+    const float su = std::clamp(u, 0.0f, 1.0f);
+    const float sv = std::clamp(v, 0.0f, 1.0f);
+    const float fx = su * float(w) - 0.5f;
+    const float fy = sv * float(h) - 0.5f;
+    const int ix0 = static_cast<int>(std::floor(fx));
+    const int iy0 = static_cast<int>(std::floor(fy));
+    const int ix1 = ix0 + 1;
+    const int iy1 = iy0 + 1;
     const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
     const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
+    // A filter tap outside [0,1] follows the Ptex adjacency into the
+    // neighbouring face instead of clamping at the seam.
+    auto tap_u = [&](int ix) { return (float(ix) + 0.5f) / float(w); };
+    auto tap_v = [&](int iy) { return (float(iy) + 0.5f) / float(h); };
     float c00[3], c10[3], c01[3], c11[3];
-    TexelRgb(page, x0, y0, c00);
-    TexelRgb(page, x1, y0, c10);
-    TexelRgb(page, x0, y1, c01);
-    TexelRgb(page, x1, y1, c11);
+    TapRgb(face, mip, tap_u(ix0), tap_v(iy0), c00);
+    TapRgb(face, mip, tap_u(ix1), tap_v(iy0), c10);
+    TapRgb(face, mip, tap_u(ix0), tap_v(iy1), c01);
+    TapRgb(face, mip, tap_u(ix1), tap_v(iy1), c11);
     for (int c = 0; c < 3; ++c) {
       const float top = c00[c] * (1.0f - tx) + c10[c] * tx;
       const float bot = c01[c] * (1.0f - tx) + c11[c] * tx;
@@ -118,22 +124,26 @@ class CpuPtexSampler {
     if (!page || page->dataType != lightusd::ptx::DataType::UInt8) return false;
     const uint32_t w = page->width, h = page->height;
     if (!w || !h || page->channels == 0) return false;
-    const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
-    const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
-    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, int(w) - 1);
-    const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, int(h) - 1);
-    const int x1 = std::min<int>(x0 + 1, int(w) - 1);
-    const int y1 = std::min<int>(y0 + 1, int(h) - 1);
+    const float su = std::clamp(u, 0.0f, 1.0f);
+    const float sv = std::clamp(v, 0.0f, 1.0f);
+    const float fx = su * float(w) - 0.5f;
+    const float fy = sv * float(h) - 0.5f;
+    const int ix0 = static_cast<int>(std::floor(fx));
+    const int iy0 = static_cast<int>(std::floor(fy));
+    const int ix1 = ix0 + 1;
+    const int iy1 = iy0 + 1;
     const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
     const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
     const int c = std::clamp(channel, 0, int(page->channels) - 1);
-    auto at = [&](int x, int y) {
-      return float(page->data[(size_t(y) * w + size_t(x)) *
-                                  page->channels + size_t(c)]) /
-             255.0f;
-    };
-    const float top = at(x0, y0) * (1.0f - tx) + at(x1, y0) * tx;
-    const float bot = at(x0, y1) * (1.0f - tx) + at(x1, y1) * tx;
+    auto tap_u = [&](int ix) { return (float(ix) + 0.5f) / float(w); };
+    auto tap_v = [&](int iy) { return (float(iy) + 0.5f) / float(h); };
+    float c00 = 0.0f, c10 = 0.0f, c01 = 0.0f, c11 = 0.0f;
+    TapChannel(face, mip, tap_u(ix0), tap_v(iy0), c, &c00);
+    TapChannel(face, mip, tap_u(ix1), tap_v(iy0), c, &c10);
+    TapChannel(face, mip, tap_u(ix0), tap_v(iy1), c, &c01);
+    TapChannel(face, mip, tap_u(ix1), tap_v(iy1), c, &c11);
+    const float top = c00 * (1.0f - tx) + c10 * tx;
+    const float bot = c01 * (1.0f - tx) + c11 * tx;
     *out = top * (1.0f - ty) + bot * ty;
     ++stats_.samples;
     ++stats_.mipSamples[std::min<uint32_t>(mip, 15u)];
@@ -155,7 +165,145 @@ class CpuPtexSampler {
 
   const Stats& stats() const { return stats_; }
 
+  // Number of taps remapped into an adjacent face (diagnostics/oracle).
+  uint64_t crossFaceTaps() const { return crossFaceTaps_; }
+
  private:
+  // Map a UV point that left the face across one edge using the Ptex adjacency
+  // (same rotation convention as PtexSeparableFilter::applyAcrossEdge). Returns
+  // false when there is no neighbour or the face uses subface adjacency, which
+  // this preview does not model; the caller then clamps inside the face.
+  bool CrossEdge(uint32_t* face, float* u, float* v) const {
+    const lightusd::ptx::Info& pi = info();
+    if (!face || *face >= pi.faces) return false;
+    const lightusd::ptx::FaceInfo& fi = pi.faceInfo[*face];
+    if ((fi.flags & 8u) != 0) return false;  // subface adjacency
+    int edge = -1;
+    if (*u < 0.0f) edge = 3;        // left
+    else if (*u > 1.0f) edge = 1;   // right
+    else if (*v < 0.0f) edge = 0;   // bottom
+    else if (*v > 1.0f) edge = 2;   // top
+    else return false;
+    const uint32_t adjacent = fi.adjFaces[edge];
+    if (adjacent == 0xffffffffu || adjacent >= pi.faces) return false;
+    const int adj_edge = (fi.adjEdges >> (2 * edge)) & 3;
+    float uu = *u;
+    float vv = *v;
+    if (edge == 3) uu += 1.0f;
+    else if (edge == 1) uu -= 1.0f;
+    else if (edge == 0) vv += 1.0f;
+    else vv -= 1.0f;
+    const int rot = (edge - adj_edge + 2) & 3;
+    float ru = uu;
+    float rv = vv;
+    if (rot == 1) {
+      ru = vv;
+      rv = 1.0f - uu;
+    } else if (rot == 2) {
+      ru = 1.0f - uu;
+      rv = 1.0f - vv;
+    } else if (rot == 3) {
+      ru = 1.0f - vv;
+      rv = uu;
+    }
+    *face = adjacent;
+    *u = std::clamp(ru, 0.0f, 1.0f);
+    *v = std::clamp(rv, 0.0f, 1.0f);
+    return true;
+  }
+
+  const lightusd::ptx::FaceImage* PageAt(uint32_t face, uint32_t mip) const {
+    const uint32_t levels = info().levels;
+    return FetchLocked(face, levels ? std::min(mip, levels - 1u) : 0u);
+  }
+
+  void SamplePageRgb(const lightusd::ptx::FaceImage* page, float u, float v,
+                     float out[3]) const {
+    const uint32_t w = page->width, h = page->height;
+    if (!w || !h || page->channels == 0) {
+      out[0] = out[1] = out[2] = 0.0f;
+      return;
+    }
+    const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
+    const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
+    const int x0 = std::clamp(int(std::floor(fx)), 0, int(w) - 1);
+    const int y0 = std::clamp(int(std::floor(fy)), 0, int(h) - 1);
+    const int x1 = std::min(x0 + 1, int(w) - 1);
+    const int y1 = std::min(y0 + 1, int(h) - 1);
+    const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
+    const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
+    float c00[3], c10[3], c01[3], c11[3];
+    TexelRgb(page, x0, y0, c00);
+    TexelRgb(page, x1, y0, c10);
+    TexelRgb(page, x0, y1, c01);
+    TexelRgb(page, x1, y1, c11);
+    for (int c = 0; c < 3; ++c) {
+      const float top = c00[c] * (1.0f - tx) + c10[c] * tx;
+      const float bot = c01[c] * (1.0f - tx) + c11[c] * tx;
+      out[c] = top * (1.0f - ty) + bot * ty;
+    }
+  }
+
+  void TapRgb(uint32_t face, uint32_t mip, float u, float v,
+              float out[3]) const {
+    bool crossed = false;
+    for (int hop = 0; hop < 2; ++hop) {
+      if (u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) break;
+      if (!CrossEdge(&face, &u, &v)) break;
+      crossed = true;
+    }
+    if (crossed) ++crossFaceTaps_;
+    const lightusd::ptx::FaceImage* page = PageAt(face, mip);
+    if (!page) {
+      out[0] = out[1] = out[2] = 0.0f;
+      return;
+    }
+    SamplePageRgb(page, u, v, out);
+  }
+
+  void SamplePageChannel(const lightusd::ptx::FaceImage* page, float u,
+                         float v, int channel, float* out) const {
+    const uint32_t w = page->width, h = page->height;
+    if (!w || !h || page->channels == 0) {
+      *out = 0.0f;
+      return;
+    }
+    const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
+    const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
+    const int x0 = std::clamp(int(std::floor(fx)), 0, int(w) - 1);
+    const int y0 = std::clamp(int(std::floor(fy)), 0, int(h) - 1);
+    const int x1 = std::min(x0 + 1, int(w) - 1);
+    const int y1 = std::min(y0 + 1, int(h) - 1);
+    const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
+    const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
+    const int c = std::clamp(channel, 0, int(page->channels) - 1);
+    auto at = [&](int x, int y) {
+      return float(page->data[(size_t(y) * w + size_t(x)) *
+                                  page->channels + size_t(c)]) /
+             255.0f;
+    };
+    const float top = at(x0, y0) * (1.0f - tx) + at(x1, y0) * tx;
+    const float bot = at(x0, y1) * (1.0f - tx) + at(x1, y1) * tx;
+    *out = top * (1.0f - ty) + bot * ty;
+  }
+
+  void TapChannel(uint32_t face, uint32_t mip, float u, float v, int channel,
+                  float* out) const {
+    bool crossed = false;
+    for (int hop = 0; hop < 2; ++hop) {
+      if (u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) break;
+      if (!CrossEdge(&face, &u, &v)) break;
+      crossed = true;
+    }
+    if (crossed) ++crossFaceTaps_;
+    const lightusd::ptx::FaceImage* page = PageAt(face, mip);
+    if (!page) {
+      *out = 0.0f;
+      return;
+    }
+    SamplePageChannel(page, u, v, channel, out);
+  }
+
   struct Entry {
     uint64_t key{0};
     lightusd::ptx::FaceImage image;
@@ -228,6 +376,7 @@ class CpuPtexSampler {
   mutable std::unordered_map<uint64_t, std::list<Entry>::iterator> byKey_;
   mutable lightusd::ptx::FaceImage transient_;
   mutable Stats stats_;
+  mutable uint64_t crossFaceTaps_{0};
   mutable std::mutex mutex_;
 };
 
