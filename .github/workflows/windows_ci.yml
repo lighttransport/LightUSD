@@ -57,13 +57,6 @@ jobs:
       - name: Test
         # lmetalview_core_test covers the portable core on Windows too.
         run: ctest --test-dir build_d3d12 -C Release -R "ld3d12view|lmetalview" --output-on-failure
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: ld3d12view-screenshots
-          path: build_d3d12/src/next/ld3d12view_example/*.png
-          if-no-files-found: ignore
 
   # Windows(x64) + Visual Studio 2026 build
   build-windows-msvc:
