@@ -260,7 +260,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
 #if defined(LIGHTUSD_ENABLE_THREAD)
   copts.num_threads = std::min<int>(
       static_cast<int>(std::thread::hardware_concurrency()),
-      kMaxExecutionThreads);
+      kAutoCompositionThreads);
   if (copts.num_threads < 1) copts.num_threads = 1;
 #else
   copts.num_threads = 1;
