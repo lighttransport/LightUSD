@@ -81,6 +81,13 @@ inline void BuildShadingTangentFrame(const float p0[3], const float p1[3],
   float b[3];
   ShadingCross(n, t, b);
   ShadingNormalize(b);
+  // Mirrored UVs (negative determinant) flip the bitangent, matching the
+  // Vulkan RT/raster and GL shader frame construction.
+  if (det < 0.0f) {
+    b[0] = -b[0];
+    b[1] = -b[1];
+    b[2] = -b[2];
+  }
 
   frame->tangent[0] = t[0];
   frame->tangent[1] = t[1];

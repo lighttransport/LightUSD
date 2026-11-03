@@ -101,6 +101,25 @@ int main() {
           "map +Y returns the frame bitangent");
   }
 
+  // 2b. Mirrored UVs (negative determinant): the bitangent flips so a
+  //     tangent-space +Y tilt points the opposite way, matching the shaders.
+  {
+    const float p0[3] = {0, 0, 0}, p1[3] = {1, 0, 0}, p2[3] = {0, 0, 1};
+    const float uv0[2] = {0, 0}, uv1[2] = {0, 1}, uv2[2] = {1, 0};
+    const float n[3] = {0, 1, 0};
+    ShadingTangentFrame f;
+    BuildShadingTangentFrame(p0, p1, p2, uv0, uv1, uv2, n, &f);
+    Check(NearVec(f.tangent, 0, 0, 1), "mirrored tangent is +Z");
+    Check(NearVec(f.bitangent, -1, 0, 0), "mirrored bitangent flips to -X");
+    Check(NearVec(f.normal, 0, 1, 0), "mirrored normal is +Y");
+
+    const float tilt[3] = {0, 0.6f, 0.8f};
+    float out[3];
+    ApplyShadingTangentNormal(f, tilt, out);
+    Check(NearVec(out, -0.6f, 0.8f, 0),
+          "mirrored tilt uses the flipped bitangent");
+  }
+
   // 3. Degenerate UVs (zero area): the fallback tangent is built from an axis
   //    that is not parallel to the normal, and the frame stays orthonormal.
   {

@@ -53,7 +53,7 @@ def Xform "World"
             interpolation = "faceVarying"
         )
         point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
-        texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0)] (
+        texCoord2f[] primvars:st = [(ST)] (
             interpolation = "faceVarying"
         )
         uniform token subdivisionScheme = "none"
@@ -119,18 +119,28 @@ GRAPH = """
 CONNECT = ("                float3 inputs:geometry_normal.connect = "
            "</World/_materials/M/NodeGraph.outputs:normal_out>\n")
 
+STD = [(0, 0), (0, 1), (1, 1), (1, 0)]
+# UV set with the U/V axis swapped, so the UV determinant is negative.
+MIRRORED = [(0, 0), (1, 0), (1, 1), (0, 1)]
+
 cases = {
     # No normal opinion at all: the reference for a flat map.
-    'none': ('(0, 1, 0)', None),
+    'none': ('(0, 1, 0)', None, STD),
     # Flat tangent-space map (decodes to (0, 0, 1)): must be neutral.
-    'flat': ('(0, 1, 0)', (0.5, 0.5, 1.0)),
+    'flat': ('(0, 1, 0)', (0.5, 0.5, 1.0), STD),
     # Decodes to (0.6, 0, 0.8) -> world (0.6, 0.8, 0) for T=+X, B=-Z, N=+Y.
-    'map_tilt': ('(0, 1, 0)', (0.8, 0.5, 0.9)),
+    'map_tilt': ('(0, 1, 0)', (0.8, 0.5, 0.9), STD),
     # The same world normal authored as geometry normals.
-    'geom_tilt': ('(0.6, 0.8, 0)', None),
+    'geom_tilt': ('(0.6, 0.8, 0)', None, STD),
+    # Mirrored UVs make the UV frame T=-Z, B=-X after the determinant flip, so
+    # the tangent-space (0, 0.6, 0.8) maps to (-0.6, 0.8, 0). Without the flip
+    # it would be (+0.6, 0.8, 0).
+    'map_mirror': ('(0, 1, 0)', (0.5, 0.8, 0.9), MIRRORED),
+    'geom_mirror': ('(-0.6, 0.8, 0)', None, MIRRORED),
 }
-for name, (normal, value) in cases.items():
+for name, (normal, value, st) in cases.items():
     text = HEADER.replace('NORMAL', normal)
+    text = text.replace('(ST)', ', '.join(f'({u}, {v})' for u, v in st))
     if value is None:
         text = text.replace('CONNECT', '').replace('GRAPH', '')
     else:
@@ -169,7 +179,7 @@ else
   XVFB_PREFIX=""
 fi
 
-for name in none flat map_tilt geom_tilt; do
+for name in none flat map_tilt geom_tilt map_mirror geom_mirror; do
   render "$name"
 done
 
@@ -196,6 +206,8 @@ base = pixels('none')
 flat = pixels('flat')
 tilt = pixels('map_tilt')
 geom = pixels('geom_tilt')
+mirror = pixels('map_mirror')
+geom_mirror = pixels('geom_mirror')
 
 def max_channel_diff(a, b):
     return max(abs(x - y) for x, y in zip(a, b))
@@ -205,14 +217,17 @@ def mean_channel_diff(a, b):
 
 flat_diff = max_channel_diff(base, flat)
 tilt_diff = max_channel_diff(tilt, geom)
+mirror_diff = max_channel_diff(mirror, geom_mirror)
 applied = mean_channel_diff(base, tilt)
 print(f'flat-vs-none max={flat_diff} tilt-vs-geom max={tilt_diff} '
-      f'map-vs-none mean={applied:.3f}')
+      f'mirrored-vs-geom max={mirror_diff} map-vs-none mean={applied:.3f}')
 if flat_diff > 1:
     raise SystemExit('FAIL: a flat normal map changed the shading')
 if tilt_diff > 1:
     raise SystemExit('FAIL: the normal map does not match the same world normal '
                      'authored as geometry normals')
+if mirror_diff > 1:
+    raise SystemExit('FAIL: mirrored UVs do not flip the bitangent')
 if applied < 5.0:
     raise SystemExit('FAIL: the normal map had no visible effect')
 print('PASS: CPU RT normal map matches the equivalent geometric normal')

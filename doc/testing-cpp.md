@@ -3415,7 +3415,8 @@ loading as well as screenshot coverage and resource budgets.
 The CPU reference renderer now applies tangent-space normal maps. Its oracle
 (`lusdview-cpu-normal-map`) renders a plane whose MaterialX `normalmap` decodes
 to `(0.6, 0, 0.8)` next to the same world normal authored as geometry normals;
-the two images must be byte-identical, and a flat map must be neutral. The
+the two images must be byte-identical, a flat map must be neutral, and a
+mirrored-UV pair must match its flipped-bitangent control. The
 transform itself has an analytic unit test (`lusdview_shading_normal_test`)
 covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
