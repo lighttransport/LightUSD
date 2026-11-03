@@ -90,6 +90,8 @@ void Usage() {
 }
 
 bool ParseArgs(int argc, char** argv, Options* o) {
+  const char* env_debug = std::getenv("LD3D12VIEW_DEBUG");
+  if (env_debug && *env_debug && *env_debug != '0') o->debug = true;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--size" && i + 1 < argc) {
@@ -366,6 +368,12 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "ld3d12view: adapter \"%s\", %ux%u\n",
                    device.adapter_name().c_str(), device.width(),
                    device.height());
+      if (opt.debug) {
+        std::fprintf(stderr, "ld3d12view: debug layer %s\n",
+                     device.debug_active()
+                         ? "active"
+                         : "unavailable (install the Graphics Tools feature)");
+      }
 
 
       lmv_camera* camera = lmv_camera_create();
@@ -892,6 +900,12 @@ int main(int argc, char** argv) {
       lmv_camera_destroy(camera);
     }
     device.WaitIdle();
+    if (opt.debug && device.debug_active()) {
+      const uint32_t errors = device.DrainValidation();
+      std::fprintf(stderr, "ld3d12view: debug layer: %u validation error(s)\n",
+                   errors);
+      if (errors) exit_code = 1;
+    }
   }
 
   if (sv.scene) lmv_scene_free(sv.scene);

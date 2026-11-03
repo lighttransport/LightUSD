@@ -80,7 +80,9 @@ class Uploader {
     D3D12_HEAP_PROPERTIES hp = {};
     hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     HRESULT hr = device_->CreateCommittedResource(
-        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST,
+        // Buffers always start in COMMON (the layer warns otherwise) and are
+        // implicitly promoted to COPY_DEST by the first copy below.
+        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COMMON,
         nullptr, IID_PPV_ARGS(out->GetAddressOf()));
     if (FAILED(hr)) return Fail(err, "CreateCommittedResource(default)", hr);
     void* mapped = nullptr;

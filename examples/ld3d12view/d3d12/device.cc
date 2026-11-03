@@ -43,8 +43,31 @@ std::string NarrowName(const wchar_t* w) {
 
 }  // namespace
 
+uint32_t Device::DrainValidation() {
+  if (!info_queue_) return 0;
+  const UINT64 n = info_queue_->GetNumStoredMessagesAllowedByRetrievalFilter();
+  for (UINT64 i = 0; i < n; ++i) {
+    SIZE_T len = 0;
+    if (FAILED(info_queue_->GetMessage(i, nullptr, &len)) || !len) continue;
+    std::vector<uint8_t> buf(len);
+    auto* m = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
+    if (FAILED(info_queue_->GetMessage(i, m, &len))) continue;
+    const bool is_error = m->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION ||
+                          m->Severity == D3D12_MESSAGE_SEVERITY_ERROR;
+    if (is_error) ++validation_errors_;
+    if (is_error || m->Severity == D3D12_MESSAGE_SEVERITY_WARNING) {
+      std::fprintf(stderr, "ld3d12view: D3D12 %s #%d: %s\n",
+                   is_error ? "ERROR" : "WARNING", static_cast<int>(m->ID),
+                   m->pDescription);
+    }
+  }
+  info_queue_->ClearStoredMessages();
+  return validation_errors_;
+}
+
 Device::~Device() {
   if (queue_ && fence_) WaitIdle();
+  DrainValidation();
   if (fence_event_) CloseHandle(fence_event_);
 }
 
@@ -86,6 +109,7 @@ bool Device::Init(const DeviceDesc& desc, std::string* err) {
   LD3D_TRY(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
                              IID_PPV_ARGS(&device_)),
            "D3D12CreateDevice");
+  if (desc.debug) device_.As(&info_queue_);  // null without Graphics Tools
 
   D3D12_COMMAND_QUEUE_DESC qd = {};
   qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -264,6 +288,7 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clear_rgba[4]) {
 }
 
 bool Device::EndFrame(Image* capture, std::string* err) {
+  DrainValidation();
   ID3D12Resource* bb = backbuffers_[frame_index_].Get();
   ComPtr<ID3D12Resource> readback;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};

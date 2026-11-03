@@ -74,6 +74,13 @@ class Device {
   UINT height() const { return height_; }
   const std::string& adapter_name() const { return adapter_name_; }
 
+  // Debug layer: true when the layer is active (Graphics Tools installed).
+  bool debug_active() const { return info_queue_ != nullptr; }
+  // Prints and counts pending debug-layer messages; returns the running total
+  // of ERROR/CORRUPTION messages. No-op (returns 0) without the debug layer.
+  uint32_t DrainValidation();
+  uint32_t validation_errors() const { return validation_errors_; }
+
  private:
   bool CreateTargets(std::string* err);
   void ReleaseTargets();
@@ -98,6 +105,8 @@ class Device {
   UINT width_ = 0;
   UINT height_ = 0;
   std::string adapter_name_;
+  ComPtr<ID3D12InfoQueue> info_queue_;
+  uint32_t validation_errors_ = 0;
 };
 
 }  // namespace ld3d12

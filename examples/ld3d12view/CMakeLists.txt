@@ -305,4 +305,44 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   set_tests_properties(ld3d12view-mesh-warp ld3d12view-instanced-warp
       PROPERTIES LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
+
+  # Opt-in: the same viewer on the machine's real GPU (no --warp). CI runners
+  # have no GPU, so this is off by default.
+  option(LD3D12VIEW_HW_TESTS "Add ld3d12view tests that use the hardware adapter" OFF)
+  if(LD3D12VIEW_HW_TESTS)
+    foreach(hw suzanne-pbr openpbr-glass-sphere openpbr-coated-cube
+                mtlx-normalmap-sphere)
+      add_test(NAME ld3d12view-hw-${hw}
+          COMMAND ld3d12view --hidden --size 320x240 --frames 4 --no-hud
+                  --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-hw-${hw}.png
+                  ${LD3D_REPO_ROOT}/models/${hw}.usda)
+    endforeach()
+    add_test(NAME ld3d12view-hw-shadow
+        COMMAND ld3d12view --hidden --size 320x240 --frames 4 --preset 0
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shadow-box.usda)
+    add_test(NAME ld3d12view-hw-skinned
+        COMMAND ld3d12view --hidden --size 320x240 --frames 6 --time 0.5
+                ${LD3D_REPO_ROOT}/tests/usda/ue-skinned-blendshape.usda)
+    set_tests_properties(ld3d12view-hw-suzanne-pbr ld3d12view-hw-openpbr-glass-sphere
+        ld3d12view-hw-openpbr-coated-cube ld3d12view-hw-mtlx-normalmap-sphere
+        ld3d12view-hw-shadow ld3d12view-hw-skinned
+        PROPERTIES LABELS "ld3d12view;hardware;d3d12" TIMEOUT 120
+                   FAIL_REGULAR_EXPRESSION "adapter \"Microsoft Basic Render")
+  endif()
+
+  # Every ld3d12view test runs with the D3D12 debug layer (when Graphics Tools
+  # is installed) and fails on any validation ERROR/CORRUPTION message.
+  get_directory_property(_ld3d_tests TESTS)
+  foreach(_t IN LISTS _ld3d_tests)
+    if(_t MATCHES "^ld3d12view-")
+      get_test_property(${_t} FAIL_REGULAR_EXPRESSION _fail)
+      if(_fail STREQUAL "NOTFOUND" OR _fail STREQUAL "")
+        set(_fail "D3D12 ERROR")
+      else()
+        list(APPEND _fail "D3D12 ERROR")
+      endif()
+      set_property(TEST ${_t} PROPERTY FAIL_REGULAR_EXPRESSION "${_fail}")
+      set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT "LD3D12VIEW_DEBUG=1")
+    endif()
+  endforeach()
 endif()
