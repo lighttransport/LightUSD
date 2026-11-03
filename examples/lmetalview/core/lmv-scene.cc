@@ -1998,7 +1998,11 @@ void BuildMaterialData(lightusd_render_scene* scene, int32_t material_id,
       out->tex[LMV_TEX_BASE_COLOR] = TextureSlot(tex);
       has_textures = has_textures || tex >= 0;
     }
-    if (MaterialParam(scene, material_id, "specular_color", &tex, value)) {
+    // UsdPreviewSurface's specularColor defaults to black and is only meaningful
+    // in the specular workflow; copying that default would zero F0 (black
+    // metals). Treat black as unauthored and keep the neutral default.
+    if (MaterialParam(scene, material_id, "specular_color", &tex, value) &&
+        (value[0] > 0.0f || value[1] > 0.0f || value[2] > 0.0f)) {
       Copy3(value, pbr.specularColor);
     }
     if (MaterialParam(scene, material_id, "metallic", &tex, value)) {

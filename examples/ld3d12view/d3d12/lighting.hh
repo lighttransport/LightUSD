@@ -32,6 +32,19 @@ int32_t FindDomeImage(const lmv_scene* scene);
 bool ComputeEnvironmentSH(const lmv_scene* scene, int32_t image_id,
                           const float color_matrix[9], float sh[9][4]);
 
+// GGX-prefiltered specular environment for image-based lighting: an equirect
+// mip chain where mip i holds radiance convolved for roughness i/(levels-1)
+// (mip 0 = mirror, last = fully rough). Stored as RGBA16F in the working colour
+// space (the shader applies the working -> display matrix). `width`/`height`
+// are the size of mip 0; each further mip halves them.
+struct PrefilteredEnv {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  std::vector<std::vector<uint16_t>> levels;  // RGBA half floats per mip
+};
+bool BuildPrefilteredEnvironment(const lmv_scene* scene, int32_t image_id,
+                                 PrefilteredEnv* out);
+
 // Orthographic shadow view-projection (column-major, 0..1 depth) for a
 // directional light towards `light_dir`, fitted to the scene bounds.
 void DirectionalShadowMatrix(const float light_dir[3], const float bmin[3],

@@ -287,7 +287,7 @@ float3 EnvironmentRadiance(float3 dir, float roughness) {
   if (idx.y >= 0) {
     float u = atan2(dir.z, dir.x) / (2.0 * PI) + 0.5;
     float v = 1.0 - (asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5);
-    float lod = clamp(roughness * 6.0, 0.0, 5.0);
+    float lod = clamp(roughness * env_params.y, 0.0, 5.0);
     return g_tex[idx.y].SampleLevel(s_wrap, float2(u, v), lod).rgb *
            env_params.x;
   }
@@ -981,7 +981,10 @@ void MeshRenderer::Draw(Device& device, ID3D12GraphicsCommandList* list,
   std::memcpy(cb.view_proj, frame.view_proj, sizeof(cb.view_proj));
   std::memcpy(cb.eye, frame.eye, sizeof(frame.eye));
   cb.idx[0] = static_cast<int32_t>(gpu.lights.size());
-  cb.idx[1] = gpu.env_index;
+  // Specular reads the GGX-prefiltered chain (mip = roughness * 5) when it
+  // exists, else the raw image with a blur-by-mip approximation.
+  cb.idx[1] = gpu.env_spec_index >= 0 ? gpu.env_spec_index : gpu.env_index;
+  cb.env_params[1] = gpu.env_spec_index >= 0 ? 5.0f : 6.0f;
   cb.idx[2] = shadows ? gpu.shadow_srv_index : -1;
   cb.idx[3] = gpu.shadow_light;
   cb.shadow_params[0] = 1.0f / static_cast<float>(SceneGPU::kShadowSize);

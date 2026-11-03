@@ -125,6 +125,8 @@ class SceneGPU {
   // Rebuilds `lights`/`shadow_light` from the scene and writes slot `slot`.
   void RefreshLights(const lmv_scene* scene, UINT slot);
   int32_t env_index = -1;  // SRV descriptor of the dome environment, or -1
+  // GGX-prefiltered copy of it (mip i = roughness i/5), or -1 if unavailable.
+  int32_t env_spec_index = -1;
   ID3D12Resource* env_resource() const {
     return env_index >= 0 ? textures_[static_cast<size_t>(env_index)].Get() : nullptr;
   }

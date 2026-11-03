@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 namespace ld3d12 {
 namespace {
@@ -168,6 +170,238 @@ bool ComputeEnvironmentSH(const lmv_scene* scene, int32_t image_id,
       sh[k][i] = color_matrix[i * 3 + 0] * c[0] + color_matrix[i * 3 + 1] * c[1] +
                  color_matrix[i * 3 + 2] * c[2];
     sh[k][3] = 0.0f;
+  }
+  return true;
+}
+
+namespace {
+
+uint16_t FloatToHalf(float f) {
+  f = std::min(std::max(f, 0.0f), 65504.0f);  // radiance: non-negative, finite
+  uint32_t x;
+  std::memcpy(&x, &f, 4);
+  const int e = static_cast<int>((x >> 23) & 0xff) - 127 + 15;
+  uint32_t m = x & 0x7fffffu;
+  if (e <= 0) {  // subnormal half (or zero)
+    if (e < -10) return 0;
+    m |= 0x800000u;
+    const uint32_t shift = static_cast<uint32_t>(14 - e);
+    return static_cast<uint16_t>((m + (1u << (shift - 1))) >> shift);
+  }
+  return static_cast<uint16_t>((static_cast<uint32_t>(e) << 10) +
+                               ((m + 0x1000u) >> 13));
+}
+
+// One RGB float image with trilinear equirect sampling over a box pyramid.
+struct EquirectPyramid {
+  struct Level {
+    int w = 0, h = 0;
+    std::vector<float> rgb;
+  };
+  std::vector<Level> levels;
+
+  void Sample(const Level& l, float u, float v, float out[3]) const {
+    u -= std::floor(u);
+    const float fx = u * l.w - 0.5f;
+    const float fy = std::min(std::max(v, 0.0f), 1.0f) * l.h - 0.5f;
+    const int x0 = static_cast<int>(std::floor(fx));
+    const int y0 = static_cast<int>(std::floor(fy));
+    const float tx = fx - x0, ty = fy - y0;
+    float acc[3] = {0, 0, 0};
+    for (int dy = 0; dy < 2; ++dy) {
+      const int y = std::min(std::max(y0 + dy, 0), l.h - 1);
+      for (int dx = 0; dx < 2; ++dx) {
+        const int x = ((x0 + dx) % l.w + l.w) % l.w;  // wrap in longitude
+        const float wgt = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty);
+        const float* p = &l.rgb[(static_cast<size_t>(y) * l.w + x) * 3];
+        for (int c = 0; c < 3; ++c) acc[c] += p[c] * wgt;
+      }
+    }
+    for (int c = 0; c < 3; ++c) out[c] = acc[c];
+  }
+
+  void Trilinear(float u, float v, float lod, float out[3]) const {
+    lod = std::min(std::max(lod, 0.0f), static_cast<float>(levels.size() - 1));
+    const size_t l0 = static_cast<size_t>(lod);
+    const size_t l1 = std::min(l0 + 1, levels.size() - 1);
+    const float t = lod - static_cast<float>(l0);
+    float a[3], b[3];
+    Sample(levels[l0], u, v, a);
+    if (t <= 0.0f || l1 == l0) {
+      for (int c = 0; c < 3; ++c) out[c] = a[c];
+      return;
+    }
+    Sample(levels[l1], u, v, b);
+    for (int c = 0; c < 3; ++c) out[c] = a[c] + (b[c] - a[c]) * t;
+  }
+};
+
+float RadicalInverse(uint32_t bits) {
+  bits = (bits << 16u) | (bits >> 16u);
+  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+  return static_cast<float>(bits) * 2.3283064365386963e-10f;
+}
+
+}  // namespace
+
+bool BuildPrefilteredEnvironment(const lmv_scene* scene, int32_t image_id,
+                                 PrefilteredEnv* out) {
+  constexpr int kBaseW = 512, kBaseH = 256, kMips = 6, kSamples = 96;
+  lmv_image_view iv = {};
+  if (lmv_scene_image(scene, static_cast<uint32_t>(image_id), &iv) != LMV_OK ||
+      !iv.pixels || iv.width < 2 || iv.height < 2)
+    return false;
+  const int w = static_cast<int>(iv.width), h = static_cast<int>(iv.height);
+  auto texel = [&](int x, int y, float o[3]) {
+    const size_t i = static_cast<size_t>(y) * w + x;
+    if (iv.is_float && (iv.channels == 3 || iv.channels == 4)) {
+      const float* p = static_cast<const float*>(iv.pixels) + i * iv.channels;
+      for (int c = 0; c < 3; ++c) o[c] = std::max(p[c], 0.0f);
+    } else if (!iv.is_float && iv.channels == 4) {
+      const uint8_t* p = static_cast<const uint8_t*>(iv.pixels) + i * 4;
+      for (int c = 0; c < 3; ++c) {
+        float v = p[c] / 255.0f;
+        if (iv.srgb)
+          v = v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+        o[c] = v;
+      }
+    } else {
+      o[0] = o[1] = o[2] = 0.0f;
+    }
+  };
+
+  // Base level: area-resample the source to kBaseW x kBaseH (<= 4x4 taps).
+  EquirectPyramid pyr;
+  pyr.levels.resize(7);  // 512x256 down to 8x4
+  {
+    auto& b = pyr.levels[0];
+    b.w = kBaseW;
+    b.h = kBaseH;
+    b.rgb.assign(static_cast<size_t>(kBaseW) * kBaseH * 3, 0.0f);
+    const int tx = std::max(1, std::min(4, w / kBaseW));
+    const int ty = std::max(1, std::min(4, h / kBaseH));
+    for (int y = 0; y < kBaseH; ++y) {
+      for (int x = 0; x < kBaseW; ++x) {
+        float acc[3] = {0, 0, 0};
+        for (int sy = 0; sy < ty; ++sy) {
+          const int py = std::min(
+              h - 1, static_cast<int>((y + (sy + 0.5f) / ty) * h / kBaseH));
+          for (int sx = 0; sx < tx; ++sx) {
+            const int px = std::min(
+                w - 1, static_cast<int>((x + (sx + 0.5f) / tx) * w / kBaseW));
+            float t[3];
+            texel(px, py, t);
+            for (int c = 0; c < 3; ++c) acc[c] += t[c];
+          }
+        }
+        float* d = &b.rgb[(static_cast<size_t>(y) * kBaseW + x) * 3];
+        for (int c = 0; c < 3; ++c) d[c] = acc[c] / float(tx * ty);
+      }
+    }
+  }
+  for (size_t k = 1; k < pyr.levels.size(); ++k) {
+    const auto& s = pyr.levels[k - 1];
+    auto& d = pyr.levels[k];
+    d.w = s.w / 2;
+    d.h = s.h / 2;
+    d.rgb.resize(static_cast<size_t>(d.w) * d.h * 3);
+    for (int y = 0; y < d.h; ++y)
+      for (int x = 0; x < d.w; ++x)
+        for (int c = 0; c < 3; ++c) {
+          float a = 0;
+          for (int dy = 0; dy < 2; ++dy)
+            for (int dx = 0; dx < 2; ++dx)
+              a += s.rgb[(static_cast<size_t>(2 * y + dy) * s.w + 2 * x + dx) * 3 + c];
+          d.rgb[(static_cast<size_t>(y) * d.w + x) * 3 + c] = a * 0.25f;
+        }
+  }
+
+  out->width = kBaseW;
+  out->height = kBaseH;
+  out->levels.assign(kMips, {});
+  const float omega_p = 4.0f * kPi / (float(kBaseW) * float(kBaseH));
+
+  for (int m = 0; m < kMips; ++m) {
+    const int lw = kBaseW >> m, lh = kBaseH >> m;
+    std::vector<uint16_t>& dst = out->levels[static_cast<size_t>(m)];
+    dst.assign(static_cast<size_t>(lw) * lh * 4, 0);
+    const float rough = static_cast<float>(m) / float(kMips - 1);
+    const float a = std::max(rough * rough, 1e-4f);
+    const float a2 = a * a;
+
+    auto do_rows = [&](int y_begin, int y_end) {
+      for (int y = y_begin; y < y_end; ++y) {
+        const float v = (y + 0.5f) / lh;
+        const float theta = (0.5f - v) * kPi;
+        const float cos_t = std::cos(theta), sin_t = std::sin(theta);
+        for (int x = 0; x < lw; ++x) {
+          const float u = (x + 0.5f) / lw;
+          const float phi = (u - 0.5f) * 2 * kPi;
+          float n[3] = {cos_t * std::cos(phi), sin_t, cos_t * std::sin(phi)};
+          float rgb[3] = {0, 0, 0};
+          if (m == 0) {
+            pyr.Trilinear(u, v, 0.0f, rgb);  // mirror: the resampled base
+          } else {
+            // Tangent frame around N (= V = R).
+            float up[3] = {std::fabs(n[1]) < 0.999f ? 0.0f : 1.0f,
+                           std::fabs(n[1]) < 0.999f ? 1.0f : 0.0f, 0.0f};
+            float tx[3], ty[3];
+            Cross(up, n, tx);
+            Normalize(tx);
+            Cross(n, tx, ty);
+            float wsum = 0.0f;
+            for (int s = 0; s < kSamples; ++s) {
+              const float xi1 = (s + 0.5f) / kSamples;
+              const float xi2 = RadicalInverse(static_cast<uint32_t>(s));
+              const float ph = 2 * kPi * xi1;
+              const float ct = std::sqrt((1 - xi2) / (1 + (a2 - 1) * xi2));
+              const float st = std::sqrt(std::max(0.0f, 1 - ct * ct));
+              float hv[3];
+              for (int c = 0; c < 3; ++c)
+                hv[c] = tx[c] * (st * std::cos(ph)) + ty[c] * (st * std::sin(ph)) +
+                        n[c] * ct;
+              const float vh = Dot(n, hv);
+              float l[3];
+              for (int c = 0; c < 3; ++c) l[c] = 2 * vh * hv[c] - n[c];
+              const float nl = Dot(n, l);
+              if (nl <= 0.0f) continue;
+              const float denom = ct * ct * (a2 - 1) + 1;
+              const float d_ggx = a2 / (kPi * denom * denom);
+              const float pdf = d_ggx * 0.25f;  // D * NdotH / (4 VdotH), N = V
+              const float omega_s = 1.0f / (kSamples * pdf);
+              const float lod = std::max(0.0f, 0.5f * std::log2(omega_s / omega_p) + 1.0f);
+              const float su = std::atan2(l[2], l[0]) / (2 * kPi) + 0.5f;
+              const float sv = 0.5f - std::asin(std::min(std::max(l[1], -1.0f), 1.0f)) / kPi;
+              float c3[3];
+              pyr.Trilinear(su, sv, lod, c3);
+              for (int c = 0; c < 3; ++c) rgb[c] += c3[c] * nl;
+              wsum += nl;
+            }
+            if (wsum > 0.0f)
+              for (int c = 0; c < 3; ++c) rgb[c] /= wsum;
+          }
+          uint16_t* d = &dst[(static_cast<size_t>(y) * lw + x) * 4];
+          d[0] = FloatToHalf(rgb[0]);
+          d[1] = FloatToHalf(rgb[1]);
+          d[2] = FloatToHalf(rgb[2]);
+          d[3] = 0x3C00;  // 1.0
+        }
+      }
+    };
+
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const int threads = (m == 0 || lh < 16) ? 1 : static_cast<int>(std::min<unsigned>(hw, 16u));
+    if (threads <= 1) {
+      do_rows(0, lh);
+    } else {
+      std::vector<std::thread> pool;
+      for (int t = 0; t < threads; ++t)
+        pool.emplace_back(do_rows, lh * t / threads, lh * (t + 1) / threads);
+      for (auto& th : pool) th.join();
+    }
   }
   return true;
 }

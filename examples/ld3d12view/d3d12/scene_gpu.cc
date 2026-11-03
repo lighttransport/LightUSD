@@ -435,6 +435,16 @@ class ImageTable {
     return static_cast<int32_t>(next_++);
   }
 
+  // Uploads a GGX-prefiltered environment mip chain (RGBA16F) and returns its
+  // descriptor index, or -1.
+  int32_t AddPrefilteredEnv(const PrefilteredEnv& env, std::string* err) {
+    std::vector<Uploader::Level> levels;
+    for (const auto& l : env.levels)
+      levels.push_back({l.data(), l.size() * sizeof(uint16_t)});
+    return Add(DXGI_FORMAT_R16G16B16A16_FLOAT, env.width, env.height, levels,
+               err);
+  }
+
   uint32_t count() const { return next_ - 1; }  // excluding the white texel
 
  private:
@@ -522,7 +532,8 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
     if (lmv_scene_texture(scene, t, &tv) == LMV_OK && tv.udim_tile_count > 0)
       ++udim_textures;
   }
-  hd.NumDescriptors = lmv_scene_image_count(scene) + 2 + udim_textures;
+  // (+1 for the prefiltered environment chain.)
+  hd.NumDescriptors = lmv_scene_image_count(scene) + 3 + udim_textures;
   hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   HRESULT hr = d3d->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srv_heap));
   if (FAILED(hr)) return Fail(err, "CreateDescriptorHeap(SRV)", hr);
@@ -697,8 +708,14 @@ bool SceneGPU::Build(Device& device, const lmv_scene* scene,
   if (dome_image >= 0) {
     const int32_t index = images.Get(dome_image, err);
     if (index >= 0 &&
-        ComputeEnvironmentSH(scene, dome_image, color_matrix, sh))
+        ComputeEnvironmentSH(scene, dome_image, color_matrix, sh)) {
       env_index = index;
+      PrefilteredEnv pre;
+      std::string soft_err;  // a failed prefilter falls back to the raw image
+      if (!std::getenv("LD3D12VIEW_NO_PREFILTER") &&
+          BuildPrefilteredEnvironment(scene, dome_image, &pre))
+        env_spec_index = images.AddPrefilteredEnv(pre, &soft_err);
+    }
   }
   if (shadow_light >= 0) {
     D3D12_RESOURCE_DESC rd = {};

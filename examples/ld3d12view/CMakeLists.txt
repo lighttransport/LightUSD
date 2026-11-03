@@ -140,8 +140,16 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       COMMAND ld3d12view --hidden --warp --size 320x240 --frames 3
               --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-env.png
               ${LD3D_REPO_ROOT}/models/mtlx-normalmap-sphere.usda)
+  # Metal spheres, roughness 0..1, under the HDR dome: GGX-prefiltered IBL.
+  add_test(NAME ld3d12view-ibl-warp
+      COMMAND ld3d12view --hidden --warp --size 640x240 --frames 3 --no-hud
+              --no-grid --preset 1
+              --screenshot ${CMAKE_CURRENT_BINARY_DIR}/ld3d12view-ibl.png
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/ibl-spheres.usda)
+  set_tests_properties(ld3d12view-ibl-warp
+      PROPERTIES PASS_REGULAR_EXPRESSION "5 mesh.*dome environment")
   set_tests_properties(ld3d12view-shadow-warp ld3d12view-env-warp
-      PROPERTIES LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
+      ld3d12view-ibl-warp PROPERTIES LABELS "ld3d12view;gpu;d3d12" TIMEOUT 120)
   # Animation: in-place updates (transforms, lights, camera, visibility,
   # instancer) and the re-conversion fallback (animated materials). Same
   # fixtures and times as the lmetalview headless tests.
