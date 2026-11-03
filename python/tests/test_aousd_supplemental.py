@@ -230,9 +230,31 @@ def test_aousd_file_format_baselines():
                         failures.append(
                             f"{name} / primChildren {got} != {want['primChildren']}")
                 continue
-            # Variant spec paths (`{foo=bar}`) are not addressable prim paths.
+            # Variant spec paths (`/Prim{set=value}`) are not addressable prim
+            # paths. An empty value names the variant set itself, whose variant
+            # names are readable without composing the branch.
             if "{" in path or "}" in path:
                 variant_paths += 1
+                head, _, brace = path.partition("{")
+                set_name, _, value = brace.partition("=")
+                value = value.rstrip("}")
+                prim = prims.get(head)
+                if (prim is None or value or "}" in value or
+                        path.count("{") != 1):
+                    continue
+                checked += 1
+                expect = want.get("variantChildren")
+                if expect is None:
+                    continue
+                try:
+                    got = list(prim.variant_sets[set_name].names)
+                except KeyError:
+                    failures.append(
+                        f"{name} {path}: variant set {set_name!r} missing")
+                    continue
+                if got != expect:
+                    failures.append(
+                        f"{name} {path} variantChildren {got} != {expect}")
                 continue
             prim_path, _, prop = path.partition(".")
             prim = prims.get(prim_path)
@@ -240,6 +262,32 @@ def test_aousd_file_format_baselines():
                 failures.append(f"{name} {path}: prim missing")
                 continue
             checked += 1
+            if "variantSetNames" in want:
+                got = list(prim.variant_sets.names())
+                expect = want["variantSetNames"].get("explicit", [])
+                if sorted(got) != sorted(expect):
+                    failures.append(
+                        f"{name} {path} variantSetNames {got} != {expect}")
+            if "variantSetChildren" in want:
+                got = [n for n in prim.variant_sets.names()
+                       if len(prim.variant_sets[n].names)]
+                if got != want["variantSetChildren"]:
+                    failures.append(
+                        f"{name} {path} variantSetChildren {got} != "
+                        f"{want['variantSetChildren']}")
+            if "variantSelection" in want:
+                for set_name, selected in want["variantSelection"].items():
+                    # The authored `variants` dictionary may carry selections
+                    # for sets that are not declared on this prim (the corpus
+                    # adds a `var_expr` entry). Only declared sets are
+                    # addressable through the variant-set API.
+                    if set_name not in prim.variant_sets:
+                        continue
+                    got = prim.variant_sets[set_name].selection
+                    if got != selected:
+                        failures.append(
+                            f"{name} {path} {set_name} selection {got!r} != "
+                            f"{selected!r}")
             if prop:
                 try:
                     attr = prim.attribute(prop)
