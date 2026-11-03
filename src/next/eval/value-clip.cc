@@ -439,16 +439,43 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
   // replaces. Without it the caller owns freshness. Entries without a stamp are
   // always trusted: pre-seeded caches (tydra's bake) loaded them themselves.
   const bool revalidate = cache->revalidate_file_stamps;
+  // Insert/refresh one entry, evicting the least recently used one when the
+  // cache is full. Callers hold a shared_ptr for the duration of their query,
+  // so eviction never invalidates a stage that is still in use.
+  // `evict` is false for negative entries: a failing clip must not displace a
+  // successfully parsed one.
+  auto store = [&](const std::string& key, ValueClipStageCache::Entry entry,
+                   bool evict = true) {
+    std::lock_guard<std::mutex> lock(cache->mutex);
+    entry.use_tick = ++cache->clock;
+    auto found = cache->entries.find(key);
+    if (found != cache->entries.end()) {
+      found->second = std::move(entry);
+      return;
+    }
+    if (cache->max_entries == 0) return;
+    if (cache->entries.size() >= cache->max_entries) {
+      if (!evict) return;
+      auto oldest = cache->entries.begin();
+      for (auto it = cache->entries.begin(); it != cache->entries.end(); ++it) {
+        if (it->second.use_tick < oldest->second.use_tick) oldest = it;
+      }
+      cache->entries.erase(oldest);
+    }
+    cache->entries.emplace(key, std::move(entry));
+  };
   auto load_stage = [&](const std::string& asset) -> std::shared_ptr<Stage> {
     const FileStamp before = revalidate ? StampFile(asset) : FileStamp{};
     {
       std::lock_guard<std::mutex> lock(cache->mutex);
       auto found = cache->entries.find(asset);
       if (found != cache->entries.end()) {
-        const ValueClipStageCache::Entry& entry = found->second;
-        if (!entry.stamped || !revalidate ||
+        ValueClipStageCache::Entry& entry = found->second;
+        const bool current = !entry.stamped || !revalidate ||
             (before.valid && entry.mtime_ticks == before.mtime_ticks &&
-             entry.size_bytes == before.size_bytes)) {
+             entry.size_bytes == before.size_bytes);
+        if (current) {
+          entry.use_tick = ++cache->clock;
           if (!entry.stage && error && error->empty()) {
             *error = entry.error;
           }
@@ -464,16 +491,12 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       // A revalidating cache only records a failure it can later invalidate.
       const bool cacheable = !revalidate || before.valid;
       if (cacheable) {
-        std::lock_guard<std::mutex> lock(cache->mutex);
-        if (cache->entries.count(asset) ||
-            cache->entries.size() < cache->max_entries) {
-          ValueClipStageCache::Entry entry;
-          entry.error = message;
-          entry.stamped = revalidate;
-          entry.mtime_ticks = before.mtime_ticks;
-          entry.size_bytes = before.size_bytes;
-          cache->entries[asset] = std::move(entry);
-        }
+        ValueClipStageCache::Entry entry;
+        entry.error = message;
+        entry.stamped = revalidate;
+        entry.mtime_ticks = before.mtime_ticks;
+        entry.size_bytes = before.size_bytes;
+        store(asset, std::move(entry), /*evict=*/false);
       }
       if (error && error->empty()) *error = std::move(message);
       return nullptr;
@@ -485,16 +508,12 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       cacheable = before.valid && after.valid && before.matches(after);
     }
     if (cacheable) {
-      std::lock_guard<std::mutex> lock(cache->mutex);
-      if (cache->entries.count(asset) ||
-          cache->entries.size() < cache->max_entries) {
-        ValueClipStageCache::Entry entry;
-        entry.stage = stage;
-        entry.stamped = revalidate;
-        entry.mtime_ticks = after.mtime_ticks;
-        entry.size_bytes = after.size_bytes;
-        cache->entries[asset] = std::move(entry);
-      }
+      ValueClipStageCache::Entry entry;
+      entry.stage = stage;
+      entry.stamped = revalidate;
+      entry.mtime_ticks = after.mtime_ticks;
+      entry.size_bytes = after.size_bytes;
+      store(asset, std::move(entry));
     }
     return stage;
   };
