@@ -4153,6 +4153,38 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # CPU preview semantic material lanes: a uniform texture lane must shade
+    # exactly like the equivalent constant lane, and MaterialX metallic/
+    # roughness/emission graph routes must affect the render.
+    foreach(cpu_lane_test
+        lusdview-cpu-material-lanes
+        lusdview-cpu-graph-lanes)
+      string(REPLACE "lusdview-cpu-" "run-cpu-" cpu_lane_script
+                     "${cpu_lane_test}")
+      add_test(
+        NAME ${cpu_lane_test}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/${cpu_lane_script}.sh"
+        )
+      set_tests_properties(${cpu_lane_test} PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300
+                           LABELS "lusdview;rt;cpu-rt")
+    endforeach()
+
+    # Visible Island PTex material routing: the CPU tracer must map intrinsic
+    # Ptex face coordinates through the atlas face rectangles and show the
+    # decoded face colour. Skips when the pinned Island texture is unavailable.
+    add_test(
+      NAME lusdview-cpu-ptex-routing
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-routing.sh"
+      )
+    set_tests_properties(lusdview-cpu-ptex-routing PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt;ptex")
+
     add_test(
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env

@@ -511,6 +511,9 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-cpu-normal-map` | CPU normal map shades like the equivalent geometric normal | `xvfb-run` when headless |
 | `lusdview-cpu-graph-tangent` | MaterialX tangent/bitangent nodes use the hit triangle frame | `xvfb-run` when headless |
 | `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
+| `lusdview-cpu-material-lanes` | CPU metallic/roughness/emissive/specular/coat/occlusion lanes match constant equivalents | `xvfb-run` when headless |
+| `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
+| `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |

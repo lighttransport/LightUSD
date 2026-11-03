@@ -49,17 +49,23 @@ bool CpuSlotUsesSecondUvSet(const float* params, int slot) {
   return (static_cast<int>(params[69] + 0.5f) & (1 << slot)) != 0;
 }
 
-void CpuXformSlotUv(const float* params, int slot, float u, float v,
-                    float* out) {
+void CpuXformUvAt(const float* params, int offset, float u, float v,
+                  float* out) {
   if (!params) {
     out[0] = u;
     out[1] = v;
     return;
   }
-  const float* p = params + slot * 6;
+  const float* p = params + offset;
   out[0] = p[0] * u + p[1] * v + p[2];
   out[1] = p[3] * u + p[4] * v + p[5];
 }
+
+void CpuXformSlotUv(const float* params, int slot, float u, float v,
+                    float* out) {
+  CpuXformUvAt(params, slot * 6, u, v, out);
+}
+
 }
 
 CpuRayTracer::~CpuRayTracer() { freeScene(); }
@@ -276,6 +282,45 @@ inline void TransformNormal(const float m[12], const float p[3], float out[3]) {
   Normalize3(out);
 }
 
+// Ptex atlases store one rectangle per face and a face-rect table in the
+// atlas alpha texels (8 RGBA texels per face: x/y/width/height as u16 LE, two
+// bytes per texel). Remap an intrinsic face (u,v) into the atlas exactly as
+// the shaders' ptexUv() does: clamp inside the inner rectangle so bilinear
+// taps cannot bleed into another face.
+inline bool PtexRemapUv(const std::vector<HostTextureDesc>& textures,
+                        const std::vector<uint8_t>& texels, int texId,
+                        int face, float* u, float* v) {
+  if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) return false;
+  const HostTextureDesc& tex = textures[static_cast<size_t>(texId)];
+  if (!tex.isPtex || face < 0 || face >= tex.ptexFaceCount ||
+      tex.width <= 0 || tex.height <= 0 || tex.ptexRectTexelOffset < 0) {
+    return false;
+  }
+  const size_t texel_count =
+      static_cast<size_t>(tex.width) * static_cast<size_t>(tex.height);
+  const size_t first = static_cast<size_t>(tex.ptexRectTexelOffset) +
+                       static_cast<size_t>(face) * 8u;
+  const size_t base = static_cast<size_t>(tex.offset);
+  if (first + 8u > texel_count || base > texels.size()) return false;
+  uint16_t values[4] = {0, 0, 0, 0};
+  for (size_t byte = 0; byte < 8u; ++byte) {
+    const size_t index = base + (first + byte) * 4u + 3u;
+    if (index >= texels.size()) return false;
+    values[byte / 2u] |= static_cast<uint16_t>(texels[index])
+                         << ((byte & 1u) * 8u);
+  }
+  if (values[2] == 0 || values[3] == 0) return false;
+  const float span_u = static_cast<float>(values[2] - 1u);
+  const float span_v = static_cast<float>(values[3] - 1u);
+  const float pu = std::clamp(*u, 0.0f, 1.0f);
+  const float pv = std::clamp(*v, 0.0f, 1.0f);
+  const float px = static_cast<float>(values[0]) + pu * span_u;
+  const float py = static_cast<float>(values[1]) + (1.0f - pv) * span_v;
+  *u = (px + 0.5f) / static_cast<float>(tex.width);
+  *v = (py + 0.5f) / static_cast<float>(tex.height);
+  return true;
+}
+
 // Bilinear-sample an RGBA8 HostTextureDesc at
 // its base mip. Deliberately mirrors sampleTexLevel/wrapCoord in
 // raytracer_kernel_src.txt (the CUDA/HIP kernel) so CPU RT matches the GPU
@@ -286,10 +331,14 @@ inline void TransformNormal(const float m[12], const float p[3], float out[3]) {
 // alpha remains an unmodified coverage/value channel.
 inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const std::vector<uint8_t>& texels, int texId,
-                                  float u, float v, float out[3]) {
+                                  float u, float v, float out[3],
+                                  int ptex_face = -1) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
+  }
+  if (ptex_face >= 0) {
+    PtexRemapUv(textures, texels, texId, ptex_face, &u, &v);
   }
   const HostTextureDesc* desc = &textures[static_cast<size_t>(texId)];
   if (desc->isUdim) {
@@ -306,7 +355,9 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     v -= static_cast<float>(tileV);
     desc = &textures[static_cast<size_t>(texId)];
   }
-  if (desc->isPtex || desc->width <= 0 || desc->height <= 0) {
+  // Ptex atlases are sampled with the remapped face-rect UV above; the atlas
+  // itself is an ordinary RGBA image from here on.
+  if (desc->width <= 0 || desc->height <= 0) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
   }
@@ -368,8 +419,11 @@ inline uint32_t HashColor(uint32_t id) {
 inline float SampleTextureBilinearChannel(
     const std::vector<HostTextureDesc>& textures,
     const std::vector<uint8_t>& texels, int texId, float u, float v,
-    int channel) {
+    int channel, int ptex_face = -1) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) return 1.0f;
+  if (ptex_face >= 0) {
+    PtexRemapUv(textures, texels, texId, ptex_face, &u, &v);
+  }
   const HostTextureDesc* desc = &textures[static_cast<size_t>(texId)];
   if (desc->isUdim) {
     const int tileU = static_cast<int>(std::floor(u));
@@ -382,7 +436,7 @@ inline float SampleTextureBilinearChannel(
     v -= static_cast<float>(tileV);
     desc = &textures[static_cast<size_t>(texId)];
   }
-  if (desc->isPtex || desc->width <= 0 || desc->height <= 0) return 1.0f;
+  if (desc->width <= 0 || desc->height <= 0) return 1.0f;
   const HostTextureDesc& d = *desc;
   channel = std::clamp(channel, 0, 3);
   auto srgbToLinear = [](float x) {
@@ -419,6 +473,56 @@ inline float SampleTextureBilinearChannel(
   const float top = texel(x0, y0) * (1.0f - tx) + texel(x1, y0) * tx;
   const float bot = texel(x0, y1) * (1.0f - tx) + texel(x1, y1) * tx;
   return top * (1.0f - ty) + bot * ty;
+}
+
+// Interpolated, transformed UV for one semantic lane.
+bool CpuLaneUv(const HostScene& scene, int material_id, int tri, float bu,
+               float bv, bool use_second_set, int xform_offset,
+               const std::vector<float>& uv0, const std::vector<float>& uv1,
+               float* out) {
+  if (static_cast<size_t>(tri) * 6 + 5 >= uv0.size()) return false;
+  const bool use_uv1 = use_second_set &&
+                       static_cast<size_t>(tri) * 6 + 5 < uv1.size();
+  const float* src = (use_uv1 ? uv1 : uv0).data() +
+                     static_cast<size_t>(tri) * 6;
+  float uv[2];
+  Interp6(src, bu, bv, uv);
+  CpuXformUvAt(CpuTextureParams(scene, material_id), xform_offset, uv[0],
+               uv[1], out);
+  return true;
+}
+
+bool CpuSampleSemanticScalar(const HostScene& scene, int material_id, int tex,
+                             int tri, float bu, float bv,
+                             bool use_second_set, int xform_offset,
+                             int channel, const std::vector<float>& uv0,
+                             const std::vector<float>& uv1, float* out,
+                             int ptex_face = -1) {
+  if (tex < 0) return false;
+  float uv[2];
+  if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
+                 xform_offset, uv0, uv1, uv)) {
+    return false;
+  }
+  *out = SampleTextureBilinearChannel(scene.textures, scene.texels, tex,
+                                      uv[0], uv[1], channel, ptex_face);
+  return true;
+}
+
+bool CpuSampleSemanticRgb(const HostScene& scene, int material_id, int tex,
+                          int tri, float bu, float bv, bool use_second_set,
+                          int xform_offset, const std::vector<float>& uv0,
+                          const std::vector<float>& uv1, float out[3],
+                          int ptex_face = -1) {
+  if (tex < 0) return false;
+  float uv[2];
+  if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
+                 xform_offset, uv0, uv1, uv)) {
+    return false;
+  }
+  SampleTextureBilinear(scene.textures, scene.texels, tex, uv[0], uv[1], out,
+                        ptex_face);
+  return true;
 }
 
 uint32_t MtlxRotl32(uint32_t x, int k) {
@@ -1303,6 +1407,14 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   const unsigned nThreads = std::max(1u, std::thread::hardware_concurrency());
   std::atomic<int> nextRow{0};
   uint8_t* pixels = rgba->data();
+  // Ptex face id for a triangle in the expanded CPU stream. The source face id
+  // is texture-local, so instance expansion reuses it unchanged.
+  auto ptexFaceFor = [&](int t) -> int {
+    if (t < 0 || static_cast<size_t>(t) >= cpuSourceTri_.size()) return -1;
+    const int src = cpuSourceTri_[static_cast<size_t>(t)];
+    if (src < 0 || static_cast<size_t>(src) >= hs_.face.size()) return -1;
+    return hs_.face[static_cast<size_t>(src)];
+  };
 
   auto cpuLayerAlpha = [&](int tri, float bu, float bv) {
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return 1.0f;
@@ -1357,7 +1469,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         }
         alpha *= SampleTextureBilinearChannel(
             hs_.textures, hs_.texels, opacityTex, slot_uv[0], slot_uv[1],
-            channel) * scale + bias;
+            channel, ptexFaceFor(tri)) * scale + bias;
       }
     }
     alpha = std::clamp(alpha, 0.0f, 1.0f);
@@ -1397,8 +1509,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         if (!hs_.matTex.empty() && static_cast<size_t>(mid) * kRtMaterialTexSlots <
                                       hs_.matTex.size()) {
           const int tex = hs_.matTex[static_cast<size_t>(mid) * kRtMaterialTexSlots];
+          const float* tp = CpuTextureParams(hs_, mid);
+          const bool uv1_used =
+              CpuSlotUsesSecondUvSet(tp, 0) &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+          const float* src_uv = uv1_used
+              ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+              : &cpuUv_[static_cast<size_t>(tri) * 6];
+          float lane_uv[2];
+          Interp6(src_uv, bu, bv, lane_uv);
+          float slot_uv[2];
+          CpuXformSlotUv(tp, 0, lane_uv[0], lane_uv[1], slot_uv);
           float sampled[3];
-          SampleTextureBilinear(hs_.textures, hs_.texels, tex, uv[0], uv[1], sampled);
+          SampleTextureBilinear(hs_.textures, hs_.texels, tex, slot_uv[0],
+                                slot_uv[1], sampled, ptexFaceFor(tri));
           color[0] *= sampled[0]; color[1] *= sampled[1]; color[2] *= sampled[2];
         }
         const size_t graphBase = static_cast<size_t>(mid) * kRtMaterialGraphFloats;
@@ -1933,7 +2057,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               CpuXformSlotUv(tex_params, 0, uv[0], uv[1], slot_uv);
               float texCol[3];
               SampleTextureBilinear(hs_.textures, hs_.texels, baseTex,
-                                    slot_uv[0], slot_uv[1], texCol);
+                                    slot_uv[0], slot_uv[1], texCol,
+                                    ptexFaceFor(static_cast<int>(tri)));
               base[0] *= texCol[0]; base[1] *= texCol[1]; base[2] *= texCol[2];
             }
           }
@@ -2028,7 +2153,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               CpuXformSlotUv(tex_params, 3, uv[0], uv[1], slot_uv);
               float rgb[3];
               SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
-                                    slot_uv[0], slot_uv[1], rgb);
+                                    slot_uv[0], slot_uv[1], rgb,
+                                    ptexFaceFor(static_cast<int>(tri)));
               tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
               tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
               tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
@@ -2318,6 +2444,145 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
             }
           }
+          // Sample the semantic texture lanes the CPU preview consumes with
+          // the same packed UV-set/transform/channel/scale-bias rules as the
+          // shaders. The loader neutralizes a lane's constant to 1 whenever a
+          // texture is bound, so constant * sample is the right combine.
+          float occlusion = 1.0f;
+          if (matId >= 0) {
+            const float* tp = CpuTextureParams(hs_, matId);
+            const size_t tex_base =
+                static_cast<size_t>(matId) * kRtMaterialTexSlots;
+            auto lane_tex = [&](size_t slot) -> int {
+              return tex_base + slot < hs_.matTex.size()
+                         ? hs_.matTex[tex_base + slot]
+                         : -1;
+            };
+            auto lane_set1 = [&](int uvset_float, int bit) {
+              return tp != nullptr &&
+                     ((static_cast<int>(tp[uvset_float] + 0.5f) &
+                       (1 << bit)) != 0);
+            };
+            auto lane_channel = [&](int offset) {
+              return tp ? static_cast<int>(tp[offset] + 0.5f) : 0;
+            };
+            auto lane_scale = [&](int offset, int c) {
+              return tp ? tp[offset + c] : 1.0f;
+            };
+            auto lane_bias = [&](int offset, int c) {
+              return tp ? tp[offset + c] : 0.0f;
+            };
+            const int tri_i = static_cast<int>(tri);
+            float v = 0.0f;
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(1), tri_i, hit.u,
+                                        hit.v, lane_set1(69, 1), 6,
+                                        lane_channel(60), cpuUv_, cpuUv1_,
+                                        &v, ptexFaceFor(tri_i))) {
+              metallic = std::clamp(
+                  metallic * (v * lane_scale(61, 0) + lane_bias(62, 0)),
+                  0.0f, 1.0f);
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(2), tri_i, hit.u,
+                                        hit.v, lane_set1(69, 2), 12,
+                                        lane_channel(63), cpuUv_, cpuUv1_,
+                                        &v, ptexFaceFor(tri_i))) {
+              roughness = std::clamp(
+                  roughness * (v * lane_scale(64, 0) + lane_bias(65, 0)),
+                  0.03f, 1.0f);
+            }
+            float rgb[3];
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(4), tri_i, hit.u,
+                                     hit.v, lane_set1(69, 4), 24, cpuUv_,
+                                     cpuUv1_, rgb, ptexFaceFor(tri_i))) {
+              for (int c = 0; c < 3; ++c) {
+                emission[c] = std::max(
+                    0.0f, emission[c] *
+                              (rgb[c] * lane_scale(52, c) + lane_bias(56, c)));
+              }
+            }
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(10), tri_i, hit.u,
+                                     hit.v,
+                                     tp != nullptr &&
+                                         static_cast<int>(tp[130] + 0.5f) == 1,
+                                     124, cpuUv_, cpuUv1_, rgb,
+                                     ptexFaceFor(tri_i))) {
+              for (int c = 0; c < 3; ++c) {
+                specColor[c] = std::max(
+                    0.0f, specColor[c] *
+                              (rgb[c] * lane_scale(132, c) + lane_bias(136, c)));
+              }
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(7), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 1), 78,
+                                        lane_channel(97), cpuUv_, cpuUv1_,
+                                        &v, ptexFaceFor(tri_i))) {
+              coatWeight = std::clamp(
+                  coatWeight * (v * lane_scale(100, 0) + lane_bias(104, 0)),
+                  0.0f, 1.0f);
+            }
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(8), tri_i, hit.u,
+                                     hit.v, lane_set1(99, 2), 84, cpuUv_,
+                                     cpuUv1_, rgb, ptexFaceFor(tri_i))) {
+              for (int c = 0; c < 3; ++c) {
+                coatColor[c] = std::max(
+                    0.0f, coatColor[c] * (rgb[c] * lane_scale(108, c) +
+                                          lane_bias(112, c)));
+              }
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(9), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 3), 90,
+                                        lane_channel(98), cpuUv_, cpuUv1_,
+                                        &v, ptexFaceFor(tri_i))) {
+              coatRoughness = std::clamp(
+                  coatRoughness * (v * lane_scale(116, 0) + lane_bias(120, 0)),
+                  0.03f, 1.0f);
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(6), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 0), 72,
+                                        lane_channel(96), cpuUv_, cpuUv1_,
+                                        &v, ptexFaceFor(tri_i))) {
+              occlusion = std::clamp(
+                  v * lane_scale(70, 0) + lane_bias(71, 0), 0.0f, 1.0f);
+            }
+            // MaterialX graph lanes override the constant/texture result,
+            // matching the shaders' hasGraphRoute checks.
+            const size_t gb =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            if (gb + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size()) {
+              float guv[2];
+              Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, guv);
+              float guv1[2] = {guv[0], guv[1]};
+              if (static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size()) {
+                Interp6(&cpuUv1_[static_cast<size_t>(tri) * 6], hit.u, hit.v,
+                        guv1);
+              }
+              const float graph_position[3] = {hitP[0], hitP[1], hitP[2]};
+              const float graph_view[3] = {-dir[0], -dir[1], -dir[2]};
+              const int source_tri =
+                  static_cast<size_t>(tri) < cpuSourceTri_.size()
+                      ? cpuSourceTri_[static_cast<size_t>(tri)]
+                      : -1;
+              auto graph_route = [&](int route) {
+                return EvalCpuMaterialXGraph(
+                    hs_, matId, route, guv[0], guv[1], guv1[0], guv1[1], nrm,
+                    graph_position, graph_view, 0.0f, 0.0f, source_tri,
+                    have_shading_frame ? shading_frame.tangent : nullptr,
+                    have_shading_frame ? shading_frame.bitangent : nullptr);
+              };
+              if (hs_.matGraph[gb + 1 + 1] >= 0.0f) {
+                metallic = std::clamp(graph_route(1)[0], 0.0f, 1.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 2] >= 0.0f) {
+                roughness = std::clamp(graph_route(2)[0], 0.03f, 1.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 4] >= 0.0f) {
+                const auto g = graph_route(4);
+                emission[0] = std::max(g[0], 0.0f);
+                emission[1] = std::max(g[1], 0.0f);
+                emission[2] = std::max(g[2], 0.0f);
+              }
+            }
+          }
           const float viewLen = std::sqrt(
               (camPos[0] - hitP[0]) * (camPos[0] - hitP[0]) +
               (camPos[1] - hitP[1]) * (camPos[1] - hitP[1]) +
@@ -2421,7 +2686,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           const float sheen = sheenWeight *
               (0.5f + 0.5f * sheenRoughness) *
               std::pow(1.0f - std::clamp(nv, 0.0f, 1.0f), 2.0f) * diff;
-          const float lit = 0.15f + 0.85f * diff * diffuseWeight + diffusion;
+          const float lit = 0.15f * occlusion +
+                            0.85f * diff * diffuseWeight + diffusion;
           outCol[0] = (base[0] * lit + specColor[0] * specular +
                        sheenColor[0] * sheen + coat + emission[0]) * exposureMul;
           outCol[1] = (base[1] * lit + specColor[1] * specular +
@@ -2447,7 +2713,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               (fresnel * (1.0f - metallic) + metallic) *
               (1.0f - 0.75f * roughness);
           for (int c = 0; c < 3; ++c) {
-            outCol[c] += exposureMul *
+            outCol[c] += exposureMul * occlusion *
                 (base[c] * diffuseWeight * domeDiffuse[c] * 0.31830988618f +
                  specColor[c] * domeSpecular[c] * envSpecWeight);
           }
