@@ -248,6 +248,31 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
         ReadDoubleProperty(prim, "width", 2.0, config_.time_code),
         ReadDoubleProperty(prim, "length", 2.0, config_.time_code), 1, 1, points, face_counts,
         face_indices, normals, uvs);
+    std::string axis = "Z";
+    GetPropToken(prim, "axis", &axis);
+    if (axis == "Z") {
+      // UsdGeomPlane's canonical quad starts at (+width,+length); the
+      // generator's face starts at (-width,+length). Remap authored tuples
+      // rather than indexing them with the generator's private vertex order.
+      ::lightusd::next::EvalOptions evaluation;
+      evaluation.time = std::isnan(config_.time_code)
+          ? ::lightusd::next::TimeQuery::Default()
+          : ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+      evaluation.follow_connections = false;
+      MeshFloatAttribute authored;
+      if (ReadMeshFloatAttribute(prim, "primvars:st", evaluation, 2, 4, 4,
+                                 &authored)) {
+        const size_t canonical[4] = {1, 2, 3, 0};
+        std::vector<value::float2> remapped;
+        for (size_t i : canonical) {
+          size_t tuple = 0;
+          if (!authored.TupleIndex(i, i, 0, &tuple)) break;
+          remapped.push_back({authored.values[tuple * 2],
+                              authored.values[tuple * 2 + 1]});
+        }
+        if (remapped.size() == 4) uvs = std::move(remapped);
+      }
+    }
   } else {
     SetLastError("Unsupported analytic geom prim");
     return false;

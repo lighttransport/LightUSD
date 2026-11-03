@@ -1,0 +1,27 @@
+#usda 1.0
+(upAxis = "Y")
+def Xform "World" {
+ def PointInstancer "I" {
+ def Mesh "Proto" {
+  uniform token subdivisionScheme = "none"
+  point3f[] points = [(-2,-2,0),(2,-2,0),(0,2,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  normal3f[] normals = [(0,1,0)] (interpolation = "constant")
+  normal3f[] primvars:normals = [(1,0,1)] (interpolation = "constant")
+  bool doubleSided = true
+ }
+  rel prototypes = </World/I/Proto>
+  int[] protoIndices = [0]
+  point3f[] positions = [(0,0,0)]
+  float3[] scales = [(2,1,1)]
+ }
+}
+def Camera "C" {
+ matrix4d xformOp:transform = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,5,1))
+ uniform token[] xformOpOrder = ["xformOp:transform"]
+ float focalLength = 50
+ float horizontalAperture = 20
+ float verticalAperture = 20
+ float2 clippingRange = (0.1,100)
+}

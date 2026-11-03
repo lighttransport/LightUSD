@@ -4,6 +4,7 @@
 // as the monolith is split into per-module .cc files).
 #pragma once
 
+#include <atomic>
 #include <functional>
 
 #include "next/eval/value-clip.hh"
@@ -297,7 +298,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
            bool indirect = false,
            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
-           float *primary_hit_t = nullptr);
+           float *primary_hit_t = nullptr,
+           std::atomic<bool>* diagnostic_exhausted = nullptr);
 
 uint8_t ToSRGB8(float linear);
 

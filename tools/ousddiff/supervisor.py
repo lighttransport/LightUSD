@@ -12,17 +12,33 @@ _spec.loader.exec_module(guard)
 MIB = 1024 ** 2
 
 
-def execute(argv, directory, timeout, env=None, max_rss_mib=30720, reserve_mib=4096):
+def execute(argv, directory, timeout, env=None, max_rss_mib=30720, reserve_mib=4096,
+            gpu_vram_path=None, gpu_budget_mib=None, on_start=None):
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     if timeout <= 0 or max_rss_mib <= 0 or reserve_mib < 0:
         raise ValueError('invalid process resource limits')
+    if (gpu_vram_path is None)!=(gpu_budget_mib is None) or (gpu_budget_mib is not None and gpu_budget_mib<=0):
+        raise ValueError('GPU monitoring requires a readable counter and positive budget')
     available = guard.available_bytes()
     budget = min(int(max_rss_mib * MIB), max(0, available - reserve_mib * MIB))
     row = dict(argv=list(argv), status='unavailable', wall_s=0.0,
                peak_rss_bytes=None, peak_tree_rss_bytes=0, rss_sample_interval_s=0.05,
                rss_budget_bytes=budget, stdout=str(directory / 'stdout.log'),
                stderr=str(directory / 'stderr.log'), returncode=None)
+    if gpu_vram_path is not None:
+        row.update(gpu_vram_counter=str(gpu_vram_path), gpu_budget_bytes=int(gpu_budget_mib*MIB),
+                   peak_device_vram_bytes=0, vram_scope='whole device, including other clients')
+        try:
+            row['initial_device_vram_bytes']=int(Path(gpu_vram_path).read_text().strip())
+            if row['initial_device_vram_bytes']<0:raise ValueError('negative GPU memory counter')
+        except (OSError,ValueError) as error:
+            row.update(error=str(error),reason='GPU memory counter unavailable')
+            return row
+        row['peak_device_vram_bytes']=row['initial_device_vram_bytes']
+        if row['initial_device_vram_bytes']>row['gpu_budget_bytes']:
+            row.update(status='resource_limit',reason='initial whole-device GPU memory budget')
+            return row
     if budget <= 0:
         row.update(status='resource_limit', reason='available memory reserve')
         return row
@@ -35,6 +51,8 @@ def execute(argv, directory, timeout, env=None, max_rss_mib=30720, reserve_mib=4
         with open(row['stdout'], 'w') as stdout, open(row['stderr'], 'w') as stderr:
             proc = subprocess.Popen(timed, stdout=stdout, stderr=stderr,
                                     env=env, start_new_session=True)
+            if on_start is not None:
+                on_start(proc)
             def watch():
                 proc.wait()
                 ended.append(time.monotonic())
@@ -42,6 +60,17 @@ def execute(argv, directory, timeout, env=None, max_rss_mib=30720, reserve_mib=4
             threading.Thread(target=watch, daemon=True).start()
             while not finished.is_set():
                 row['peak_tree_rss_bytes'] = max(row['peak_tree_rss_bytes'], guard.group_rss_bytes(proc.pid))
+                if gpu_vram_path is not None:
+                    try:
+                        usage=int(Path(gpu_vram_path).read_text().strip())
+                        if usage<0:raise ValueError('negative GPU memory counter')
+                    except (OSError,ValueError):
+                        row.update(status='resource_limit',reason='GPU memory counter became unavailable')
+                        break
+                    row['peak_device_vram_bytes']=max(row['peak_device_vram_bytes'],usage)
+                    if usage>row['gpu_budget_bytes']:
+                        row.update(status='resource_limit',reason='whole-device GPU memory budget')
+                        break
                 if time.monotonic() - started > timeout:
                     row.update(status='timeout', reason='wall time limit')
                     break

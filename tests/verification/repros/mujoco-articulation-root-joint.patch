@@ -1,0 +1,15 @@
+--- a/plugin/usd_decoder/kinematic_tree.cc
++++ b/plugin/usd_decoder/kinematic_tree.cc
+@@ -111,8 +111,11 @@
+   for (auto it = range.begin(); it != range.end(); ++it) {
+     pxr::UsdPrim prim = *it;
+ 
++    // ArticulationRootAPI may be authored on the root joint. It marks an
++    // articulation graph; it must not turn that joint into another body.
+     bool is_body = prim.HasAPI<pxr::UsdPhysicsRigidBodyAPI>() ||
+-                   prim.HasAPI<pxr::UsdPhysicsArticulationRootAPI>();
++                   (prim.HasAPI<pxr::UsdPhysicsArticulationRootAPI>() &&
++                    !prim.IsA<pxr::UsdPhysicsJoint>());
+     bool resets = xform_cache.GetResetXformStack(prim);
+     // Only update (push/pop) the owner stack for bodies (becomes new owner) and
+     // resetXformStack (reset owner to world).

@@ -3221,3 +3221,224 @@ the color-write-disabled depth pipeline. It runs on software or hardware Vulkan.
 The deformation depth-parity harness disables the grid as well as skeleton
 helpers: grid placement follows posed bounds and is composited after the AOV,
 so it can differ even when CPU/GPU geometry matches.
+
+### Linked lusdview / usdview diagnostics
+
+The opt-in linked viewer controller, authentication, capture reports and live
+regression commands are documented in [tools/view_control/README.md](../tools/view_control/README.md).
+Run the Python unit tests there and the live test against an explicitly launched
+small fixture when changing the shared camera/MCP protocol. Hardware live tests
+require the GPU/display access described in the viewer documentation. An installed
+older USD tested through the development bootstrap does not validate the rebuilt
+OpenUSD fork.
+
+For linked viewer changes, also run the opt-in retained-frame and bone regression
+in `tools/view_control/test_frames_live.py` against a controller session launched
+with `tests/usda/view-control-skeleton.usda` and the installed OpenUSD fork. It
+checks independent bone visibility with guide purpose disabled, unchanged skin
+and descendant geometry after toggling, exact native framebuffer readback,
+retained pixels after display/selection changes, token idempotency and release.
+The lusdview **Tools > Compare viewers** panel must be checked on GL and Vulkan,
+including image replacement and renderer switching; the native `compare_panel`
+tool can save its composited window for visual review. Full paired captures need
+the updated fork's mono raster frame-barrier protocol.
+
+Headless agent comparison is documented in
+[`tools/view_control/HEADLESS.md`](../tools/view_control/HEADLESS.md). Run its
+`test_headless_live.py` suite on CPU and available GPU backends after changing
+lusdrender camera generation, shared GPU camera matrices or the fork's usdrecord
+EGL/FrameRecorder code. The suite removes DISPLAY/WAYLAND_DISPLAY, validates
+same-view silhouettes and clipping, and checks actual diagnostic annotation
+pixels, edit atomicity and source immutability. Run `test_headless_usd.py` with
+the installed SDK environment for camera/default-value and USDZ dependency checks.
+
+### Paired headless asset/time/AOV validation
+
+Use `tools/view_control/control.py validate --config
+ tools/view_control/jobs/usd-assets.json --assets-root ../usd-assets --out
+ /tmp/usd-assets-validation` (write the command on one line), with GPU device
+access for `vkr`/EGL. The JSON supports uniform, seeded random and explicit USD
+time-code samples, with per-scene overrides. See
+[headless validation jobs](../tools/view_control/HEADLESS.md#json-validation-jobs-assets-animation-times-and-shading-aovs)
+for AOV spaces, CPU versus GPU capture, material diagnostic limits and gates.
+Every sampled time renders both tools at the same resolved camera and exact time.
+Failures and unsupported captures remain explicit in the manifest; the command
+returns nonzero unless all requested comparisons pass.
+
+The [Caldera AMD measurement](validation/caldera-amd-2026-11-02.md) records the
+original geometry failure separately from temporary pose-baked diagnostic controls.
+The [USD-WG sampled-time/AOV report](validation/usd-assets-amd-2026-11-02.md)
+includes the versioned job config and portable per-frame metrics.
+
+### Independent physics-property reload checks
+
+[The Menagerie report](validation/menagerie-2026-11-02.md) records source-compiler,
+semantic, loaded-field/geometry and renderer gates separately. Use
+`tools/view_control/menagerie_validate.py` with the current installed LightUSD
+Python package and MuJoCo; it retains three serialized formats and invokes a
+separate SDK interpreter for independent loading. See
+[the headless commands](../tools/view_control/HEADLESS.md#menagerie-conversion-and-independent-physics-loading).
+
+The small `tests/usda/physics-load-compare-{base,root}.usda` fixtures exercise
+references, variants, units, drive targets and midpoint property/world-transform
+evaluation. `test_physics_compare.py` supplies negative mutation/geometry-digest
+checks; `test_physics_snapshot.py` runs in SDK and native Python environments.
+The C++ `test_validation` includes valid linear/angular drive instances and
+invalid/distance drive cases while retaining distance limits.
+
+[ALab](validation/alab-2026-11-02.md) and
+[Island](validation/island-2026-11-02.md) reports preserve capture failures and
+separately identify derived controls/subsets; those are not full-scene passes.
+
+The PCP regression suite also checks inherited value clips on descendants with
+no local child spec: clips must beat weaker reference defaults, preserve stronger
+local defaults, retain their authoring-layer asset anchor, and leave DefaultTime
+queries distinct from numeric sampling. Renderer diagnostics must evaluate points
+at the same numeric time as topology; a successful render alone does not certify
+image agreement or shading.
+
+`tool-lusdrender-capture-normals` verifies distinct raw geometric and interpolated
+normal channels on an instanced plane with nonuniform scale against analytic
+values. Tydra's extraction regression also checks indexed faceVarying UVs when
+point and corner counts are equal, plus uniform normals and scratch lifetimes.
+
+Dataset gap diagnostics are tracked in
+[the implementation ledger](validation/gap-closure-status.md). The bounded
+physics runner `tools/view_control/dynamics.py` checks analytic motion and real
+post-impact contact from source MJCF and converted USD. Failed/unsupported
+consumer behavior is retained and cannot count as source fidelity. Its pure
+harness checks run with `python3 -m unittest discover -s tools/view_control`.
+The asset-free SDK articulation repro is
+`tests/verification/repros/openusd-single-body-articulation.py` and runs with
+an OpenUSD-enabled Python interpreter. It deliberately fails on the unpatched
+single-body parser behavior.
+
+### Raw AMD geometry and bounded instancing checks
+
+The `tool-lusdrender-vk-data-aovs`, `tool-lusdrender-vk-instanced-curves` and
+`tool-lusdrender-vk-blas-batches` tests exercise raw depth/geometric/shading normals,
+nonuniform/reflected transforms, `primvars:normals` priority, nested curve
+instances, zero-width taper spans, evaluated cubic ribbons and nearest-hit merges
+across BLAS batches and TLAS slices. The batch test also compares one-triangle
+flat chunks against the instanced path within 1e-6, guarding the normal-array
+append offset. Hardware results must identify the actual Vulkan device; sandbox
+llvmpipe runs do not establish AMD coverage. See the tests' registered names in
+`ctest --test-dir build_ninja -N -R 'lusdrender.*vk'` for the current build.
+
+Original-source AOV jobs and retained failures are indexed in
+[the gap closure ledger](validation/gap-closure-status.md). They distinguish
+opaque geometry, authored-normal skinning, material channels and beauty. Do not
+accept missing/invalid SDK normal coverage, unsupported channels or consumer
+omissions as a full dataset pass.
+
+`tool-lusdrender-texture-value-modifiers` independently checks two materials
+sharing a one-pixel texture with different RGB scale/bias, in raw and sRGB source
+spaces, through both material resolvers. The expected pixels come from the
+analytic transfer function, not an SDK screenshot. The GPU variant runs the same
+contract through Vulkan; force `LUSDR_GPU_TRIANGLE_CHUNK=1` to test preservation of
+material IDs and UVs across chunks.
+
+Material-channel validation uses `-diagnosticEmission`: unlit emission with
+standard display sRGB and no photographic tone map. This isolates the source
+channel from BRDF/light differences. CPU and flat Vulkan are calibrated;
+unsupported native backends report missing channel coverage explicitly. Beauty
+continues to use its normal rendering model.
+
+The roughness/metallic dataset gates additionally render the original native
+scene with `-diagnosticMaterial roughness|metallic`. A passing shared emissive
+wrapper alone cannot establish that the native material field is correct.
+`tool-lusdrender-diagnostic-material` and its GPU counterpart use distinct RGB
+and alpha channels, scale/bias, shared materials and UV1, with independent raw
+and sRGB expectations. RGB scalar reads honor authored color space while alpha
+stays linear. The sRGB case fails before the scalar sampler/resolver fix.
+
+`tool-lusdrender-diagnostic-opacity-chunks-gpu` forces one triangle per Vulkan
+chunk and checks two-layer compositing against independent math. Continuation
+rebuilds one GPU chunk at a time and preserves nearest-hit global IDs and texture
+footprints. Diagnostic-only indexed positions stay on the CPU until shading ends.
+The CPU-chunks counterpart checks transmission rays retain their BVH chunk list.
+Both reject a 20-layer diagnostic with no partial output image; the diagnostic
+limit is 16 layers. Ordinary preview recursion keeps its existing limit.
+The same fixture puts the back layer beyond an authored far clip: transmission
+must reduce its remaining ray range after each surface, on CPU and Vulkan.
+
+Dataset gap acceptance is available through `tools/view_control/control.py verify`.
+The [session ledger](validation/gap-closure-status.md) links actual hashed evidence,
+fixed thresholds, independent physics contracts and outstanding failures. Native
+instance handles have C/Python traversal and generation tests. MJCF Plane texture
+domains and varying-texture indexed/sequential GPU chunk copies have independent
+regressions; a constant one-pixel texture cannot detect missing UV coordinates.
+
+### Large-scene dependency failures and clip boundaries
+
+`test_load.py` exercises decoded-array limits separately from byte/structural
+limits through files, buffers and referenced crates. Negative, overflowing and
+nonintegral limits must be rejected before loading. Strict PCP builds and
+untrusted document sessions fail on rejected/unreadable references; trusted
+compatibility sessions can still explicitly request partial composition.
+`test_attribute_resolution.py` checks linear normal/scalar interpolation across
+one-sample clip files without `interpolateMissingClipValues`, plus held mode.
+The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
+strength against direct child reference/payload/inherit arcs and a weaker
+referenced ancestor, in serial/parallel and expanded/native-instance modes.
+
+`lusdrender` CLI robustness additionally rejects malformed/nonfinite memory
+budgets and invalid `-maxArrayElements` values, and fails on missing referenced
+geometry. Dataset jobs retain explicit `native_load_limits` in their replay JSON
+and renderer commands. Complete-scene acceptance requires successful dependency
+loading as well as screenshot coverage and resource budgets.
+
+The emissive diagnostic opacity regression now covers PreviewSurface
+`transparent` (full emission), `presence` (attenuated emission), and masked
+cutouts, with custom UV sets, shared material caches and alpha scale/bias.
+CPU and AMD Vulkan results are compared with analytic two-layer math.
+Referenced-package texture equivalence also covers an empty USDZ root with a
+nested sublayer and relative texture path; its shell harness propagates pixel
+assertion failures. The SDK material wrapper's optional Pillow scalar adapter
+has independent r/g/b/a channel and parameter-preservation tests in
+`tools/view_control/test_validation_stage.py`.
+
+`test_pcp` also checks the high-level composed loader's explicit thread budget:
+a2048-payload fixture records callback thread IDs and requires both0 and1 to
+remain on the caller thread. Previously1 silently retained the automatic
+hardware worker count. Negative remains automatic; larger positive counts are
+bounded by the execution policy.
+
+Python default traversal prunes ancestors before visiting children,so it uses
+the local default-predicate C query once per prim instead of rewalking all
+ancestors at every descendant. The effective public predicate remains
+available for arbitrary handles. Default-predicate traversal tests cover
+inactive,over/class and instance-proxy ancestry. Load benchmarks now record
+explicit native thread,input-policy and array limits and fingerprint the
+frozen Python package as well as its extension/library. Trusted/mmap profiles
+must be reported separately from the unchanged untrusted default.
+
+The internal `next_test_c_api_lazy_view` regression requires numeric arrays to
+remain undecoded during wrong-type probes and aliases validated uncompressed
+POD storage through a C buffer pin. A counting source verifies zero decodes,
+exact source-pointer identity and source retention after value destruction.
+Compressed and misaligned inputs fall back to decoding; half storage retains
+its existing float widening. Python lifetime tests cover an actual USDC view
+across property replacement,stage close,owner collection and source unlink
+under both input policies. Borrowing never changes the untrusted snapshot
+policy or the decoded-array count ceiling.
+
+### Resumed dataset verification, 2026-11-03
+
+The [resumed report](validation/session-resumed-2026-11-03.md) records the final
+276-test native sweep, separate Python/next/AOUSD/WASM checks and AMD captures.
+[USD-assets sampled diagnostics](validation/usd-assets-native-parameters-2026-11-03.md)
+now require actual native roughness/metallic field checks in addition to shared
+emissive adapters. [Island subset masks](validation/island-subset-population-2026-11-03.md)
+retain relationship/connection dependencies without modifying source layers.
+Reference completeness checks reject known shader/GL/resource loss even after
+exit zero; lighting truncation affects beauty but not independent unlit AOVs.
+The [normal-AOV control](validation/normal-aov-contract-2026-11-03.md) prevents
+unperturbed mesh normal agreement from being reported as normal-map validation.
+Failed and unsupported catalogue contracts remain open in the hashed evidence.
+
+The [OpenUSD staging-buffer control](validation/openusd-staging-buffer-2026-11-03.md)
+independently reproduces the AMD/Mesa 4 GiB boundary. Its candidate SDK patch is
+validated through an isolated preload, including 300 MiB byte-exact transfers,
+overlapping write order and zero-capacity fallback. It is not installed or a
+complete SDK regression pass; missing VDB/shader capabilities remain open.

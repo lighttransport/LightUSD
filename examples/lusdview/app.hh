@@ -1200,6 +1200,17 @@ class App
   std::uint64_t sceneGen_{0};
 #if defined(LUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
+  double mcpCpuFrameSeconds_{0.0};
+  double mcpRenderedTime_{0.0};
+  uint64_t mcpFrameSerial_{0};
+  nlohmann::json mcpRenderedCamera_;
+  std::string mcpCompareWindowPath_;
+  nlohmann::json mcpCompareWindowResult_;
+  std::string mcpBarrierRequest_;
+  nlohmann::json mcpBarrierSubmitting_;
+  nlohmann::json mcpBarrier_;
+  std::vector<uint8_t> mcpBarrierPixels_;
+  int mcpBarrierWidth_{0}, mcpBarrierHeight_{0};
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.

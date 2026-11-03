@@ -3,6 +3,7 @@
 //
 // LightUSD C API implementation (core: stage/prim/attr/authoring).
 
+#include "next/schema/schema-registry.hh"
 #include "c-internal.hh"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include "next/load-usd.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value-view.hh"
+#include "next/crate/crate-data-source.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
@@ -111,8 +113,16 @@ const n::PrimSpec* SpecFromC(lightusd_prim p) {
 
 n::UsdPrim FromC(lightusd_prim p) {
   const n::PrimSpec* spec = SpecFromC(p);
-  return spec ? n::UsdPrim(spec, static_cast<const n::Layer*>(p._layer), p._index)
-              : n::UsdPrim();
+  if (!spec) return n::UsdPrim();
+  if (p._pad) {
+    std::lock_guard<std::mutex> lock(p._owner->proxy_mutex);
+    if (p._owner->proxy_generation != p._generation ||
+        p._pad > p._owner->proxy_ids.size()) return n::UsdPrim();
+    const auto& proxy = *p._owner->proxy_ids[p._pad - 1];
+    return proxy.GetLayer() == p._layer && proxy.GetIndex() == p._index
+               ? proxy : n::UsdPrim();
+  }
+  return n::UsdPrim(spec, static_cast<const n::Layer*>(p._layer), p._index);
 }
 
 lightusd_prim ToC(const lightusd_stage* owner, const n::UsdPrim& prim) {
@@ -122,6 +132,26 @@ lightusd_prim ToC(const lightusd_stage* owner, const n::UsdPrim& prim) {
     result._layer = prim.GetLayer();
     result._index = prim.GetIndex();
     result._generation = owner->generation.load(std::memory_order_acquire);
+    const auto* spec = prim.GetLayer()->prim(prim.GetIndex());
+    if (spec && prim.GetPath() != spec->path()) {
+      std::lock_guard<std::mutex> lock(owner->proxy_mutex);
+      if (owner->proxy_generation != result._generation) {
+        owner->proxy_ids.clear();
+        owner->proxy_prims.clear();
+        owner->proxy_path_ids.clear();
+        owner->proxy_generation = result._generation;
+      }
+      const std::string& path = prim.GetPath().str();
+      auto id = owner->proxy_path_ids.find(path);
+      if (id == owner->proxy_path_ids.end()) {
+        if (owner->proxy_ids.size() >= UINT32_MAX) return lightusd_prim{};
+        auto found = owner->proxy_prims.emplace(path, prim).first;
+        owner->proxy_ids.push_back(&found->second);
+        id = owner->proxy_path_ids.emplace(
+            path, static_cast<uint32_t>(owner->proxy_ids.size())).first;
+      }
+      result._pad = id->second;
+    }
   }
   return result;
 }
@@ -250,11 +280,29 @@ lightusd_status MakeView(n::ValueView v, lightusd_value_view* out) {
     return LIGHTUSD_OK;
   }
 
+  // Preserve validated lazy POD storage instead of decoding a second copy.
+  // Pinning the owner retains the LazyArrayRef and therefore its byte source.
+  if (v.is_lazy() && n::CanBorrowLazyFlat(v)) {
+    const auto* ref = v.lazy_ref();
+    out->storage = static_cast<uint8_t>(StorageFor(t, true));
+    out->components = static_cast<uint8_t>(n::GetComponentCount(t));
+    out->nbytes = static_cast<size_t>(ref->element_count * ref->src_elem_stride);
+    out->data = out->nbytes
+        ? ref->source->base() + ref->block_offset +
+              n::CrateArrayCountHeaderBytes(ref->source->version())
+        : nullptr;
+    return LIGHTUSD_OK;
+  }
+
   size_t nbytes = 0;
   const uint8_t* bytes = nullptr;
   if (v.is_lazy()) {
     std::lock_guard<std::mutex> lk(g_materialize_mu);
     bytes = v.raw_bytes(&nbytes);  // materializes under the lock
+    if (v.is_lazy()) {
+      std::memset(out, 0, sizeof(*out));
+      return Fail(LIGHTUSD_ERR_PARSE, "failed to materialize array value");
+    }
   } else {
     bytes = v.raw_bytes(&nbytes);
   }
@@ -788,11 +836,44 @@ lightusd_status lightusd_stage_load(const char* filename,
   } else {
     ok = n::LoadUSD(filename, &stage->stage, lo, &warn, &err);
   }
+  if (ok && composed &&
+      (format == LIGHTUSD_FORMAT_USDA || format == LIGHTUSD_FORMAT_USDC)) {
+    n::AssetResolver resolver = lo.resolver ? *lo.resolver : n::AssetResolver();
+    if (lo.resolver) {
+      auto config = resolver.GetConfig();
+      config.context = lo.resolver->GetCurrentContext();
+      resolver.SetConfig(config);
+    } else {
+      const std::string fn(filename);
+      const size_t slash = fn.find_last_of("/\\");
+      resolver.SetWorkingDirectory(slash == std::string::npos ? "." :
+                                   slash == 0 ? fn.substr(0, 1) : fn.substr(0, slash));
+    }
+    ok = n::ComposeLoadedStage(&stage->stage, resolver, filename, lo,
+                               &warn, &err, &co);
+  }
   if (ok) {
     const std::string fn(filename ? filename : "");
     stage->source_filename = fn;
     const size_t slash = fn.find_last_of("/\\");
-    stage->source_dir = (slash == std::string::npos) ? "" : fn.substr(0, slash);
+    stage->source_dir = slash == std::string::npos ? "." :
+                        slash == 0 ? fn.substr(0, 1) : fn.substr(0, slash);
+    if (!lo.resolver) {
+      n::LoadUSDOptions eval_options(lo);
+      // Progress userdata is borrowed only for the original load call.
+      eval_options.usda_options.parse_options.progress_callback = {};
+      eval_options.usdc_options.crate_options.progress_callback = {};
+      stage->file_eval_options.reset(
+          new (std::nothrow) n::LoadUSDOptions(std::move(eval_options)));
+      if (!stage->file_eval_options)
+        return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "clip load options allocation failed");
+      std::error_code ec;
+      const fs::path absolute = fs::absolute(fs::path(fn), ec);
+      if (!ec) {
+        stage->source_filename = absolute.string();
+        stage->source_dir = absolute.parent_path().string();
+      }
+    }
   }
   if (!ok) {
     // Distinguish IO from parse errors coarsely.
@@ -873,6 +954,8 @@ uint64_t lightusd_stage_generation(const lightusd_stage* stage) {
   return stage ? stage->generation.load(std::memory_order_acquire) : 0;
 }
 
+}  // extern "C"
+
 namespace {
 n::Stage ImportedPackageStage(const lightusd_stage* stage) {
   n::Stage copy = stage->ReadStage().Clone();
@@ -894,6 +977,8 @@ n::Stage ImportedPackageStage(const lightusd_stage* stage) {
   return copy;
 }
 }  // namespace
+
+extern "C" {
 
 lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* filename,
                             const lightusd_save_options* opts) {
@@ -1451,7 +1536,14 @@ lightusd_sv lightusd_prim_type_name(lightusd_prim p) {
 
 lightusd_sv lightusd_prim_path(lightusd_prim p) {
   const n::PrimSpec* spec = SpecFromC(p);
-  return spec ? SV(spec->path().str()) : EmptySV();
+  if (!spec) return EmptySV();
+  if (!p._pad) return SV(spec->path().str());
+  std::lock_guard<std::mutex> lock(p._owner->proxy_mutex);
+  if (p._owner->proxy_generation != p._generation ||
+      p._pad > p._owner->proxy_ids.size()) return EmptySV();
+  const auto& proxy = *p._owner->proxy_ids[p._pad - 1];
+  return proxy.GetLayer() == p._layer && proxy.GetIndex() == p._index
+             ? SV(proxy.GetPath().str()) : EmptySV();
 }
 
 uint64_t lightusd_prim_root_layer_resource_id(lightusd_prim p) {
@@ -1477,8 +1569,29 @@ int lightusd_prim_has_payload(lightusd_prim p) {
 }
 
 int lightusd_prim_is_active(lightusd_prim p) {
-  const n::PrimSpec* spec = SpecFromC(p);
-  return (spec && spec->meta().active) ? 1 : 0;
+  return FromC(p).IsActive() ? 1 : 0;
+}
+
+int lightusd_prim_matches_default_predicate(lightusd_prim p) {
+  n::UsdPrim prim = FromC(p);
+  if (!prim) return 0;
+  // Traverse ancestry once: four separate effective-state queries repeat
+  // parent/path remapping, which is significant for large proxy hierarchies.
+  while (prim) {
+    const auto& meta = prim.GetMeta();
+    if (!meta.active || !meta.loaded ||
+        prim.GetSpecifier() != n::PrimSpecifier::Def) return 0;
+    prim = prim.GetParent();
+  }
+  return 1;
+}
+
+int lightusd_prim_matches_local_default_predicate(lightusd_prim p) {
+  const n::UsdPrim prim = FromC(p);
+  if (!prim) return 0;
+  const auto& meta = prim.GetMeta();
+  return meta.active && meta.loaded &&
+         prim.GetSpecifier() == n::PrimSpecifier::Def;
 }
 
 lightusd_prim lightusd_prim_parent(lightusd_prim p) { return ToC(p._owner, FromC(p).GetParent()); }
@@ -1605,7 +1718,9 @@ lightusd_sv lightusd_prim_property_type_name(lightusd_prim p, const char* name) 
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return EmptySV();
   const std::string* tn = spec->property_type_name(std::string(name));
-  return tn ? SV(*tn) : EmptySV();
+  if (tn && !tn->empty()) return SV(*tn);
+  const auto* definition = n::GetSchemaRegistry().FindProperty(*spec, name);
+  return definition ? SV(definition->type_name) : EmptySV();
 }
 
 lightusd_status lightusd_attr_get(lightusd_prim p, const char* name,
@@ -1749,22 +1864,35 @@ lightusd_status lightusd_attr_eval_ex(const lightusd_stage* stage, lightusd_prim
                                     : n::TimeInterpolation::Linear;
   options.follow_connections = follow_connections != 0;
   if (!stage->source_dir.empty()) {
-    auto resolver = std::make_shared<n::AssetResolver>();
-    resolver->SetWorkingDirectory(stage->source_dir);
-    options.clip_stage_cache = std::make_shared<n::ValueClipStageCache>();
-    options.clip_stage_loader = [resolver](const std::string& asset,
-                                           n::Stage* clip, std::string* warning,
-                                           std::string* error) {
-      const n::ResolvedAsset resolved = resolver->Resolve(asset);
+    if (stage->file_eval_options)
+      options.strict_aousd_conformance =
+          stage->file_eval_options->input_policy == n::InputPolicy::Untrusted;
+    // Most queries never consult clips. Defer resolver/options construction
+    // until resolution actually requests an asset; otherwise every ordinary
+    // mesh array read pays allocations and a getcwd syscall. ResolveValueClip
+    // supplies its own bounded-lifetime per-query cache when none is provided.
+    options.clip_stage_loader = [stage](const std::string& asset,
+                                       n::Stage* clip, std::string* warning,
+                                       std::string* error) {
+      n::ResolverConfig config;
+      config.working_directory = stage->source_dir;
+      n::AssetResolver resolver(config);
+      n::LoadUSDOptions clip_options = stage->file_eval_options
+          ? *stage->file_eval_options : n::LoadUSDOptions();
+      clip_options.resolver = &resolver;
+      const n::ResolvedAsset resolved = resolver.Resolve(asset);
       return resolved.exists &&
-             n::LoadUSDComposed(resolved.resolved_path, clip, warning, error);
+             n::LoadUSDComposed(resolved.resolved_path, clip, clip_options,
+                                warning, error);
     };
   }
   n::EvalResult r = n::AttributeEval(&stage->ReadStage()).EvalWith(
       FromC(p), std::string(name), options);
   if (!r.success) {
-    return Fail(LIGHTUSD_ERR_NOT_FOUND,
-                std::string("attribute evaluation failed for: ") + name);
+    return Fail(r.error.empty() ? LIGHTUSD_ERR_NOT_FOUND
+                               : LoadFailureStatus(r.error, LIGHTUSD_ERR_PARSE),
+                std::string("attribute evaluation failed for: ") + name +
+                    (r.error.empty() ? "" : ": " + r.error));
   }
   lightusd_value* res = NewValue(std::move(r.value));
   if (!res) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");

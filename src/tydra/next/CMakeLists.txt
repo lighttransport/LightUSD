@@ -241,6 +241,9 @@ if(TYDRA_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_tydra_next.cc
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    add_executable(skinning_points_dump
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/skinning-points-dump.cc)
+    target_link_libraries(skinning_points_dump PRIVATE tydra_next lightusd_next)
 endif()
 
 if(LIGHTUSD_NEXT_BUILD_FUZZERS)

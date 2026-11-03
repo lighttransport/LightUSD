@@ -389,6 +389,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawViewport();
   drawTimeline();
   drawMcpServerPanel();
+  comparePanel_.draw(renderer_,compareGeneration_,compareThreaded_,selPath_.c_str());
   drawAboutModal();
   drawLoadingModal();
   drawProgressOverlay();
@@ -1083,6 +1084,7 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Tools")) {
+      if (ImGui::MenuItem("Compare viewers")) comparePanel_.open();
       if (ImGui::MenuItem("MCP Server", nullptr, showMcpServer_)) {
         showMcpServer_ = true;
       }
@@ -1913,6 +1915,13 @@ bool Gui::isPathSelected(const std::string& path) const {
   if (path.empty()) return false;
   for (const SelectionItem& item : selectionList_) {
     if (item.path == path) return true;
+  }
+  return false;
+}
+
+bool Gui::focusSelectedPath(const std::string& path) {
+  for (size_t i = 0; i < selectionList_.size(); ++i) {
+    if (selectionList_[i].path == path) { focusSelectionListItem(i); return true; }
   }
   return false;
 }
@@ -7012,7 +7021,15 @@ void Gui::drawViewport() {
   ImGui::Begin("Viewport", nullptr, flags);
   ImGui::PopStyleVar();
 
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  ImVec2 avail = ImGui::GetContentRegionAvail();
+  if (fixedRenderW_ > 0 && fixedRenderH_ > 0) {
+    const float scale = std::min(avail.x / fixedRenderW_, avail.y / fixedRenderH_);
+    const ImVec2 fitted(scale * fixedRenderW_, scale * fixedRenderH_);
+    const ImVec2 cursor = ImGui::GetCursorPos();
+    ImGui::SetCursorPos(ImVec2(cursor.x + (avail.x - fitted.x) * 0.5f,
+                               cursor.y + (avail.y - fitted.y) * 0.5f));
+    avail = fitted;
+  }
   const int w = static_cast<int>(avail.x);
   const int h = static_cast<int>(avail.y);
   viewportW_ = w;
@@ -7027,8 +7044,8 @@ void Gui::drawViewport() {
     // ImGui layout/input use logical coordinates. Raster targets use physical
     // pixels so Retina viewports are as sharp as the surrounding UI.
     const ImVec2 fbScale = ImGui::GetIO().DisplayFramebufferScale;
-    const int rw = std::max(1, static_cast<int>(std::lround(w * renderScale_ * fbScale.x)));
-    const int rh = std::max(1, static_cast<int>(std::lround(h * renderScale_ * fbScale.y)));
+    const int rw = fixedRenderW_ > 0 ? fixedRenderW_ : std::max(1, static_cast<int>(std::lround(w * renderScale_ * fbScale.x)));
+    const int rh = fixedRenderH_ > 0 ? fixedRenderH_ : std::max(1, static_cast<int>(std::lround(h * renderScale_ * fbScale.y)));
     gpu([this, rw, rh] { renderer_->resizeViewport(rw, rh); });
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
@@ -7262,6 +7279,14 @@ void Gui::drawViewport() {
   ImGui::End();
 }
 
+void Gui::setNextStage(const lightusd::api::Stage& stage) {
+  if (nextStage_.get() == stage.get()) return;
+  nextStage_ = stage;
+  nextSkeletonPathsReady_ = false;
+  nextSkeletonPaths_.clear(); nextSkeletonLines_.clear();
+  nextSkeletonTimeValid_ = false;
+}
+
 void Gui::renderViewportScene(FramePacket* packet) {
   if (!renderer_ || !cam_ || viewportW_ <= 0 || viewportH_ <= 0) return;
 
@@ -7271,10 +7296,11 @@ void Gui::renderViewportScene(FramePacket* packet) {
   cam_->setAspect(static_cast<float>(vpW) / static_cast<float>(viewportH_));
   const int vpH = viewportH_;
   const ImVec2 fbScale = ImGui::GetIO().DisplayFramebufferScale;
-  const int renderW = std::max(
+  const int renderW = fixedRenderW_ > 0 ? fixedRenderW_ : std::max(
       1, static_cast<int>(std::lround(vpW * renderScale_ * fbScale.x)));
-  const int renderH = std::max(
+  const int renderH = fixedRenderH_ > 0 ? fixedRenderH_ : std::max(
       1, static_cast<int>(std::lround(vpH * renderScale_ * fbScale.y)));
+  if (fixedRenderW_ > 0) cam_->setAspect(static_cast<float>(renderW) / renderH);
   gpu([this, renderW, renderH] { renderer_->resizeViewport(renderW, renderH); });
 
   const light3d::Mat4 viewM = cam_->view();
@@ -7438,6 +7464,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   }
 
   if (!packet) {
+    if (renderObserver_) renderObserver_();
     renderer_->renderFrame(p);  // single-threaded: render inline
     if (timeFrame) {
       auto t3 = Clock::now();
@@ -7635,7 +7662,47 @@ void Gui::buildHelpers() {
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
   // Draw the same animated joint hierarchy used for skinning, then apply the
   // Skeleton prim transform to match the rendered character placement.
-  if (showSkeleton_ && loaded_ && loaded_->ok) {
+  if (showSkeleton_ && nextStage_) {
+    if (!nextSkeletonPathsReady_) {
+      VisitPublicPrims(nextStage_.get(), [&](lightusd_prim prim) {
+        if (PublicString(lightusd_prim_type_name(prim)) == "Skeleton")
+          nextSkeletonPaths_.push_back(PublicString(lightusd_prim_path(prim)));
+        return true;
+      });
+      nextSkeletonPathsReady_ = true;
+    }
+    if (!nextSkeletonTimeValid_ || nextSkeletonTime_ != timeline_.applied) {
+      nextSkeletonLines_.clear();
+      const float dx = draw_ && draw_->hasBounds ? draw_->aabbMax[0] - draw_->aabbMin[0] : 1.0f;
+      const float dy = draw_ && draw_->hasBounds ? draw_->aabbMax[1] - draw_->aabbMin[1] : 1.0f;
+      const float dz = draw_ && draw_->hasBounds ? draw_->aabbMax[2] - draw_->aabbMin[2] : 1.0f;
+      const float diagonal = std::sqrt(dx*dx + dy*dy + dz*dz);
+      auto segment = [&](const light3d::Vec3& a, const light3d::Vec3& b) {
+        nextSkeletonLines_.push_back(HelperVertex{{a.x,a.y,a.z},{0.10f,0.80f,0.90f}});
+        nextSkeletonLines_.push_back(HelperVertex{{b.x,b.y,b.z},{0.10f,0.80f,0.90f}});
+      };
+      for (const auto& path : nextSkeletonPaths_) {
+        NextSkeletonOverlay pose;
+        if (!BuildNextSkeletonOverlay(nextStage_.get(),path,timeline_.applied,&pose)) continue;
+        const size_t count = std::min(pose.parents.size(), pose.positions.size()/3);
+        const float markerSize = std::max(diagonal*(count>=1024 ? 0.001f : 0.015f),1e-5f);
+        for (size_t joint=0; joint<count; ++joint) {
+          const light3d::Vec3 p{pose.positions[joint*3],pose.positions[joint*3+1],pose.positions[joint*3+2]};
+          segment({p.x-markerSize,p.y,p.z},{p.x+markerSize,p.y,p.z});
+          segment({p.x,p.y-markerSize,p.z},{p.x,p.y+markerSize,p.z});
+          segment({p.x,p.y,p.z-markerSize},{p.x,p.y,p.z+markerSize});
+          const int parent = pose.parents[joint];
+          if (count<1024 && parent>=0 && static_cast<size_t>(parent)<count) {
+            const size_t j=static_cast<size_t>(parent)*3;
+            segment({pose.positions[j],pose.positions[j+1],pose.positions[j+2]},p);
+          }
+        }
+      }
+      nextSkeletonTime_ = timeline_.applied;
+      nextSkeletonTimeValid_ = true;
+    }
+    overlayLines_.insert(overlayLines_.end(),nextSkeletonLines_.begin(),nextSkeletonLines_.end());
+  } else if (showSkeleton_ && loaded_ && loaded_->ok) {
     std::unordered_map<std::string, light3d::Mat4> nodeWorlds;
     std::function<void(const tydra::Node&)> collectNodeWorlds =
         [&](const tydra::Node& node) {

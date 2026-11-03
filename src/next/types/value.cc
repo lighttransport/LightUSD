@@ -196,10 +196,13 @@ StringView ValueView::as_string() const { const lu_view s = core_ && (type_id() 
 StringView ValueView::as_token() const { const lu_view s = type_id() == TypeId::Token ? lu_value_string(core_) : lu_view{nullptr, 0}; return {s.data, s.len}; }
 StringView ValueView::as_asset_path() const { const lu_view s = type_id() == TypeId::AssetPath ? lu_value_string(core_) : lu_view{nullptr, 0}; return {s.data, s.len}; }
 DictView ValueView::as_dictionary() const { return DictView(is_dictionary() ? core_ : nullptr); }
-StringArrayView ValueView::as_token_array() const { return materialize() && core_->kind == LU_VALUE_ARRAY && lu_value_uses_string_storage(core_->type) ? StringArrayView(core_) : StringArrayView(); }
+StringArrayView ValueView::as_token_array() const {
+  if (!is_array() || !lu_value_uses_string_storage(core_->type)) return {};
+  return materialize() && core_->kind == LU_VALUE_ARRAY ? StringArrayView(core_) : StringArrayView();
+}
 #define ARRAY_READER(NAME, T, COMPONENT) \
 ValueArrayView<const T> ValueView::as_##NAME##_array() const { \
-  if (!materialize() || core_->kind != LU_VALUE_ARRAY || lu_value_array_component(core_->type) != LU_TYPE_##COMPONENT) return {}; \
+  if (!is_array() || lu_value_array_component(core_->type) != LU_TYPE_##COMPONENT || !materialize() || core_->kind != LU_VALUE_ARRAY) return {}; \
   return {static_cast<const T*>(lu_value_data(core_)), lu_value_array_scalar_count(core_)}; \
 }
 ARRAY_READER(float, float, FLOAT)

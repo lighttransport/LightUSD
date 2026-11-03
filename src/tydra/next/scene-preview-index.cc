@@ -29,7 +29,7 @@ bool Build::source_save_catalog(usd::Layer& catalog) {
       if (!value || !value->as_asset_path()) continue;
       const std::string path = value->as_asset_path();
       if (!path.empty() && !fs::path(path).is_absolute() && !anchor.empty())
-        paths[path] = (fs::path(anchor) / path).lexically_normal().string();
+        paths[path] = usd::ResolveAssetAnchorPath(path, spec->asset_anchor_id());
     }
     spec->remap_asset_paths(paths);
   }

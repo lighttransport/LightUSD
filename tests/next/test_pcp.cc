@@ -5206,7 +5206,180 @@ static void test_spec_lookup_filter_exactness() {
   std::cout << "  OK" << std::endl;
 }
 
+// Clip metadata authored only on an ancestor must keep its strength against
+// defaults introduced by a weaker reference, including absent child specs.
+static void test_inherited_clip_strength() {
+  const std::string weak = PcpScratchDirectory() + "/clip-weak.usda";
+  const std::string root = PcpScratchDirectory() + "/clip-root.usda";
+  { std::ofstream f(weak); f << "#usda 1.0\ndef Xform \"Asset\" {\n"
+      " def Scope \"C\" { float x = 9 }\n"
+      " def Scope \"Override\" { float x = 9 }\n}\n"; }
+  { std::ofstream f(root); f << "#usda 1.0\ndef Xform \"Shot\" (\n"
+      " prepend references = @clip-weak.usda@</Asset>\n"
+      " clips = { dictionary default = {\n"
+      "  asset[] assetPaths = [@clip.usda@]\n"
+      "  string primPath = \"/Cache\"\n"
+      "  double2[] active = [(1, 0)]\n"
+      " } }\n) {\n over \"Override\" { float x = 7 }\n}\n"; }
+  const std::string clip_path = PcpScratchDirectory() + "/clip.usda";
+  { std::ofstream f(clip_path); f << "#usda 1.0\ndef Xform \"Cache\" {\n"
+      " def Scope \"C\" { float x.timeSamples = { 1: 2, 2: 4 } }\n"
+      " def Scope \"Override\" { float x.timeSamples = { 1: 2, 2: 4 } }\n}\n"; }
+  AssetResolver resolver;
+  Stage stage;
+  std::string warn, err;
+  const bool built = pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err);
+  PCP_CHECK(built, err);
+  if (!built) return;
+  EvalOptions options;
+  options.time = TimeQuery::Numeric(1.5);
+  options.clip_stage_loader = [&](const std::string& asset, Stage* out,
+                                  std::string*, std::string*) {
+    PCP_CHECK(asset == clip_path, "clip asset anchored at authoring layer");
+    auto clip = LoadUSDAFromFile(asset);
+    if (!clip.success) return false;
+    *out = std::move(clip.stage);
+    return true;
+  };
+  AttributeEval eval(&stage);
+  auto child = stage.GetPrimAtPath("/Shot/C");
+  auto value = eval.EvalWith(child, "x", options);
+  PCP_CHECK(value.success && value.from_time_sample && value.value.as_float() &&
+            *value.value.as_float() == 3.0f, "inherited clip beats weak default");
+  auto override_value = eval.EvalWith(stage.GetPrimAtPath("/Shot/Override"), "x", options);
+  PCP_CHECK(override_value.success && override_value.value.as_float() &&
+            *override_value.value.as_float() == 7.0f, "strong local default beats clip");
+  options.time = TimeQuery::Default();
+  value = eval.EvalWith(child, "x", options);
+  PCP_CHECK(value.success && value.value.as_float() && *value.value.as_float() == 9.0f,
+            "default-time does not sample inherited clips");
+  std::remove(root.c_str());
+  std::remove(weak.c_str());
+  std::remove(clip_path.c_str());
+}
+
+static void test_ancestor_variant_child_arc_strength() {
+  const std::string base = LIGHTUSD_TEST_REPO_ROOT
+      "/tests/usda/pcp-ancestor-variant/";
+  for (const char* name : {"reference.usda", "payload.usda", "inherit.usda",
+                            "local-reference.usda"}) {
+    for (int threads : {1, 4}) {
+      for (bool native : {false, true}) {
+        AssetResolver resolver;
+        pcp::CompositionOptions options;
+        options.num_threads = threads;
+        options.load_payloads = true;
+        if (native) {
+          options.flatten_instances = false;
+          options.instance_flatten_mode = pcp::InstanceFlattenMode::Native;
+        }
+        Stage stage;
+        std::string warning, error;
+        const bool loaded = pcp::ComposeStageFromFile(base + name, resolver,
+            &stage, options, &warning, &error);
+        PCP_CHECK(loaded, error);
+        if (!loaded) continue;
+        const bool inherited = std::string(name) == "inherit.usda" ||
+                               std::string(name) == "local-reference.usda";
+        const std::string selected = inherited ? "Proxy" : "Render";
+        const std::string rejected = inherited ? "Render" : "Proxy";
+        PCP_CHECK(stage.GetPrimAtPath("/Root/Body/" + selected).IsValid(),
+                  "ancestor variant/child arc selected geometry");
+        PCP_CHECK(!stage.GetPrimAtPath("/Root/Body/" + rejected).IsValid(),
+                  "ancestor variant/child arc must not retain stale geometry");
+        const Value* strength = stage.GetPrimAtPath("/Root/Body")
+            .GetPropertyValue("strength");
+        PCP_CHECK(strength && strength->as_float() &&
+                  *strength->as_float() == (inherited ? 0.0f : 1.0f),
+                  "ordinary property must use the same arc strength order");
+      }
+    }
+  }
+}
+
+static void test_strict_failed_arc_and_variant_dependencies() {
+  const uint32_t package_anchor = InternAssetAnchor("/tmp/package.usdz[nested/model.usda]");
+  PCP_CHECK(ResolveAssetAnchorPath("../tex.png", package_anchor) ==
+            "/tmp/package.usdz[tex.png]", "package parent stays inside archive");
+  PCP_CHECK(ResolveAssetAnchorPath("textures/tex.png", package_anchor) ==
+            "/tmp/package.usdz[nested/textures/tex.png]", "package layer directory retained");
+  PCP_CHECK(ResolveAssetAnchorPath("../../escape.png", package_anchor).empty(),
+            "package asset cannot escape archive root");
+  for (bool strict : {false, true}) {
+    for (const char* arc : {"references", "payload"}) {
+      auto loaded = LoadUSDAFromString(std::string("#usda 1.0\ndef Xform \"Root\" (") +
+          arc + " = @absent-strict-arc.usda@</Asset>) {}\n");
+      PCP_CHECK(loaded.success, "parse missing-arc fixture");
+      if (!loaded.success) continue;
+      AssetResolver resolver;
+      resolver.SetWorkingDirectory(PcpScratchDirectory());
+      pcp::CompositionOptions options;
+      options.error_when_asset_not_found = strict;
+      options.load_payloads = true;
+      auto opened = pcp::Cache::Open(resolver,
+          std::shared_ptr<Layer>(loaded.stage.ReleaseRootLayer()), "", options);
+      PCP_CHECK(bool(opened), "open missing-arc fixture");
+      if (!opened) continue;
+      Stage result;
+      PCP_CHECK(opened->BuildStage(&result, nullptr, nullptr) == !strict,
+                "strict BuildStage must fail without an error output pointer");
+      if (strict) PCP_CHECK(opened->GetCompositionIssueCount() != 0,
+                            "strict failed arc needs a typed diagnostic");
+    }
+  }
+  const std::string base = LIGHTUSD_TEST_REPO_ROOT
+      "/tests/usda/pcp-ancestor-variant/";
+  StageSession session;
+  PCP_CHECK(session.OpenFile(base + "reference.usda"), session.GetError());
+  const auto dependencies = session.GetLayerDependencies();
+  AssetResolver dependency_resolver;
+  const std::string geometry = dependency_resolver.ResolvePath(
+      base + "geometry.usda", "");
+  PCP_CHECK(std::find(dependencies.begin(), dependencies.end(),
+                     geometry) != dependencies.end(),
+            "variant dependency must retain its physical asset");
+  for (const auto& dependency : dependencies) {
+    PCP_CHECK(dependency.find('\x1f') == std::string::npos &&
+              dependency.compare(0, 8, "variant:") != 0,
+              "synthetic variant identity must not leak into physical dependencies");
+  }
+}
+
+// The high-level loader must honor an explicit one-thread composition budget.
+static void test_composed_loader_serial_thread_budget() {
+  const std::string file = "/tmp/next_pcp_serial_budget_" + std::to_string(getpid()) + ".usda";
+  {
+    std::ofstream out(file);
+    out << "#usda 1.0\ndef Xform \"Source\" {}\ndef Xform \"World\" {\n";
+    for (int i = 0; i < 2048; ++i)
+      out << " def Xform \"P" << i << "\" (prepend payload = </Source>) {}\n";
+    out << "}\n";
+  }
+  for (const int threads : {0, 1}) {
+    const auto caller = std::this_thread::get_id();
+    std::atomic<bool> foreign_thread{false};
+    std::atomic<unsigned> calls{0};
+    pcp::CompositionOptions options;
+    options.num_threads = threads;
+    options.payload_policy = [&](const Path&, const std::string&) {
+      ++calls;
+      if (std::this_thread::get_id() != caller) foreign_thread.store(true);
+      return false;
+    };
+    Stage stage;
+    std::string warn, err;
+    const bool loaded = LoadUSDComposed(file, &stage, LoadUSDOptions{}, &warn, &err, &options);
+    PCP_CHECK(loaded, "serial-budget fixture must compose");
+    PCP_CHECK(calls.load() >= 2048, "serial-budget fixture must exercise payload policy");
+    PCP_CHECK(!foreign_thread.load(), "zero/one-thread composition policy must stay on caller thread");
+  }
+  std::remove(file.c_str());
+}
+
 int main() {
+  test_strict_failed_arc_and_variant_dependencies();
+  test_ancestor_variant_child_arc_strength();
+  test_inherited_clip_strength();
   test_source_snapshot_replay();
   test_batched_source_snapshot_back_reference();
   test_source_snapshot_crate_and_package();
@@ -5291,6 +5464,7 @@ int main() {
   test_concurrent_queries();
   test_concurrent_payload_edits();
   test_parallel_build_matches_serial();
+  test_composed_loader_serial_thread_budget();
   test_ancestor_reference_cycle();
   test_mutual_reference_cycle();
   test_self_payload_cycle();

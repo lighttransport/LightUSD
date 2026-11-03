@@ -10,7 +10,8 @@
 // yields a nonexistent path (the texture is then silently dropped).
 //
 // Composition flattens prims from many layers into one, so the source layer is
-// lost unless it is recorded. Each loaded layer's directory is interned here and
+// lost unless it is recorded. Each loaded layer's directory (or full package-layer
+// identifier for archive entries) is interned here and
 // the resulting id is stamped onto that layer's PrimSpecs
 // (`PrimSpec::asset_anchor_id`), then carried through composition. This mirrors
 // the eager path's per-prim `current_working_path` stamp.
@@ -25,14 +26,22 @@
 
 namespace lightusd {
 namespace next {
+class Layer;
 
-/// Intern an anchor directory and return its id. The empty string maps to 0
+/// Intern an anchor directory or package-layer identifier and return its id. The empty string maps to 0
 /// ("no anchor" -- the consumer falls back to its default base directory).
 /// Thread-safe: composition loads and stamps layers from several threads.
 uint32_t InternAssetAnchor(const std::string& dir);
 
-/// The directory for `id`, or "" when `id` is 0 / unknown.
+/// The directory or package-layer identifier for `id`, or "" when unknown.
 const std::string& AssetAnchorPath(uint32_t id);
+
+/// Resolve an authored asset against an anchor directory, or against a full
+/// package-layer identifier. Package traversal cannot escape its archive root.
+std::string ResolveAssetAnchorPath(const std::string& asset, uint32_t id);
+
+/// Stamp a loaded package layer with its full package-layer identifier.
+void StampPackageAssetAnchor(Layer* layer, const std::string& identifier);
 
 }  // namespace next
 }  // namespace lightusd

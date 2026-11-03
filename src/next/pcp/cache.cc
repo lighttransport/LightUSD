@@ -63,7 +63,17 @@ bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn
 bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
                        const PreviewCallback& preview_callback) {
   if (!stage) return false;
-  const bool ok = impl_->BuildStage(stage, warn, err, preview_callback);
+  bool ok = impl_->BuildStage(stage, warn, err, preview_callback);
+  // A failed reference must not turn a strict load into a successful partial
+  // stage. Diagnostics are recorded even when the caller omits `err`.
+  if (ok && impl_->options.error_when_asset_not_found) {
+    for (const auto &issue : GetCompositionIssues()) {
+      if (issue.code == ErrorCode::InvalidAssetPath) {
+        ok = false;
+        break;
+      }
+    }
+  }
   if (ok) impl_->reg_->RetainImportedAssets(stage->GetRootLayer());
   return ok;
 }
@@ -71,28 +81,11 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
 std::vector<std::string> Cache::GetLayerDependencies() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<std::string> dependencies;
-  auto physical_identifier = [](std::string identifier) {
-    // Variant content has a synthetic layer-stack id
-    // variant:<host>:<site>:<set>:<selection>. Its bytes live in <host>, which
-    // is the dependency cache validation must stat. Nested variants unwrap
-    // repeatedly. Keep Windows drive-letter colons: only the final three
-    // composition suffixes are removed each iteration.
-    while (identifier.compare(0, 8, "variant:") == 0) {
-      std::string host = identifier.substr(8);
-      bool valid = true;
-      for (int suffix = 0; suffix < 3; ++suffix) {
-        const size_t colon = host.rfind(':');
-        if (colon == std::string::npos) { valid = false; break; }
-        host.resize(colon);
-      }
-      if (!valid) break;
-      identifier.swap(host);
-    }
-    return identifier;
-  };
   for (const LayerStack& stack : impl_->layer_stacks) {
     for (const std::string& identifier : stack.layer_identifiers) {
-      const std::string physical = physical_identifier(identifier);
+      std::string physical = Impl::RealAnchorOf(identifier);
+      std::string package, entry;
+      if (AssetResolver::ParsePackagePath(physical, &package, &entry)) physical = package;
       if (!physical.empty()) dependencies.push_back(physical);
     }
   }
@@ -1734,6 +1727,13 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
           for (size_t i = lo; i < hi; ++i) {
             std::vector<Src> &sources = *compact_targets[i];
             const size_t before_capacity = sources.capacity();
+            // A source without a child spec may still contribute ancestor
+            // clips at this strength. Keep it until opinion composition.
+            const bool inherited_clips = std::any_of(
+                sources.begin(), sources.end(), [&](const Src& source) {
+                  return layer_stacks[source.stack_idx].has_value_clips;
+                });
+            if (inherited_clips) continue;
             const size_t removed = CompactOpinionSources(sources);
             if (removed) {
               removed_sum += removed;

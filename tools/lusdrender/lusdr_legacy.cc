@@ -1229,8 +1229,13 @@ bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
   frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
   frame->yfov = 2.0f * std::atan(0.5f * vertical_aperture /
                                  std::max(1.0e-6f, focal_length));
-  frame->xmag = horizontal_aperture;
-  frame->ymag = vertical_aperture;
+  frame->xmag = horizontal_aperture * 0.1f;
+  frame->ymag = vertical_aperture * 0.1f;
+  float offset_x=0, offset_y=0;
+  EvalAnimFallback(stage,cam.horizontalApertureOffset,"horizontalApertureOffset",time,&offset_x);
+  EvalAnimFallback(stage,cam.verticalApertureOffset,"verticalApertureOffset",time,&offset_y);
+  frame->shift_x=2.0f*offset_x/std::max(1.0e-6f,horizontal_aperture);
+  frame->shift_y=2.0f*offset_y/std::max(1.0e-6f,vertical_aperture);
   frame->znear = std::max(1.0e-5f, clipping_range[0]);
   frame->zfar = std::max(frame->znear, clipping_range[1]);
   frame->ortho = projection == lightusd::GeomCamera::Projection::Orthographic;

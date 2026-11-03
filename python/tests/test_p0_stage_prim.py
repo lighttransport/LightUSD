@@ -260,3 +260,62 @@ def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"])
     # so /Base may not be present; just verify load succeeds
     st_nc = lightusd.load(str(root), composed=False)
     assert st_nc is not None
+
+
+def test_native_instance_proxy_paths_and_parents(tmp_path):
+    source = tmp_path / "instances.usda"
+    source.write_text('''#usda 1.0
+    def Xform "Source" {
+        def Xform "Group" {
+            def Mesh "Mesh" { point3f[] points = [(1,2,3)] }
+        }
+    }
+    def Xform "A" ( prepend references = </Source> instanceable = true ) {}
+    def Xform "B" ( prepend references = </Source> instanceable = true ) {}
+    ''')
+    stage = lightusd.load(str(source), preserve_native_instances=True)
+    for name in ("A", "B"):
+        root = stage.prim_at("/" + name)
+        group, = root.children
+        mesh, = group.children
+        assert group.path == f"/{name}/Group"
+        assert mesh.path == f"/{name}/Group/Mesh"
+        assert mesh.parent.path == group.path
+        assert mesh.parent.parent.path == root.path
+        assert stage.prim_at(mesh.path).path == mesh.path
+        assert mesh.attribute("points").resolve(time=0).tolist() == [(1, 2, 3)]
+    stale = stage.prim_at("/B/Group/Mesh")
+    stage.define_prim("/New", "Xform")
+    # Python self-heals surviving handles by their logical path.
+    assert stale.path == "/B/Group/Mesh"
+    assert stage.prim_at("/B/Group/Mesh").path == stale.path
+    stage.remove_prim("/B")
+    with pytest.raises(lightusd.StaleHandleError):
+        _ = stale.path
+
+
+def test_leaf_prim_truthiness_is_validity_not_child_count():
+    stage = lightusd.Stage.create()
+    prim = stage.define_prim("/Leaf", "Xform")
+    assert len(prim) == 0
+    assert bool(prim)
+    stage.define_prim("/Sibling", "Xform")
+    assert bool(prim)  # Surviving logical handles self-heal.
+    stage.remove_prim("/Leaf")
+    with pytest.raises(lightusd.StaleHandleError):
+        bool(prim)
+
+
+def test_explicit_default_traversal_prunes_nonparticipating_subtrees():
+    stage = lightusd.loads('''#usda 1.0
+    class Xform "Class" { def Mesh "AbstractMesh" {} }
+    def Xform "Root" {
+        def Mesh "Visible" {}
+        def Xform "Inactive" (active = false) { def Mesh "Hidden" {} }
+        over "Undefined" { def Mesh "Child" {} }
+    }
+    ''')
+    assert [p.path for p in stage.traverse()] == ["/Root", "/Root/Visible"]
+    assert [p.path for p in stage.traverse(all_prims=True)] == [p.path for p in stage]
+    assert stage.prim_at("/Root/Inactive/Hidden").active is False
+    assert stage.prim_at("/Root/Inactive/Hidden").metadata("active") is None

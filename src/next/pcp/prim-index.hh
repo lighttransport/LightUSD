@@ -94,6 +94,10 @@ struct StackRelocates {
 /// and is refcount-shared across every node/index that uses it (parse-once).
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
+  // Layers containing clip metadata need ancestral opinions during value
+  // composition, including layers with no spec at the requested child path.
+  std::vector<bool> layer_has_value_clips;
+  bool has_value_clips = false;
   std::vector<std::string> layer_identifiers;  // resolved id for each layer
   // Per-layer time offset RELATIVE TO THE STACK ROOT, accumulated through
   // nested sublayer `(offset = ..; scale = ..)` annotations. Parallel to
@@ -107,6 +111,10 @@ struct LayerStack {
   // expressions can resolve differently). Equals `identifier` when no
   // variables were inherited.
   std::string cache_key;
+  // For USDA inline variant-content stacks, retain the introducing site.
+  // Stable keys survive parallel cache adoption without index remapping.
+  std::string variant_owner_key;
+  std::string variant_owner_site;
   LayerOffset offset;                           // cumulative time offset to root
   // Variables authored by this stack, composed weakest-to-strongest.
   Value expression_variables;

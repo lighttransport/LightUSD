@@ -104,7 +104,9 @@
                   std::vector<Src> *out, std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const ArcChain &chain, std::string *warn,
-                  std::string *err);
+                  std::string *err,
+                  void (*before_references)(void*) = nullptr,
+                  void* before_references_data = nullptr);
 
   std::vector<Src> ExpandList(const std::vector<Src> &base,
                               const std::string &root_prim_path,

@@ -146,18 +146,18 @@ Value Value::MakeDouble4(double x, double y, double z, double w) {
   return v;
 }
 
-Value Value::MakeQuatf(float x, float y, float z, float w) {
+Value Value::MakeQuatf(float w, float x, float y, float z) {
   Value v;
   v.core_.type = static_cast<uint16_t>(TypeId::Quatf);
-  float data[4] = {x, y, z, w};
+  float data[4] = {w, x, y, z};
   AdoptPod(v, data, sizeof(data));
   return v;
 }
 
-Value Value::MakeQuatd(double x, double y, double z, double w) {
+Value Value::MakeQuatd(double w, double x, double y, double z) {
   Value v;
   v.core_.type = static_cast<uint16_t>(TypeId::Quatd);
-  double data[4] = {x, y, z, w};
+  double data[4] = {w, x, y, z};
   AdoptPod(v, data, sizeof(data));
   return v;
 }

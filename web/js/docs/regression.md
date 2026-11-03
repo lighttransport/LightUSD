@@ -458,3 +458,13 @@ without composition or rendering. The next document API enforces its 512 MiB
 input/resident limit. `--max-fail 0`, supplied by the npm command, fails on any
 rejected input; a missing loader API is an error. The pinned corpus currently
 contains 280 USD-family files.
+
+### Composed-load dependency failures
+
+A next RenderStream composed load fails when an external reference or payload
+cannot load, including blocked parent-relative paths and missing assets after
+an attached store is detached. It must clear prior render geometry and retain
+the typed composition issue report. A successful empty/partial scene is not an
+acceptable result for these cases. The USDA composition, C dispatch and loading
+parity suites assert this contract; legacy parse-only loads may still succeed.
+Incremental dependency discovery belongs to the flatten-session workflow.

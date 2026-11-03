@@ -272,6 +272,15 @@ int lrt_vk_rtx_scene_render_materialx_path(
     const lrt_vk_material_path_desc *desc, float *out_rgba,
     lrt_result *err);
 
+/* Offline, bounded GPU residency: share every prototype BLAS, retain an owned
+ * host copy of placements, and build/trace one <=1M-instance TLAS at a time.
+ * All placements participate in nearest-hit merging. Repeated wide traces are
+ * supported, rebuilding the slices each time. LRT_VK_TLAS_SLICE can override the
+ * slice size for diagnostics. Use trace_wide even for a small scene. */
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_streamed(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err);
+
 /* Wide-id hit: like lrt_hit but the single 32-bit prim_id is replaced by the two
  * fields the wide trace stores separately. `inst` is the TLAS instance (placement)
  * id 0..ninsts-1; `local` is the prototype-local triangle index. A miss sets

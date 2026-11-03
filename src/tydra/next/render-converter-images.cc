@@ -43,13 +43,15 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   // fallback). Anchor it at the AUTHORING layer's directory, same as above.
   if (config_.asset_resolver) {
     ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
-        file, base.empty() ? std::string() : base + "/");
+        file, base.empty() ? std::string() :
+              ::lightusd::next::AssetResolver::IsPackagePath(base) ? base : base + "/");
     if (resolved.exists && !resolved.resolved_path.empty()) {
       return resolved.resolved_path;
     }
     return file;
   }
 
+  if (!anchor.empty()) return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
   if (base.empty()) return file;
 
   // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and

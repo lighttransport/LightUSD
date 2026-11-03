@@ -201,7 +201,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         if (!arc_layer) {
           if (options.error_when_asset_not_found) {
             AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
-                     "Arc asset not found: " + arc.asset_path, err);
+                     "Failed to load arc asset: " + arc.asset_path, err);
           }
           return;
         }

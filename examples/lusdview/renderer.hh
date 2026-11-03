@@ -674,6 +674,10 @@ class Renderer {
   // Texture handle of the offscreen color target for ImGui::Image.
   virtual ViewportTexHandle viewportTexture() const = 0;
 
+  // Four renderer-owned RGBA8 comparison previews, independent of scene textures.
+  // Uploads run on the GPU owner between frames. A null image queries the handle.
+  virtual ViewportTexHandle comparisonImage(int, const light3d::Image* = nullptr) { return 0; }
+
   // Composite: draw the current ImGui draw data to the window and present/swap.
   // Must be called after ImGui::Render().
   virtual void present() = 0;

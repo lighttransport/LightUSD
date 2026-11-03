@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
+#include "../layer/asset-anchor.hh"
 namespace lightusd {
 namespace next {
 namespace pcp {
@@ -258,12 +259,24 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
       return false;
     }
     st.layers.push_back(layer);
-    st.layer_identifiers.push_back(identifier);
+    bool has_clips = false;
+    for (size_t i = 0; i < layer->prim_count(); ++i) {
+      const PrimSpec* spec = layer->prim(static_cast<uint32_t>(i));
+      if (spec && spec->meta().clips().is_dictionary()) {
+        has_clips = true;
+        break;
+      }
+    }
+    st.layer_has_value_clips.push_back(has_clips);
+    st.has_value_clips = st.has_value_clips || has_clips;
+    const std::string& source_anchor = AssetAnchorPath(layer->source_asset_anchor_id());
+    st.layer_identifiers.push_back(AssetResolver::IsPackagePath(source_anchor)
+                                       ? source_anchor : identifier);
     st.layer_offsets.push_back(cum_offset);
     // Anchor = the referencing layer's FILE path; AssetResolver::Resolve takes
     // its directory internally. (Passing a pre-stripped dir double-strips and
     // breaks deep relative paths like `../../Materials/x.usd`.)
-    const std::string &anchor = identifier;
+    const std::string anchor = st.layer_identifiers.back();
     const auto &sub_offsets = layer->meta().subLayerOffsets;
     for (size_t sub_i = 0; sub_i < layer->meta().subLayers.size(); ++sub_i) {
       std::string sub = layer->meta().subLayers[sub_i];

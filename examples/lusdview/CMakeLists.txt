@@ -117,6 +117,7 @@ set(LUSDVIEW_SOURCES
     camera_stereo.cc
     frame_packet.cc
     gui.cc
+    compare_panel.cc
     gui_stringify.cc
     gui_style.cc
     gl/gl_util.cc
@@ -384,6 +385,15 @@ endfunction()
 lusdview_set_warning_flags(lusdview_material_objects)
 
 if(LIGHTUSD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME lusdview-control-unit
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover
+          -s ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/view_control -p test_control.py)
+    set_tests_properties(lusdview-control-unit PROPERTIES
+        LABELS "lusdview;mcp" TIMEOUT 30
+        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+  endif()
   if(LUSDVIEW_HAVE_OPTIX)
     add_executable(lusdview_optix_runtime_test
         tests/optix_runtime_test.cc

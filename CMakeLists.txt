@@ -2430,6 +2430,12 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
+    add_test(NAME tool-view-control-headless
+      COMMAND ${LUSDR_PYTHON} -m unittest discover
+              -s ${PROJECT_SOURCE_DIR}/tools/view_control -p test_headless.py)
+    set_tests_properties(tool-view-control-headless PROPERTIES
+      TIMEOUT 30 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;headless;mcp")
     set(LUSDR_SPARSE_QJS_ARG)
     if(LIGHTUSD_WITH_QJS)
       set(LUSDR_SPARSE_QJS_ARG --with-qjs)
@@ -2572,6 +2578,12 @@ if(LIGHTUSD_BUILD_TESTS)
         cli-robustness
         cmyk-jpeg-texture
         degraded-material
+        diagnostic-material
+        diagnostic-material-gpu
+        diagnostic-opacity
+        diagnostic-opacity-chunks-gpu
+        diagnostic-opacity-cpu-chunks
+        diagnostic-opacity-gpu
         dome-format
         double-sided-cull
         frames-framespec
@@ -2596,8 +2608,12 @@ if(LIGHTUSD_BUILD_TESTS)
         sphere-light-nee
         subdivision-schemes
         textureless-dome
+        texture-value-modifiers
+        texture-value-modifiers-gpu
+        texture-chunk-uvs-gpu
         timecode-blendshape-animation
         timecode-normals-animation
+        capture-normals
         timecode-points-animation
         timecode-transform-animation
         transparency
@@ -2606,6 +2622,10 @@ if(LIGHTUSD_BUILD_TESTS)
         uv-set-routing
         gaussian-carrier-dispatch
         gaussian-schema-aliases
+        vk-instanced-lifetime
+        vk-data-aovs
+        vk-instanced-curves
+        vk-blas-batches
         vk-ray-tiling)
     foreach(t ${LUSDR_SHELL_TESTS})
       add_test(
@@ -2615,7 +2635,7 @@ if(LIGHTUSD_BUILD_TESTS)
                 "$<TARGET_FILE:lusdrender>"
       )
       set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
-      if(t MATCHES "gpu|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
+      if(t MATCHES "gpu|^vk-blas-batches$|^vk-instanced-curves$|^vk-data-aovs$|^vk-instanced-lifetime$|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
         set_tests_properties(tool-lusdrender-${t} PROPERTIES
                              LABELS "lusdrender;gpu")
       else()

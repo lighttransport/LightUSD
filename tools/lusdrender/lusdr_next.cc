@@ -222,7 +222,15 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
                           const std::vector<Texture> *tex_pool = nullptr,
                           float disp_scale = 0.0f,
                           float displacement_tex_scale = 1.0f,
-                          float displacement_tex_bias = 0.0f) {
+                          float displacement_tex_bias = 0.0f,
+                          const lightusd::next::EvalOptions *evaluation = nullptr,
+                          bool opacity_presence = true) {
+  auto readFloatCopy = [&](const lightusd::next::UsdPrim& p, const char* name, double t) {
+    if (!evaluation) return ReadFloatArrayLazy(p, name, t);
+    lightusd::tydra::next::ValueArrayRead<float> values;
+    lightusd::tydra::next::ReadFloatArray(p, name, *evaluation, &values);
+    return std::vector<float>(values.begin(), values.end());
+  };
   // MeshLightAPI: this mesh is an AREA LIGHT, not just emissive geometry. The next
   // loader used to ignore that entirely -- LightCache::mesh was only ever built by
   // the legacy flatten -- so an emissive mesh lit nothing and was seen only by
@@ -260,7 +268,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
               prim.GetPropertyValue("inputs:normalize"))
         if (const bool *b = v->as_bool()) normalize = *b;
       if (normalize) {
-        const std::vector<float> npts_f = ReadFloatArrayLazy(prim, "points", time);
+        const std::vector<float> npts_f = readFloatCopy(prim, "points", time);
         const std::vector<int32_t> ncounts =
             ReadIntArrayLazy(prim, "faceVertexCounts", time);
         const std::vector<int32_t> nidx =
@@ -315,6 +323,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
     out_job_mat->opacity = opacity;
     out_job_mat->opacity_tex_id = opacity_tex.id;
     out_job_mat->opacity_threshold = opacity_threshold;
+    out_job_mat->opacity_presence = opacity_presence;
     out_job_mat->clearcoat = clearcoat;
     out_job_mat->clearcoat_roughness = clearcoat_roughness;
     out_job_mat->clearcoat_tex_id = clearcoat_tex.id;
@@ -360,7 +369,9 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
     counts.view = {generated.counts.data(), generated.counts.size(), false};
     indices.view = {generated.indices.data(), generated.indices.size(), false};
   } else {
-    ReadFloatArrayViewLazy(prim, "points", time, &points);
+    if (evaluation) lightusd::tydra::next::ReadFloatArray(
+        prim, "points", *evaluation, &points);
+    else ReadFloatArrayViewLazy(prim, "points", time, &points);
     ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
     ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
   }
@@ -380,19 +391,42 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       blend_weights ? ComputeBlendShapeOffsetsNext(stage, prim, *blend_weights,
                                                    npts)
                     : std::vector<Vec3>();
+  std::vector<float> morphed_points;
+  if (!blend_offsets.empty()) {
+    morphed_points.resize(points.size());
+    for (size_t i = 0; i < npts; ++i) {
+      morphed_points[3*i] = points[3*i] + blend_offsets[i].x;
+      morphed_points[3*i+1] = points[3*i+1] + blend_offsets[i].y;
+      morphed_points[3*i+2] = points[3*i+2] + blend_offsets[i].z;
+    }
+    points.view = {morphed_points.data(), morphed_points.size(), false};
+  }
+  std::vector<float> skinned_points;
+  std::vector<double> skin_normals;
+  std::string skin_error;
+  if (stage && !lightusd::tydra::next::EvaluateSkinnedPoints(
+          *stage, prim, time, points, &skinned_points, &skin_error,
+          (prim.GetPropertyValue("normals") || prim.GetPropertyValue("primvars:normals")) ? &skin_normals : nullptr)) {
+    std::cerr << "Skinning failed: " << prim.GetPath().str()
+              << ": " << skin_error << "\n";
+    stats->skipped_meshes++;
+    return;
+  }
+  if (!skinned_points.empty())
+    points.view = {skinned_points.data(), skinned_points.size(), false};
   for (size_t i = 0; i < npts; i++) {
     Vec3 p{points[3 * i], points[3 * i + 1], points[3 * i + 2]};
-    if (!blend_offsets.empty()) p = Add(p, blend_offsets[i]);
     wpts[i] = TransformPoint(world, p);
   }
 
   // UV (primvars:st) for the diffuse texture. Stored flat [u0,v0,u1,v1,...].
-  // Interpolation is inferred from sizes: per-point ("vertex"/"varying") when
-  // the UV count matches the point count, otherwise per-face-vertex
-  // ("faceVarying"). primvars:st:indices indirection is honored when present.
-  std::vector<float> st;
-  std::vector<int32_t> st_indices;
-  bool st_facevarying = false;
+  lightusd::next::EvalOptions fallback_evaluation;
+  fallback_evaluation.time = lightusd::next::TimeQuery::Numeric(time);
+  fallback_evaluation.follow_connections = false;
+  const auto& attribute_evaluation = evaluation ? *evaluation : fallback_evaluation;
+  using lightusd::tydra::next::MeshFloatAttribute;
+  using lightusd::tydra::next::ReadMeshFloatAttribute;
+  MeshFloatAttribute st;
   bool have_st = false;
   if ((want_uvs || displacement_tex_id >= 0) &&
       (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
@@ -400,58 +434,41 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
        opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
        clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
        displacement_tex_id >= 0)) {
-    // Pick the UV set. If the bound base-color texture names one (its
-    // UsdPrimvarReader varname), use that so a texture reading a secondary set
-    // (e.g. `uvSet1`) is sampled with it, matching lusdview. Otherwise fall back
-    // to the exporter preference list tydra-next's converter uses.
-    std::string st_name;
-    if (!preferred_uv.empty()) {
-      st = ReadFloatArrayLazy(prim, ("primvars:" + preferred_uv).c_str(), time);
-      if (!st.empty()) st_name = preferred_uv;
+    if (!analytic && !preferred_uv.empty()) have_st = ReadMeshFloatAttribute(
+        prim, "primvars:" + preferred_uv, attribute_evaluation,
+        2, npts, indices.size(), &st);
+    if (!analytic && !have_st) for (const std::string& name :
+        lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
+      if (ReadMeshFloatAttribute(prim, "primvars:" + name, attribute_evaluation,
+          2, npts, indices.size(), &st)) { have_st = true; break; }
     }
-    if (st.empty()) {
-      for (const std::string &name :
-           lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
-        st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
-        if (!st.empty()) {
-          st_name = name;
-          break;
-        }
-      }
-    }
-    if (st.empty() && analytic && !generated.uvs.empty()) {
-      st = generated.uvs;
-      st_facevarying = generated.uvs_facevarying;
+    if (!have_st && analytic && !generated.uvs.empty()) {
+      st.components = 2;
+      st.values.view = {generated.uvs.data(), generated.uvs.size(), false};
+      st.interpolation = generated.uvs_facevarying ? "faceVarying" : "vertex";
       have_st = true;
-    } else if (!st.empty()) {
-      st_indices = ReadIntArrayLazy(
-          prim, ("primvars:" + st_name + ":indices").c_str(), time);
-      const size_t uv_count =
-          st_indices.empty() ? (st.size() / 2) : st_indices.size();
-      // Per-point if it matches the points; per-face-vertex if it matches the
-      // face-vertex stream (== faceVertexIndices length).
-      if (uv_count == npts) {
-        st_facevarying = false;
-        have_st = true;
-      } else if (uv_count == indices.size()) {
-        st_facevarying = true;
-        have_st = true;
-      }
     }
   }
-  // Fetch the UV for face-vertex slot `fv` (position in the face-vertex stream)
-  // whose underlying point index is `pi`. Returns {u,v}.
-  auto uv_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
-    if (!have_st) return {0.0f, 0.0f};
-    size_t s = st_facevarying ? fv : size_t(pi);
-    if (!st_indices.empty()) {
-      if (s >= st_indices.size()) return {0.0f, 0.0f};
-      int32_t idx = st_indices[s];
-      if (idx < 0) return {0.0f, 0.0f};
-      s = size_t(idx);
+  const bool st_facevarying = st.interpolation == "faceVarying" ||
+                             st.interpolation == "uniform";
+  // Uniform attributes need an authored face id. Allocate the small prefix
+  // table only when one is actually used, rather than a per-corner face array.
+  std::vector<size_t> face_offsets;
+  auto face_for_corner = [&](size_t corner) {
+    if (face_offsets.empty()) {
+      face_offsets.push_back(0);
+      for (int32_t count : counts)
+        face_offsets.push_back(face_offsets.back() + size_t(std::max(0, count)));
     }
-    if (s * 2 + 1 >= st.size()) return {0.0f, 0.0f};
-    return {st[s * 2 + 0], st[s * 2 + 1]};
+    const auto upper = std::upper_bound(face_offsets.begin(), face_offsets.end(), corner);
+    return upper == face_offsets.begin() ? SIZE_MAX : size_t(upper - face_offsets.begin() - 1);
+  };
+  auto uv_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
+    if (!have_st || pi < 0) return {0.0f, 0.0f};
+    size_t tuple = 0;
+    const size_t face = st.interpolation == "uniform" ? face_for_corner(fv) : 0;
+    if (!st.TupleIndex(size_t(pi), fv, face, &tuple)) return {0.0f, 0.0f};
+    return {st.values[tuple * 2], st.values[tuple * 2 + 1]};
   };
 
   // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
@@ -580,12 +597,12 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   std::vector<float> dcol, dopac;
   int dc_mode = 0, do_mode = 0;  // 0=const, 1=vertex, 2=faceVarying, 3=uniform
   if (want_colors) {
-    dcol = ReadFloatArrayLazy(prim, "primvars:displayColor", time);
+    dcol = readFloatCopy(prim, "primvars:displayColor", time);
     const size_t nc = dcol.size() / 3;
     if (nc == npts) dc_mode = 1;
     else if (nc == indices.size()) dc_mode = 2;
     else if (nc == counts.size()) dc_mode = 3;
-    dopac = ReadFloatArrayLazy(prim, "primvars:displayOpacity", time);
+    dopac = readFloatCopy(prim, "primvars:displayOpacity", time);
     const size_t no = dopac.size();
     if (no == npts) do_mode = 1;
     else if (no == indices.size()) do_mode = 2;
@@ -608,35 +625,71 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
     }
   };
 
-  // Authored normals for smooth shading (`-smooth`). Stored per corner in the
-  // job's frame (world for flat, prototype-local for instanced — `world` is
-  // identity there), transformed at hit. Falls back to the geometric normal when
-  // absent. Interpolation inferred from size (vertex / faceVarying).
-  std::vector<float> nrm;
-  int nrm_mode = 0;  // 0=none, 1=vertex, 2=faceVarying
-  // Displaced meshes shade with the geometric normal of the deformed surface, so
-  // authored (pre-displacement) normals are ignored -- they no longer match.
+  MeshFloatAttribute normal_attribute;
+  std::vector<float> generated_smooth_normals;
+  bool have_normal_attribute = false;
   if (want_normals && !do_displace) {
-    nrm = ReadFloatArrayLazy(prim, "normals", time);
-    if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
-    if (nrm.empty() && analytic) {
-      nrm = generated.normals;
-      nrm_mode = generated.normals_facevarying ? 2 : 1;
+    have_normal_attribute =
+        lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
+        (ReadMeshFloatAttribute(prim, "primvars:normals", attribute_evaluation,
+                                3, npts, indices.size(), &normal_attribute) ||
+         ReadMeshFloatAttribute(prim, "normals", attribute_evaluation, 3, npts,
+                                indices.size(), &normal_attribute));
+    if (!have_normal_attribute && analytic && !generated.normals.empty()) {
+      normal_attribute.components = 3;
+      normal_attribute.values.view = {generated.normals.data(),
+                                      generated.normals.size(), false};
+      normal_attribute.interpolation =
+          generated.normals_facevarying ? "faceVarying" : "vertex";
+      have_normal_attribute = true;
     }
-    const size_t nn = nrm.size() / 3;
-    if (nrm_mode == 0 && nn == npts) nrm_mode = 1;
-    else if (nn == indices.size()) nrm_mode = 2;
   }
-  // World-space normal for face-vertex slot `fv` (point index `pi`); `geom` is the
-  // face's geometric normal (already in the job frame) used as the fallback.
-  auto norm_at = [&](size_t fv, int32_t pi, const Vec3 &geom) -> Vec3 {
-    if (!nrm_mode) return geom;
-    size_t ni = nrm_mode == 1 ? size_t(pi) : fv;
-    if (ni * 3 + 2 >= nrm.size()) return geom;
-    Vec3 ln{nrm[ni * 3 + 0], nrm[ni * 3 + 1], nrm[ni * 3 + 2]};
-    Vec3 wn = TransformVector(world, ln);  // job-frame (world for flat path)
-    float len = Length(wn);
-    return len > 1.0e-12f ? Mul(wn, 1.0f / len) : geom;
+  if (want_normals && !do_displace && !have_normal_attribute &&
+      lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
+    const auto* orientation = prim.GetPropertyValue("orientation");
+    const bool left_handed = orientation && orientation->as_token() &&
+                             *orientation->as_token() == "leftHanded";
+    if (lightusd::tydra::next::ComputeMeshSmoothNormals(
+            points, counts, indices, left_handed, &generated_smooth_normals)) {
+      normal_attribute.components = 3;
+      normal_attribute.interpolation = "vertex";
+      normal_attribute.values.view = {generated_smooth_normals.data(),
+                                      generated_smooth_normals.size(), false};
+      have_normal_attribute = true;
+      skin_normals.clear();  // Generated from posed points, not rest normals.
+    }
+  }
+  matrix4d inverse_normal_world;
+  const bool invertible_normal_world =
+      have_normal_attribute &&
+      lightusd::inverse(world, inverse_normal_world, 1.0e-12);
+  auto norm_at = [&](size_t fv, int32_t pi, const Vec3& geom) -> Vec3 {
+    if (!have_normal_attribute || !invertible_normal_world || pi < 0)
+      return geom;
+    size_t tuple = 0;
+    const size_t face =
+        normal_attribute.interpolation == "uniform" ? face_for_corner(fv) : 0;
+    if (!normal_attribute.TupleIndex(size_t(pi), fv, face, &tuple)) return geom;
+    Vec3 n{normal_attribute.values[tuple * 3],
+           normal_attribute.values[tuple * 3 + 1],
+           normal_attribute.values[tuple * 3 + 2]};
+    if (!skin_normals.empty()) {
+      const double* m = skin_normals.data() + size_t(pi) * 9;
+      n = {float(n.x * m[0] + n.y * m[3] + n.z * m[6]),
+           float(n.x * m[1] + n.y * m[4] + n.z * m[7]),
+           float(n.x * m[2] + n.y * m[5] + n.z * m[8])};
+    }
+    const Vec3 wn{float(n.x * inverse_normal_world.m[0][0] +
+                        n.y * inverse_normal_world.m[0][1] +
+                        n.z * inverse_normal_world.m[0][2]),
+                  float(n.x * inverse_normal_world.m[1][0] +
+                        n.y * inverse_normal_world.m[1][1] +
+                        n.z * inverse_normal_world.m[1][2]),
+                  float(n.x * inverse_normal_world.m[2][0] +
+                        n.y * inverse_normal_world.m[2][1] +
+                        n.z * inverse_normal_world.m[2][2])};
+    const float length = Length(wn);
+    return length > 1.0e-12f ? Mul(wn, 1.0f / length) : geom;
   };
 
   // Reserve from the exact triangle-fan estimate. StreamMeshJobs gives each mesh
@@ -715,6 +768,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   tmpl.opacity_tex_scale = opacity_tex.scale;
   tmpl.opacity_tex_bias = opacity_tex.bias;
   tmpl.opacity_threshold = opacity_threshold;
+  tmpl.opacity_presence = opacity_presence;
   tmpl.clearcoat = clearcoat;
   tmpl.clearcoat_roughness = clearcoat_roughness;
   tmpl.clearcoat_tex_id = clearcoat_tex.id;
@@ -731,6 +785,14 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   tmpl.use_specular_workflow = use_specular_workflow;
   tmpl.purpose_bit = purpose_bit;
 
+  lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
+  lightusd::tydra::next::ReadIntArray(prim, "holeIndices", attribute_evaluation,
+                                      &hole_values);
+  const std::unordered_set<int32_t> holes(hole_values.begin(),
+                                          hole_values.end());
+  const auto* orientation = prim.GetPropertyValue("orientation");
+  const bool left_handed = orientation && orientation->as_token() &&
+                           *orientation->as_token() == "leftHanded";
   const bool have_mask = face_mask && !face_mask->empty();
   size_t cursor = 0;
   size_t face_idx = 0;
@@ -741,21 +803,24 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       continue;
     }
     // GeomSubset job split: this job emits only its own faces.
-    if (have_mask && (face >= face_mask->size() || !(*face_mask)[face])) {
+    if (holes.count(static_cast<int32_t>(face)) ||
+        (have_mask && (face >= face_mask->size() || !(*face_mask)[face]))) {
       cursor += size_t(c);
       continue;
     }
     for (int32_t k = 1; k + 1 < c; k++) {
+      const size_t corner1 = cursor + size_t(left_handed ? k + 1 : k);
+      const size_t corner2 = cursor + size_t(left_handed ? k : k + 1);
       int32_t i0 = indices[cursor + 0];
-      int32_t i1 = indices[cursor + size_t(k)];
-      int32_t i2 = indices[cursor + size_t(k + 1)];
+      int32_t i1 = indices[corner1];
+      int32_t i2 = indices[corner2];
       if (i0 < 0 || i1 < 0 || i2 < 0 || size_t(i0) >= npts ||
           size_t(i1) >= npts || size_t(i2) >= npts) {
         continue;
       }
-      const Vec3 &p0 = wpts[size_t(i0)];
-      const Vec3 &p1 = wpts[size_t(i1)];
-      const Vec3 &p2 = wpts[size_t(i2)];
+      const Vec3& p0 = wpts[size_t(i0)];
+      const Vec3& p1 = wpts[size_t(i1)];
+      const Vec3& p2 = wpts[size_t(i2)];
       Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
       if (Length(n) < 1.0e-12f) continue;
 
@@ -810,8 +875,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
         // Keep tri_uvs parallel to tris (6 floats/tri). uv0=vert0, uv1=vert(k),
         // uv2=vert(k+1) in fan order, matching i0/i1/i2 above.
         auto uv0 = uv_at(cursor + 0, i0);
-        auto uv1 = uv_at(cursor + size_t(k), i1);
-        auto uv2 = uv_at(cursor + size_t(k + 1), i2);
+        auto uv1 = uv_at(corner1, i1);
+        auto uv2 = uv_at(corner2, i2);
         // Bake the UsdTransform2d (if any) into the stored UVs.
         uv_xform.apply(&uv0.first, &uv0.second);
         uv_xform.apply(&uv1.first, &uv1.second);
@@ -824,8 +889,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
         // i0/i1/i2. Constant meshes replicate base_color/opacity at all corners.
         float c0[4], c1[4], c2[4];
         col_at(cursor + 0, i0, face, c0);
-        col_at(cursor + size_t(k), i1, face, c1);
-        col_at(cursor + size_t(k + 1), i2, face, c2);
+        col_at(corner1, i1, face, c1);
+        col_at(corner2, i2, face, c2);
         auto q = [](float x) -> uint8_t {
           x = x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
           return uint8_t(int(x * 255.0f + 0.5f));
@@ -838,8 +903,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       if (want_normals) {
         // Per-corner normals (9 floats/tri), fan order matching i0/i1/i2.
         Vec3 n0 = norm_at(cursor + 0, i0, n);
-        Vec3 n1 = norm_at(cursor + size_t(k), i1, n);
-        Vec3 n2 = norm_at(cursor + size_t(k + 1), i2, n);
+        Vec3 n1 = norm_at(corner1, i1, n);
+        Vec3 n2 = norm_at(corner2, i2, n);
         tri_normals->insert(tri_normals->end(),
                             {n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y,
                              n2.z});
@@ -916,16 +981,8 @@ lightusd::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
 // return the path untouched, preserving the previous behavior.
 std::string AnchorAssetNext(const lightusd::next::UsdPrim &prim,
                             const std::string &path) {
-  if (path.empty() || lightusd::next::AssetResolver::IsAbsolutePath(path) ||
-      path.find("://") != std::string::npos) {
-    return path;
-  }
-  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
-  const uint32_t id = spec ? spec->asset_anchor_id() : 0u;
-  const std::string &dir = lightusd::next::AssetAnchorPath(id);
-  if (dir.empty()) return path;
-  return lightusd::next::AssetResolver::NormalizePath(
-      lightusd::next::AssetResolver::JoinPath(dir, path));
+  const auto* spec = prim.GetPrimSpec();
+  return lightusd::next::ResolveAssetAnchorPath(path, spec ? spec->asset_anchor_id() : 0u);
 }
 
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
@@ -1161,18 +1218,47 @@ bool ReadVec3Value(const lightusd::next::Value &value, Vec3 *out) {
   return false;
 }
 
+// Shared RGB-slot loading keeps emission/specular modifiers identical to
+// diffuse: decode color space first, then apply the authored scale/bias.
+int32_t LoadColorTextureNext(const lightusd::next::UsdPrim& texture,
+                             TextureCache& cache, bool default_srgb = true) {
+  const auto* value = texture.GetPropertyValue("inputs:file");
+  if (!value) return -1;
+  auto asset = value->as_asset_path();
+  if (!asset) asset = value->as_string();
+  if (!asset || asset->empty()) return -1;
+  WrapMode wrap_s = WrapMode::Repeat, wrap_t = WrapMode::Repeat;
+  if (const auto* v = texture.GetPropertyValue("inputs:wrapS"))
+    if (auto token = v->as_token()) wrap_s = ParseWrapMode(*token);
+  if (const auto* v = texture.GetPropertyValue("inputs:wrapT"))
+    if (auto token = v->as_token()) wrap_t = ParseWrapMode(*token);
+  bool srgb = default_srgb;
+  if (const auto* v = texture.GetPropertyValue("inputs:sourceColorSpace"))
+    if (auto token = v->as_token()) {
+      if (*token == "raw" || *token == "linear") srgb = false;
+      else if (*token == "sRGB" || *token == "srgb") srgb = true;
+    }
+  Vec3 scale{1, 1, 1}, bias{0, 0, 0};
+  if (const auto* v = texture.GetPropertyValue("inputs:scale"))
+    ReadVec3Value(*v, &scale);
+  if (const auto* v = texture.GetPropertyValue("inputs:bias"))
+    ReadVec3Value(*v, &bias);
+  return LoadTextureCached(cache, AnchorAssetNext(texture, *asset), wrap_s,
+                           wrap_t, srgb, scale, bias);
+}
+
 // Resolve a scalar PBR input (inputs:roughness / inputs:metallic) that connects
-// to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Loads the raw texture
+// to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Defaults to raw data
 // and records the source channel.
-void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
-                              const lightusd::next::UsdPrim &surf,
-                              const std::string &input, TextureCache &tc,
-                              ScalarTex *out) {
-  const lightusd::next::PrimSpec *spec = surf.GetPrimSpec();
+void ResolveScalarTextureNext(const lightusd::next::Stage& stage,
+                              const lightusd::next::UsdPrim& surf,
+                              const std::string& input, TextureCache& tc,
+                              ScalarTex* out) {
+  const lightusd::next::PrimSpec* spec = surf.GetPrimSpec();
   if (!spec) return;
-  const std::vector<lightusd::next::Path> *c = spec->connection(input);
+  const std::vector<lightusd::next::Path>* c = spec->connection(input);
   if (!c || c->empty()) return;
-  const lightusd::next::Path &target = (*c)[0];
+  const lightusd::next::Path& target = (*c)[0];
   lightusd::next::UsdPrim tex = stage.GetPrimAtPath(target.prim_path());
   if (!tex.IsValid()) return;
   const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file");
@@ -1180,12 +1266,9 @@ void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
   auto ap = fv->as_asset_path();
   if (!ap) ap = fv->as_string();
   if (!ap || ap->empty()) return;
-  WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-    if (auto t = v->as_token()) ws = ParseWrapMode(*t);
-  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-    if (auto t = v->as_token()) wt = ParseWrapMode(*t);
-  int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, /*srgb=*/false);
+  // Scalar slots default to raw, but explicit RGB source color space wins.
+  // The channel sampler preserves linear alpha independently of this choice.
+  int32_t id = LoadColorTextureNext(tex, tc, false);
   if (id < 0) return;
   out->id = id;
   const std::string prop = target.property_name();  // e.g. "outputs:g"
@@ -1210,14 +1293,47 @@ void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
   }
 }
 
-// If a UsdUVTexture's inputs:st chain runs through a UsdTransform2d, read its
-// rotation (deg, CCW) / scale / translation. Otherwise returns identity.
-UvXform ResolveUvXform(const lightusd::next::Stage &stage,
-                       const lightusd::next::UsdPrim &uvtex) {
+// Other shading models retain their existing presence-style diagnostic.
+bool ResolveOpacityPresenceNext(const lightusd::next::Stage& stage,
+                                const std::string& material_path) {
+  const auto surface = ConnectedPrimNext(stage, stage.GetPrimAtPath(material_path), "outputs:surface");
+  const auto* id = surface.GetPropertyValue("info:id");
+  if (!id || !id->as_token() || *id->as_token() != "UsdPreviewSurface") return true;
+  const auto* value = surface.GetPropertyValue("inputs:opacityMode");
+  const auto mode = value ? value->as_token() : nullptr;
+  return mode && *mode == "presence";
+}
+
+// Follow a bounded texture coordinate chain to its authored primvar.
+std::string ResolveUvPrimvarNext(const lightusd::next::Stage& stage,
+                                 lightusd::next::UsdPrim node) {
+  for (unsigned depth = 0; node.IsValid() && depth < 32; ++depth) {
+    const auto* id = node.GetPropertyValue("info:id");
+    const auto name = id ? id->as_token() : lightusd::next::StringView();
+    if (name && *name == "UsdPrimvarReader_float2") {
+      const auto* value = node.GetPropertyValue("inputs:varname");
+      if (!value) return {};
+      auto primvar = value->as_token();
+      if (!primvar) primvar = value->as_string();
+      return primvar ? std::string(*primvar) : std::string();
+    }
+    if (name && *name == "UsdUVTexture")
+      node = ConnectedPrimNext(stage, node, "inputs:st");
+    else if (name && *name == "UsdTransform2d")
+      node = ConnectedPrimNext(stage, node, "inputs:in");
+    else
+      return {};
+  }
+  return {};
+}
+
+// Read the rotation, scale and translation of a connected UsdTransform2d.
+UvXform ResolveUvXform(const lightusd::next::Stage& stage,
+                       const lightusd::next::UsdPrim& uvtex) {
   UvXform x;
   lightusd::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
   if (!st.IsValid()) return x;
-  const lightusd::next::Value *idv = st.GetPropertyValue("info:id");
+  const lightusd::next::Value* idv = st.GetPropertyValue("info:id");
   auto id = idv ? idv->as_token() : nullptr;
   if (!id || *id != "UsdTransform2d") return x;
   float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
@@ -1374,29 +1490,13 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (const float *f = sc->as_float3())
       if (specular_color) *specular_color = Vec3{f[0], f[1], f[2]};
   if (specular_tex_id) {
-    lightusd::next::UsdPrim stex =
-        ConnectedPrimNext(stage, surf, "inputs:specularColor");
-    if (stex.IsValid()) {
-      if (const lightusd::next::Value *fv =
-              stex.GetPropertyValue("inputs:file")) {
-        auto ap = fv->as_asset_path();
-        if (!ap) ap = fv->as_string();
-        if (ap && !ap->empty()) {
-          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
-            if (auto t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
-            if (auto t = v->as_token()) wt = ParseWrapMode(*t);
-          bool srgb = true;
-          if (const lightusd::next::Value *v =
-                  stex.GetPropertyValue("inputs:sourceColorSpace"))
-            if (auto t = v->as_token()) srgb = (*t != "raw");
-          int32_t id = LoadTextureCached(tc, AnchorAssetNext(stex, *ap), ws, wt, srgb);
-          if (id >= 0) {
-            *specular_tex_id = id;
-            if (specular_color) *specular_color = Vec3{1.0f, 1.0f, 1.0f};
-          }
-        }
+    auto texture=ConnectedPrimNext(stage,surf,"inputs:specularColor");
+    if(texture.IsValid()) {
+      const int32_t id=LoadColorTextureNext(texture,tc);
+      if(id>=0) {
+        *specular_tex_id=id;
+        if(specular_color)*specular_color=Vec3{1,1,1};
+        if(uv_xform && uv_xform->identity)*uv_xform=ResolveUvXform(stage,texture);
       }
     }
   }
@@ -1407,25 +1507,13 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (const float *f = e->as_float3())
       if (emission) *emission = Vec3{f[0], f[1], f[2]};
   if (emission_tex_id) {
-    lightusd::next::UsdPrim etex =
-        ConnectedPrimNext(stage, surf, "inputs:emissiveColor");
-    if (etex.IsValid()) {
-      if (const lightusd::next::Value *fv =
-              etex.GetPropertyValue("inputs:file")) {
-        auto ap = fv->as_asset_path();
-        if (!ap) ap = fv->as_string();
-        if (ap && !ap->empty()) {
-          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
-            if (auto t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
-            if (auto t = v->as_token()) wt = ParseWrapMode(*t);
-          int32_t id = LoadTextureCached(tc, AnchorAssetNext(etex, *ap), ws, wt, /*srgb=*/true);
-          if (id >= 0) {
-            *emission_tex_id = id;
-            if (emission) *emission = Vec3{1.0f, 1.0f, 1.0f};  // texture is the tint
-          }
-        }
+    auto texture=ConnectedPrimNext(stage,surf,"inputs:emissiveColor");
+    if(texture.IsValid()) {
+      const int32_t id=LoadColorTextureNext(texture,tc);
+      if(id>=0) {
+        *emission_tex_id=id;
+        if(emission)*emission=Vec3{1,1,1};
+        if(uv_xform && uv_xform->identity)*uv_xform=ResolveUvXform(stage,texture);
       }
     }
   }
@@ -1442,37 +1530,11 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim tex =
       ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
   if (tex.IsValid()) {
-    if (const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
-      auto ap = fv->as_asset_path();
-      if (!ap) ap = fv->as_string();
-      if (ap && !ap->empty()) {
-        WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-          if (auto t = v->as_token()) ws = ParseWrapMode(*t);
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-          if (auto t = v->as_token()) wt = ParseWrapMode(*t);
-        bool srgb = true;
-        if (const lightusd::next::Value *v =
-                tex.GetPropertyValue("inputs:sourceColorSpace")) {
-          if (auto t = v->as_token()) srgb = (*t != "raw");
-        }
-        // inputs:scale/bias tint the sampled color (default identity).
-        Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
-          ReadVec3Value(*v, &sc);
-        }
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
-          ReadVec3Value(*v, &bi);
-        }
-        int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, srgb, sc, bi);
-        if (id >= 0) {
-          *tex_id = id;
-          // A textured surface tints by the texture, not the (often unauthored)
-          // diffuseColor constant. Use white so sampling shows true texels.
-          *base_color = Vec3{1.0f, 1.0f, 1.0f};
-          if (uv_xform) *uv_xform = ResolveUvXform(stage, tex);
-        }
-      }
+    const int32_t id=LoadColorTextureNext(tex,tc);
+    if(id>=0) {
+      *tex_id=id;
+      *base_color=Vec3{1,1,1};
+      if(uv_xform)*uv_xform=ResolveUvXform(stage,tex);
     }
   }
 
@@ -1529,6 +1591,7 @@ void ApplyDisplayPrimvarsNext(const lightusd::next::UsdPrim &mesh,
 
 void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   if (!job) return;
+  job->uv_primvar = r.uv_primvar;
   job->base_color = r.base_color;
   job->tex_id = r.tex_id;
   job->roughness = r.roughness;
@@ -1545,6 +1608,7 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   job->opacity = r.opacity;
   job->opacity_tex = r.opacity_tex;
   job->opacity_threshold = r.opacity_threshold;
+  job->opacity_presence = r.opacity_presence;
   job->clearcoat = r.clearcoat;
   job->clearcoat_roughness = r.clearcoat_roughness;
   job->clearcoat_tex = r.clearcoat_tex;
@@ -1563,6 +1627,7 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
 
 ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   ResolvedMat r;
+  r.uv_primvar = job.uv_primvar;
   r.base_color = job.base_color;
   r.tex_id = job.tex_id;
   r.roughness = job.roughness;
@@ -1579,6 +1644,7 @@ ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   r.opacity = job.opacity;
   r.opacity_tex = job.opacity_tex;
   r.opacity_threshold = job.opacity_threshold;
+  r.opacity_presence = job.opacity_presence;
   r.clearcoat = job.clearcoat;
   r.clearcoat_roughness = job.clearcoat_roughness;
   r.clearcoat_tex = job.clearcoat_tex;
@@ -1612,6 +1678,7 @@ TriMat TriMatFromResolved(const ResolvedMat &r) {
   m.opacity = r.opacity;
   m.opacity_tex_id = r.opacity_tex.id;
   m.opacity_threshold = r.opacity_threshold;
+  m.opacity_presence = r.opacity_presence;
   m.clearcoat = r.clearcoat;
   m.clearcoat_roughness = r.clearcoat_roughness;
   m.clearcoat_tex_id = r.clearcoat_tex.id;
@@ -1888,9 +1955,16 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
         resolved.uv_primvar = scratch.textures[size_t(did)].uv_primvar;
       }
     }
-    LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
-                      nullptr, nullptr,
-                      &resolved.emission_tex_id);
+    if (LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
+                          nullptr, nullptr, &resolved.emission_tex_id)) {
+      // A connected color replaces the shader input's fallback; multiplying
+      // the texture by that fallback (usually black) erased CPU emission.
+      resolved.emission=Vec3{1,1,1};
+      if(resolved.tex_id<0) {
+        ApplyRenderTextureUvXform(stage,scratch,s.emissive_color.texture_id,false,&resolved.uv_xform);
+        resolved.uv_primvar=scratch.textures[size_t(s.emissive_color.texture_id)].uv_primvar;
+      }
+    }
     const Vec3 normal_scale{2.0f, 2.0f, 2.0f};
     const Vec3 normal_bias{-1.0f, -1.0f, -1.0f};
     LoadRenderTexture(scratch, s.normal.texture_id, tc, false,
@@ -1898,9 +1972,9 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                       &resolved.normal_tex_id);
     ApplyRenderTextureUvXform(stage, scratch, s.normal.texture_id,
                               true, &resolved.uv_xform);
-    LoadRenderTexture(scratch, s.specular_color.texture_id, tc, true,
-                      nullptr, nullptr,
-                      &resolved.specular_tex_id);
+    if (LoadRenderTexture(scratch, s.specular_color.texture_id, tc, true,
+                          nullptr, nullptr, &resolved.specular_tex_id))
+      resolved.specular_color=Vec3{1,1,1};
     LoadRenderScalarTexture(scratch, s.roughness, tc, false, &resolved.rough_tex);
     LoadRenderScalarTexture(scratch, s.metallic, tc, false, &resolved.metal_tex);
     LoadRenderScalarTexture(scratch, s.occlusion, tc, false, &resolved.occ_tex);
@@ -1952,7 +2026,19 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                             &resolved.clearcoat_rough_tex);
   }
 
-  const float *m = scratch.working_to_display_linear;
+  // Data-only materials (notably opacity-only diagnostics) still choose the
+  // authored UV set. A color texture is not required to drive geometry UVs.
+  if (resolved.tex_id < 0 && resolved.emission_tex_id < 0) {
+    for (size_t texture = 0; texture < scratch.textures.size(); ++texture) {
+      if (scratch.textures[texture].uv_primvar.empty()) continue;
+      resolved.uv_primvar = scratch.textures[texture].uv_primvar;
+      ApplyRenderTextureUvXform(stage, scratch, int32_t(texture), false,
+                                &resolved.uv_xform);
+      break;
+    }
+  }
+
+  const float* m = scratch.working_to_display_linear;
   const auto to_display = [m](const Vec3 &v) {
     return Vec3{m[0] * v.x + m[1] * v.y + m[2] * v.z,
                 m[3] * v.x + m[4] * v.y + m[5] * v.z,
@@ -2125,17 +2211,33 @@ void ResolveMeshMaterialCached(
   }
 
   auto resolve_legacy = [&]() {
-    ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
-                            &job->roughness, &job->metallic, &job->normal_tex_id,
-                            &job->uv_xform, &job->rough_tex, &job->metal_tex,
-                            &job->emission, &job->emission_tex_id, &job->occlusion,
-                            &job->occ_tex, &job->opacity, &job->opacity_tex,
-                            &job->opacity_threshold, &job->clearcoat,
-                            &job->clearcoat_roughness, &job->clearcoat_tex,
-                            &job->clearcoat_rough_tex, &job->specular_color,
-                            &job->specular_tex_id, &job->ior,
-                            &job->use_specular_workflow, &job->vertex_color,
-                            &job->displacement, &job->displacement_tex);
+    ResolveMeshMaterialNext(
+        stage, mesh, tc, &job->base_color, &job->tex_id, &job->roughness,
+        &job->metallic, &job->normal_tex_id, &job->uv_xform, &job->rough_tex,
+        &job->metal_tex, &job->emission, &job->emission_tex_id, &job->occlusion,
+        &job->occ_tex, &job->opacity, &job->opacity_tex,
+        &job->opacity_threshold, &job->clearcoat, &job->clearcoat_roughness,
+        &job->clearcoat_tex, &job->clearcoat_rough_tex, &job->specular_color,
+        &job->specular_tex_id, &job->ior, &job->use_specular_workflow,
+        &job->vertex_color, &job->displacement, &job->displacement_tex);
+    auto material = stage.GetPrimAtPath(key);
+    auto surface = ConnectedPrimNext(stage, material, "outputs:surface");
+    for (const auto& input :
+         {std::pair<const char*, bool>{"inputs:diffuseColor", job->tex_id >= 0},
+          {"inputs:emissiveColor", job->emission_tex_id >= 0},
+          {"inputs:normal", job->normal_tex_id >= 0},
+          {"inputs:opacity", job->opacity_tex.id >= 0},
+          {"inputs:roughness", job->rough_tex.id >= 0},
+          {"inputs:metallic", job->metal_tex.id >= 0}}) {
+      if (!input.second) continue;
+      const auto texture = ConnectedPrimNext(stage, surface, input.first);
+      const std::string uv = ResolveUvPrimvarNext(stage, texture);
+      if (uv.empty()) continue;
+      job->uv_primvar = uv;
+      if (job->uv_xform.identity)
+        job->uv_xform = ResolveUvXform(stage, texture);
+      break;
+    }
   };
 
   const Options::MaterialResolver mode =
@@ -2175,6 +2277,7 @@ void ResolveMeshMaterialCached(
   }
 
   if (!front_cached && !key.empty()) {
+    job->opacity_presence = ResolveOpacityPresenceNext(stage, key);
     cache.emplace(key, CaptureResolvedFromJob(*job));
   }
 
@@ -2205,6 +2308,7 @@ void ResolveMeshMaterialCached(
     return;
   }
   if (back_degraded && tc.degraded_materials) (*tc.degraded_materials)++;
+  back_job.opacity_presence = ResolveOpacityPresenceNext(stage, back_key);
   ResolvedMat back = CaptureResolvedFromJob(back_job);
   cache.emplace(back_key, back);
   job->back_material = std::make_shared<ResolvedMat>(std::move(back));
@@ -2477,7 +2581,7 @@ static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
                                          lightusd::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *out);
+                                         std::vector<MeshJobNext> *out, bool include_curves = false);
 // Shared body behind the public vector collector and the streaming placement
 // collector.
 static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
@@ -2555,7 +2659,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
       return;
     }
   }
-  if (IsTriangleMeshNext(prim) &&
+  if ((IsTriangleMeshNext(prim) || (sink && IsCurvePrimNext(prim))) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
@@ -2635,7 +2739,7 @@ static void ExpandPointInstancerJobsNext(
     if (!proto_done[pi]) {
       proto_done[pi] = true;
       CollectExpandedProtoJobsNext(stage, proto_prim[pi], purpose, time,
-                                   &proto_jobs[pi]);
+                                   &proto_jobs[pi], sink != nullptr);
     }
     return proto_jobs[pi];
   };
@@ -2687,21 +2791,30 @@ static void ExpandPointInstancerJobsNext(
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
                                          lightusd::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *out) {
+                                         std::vector<MeshJobNext> *out, bool include_curves) {
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
   // A prototype root may itself be a Mesh (a PointInstancer/native prototype can
   // point straight at one); collect it at identity too.
-  if (IsTriangleMeshNext(proto)) {
+  if (IsTriangleMeshNext(proto) || (include_curves && IsCurvePrimNext(proto))) {
     MeshJobNext j;
     j.prim = proto;
     j.world = matrix4d::identity();
     j.purpose = purpose;
     out->push_back(std::move(j));
   }
-  for (const lightusd::next::UsdPrim &child : proto.GetChildren())
-    CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
-                               kNoMask, out, /*expand_instancers=*/true);
+  if (include_curves) {
+    const RtInstanceSink collect = [&](const lightusd::next::UsdPrim& prim,
+        const matrix4d& world, lightusd::Purpose p) {
+      MeshJobNext job;job.prim=prim;job.world=world;job.purpose=p;out->push_back(std::move(job));
+    };
+    for (const auto& child : proto.GetChildren())
+      CollectRTInstancePlacementsNext(stage,child,matrix4d::identity(),purpose,time,kNoMask,collect,0);
+  } else {
+    for (const lightusd::next::UsdPrim &child : proto.GetChildren())
+      CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
+                                 kNoMask, out, /*expand_instancers=*/true);
+  }
 }
 
 // Expand a scenegraph (instanceable) native instance into world-space MeshJobNext
@@ -2722,7 +2835,7 @@ static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   std::vector<MeshJobNext> proto_jobs;
-  CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
+  CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs, sink != nullptr);
   for (const MeshJobNext &pj : proto_jobs)
     EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * world, pj.purpose);
 }
@@ -3186,8 +3299,10 @@ bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
       frame->up = Normalize(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
       frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
       frame->yfov = 2.0f * std::atan(0.5f * vap / std::max(1.0e-6f, focal));
-      frame->xmag = hap;
-      frame->ymag = vap;
+      frame->xmag = hap * 0.1f;  // USD aperture units are tenths of a scene unit.
+      frame->ymag = vap * 0.1f;
+      frame->shift_x = 2.0f * ReadCamFloatNext(prim,"horizontalApertureOffset",0.0f) / std::max(1.0e-6f,hap);
+      frame->shift_y = 2.0f * ReadCamFloatNext(prim,"verticalApertureOffset",0.0f) / std::max(1.0e-6f,vap);
       frame->znear = std::max(1.0e-5f, znear);
       frame->zfar = std::max(frame->znear, zfar);
       frame->ortho = (proj == "orthographic");
@@ -4942,7 +5057,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     // by the resolved displacement (texture from tex_pool). disp_scale
                     // == 0 disables it (then renders are byte-identical to before).
                     const std::vector<Texture> *tex_pool = nullptr,
-                    float disp_scale = 0.0f) {
+                    float disp_scale = 0.0f,
+                    const lightusd::next::ValueClipStageLoader& clip_loader = {}) {
   const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
@@ -5007,6 +5123,12 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
       // A bad_alloc must be caught INSIDE each worker thread (an exception
       // escaping a std::thread calls std::terminate); it signals the cap was hit.
       auto worker = [&]() {
+        lightusd::next::EvalOptions evaluation;
+        evaluation.time = lightusd::next::TimeQuery::Numeric(time);
+        evaluation.follow_connections = false;
+        evaluation.clip_stage_loader = clip_loader;
+        evaluation.clip_stage_cache =
+            std::make_shared<lightusd::next::ValueClipStageCache>();
         try {
           for (;;) {
             const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
@@ -5033,7 +5155,7 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 indexed ? &jvb : nullptr, job.displacement,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
-                job.displacement_tex.bias);
+                job.displacement_tex.bias, &evaluation, job.opacity_presence);
             r.mat.capture_prim_id = CapturePrimId(job.prim.GetPath().str());
             r.has_openpbr = job.has_openpbr;
             r.openpbr = job.openpbr;
@@ -5285,7 +5407,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                         &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
                         /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
                         /*out_indices=*/static_cast<IdxVec *>(nullptr),
-                        &ctx.textures, disp_scale)) {
+                        &ctx.textures, disp_scale, ctx.clip_stage_loader)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -5488,7 +5610,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               jobs_have_color(gjobs),
               &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
               /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
-              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f))
+              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f,
+              ctx.clip_stage_loader))
         gstream_ok.store(false, std::memory_order_relaxed);
     }
   };
@@ -5526,7 +5649,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*out_uverts=*/static_cast<FloatVec *>(nullptr),
                                /*out_indices=*/static_cast<IdxVec *>(nullptr),
                                &ctx.textures,
-                               opt.displace ? opt.displace_scale : 0.0f);
+                               opt.displace ? opt.displace_scale : 0.0f,
+                               ctx.clip_stage_loader);
     // The prototype's geometry and material data now live in ctx.blas[b].
     // Do not retain the authored job records while the remaining prototypes
     // build; this is significant for subset-heavy composed scenes.
@@ -6455,6 +6579,7 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
   session_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
   session_options.compose = true;
   session_options.composition.load_payloads = true;
+  session_options.composition.error_when_asset_not_found = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
   session_options.composition.variant_overrides_by_path = opt.preview_variant_overrides;
   // A render mask is also a composition boundary. Loading every payload and
@@ -6472,6 +6597,9 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
   }
   session_options.load.limits.max_resident_bytes =
       MemBudget::Get().Cap() * 55 / 100;
+  session_options.load.limits.max_input_bytes = session_options.load.limits.max_resident_bytes;
+  session_options.load.limits.max_asset_bytes = session_options.load.limits.max_resident_bytes;
+  session_options.load.limits.max_array_elements = size_t(opt.max_array_elements);
   session_options.cache_retention = lightusd::next::CacheRetention::LayersOnly;
   lightusd::next::StageSession session;
   if (!session.OpenFile(opt.input, session_options)) {
@@ -6491,7 +6619,8 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
     const std::vector<std::string> dependencies = session.GetLayerDependencies();
     const lightusd::next::ResolverConfig resolver_config = session_options.resolver;
     const std::string input = opt.input;
-    *clip_loader = [resolver_config, dependencies, input](
+    const auto clip_limits = session_options.load.limits;
+    *clip_loader = [resolver_config, dependencies, input, clip_limits](
         const std::string &asset, lightusd::next::Stage *clip_stage,
         std::string *clip_warn, std::string *clip_err) {
       if (!clip_stage) return false;
@@ -6522,8 +6651,10 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
       }
       lightusd::next::StageSessionOptions clip_options;
       clip_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
+      clip_options.load.limits = clip_limits;
       clip_options.resolver = resolver_config;
       clip_options.composition.load_payloads = true;
+      clip_options.composition.error_when_asset_not_found = true;
       lightusd::next::StageSession clip_session;
       if (!clip_session.OpenFile(resolved, clip_options)) {
         if (clip_warn) *clip_warn = clip_session.GetWarning();
@@ -6583,6 +6714,8 @@ bool CaptureSource(const std::string& source, CaptureAov* aov) {
   if (source.empty() || source == "Ci" || source == "color") *aov = CaptureAov::Color;
   else if (source == "depth" || source == "z") *aov = CaptureAov::Depth;
   else if (source == "worldNormal" || source == "N") *aov = CaptureAov::WorldNormal;
+  else if (source == "geometricNormal") *aov = CaptureAov::GeometricNormal;
+  else if (source == "shadingNormal") *aov = CaptureAov::ShadingNormal;
   else if (source == "primId") *aov = CaptureAov::PrimId;
   else return false;
   return true;
@@ -6742,6 +6875,8 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
 
   if (!ApplyUsdRenderOptions(ctx.stage, &ctx.opt)) return false;
+  if (ctx.opt.aov == CaptureAov::ShadingNormal || ctx.opt.all_render_products)
+    ctx.opt.smooth = true;
   ctx.width = ctx.opt.width > 0 ? ctx.opt.width : 960;
 
   // The composed stage is the memory baseline; everything our pool allocator

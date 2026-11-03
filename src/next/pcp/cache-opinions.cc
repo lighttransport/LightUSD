@@ -186,7 +186,85 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
       }
 
       if (s.suppress_site_specs) continue;  // relocation-source opinions
-      const std::vector<SpecRef> &specs = SpecsFor(s);
+      const std::vector<SpecRef> &local_specs = SpecsFor(s);
+      std::vector<SpecRef> clip_specs;
+      std::vector<std::unique_ptr<PrimSpec>> inherited_clips;
+      const LayerStack& stack = layer_stacks[s.stack_idx];
+      if (stack.has_value_clips) {
+        // Interleave inherited clips at their authoring layer's strength,
+        // rather than copying the composed parent's clips after all child
+        // values have merged. The latter loses which defaults clips shadow.
+        size_t local = 0;
+        for (size_t li = 0; li < stack.layers.size(); ++li) {
+          const Layer* layer = stack.layers[li].get();
+          const PrimSpec* child = nullptr;
+          if (local < local_specs.size() && local_specs[local].layer == layer) {
+            child = local_specs[local].spec;
+            clip_specs.push_back(local_specs[local++]);
+          }
+          if (!stack.layer_has_value_clips[li] ||
+              (child && child->meta().clips().is_dictionary())) continue;
+          std::string ancestor = s.site;
+          while (true) {
+            const size_t slash = ancestor.rfind('/');
+            if (slash == std::string::npos || slash == 0) break;
+            ancestor.resize(slash);
+            const PrimSpec* owner = layer->prim_at_path(ancestor);
+            if (!owner || !owner->meta().clips().is_dictionary()) continue;
+            auto inherited = std::make_unique<PrimSpec>();
+            inherited->set_specifier(PrimSpecifier::Over);
+            Value clips = Value::MakeDictionary();
+            for (const auto& entry : owner->meta().clips().as_dictionary().entries()) {
+              Value set = entry.second;
+              if (set.is_dictionary()) {
+                // Anchor each clip to the metadata's authoring layer. Searching
+                // dependency directories by basename can choose another cache
+                // with identically named per-frame files.
+                const auto assets = set.as_dictionary().find("assetPaths");
+                if (assets && assets->as_token_array()) {
+                  std::vector<std::string> paths;
+                  for (const std::string& asset : assets->as_token_array()) {
+                    const std::string resolved = resolver->ResolvePath(
+                        asset, stack.layer_identifiers[li], false);
+                    paths.push_back(resolved.empty() ? asset : resolved);
+                  }
+                  set.as_dictionary().set("assetPaths",
+                      Value::MakeStringLikeArray(paths, TypeId::AssetPath));
+                }
+                for (const char* field : {"manifestAssetPath", "manifestPath"}) {
+                  const auto asset = set.as_dictionary().find(field);
+                  if (!asset) continue;
+                  auto path = asset->as_asset_path();
+                  if (!path) path = asset->as_string();
+                  if (!path) continue;
+                  const std::string resolved = resolver->ResolvePath(
+                      std::string(*path), stack.layer_identifiers[li], false);
+                  if (!resolved.empty()) set.as_dictionary().set(
+                      field, Value::MakeAssetPath(resolved));
+                }
+                const auto path = set.as_dictionary().find("primPath");
+                if (path && path->as_string()) {
+                  set.as_dictionary().set("primPath", Value::MakeStringLike(
+                      std::string(*path->as_string()) + s.site.substr(ancestor.size()),
+                      TypeId::String));
+                }
+              }
+              clips.as_dictionary().set(entry.first, set);
+            }
+            inherited->meta().clips() = std::move(clips);
+            inherited->meta().clipSetEdits() = owner->meta().clipSetEdits();
+            SpecRef ref;
+            ref.spec = inherited.get();
+            ref.layer = layer;
+            ref.layer_identifier = &stack.layer_identifiers[li];
+            ref.layer_offset = stack.layer_offsets[li];
+            clip_specs.push_back(ref);
+            inherited_clips.push_back(std::move(inherited));
+            break;
+          }
+        }
+      }
+      const std::vector<SpecRef>& specs = stack.has_value_clips ? clip_specs : local_specs;
       if (specs.empty()) continue;
 
       // A relocate authored in a layer stack does NOT remap the TARGET paths of

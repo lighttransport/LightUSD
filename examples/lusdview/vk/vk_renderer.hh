@@ -13,6 +13,7 @@
 // volkInitialize()/volkLoadInstance()/volkLoadDevice() populate.
 #include "volk.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <future>
@@ -140,6 +141,7 @@ class VulkanRenderer final : public Renderer {
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
+  ViewportTexHandle comparisonImage(int slot, const light3d::Image* image = nullptr) override;
   void present() override;
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   void presentThreaded(ImDrawData* drawData, int fbW, int fbH) override;
@@ -153,7 +155,9 @@ class VulkanRenderer final : public Renderer {
   bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   bool captureLinearViewport(std::vector<float>* rgba, int* w, int* h) override;
-  bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
+  void requestWindowCapture() override { wantWindowCapture_=true; }
+  bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;
+  bool readCompositeImage(uint32_t imageIndex, std::vector<uint8_t>* rgba, int* w, int* h);
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
@@ -656,6 +660,14 @@ class VulkanRenderer final : public Renderer {
                    VkDeviceSize* outOffset);
   void flushPendingUploads();
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
+  struct ComparisonTexture {
+    VkImage image{VK_NULL_HANDLE};
+    VkDeviceMemory memory{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+    VkDescriptorSet descriptor{VK_NULL_HANDLE};
+  };
+  std::array<ComparisonTexture,4> comparisonTextures_{};
+  void destroyComparisonTexture(ComparisonTexture& texture);
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
                           const std::vector<light3d::Image>* mips = nullptr,
@@ -704,6 +716,9 @@ class VulkanRenderer final : public Renderer {
   int winFbW_{0}, winFbH_{0};
   bool headless_{false};       // windowless: no surface/swapchain, render offscreen
   int headlessW_{1280}, headlessH_{800};  // composite size when headless
+  bool wantWindowCapture_{false}, windowCaptureSupported_{false};
+  std::vector<uint8_t> windowCapture_;
+  int windowCaptureWidth_{0}, windowCaptureHeight_{0};
   uint32_t lastSwapIndex_{0};  // last composite image written (for captureWindow)
   RendererCaps caps_{};
   bool imguiInited_{false};

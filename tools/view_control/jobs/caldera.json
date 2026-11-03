@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "assets_root": "/mnt/nvme02/data",
+  "size": [
+    640,
+    480
+  ],
+  "backend": "vkr",
+  "data_backend": "vkr",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "explicit",
+    "values": [
+      0
+    ]
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal",
+    "baseColor",
+    "roughness",
+    "metallic"
+  ],
+  "scenes": [
+    {
+      "path": "caldera/map_source/prefabs/br/wz_vg/mp_wz_island/commercial/restaurant_01.usd"
+    }
+  ]
+}

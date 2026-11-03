@@ -64,7 +64,7 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
         os.remove(os.path.join(os.path.dirname(config), "imgui.ini"))
     except FileNotFoundError:
         pass
-    cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
+    cmd = [binary, loader, "--headless", "--size", "320x320", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--config", config,
            "--no-skeleton", "--no-grid",
            "--screenshot", out,

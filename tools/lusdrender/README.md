@@ -376,3 +376,20 @@ assembled `island.usda` (all 20 elements + XGen + curves + DomeLight) renders
 directly from raw USD: **5.69 B effective triangles** (22.8 M instances, 56.6 M
 unique) in **1 m 33 s / 25.9 GB** (`-maxMem`). See the doc's analysis and
 follow-ups.
+
+Flat and instanced Vulkan ray-query capture also accept `--aov depth`,
+`--aov geometricNormal`, and `--aov shadingNormal` with one sample per pixel
+and `.pfm` output. These are raw triangle-hit distance and signed world-space
+normals, before material normal mapping or face-forward adjustment. Misses are
+zero. This diagnostic path does not apply material opacity/cutout filtering.
+The explicit `-vkInstancedStream` mode keeps one TLAS slice resident while tracing every placement; it also supports these raw AOVs. `worldNormal`, prim IDs and RenderProducts remain CPU-only.
+The analytic nonuniform-scale fixture has been checked on AMD hardware; CPU
+agreement alone does not establish GPU traversal correctness.
+
+
+`-smooth` respects mesh subdivision semantics: authored polygon normals are
+interpolated when present; absent normals on `none` and `bilinear` meshes remain
+flat, while supported smooth subdivision schemes generate vertex normals.
+Authored +Z Plane texture coordinates are remapped from the canonical USD quad
+order into generated corners. Vulkan mesh chunks preserve the same per-vertex
+UV stream in both indexed and sequential copies.

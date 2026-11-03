@@ -3,6 +3,8 @@
 
 #include "value-clip.hh"
 #include "../layer/prim-spec.hh"
+#include "../layer/asset-anchor.hh"
+#include "../resolver/asset-resolver.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -294,6 +296,12 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
     auto interpolate = dict->find("interpolateMissingClipValues");
     if (interpolate && interpolate->as_bool())
       set.interpolate_missing = *interpolate->as_bool();
+    const uint32_t anchor_id = prim.GetPrimSpec()->asset_anchor_id();
+    if (AssetResolver::IsPackagePath(AssetAnchorPath(anchor_id))) {
+      for (auto& path : set.asset_paths) path = ResolveAssetAnchorPath(path, anchor_id);
+      if (!set.manifest_asset_path.empty())
+        set.manifest_asset_path = ResolveAssetAnchorPath(set.manifest_asset_path, anchor_id);
+    }
     for (const std::string& path : set.asset_paths) {
       if (path.empty()) {
         if (error) *error = "Empty value-clip asset path in set `" + set.name + "`";
@@ -499,6 +507,92 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
     std::string asset;
     Value value =
         sample_clip_at(static_cast<size_t>(index), stage_time, &asset);
+
+    // The clip's active start is an implicit sample. After its last sample,
+    // linear resolution brackets against the NEXT clip's active start, rather
+    // than clamping the current file. This is independent of the option for
+    // interpolating clips that omit the property entirely.
+    if (!value.is_empty() && interpolation == TimeInterpolation::Linear &&
+        set.active.size() > 1) {
+      const auto next = std::upper_bound(
+          set.active.begin(), set.active.end(), stage_time,
+          [](double t, const std::pair<double, int>& entry) {
+            return t < entry.first;
+          });
+      if (next != set.active.end() && next != set.active.begin() &&
+          stage_time > std::prev(next)->first) {
+        const auto current = std::prev(next);
+        const double start = current->first, end = next->first;
+        const auto mapping_at_end = std::lower_bound(
+            set.times.begin(), set.times.end(), end,
+            [](const std::pair<double, double>& mapping, double t) {
+              return mapping.first < t;
+            });
+        const auto mapping_after_end = std::upper_bound(
+            mapping_at_end, set.times.end(), end,
+            [](double t, const std::pair<double, double>& mapping) {
+              return t < mapping.first;
+            });
+        const bool jumps_at_end = mapping_at_end != mapping_after_end &&
+            mapping_at_end->second != std::prev(mapping_after_end)->second;
+        const Stage* active_stage = load_stage(set.asset_paths[size_t(index)]);
+        const UsdPrim active_prim = active_stage
+            ? active_stage->GetPrimAtPath(clip_path) : UsdPrim();
+        double lower = start;
+        bool has_upper = false;
+        auto consider = [&](double t) {
+          if (!std::isfinite(t) || t < start || t >= end) return;
+          if (t <= stage_time) lower = std::max(lower, t);
+          if (t >= stage_time) has_upper = true;
+        };
+        for (const auto& mapping : set.times) consider(mapping.first);
+        // Invert each piece of the stage-to-clip time function. A frozen
+        // segment has no additional sample locations; its endpoints above
+        // already bracket its constant value. Reversed segments are valid.
+        const auto samples = active_prim.GetTimeSampleTimes(property);
+        if (set.times.empty()) {
+          const auto upper = std::lower_bound(samples.begin(), samples.end(), stage_time);
+          if (upper != samples.end()) consider(*upper);
+          if (upper != samples.begin()) consider(*std::prev(upper));
+        } else if (!samples.empty()) {
+          for (size_t i = 1; i < set.times.size(); ++i) {
+            const auto& a = set.times[i - 1];
+            const auto& b = set.times[i];
+            if (b.first <= a.first || b.second == a.second ||
+                b.first < start || a.first >= end) continue;
+            const double query = std::max(a.first, std::min(b.first, stage_time));
+            const double clip_query = a.second + (b.second - a.second) *
+                ((query - a.first) / (b.first - a.first));
+            const auto upper = std::lower_bound(samples.begin(), samples.end(), clip_query);
+            auto invert = [&](double t) {
+              const double alpha = (t - a.second) / (b.second - a.second);
+              if (alpha >= 0.0 && alpha <= 1.0)
+                consider(a.first + alpha * (b.first - a.first));
+            };
+            if (upper != samples.end()) invert(*upper);
+            if (upper != samples.begin()) invert(*std::prev(upper));
+          }
+        }
+        // A time-map jump at the boundary isolates its two sides. Never
+        // blend the left clip toward the right-hand value of that jump.
+        // Default-only compatibility opinions also remain held.
+        if (!has_upper && !jumps_at_end && stage_time > lower && !samples.empty()) {
+          std::string lower_asset, upper_asset;
+          Value lo = sample_clip_at(size_t(index), lower, &lower_asset);
+          Value hi = sample_clip_at(size_t(next->second), end, &upper_asset);
+          if (!lo.is_empty() && !hi.is_empty()) {
+            value = LerpValue(lo, hi, (stage_time - lower) / (end - lower));
+            asset = lower_asset;
+            if (resolution_info) {
+              resolution_info->lower_asset = lower_asset;
+              resolution_info->upper_asset = upper_asset;
+              resolution_info->lower_stage_time = lower;
+              resolution_info->upper_stage_time = end;
+            }
+          }
+        }
+      }
+    }
 
     // interpolateMissingClipValues: when the ACTIVE clip has no opinion, pxr
     // treats all clips as one merged timeline and LINEARLY INTERPOLATES the

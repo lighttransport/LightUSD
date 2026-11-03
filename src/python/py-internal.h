@@ -158,6 +158,7 @@ typedef struct {
   Py_ssize_t top;    /* number of valid entries */
   Py_ssize_t cap;
   uint64_t gen;
+  int default_predicate;
 } LightUSDStageIter;
 
 typedef struct {

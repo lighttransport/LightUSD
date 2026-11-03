@@ -267,22 +267,22 @@ run_asset_pass() {
   local log
   log="$(run_lusdview --headless "$@" --frames 4 --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
-  if ! echo "$log" | grep -q "render stats"; then
+  if ! grep -q "render stats" <<< "$log"; then
     echo "SKIP: Vulkan backend unavailable in this environment ($label)"
     return $SKIP
   fi
   if [ "$label" = rt ] &&
-     ! echo "$log" | grep -Eq "caps: v1 .*rt=hardware"; then
+     ! grep -Eq "caps: v1 .*rt=hardware" <<< "$log"; then
     echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
     return $SKIP
   fi
-  if echo "$log" | grep -q "load failed" ||
-     ! echo "$log" | grep -Eq 'drawn tris [1-9][0-9]*'; then
+  if grep -q "load failed" <<< "$log" ||
+     ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log"; then
     echo "FAIL: $label produced no renderable triangles"
     return 1
   fi
   if [ "$label" = custom-primvars ] &&
-     ! echo "$log" | grep -Eq 'loaded .*: 3 mesh\(es\), 3 tri\(s\)'; then
+     ! grep -Eq 'loaded .*: 3 mesh\(es\), 3 tri\(s\)' <<< "$log"; then
     echo "FAIL: custom float/int/vector primvars did not retain all meshes"
     return 1
   fi
@@ -290,10 +290,10 @@ run_asset_pass() {
     # --max-gpu-mem is DERIVED from the device's VRAM (half of it, floor 8 GiB),
     # so assert that a positive budget was resolved, not a number that only holds
     # on a 16 GiB card.
-    for expected in "large-scene-profile instance-heavy resolved" "backend=vk" \
+    for expected in "large-scene-profile instance-heavy resolved" "backend=vulkan" \
                     "--next=on" "--raster-lod=on" "--rt-lod=on" \
                     "--max-gpu-mem=[1-9][0-9]*\.[0-9]"; do
-      if ! echo "$log" | grep -Eq -- "$expected"; then
+      if ! grep -Eq -- "$expected" <<< "$log"; then
         echo "FAIL: profile pass did not apply expected default: $expected"
         return 1
       fi
@@ -301,12 +301,12 @@ run_asset_pass() {
   elif [ "$label" = "profile-final" ]; then
     for expected in "large-scene-profile instance-heavy resolved" \
                     "--rt-lod=off"; do
-      if ! echo "$log" | grep -Eq -- "$expected"; then
+      if ! grep -Eq -- "$expected" <<< "$log"; then
         echo "FAIL: final path tracing retained implicit RT LOD: $expected"
         return 1
       fi
     done
-    if echo "$log" | grep -Eq '\[rt-lod\].*proxy=[1-9]'; then
+    if grep -Eq '\[rt-lod\].*proxy=[1-9]' <<< "$log"; then
       echo "FAIL: final path tracing rendered an implicit bounding-box proxy"
       return 1
     fi

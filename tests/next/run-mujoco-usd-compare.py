@@ -19,7 +19,7 @@ The USD decoder names elements by prim path; elements are matched by the
 path's leaf, which is the (sanitized) MJCF name.
 
 What MuJoCo 3.16's decoder cannot read back is recorded under
-``decoder_limits`` instead of failing a model (see ``_decoder_limit``). Three
+``decoder_limits`` and makes coverage incomplete, never a pass. Three
 decoder bugs make otherwise valid stages fail or misread outright and need the
 fix in lighttransport/mujoco@77183565 (branch ``tinyusdz``; newton:inertia
 next to diagonalInertia, physics-purpose material bindings, site gprims
@@ -76,10 +76,14 @@ def _dump(args, path, usd):
         # The plugin links libmjcPhysics/OpenUSD from the install's lib/.
         env["LD_LIBRARY_PATH"] = os.pathsep.join([str(prefix / "lib"), env.get("LD_LIBRARY_PATH", "")])
     out = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
+    if out.returncode:
+        raise RuntimeError(f"consumer exited {out.returncode}: {out.stderr[-1200:]}")
     line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else "{}"
     data = json.loads(line)
     if "error" in data:
         raise RuntimeError(data["error"])
+    if any(key not in data for key in ('counts','option',*FIELDS)):
+        raise RuntimeError('consumer returned an incomplete model dump')
     data["stderr"] = out.stderr[-2000:]
     return data
 
@@ -122,7 +126,8 @@ OPTION = (("timestep", 1e-9, 0), ("iterations", 0, 0), ("integrator", 0, 0), ("c
 
 
 # What MuJoCo 3.16's USD decoder cannot read back, whatever the stage says.
-# Differences of these kinds are recorded as notes, not issues:
+# Differences of these kinds are recorded as incomplete coverage, not attributed
+# to the USD producer merely because this consumer cannot represent them:
 # * revolute/prismatic limits are read with Get(), so an unauthored limit
 #   decodes as limited with the schema's -inf..inf fallback;
 # * contype/conaffinity bitmasks have no MjcPhysics attribute (colliders
@@ -144,7 +149,11 @@ def _decoder_limit(kind, field, item, other):
 
 def compare(ref, cand, notes=None, keys=True):
     issues = []
+    if not any(ref[kind] for kind in FIELDS) and notes is not None:
+        notes.append("no comparable physics elements in reference")
     balls = [j["name"] for j in ref["joints"] if j["type"] == BALL]
+    if balls and notes is not None:
+        notes.append("decoder omits spherical joint semantics: " + ", ".join(balls[:6]))
     for key in COUNTS:
         if key == "nkey" and not keys:
             continue  # only <size nkey> placeholders, no authored <key>
@@ -169,6 +178,8 @@ def compare(ref, cand, notes=None, keys=True):
                 notes.append(f"ball joints the decoder skips: {', '.join(skipped[:6])}")
             # A free joint is no USD prim; the decoder adds an unnamed one.
             missing = [n for n in missing if a[n]["type"] not in (BALL, FREE)]
+            if notes is not None and any(a[n]["type"] == FREE for n in set(a)-set(b)):
+                notes.append("free joint properties are not matched to unnamed decoder joints")
         if kind == "equalities" and missing:
             # The decoder names a joint equality after the follower joint
             # prim: compare the unmatched ones by type.
@@ -224,7 +235,7 @@ def main():
             inputs.extend(models[:1] or candidates[:1])
     if args.limit:
         inputs = inputs[:args.limit]
-    totals = {"pass": 0, "mismatch": 0, "error": 0, "skip": 0}
+    totals = {"pass": 0, "incomplete": 0, "mismatch": 0, "error": 0, "skip": 0}
     results = []
     with tempfile.TemporaryDirectory() as tmp:
         for n, path in enumerate(inputs):
@@ -254,10 +265,10 @@ def main():
                 cand = _dump(args, out, True)
                 notes = []
                 issues = compare(ref, cand, notes, b"<key" in path.read_bytes())
-                entry.update(status="pass" if not issues else "mismatch", issues=issues)
+                entry.update(status="mismatch" if issues else "incomplete" if notes else "pass", issues=issues,
+                             coverage_complete=not notes)
                 if notes:
-                    entry["decoder_limits"] = sorted(set(n.split(":")[0] if n.startswith("decoder") else n
-                                                         for n in notes))[:20]
+                    entry["decoder_limits"] = sorted(set(notes))[:20]
                     entry["decoder_limit_count"] = len(notes)
                 deprecations = sorted(set(re.findall(r"uses deprecated (mjc:[\w:]+)", cand["stderr"])))
                 if deprecations:
@@ -272,7 +283,11 @@ def main():
     print(json.dumps(totals))
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps({"totals": totals, "results": results}, indent=1))
+        args.out.write_text(json.dumps({"totals": totals, "results": results,
+            "scope": "Compiled consumer properties only; no solver or trajectory equivalence",
+            "oracle_policy": "Consumer decoder omissions are incomplete coverage, not producer failures or passes"}, indent=1))
+    if totals["mismatch"] or totals["error"]: return 1
+    if totals["incomplete"] or totals["skip"] or not results: return 2
     return 0
 
 

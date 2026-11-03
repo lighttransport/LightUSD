@@ -398,9 +398,9 @@ bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
                 anchor.empty()
                     ? std::filesystem::path(result.usd_path).parent_path()
                     : std::filesystem::path(anchor);
-            item.texture = (base / std::string(asset->as_asset_path()))
-                               .lexically_normal()
-                               .string();
+            item.texture = anchor.empty()
+                ? (base / std::string(asset->as_asset_path())).lexically_normal().string()
+                : usd::ResolveAssetAnchorPath(std::string(asset->as_asset_path()), spec->asset_anchor_id());
             if (spec)
               if (const auto* meta = spec->property_meta("inputs:texture:file"))
                 item.srgb = meta->colorSpace != "raw" &&
@@ -416,9 +416,9 @@ bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
               anchor.empty()
                   ? std::filesystem::path(result.usd_path).parent_path()
                   : std::filesystem::path(anchor);
-          item.ies = (base / item.value.shaping_ies_file)
-                         .lexically_normal()
-                         .string();
+          item.ies = anchor.empty()
+              ? (base / item.value.shaping_ies_file).lexically_normal().string()
+              : usd::ResolveAssetAnchorPath(item.value.shaping_ies_file, spec->asset_anchor_id());
         }
         auto read_links = [&](const char* first, const char* second) {
           std::vector<std::string> out;
@@ -462,9 +462,9 @@ bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
       const auto base =
           anchor.empty() ? std::filesystem::path(result.usd_path).parent_path()
                          : std::filesystem::path(anchor);
-      selected.path = (base / std::string(path->as_asset_path()))
-                          .lexically_normal()
-                          .string();
+      selected.path = anchor.empty()
+          ? (base / std::string(path->as_asset_path())).lexically_normal().string()
+          : usd::ResolveAssetAnchorPath(std::string(path->as_asset_path()), spec->asset_anchor_id());
       selected.name = field;
       const auto volume = stage.GetPrimAtPath(usd::Path(parent));
       const auto* marker =

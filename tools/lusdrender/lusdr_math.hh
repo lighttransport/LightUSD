@@ -99,6 +99,7 @@ struct TriInfo {
   Vec3 n;
   // USD doubleSided (default 1 = pre-cull behavior; see FlatTri::double_sided).
   uint8_t double_sided{1};
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float roughness{0.55f};
@@ -179,6 +180,7 @@ struct TriMat {
   uint8_t opacity_ch{0};
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   float rough_tex_scale{1.0f};
   float rough_tex_bias{0.0f};
   float metal_tex_scale{1.0f};
@@ -253,6 +255,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.opacity = m.opacity;
   t.opacity_tex_id = m.opacity_tex_id;
   t.opacity_threshold = m.opacity_threshold;
+  t.opacity_presence = m.opacity_presence;
   t.clearcoat = m.clearcoat;
   t.clearcoat_roughness = m.clearcoat_roughness;
   t.clearcoat_tex_id = m.clearcoat_tex_id;
@@ -306,6 +309,7 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.opacity = t.opacity;
   m.opacity_tex_id = t.opacity_tex_id;
   m.opacity_threshold = t.opacity_threshold;
+  m.opacity_presence = t.opacity_presence;
   m.clearcoat = t.clearcoat;
   m.clearcoat_roughness = t.clearcoat_roughness;
   m.clearcoat_tex_id = t.clearcoat_tex_id;
@@ -372,6 +376,7 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.occlusion == b.occlusion && a.opacity == b.opacity &&
          a.opacity_tex_id == b.opacity_tex_id &&
          a.opacity_threshold == b.opacity_threshold &&
+         a.opacity_presence == b.opacity_presence &&
          a.clearcoat == b.clearcoat &&
          a.clearcoat_roughness == b.clearcoat_roughness &&
          a.clearcoat_tex_id == b.clearcoat_tex_id &&
@@ -569,6 +574,22 @@ inline Vec3 TransformDirO2W(const float o[12], const Vec3 &v) {
               o[8] * v.x + o[9] * v.y + o[10] * v.z};
 }
 
+// Normals use the inverse transpose, including non-uniform/reflected instances.
+inline Vec3 TransformNormalO2W(const float o[12], const Vec3& n) {
+  const float a = o[5] * o[10] - o[6] * o[9];
+  const float b = o[6] * o[8] - o[4] * o[10];
+  const float c = o[4] * o[9] - o[5] * o[8];
+  const float determinant = o[0] * a + o[1] * b + o[2] * c;
+  if (std::abs(determinant) < 1.0e-20f) return Vec3{0, 0, 0};
+  return Mul(Vec3{a * n.x + b * n.y + c * n.z,
+      (o[2] * o[9] - o[1] * o[10]) * n.x +
+      (o[0] * o[10] - o[2] * o[8]) * n.y +
+      (o[1] * o[8] - o[0] * o[9]) * n.z,
+      (o[1] * o[6] - o[2] * o[5]) * n.x +
+      (o[2] * o[4] - o[0] * o[6]) * n.y +
+      (o[0] * o[5] - o[1] * o[4]) * n.z}, 1.0f / determinant);
+}
+
 // Compose two 3x4 object->world transforms (same column-vector layout as
 // TransformPointO2W: world = A*p + t). out = outer * inner, i.e. out maps a point
 // by applying `inner` first then `outer`: out(p) = outer(inner(p)). Used to flatten
@@ -629,6 +650,18 @@ inline void PixelJitter(int s, int spp, float *jx, float *jy) {
     *jx = RadicalInverse(uint32_t(s) + 1u, 2u);
     *jy = RadicalInverse(uint32_t(s) + 1u, 3u);
   }
+}
+
+// Diagnostic emission values use display sRGB directly, with no photographic
+// tone map. Both CPU and GPU channel captures share this encoding.
+inline uint8_t EncodeDiagnosticSRGB(float value) {
+  const float linear =
+      std::isfinite(value) ? std::max(0.0f, std::min(1.0f, value)) : 0.0f;
+  const float srgb = linear <= 0.0031308f
+                         ? 12.92f * linear
+                         : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+  return static_cast<uint8_t>(
+      std::lround(std::max(0.0f, std::min(1.0f, srgb)) * 255.0f));
 }
 
 }  // namespace lusdr

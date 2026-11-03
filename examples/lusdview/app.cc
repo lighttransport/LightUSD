@@ -5436,6 +5436,18 @@ void App::updateNextDeformFrameIfNeeded() {
       draw_.hasBounds = true;
     }
   }
+  // Seed auto-fit and the frozen helper extent from the same tight initial
+  // pose as CPU skinning. Later animation frames retain the inexpensive
+  // conservative bone bounds above; they must not rescale the ground grid.
+  if (!std::isfinite(skinFrameTime_)) {
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                 gui_.blendOverrides(), bmin, bmax)) {
+      std::copy(bmin, bmin + 3, draw_.aabbMin);
+      std::copy(bmax, bmax + 3, draw_.aabbMax);
+      draw_.hasBounds = true;
+    }
+  }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
     BuildNextMorphWeights(nextStageSnapshot_.get(), draw_, animTime_,
@@ -7640,7 +7652,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
-    if (maxFrames < 0 && streamHttpPort_ <= 0)
+    if (maxFrames < 0 && streamHttpPort_ <= 0 && !mcpStdio_ && mcpHttpPort_ <= 0)
       maxFrames = 4;  // windowless runs are bounded by frame count
     // GLFW is never initialized in the headless path (no window, no surface).
   } else {
@@ -7852,6 +7864,15 @@ int App::run(const std::string& initialFile, int maxFrames,
                                        : "Failed to start MCP HTTP server";
     }
     if (mcpStdio_) mcp_->startStdio();
+    gui_.setRenderObserver([this] {
+      if (mcpBarrierRequest_.empty() || rtPath_ || stereoRequested_ || rasterMotionAccum_.valid ||
+          loadActive_ || progressiveActive_ || reconvActive_ || (reconvHasRequest_ && reconvRequested_ != reconvApplied_)) return;
+      std::string error;
+      auto state = mcpCallLibraryTool("view_state", nlohmann::json::object(), error);
+      if (!error.empty()) return;
+      for (const char* key : {"frame_serial", "rendered_camera", "rendered_time", "barrier"}) state.erase(key);
+      mcpBarrierSubmitting_ = std::move(state);
+    });
   }
 #else
   if (mcpStdio_ || mcpHttpPort_ > 0) {
@@ -8178,6 +8199,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #endif
         mcpHttpRunning_, mcpHttpHost_, mcpHttpPort_ > 0 ? mcpHttpPort_ : 8080,
         mcpHttpStatus_);
+    gui_.setCompareContext(rendererGeneration_, renderThreadActive_);
     gui_.frame(renderer_.get(), &camera_);
     if (!droppedEnvmapPath_.empty()) {
       gui_.setDomeFilePath(droppedEnvmapPath_);
@@ -8855,11 +8877,45 @@ int App::run(const std::string& initialFile, int maxFrames,
         streamPrevClientCount_ = cc;
       }
       if (streamSend) renderer_->requestWindowCapture();
+#if defined(LUSDVIEW_HAVE_MCP)
+      if (!mcpCompareWindowPath_.empty()) renderer_->requestWindowCapture();
+#endif
 
       if (!imguiRenderedBeforeStereo) ImGui::Render();
       static const bool timeFrame = std::getenv("LUSDVIEW_TIME_FRAME") != nullptr;
       const auto tp0 = std::chrono::steady_clock::now();
       renderer_->present();
+#if defined(LUSDVIEW_HAVE_MCP)
+      if (!mcpCompareWindowPath_.empty()) {
+        std::vector<uint8_t> pixels;
+        int width=0,height=0;
+        std::string error;
+        bool ok=renderer_->captureWindow(&pixels,&width,&height);
+        if (ok) ok=WriteScreenshotImage(mcpCompareWindowPath_,pixels,width,height,&error);
+        else error="composited window readback is unavailable";
+        mcpCompareWindowResult_={{"pending",false},{"written",ok},{"path",mcpCompareWindowPath_},
+                                 {"width",width},{"height",height},{"error",error}};
+        mcpCompareWindowPath_.clear();
+      }
+      if (mcp_) {
+        mcpCpuFrameSeconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - uiFrameStart).count();
+        ++mcpFrameSerial_;
+        mcpRenderedTime_ = hasAnimation_ ? reconvApplied_ : animTime_;
+        std::string cameraError;
+        mcpRenderedCamera_ = mcpViewport(nlohmann::json{{"op", "get"}}, cameraError)["camera"];
+        if (!mcpBarrierSubmitting_.is_null()) {
+          mcpBarrierPixels_.clear();
+          const bool captured = renderer_->captureViewport(&mcpBarrierPixels_, &mcpBarrierWidth_, &mcpBarrierHeight_);
+          mcpBarrier_ = {{"token", mcpBarrierRequest_}, {"frame_serial", mcpFrameSerial_},
+                         {"state", std::move(mcpBarrierSubmitting_)},
+                         {"ready", captured && mcpBarrierWidth_ > 1 && mcpBarrierHeight_ > 1}};
+          mcpBarrier_["state"]["timeline"]["time"] = mcpRenderedTime_;
+          if (!captured) mcpBarrier_["error"] = "viewport readback failed";
+          mcpBarrierSubmitting_ = nullptr;
+          mcpBarrierRequest_.clear();
+        }
+      }
+#endif
 
       if (rasterMotionFrame) {
         RasterMotionAccumulation& accum = rasterMotionAccum_;

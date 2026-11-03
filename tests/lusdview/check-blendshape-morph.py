@@ -135,15 +135,21 @@ def render(binary, model, out, time, extra=(), env=None):
     e = dict(os.environ)
     if env:
         e.update(env)
+    try:os.remove(out)
+    except FileNotFoundError:pass
+    try:os.remove(os.path.join(os.path.dirname(out), "imgui.ini"))
+    except FileNotFoundError:pass
     config = os.path.join(os.path.dirname(out), "config.json")
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
-    cmd = [binary, "--next", "--headless", "--frames", "3", "--time",
-           str(time), "--config", config, "--screenshot", out, *extra, model]
+    cmd = [binary, "--next", "--headless", "--size", "320x320", "--frames", "3", "--time",
+           str(time), "--config", config, "--no-grid", "--no-skeleton",
+           "--screenshot", out, *extra, model]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       env=e, timeout=120)
+        with open(out + ".log", "w") as log:
+            result=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,env=e,timeout=120)
+        if result.returncode:return False
     except subprocess.TimeoutExpired:
         return False
     return os.path.exists(out) and os.path.getsize(out) > 0

@@ -567,7 +567,7 @@ def main():
 
     resolvers = [SchemaResolverMjc(), SchemaResolverNewton()]
     results = []
-    totals = {p: {"pass": 0, "mismatch": 0, "error": 0, "rejected": 0} for p in profiles}
+    totals = {p: {"pass": 0, "incomplete": 0, "mismatch": 0, "error": 0, "rejected": 0} for p in profiles}
     with tempfile.TemporaryDirectory() as tmp:
         for path in inputs:
             entry = {"input": str(path), "profiles": {}}
@@ -603,7 +603,11 @@ def main():
                     record["issues"] = issues
                     if notes:
                         record["reference_differs"] = notes
-                    record["status"] = "pass" if not issues else "mismatch"
+                    # Replacing an SDF with its source mesh changes the tested
+                    # collision representation; it cannot certify SDF fidelity.
+                    complete = not any(note.startswith("no CUDA device:") for note in notes)
+                    record["coverage_complete"] = complete
+                    record["status"] = "mismatch" if issues else "pass" if complete else "incomplete"
                 except Exception as exc:
                     record["status"] = "error"
                     record["error"] = f"{type(exc).__name__}: {exc}"
@@ -618,12 +622,15 @@ def main():
                 detail = "; ".join(record.get("issues", [])[:4]) or record.get("error", "")
                 print(f"{record['status'].upper():8s} {profile:8s} {path}  {detail}", flush=True)
             results.append(entry)
-    report = {"versions": {"newton": newton.__version__, "warp": wp.__version__},
+    report = {"versions": {"newton": getattr(newton, "__version__", "unversioned checkout"), "warp": wp.__version__},
+              "scope": "Compiled importer properties; SDF-to-mesh substitutions are incomplete coverage, not SDF passes",
               "totals": totals, "results": results}
     print(json.dumps(totals))
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(report, indent=1, default=str))
+    if any(row["error"] or row["mismatch"] for row in totals.values()): return 1
+    if not results or any(row["incomplete"] for row in totals.values()): return 2
     return 0
 
 

@@ -68,6 +68,7 @@ class MCPServer {
   std::thread stdioThread_;
   bool stdioStarted_{false};
 
+  std::string httpToken_;
   mg_context* httpCtx_{nullptr};
 };
 

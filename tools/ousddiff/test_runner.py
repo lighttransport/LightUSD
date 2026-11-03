@@ -114,6 +114,20 @@ class RunnerTests(unittest.TestCase):
             result = execute([sys.executable, '-c', 'import time; a=bytearray(80*1024*1024); time.sleep(5)'], directory, 5, max_rss_mib=40, reserve_mib=0)
             self.assertEqual(result['status'], 'resource_limit')
 
+    def test_gpu_counter_budget_and_unavailable_are_not_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);counter=root/'vram';counter.write_text(str(2*1024**2))
+            result=execute([sys.executable,'-c','raise SystemExit(99)'],root/'over',5,
+                           max_rss_mib=512,reserve_mib=0,gpu_vram_path=counter,gpu_budget_mib=1)
+            self.assertEqual(result['status'],'resource_limit')
+            self.assertIsNone(result['returncode'])
+            self.assertEqual(result['peak_device_vram_bytes'],2*1024**2)
+            counter.unlink()
+            result=execute([sys.executable,'-V'],root/'missing',5,
+                           gpu_vram_path=counter,gpu_budget_mib=1)
+            self.assertEqual(result['status'],'unavailable')
+            self.assertIsNone(result['returncode'])
+
     def test_report_escapes_html_and_needs_no_fetch(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.html'

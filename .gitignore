@@ -560,3 +560,6 @@ python/lightusd/_core.*.so
 # each machine keeps its own copy and it conflicted in every cross-merge.
 task.md
 @resume.md
+
+# Small authored regression fixtures for ancestor variant strength.
+!tests/usda/pcp-ancestor-variant/*.usda

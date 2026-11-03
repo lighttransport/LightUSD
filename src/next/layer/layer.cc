@@ -138,6 +138,7 @@ Layer::Layer(Layer&& other) noexcept
       meta_(std::move(other.meta_)),
       finalized_(other.finalized_),
       lazy_path_index_(other.lazy_path_index_),
+      source_asset_anchor_id_(other.source_asset_anchor_id_),
       path_index_dirty_(other.path_index_dirty_.load()),
       prim_filler_(std::move(other.prim_filler_)) {
   other.path_index_dirty_.store(false);
@@ -150,6 +151,7 @@ Layer& Layer::operator=(Layer&& other) noexcept {
     meta_ = std::move(other.meta_);
     finalized_ = other.finalized_;
     lazy_path_index_ = other.lazy_path_index_;
+    source_asset_anchor_id_ = other.source_asset_anchor_id_;
     path_index_dirty_.store(other.path_index_dirty_.load());
     other.path_index_dirty_.store(false);
     prim_filler_ = std::move(other.prim_filler_);
@@ -409,6 +411,7 @@ Layer Layer::Clone() const {
   }
   out.root_indices_ = root_indices_;
   out.meta_ = meta_;
+  out.source_asset_anchor_id_ = source_asset_anchor_id_;
   out.finalized_ = finalized_;
   out.build_path_index();
   return out;

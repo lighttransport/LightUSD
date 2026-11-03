@@ -2401,8 +2401,10 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
 // Row-vector convention, matching tydra::SkinPointsLBS.
 bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
                       const std::string& animPath, double time,
-                      std::vector<matrix4d>* skinMat) {
-  if (!stage || !skinMat) return false;
+                      std::vector<matrix4d>* skinMat,
+                      std::vector<matrix4d>* jointWorlds = nullptr,
+                      std::vector<int>* parents = nullptr) {
+  if (!stage || (!skinMat && !jointWorlds)) return false;
   const lightusd_prim skelPrim =
       lightusd_stage_prim_at_path(stage, skelPath.c_str());
   const lightusd_prim animPrim = animPath.empty() ? lightusd_prim{} :
@@ -2521,6 +2523,9 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
       world.size() != nj) {
     return false;
   }
+  if (jointWorlds) *jointWorlds = world;
+  if (parents) *parents = topo;
+  if (!skinMat) return true;
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
     std::vector<matrix4d> restWorld;
@@ -5540,6 +5545,34 @@ bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
     if (FindLegacyCameraAtTimeRec(child, name, time, out)) return true;
   }
   return false;
+}
+
+bool BuildNextSkeletonOverlay(const lightusd_stage* stage, const std::string& path,
+                              double time, NextSkeletonOverlay* output) {
+  if (!stage || !output) return false;
+  output->positions.clear(); output->parents.clear();
+  const auto skeleton = lightusd_stage_prim_at_path(stage, path.c_str());
+  if (!lightusd_prim_is_valid(skeleton) || PublicPrimType(skeleton) != "Skeleton") return false;
+  for (auto prim = skeleton; lightusd_prim_is_valid(prim); prim = lightusd_prim_parent(prim)) {
+    if (!lightusd_prim_is_active(prim)) return true;
+    lightusd::api::Value visibility;
+    lightusd_sv value{};
+    if (lightusd_attr_eval(stage, prim, "visibility", time, visibility.put()) == LIGHTUSD_OK &&
+        lightusd::api::ValueString(visibility, &value) == LIGHTUSD_OK && PublicString(value) == "invisible") return true;
+  }
+  const auto animation = FindSkelAnimationPublic(stage, skeleton, skeleton);
+  const std::string animPath = lightusd_prim_is_valid(animation) ? PublicString(lightusd_prim_path(animation)) : std::string();
+  std::vector<matrix4d> joints;
+  if (!PoseNextSkeleton(stage, path, animPath, time, nullptr, &joints, &output->parents)) return false;
+  double world[16];
+  if (lightusd_prim_world_transform(stage, skeleton, time, world) != LIGHTUSD_OK) return false;
+  const matrix4d placement = Mat4dFromArray(world);
+  output->positions.reserve(joints.size() * 3);
+  for (const auto& joint : joints) {
+    const matrix4d placed = joint * placement;
+    for (int axis = 0; axis < 3; ++axis) output->positions.push_back(static_cast<float>(placed.m[3][axis]));
+  }
+  return true;
 }
 
 static bool ComputeNextBoneRows(const lightusd_stage* stage, const DrawScene& draw,

@@ -124,7 +124,7 @@ void PrintUsage(const char *prog) {
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
       << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
-      << "  --aov <color|depth|worldNormal|primId> CPU capture (data AOVs require .pfm)\n"
+      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId> capture (.pfm for data; raw depth/normals also support -vkr)\n"
       << "  --all-products        Render settings products; output is a filename prefix.\n"
       << "  -renderProduct <path>  Select one product from the settings.\n"
       << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
@@ -154,6 +154,10 @@ void PrintUsage(const char *prog) {
       << "  -quality <fast|default|hq>\n"
       << "                         LightRT BVH build quality (default default).\n"
       << "  -threads <N>           LightRT build threads (0 = backend default).\n"
+      << "  -maxMem <GiB>          Finite process/load budget (0 = automatic).\n"
+      << "  -maxArrayElements <N>  Decoded USD array count cap (default 16777216).\n"
+      << "  -diagnosticEmission    Unlit emissive channel diagnostic, sRGB/no tone map\n"
+      << "  -diagnosticMaterial NAME  Resolved native roughness/metallic, sRGB/no tone map\n"
       << "  -subdiv <N>            Subdivision level for Mesh subdivisionScheme\n"
       << "                         catmullClark/loop/bilinear (default 0).\n"
       << "  -complexity <low|medium|high|veryhigh>\n"
@@ -229,6 +233,8 @@ void PrintUsage(const char *prog) {
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
       << "  -vkDevice <N>         Select Vulkan physical-device index (default auto).\n"
+      << "  -curveSegments <1..64> Spline samples per span for instanced GPU tubes (default 8)\n"
+      << "  -vkInstancedStream    Offline instancing with one TLAS slice resident (all placements)\n"
       << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
       << "                        prototype, shared across instances; saves VRAM on\n"
       << "                        instanced scenes). Falls back to flat if no shares.\n"
@@ -323,6 +329,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       if (name == "color") opt->aov = CaptureAov::Color;
       else if (name == "depth") opt->aov = CaptureAov::Depth;
       else if (name == "worldNormal") opt->aov = CaptureAov::WorldNormal;
+      else if (name == "geometricNormal") opt->aov = CaptureAov::GeometricNormal;
+      else if (name == "shadingNormal") { opt->aov = CaptureAov::ShadingNormal; opt->smooth = true; }
       else if (name == "primId") opt->aov = CaptureAov::PrimId;
       else { std::cerr << "Unknown AOV: " << name << "\n"; return false; }
       opt->aov_explicit = true;
@@ -439,6 +447,23 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
+    }
+    OPT_MATCH(a == "-diagnosticEmission" || a == "--diagnostic-emission") {
+      opt->diagnostic_emission = true;
+    }
+    OPT_MATCH(a == "-diagnosticMaterial" || a == "--diagnostic-material") {
+      const char* value = need_value(a.c_str());
+      if (!value) return false;
+      const std::string name(value);
+      if (name == "roughness")
+        opt->diagnostic_material = MaterialDiagnostic::Roughness;
+      else if (name == "metallic")
+        opt->diagnostic_material = MaterialDiagnostic::Metallic;
+      else {
+        std::cerr << "Material diagnostic must be roughness or metallic.\n";
+        return false;
+      }
+      opt->diagnostic_emission = true;
     }
     OPT_MATCH(a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
@@ -588,14 +613,26 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-maxMem" || a == "--maxMem") {
       const char *v = need_value(a.c_str());
-      char *end = nullptr;
-      double g = v ? std::strtod(v, &end) : 0.0;
-      if (!v || end == v || g < 0.0) {
+      double g = 0.0;
+      if (!v || !ParseDoubleStrict(v, &g) || g < 0.0) {
         std::cerr << "Invalid -maxMem (expected GiB, e.g. -maxMem 24).\n";
         return false;
       }
       opt->max_mem_gib = g;
       opt->max_mem_explicit = true;
+    }
+    OPT_MATCH(a == "-maxArrayElements") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      errno = 0;
+      const unsigned long long count = v ? std::strtoull(v, &end, 10) : 0;
+      if (!v || !std::isdigit(static_cast<unsigned char>(*v)) ||
+          errno == ERANGE || !end || *end || !count ||
+          count > std::numeric_limits<size_t>::max()) {
+        std::cerr << "Invalid -maxArrayElements (expected a positive element count).\n";
+        return false;
+      }
+      opt->max_array_elements = count;
     }
     OPT_MATCH(a == "-lodStream" || a == "--lodStream") {
       opt->lod_stream = true;
@@ -603,9 +640,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-maxVram" || a == "--maxVram") {
       const char *v = need_value(a.c_str());
-      char *end = nullptr;
-      double g = v ? std::strtod(v, &end) : 0.0;
-      if (!v || end == v || g < 0.0) {
+      double g = 0.0;
+      if (!v || !ParseDoubleStrict(v, &g) || g < 0.0) {
         std::cerr << "Invalid -maxVram (expected GiB, e.g. -maxVram 8).\n";
         return false;
       }
@@ -621,6 +657,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
       opt->rt_lod_frustum_cull = true;
+    }
+    OPT_MATCH(a == "-curveSegments") {
+      const char* v = need_value(a.c_str());
+      if (!v) return false;
+      int segments = 0;
+      if (!ParseIntStrict(v, &segments) || segments < 1 || segments > 64) {
+        std::cerr << "Invalid -curveSegments (expected 1..64).\n";
+        return false;
+      }
+      opt->curve_segments = uint32_t(segments);
+      continue;
     }
     OPT_MATCH(a == "-rtLodFullPx" || a == "--rtLodFullPx") {
       const char *v = need_value(a.c_str());
@@ -810,10 +857,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
     }
-    OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced") {
+    OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced" || a == "-vkInstancedStream") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->vulkan_instanced = true;
+      opt->vulkan_instanced_stream = a == "-vkInstancedStream";
       opt->backend_explicit = true;
     }
     OPT_MATCH(a == "-gpuShade" || a == "--gpuShade") {
@@ -972,6 +1020,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     PrintUsage(argv[0]);
     return false;
   }
+  if (opt->diagnostic_material != MaterialDiagnostic::None &&
+      opt->aov != CaptureAov::Color) {
+    std::cerr << "-diagnosticMaterial cannot be combined with a data AOV.\n";
+    return false;
+  }
+  if (opt->diagnostic_emission && (opt->cuda || opt->hip || opt->vulkan_instanced || opt->use_d3d || opt->path_trace)) {
+    std::cerr << "-diagnosticEmission supports CPU preview and flat Vulkan primary-ray paths only.\n";
+    return false;
+  }
+  if (opt->diagnostic_emission) opt->gpu_shade = Options::GpuShadeMode::Cpu;
   opt->input = positional[0];
   opt->output = positional.size() > 1 ? positional[1] : std::string();
   if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {

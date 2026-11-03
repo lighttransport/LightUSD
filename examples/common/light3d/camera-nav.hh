@@ -124,11 +124,16 @@ class OrbitCamera {
 
   // Absolute camera placement (e.g. driven by the MCP viewport tool). Pitch is
   // clamped like orbit(); distance kept positive.
+  // Rigid camera-to-world pose, column-major; retains roll and pole views.
+  bool setPose(const float transform[16], float pivotDistance);
   void setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,
                 float dist);
 
  private:
   light3d::Vec3 target_{0.0f, 0.0f, 0.0f};
+  bool havePose_{false};
+  light3d::Vec3 poseBackward_{0, 0, 1};
+  light3d::Vec3 poseUp_{0, 1, 0};
   float yaw_{0.6f};       // radians, azimuth around the up axis
   float pitch_{0.35f};    // radians, elevation, clamped to (-89deg, 89deg)
   float distance_{5.0f};

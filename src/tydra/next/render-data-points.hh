@@ -77,6 +77,8 @@ struct RenderCurves {
   // duplicating the first tessellated point at the end.
   std::vector<uint32_t> tessellated_vertex_counts;  // points per polyline
   FloatChunked tessellated_points;  // xyz interleaved
+  // Authored curve normals evaluated with the curve basis; normalize at use.
+  FloatChunked tessellated_normals;
   // Per-tessellated-point widths (linearly interpolated along the curve).
   // Empty when widths are absent or constant (use widths[0] instead).
   FloatChunked tessellated_widths;

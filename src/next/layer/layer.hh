@@ -295,6 +295,10 @@ public:
 
   const LayerMeta& meta() const;
   LayerMeta& meta();
+  // Runtime source provenance, including empty package root layers. Not USD
+  // metadata and never serialized into authored data.
+  uint32_t source_asset_anchor_id() const { return source_asset_anchor_id_; }
+  void set_source_asset_anchor_id(uint32_t id) { source_asset_anchor_id_ = id; }
 
   /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
   /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
@@ -329,6 +333,7 @@ private:
   LayerMeta meta_;
   bool finalized_ = false;
   bool lazy_path_index_ = false;
+  uint32_t source_asset_anchor_id_ = 0;
   // Set by finalize() when the index was deferred; cleared by the build.
   mutable std::atomic<bool> path_index_dirty_{false};
   std::shared_ptr<PrimFiller> prim_filler_;

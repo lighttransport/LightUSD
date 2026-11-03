@@ -1010,6 +1010,33 @@ static int test_native_instance_load(const char* path) {
                 native, "/InstancingTests/Forest/Tree1"))
             .len == 0);
   CHECK(lightusd_prim_instance_prototype_path((lightusd_prim){0}).len == 0);
+  /* Shared storage must not leak the prototype's namespace into picks,
+   * children, parent navigation or repeated direct lookup. */
+  lightusd_prim trunk = lightusd_prim_child_by_name(secondary, "Trunk");
+  CHECK(lightusd_prim_is_valid(trunk));
+  const char* logical_path = "/InstancingTests/Forest/Tree2/Trunk";
+  lightusd_sv borrowed_path = lightusd_prim_path(trunk);
+  CHECK(borrowed_path.len == strlen(logical_path));
+  CHECK(memcmp(borrowed_path.data, logical_path, borrowed_path.len) == 0);
+  lightusd_prim direct = lightusd_stage_prim_at_path(native, logical_path);
+  CHECK(lightusd_prim_is_valid(direct));
+  CHECK(lightusd_prim_path(direct).data == borrowed_path.data);
+  lightusd_sv parent_path = lightusd_prim_path(lightusd_prim_parent(trunk));
+  CHECK(parent_path.len == strlen("/InstancingTests/Forest/Tree2"));
+  CHECK(memcmp(parent_path.data, "/InstancingTests/Forest/Tree2", parent_path.len) == 0);
+  for (size_t i = 0; i < lightusd_prim_child_count(secondary); ++i) {
+    lightusd_prim child = lightusd_prim_child(secondary, i);
+    lightusd_sv child_path = lightusd_prim_path(child);
+    CHECK(child_path.len > parent_path.len);
+    CHECK(memcmp(child_path.data, parent_path.data, parent_path.len) == 0);
+  }
+  CHECK(memcmp(borrowed_path.data, logical_path, borrowed_path.len) == 0);
+  CHECK_OK(lightusd_stage_define_prim(native, "/NewPrim", "Xform", 0, NULL));
+  CHECK(!lightusd_prim_is_valid(trunk));
+  CHECK(lightusd_prim_path(trunk).len == 0);
+  lightusd_prim refreshed = lightusd_stage_prim_at_path(native, logical_path);
+  CHECK(lightusd_prim_is_valid(refreshed));
+  CHECK(lightusd_prim_path(refreshed).len == strlen(logical_path));
   lightusd_stage_destroy(holder);
   lightusd_stage_destroy(native);
   return 0;

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include "compare_panel.hh"
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -43,6 +44,8 @@ using light3d::OrbitCamera;
 
 class Gui {
  public:
+  void openCompare(int mode = -1) { comparePanel_.open(mode); }
+  void setCompareContext(unsigned long long generation, bool threaded) { compareGeneration_=generation; compareThreaded_=threaded; }
   ~Gui();  // joins the per-instance cull worker
 
   struct LoadStatus {
@@ -119,7 +122,8 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const lightusd::api::Stage& stage) { nextStage_ = stage; }
+  void setNextStage(const lightusd::api::Stage& stage);
+  size_t nextSkeletonOverlayVertexCount() const { return showSkeleton_ ? nextSkeletonLines_.size() : 0; }
   // StageSession owns the authoritative deferred set. The composed next Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
@@ -239,12 +243,14 @@ class Gui {
   // Temporarily render an authored stereo eye into a half-width target. The
   // ImGui viewport remains full width; App composites the two eye captures back
   // into that display-sized target before the final present.
+  void setFixedRenderSize(int width, int height) { fixedRenderW_ = width; fixedRenderH_ = height; }
   void setStereoEyeViewportWidth(int width) { stereoEyeViewportWidth_ = width; }
   void viewportPixelToScreen(float x, float y, float* sx, float* sy) const {
     if (sx) *sx = x + viewportImageMin_.x;
     if (sy) *sy = y + viewportImageMin_.y;
   }
   // Route a GPU op to the render thread (threaded); runs inline if unset.
+  void setRenderObserver(std::function<void()> observer) { renderObserver_ = std::move(observer); }
   void setPostGpu(std::function<void(std::function<void()>)> fn) {
     postGpu_ = std::move(fn);
   }
@@ -282,6 +288,17 @@ class Gui {
   // CUDA ray tracer which bakes displacement into geometry at build time.
   float displacementScale() const {
     return displacementEnabled_ ? displacementScale_ : 0.0f;
+  }
+  void setBackgroundPreset(bool white) {
+    clearColor_[0] = clearColor_[1] = clearColor_[2] = white ? 1.0f : 0.0f;
+  }
+  const char* backgroundPreset() const {
+    if (clearColor_[0] == 0 && clearColor_[1] == 0 && clearColor_[2] == 0) return "black";
+    if (clearColor_[0] == 1 && clearColor_[1] == 1 && clearColor_[2] == 1) return "white";
+    return "native";
+  }
+  void setPurposeFlags(bool guide, bool proxy, bool render) {
+    showPurposeGuide_ = guide; showPurposeProxy_ = proxy; showPurposeRender_ = render;
   }
   uint32_t purposeVisibleMask() const {
     return (showPurposeDefault_ ? 1u : 0u) |
@@ -458,6 +475,7 @@ class Gui {
   void setSelectionItems(std::vector<SelectionItem> items, bool recordHistory);
   // Ctrl+click in the hierarchy: add/remove one prim from the multi-selection.
   void toggleSelectionItem(const SelectionItem& item);
+  bool focusSelectedPath(const std::string& path);
   // Hierarchy "select group": every renderable prim at or below `path`.
   void selectDescendants(const std::string& path, bool addToSelection);
   // Every prim visible inside the viewport rectangle.
@@ -663,6 +681,11 @@ class Gui {
 
   const lightusd::Prim* selPrim_{nullptr};
   lightusd::api::Stage nextStage_;
+  std::vector<std::string> nextSkeletonPaths_;
+  bool nextSkeletonPathsReady_{false};
+  double nextSkeletonTime_{0};
+  bool nextSkeletonTimeValid_{false};
+  std::vector<HelperVertex> nextSkeletonLines_;
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
@@ -744,6 +767,7 @@ class Gui {
   ImGuiTextFilter metaFilter_;
 
   // View menu toggles
+  int fixedRenderW_{0}, fixedRenderH_{0};
   bool showGrid_{true};
   bool showAxes_{true};
   bool showSceneBbox_{false};
@@ -799,6 +823,10 @@ class Gui {
   // scenes); cullInstances() polls the worker, applies its compacted result on the
   // main thread (updateInstanceVisibility is a GPU call), and relaunches on change.
   // Run a GPU op on the render thread when threaded, else inline.
+  ComparePanel comparePanel_;
+  unsigned long long compareGeneration_{0};
+  bool compareThreaded_{false};
+  std::function<void()> renderObserver_;
   std::function<void(std::function<void()>)> postGpu_;
   void gpu(std::function<void()> op) {
     if (postGpu_) postGpu_(std::move(op)); else op();

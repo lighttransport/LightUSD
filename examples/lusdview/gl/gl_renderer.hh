@@ -5,6 +5,7 @@
 
 #include <glad/glad.h>
 
+#include <array>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -71,6 +72,11 @@ class GLRenderer final : public Renderer {
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
+  void viewportSize(int* width, int* height) const override {
+    if (width) *width=vpW_;
+    if (height) *height=vpH_;
+  }
+  ViewportTexHandle comparisonImage(int slot, const light3d::Image* image = nullptr) override;
   bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   void present() override;
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
@@ -475,6 +481,7 @@ class GLRenderer final : public Renderer {
   // Row-flip scratch for uploadViewportImage (CUDA/HIP/CPU RT overlay).
   std::vector<uint8_t> flippedUploadScratch_;
 
+  std::array<GLuint,4> comparisonTextures_{};
   struct GLTexture {
     GLuint tex2d{0};
     GLuint arrayTex{0};

@@ -337,6 +337,14 @@ static void test_parent_path_config(const char* filename) {
     config.flags = mode == 2 ? LIGHTUSD_DOCUMENT_REJECT_PARENT_PATHS : 0;
     assert(lightusd_document_session_create(NULL, &session) == LIGHTUSD_OK);
     assert(lightusd_document_session_configure_open(session, &config) == LIGHTUSD_OK);
+    if (mode == 0) {
+      /* Untrusted composition is fail-closed: a rejected dependency must not
+       * masquerade as a successful partial document. */
+      assert(lightusd_document_session_open_file(session, filename, &snapshot) != LIGHTUSD_OK);
+      assert(snapshot == NULL);
+      lightusd_document_session_destroy(session);
+      continue;
+    }
     assert(lightusd_document_session_open_file(session, filename, &snapshot) == LIGHTUSD_OK);
     assert(lightusd_document_snapshot_has_prim(snapshot, "/Root"));
     assert(lightusd_document_snapshot_has_prim(snapshot, "/Root/Child") == (mode == 1));

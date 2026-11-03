@@ -1,0 +1,62 @@
+--- a/pxr/imaging/hdSt/stagingBuffer.cpp
++++ b/pxr/imaging/hdSt/stagingBuffer.cpp
+@@ -11,6 +11,8 @@
+ #include "pxr/imaging/hgi/capabilities.h"
+ #include "pxr/imaging/hgi/hgi.h"
+ 
++#include <algorithm>
++
+ PXR_NAMESPACE_OPEN_SCOPE
+ 
+ HdStStagingBuffer::HdStStagingBuffer(HdStResourceRegistry *resourceRegistry)
+@@ -52,7 +54,14 @@
+         return;
+     }
+ 
+-    _capacity = capacity;
++    // Pending bytes include uploads that bypass staging. Do not allocate one
++    // buffer for the whole commit: that can exceed a backend's buffer limit
++    // even when every destination buffer fits. Remaining copies use the
++    // existing direct-upload path once this bounded staging space is full.
++    constexpr size_t maxStagingBytes = 256 * 1024 * 1024;
++    const size_t backendLimit = _resourceRegistry->GetHgi()->GetCapabilities()->
++        GetMaxShaderStorageBlockSize();
++    _capacity = std::min(capacity, std::min(maxStagingBytes, backendLimit));
+ }
+ 
+ void
+@@ -71,7 +80,16 @@
+     // The value of 'queueThreshold' is estimated (when is the extra memcpy
+     // into the staging buffer slower than immediately issuing a gpu upload)
+     static constexpr int queueThreshold = 512 * 1024;
+-    if (!_isUma && copyOp.byteSize > queueThreshold) {
++    if ((!_isUma && copyOp.byteSize > queueThreshold) ||
++        _head > _capacity || copyOp.byteSize > _capacity - _head) {
++        // Preserve submission order before bypassing queued staged copies.
++        // Wait before reusing CPU staging storage: Flush records commands
++        // whose source pointer is consumed only when the work is submitted.
++        if (_head != 0) {
++            Flush();
++            _resourceRegistry->SubmitBlitWork(
++                HgiSubmitWaitTypeWaitUntilCompleted);
++        }
+         HgiBlitCmds* blitCmds = _resourceRegistry->GetGlobalBlitCmds();
+         blitCmds->CopyBufferCpuToGpu(copyOp);
+         return;
+@@ -100,8 +118,16 @@
+         buffer = _handles[_activeSlot];
+     }
+ 
++    if (!buffer) {
++        _resourceRegistry->GetGlobalBlitCmds()->CopyBufferCpuToGpu(copyOp);
++        return;
++    }
+     size_t capacity = buffer->GetDescriptor().byteSize;
+     uint8_t *cpuStaging = static_cast<uint8_t*>(buffer->GetCPUStagingAddress());
++    if (!cpuStaging) {
++        _resourceRegistry->GetGlobalBlitCmds()->CopyBufferCpuToGpu(copyOp);
++        return;
++    }
+ 
+     if (TF_VERIFY(_head + copyOp.byteSize <= capacity)) {
+         // Copy source into the staging buffer.

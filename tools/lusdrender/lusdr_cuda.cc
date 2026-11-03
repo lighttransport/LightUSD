@@ -21,6 +21,7 @@
 #include "rt_scene_build.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "light3d/math.h"
+#include "lusdr_camera.hh"
 #include "image-writer.hh"
 #include "lusdr_context.hh"
 
@@ -309,7 +310,8 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       mat.materialXNodeGraphJson = material_src.materialx_graph_json;
       const auto set_sample = [&](int texture, int channel,
                                   const ScalarTex *scalar,
-                                  lusdview::DrawTexSampleCPU *sample) {
+                                  lusdview::DrawTexSampleCPU *sample,
+                                  bool color_slot = false) {
         sample->tex = texture;
         sample->channel = channel;
         sample->uv.m00 = material_src.uv_xform.rc * material_src.uv_xform.sx;
@@ -318,13 +320,18 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         sample->uv.m11 = material_src.uv_xform.rc * material_src.uv_xform.sy;
         sample->uv.tx = material_src.uv_xform.tx;
         sample->uv.ty = material_src.uv_xform.ty;
+        if (color_slot && texture>=0 && size_t(texture)<textures.size()) {
+          const Texture& source=textures[size_t(texture)];
+          sample->scale[0]=source.scale.x;sample->scale[1]=source.scale.y;sample->scale[2]=source.scale.z;
+          sample->bias[0]=source.bias.x;sample->bias[1]=source.bias.y;sample->bias[2]=source.bias.z;
+        }
         if (scalar) {
           sample->scale[0] = scalar->scale;
           sample->bias[0] = scalar->bias;
         }
       };
-      set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample);
-      set_sample(material_src.specular_tex_id, -1, nullptr, &mat.specularColorSample);
+      set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample, true);
+      set_sample(material_src.specular_tex_id, -1, nullptr, &mat.specularColorSample, true);
       set_sample(material_src.normal_tex_id, -1, nullptr, &mat.normalSample);
       set_sample(material_src.coat_normal_tex_id, -1, nullptr,
                  &mat.coatNormalSample);
@@ -338,7 +345,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
                  &material_src.metal_tex,
                  &mat.metallicSample);
       set_sample(material_src.emission_tex_id, -1, nullptr,
-                 &mat.emissiveSample);
+                 &mat.emissiveSample, true);
       set_sample(material_src.occ_tex.id, material_src.occ_tex.ch,
                  &material_src.occ_tex,
                  &mat.occlusionSample);
@@ -373,6 +380,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       }
     }
     RouteSemanticTextures(&mat);
+    if (!mat.hasLightRtOpenPBR) lusdview::BakeRealtimePbrMaterial(&mat);
     scene->materials.push_back(std::move(mat));
 
     lusdview::DrawMeshCPU mesh;
@@ -555,11 +563,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
   const light3d::Vec3 fwd{camera.forward.x, camera.forward.y, camera.forward.z};
   const light3d::Vec3 up{camera.up.x, camera.up.y, camera.up.z};
   const light3d::Mat4 view = light3d::lookAt(eye, eye + fwd, up);
-  const float znear = std::max(camera.znear, 1.0e-5f);
-  const float zfar = std::max(camera.zfar, znear + 1.0f);
-  const light3d::Mat4 proj = light3d::perspectiveZeroOne(
-      camera.yfov, static_cast<float>(w) / static_cast<float>(h), znear,
-      zfar);
+  const light3d::Mat4 proj = CameraProjectionZeroOne(camera,static_cast<float>(w)/static_cast<float>(h));
   const light3d::Mat4 vp = proj * view;
   const light3d::Mat4 inv = vp.inverse();
   const float cam[3] = {camera.origin.x, camera.origin.y, camera.origin.z};
@@ -586,7 +590,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
               << "," << cam[2] << " forward=" << camera.forward.x << ","
               << camera.forward.y << "," << camera.forward.z
               << " up=" << camera.up.x << "," << camera.up.y << ","
-              << camera.up.z << " clip=" << znear << "," << zfar
+              << camera.up.z << " clip=" << camera.znear << "," << camera.zfar
               << " bounds=["
               << scene.aabbMin[0] << "," << scene.aabbMin[1] << ","
               << scene.aabbMin[2] << "]-[" << scene.aabbMax[0] << ","

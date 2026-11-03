@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -764,7 +765,8 @@ inline Vec3 EnvDir(const IblCache &ibl, const Vec3 &d) {
 inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
                              uint8_t ch, float u, float v, float lod,
                              float scale = 1.0f, float bias = 0.0f) {
-  if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
+  if (id < 0 || size_t(id) >= textures.size())
+    return std::numeric_limits<float>::quiet_NaN();
   return textures[size_t(id)].sample_channel(u, v, lod, int(ch)) * scale + bias;
 }
 
@@ -778,7 +780,8 @@ inline float SampleScalarTexAniso(const std::vector<Texture> &textures,
                                   bool have_fp, float dudx, float dvdx,
                                   float dudy, float dvdy, int max_aniso,
                                   float scale = 1.0f, float bias = 0.0f) {
-  if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
+  if (id < 0 || size_t(id) >= textures.size())
+    return std::numeric_limits<float>::quiet_NaN();
   const Texture &tx = textures[size_t(id)];
   const float raw = have_fp ? tx.sample_channel_aniso(u, v, dudx, dvdx, dudy,
                                                       dvdy, max_aniso, int(ch))
@@ -867,7 +870,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
-                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr) {
+                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr,
+                    Vec3* geometric_normal, Vec3* shading_normal) {
   if (out_openpbr) *out_openpbr = nullptr;
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
@@ -900,6 +904,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     out->p1 = wp1;
     out->p2 = wp2;
     out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+    if (geometric_normal) *geometric_normal = out->n;
+    if (shading_normal) *shading_normal = out->n;
     return true;
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
@@ -958,6 +964,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   out->p1 = wp1;
   out->p2 = wp2;
   out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+  if (geometric_normal) *geometric_normal = out->n;
   // Smooth shading: interpolate per-corner authored normals (local) and transform
   // by the instance, falling back to the geometric normal above.
   if (size_t(th.prim_id) * 9 + 8 < b.tri_normals.size()) {
@@ -966,9 +973,10 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     Vec3 ln{w0 * nn[0] + w1 * nn[3] + w2 * nn[6],
             w0 * nn[1] + w1 * nn[4] + w2 * nn[7],
             w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
-    Vec3 wn = TransformDirO2W(inst.o2w, ln);
+    Vec3 wn = TransformNormalO2W(inst.o2w, ln);
     if (Length(wn) > 1.0e-12f) out->n = Normalize(wn);
   }
+  if (shading_normal) *shading_normal = out->n;
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
@@ -1002,20 +1010,21 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.rough_tex_scale,
                                        lt.rough_tex_bias);
-        if (r >= 0.0f) out->roughness = ClampFloat(r, 0.0f, 1.0f);
+        if (std::isfinite(r)) out->roughness = ClampFloat(r, 0.0f, 1.0f);
       }
       if (lt.metal_tex_id >= 0) {
         float m = SampleScalarTexAniso(*textures, lt.metal_tex_id, lt.metal_ch, u,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.metal_tex_scale,
                                        lt.metal_tex_bias);
-        if (m >= 0.0f) out->metallic = ClampFloat(m, 0.0f, 1.0f);
+        if (std::isfinite(m)) out->metallic = ClampFloat(m, 0.0f, 1.0f);
       }
       if (lt.emission_tex_id >= 0 &&
           size_t(lt.emission_tex_id) < textures->size()) {
         const Texture &et = (*textures)[size_t(lt.emission_tex_id)];
         Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
                          : et.sample(u, v, 0.0f);
+        e=et.apply_value_transform(e);
         out->emission = Vec3{lt.emission.x * e.x, lt.emission.y * e.y,
                              lt.emission.z * e.z};
       }
@@ -1024,6 +1033,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         const Texture &st = (*textures)[size_t(lt.specular_tex_id)];
         Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
                          : st.sample(u, v, 0.0f);
+        s=st.apply_value_transform(s);
         out->specular_color = Vec3{lt.specular_color.x * s.x,
                                    lt.specular_color.y * s.y,
                                    lt.specular_color.z * s.z};
@@ -1033,7 +1043,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.occ_tex_scale,
                                        lt.occ_tex_bias);
-        if (o >= 0.0f) out->occlusion = ClampFloat(o, 0.0f, 1.0f);
+        if (std::isfinite(o)) out->occlusion = ClampFloat(o, 0.0f, 1.0f);
       }
       if (lt.opacity_tex_id >= 0) {
         float a = SampleScalarTexAniso(*textures, lt.opacity_tex_id,
@@ -1041,7 +1051,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        dudy, dvdy, kMaxAniso,
                                        lt.opacity_tex_scale,
                                        lt.opacity_tex_bias);
-        if (a >= 0.0f) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
+        if (std::isfinite(a)) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
       }
       if (lt.clearcoat_tex_id >= 0) {
         float clearcoat_val = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
@@ -1049,7 +1059,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                          dudy, dvdy, kMaxAniso,
                                          lt.clearcoat_tex_scale,
                                          lt.clearcoat_tex_bias);
-        if (clearcoat_val >= 0.0f) out->clearcoat = ClampFloat(clearcoat_val, 0.0f, 1.0f);
+        if (std::isfinite(clearcoat_val)) out->clearcoat = ClampFloat(clearcoat_val, 0.0f, 1.0f);
       }
       if (lt.clearcoat_rough_tex_id >= 0) {
         float cr = SampleScalarTexAniso(*textures, lt.clearcoat_rough_tex_id,
@@ -1057,7 +1067,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                         dudx, dvdx, dudy, dvdy, kMaxAniso,
                                         lt.clearcoat_rough_tex_scale,
                                         lt.clearcoat_rough_tex_bias);
-        if (cr >= 0.0f) out->clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+        if (std::isfinite(cr)) out->clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
@@ -1094,7 +1104,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                *openpbr_mats,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
-           float *primary_hit_t) {
+           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1109,12 +1119,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
+  Vec3 hit_geometric_normal{0, 0, 0}, hit_shading_normal{0, 0, 0};
   const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
-                       &hit_tri, &hit_openpbr)) {
+                       &hit_tri, &hit_openpbr, &hit_geometric_normal, &hit_shading_normal)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -1150,6 +1161,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       hit_tri.p1 = ft.p1;
       hit_tri.p2 = ft.p2;
       hit_tri.n = ft.n;
+      hit_geometric_normal = ft.n;
       hit_tri.purpose_bit = ft.purpose_bit;
       // Per-corner displayColor/displayOpacity (RGBA), barycentric-interpolated.
       if (tri_colors && size_t(hit.prim_id) * 12 + 11 < tri_colors->size()) {
@@ -1171,6 +1183,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
         if (Length(sn) > 1.0e-12f) hit_tri.n = Normalize(sn);
       }
+      hit_shading_normal = hit_tri.n;
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
@@ -1206,14 +1219,14 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v, have_fp,
                 dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.rough_tex_scale,
                 hit_tri.rough_tex_bias);
-            if (r >= 0.0f) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
+            if (std::isfinite(r)) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
           }
           if (hit_tri.metal_tex_id >= 0) {
             float m = SampleScalarTexAniso(
                 *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v, have_fp,
                 dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.metal_tex_scale,
                 hit_tri.metal_tex_bias);
-            if (m >= 0.0f) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
+            if (std::isfinite(m)) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
           }
           if (hit_tri.emission_tex_id >= 0 &&
               size_t(hit_tri.emission_tex_id) < textures->size()) {
@@ -1221,6 +1234,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
             Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
                                                kMaxAniso)
                              : et.sample(u, v, 0.0f);
+            e=et.apply_value_transform(e);
             hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
                                     hit_tri.emission.y * e.y,
                                     hit_tri.emission.z * e.z};
@@ -1231,6 +1245,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
             Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
                                                kMaxAniso)
                              : st.sample(u, v, 0.0f);
+            s=st.apply_value_transform(s);
             hit_tri.specular_color = Vec3{hit_tri.specular_color.x * s.x,
                                           hit_tri.specular_color.y * s.y,
                                           hit_tri.specular_color.z * s.z};
@@ -1240,21 +1255,21 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v, have_fp,
                 dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.occ_tex_scale,
                 hit_tri.occ_tex_bias);
-            if (o >= 0.0f) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
+            if (std::isfinite(o)) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
           }
           if (hit_tri.opacity_tex_id >= 0) {
             float a = SampleScalarTexAniso(
                 *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
                 have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
                 hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
-            if (a >= 0.0f) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
+            if (std::isfinite(a)) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
           }
           if (hit_tri.clearcoat_tex_id >= 0) {
             float cc = SampleScalarTexAniso(
                 *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
                 have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
                 hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
-            if (cc >= 0.0f) hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+            if (std::isfinite(cc)) hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
           }
           if (hit_tri.clearcoat_rough_tex_id >= 0) {
             float cr = SampleScalarTexAniso(
@@ -1262,7 +1277,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 hit_tri.clearcoat_rough_ch, u, v, have_fp, dudx, dvdx, dudy,
                 dvdy, kMaxAniso, hit_tri.clearcoat_rough_tex_scale,
                 hit_tri.clearcoat_rough_tex_bias);
-            if (cr >= 0.0f)
+            if (std::isfinite(cr))
               hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
           }
           if (hit_tri.normal_tex_id >= 0 &&
@@ -1317,6 +1332,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (direct_hit.hit) {
     hit_t = direct_hit.t;
     tri.n = direct_hit.n;
+    hit_geometric_normal = hit_shading_normal = direct_hit.n;
     tri.base_color = direct_hit.base_color;
     tri.emission = direct_hit.emission;
   } else {
@@ -1326,9 +1342,51 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (primary_hit_t) *primary_hit_t = hit_t;
   if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
   if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
+  if (opt.aov == CaptureAov::GeometricNormal) return Normalize(hit_geometric_normal);
+  if (opt.aov == CaptureAov::ShadingNormal) return Normalize(hit_shading_normal);
   if (opt.aov == CaptureAov::PrimId) {
     const float id = float(tri.capture_prim_id);
     return Vec3{id, id, id};
+  }
+  const Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
+  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
+  // lies behind it (continuation ray; bounded recursion). Opaque hits (default
+  // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
+  auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
+    if (tri.opacity >= 0.999f) return col;
+    if (depth >= (opt.diagnostic_emission ? 15 : 4)) {
+      if (opt.diagnostic_emission && diagnostic_exhausted)
+        diagnostic_exhausted->store(true, std::memory_order_relaxed);
+      return col;
+    }
+    const float a = std::max(0.0f, tri.opacity);
+    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                               std::fabs(p.z));
+    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+    const Vec3 behind_org = Add(p, Mul(ray_dir, eps));
+    CameraFrame behind_camera = camera;
+    behind_camera.znear = eps;
+    behind_camera.zfar = std::max(0.0f, camera.zfar - hit_t - eps);
+    const Vec3 behind =
+        Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
+              ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
+              tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
+              nullptr, diagnostic_exhausted);
+    return Add(Mul(col, a), Mul(behind, 1.0f - a));
+  };
+  if (opt.diagnostic_emission) {
+    Vec3 diagnostic = tri.emission;
+    if (opt.diagnostic_material != MaterialDiagnostic::None) {
+      const float value = opt.diagnostic_material == MaterialDiagnostic::Roughness
+          ? tri.roughness : tri.metallic;
+      diagnostic = Vec3{value, value, value};
+    }
+    // Transparent PreviewSurface retains emission at full weight. Presence
+    // attenuates it, while cutout masks both modes identically.
+    const Vec3 blended = apply_opacity(diagnostic);
+    if (!tri.opacity_presence && tri.opacity_threshold <= 0.0f)
+      return Add(blended, Mul(diagnostic, 1.0f - std::clamp(tri.opacity, 0.0f, 1.0f)));
+    return blended;
   }
   // Converted particle previews bake surface color rather than illumination.
   // Keep their camera light independent of the original scene's light powers.
@@ -1342,7 +1400,6 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 : Occluded(scene, tris, op, on, ol, omax, direct,
                            opt.purpose_mask, triangle_chunks);
   };
-  Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
   Vec3 n = tri.n;
   if (Dot(n, ray_dir) > 0.0f) {
     n = Mul(n, -1.0f);
@@ -1411,24 +1468,6 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   } else if (lights.has_dome) {
     c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
   }
-  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
-  // lies behind it (continuation ray; bounded recursion). Opaque hits (default
-  // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
-  auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
-    if (tri.opacity >= 0.999f || depth >= 4) return col;
-    const float a = std::max(0.0f, tri.opacity);
-    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
-                               std::fabs(p.z));
-    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
-    const Vec3 behind_org = Add(p, Mul(ray_dir, eps));
-    CameraFrame behind_camera = camera;
-    behind_camera.znear = eps;
-    const Vec3 behind =
-        Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
-              ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
-              tri_colors, tri_normals, openpbr_mats, indirect);
-    return Add(Mul(col, a), Mul(behind, 1.0f - a));
-  };
   // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
   // in lightrt-bsdf mode -- the legacy shading path has no BSDF pdf to weigh
   // against, so MIS is not even defined there, and its look must not change.
@@ -1512,7 +1551,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                         opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
                         instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
-                        triangle_chunks, &bounce_hit_t);
+                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
     // Beer-Lambert extinction over the actual continuation-ray distance instead
     // of tinting only at the interface; this makes thick glass absorb more than
@@ -1669,8 +1708,8 @@ uint8_t ToSRGB8(float linear) {
 
 void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
              Vec3 *org, Vec3 *dir) {
-  float px = 2.0f * sx - 1.0f;
-  float py = 1.0f - 2.0f * sy;
+  float px = 2.0f * sx - 1.0f + camera.shift_x;
+  float py = 1.0f - 2.0f * sy + camera.shift_y;
   if (camera.ortho) {
     float xmag = camera.xmag;
     float ymag = camera.ymag;
@@ -2099,6 +2138,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   // square and aliased against regular geometry/texture patterns; Halton spreads
   // the same N samples evenly while staying fully deterministic in `s`.
   int spp = data_aov ? 1 : std::max(1, opt.samples);
+  std::atomic<bool> diagnostic_exhausted{false};
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
@@ -2122,11 +2162,17 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                   &rd.dy);
           rd.valid = true;
-          float primary_hit_t = camera.zfar;
-          Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
+          CameraFrame ray_camera=camera;
+          if (!camera.ortho) {
+            const float cosine=std::max(1.0e-6f,Dot(camera.forward,dir));
+            ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
+          }
+          float primary_hit_t = ray_camera.zfar;
+          Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, ray_camera, opt,
                             org, dir, textures, tri_uvs, tlas, blas, instances,
                             rd, 0, tri_colors, tri_normals, openpbr_mats,
-                            false, triangle_chunks, &primary_hit_t);
+                            false, triangle_chunks, &primary_hit_t,
+                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr);
           if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;
@@ -2146,7 +2192,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
               }
             }
           }
-          if (!data_aov && volumes && !volumes->empty()) {
+          if (!data_aov && !opt.diagnostic_emission && volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf, lights,
                                     opt.ambient, primary_hit_t,
                                     opt.volume_level_set);
@@ -2160,9 +2206,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
           continue;
         }
-        img.data[ofs + 0] = ToSRGB8(color.x);
-        img.data[ofs + 1] = ToSRGB8(color.y);
-        img.data[ofs + 2] = ToSRGB8(color.z);
+        img.data[ofs + 0] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.x):ToSRGB8(color.x);
+        img.data[ofs + 1] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.y):ToSRGB8(color.y);
+        img.data[ofs + 2] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.z):ToSRGB8(color.z);
         img.data[ofs + 3] = 255;
       }
     }
@@ -2183,6 +2229,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
       pool.emplace_back(render_rows, y0, y1);
     }
     for (std::thread &th : pool) th.join();
+  }
+  if (diagnostic_exhausted.load(std::memory_order_relaxed)) {
+    std::cerr << "CPU material diagnostic exceeds the maximum 16 transparency layers.\n";
+    return {};
   }
   return img;
 }

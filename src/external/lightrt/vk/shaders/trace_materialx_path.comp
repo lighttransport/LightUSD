@@ -229,7 +229,10 @@ bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   vec3 n0=vec3(vertices[i0*8u+3u],vertices[i0*8u+4u],vertices[i0*8u+5u]);
   vec3 n1=vec3(vertices[i1*8u+3u],vertices[i1*8u+4u],vertices[i1*8u+5u]);
   vec3 n2=vec3(vertices[i2*8u+3u],vertices[i2*8u+4u],vertices[i2*8u+5u]);
-  h.n=normalize(n0*w+n1*h.bary.x+n2*h.bary.y); if(length(h.n)<0.1)h.n=normalize(cross(p1-p0,p2-p0));
+  vec3 interpolated=n0*w+n1*h.bary.x+n2*h.bary.y;
+  // Test the unnormalized vector: normalize(0) can produce NaNs and hide
+  // emissive diagnostic geometry when the source has no usable normals.
+  h.n=dot(interpolated,interpolated)>1e-12?normalize(interpolated):normalize(cross(p1-p0,p2-p0));
   vec2 uv0=vec2(vertices[i0*8u+6u],vertices[i0*8u+7u]),uv1=vec2(vertices[i1*8u+6u],vertices[i1*8u+7u]),uv2=vec2(vertices[i2*8u+6u],vertices[i2*8u+7u]);
   h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
   h.tangent=abs(det)>1e-8?normalize(((p1-p0)*duv2.y-(p2-p0)*duv1.y)/det):normalize(abs(h.n.z)<0.9?cross(h.n,vec3(0,0,1)):cross(h.n,vec3(0,1,0)));
@@ -323,10 +326,14 @@ void main(){
   uint seed=hashU(px.x+px.y*pc.frame.x+pc.path.y*1664525u); vec3 sum=vec3(0);
   for(uint s=0u;s<max(pc.frame.z,1u);++s){
     vec2 jitter=vec2(rnd(seed),rnd(seed)); vec2 ndc=(vec2(px)+jitter)/vec2(pc.frame.xy)*2.0-1.0;
-    vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w; vec3 o=pc.camera.xyz,d=normalize(f.xyz-o);
+    ndc.y=-ndc.y; // Output rows use top-left image coordinates.
+    vec4 n=pc.invViewProj*vec4(ndc,0,1); n/=n.w;
+    vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w;
+    vec3 o=n.xyz,d=normalize(f.xyz-n.xyz);
+    float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d)*mis;break;}
+      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d)*mis;break;}
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));

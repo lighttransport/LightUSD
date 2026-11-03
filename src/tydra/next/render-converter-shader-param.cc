@@ -492,13 +492,13 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           if (config_.asset_resolver) {
             resolved_tile = config_.asset_resolver->Resolve(
                 tile_asset, authored_anchor.empty() ? std::string()
-                                                    : authored_anchor + "/");
+                                                    : (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
           } else if (!config_.asset_base_dir.empty()) {
             ::lightusd::next::AssetResolver local_resolver;
             local_resolver.SetWorkingDirectory(config_.asset_base_dir);
             if (!authored_anchor.empty()) {
               resolved_tile = local_resolver.Resolve(tile_asset,
-                                                     authored_anchor + "/");
+                                                     (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
             }
             if (!resolved_tile.exists) {
               resolved_tile = local_resolver.Resolve(tile_asset);

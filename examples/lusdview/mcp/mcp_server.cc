@@ -50,6 +50,15 @@ MCPServer::~MCPServer() { stop(); }
 
 json MCPServer::buildToolsList() const {
   json tools = json::array();
+  tools.push_back(tool("compare_panel", "Open the native paired-view comparison panel or save its composited window to the controller directory.",
+      {{"op", strProp("open, status or window_capture")}, {"mode", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
+       {"window_size", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2}}}}));
+  tools.push_back(tool("inspect_prim", "Paginated native next-stage property diagnostics, relationship targets and attribute connections. Array defaults report type/count without materialization.",
+      {{"path", strProp("Absolute prim path")}, {"offset", {{"type", "integer"}, {"minimum", 0}}},
+       {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 256}}}}, json::array({"path"})));
+  tools.push_back(tool("frame_barrier", "Retain the next submitted non-threaded mono raster frame and its full native state. Retrieve its pixels with screenshot {barrier:token}.",
+      {{"token", strProp("Unique request token, maximum 128 bytes")}, {"cancel", {{"type", "boolean"}}}}, json::array({"token"})));
+  tools.push_back(tool("view_state", "Read the linked-view camera, purpose, selection and scene snapshot.", json::object()));
   tools.push_back(tool("load_usd", "Load a USD path or inline USDA text into "
                                    "the viewer (async; poll get_scene_info).",
                        {{"path", strProp("Path to a USD file")},
@@ -79,8 +88,10 @@ json MCPServer::buildToolsList() const {
       "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
       "| bookmark_save {slot} | bookmark_load {slot} | focus_dof {focus the "
       "thin lens on the picked/selected object} | set "
-      "{absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | focus_dof | set")},
+      "{absolute target[3],yaw,pitch,distance}; get reads the full camera snapshot; "
+      "set_camera {camera} applies a rigid pose/projection snapshot.",
+      {{"camera", {{"type", "object"}, {"description", "Camera snapshot returned by op=get"}}},
+       {"op", strProp("get | set_camera | orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | focus_dof | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
@@ -158,9 +169,9 @@ json MCPServer::buildToolsList() const {
       {{"path", strProp("resolved dependency-layer path (omit = root layer)")}}));
   tools.push_back(tool(
       "timeline",
-      "Control animation playback. op=play | pause | stop (reset to start) | "
+      "Control animation playback. op=get | play | pause | stop (reset to start) | "
       "seek {time}. Returns the playback state (playing, time, start, end, fps).",
-      {{"op", strProp("play | pause | stop | seek")},
+      {{"op", strProp("get | play | pause | stop | seek")},
        {"time", numProp("target time code (seek)")}},
       json::array({"op"})));
   tools.push_back(tool(
@@ -170,7 +181,9 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "render_settings",
       "Query or set resettable per-capture options without restarting lusdview.",
-      {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
+      {{"guide", {{"type", "boolean"}}}, {"proxy", {{"type", "boolean"}}},
+       {"render", {{"type", "boolean"}}}, {"background", strProp("black | white")},
+       {"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
        {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
        {"transparency", strProp("auto | weighted | sorted; weighted warms asynchronously on Vulkan")},
        {"adaptive_quality", {{"type", "boolean"}, {"description", "enable adaptive Vulkan quality"}}},
@@ -229,7 +242,8 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "vchar_debug",
       "Select a virtual-human diagnostic view and skeleton overlay.",
-      {{"mode", strProp("shaded | skin-weights | blend-influence | normals | tangents")},
+      {{"skeleton", {{"type", "boolean"}, {"description", "Skeleton overlay visibility"}}},
+       {"mode", strProp("shaded | skin-weights | blend-influence | normals | tangents")},
        {"skeleton", {{"type", "boolean"}}}}));
   tools.push_back(tool(
       "autorigger_inspect",

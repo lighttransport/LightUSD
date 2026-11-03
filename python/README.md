@@ -239,3 +239,51 @@ through `stage.warnings()`.
   the wheel; the choice belongs to the process embedding the extension.
 - Measurements, A/B method and binding-vs-CLI parity:
   [large-scene profile §2.6.9](../doc/large-scene.md#269-python-binding-abi3-loadcompose-profile-2026-10).
+
+For diagnostics, `attribute.resolve(time=None)` performs a USD DefaultTime query;
+`resolve(time=2.5)` evaluates numeric samples and clips, including schema
+fallbacks. Connections are followed only with `follow_connections=True`.
+`has_authored_default` and `is_default_blocked` distinguish a composed authored
+value, a value block, and an absent default. Keep these states separate from the
+resolved value: physics schemas use sentinel defaults such as zero mass to
+request automatic computation. `get()` retains its existing compatibility
+behavior, including its earliest-sample fallback when no default exists.
+
+
+`load(path, preserve_native_instances=True)` retains shared native prototypes
+for traversal and diagnostics. Instance descendants keep their logical paths,
+parent navigation and evaluated attributes. The default remains the self-contained
+holder representation for export/save round trips; native prototype metadata is
+an in-memory representation and does not provide a self-contained USDA export.
+
+A valid leaf `Prim` is truthy even when `len(prim) == 0`. Boolean conversion,
+like other prim operations, self-heals surviving logical handles and raises
+`StaleHandleError` for a removed prim. Test `prim is None` when distinguishing
+an absent optional lookup from a present handle.
+
+`stage.traverse()` visits active, loaded, defined, nonabstract prims, including
+native instance proxies. `stage.traverse(all_prims=True)` and `iter(stage)` also
+include undefined overs, class prims and inactive subtrees.
+
+`load`, `load_bytes` and `flatten_file` accept `max_array_elements` independently
+of the byte budget. Zero retains the finite default (16 million elements).
+Large trusted datasets can explicitly raise this count; for example,
+`load(path, max_memory=30 * 1024**3, max_array_elements=64 * 1024**2)`.
+Failed referenced asset loads, including resource-limit failures, fail the
+default untrusted composed load instead of returning incomplete geometry.
+
+File-backed clip evaluation retains the file load's explicit byte/array limits
+and absolute source directory. Changing the working directory after loading a
+basename does not change its clip anchor. Evaluation errors such as a rejected
+clip load raise an exception; a genuinely unauthored or blocked value still
+resolves to `None`. Custom resolver handles remain borrowed during the load call;
+retaining their callbacks for later clip evaluation is not supported by this API.
+
+`load`, `load_bytes`, and `flatten_file` accept `max_threads=0` for bounded
+automatic workers, `1` for serial parsing/composition, or a positive fixed
+worker hint. Negative, noninteger and overflowing values are rejected.
+`input_policy="untrusted"` remains the default. Explicit `"trusted"` selects
+the existing C API compatibility policy, including file-backed crate mmap and
+relaxed missing-dependency behavior. Use that profile only for known immutable
+inputs; it is a distinct policy, not a change to secure defaults. Performance
+reports must record the policy and verify matching complete scene work.

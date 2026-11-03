@@ -98,6 +98,39 @@ static void TestSharedDeferredBudget() {
 
 int main() {
   TestSharedDeferredBudget();
+  // Crate 0.4 arrays have a rank word before the count. Check the eager
+  // decoder, lazy count, borrowed view and text printer against explicit bytes.
+  {
+    const CrateVersion version{0, 4, 0};
+    std::string bytes(16, '\0');
+    const uint32_t header[] = {1, 4};
+    const int32_t values[] = {3, -9, 17, 42};
+    bytes.append(reinterpret_cast<const char*>(header), sizeof(header));
+    bytes.append(reinterpret_cast<const char*>(values), sizeof(values));
+    auto source = CrateDataSource::Adopt(std::move(bytes), version);
+    const auto rep = ValueRep::Make(CrateTypeId::Int, 16, true);
+    LazyArrayRef ref;
+    assert(CrateArrayCountHeaderBytes(version) == 8);
+    assert(ProbeArrayBlock(source, rep, 4, &ref));
+    assert(ref.element_count == 4 && ref.block_len == 24);
+    Value lazy = Value::MakeLazyArray(ref), eager;
+    assert(DecodeCrateArray(source->base(), source->size(), rep, version, {}, 4, &eager));
+    assert(eager.as_int_array()->size() == 4 && (*eager.as_int_array())[3] == 42);
+    ArrayScratch<int32_t> scratch;
+    ArrayView<int32_t> view;
+    assert(GetIntArrayView(lazy, &scratch, &view));
+    assert(view.size == 4 && view[0] == 3 && view[1] == -9 && view[3] == 42);
+    std::string text;
+    StreamWriter writer(&text);
+    PrintValue(writer, lazy);
+    assert(text == "[3, -9, 17, 42]");
+    assert(lazy.is_lazy());
+    std::string invalid(16, '\0');
+    const uint32_t bad_header[] = {2, 4};
+    invalid.append(reinterpret_cast<const char*>(bad_header), sizeof(bad_header));
+    auto bad = CrateDataSource::Adopt(std::move(invalid), version);
+    assert(!ProbeArrayBlock(bad, rep, 4, &ref));
+  }
   std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
 
   // Empty ArrayView must be safe to use with begin()/end() range APIs.

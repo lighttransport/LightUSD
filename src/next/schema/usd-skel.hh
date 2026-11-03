@@ -53,7 +53,7 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
 struct SkelAnimationData {
   // Joint animation data (float3[] or quatf[] per joint)
   std::vector<float> translations;     // float3[] xyz interleaved
-  std::vector<float> rotations;        // quatf[] xyzw interleaved
+  std::vector<float> rotations;        // quatf[] wxyz interleaved
   std::vector<float> scales;           // half3[] stored as float for convenience
   std::vector<float> blendShapeWeights; // float[]
 

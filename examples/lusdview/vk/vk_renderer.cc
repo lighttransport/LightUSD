@@ -1667,6 +1667,8 @@ bool VulkanRenderer::createSwapchain(std::string* err) {
   ci.imageExtent = extent;
   ci.imageArrayLayers = 1;
   ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  windowCaptureSupported_ = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+  if (windowCaptureSupported_) ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
   ci.preTransform = caps.currentTransform;
   ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -6757,6 +6759,18 @@ void VulkanRenderer::flushPendingUploads() {
     VkBufferCopy c{u.stagingOffset, 0, u.size};
     vkCmdCopyBuffer(cb, u.staging ? u.staging : stagingRing_, u.dst, 1, &c);
   }
+  if (!pendingUploads_.empty()) {
+    // These copies feed vertex/index fetch, storage reads and AS build inputs.
+    // A queue-idle wait retires the copy but does not provide their memory
+    // dependency. Publish the writes before any subsequent consumer.
+    VkMemoryBarrier ready{};
+    ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    ready.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &ready,
+                         0, nullptr, 0, nullptr);
+  }
   for (const PendingImageUpload& u : pendingImageUploads_) {
     VkImageMemoryBarrier toDst{};
     toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -10839,6 +10853,17 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
 
   VkCommandBuffer cb = beginOneShot();
   pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  // Queue completion alone does not make AS writes visible to TLAS builds or
+  // ray queries in subsequent submissions.
+  VkMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+  barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+  vkCmdPipelineBarrier(cb,
+                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0, 1, &barrier, 0, nullptr, 0, nullptr);
   endOneShot(cb);
 
   vkDestroyBuffer(device_, scratch, nullptr);
@@ -10917,6 +10942,17 @@ void VulkanRenderer::refitBlas(VkMeshGPU& m) {
 
   VkCommandBuffer cb = beginOneShot();
   pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  // Queue completion alone does not make AS writes visible to TLAS builds or
+  // ray queries in subsequent submissions.
+  VkMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+  barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+  vkCmdPipelineBarrier(cb,
+                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0, 1, &barrier, 0, nullptr, 0, nullptr);
   endOneShot(cb);
 }
 
@@ -15530,6 +15566,31 @@ ViewportTexHandle VulkanRenderer::viewportTexture() const {
   return reinterpret_cast<ViewportTexHandle>(offscreenTexId_);
 }
 
+void VulkanRenderer::destroyComparisonTexture(ComparisonTexture& texture) {
+  if (texture.descriptor && imguiInited_) ImGui_ImplVulkan_RemoveTexture(texture.descriptor);
+  if (texture.view) vkDestroyImageView(device_,texture.view,nullptr);
+  if (texture.image) vkDestroyImage(device_,texture.image,nullptr);
+  if (texture.memory) vkFreeMemory(device_,texture.memory,nullptr);
+  texture = ComparisonTexture{};
+}
+
+ViewportTexHandle VulkanRenderer::comparisonImage(int slot, const light3d::Image* image) {
+  if (slot < 0 || slot >= 4 || !device_ || !imguiInited_) return 0;
+  auto& target = comparisonTextures_[static_cast<size_t>(slot)];
+  if (!image) return reinterpret_cast<ViewportTexHandle>(target.descriptor);
+  if (image->width < 1 || image->height < 1 || image->width > 4096 || image->height > 4096 ||
+      image->channels != 4 || image->data.size() != static_cast<size_t>(image->width)*static_cast<size_t>(image->height)*4) return 0;
+  ComparisonTexture next;
+  if (!createTextureImage(*image,&next.image,&next.memory,&next.view)) return 0;
+  next.descriptor = ImGui_ImplVulkan_AddTexture(sampler_,next.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  if (!next.descriptor) { destroyComparisonTexture(next); return 0; }
+  // A prior ImGui frame may still reference the replaced descriptor/image.
+  vkDeviceWaitIdle(device_);
+  destroyComparisonTexture(target);
+  target = next;
+  return reinterpret_cast<ViewportTexHandle>(target.descriptor);
+}
+
 bool VulkanRenderer::recreateSwapchain() {
   std::string* err = nullptr;
   int w = 0, h = 0;
@@ -17578,7 +17639,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       const VkImage images[3] = {colorImg_, oitAccumImg_, oitRevealImg_};
       for (size_t i = 0; i < 3; ++i) {
         toGeneral[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        toGeneral[i].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        toGeneral[i].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         toGeneral[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
                                      VK_ACCESS_SHADER_WRITE_BIT;
         toGeneral[i].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -17708,6 +17769,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                  double(vramBudget) / (1024.0 * 1024.0 * 1024.0));
   }
 
+  if (wantWindowCapture_) {
+    wantWindowCapture_=false;
+    windowCapture_.clear();
+    windowCaptureWidth_=windowCaptureHeight_=0;
+    readCompositeImage(imageIndex,&windowCapture_,&windowCaptureWidth_,&windowCaptureHeight_);
+  }
   if (headless_) {
     // The composite image is left in TRANSFER_SRC_OPTIMAL; captureWindow() reads it.
     lastSwapIndex_ = imageIndex;
@@ -17993,12 +18060,19 @@ bool VulkanRenderer::captureLinearViewport(std::vector<float>* rgba, int* w,
 }
 
 bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
-  // Headless only: read back the last composite image (UI + viewport). The swap
-  // render pass left it in TRANSFER_SRC_OPTIMAL, so we can copy it straight out.
-  if (!headless_ || !device_ || swapImages_.empty() ||
-      lastSwapIndex_ >= swapImages_.size()) {
-    return false;
-  }
+  if (!rgba || !w || !h) return false;
+  if (headless_) return readCompositeImage(lastSwapIndex_,rgba,w,h);
+  if (windowCapture_.empty()) return false;
+  *rgba=windowCapture_; *w=windowCaptureWidth_; *h=windowCaptureHeight_;
+  return true;
+}
+
+bool VulkanRenderer::readCompositeImage(uint32_t imageIndex, std::vector<uint8_t>* rgba, int* w, int* h) {
+  // Windowed images must still be acquired and not yet presented. Copy only on
+  // explicit requests, then restore PRESENT before handing ownership to WSI.
+  if (!device_ || imageIndex>=swapImages_.size() || (!headless_ && !windowCaptureSupported_) ||
+      (swapFormat_!=VK_FORMAT_R8G8B8A8_UNORM && swapFormat_!=VK_FORMAT_R8G8B8A8_SRGB &&
+       swapFormat_!=VK_FORMAT_B8G8R8A8_UNORM && swapFormat_!=VK_FORMAT_B8G8R8A8_SRGB)) return false;
   vkDeviceWaitIdle(device_);
   if (!rgba || !w || !h) return false;
   const uint32_t cw = swapExtent_.width, ch = swapExtent_.height;
@@ -18032,12 +18106,33 @@ bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
   }
 
   VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier transition{};
+  transition.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  transition.srcAccessMask=0;
+  transition.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+  transition.oldLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  transition.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  transition.srcQueueFamilyIndex=transition.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+  transition.image=swapImages_[imageIndex];
+  transition.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+  VkMemoryBarrier visibility{};
+  visibility.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  visibility.srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  visibility.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+  if (!headless_) vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&visibility,0,nullptr,1,&transition);
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
   region.imageExtent = {cw, ch, 1};
-  vkCmdCopyImageToBuffer(cb, swapImages_[lastSwapIndex_],
+  vkCmdCopyImageToBuffer(cb, swapImages_[imageIndex],
                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
+  if (!headless_) {
+    transition.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    transition.dstAccessMask=0;
+    transition.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    transition.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,nullptr,0,nullptr,1,&transition);
+  }
   endOneShot(cb);
 
   void* mapped = nullptr;
@@ -18052,6 +18147,8 @@ bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
   vkDestroyBuffer(device_, buf, nullptr);
   vkFreeMemory(device_, mem, nullptr);
 
+  if (swapFormat_==VK_FORMAT_B8G8R8A8_UNORM || swapFormat_==VK_FORMAT_B8G8R8A8_SRGB)
+    for (size_t pixel=0;pixel<rgba->size();pixel+=4) std::swap((*rgba)[pixel],(*rgba)[pixel+2]);
   *w = static_cast<int>(cw);
   *h = static_cast<int>(ch);
   return true;  // R8G8B8A8_UNORM, top-down
@@ -18093,6 +18190,7 @@ void VulkanRenderer::shutdown() {
   if (oitSimpleMeshPipeline_ && device_)
     vkDestroyPipeline(device_, oitSimpleMeshPipeline_, nullptr);
   oitSimpleMeshPipeline_ = VK_NULL_HANDLE;
+  for (auto& texture : comparisonTextures_) destroyComparisonTexture(texture);
   destroyScene();
   // The unit-cube proxy BLAS is renderer-wide rather than part of meshes_, so
   // destroyScene intentionally retains it across scene reloads. Release it
@@ -18228,6 +18326,7 @@ void VulkanRenderer::shutdown() {
   if (oitNativeCarrierPipeline_) { vkDestroyPipeline(device_, oitNativeCarrierPipeline_, nullptr); oitNativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierShadowPipeline_) { vkDestroyPipeline(device_, nativeCarrierShadowPipeline_, nullptr); nativeCarrierShadowPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
+  if (wireInstPipeline_) { vkDestroyPipeline(device_, wireInstPipeline_, nullptr); wireInstPipeline_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
   if (instDepthPipeline_) { vkDestroyPipeline(device_, instDepthPipeline_, nullptr); instDepthPipeline_ = VK_NULL_HANDLE; }
   if (instTranslucentPipeline_) { vkDestroyPipeline(device_, instTranslucentPipeline_, nullptr); instTranslucentPipeline_ = VK_NULL_HANDLE; }

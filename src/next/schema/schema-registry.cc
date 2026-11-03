@@ -78,6 +78,12 @@ SchemaRegistry::SchemaRegistry() {
       {"Cylinder", "Gprim"}, {"Cone", "Gprim"},
       {"Capsule", "Gprim"}, {"Plane", "Gprim"},
       {"Camera", "Xformable"}, {"PointInstancer", "Boundable"},
+      {"PhysicsJoint", "Imageable"},
+      {"PhysicsFixedJoint", "PhysicsJoint"},
+      {"PhysicsRevoluteJoint", "PhysicsJoint"},
+      {"PhysicsPrismaticJoint", "PhysicsJoint"},
+      {"PhysicsSphericalJoint", "PhysicsJoint"},
+      {"PhysicsDistanceJoint", "PhysicsJoint"},
       {"GeomSubset", "Imageable"}, {"DistantLight", "Xformable"},
       {"DomeLight", "Xformable"}, {"RectLight", "Xformable"},
       {"DiskLight", "Xformable"}, {"SphereLight", "Xformable"},
@@ -200,6 +206,57 @@ SchemaRegistry::SchemaRegistry() {
   add("PhysicsCollisionAPI", "physics:collisionEnabled", "bool", Value(true));
   add("PhysicsMassAPI", "physics:mass", "float", Value(0.0f));
   add("PhysicsMassAPI", "physics:density", "float", Value(0.0f));
+  const float infinity = std::numeric_limits<float>::infinity();
+  // UsdPhysics schema sentinel values request automatic computation. In
+  // particular, mass=0 and principalAxes=(0,0,0,0) are not physical zero-mass
+  // or normalized-rotation assertions.
+  add("PhysicsMassAPI", "physics:centerOfMass", "point3f",
+      Value::MakePoint3f(-infinity, -infinity, -infinity));
+  add("PhysicsMassAPI", "physics:diagonalInertia", "float3",
+      Value::MakeFloat3(0, 0, 0));
+  add("PhysicsMassAPI", "physics:principalAxes", "quatf", Value::MakeQuatf(0, 0, 0, 0));
+  add("PhysicsMaterialAPI", "physics:density", "float", Value(0.0f));
+  add("PhysicsMeshCollisionAPI", "physics:approximation", "token", Token("none"));
+  declare("PhysicsCollisionGroup", "physics:invertFilteredGroups", "bool");
+  declare("PhysicsCollisionGroup", "physics:mergeGroup", "string");
+  declare("PhysicsCollisionGroup", "physics:filteredGroups", "relationship");
+  // CollisionGroup includes CollectionAPI:colliders without an authored API
+  // list. AOUSD Core 1.0.1 / 1.1 define includeRoot's fallback as false;
+  // OpenUSD 26.11's generated schema currently leaves it unset.
+  add("PhysicsCollisionGroup", "collection:colliders:expansionRule", "token",
+      Token("expandPrims"));
+  add("PhysicsCollisionGroup", "collection:colliders:includeRoot", "bool",
+      Value(false));
+  declare("PhysicsCollisionGroup", "collection:colliders:includes", "relationship");
+  declare("PhysicsCollisionGroup", "collection:colliders:excludes", "relationship");
+
+  add("PhysicsJoint", "physics:jointEnabled", "bool", Value(true));
+  add("PhysicsJoint", "physics:collisionEnabled", "bool", Value(false));
+  add("PhysicsJoint", "physics:excludeFromArticulation", "bool", Value(false));
+  add("PhysicsJoint", "physics:breakForce", "float", Value(infinity));
+  add("PhysicsJoint", "physics:breakTorque", "float", Value(infinity));
+  for (const char* name : {"physics:localPos0", "physics:localPos1"})
+    add("PhysicsJoint", name, "point3f", Value::MakePoint3f(0, 0, 0));
+  for (const char* name : {"physics:localRot0", "physics:localRot1"})
+    add("PhysicsJoint", name, "quatf", Value::MakeQuatf(1, 0, 0, 0));
+  for (const char* schema : {"PhysicsRevoluteJoint", "PhysicsPrismaticJoint"}) {
+    add(schema, "physics:axis", "token", Token("X"));
+    add(schema, "physics:lowerLimit", "float", Value(-infinity));
+    add(schema, "physics:upperLimit", "float", Value(infinity));
+  }
+  add("PhysicsSphericalJoint", "physics:axis", "token", Token("X"));
+  add("PhysicsSphericalJoint", "physics:coneAngle0Limit", "float", Value(-1.0f));
+  add("PhysicsSphericalJoint", "physics:coneAngle1Limit", "float", Value(-1.0f));
+  add("PhysicsDistanceJoint", "physics:minDistance", "float", Value(-1.0f));
+  add("PhysicsDistanceJoint", "physics:maxDistance", "float", Value(-1.0f));
+  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:type", "token", Token("force"));
+  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:maxForce", "float", Value(infinity));
+  for (const char* name : {"drive:__INSTANCE__:physics:targetPosition",
+       "drive:__INSTANCE__:physics:targetVelocity", "drive:__INSTANCE__:physics:damping",
+       "drive:__INSTANCE__:physics:stiffness"})
+    add("PhysicsDriveAPI", name, "float", Value(0.0f));
+  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:low", "float", Value(-infinity));
+  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:high", "float", Value(infinity));
 
   // UsdGeom Imageable/Camera/curves/subset fallbacks (values verified
   // against pxr's generated usdGeom schema.usda).
@@ -373,12 +430,6 @@ SchemaRegistry::SchemaRegistry() {
           {"SkelBindingAPI", "skel:jointWeights", "float[]"},
           {"SkelBindingAPI", "skel:skeleton", "relationship"},
           {"SkelBindingAPI", "skel:animationSource", "relationship"},
-          {"PhysicsDriveAPI", "physics:drive:type", "token"},
-          {"PhysicsDriveAPI", "physics:drive:maxForce", "float"},
-          {"PhysicsDriveAPI", "physics:drive:targetPosition", "float"},
-          {"PhysicsDriveAPI", "physics:drive:targetVelocity", "float"},
-          {"PhysicsLimitAPI", "physics:limit:low", "float"},
-          {"PhysicsLimitAPI", "physics:limit:high", "float"},
           // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
           {"TetMesh", "tetVertexIndices", "int4[]"},
           {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},

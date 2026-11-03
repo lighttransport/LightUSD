@@ -653,7 +653,8 @@ LIGHTUSD_API double lightusd_stage_end_timecode(const lightusd_stage* stage);
  * Prim access & traversal
  * ============================================================ */
 
-/* Borrowed, generation-checked prim handle. No allocation, no destroy.
+/* Borrowed, generation-checked prim handle. No destroy. Instance-proxy
+ * identity is interned on demand by the owner.
  * The owner must remain alive. Structural mutation invalidates the handle;
  * access then returns invalid/empty or LIGHTUSD_ERR_INVALID_ARG.
  * Never touch the members directly. */
@@ -686,6 +687,13 @@ LIGHTUSD_API uint64_t lightusd_prim_root_layer_resource_id(lightusd_prim p);
 /* 0 = def, 1 = over, 2 = class */
 LIGHTUSD_API uint8_t lightusd_prim_specifier(lightusd_prim p);
 LIGHTUSD_API int lightusd_prim_is_active(lightusd_prim p);
+/* Effective default traversal predicate: active, loaded, defined and
+ * non-abstract, including ancestor state. Instance proxies retain logical paths. */
+LIGHTUSD_API int lightusd_prim_matches_default_predicate(lightusd_prim p);
+/* Local flags only, for a root-first traversal that prunes rejected ancestors.
+ * Equivalent to the effective predicate when all ancestors already matched;
+ * avoids repeatedly walking the same ancestry for every descendant. */
+LIGHTUSD_API int lightusd_prim_matches_local_default_predicate(lightusd_prim p);
 /* Whether this prim has authored payload arcs in the current stage view.
  * Resolved composition may consume these arcs. Invalid handles return zero. */
 LIGHTUSD_API int lightusd_prim_has_payload(lightusd_prim p);

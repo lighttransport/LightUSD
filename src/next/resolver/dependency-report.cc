@@ -264,6 +264,7 @@ class Collector {
       // otherwise treats its anchor argument as a layer filename and removes
       // its last path component, so make the directory intent explicit.
       if (spec->asset_anchor_id() != 0 && !anchor.empty() &&
+          !AssetResolver::IsPackagePath(anchor) &&
           anchor.back() != '/' && anchor.back() != '\\') {
         anchor.push_back('/');
       }

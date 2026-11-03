@@ -1925,9 +1925,11 @@ def Xform "Root" ( references = @../dep.usda@</Base> ) { }
 const parentDeniedStream = new module.RenderStream();
 parentPathStore.setAllowParentRelativeAssetPaths(false);
 const parentDeniedLoad = parentDeniedStream.beginCachedAsset(parentPathStore, 'scene/root.usda');
-assert.equal(parentDeniedLoad.success, true, parentDeniedLoad.error);
-assert.equal(parentDeniedLoad.meshCount, 0,
-  'parent-relative asset policy is imported into the render resolver');
+assert.equal(parentDeniedLoad.success, false,
+  'denied dependency paths must fail composition rather than return an empty successful scene');
+assert.match(parentDeniedLoad.error, /dep\.usda/);
+assert.equal(parentDeniedStream.numMeshes(), 0,
+  'failed composition must not expose partial render geometry');
 const parentAllowedStream = new module.RenderStream();
 parentPathStore.setAllowParentRelativeAssetPaths(true);
 const parentAllowedLoad = parentAllowedStream.beginCachedAsset(parentPathStore, 'scene/root.usda');
@@ -1961,9 +1963,11 @@ assert.equal(liveAssetStream.detachAssetStore(), true);
 assert.deepEqual(liveAssetStream.getProvidedAsset('local.bin'),
   new Uint8Array([4, 5, 6]), 'detaching preserves stream-local provided assets');
 const detachedComposition = liveAssetStream.begin(liveAssetRoot);
-assert.equal(detachedComposition.success, true, detachedComposition.error);
-assert.equal(detachedComposition.meshCount, 0,
-  'detaching removes imported dependencies from future loads');
+assert.equal(detachedComposition.success, false,
+  'detaching the dependency store must fail future composed loads');
+assert.match(detachedComposition.error, /dep\.usda/);
+assert.equal(liveAssetStream.numMeshes(), 0,
+  'failed reload clears geometry retained from the previous successful load');
 assert.throws(() => liveAssetStream.detachAssetStore(true), /wrong argument count/);
 liveAssetStream.delete();
 liveAssetStore.delete();

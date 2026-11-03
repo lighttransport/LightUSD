@@ -121,8 +121,9 @@ class Value {
   static Value MakeDouble2(double x, double y);
   static Value MakeDouble3(double x, double y, double z);
   static Value MakeDouble4(double x, double y, double z, double w);
-  static Value MakeQuatf(float x, float y, float z, float w);
-  static Value MakeQuatd(double x, double y, double z, double w);
+  // Canonical USD order: scalar first (w, x, y, z), including POD storage.
+  static Value MakeQuatf(float w, float x, float y, float z);
+  static Value MakeQuatd(double w, double x, double y, double z);
   static Value MakeMatrix2f(const float* data);
   static Value MakeMatrix3f(const float* data);
   static Value MakeMatrix4f(const float* data);

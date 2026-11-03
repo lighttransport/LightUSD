@@ -187,9 +187,9 @@ inline bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
-/// Width of the element-count header at a crate array payload: uint32 for
-/// crate versions < 0.7.0, uint64 for >= 0.7.0. Element data immediately
-/// follows the count. Evidence: pxr crateFile.cpp _WriteUncompressedArray /
+/// Complete array header width: [u32 rank=1, u32 count] before 0.5,
+/// [u32 count] in 0.5/0.6, [u64 count] from 0.7. Element data immediately
+/// follows this header. Evidence: pxr crateFile.cpp UnpackArray and _WriteUncompressedArray /
 /// _ReadUncompressedArray / _Read+_WritePossiblyCompressedArray all gate on
 /// `(ver < CrateFile::Version(0,7,0)) ? <uint32_t> : <uint64_t>`. There is no
 /// "packed count" form (a previous lo/hi-split heuristic here mis-read pre-0.7
@@ -197,7 +197,7 @@ uint32_t CrateArrayElemStride(CrateTypeId id);
 uint32_t CrateArrayCountHeaderBytes(CrateVersion version);
 
 /// Read the version-appropriate element-count header at the current position
-/// of `r`. Returns false on a short read.
+/// of `r`, including the legacy rank word. Rejects short reads/unsupported ranks.
 bool ReadCrateArrayCount(class StreamReader& r, CrateVersion version,
                          uint64_t* count);
 

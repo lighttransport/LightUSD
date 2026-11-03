@@ -448,7 +448,7 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
       {"physics.collisionGroup.mergeGroup", "physics",
        "mergeGroupName must be consistent across merged groups"},
       {"physics.drive.dof", "physics",
-       "a drive's degree of freedom must match its joint type"},
+       "drive instance must name a supported axis or linear/angular DOF"},
       {"physics.drive.type", "physics",
        "drive type must be force or acceleration"},
       {"physics.drive.value", "physics",

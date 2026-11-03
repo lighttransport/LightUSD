@@ -78,7 +78,12 @@ struct Texture {
   Vec3 scale{1.0f, 1.0f, 1.0f};
   Vec3 bias{0.0f, 0.0f, 0.0f};
 
-  static float ApplyWrap(float x, WrapMode m, bool *in_bounds) {
+  Vec3 apply_value_transform(const Vec3& value) const {
+    return {value.x * scale.x + bias.x, value.y * scale.y + bias.y,
+            value.z * scale.z + bias.z};
+  }
+
+  static float ApplyWrap(float x, WrapMode m, bool* in_bounds) {
     *in_bounds = true;
     switch (m) {
       case WrapMode::Repeat:
@@ -361,10 +366,14 @@ struct Texture {
     return bilinear_channel_data(d, w, h, channels, wu, wv, ch);
   }
 
-  // Trilinear single-channel sample (incl. alpha). Raw (scalar inputs are always
-  // sourceColorSpace=raw), so no sRGB. Matches ChannelOf(sample(...)) bit-for-bit
-  // for r/g/b on a raw texture; additionally exposes alpha (ch=3).
+  // RGB outputs retain the texture's authored source color transform even when
+  // connected to a scalar input. Alpha is always linear and bypasses that
+  // transform. Raw data textures keep the single-channel sampling fast path.
   float sample_channel(float u, float v, float lod, int ch) const {
+    if (ch >= 0 && ch < 3 && (srgb || !color_transform.bypass)) {
+      const Vec3 value = sample(u, v, lod);
+      return ch == 0 ? value.x : ch == 1 ? value.y : value.z;
+    }
     if (is_udim) {
       float lu = 0.0f, lv = 0.0f;
       const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
@@ -536,6 +545,7 @@ struct CameraFrame {
   Vec3 up{0.0f, 1.0f, 0.0f};
   Vec3 forward{0.0f, 0.0f, -1.0f};
   float yfov{45.0f * 3.14159265358979323846f / 180.0f};
+  float shift_x{0.0f}, shift_y{0.0f};  // normalized filmback offsets
   float xmag{1.0f};
   float ymag{1.0f};
   float znear{0.001f};
@@ -543,7 +553,8 @@ struct CameraFrame {
   bool ortho{false};
 };
 
-enum class CaptureAov { Color, Depth, WorldNormal, PrimId };
+enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNormal, PrimId };
+enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
   CaptureAov aov{CaptureAov::Color};
@@ -585,6 +596,8 @@ struct Options {
   bool rt_preview{false};
   bool scene_preview_albedo{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
+  bool diagnostic_emission{false}; // unlit channel wrapper, sRGB without tone map
+  MaterialDiagnostic diagnostic_material{MaterialDiagnostic::None};
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
@@ -612,6 +625,7 @@ struct Options {
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time
   double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
+  uint64_t max_array_elements{16ull * 1024ull * 1024ull};
   std::map<std::string,std::map<std::string,std::string>> preview_variant_overrides;
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
   // -lodStream: view-dependent district LOD. A cheap proxy pass measures each
@@ -645,6 +659,7 @@ struct Options {
   bool rt_lod{false};
   bool rt_lod_proxy{true};         // distant -> box proxy (false = Full-or-Cull)
   bool rt_lod_frustum_cull{false}; // GI-unsafe; opt-in speed flag
+  uint32_t curve_segments{8};  // -curveSegments: per cubic span, instanced GPU tubes
   float rt_lod_full_px{64.0f};     // -rtLodFullPx
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
@@ -668,6 +683,7 @@ struct Options {
   // sharing). Requires ray query; falls back to the flat path when unavailable or
   // when the scene has no shareable instances. OFF by default.
   bool vulkan_instanced{false};
+  bool vulkan_instanced_stream{false};  // one TLAS slice resident; retain all placements
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
   bool hip{false};                 // -hip: use the HIP/ROCm compute backend
   bool cuda{false};                // -cuda: shared CUDA/NVRTC RT backend
@@ -789,6 +805,7 @@ struct RTPreviewStats {
     std::vector<float> normals;
     std::vector<float> uvs;
     std::vector<uint32_t> indices;
+    uint32_t source_material_id{UINT32_MAX}; // survives bounded GPU chunking
   };
   size_t meshes{0};
   size_t meshes_with_mmap_points{0};
@@ -1029,6 +1046,7 @@ struct MeshJobNext {
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   float clearcoat{0.0f};                 // inputs:clearcoat weight
   float clearcoat_roughness{0.01f};      // inputs:clearcoatRoughness
   ScalarTex clearcoat_tex;               // clearcoat-weight texture + channel
@@ -1065,6 +1083,7 @@ struct TextureCache {
 };
 
 struct ResolvedMat {
+  std::string uv_primvar;
   Vec3 base_color{0.55f, 0.55f, 0.55f};
   int32_t tex_id{-1};
   float roughness{0.55f};
@@ -1082,6 +1101,7 @@ struct ResolvedMat {
   float opacity{1.0f};
   ScalarTex opacity_tex;
   float opacity_threshold{0.0f};
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   float clearcoat{0.0f};
   float clearcoat_roughness{0.01f};
   ScalarTex clearcoat_tex;

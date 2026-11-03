@@ -228,6 +228,7 @@ void RenderCurves::compact() {
   colors.shrink_to_fit();
   opacities.shrink_to_fit();
   tessellated_points.shrink_to_fit();
+  tessellated_normals.shrink_to_fit();
   tessellated_widths.shrink_to_fit();
   tessellated_colors.shrink_to_fit();
   tessellated_opacities.shrink_to_fit();
@@ -236,7 +237,7 @@ void RenderCurves::compact() {
 bool RenderCurves::has_alloc_failure() const {
   return points.alloc_failed() || widths.alloc_failed() ||
          colors.alloc_failed() || opacities.alloc_failed() ||
-         tessellated_points.alloc_failed() ||
+         tessellated_points.alloc_failed() || tessellated_normals.alloc_failed() ||
          tessellated_widths.alloc_failed() ||
          tessellated_colors.alloc_failed() ||
          tessellated_opacities.alloc_failed();
@@ -253,6 +254,7 @@ size_t RenderCurves::memory_usage() const {
   AddBytes(&total, opacities.memory_usage());
   AddBytes(&total, VectorBytes(tessellated_vertex_counts));
   AddBytes(&total, tessellated_points.memory_usage());
+  AddBytes(&total, tessellated_normals.memory_usage());
   AddBytes(&total, tessellated_widths.memory_usage());
   AddBytes(&total, tessellated_colors.memory_usage());
   AddBytes(&total, tessellated_opacities.memory_usage());

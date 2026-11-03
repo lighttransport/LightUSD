@@ -408,7 +408,8 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
             next::AssetAnchorPath(owner.asset_anchor_id());
         const std::string anchor = anchor_dir.empty()
                                        ? std::string()
-                                       : anchor_dir + "/__layer__.usd";
+                                       : next::AssetResolver::IsPackagePath(anchor_dir)
+                                           ? anchor_dir : anchor_dir + "/__layer__.usd";
         const std::string rp = st->resolver->ResolvePath(ap, anchor);
         const uint64_t sz = FileSizeBytes(rp);
         if (sz == 0 || st->loaded_bytes > st->budget_bytes ||

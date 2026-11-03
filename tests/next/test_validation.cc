@@ -868,6 +868,32 @@ def Xform "Root"
         "default options report core group only");
 }
 
+static void test_drive_instance_dofs() {
+  ValidationOptions options;
+  options.physics = true;
+  for (const std::string dof : {"linear", "angular", "transX", "rotZ"}) {
+    const std::string text = "#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsDriveAPI:" +
+        dof + "\"]) {\n float drive:" + dof + ":physics:stiffness = 1\n}\n";
+    USDValidationResult result;
+    CHECK(Validate(text, options, &result), "drive DOF snippet parses");
+    CHECK(CountErrors(result, "physics.drive.dof") == 0,
+          "valid DriveAPI instance accepted: " + dof);
+  }
+  for (const std::string dof : {"distance", "invalid"}) {
+    const std::string text = "#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsDriveAPI:" +
+        dof + "\"]) {\n float drive:" + dof + ":physics:stiffness = 1\n}\n";
+    USDValidationResult result;
+    CHECK(Validate(text, options, &result), "invalid drive snippet still parses");
+    CHECK(CountErrors(result, "physics.drive.dof") >= 2,
+          "invalid DriveAPI schema and property are rejected: " + dof);
+  }
+  USDValidationResult result;
+  CHECK(Validate("#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsLimitAPI:distance\"]) {\n float limit:distance:physics:high = 1\n}\n", options, &result),
+        "distance limit snippet parses");
+  CHECK(CountErrors(result, "physics.limit.dof") == 0,
+        "distance remains a valid LimitAPI instance");
+}
+
 int main() {
   size_t rule_count = 0;
   const ValidationRuleInfo* rules = GetValidationRuleTable(&rule_count);
@@ -904,6 +930,7 @@ int main() {
   test_materialx_rules();
   test_lux_rules();
   test_physics_rules();
+  test_drive_instance_dofs();
   test_prim_name_and_kind();
   test_arkit_rules();
   test_parse_failure();

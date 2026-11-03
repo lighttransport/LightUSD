@@ -108,6 +108,13 @@ bool IsPhysicsDofName(const std::string &dof) {
   return kDofs.count(dof) > 0;
 }
 
+// DriveAPI additionally names the single DOF of prismatic/revolute joints.
+// LimitAPI's distance token is not a drive instance.
+static bool IsPhysicsDriveDofName(const std::string &dof) {
+  return dof == "linear" || dof == "angular" ||
+         (dof != "distance" && IsPhysicsDofName(dof));
+}
+
 bool HasAppliedPhysicsSchema(const std::vector<AppliedSchema> &schemas) {
   for (const AppliedSchema &schema : schemas) {
     if (IsPhysicsSchemaName(schema.name)) {
@@ -354,7 +361,9 @@ void ValidatePhysicsDriveAndLimitAPIs(
   for (const AppliedSchema &schema : schemas) {
     if ((schema.name == "PhysicsDriveAPI" ||
          schema.name == "PhysicsLimitAPI") &&
-        !IsPhysicsDofName(schema.instance_name)) {
+        !(schema.name == "PhysicsDriveAPI"
+              ? IsPhysicsDriveDofName(schema.instance_name)
+              : IsPhysicsDofName(schema.instance_name))) {
       AddError(result,
                schema.name == "PhysicsDriveAPI" ? "physics.drive.dof"
                                                 : "physics.limit.dof",
@@ -406,7 +415,7 @@ void ValidatePhysicsDriveAndLimitAPIs(
                      "; UsdPhysics does not read " + prop_name);
     }
     if (api == "drive") {
-      if (!IsPhysicsDofName(dof)) {
+      if (!IsPhysicsDriveDofName(dof)) {
         AddError(result, "physics.drive.dof", location,
                  "PhysicsDriveAPI DOF `" + dof + "` is not supported");
       }

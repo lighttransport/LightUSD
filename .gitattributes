@@ -1,0 +1,3 @@
+
+# Unified diffs preserve whitespace in upstream context lines.
+tests/verification/repros/*.patch -whitespace

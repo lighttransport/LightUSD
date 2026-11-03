@@ -729,6 +729,18 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
     Set(prim, "width", tn::Value(number("width", 2.0)), "double");
     Set(prim, "length", tn::Value(number("length", 2.0)), "double");
     SetToken(prim, "axis", AxisFromToken(JsonString(shape, "axis", "Z")), true);
+    // MJCF visual planes need an authored texture domain. Native procedural
+    // geometry supplies UVs, but Storm's Plane adapter does not invent `st`.
+    // Vertex order follows UsdGeomPlane's +Z quad, with the same orientation
+    // as our generated plane: u grows along +X and v along -Y.
+    if (mjcf_source &&
+        AxisFromToken(JsonString(shape, "axis", "Z")) == "Z") {
+      Set(prim, "primvars:st",
+          tn::Value::MakeFloatCompArray({1, 0, 0, 0, 0, 1, 1, 1},
+                                       tn::TypeId::Texcoord2f, 2),
+          "texCoord2f[]");
+      SetInterpolation(prim, "primvars:st", "vertex");
+    }
   }
   SetTransformFromJson(prim, shape_json);
   if (collision) {

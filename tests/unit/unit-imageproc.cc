@@ -10,6 +10,9 @@
 #include <cmath>
 #include <cstdint>
 #include <vector>
+#include <cstring>
+#include <string>
+#include "image-loader.hh"
 
 using namespace lightusd;
 
@@ -121,4 +124,27 @@ void imageproc_simd_level_test(void) {
   for (size_t i = 0; i < buf.size(); ++i)
     if (buf[i] != ref[i]) { ok = false; break; }
   TEST_CHECK(ok);
+}
+
+
+void imageproc_hdr_flat_complete_test(void) {
+  const std::string header="#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 32 +X 64\n";
+  std::vector<uint8_t> bytes(header.begin(),header.end());
+  for(size_t i=0;i<64*32;++i){
+    bytes.push_back(128);bytes.push_back(255);bytes.push_back(64);bytes.push_back(i%3?129:0);
+  }
+  auto decoded=lightusd::image::LoadImageFromMemory(bytes.data(),bytes.size(),"flat.hdr");
+  TEST_ASSERT(decoded.has_value());
+  const auto& image=decoded.value().image;
+  TEST_CHECK(image.width==64 && image.height==32 && image.channels==4 && image.bpp==32);
+  TEST_ASSERT(image.data.size()==64*32*4*sizeof(float));
+  for(size_t i=0;i<64*32;++i){
+    float values[4];std::memcpy(values,image.data.data()+i*4*sizeof(float),sizeof(values));
+    TEST_CHECK(values[0]==(i%3?1.f:0.f));
+    TEST_CHECK(values[1]==(i%3?255.f/128.f:0.f));
+    TEST_CHECK(values[2]==(i%3?.5f:0.f));
+    TEST_CHECK(values[3]==1.f);
+  }
+  for(size_t missing:{size_t(1),size_t(4),size_t(16)})
+    TEST_CHECK(!lightusd::image::LoadImageFromMemory(bytes.data(),bytes.size()-missing,"truncated.hdr"));
 }

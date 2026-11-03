@@ -16,6 +16,7 @@
 #include "next/schema/geom-point-instancer.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value-view.hh"
+#include "next/eval/attribute-eval.hh"
 
 namespace lightusd {
 namespace tydra {
@@ -218,13 +219,56 @@ struct ValueArrayRead {
   const T* end() const { return view.end(); }
 };
 
+// A mesh attribute retains authored interpolation and optional index
+// indirection. Resolve a corner before accessing its scalar tuple; equal point
+// and corner counts must not override an authored faceVarying opinion.
+struct MeshFloatAttribute {
+  ValueArrayRead<float> values;
+  ValueArrayRead<int32_t> indices;
+  std::string interpolation;
+  size_t components = 0;
+  bool TupleIndex(size_t point, size_t corner, size_t face, size_t* index) const;
+};
+// Empty output means no skeleton binding. On failure the caller must reject
+// the mesh; unsupported skinning must not silently render the bind pose.
+bool EvaluateSkinnedPoints(
+    const ::lightusd::next::Stage& stage, const ::lightusd::next::UsdPrim& mesh,
+    double time, const ValueArrayRead<float>& points,
+    std::vector<float>* output, std::string* error,
+    std::vector<double>* point_normal_matrices = nullptr);
+// Subdivision schemes define their own normals; authored mesh normals are
+// only meaningful for polygonal subdivisionScheme="none" geometry.
+bool MeshUsesAuthoredNormals(const ::lightusd::next::UsdPrim& prim);
+// Polygonal and bilinear surfaces keep flat normals when none are authored.
+bool MeshUsesGeneratedSmoothNormals(const ::lightusd::next::UsdPrim& prim);
+// Smooth shading policy for meshes without authored normals: sum oriented
+// incident polygon corner cross products, then normalize in mesh-local space.
+// Uses evaluated (already deformed) points. Rejects malformed topology.
+bool ComputeMeshSmoothNormals(const ValueArrayRead<float>& points,
+                              const ValueArrayRead<int32_t>& counts,
+                              const ValueArrayRead<int32_t>& indices,
+                              bool left_handed, std::vector<float>* normals);
+bool ReadMeshFloatAttribute(const ::lightusd::next::UsdPrim& prim,
+                            const std::string& name,
+                            const ::lightusd::next::EvalOptions& options,
+                            size_t components, size_t point_count,
+                            size_t corner_count, MeshFloatAttribute* out);
+
 bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out);
+// Full evaluation, including clip precedence. The returned array owns any
+// evaluated storage for as long as the caller retains ValueArrayRead.
+bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim, const char* name,
+                    const ::lightusd::next::EvalOptions& options,
+                    ValueArrayRead<float>* out);
 bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim,
                     const ::lightusd::next::PropNameId& name,
                     double time, ValueArrayRead<float>* out);
 bool ReadIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out);
+bool ReadIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
+                  const ::lightusd::next::EvalOptions& options,
+                  ValueArrayRead<int32_t>* out);
 bool ReadIntArray(const ::lightusd::next::UsdPrim& prim,
                   const ::lightusd::next::PropNameId& name,
                   double time, ValueArrayRead<int32_t>* out);

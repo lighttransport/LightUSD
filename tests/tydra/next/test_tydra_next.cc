@@ -819,8 +819,84 @@ void TestDeepSceneAccess() {
   std::cout << "  Deep Scene Access: PASSED\n";
 }
 
+void TestSkinnedPointEvaluation() {
+  std::string source = R"(#usda 1.0
+ def SkelRoot "Rig" {
+  rel skel:skeleton = </Rig/Skeleton>
+  def Skeleton "Skeleton" {
+   double3 xformOp:translate = (3,0,0)
+   uniform token[] xformOpOrder = ["xformOp:translate"]
+   uniform token[] joints = ["root"]
+   uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   uniform matrix4d[] restTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   rel skel:animationSource = </Rig/Animation>
+  }
+  def SkelAnimation "Animation" {
+   uniform token[] joints = ["root"]
+   float3[] translations = [(2,0,0)]
+   quatf[] rotations = [(0.70710678,0,0,0.70710678)]
+   half3[] scales = [(1,1,1)]
+  }
+  def Mesh "Mesh" {
+   point3f[] points = [(1,0,0),(0,1,0)]
+   int[] primvars:skel:jointIndices = [0] (elementSize = 1 interpolation = "constant")
+   float[] primvars:skel:jointWeights = [1] (elementSize = 1 interpolation = "constant")
+  }
+ }
+)";
+  auto loaded = LoadUSDAFromString(source);
+  assert(loaded.success);
+  auto prim = loaded.stage.GetPrimAtPath("/Rig/Mesh");
+  ValueArrayRead<float> points;assert(ReadFloatArray(prim,"points",0,&points));
+  std::vector<float> result;std::vector<double> normals;std::string error;
+  assert(EvaluateSkinnedPoints(loaded.stage,prim,0,points,&result,&error,&normals));
+  assert(result.size()==6);
+  // Scalar-first quaternion, inherited binding, constant influences and the
+  // skeleton-to-mesh transform each affect this independently derived result.
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  assert(std::abs(result[3]-4)<1e-5 && std::abs(result[4])<1e-5);
+  assert(normals.size()==18 && std::abs(normals[0])<1e-5 && std::abs(normals[1]-1)<1e-5);
+  auto replace = [&](const std::string& from,const std::string& to) {
+    const size_t at=source.find(from);assert(at!=std::string::npos);source.replace(at,from.size(),to);
+  };
+  replace("jointIndices = [0]", "jointIndices = [99,0]");
+  replace("jointWeights = [1]", "jointWeights = [0,1]");
+  replace("point3f[] points", "int[] primvars:skel:jointIndices:indices = [1]\n int[] primvars:skel:jointWeights:indices = [1]\n point3f[] points");
+  auto indexed=LoadUSDAFromString(source);assert(indexed.success);
+  assert(EvaluateSkinnedPoints(indexed.stage,indexed.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  replace("jointIndices:indices = [1]", "jointIndices:indices = [-1]");
+  auto invalid=LoadUSDAFromString(source);assert(invalid.success);
+  assert(!EvaluateSkinnedPoints(invalid.stage,invalid.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  std::cout << "  Standard linear skinning: PASSED\n";
+}
+
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
+  {
+    auto parsed = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "M" {
+   texCoord2f[] primvars:st0 = [(0, 0), (1, 0), (0, 1)] (interpolation = "faceVarying")
+   int[] primvars:st0:indices = [2, 0, 1]
+   normal3f[] normals = [(0, 0, 1)] (interpolation = "uniform")
+ }
+)");
+    assert(parsed.success);
+    auto prim = parsed.stage.GetPrimAtPath("/M");
+    EvalOptions options;
+    options.follow_connections = false;
+    MeshFloatAttribute uv, normal;
+    assert(ReadMeshFloatAttribute(prim, "primvars:st0", options, 2, 3, 3, &uv));
+    size_t tuple = 0;
+    assert(uv.TupleIndex(1, 0, 0, &tuple) && tuple == 2);
+    assert(uv.values[tuple * 2] == 0 && uv.values[tuple * 2 + 1] == 1);
+    assert(!uv.TupleIndex(0, 3, 0, &tuple));
+    assert(ReadMeshFloatAttribute(prim, "normals", options, 3, 3, 3, &normal));
+    assert(normal.TupleIndex(2, 2, 0, &tuple) && tuple == 0);
+    assert(!normal.TupleIndex(0, 0, 1, &tuple));
+    // Reading another attribute must preserve the first reader's storage.
+    assert(uv.values[4] == 0 && uv.values[5] == 1);
+  }
   // Instance proxy expansion can outgrow the authored prim estimate. Every
   // pointer view must still address its record after storage growth.
   {
@@ -4042,6 +4118,9 @@ def Xform "World"
         uniform token wrap = "nonperiodic"
         int[] curveVertexCounts = [4]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+        normal3f[] normals = [(0, 1, 0)] (interpolation = "constant")
+        normal3f[] primvars:normals = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+        int[] primvars:normals:indices = [0, 1, 2, 3]
     }
 
     def HermiteCurves "Hermite"
@@ -4246,6 +4325,12 @@ def Xform "World"
   assert(std::fabs(bezier.tessellated_points[8] - 0.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
+
+  assert(bezier.tessellated_normals.size() == 9);
+  // Cubic midpoint weights are 1/8, 3/8, 3/8, 1/8; primvar wins.
+  assert(std::fabs(bezier.tessellated_normals[3] - .125f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[4] - .375f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[5] - .5f) < 1e-6f);
 
   const RenderCurves& hermite = curve("/World/Hermite");
   assert(hermite.is_hermite);
@@ -4549,13 +4634,13 @@ def Xform "Root" (
       {"clip_0.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (1, 2, 3)
+    double3 xformOp:translate.timeSamples = {0: (1, 2, 3)}
 }
 )"},
       {"clip_1.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (5, 6, 7)
+    double3 xformOp:translate.timeSamples = {2: (5, 6, 7)}
 }
 )"}};
 
@@ -4594,7 +4679,7 @@ def Xform "Root"
   assert(channel.target_prim_path == "/Root");
   assert(channel.keyframes.size() == 3);
   assert(std::fabs(channel.keyframes[0].value.x - 1.0f) < 0.001f);
-  assert(std::fabs(channel.keyframes[1].value.x - 1.0f) < 0.001f);
+  assert(std::fabs(channel.keyframes[1].value.x - 3.0f) < 0.001f);
   assert(std::fabs(channel.keyframes[2].value.x - 5.0f) < 0.001f);
 
   std::cout << "  Next value-clip baking: PASSED\n";
@@ -8589,7 +8674,81 @@ static void TestFieldFallbackAndDenseBox() {
 #endif
 }
 
+static void TestAuthoredPlaneTextureDomain() {
+  auto loaded = LoadUSDAFromString(R"(#usda 1.0
+ def Plane "Plane" {
+  uniform token axis = "Z"
+  double width = 2
+  double length = 2
+  texCoord2f[] primvars:st = [(2,3),(5,7),(11,13),(17,19)] (interpolation = "vertex")
+ }
+)");
+  assert(loaded.success);
+  lightusd::tydra::next::ConverterConfig config;
+  config.mesh.triangulate = false;
+  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::next::RenderMesh mesh;
+  assert(converter.ConvertRenderableMesh(loaded.stage,
+      loaded.stage.GetPrimAtPath("/Plane"), &mesh));
+  assert(mesh.face_vertex_indices.size() == 4 && mesh.texcoords_0.size() == 8);
+  const float expected[4][2] = {{2,3},{5,7},{11,13},{17,19}};
+  for (size_t corner = 0; corner < 4; ++corner) {
+    const size_t index = mesh.face_vertex_indices[corner];
+    const float x = mesh.points[index * 3], y = mesh.points[index * 3 + 1];
+    const size_t canonical = y > 0 ? (x > 0 ? 0 : 1) : (x > 0 ? 3 : 2);
+    assert(mesh.texcoords_0[corner * 2] == expected[canonical][0]);
+    assert(mesh.texcoords_0[corner * 2 + 1] == expected[canonical][1]);
+  }
+}
+
+static void TestGeneratedSmoothNormals() {
+  using namespace lightusd::tydra::next;
+  auto policy = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "Default" {}
+ def Mesh "Polygon" { uniform token subdivisionScheme = "none" }
+ def Mesh "Loop" { uniform token subdivisionScheme = "loop" }
+ def Mesh "Bilinear" { uniform token subdivisionScheme = "bilinear" }
+)");
+  assert(policy.success);
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Bilinear")));
+  const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 4, 4, 4};
+  const int32_t face_counts[] = {3, 3};
+  const int32_t face_indices[] = {0, 1, 2, 0, 1, 3};
+  ValueArrayRead<float> points;
+  points.view = {positions, 15, false};
+  ValueArrayRead<int32_t> counts;
+  counts.view = {face_counts, 2, false};
+  ValueArrayRead<int32_t> indices;
+  indices.view = {face_indices, 6, false};
+  std::vector<float> normals;
+  assert(ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  const float inv = 1.0f / std::sqrt(5.0f);
+  for (size_t point : {size_t(0), size_t(1)}) {
+    assert(std::abs(normals[point * 3]) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 1] + 2 * inv) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 2] - inv) < 1e-6f);
+  }
+  assert(normals[8] == 1.0f && normals[10] == -1.0f);
+  assert(normals[12] == 0 && normals[13] == 0 && normals[14] == 0);
+  assert(ComputeMeshSmoothNormals(points, counts, indices, true, &normals));
+  assert(std::abs(normals[1] - 2 * inv) < 1e-6f);
+  const int32_t invalid[] = {0, -1, 2, 0, 1, 3};
+  indices.view = {invalid, 6, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  assert(normals.empty());
+  indices.view = {face_indices, 5, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+}
+
 int main() {
+  TestAuthoredPlaneTextureDomain();
+  TestGeneratedSmoothNormals();
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
   // ChunkedArray tests
@@ -8625,6 +8784,7 @@ int main() {
   // Scene Access tests
   TestSceneAccess();
   TestDeepSceneAccess();
+  TestSkinnedPointEvaluation();
   TestRenderExtract();
 
   std::cout << "\n";

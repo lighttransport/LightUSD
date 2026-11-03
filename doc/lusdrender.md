@@ -41,6 +41,23 @@ CPU and descriptor paths additionally check packed-channel roughness sampling
 with scale/bias against an equivalent constant material. Legacy compute preview
 uses constant roughness and does not evaluate that scalar texture check.
 
+For material debugging, `-diagnosticMaterial roughness` or `metallic` outputs
+the resolved native preview field from the original scene, including scalar
+texture channel, scale/bias and UV selection. CPU preview (`-rtPreview`) and
+flat Vulkan (`-vkr`, CPU material sampling after GPU intersections) support this
+mode. Output uses sRGB without tone mapping, with the same bounded opacity
+compositing as `-diagnosticEmission`. Instanced GPU, CUDA/HIP, path tracing and
+data-AOV combinations are rejected. This does not compare BRDF integration.
+RGB scalar outputs honor authored texture color space; alpha stays linear.
+Unspecified/auto scalar texture color space defaults to raw data.
+
+Diagnostic transparency supports hardware Vulkan ray-query chunks. One chunk's
+acceleration structure stays resident at a time; CPU indexed positions are kept
+for continuation rebuilds and texture footprints. This costs extra builds and
+CPU storage. Compute-only chunked transparency remains unsupported. CPU and
+Vulkan diagnostics fail explicitly when their 16-layer limit is exhausted,
+without writing a partial image. Ordinary preview keeps its own recursion limit.
+
 The streamed material adapter translates resolved semantic texture slots into
 bounded graph routes for descriptor shading, including base color, metalness,
 roughness, opacity, emission, normal, specular color, and coat inputs. Existing
@@ -326,3 +343,38 @@ The GPU-instancing path is now feature-complete: render PointInstancer + native
 instances, per-prototype BLAS sharing, per-instance LOD (flatten-side and
 two-level), displacement, and >8M-triangle prototype chunking — all reusing
 LightRT's existing ray-query shader (no SPIR-V change).
+
+## Coding-agent headless comparison with usdrecord
+
+[`tools/view_control/control.py headless`](../tools/view_control/HEADLESS.md)
+provides one-shot and MCP control for same-state lusdrender/usdrecord renders,
+including rolled/shifted orthographic cameras, purposes, time, sparse edits,
+readable bone/selection diagnostics and image diffs. The fork's usdrecord EGL
+path uses no desktop or display server; the controller records its actual GL
+vendor/device. Batch wall times include startup/load/build/render/write and are
+reported separately from image comparison. The existing resident `lusdrender -mcp`
+interface remains available for its native CPU render context.
+
+Raw CPU normal diagnostics distinguish `--aov geometricNormal` (triangle winding)
+from `--aov shadingNormal` (authored/interpolated normals before material normal
+maps). Both require `.pfm` output and preserve signed world-space float values.
+`shadingNormal` enables authored normal extraction automatically. Normals use the
+inverse transpose under nonuniform instance transforms. The older `worldNormal`
+channel preserves its existing selected-shading behavior and may include normal
+maps; use the explicit channels for diagnostics. These CPU captures do not certify
+the GPU backend. `tool-lusdrender-capture-normals` checks the two channels against
+an analytic nonuniformly scaled plane.
+
+### Explicit large-array load limits
+
+The native CLI fails when a referenced layer cannot be loaded, including parser
+and resource-limit errors. Ordinary layer-relative paths remain supported.
+`-maxMem` bounds the loader's input, dependency and resident byte budgets;
+`-maxArrayElements N` independently raises the decoded-array count ceiling from
+its finite default of16,777,216. For trusted Island validation use
+`-maxMem 30 -maxArrayElements 67108864`, with the external RSS/VRAM supervisor.
+A successful render with an omitted dependency cannot establish scene coverage.
+
+Validation job JSON accepts `native_load_limits` globally or on a scene:
+`{"max_memory_gib":30,"max_array_elements":67108864}`. A scene object overrides
+the global object. The recorded renderer command retains both explicit values.

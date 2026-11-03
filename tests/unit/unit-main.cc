@@ -297,6 +297,7 @@ TEST_LIST = {
   { "png_stream_colorspace_16bit_test", png_stream_colorspace_16bit_test },
   { "png_stream_transcode_16bit_test", png_stream_transcode_16bit_test },
   { "png_stream_resize_16bit_test", png_stream_resize_16bit_test },
+  { "imageproc_hdr_flat_complete_test", imageproc_hdr_flat_complete_test },
   { "imageproc_mat3_identity_test", imageproc_mat3_identity_test },
   { "imageproc_mat3_swap_test", imageproc_mat3_swap_test },
   { "imageproc_mat3_parity_test", imageproc_mat3_parity_test },

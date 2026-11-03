@@ -70,7 +70,23 @@ expect_clean_failure() {
 }
 
 expect_clean_failure "-fitScale abc" "$TMP/tri.usda" "$TMP/x.png" -fitScale abc
+expect_clean_failure "invalid material diagnostic" "$TMP/tri.usda" "$TMP/x.png" -diagnosticMaterial other
+expect_clean_failure "material diagnostic with data AOV" "$TMP/tri.usda" "$TMP/x.png" -diagnosticMaterial roughness --aov depth
+expect_clean_failure "unsupported instanced material diagnostic" "$TMP/tri.usda" "$TMP/x.png" -diagnosticMaterial metallic -vkInstanced
 expect_clean_failure "-fitScale 1e999" "$TMP/tri.usda" "$TMP/x.png" -fitScale 1e999
+for option in -maxMem -maxVram; do
+  for value in nan inf 1garbage -1; do
+    expect_clean_failure "$option $value" "$TMP/tri.usda" "$TMP/x.png" "$option" "$value"
+  done
+done
+for value in 0 -1 nan 18446744073709551616 16garbage; do
+  expect_clean_failure "-maxArrayElements $value" "$TMP/tri.usda" "$TMP/x.png" -maxArrayElements "$value"
+done
+cat > "$TMP/missing.usda" <<'USDA'
+#usda 1.0
+def Xform "World" (references = @absent.usda@</Asset>) {}
+USDA
+expect_clean_failure "missing referenced geometry" "$TMP/missing.usda" "$TMP/x.png" -rtPreview -w 16 -height 16
 expect_clean_failure "-w 2000000000" "$TMP/tri.usda" "$TMP/x.png" -w 2000000000
 expect_clean_failure "-height 2000000000" "$TMP/tri.usda" "$TMP/x.png" -height 2000000000
 expect_clean_failure "-samples 2000000000" "$TMP/tri.usda" "$TMP/x.png" -samples 2000000000

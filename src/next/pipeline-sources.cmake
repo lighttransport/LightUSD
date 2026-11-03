@@ -38,6 +38,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc
+    layer/asset-anchor.cc
     layer/array-edit.cc
     layer/property-index.cc
     layer/prim-spec.cc

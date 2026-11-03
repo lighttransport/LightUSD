@@ -104,3 +104,33 @@ documents live in [archive/](archive/).
 
 - [tydra-animation-spec-en.md](tydra-animation-spec-en.md) — Tydra animation
   specification.
+
+## Renderer validation reports
+
+- [Current dataset gap closure ledger](validation/gap-closure-status.md) and
+  [resumed implementation report](validation/session-resumed-2026-11-03.md).
+- [Complete matching-work load time and RSS](validation/load-performance-resumed-2026-11-03.md).
+- [Extended USD-assets, empty-view controls and analytic sphere checks](validation/usd-assets-extended-2026-11-03.md).
+- [Final USD-assets sampled diagnostic refresh](validation/usd-assets-native-parameters-2026-11-03.md).
+- [OpenUSD staging allocation defect and bounded control](validation/openusd-staging-buffer-2026-11-03.md).
+- [Island resource-closed subset validation](validation/island-subset-population-2026-11-03.md).
+- [Normal AOV interpretation control](validation/normal-aov-contract-2026-11-03.md).
+- [Original-source native roughness/metallic checks](validation/roughness-native-parameters-2026-11-03.md).
+- [Explicit contact-response controls](validation/physics-contact-response-2026-11-03.md).
+- [Optimized PTex reference and generated-fixture controls](validation/island-ptex-release-control-2026-11-03.md).
+- [Caldera AMD geometry and performance](validation/caldera-amd-2026-11-02.md).
+- [USD-WG assets: sampled animation times and shading AOVs](validation/usd-assets-amd-2026-11-02.md).
+- [Headless validation job configuration](../tools/view_control/HEADLESS.md#json-validation-jobs-assets-animation-times-and-shading-aovs).
+- [ALab original-source shot and Remi refresh](validation/alab-original-2026-11-03.md); [earlier diagnostic controls](validation/alab-2026-11-02.md).
+- [Disney Island full scene and terrain subsets](validation/island-2026-11-02.md).
+- [MuJoCo Menagerie conversion, rendering and after-load physics](validation/menagerie-2026-11-02.md).
+
+- [Island bounded mesh repeatability](validation/island-mesh-repeatability-2026-11-03.md).
+- [Island independent PTex decoding](validation/island-ptex-2026-11-03.md).
+- [Physics consumer defects and analytic dynamics](validation/physics-gap-investigation-2026-11-03.md).
+
+- [Bounded original Island meshes and curves](validation/island-curves-2026-11-03.md)
+
+- [Original Caldera and rigged AMD geometry acceptance](validation/geometry-acceptance-2026-11-03.md)
+
+- [Dataset gap implementation and audit (2026-11-03)](validation/session-final-2026-11-03.md)

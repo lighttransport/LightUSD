@@ -185,11 +185,14 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                                   : layer_id);
             const std::string vid = "variant:" +
                                     variant_anchor + "\x1f" +
-                                    layer_stacks[src.stack_idx].identifier +
+                                    layer_stacks[src.stack_idx].cache_key +
                                     ":" + src.site + ":" + set_name + ":" +
                                     vd->name;
             uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
             if (cstack == kInvalidStack) return;
+            layer_stacks[cstack].variant_owner_key =
+                layer_stacks[src.stack_idx].cache_key;
+            layer_stacks[cstack].variant_owner_site = src.site;
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
@@ -309,7 +312,8 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
                   std::vector<Src> *out, std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const ArcChain &chain, std::string *warn,
-                  std::string *err) {
+                  std::string *err, void (*before_references)(void*),
+                  void* before_references_data) {
     out->push_back(src);
 
     // A relocation-source anchor: its own specs (and thus their arcs and
@@ -433,6 +437,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
 
       if (merge) continue;  // merged refs/payloads/specializes handled below
 
+      if (before_references) before_references(before_references_data);
       // References. Anchor relative asset paths to THIS spec's authoring layer.
       for (const std::string &ref_str : spec->meta().references) {
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
@@ -468,6 +473,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
     }
 
     if (merge) {
+      if (before_references) before_references(before_references_data);
       // Cross-layer-merged references / payloads / specializes, processed once
       // in LIVRPS order (all inherits already emitted above, before variants).
       for (const auto &s : MergeArcField(specs, ArcSel::References)) {
@@ -534,7 +540,60 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
     if (scoped != options.variant_overrides_by_path.end()) {
       for (const auto &ov : scoped->second) sels[ov.first] = ov.second;
     }
-    for (const Src &s : base) {
+    // An ancestor variant's opinions on this child precede the child's own
+    // references/payloads, but follow its direct inherits and variants. Expand
+    // those base sources at the reference boundary instead of letting an early
+    // child reference install weaker selections before the ancestor is visited.
+    const auto related_variant = [&](const Src& candidate, const Src& owner) {
+      const auto related_stack = [&](uint32_t stack) {
+        for (size_t depth = 0; depth <= layer_stacks.size(); ++depth) {
+          const LayerStack& current = layer_stacks[stack];
+          if (current.variant_owner_key.empty()) return false;
+          if (current.variant_owner_key == layer_stacks[owner.stack_idx].cache_key &&
+              IsPathAtOrUnder(owner.site, current.variant_owner_site)) return true;
+          auto parent = stack_by_id.find(current.variant_owner_key);
+          if (parent == stack_by_id.end()) return false;
+          stack = parent->second;
+        }
+        return false;
+      };
+      if (related_stack(candidate.stack_idx)) return true;
+      if (candidate.arc_chain()) {
+        for (const auto& node : *candidate.arc_chain())
+          if (related_stack(node.first)) return true;
+      }
+      // USDC variants use bracketed holders in the owner's layer stack.
+      if (candidate.stack_idx == owner.stack_idx) {
+        for (size_t pos = 0; (pos = candidate.site.find("/{", pos)) != std::string::npos; ++pos) {
+          const std::string host = candidate.site.substr(0, pos);
+          if (IsPathAtOrUnder(owner.site, host) &&
+              owner.site.compare(pos, 2, "/{") != 0) return true;
+        }
+      }
+      return false;
+    };
+    bool has_ancestral_variants = false;
+    for (const Src& source : base) {
+      if (source.arc_kind == ArcType::Variant ||
+          source.site.find("/{") != std::string::npos ||
+          !layer_stacks[source.stack_idx].variant_owner_key.empty()) {
+        has_ancestral_variants = true;
+        break;
+      }
+      if (source.arc_chain()) {
+        for (const auto& node : *source.arc_chain()) {
+          if (!layer_stacks[node.first].variant_owner_key.empty()) {
+            has_ancestral_variants = true;
+            break;
+          }
+        }
+        if (has_ancestral_variants) break;
+      }
+    }
+    std::vector<bool> consumed;
+    if (has_ancestral_variants) consumed.resize(base.size(), false);
+    const auto expand_base = [&](auto&& self, size_t index) -> void {
+      const Src& s = base[index];
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
@@ -571,7 +630,28 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
         }
       }
       const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, anc, 0};
-      ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
+      auto promote_ancestral_variants = [&] {
+        for (size_t next = index + 1; next < base.size(); ++next) {
+          if (consumed[next] || !related_variant(base[next], s)) continue;
+          consumed[next] = true;
+          self(self, next);
+        }
+      };
+      if (consumed.empty()) {
+        ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
+      } else {
+        ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err,
+            [](void* context) {
+              (*static_cast<decltype(promote_ancestral_variants)*>(context))();
+            }, &promote_ancestral_variants);
+      }
+    };
+    for (size_t index = 0; index < base.size(); ++index) {
+      if (!consumed.empty()) {
+        if (consumed[index]) continue;
+        consumed[index] = true;
+      }
+      expand_base(expand_base, index);
     }
     // Variant sets whose selection was authored at a WEAKER site graft now,
     // at their recorded strength position (pxr resolves selections across the

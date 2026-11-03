@@ -196,6 +196,10 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
 }
 
 uint32_t CrateArrayCountHeaderBytes(CrateVersion version) {
+  // Before 0.5 the uncompressed block starts with a u32 rank (always 1),
+  // followed by a u32 element count. 0.5/0.6 dropped the rank; 0.7 widened
+  // the count to u64. Borrowing/printing need the complete header width.
+  if (version.major == 0 && version.minor < 5) return 8u;
   // pxr crateFile.cpp _Write/_ReadUncompressedArray (and the compressed-array
   // paths): `(ver < CrateFile::Version(0,7,0)) ? <uint32_t> : <uint64_t>`.
   return version.is_pre_070() ? 4u : 8u;
@@ -204,6 +208,10 @@ uint32_t CrateArrayCountHeaderBytes(CrateVersion version) {
 bool ReadCrateArrayCount(StreamReader& r, CrateVersion version,
                          uint64_t* count) {
   if (!count) return false;
+  if (version.major == 0 && version.minor < 5) {
+    uint32_t rank = 0;
+    if (!r.read_u32(rank) || rank != 1) return false;
+  }
   if (version.is_pre_070()) {
     uint32_t c32 = 0;
     if (!r.read_u32(c32)) return false;

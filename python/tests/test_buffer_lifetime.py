@@ -60,3 +60,23 @@ def test_render_buffer_retains_catalog():
     del scene, stage
     gc.collect()
     assert view.shape == (3, 3) and view.tolist()[1] == [1, 0, 0]
+
+
+@pytest.mark.parametrize('policy', ['untrusted', 'trusted'])
+def test_lazy_crate_array_pin_survives_edit_close_and_unlink(tmp_path, policy):
+    path=tmp_path/'source.usdc'
+    with lightusd.Stage.create() as source:
+        prim=source.define_prim('/M','Mesh')
+        prim.set('points',[(float(i),float(i+1),float(i+2)) for i in range(2048)],type='point3f[]')
+        source.save(str(path))
+    stage=lightusd.load(path,composed=False,input_policy=policy)
+    prim=stage.prim_at('/M')
+    array=prim.attribute('points').resolve(time=0)
+    view=memoryview(array)
+    assert view.shape == (2048,3) and view.format == 'f' and view.readonly
+    prim.set('points',[(0,0,0)],type='point3f[]')
+    stage.close()
+    del array,prim,stage
+    path.unlink()
+    gc.collect()
+    assert view[0,0] == 0 and view[2047,2] == 2049

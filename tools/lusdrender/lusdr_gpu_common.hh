@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "lightrt_c_tri.h"  // lrt_tri_scene, lrt_ray, lrt_hit
@@ -60,7 +61,9 @@ bool BuildGpuCpuScene(int threads, GpuTriScene *out,
 
 // Append per-triangle smooth-normal metadata from a chunk, promoting the
 // destination to zero-filled streams only when some chunk actually needs it.
-void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst);
+// prior_triangles is explicit: colors may already contain the current chunk.
+void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst,
+                            size_t prior_triangles);
 
 // Validate a GPU trace dispatch dimensions before allocating rays or passing the
 // count to LightRT's GPU APIs, which all take a uint32_t ray count.
@@ -112,7 +115,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
 struct InstSampleHit {
   uint32_t inst = 0;
   uint32_t local = 0;
-  float u = 0.0f, v = 0.0f;
+  float u = 0.0f, v = 0.0f, t = 0.0f;
   bool valid = false;
 };
 
@@ -133,11 +136,16 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 // Shade the traced `hits` (smooth normal + key light + camera headlight +
 // ambient), average the spp samples per pixel, and write the image to
 // opt.output. Returns false on image-write failure.
+using GpuTraceContinuation = std::function<bool(
+    const std::vector<lrt_ray>&, std::vector<lrt_hit>*)>;
+using GpuTrianglePositions = std::function<bool(uint32_t, Vec3*)>;
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
                         const std::vector<lrt_hit> &hits, int w, int h, int spp,
                         const std::vector<ResolvedMat> *materials = nullptr,
-                        const std::vector<Texture> *textures = nullptr);
+                        const std::vector<Texture> *textures = nullptr,
+                        const GpuTraceContinuation& trace_continuation = {},
+                        const GpuTrianglePositions& triangle_positions = {});
 
 // Shade native Gaussian ellipse hits directly from chunk-local metadata. This
 // avoids flattening all splat colors/normals into a second scene-wide

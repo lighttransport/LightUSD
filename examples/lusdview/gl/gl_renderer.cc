@@ -5319,6 +5319,40 @@ ViewportTexHandle GLRenderer::viewportTexture() const {
   return static_cast<ViewportTexHandle>(dofApplied_ ? dofTex_ : colorTex_);
 }
 
+ViewportTexHandle GLRenderer::comparisonImage(int slot, const light3d::Image* image) {
+  if (slot < 0 || slot >= 4) return 0;
+  auto& target = comparisonTextures_[static_cast<size_t>(slot)];
+  if (!image) return static_cast<ViewportTexHandle>(target);
+  if (image->width < 1 || image->height < 1 || image->width > 4096 || image->height > 4096 ||
+      image->channels != 4 || image->data.size() != static_cast<size_t>(image->width)*static_cast<size_t>(image->height)*4) return 0;
+  GLint previous = 0, unpack = 0, alignment = 0, rowLength = 0;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+  glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);
+  GLuint texture = 0;
+  glGenTextures(1,&texture);
+  glBindTexture(GL_TEXTURE_2D,texture);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,image->width,image->height,0,GL_RGBA,GL_UNSIGNED_BYTE,image->data.data());
+  GLint width = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&width);
+  glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(previous));
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,static_cast<GLuint>(unpack));
+  glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,rowLength);
+  if (width != image->width) { glDeleteTextures(1,&texture); return 0; }
+  if (target) glDeleteTextures(1,&target);
+  target = texture;
+  return static_cast<ViewportTexHandle>(target);
+}
+
 bool GLRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
   // Composite an externally-traced RGBA8 image (CUDA/HIP/CPU RT) into the
   // offscreen viewport target for this frame, mirroring
@@ -5459,6 +5493,7 @@ bool GLRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
 }
 
 void GLRenderer::shutdown() {
+  for (auto& texture : comparisonTextures_) { if (texture) glDeleteTextures(1,&texture); texture = 0; }
   destroyScene();
   if (whiteTex_) { glDeleteTextures(1, &whiteTex_); whiteTex_ = 0; }
   if (boneTex_) { glDeleteTextures(1, &boneTex_); boneTex_ = 0; }

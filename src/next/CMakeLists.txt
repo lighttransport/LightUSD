@@ -79,9 +79,6 @@ set(LIGHTUSD_NEXT_SOURCES
     # Type system
     types/value-view.cc
 
-    # Layer (unified PrimSpec storage)
-    layer/asset-anchor.cc
-
     # Writers
     writer/prim-printer.cc
     writer/usda-writer.cc
@@ -1402,6 +1399,9 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_compile_definitions(test_lightusd_cpp PRIVATE LIGHTUSD_TEST_RENDER_API=1)
     endif()
     add_test(NAME next_test_cpp_facade COMMAND test_lightusd_cpp)
+    add_executable(test_c_api_lazy_view ../../tests/next/test_c_api_lazy_view.cc)
+    target_link_libraries(test_c_api_lazy_view PRIVATE lightusd_c)
+    add_test(NAME next_test_c_api_lazy_view COMMAND test_c_api_lazy_view)
     if(LIGHTUSD_WITH_TYDRA)
         add_executable(test_lightusd_document_session
             ../../tests/c-api/test_lightusd_document_session.c)
@@ -1678,6 +1678,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME next_mujoco_compare_coverage
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_mujoco_compare_coverage.py)
+        set_tests_properties(next_mujoco_compare_coverage PROPERTIES LABELS "next;physics")
         add_test(NAME next_usdcat_options
             COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-usdcat-options.py

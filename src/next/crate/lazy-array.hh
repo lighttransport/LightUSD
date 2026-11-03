@@ -59,8 +59,8 @@ public:
 };
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.
-/// The on-disk block at `block_offset` is `[count][data...]`; the count header
-/// is u64 for crate >= 0.7.0 and u32 for older versions.
+/// The on-disk block at `block_offset` is `[header][data...]`: header is
+/// [u32 rank=1,u32 count] before 0.5, u32 count in 0.5/0.6, u64 from 0.7.
 struct LazyArrayRef {
   std::shared_ptr<LazyArraySource> source;  // keeps the backing source alive
   ValueRep rep;                             // original on-disk rep (flags+payload)

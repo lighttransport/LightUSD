@@ -230,14 +230,18 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, warn, err);
+    auto layer = ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, warn, err);
+    StampPackageAssetAnchor(layer.get(), label);
+    return layer;
   }
   if (is_usda) {
     LoadOptions lopts;
     lopts.parse_options = MakeUSDAParseOptions(options);
-    return ConvertLoadedUSDA(
+    auto layer = ConvertLoadedUSDA(
         LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
         label, warn, err);
+    StampPackageAssetAnchor(layer.get(), label);
+    return layer;
   }
 
   if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
@@ -277,9 +281,8 @@ namespace {
 // from many layers into one, so without this the authoring layer -- and with it
 // the only correct anchor for `@../tex/foo.png@` -- is lost. See asset-anchor.hh.
 //
-// USDZ is deliberately excluded: paths inside a package are package-relative and
-// are resolved against the archive, not the filesystem, so they must keep
-// anchor 0 (the consumer's existing package handling takes over).
+// Package layers receive their full package-layer anchor when decoded. They
+// must not be overwritten by the outer archive's filesystem directory.
 void StampAssetAnchor(Layer *layer, const std::string &resolved_path) {
   if (!layer) return;
   const size_t slash = resolved_path.find_last_of("/\\");
@@ -305,8 +308,9 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          const LayerLoadOptions &options) {
   std::shared_ptr<Layer> layer =
       LoadLayerFromFileUnstamped(resolved_path, warn, err, options);
-  // Package entries resolve inside the archive; leave them at anchor 0.
-  if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
+  // Package layers already carry their archive-aware anchor.
+  if (layer && !AssetResolver::IsPackagePath(resolved_path) &&
+      !EndsWithNoCase(resolved_path, ".usdz")) {
     StampAssetAnchor(layer.get(), resolved_path);
   }
   return layer;
@@ -354,7 +358,7 @@ std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
     layer = ConvertLoadedUSDA(LoadUSDAFromFile(storage_path, opts),
                              identifier, warn, err);
   }
-  if (layer && !AssetResolver::IsPackagePath(identifier))
+  if (layer && !zip && !AssetResolver::IsPackagePath(identifier))
     StampAssetAnchor(layer.get(), identifier);
   return layer;
 }

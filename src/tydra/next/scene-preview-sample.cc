@@ -345,7 +345,7 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
                 const auto anchor =
                     usd::AssetAnchorPath(prims[i].asset_anchor_id());
                 if (!fs::path(file).is_absolute() && !anchor.empty())
-                  file = (fs::path(anchor) / file).lexically_normal().string();
+                  file = usd::ResolveAssetAnchorPath(file, prims[i].asset_anchor_id());
                 copy.upsert_property(name, usd::Value::MakeAssetPath(file));
                 dependencies.insert(file);
                 continue;

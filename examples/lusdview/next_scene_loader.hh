@@ -147,6 +147,14 @@ bool BuildNextSkinningFrame(const lightusd_stage* stage, DrawScene* draw,
                             double time, SkinningFrameCPU* frame,
                             float* outMin = nullptr, float* outMax = nullptr);
 
+struct NextSkeletonOverlay {
+  std::vector<float> positions; // world-space xyz, one per joint
+  std::vector<int> parents;
+};
+// Uses the same posed joint hierarchy as native next skinning; source visibility is respected.
+bool BuildNextSkeletonOverlay(const lightusd_stage* stage, const std::string& path,
+                              double time, NextSkeletonOverlay* output);
+
 // The scene's world box at `time`, with the skeleton posed. The load-time box is
 // the REST box, so an animated `--time` load otherwise frames, grids and depth-
 // normalizes against a pose it is not showing (the Tydra path re-derives its box

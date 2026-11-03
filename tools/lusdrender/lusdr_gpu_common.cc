@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <limits>
 #include <thread>
 #include <unordered_map>
@@ -38,6 +39,32 @@ void ParallelRows(int h, unsigned nthreads, F &&fn) {
     workers.emplace_back([y0, y1, &fn] { fn(y0, y1); });
   }
   for (auto &w : workers) w.join();
+}
+
+template <typename Sample>
+bool WriteGpuDataAov(const Options& opt, int w, int h, int spp, const Sample& sample) {
+  if(spp!=1 || opt.output.size()<4 || opt.output.substr(opt.output.size()-4)!=".pfm") {
+    std::cerr << "GPU data AOVs require one sample per pixel and .pfm output\n";
+    return false;
+  }
+  std::ofstream out(opt.output,std::ios::binary);
+  out << "PF\n" << w << " " << h << "\n-1.0\n";
+  for(int y=h-1;y>=0;--y)for(int x=0;x<w;++x) {
+    Vec3 value{0,0,0};
+    if(!sample(size_t(y)*size_t(w)+size_t(x),&value)) {
+      std::cerr << "Invalid GPU hit in data capture\n";return false;
+    }
+    const float channels[3]={value.x,value.y,value.z};
+    for(float channel:channels) {
+      if(!std::isfinite(channel)){std::cerr << "Nonfinite GPU data AOV\n";return false;}
+      uint32_t bits;std::memcpy(&bits,&channel,4);
+      char bytes[4];for(unsigned b=0;b<4;++b)bytes[b]=char(bits>>(8*b));
+      out.write(bytes,4);
+    }
+  }
+  out.close();
+  if(!out)std::cerr << "Failed to write GPU data AOV\n";
+  return bool(out);
 }
 
 }  // namespace
@@ -171,7 +198,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
         out->vn1.push_back(vnorm(i1));
         out->vn2.push_back(vnorm(i2));
       }
-      out->material_ids.push_back(static_cast<uint32_t>(mesh_idx));
+      out->material_ids.push_back(g.source_material_id==UINT32_MAX?static_cast<uint32_t>(mesh_idx):g.source_material_id);
       const bool perVertexUv = g.uvs.size() == size_t(nv) * 2u;
       const uint32_t uv_idx[3] = {i0, i1, i2};
       for (uint32_t corner : uv_idx) {
@@ -201,9 +228,9 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   return true;
 }
 
-void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst) {
+void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst,
+                            size_t prior) {
   if (!dst || (!src.has_vertex_normals && !dst->has_vertex_normals)) return;
-  const size_t prior = dst->base_colors.size();
   if (!dst->has_vertex_normals) {
     dst->vn0.assign(prior, Vec3{0.0f, 0.0f, 0.0f});
     dst->vn1.assign(prior, Vec3{0.0f, 0.0f, 0.0f});
@@ -281,6 +308,9 @@ bool BuildGpuTriChunk(
         }
       }
       if (identity) {
+        if(source_mesh>UINT32_MAX)return false;
+        if(geos[source_mesh].source_material_id==UINT32_MAX)
+          geos[source_mesh].source_material_id=static_cast<uint32_t>(source_mesh);
         chunk_geos->push_back(std::move(geos[source_mesh]));
         chunk_colors->push_back(
             source_mesh < base_colors.size() ? base_colors[source_mesh]
@@ -292,12 +322,16 @@ bool BuildGpuTriChunk(
     }
     const size_t take = std::min(limit - *chunk_triangles, ntri - *tri_index);
     RTPreviewStats::MeshGeometry dst;
+    if(source_mesh>UINT32_MAX)return false;
+    dst.source_material_id=src.source_material_id==UINT32_MAX?static_cast<uint32_t>(source_mesh):src.source_material_id;
     const bool per_vertex_normals = src.normals.size() == nv * 3u;
+    const bool per_vertex_uvs = src.uvs.size() == nv * 2u;
     const size_t first_index = *tri_index * 3u;
     const size_t index_count = take * 3u;
     dst.positions.reserve(index_count * 3u);
     dst.indices.reserve(index_count);
     if (per_vertex_normals) dst.normals.reserve(index_count * 3u);
+    if (per_vertex_uvs) dst.uvs.reserve(index_count * 2u);
     bool sequential = first_index + index_count <= src.indices.size() &&
                       first_index + index_count <= nv;
     for (size_t i = 0; sequential && i < index_count; ++i) {
@@ -316,6 +350,10 @@ bool BuildGpuTriChunk(
         dst.normals.insert(dst.normals.end(),
                            src.normals.begin() + vertex_begin * 3u,
                            src.normals.begin() + (vertex_begin + vertex_count) * 3u);
+      }
+      if (per_vertex_uvs) {
+        dst.uvs.insert(dst.uvs.end(), src.uvs.begin() + vertex_begin * 2u,
+                       src.uvs.begin() + (vertex_begin + vertex_count) * 2u);
       }
       dst.indices.resize(index_count);
       for (size_t i = 0; i < index_count; ++i)
@@ -348,6 +386,10 @@ bool BuildGpuTriChunk(
               dst.normals.insert(dst.normals.end(),
                                  src.normals.begin() + old_id * 3u,
                                  src.normals.begin() + old_id * 3u + 3u);
+            }
+            if (per_vertex_uvs) {
+              dst.uvs.insert(dst.uvs.end(), src.uvs.begin() + old_id * 2u,
+                             src.uvs.begin() + old_id * 2u + 2u);
             }
           } else {
             new_id = remap_it->second;
@@ -440,6 +482,39 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
                                  const std::vector<lrt_ray> &rays,
                                  const std::vector<InstSampleHit> &hits, int w,
                                  int h, int spp) {
+  if(opt.aov!=CaptureAov::Color) {
+    return WriteGpuDataAov(opt,w,h,spp,[&](size_t i,Vec3* value) {
+      const auto& hit=hits[i];if(!hit.valid)return true;
+      if(hit.inst>=s.insts.size())return false;
+      const auto& placement=s.insts[hit.inst];
+      if(placement.proto>=s.protos.size())return false;
+      const auto& prototype=s.protos[placement.proto];
+      if(hit.local>=prototype.ntris)return false;
+      if(opt.aov==CaptureAov::Depth){*value={hit.t,hit.t,hit.t};return true;}
+      auto world_point=[&](uint32_t index) {
+        const float* p=prototype.verts.data()+size_t(index)*3;
+        const float* m=placement.o2w;
+        return Vec3{m[0]*p[0]+m[1]*p[1]+m[2]*p[2]+m[3],
+                    m[4]*p[0]+m[5]*p[1]+m[6]*p[2]+m[7],
+                    m[8]*p[0]+m[9]*p[1]+m[10]*p[2]+m[11]};
+      };
+      const size_t triangle=size_t(hit.local)*3;
+      const Vec3 p0=world_point(prototype.idx[triangle]);
+      const Vec3 p1=world_point(prototype.idx[triangle+1]);
+      const Vec3 p2=world_point(prototype.idx[triangle+2]);
+      *value=Normalize(Cross(Sub(p1,p0),Sub(p2,p0)));
+      if(opt.aov!=CaptureAov::GeometricNormal && hit.local<prototype.vn0.size() && hit.local<prototype.vn1.size() && hit.local<prototype.vn2.size()) {
+        const Vec3 normal=Add(Add(Mul(prototype.vn0[hit.local],1-hit.u-hit.v),Mul(prototype.vn1[hit.local],hit.u)),Mul(prototype.vn2[hit.local],hit.v));
+        if(Length(normal)>1e-8f) {
+          const float* m=placement.n2w;
+          *value=Normalize(Vec3{m[0]*normal.x+m[1]*normal.y+m[2]*normal.z,
+              m[3]*normal.x+m[4]*normal.y+m[5]*normal.z,
+              m[6]*normal.x+m[7]*normal.y+m[8]*normal.z});
+        }
+      }
+      return true;
+    });
+  }
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
@@ -475,11 +550,15 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
 
           Vec3 bc = pr.base_color;
           // Smooth normal in prototype space, then transform to world.
-          Vec3 Nobj = pr.normals[local];
+          const uint32_t i0=pr.idx[size_t(local)*3],i1=pr.idx[size_t(local)*3+1],i2=pr.idx[size_t(local)*3+2];
+          const auto point=[&](uint32_t i){return Vec3{pr.verts[size_t(i)*3],pr.verts[size_t(i)*3+1],pr.verts[size_t(i)*3+2]};};
+          Vec3 Nobj=Normalize(Cross(Sub(point(i1),point(i0)),Sub(point(i2),point(i0))));
           const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
-          Vec3 sn = Add(Add(Mul(pr.vn0[local], w0), Mul(pr.vn1[local], w1)),
-                        Mul(pr.vn2[local], w2));
-          if (Length(sn) > 1.0e-8f) Nobj = sn;
+          if(local<pr.vn0.size() && local<pr.vn1.size() && local<pr.vn2.size()) {
+            Vec3 sn = Add(Add(Mul(pr.vn0[local], w0), Mul(pr.vn1[local], w1)),
+                          Mul(pr.vn2[local], w2));
+            if (Length(sn) > 1.0e-8f) Nobj = sn;
+          }
           Vec3 N = xform_n(pl.n2w, Nobj);
           if (Length(N) > 1.0e-8f) N = Normalize(N);
           Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
@@ -513,15 +592,7 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
 
 void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
                         std::vector<lrt_ray> *rays) {
-  Vec3 eye = camera.origin;
-  Vec3 fwd = camera.forward;
-  Vec3 up = camera.up;
-  Vec3 right = Normalize(Cross(fwd, up));
-  Vec3 camUp = Cross(right, fwd);
-  float aspect = float(w) / float(h);
-  float half_h = std::tan(camera.yfov * 0.5f);
-  float half_w = half_h * aspect;
-
+  const float aspect = float(w)/float(h);
   const size_t nrays = size_t(w) * size_t(h) * size_t(spp);
   rays->resize(nrays);
   ParallelRows(h, std::thread::hardware_concurrency(), [&](int yBegin, int yEnd) {
@@ -531,15 +602,13 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
       for (int s = 0; s < spp; ++s) {
         float jx, jy;
         PixelJitter(s, spp, &jx, &jy);
-        float fx = (float(x) + jx) / float(w) * 2.0f - 1.0f;
-        float fy = (float(y) + jy) / float(h) * 2.0f - 1.0f;
-        Vec3 dir = Add(Mul(right, fx * half_w), Add(Mul(camUp, fy * half_h), fwd));
-        dir = Normalize(dir);
-        lrt_ray &ray = (*rays)[base + size_t(s)];
-        ray.org[0] = eye.x; ray.org[1] = eye.y; ray.org[2] = eye.z;
-        ray.tmin = 0.001f;
-        ray.dir[0] = dir.x; ray.dir[1] = dir.y; ray.dir[2] = dir.z;
-        ray.tmax = 1.0e10f;
+        Vec3 origin, direction;
+        MakeRay(camera,aspect,(float(x)+jx)/float(w),(float(y)+jy)/float(h),&origin,&direction);
+        lrt_ray &ray=(*rays)[base+size_t(s)];
+        ray.org[0]=origin.x; ray.org[1]=origin.y; ray.org[2]=origin.z;
+        ray.dir[0]=direction.x; ray.dir[1]=direction.y; ray.dir[2]=direction.z;
+        const float cosine=camera.ortho?1.0f:std::max(1.0e-6f,Dot(camera.forward,direction));
+        ray.tmin=camera.znear/cosine; ray.tmax=camera.zfar/cosine;
       }
     }
   }
@@ -550,7 +619,179 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
                         const std::vector<lrt_hit> &hits, int w, int h, int spp,
                         const std::vector<ResolvedMat> *materials,
-                        const std::vector<Texture> *textures) {
+                        const std::vector<Texture> *textures,
+                        const GpuTraceContinuation& trace_continuation,
+                        const GpuTrianglePositions& triangle_positions) {
+  if(opt.aov!=CaptureAov::Color) {
+    return WriteGpuDataAov(opt,w,h,spp,[&](size_t i,Vec3* value) {
+      const auto& hit=hits[i];
+      if(hit.prim_id==LRT_TRI_NO_HIT)return true;
+      if(hit.prim_id>=s.ntris)return false;
+      if(opt.aov==CaptureAov::Depth){*value={hit.t,hit.t,hit.t};return true;}
+      if(hit.prim_id>=s.normals.size())return false;
+      *value=s.normals[hit.prim_id];
+      if(opt.aov!=CaptureAov::GeometricNormal && s.has_vertex_normals &&
+          hit.prim_id<s.vn0.size() && hit.prim_id<s.vn1.size() && hit.prim_id<s.vn2.size()) {
+        const Vec3 normal=Add(Add(Mul(s.vn0[hit.prim_id],1-hit.u-hit.v),Mul(s.vn1[hit.prim_id],hit.u)),Mul(s.vn2[hit.prim_id],hit.v));
+        if(Length(normal)>1e-8f)*value=Normalize(normal);
+      }
+      return true;
+    });
+  }
+  std::vector<Vec3> diagnostic;
+  if (opt.diagnostic_emission) {
+    diagnostic.resize(rays.size(), Vec3{0, 0, 0});
+    std::vector<lrt_ray> active_rays = rays;
+    std::vector<lrt_hit> active_hits = hits;
+    std::vector<size_t> indices(rays.size());
+    std::vector<float> weights(rays.size(), 1.0f);
+    for (size_t i = 0; i < indices.size(); ++i) indices[i] = i;
+    for (unsigned layer = 0; !indices.empty(); ++layer) {
+      std::vector<lrt_ray> next_rays;
+      std::vector<size_t> next_indices;
+      std::vector<float> next_weights;
+      for (size_t i = 0; i < indices.size(); ++i) {
+        const auto& hit = active_hits[i];
+        const auto& ray = active_rays[i];
+        const size_t pixel = indices[i];
+        if (hit.prim_id == LRT_TRI_NO_HIT) {
+          diagnostic[pixel] = Add(diagnostic[pixel], Mul(opt.bg, weights[i]));
+          continue;
+        }
+        if (hit.prim_id >= s.ntris) return false;
+        Vec3 emission{0, 0, 0};
+        float opacity = 1.0f;
+        bool attenuate_emission = true;
+        if (materials && hit.prim_id < s.material_ids.size() &&
+            s.material_ids[hit.prim_id] < materials->size()) {
+          const auto& material = (*materials)[s.material_ids[hit.prim_id]];
+          emission = material.emission;
+          const bool material_diagnostic =
+              opt.diagnostic_material != MaterialDiagnostic::None;
+          const ScalarTex& diagnostic_texture =
+              opt.diagnostic_material == MaterialDiagnostic::Roughness
+                  ? material.rough_tex : material.metal_tex;
+          if (material_diagnostic) {
+            const float value = opt.diagnostic_material == MaterialDiagnostic::Roughness
+                ? material.roughness : material.metallic;
+            emission = Vec3{value, value, value};
+          }
+          opacity = material.opacity;
+          attenuate_emission = material.opacity_presence || material.opacity_threshold > 0.0f;
+          if (size_t(hit.prim_id) * 6u + 5u < s.tri_uvs.size()) {
+            const size_t uv = size_t(hit.prim_id) * 6u;
+            const float a = 1.0f - hit.u - hit.v;
+            float u = s.tri_uvs[uv] * a + s.tri_uvs[uv + 2] * hit.u + s.tri_uvs[uv + 4] * hit.v;
+            float v = s.tri_uvs[uv + 1] * a + s.tri_uvs[uv + 3] * hit.u + s.tri_uvs[uv + 5] * hit.v;
+            material.uv_xform.apply(&u, &v);
+            float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+            bool footprint = false;
+            const size_t triangle = size_t(hit.prim_id) * 3u;
+            if ((triangle_positions || triangle + 2 < s.flat_idx.size()) && w > 1 && h > 1) {
+              Vec3 positions[3];
+              bool valid = triangle_positions ? triangle_positions(hit.prim_id, positions) : true;
+              for (size_t corner = 0; !triangle_positions && corner < 3; ++corner) {
+                const size_t vertex = size_t(s.flat_idx[triangle + corner]) * 3u;
+                if (vertex + 2 >= s.flat_verts.size()) { valid = false; break; }
+                positions[corner] = {s.flat_verts[vertex], s.flat_verts[vertex + 1], s.flat_verts[vertex + 2]};
+              }
+              if (valid) {
+                const size_t screen = pixel / size_t(spp);
+                const size_t x = screen % size_t(w), y = screen / size_t(w);
+                const size_t neighbor_x = (y * size_t(w) + (x + 1 < size_t(w) ? x + 1 : x - 1)) * size_t(spp) + pixel % size_t(spp);
+                const size_t neighbor_y = ((y + 1 < size_t(h) ? y + 1 : y - 1) * size_t(w) + x) * size_t(spp) + pixel % size_t(spp);
+                const auto& rx = rays[neighbor_x];
+                const auto& ry = rays[neighbor_y];
+                RayDiff differential;
+                differential.ox = {rx.org[0], rx.org[1], rx.org[2]};
+                differential.dx = {rx.dir[0], rx.dir[1], rx.dir[2]};
+                differential.oy = {ry.org[0], ry.org[1], ry.org[2]};
+                differential.dy = {ry.dir[0], ry.dir[1], ry.dir[2]};
+                differential.valid = true;
+                float transformed[6];
+                for (size_t corner = 0; corner < 3; ++corner) {
+                  transformed[corner * 2] = s.tri_uvs[uv + corner * 2];
+                  transformed[corner * 2 + 1] = s.tri_uvs[uv + corner * 2 + 1];
+                  material.uv_xform.apply(&transformed[corner * 2], &transformed[corner * 2 + 1]);
+                }
+                footprint = ComputeUVFootprint(
+                    {ray.org[0], ray.org[1], ray.org[2]},
+                    {ray.dir[0], ray.dir[1], ray.dir[2]}, differential,
+                    positions[0], positions[1], positions[2],
+                    Normalize(Cross(Sub(positions[1], positions[0]), Sub(positions[2], positions[0]))),
+                    transformed[0], transformed[1], transformed[2], transformed[3], transformed[4], transformed[5],
+                    &dudx, &dvdx, &dudy, &dvdy);
+              }
+            }
+            if (material_diagnostic && textures && diagnostic_texture.id >= 0 &&
+                size_t(diagnostic_texture.id) < textures->size()) {
+              const auto& texture = (*textures)[size_t(diagnostic_texture.id)];
+              const float value = (footprint
+                  ? texture.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                                 kMaxAniso, int(diagnostic_texture.ch))
+                  : texture.sample_channel(u, v, 0, int(diagnostic_texture.ch))) *
+                  diagnostic_texture.scale + diagnostic_texture.bias;
+              if (std::isfinite(value)) {
+                const float clamped = std::clamp(value, 0.0f, 1.0f);
+                emission = Vec3{clamped, clamped, clamped};
+              }
+            }
+            if (!material_diagnostic && textures && material.emission_tex_id >= 0 &&
+                size_t(material.emission_tex_id) < textures->size()) {
+              const auto& texture = (*textures)[size_t(material.emission_tex_id)];
+              const Vec3 texel = texture.apply_value_transform(footprint
+                  ? texture.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
+                  : texture.sample(u, v));
+              emission = Vec3{emission.x * texel.x, emission.y * texel.y, emission.z * texel.z};
+            }
+            if (textures && material.opacity_tex.id >= 0 &&
+                size_t(material.opacity_tex.id) < textures->size()) {
+              const auto& texture = (*textures)[size_t(material.opacity_tex.id)];
+              opacity *= (footprint
+                  ? texture.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso, int(material.opacity_tex.ch))
+                  : texture.sample_channel(u, v, 0, int(material.opacity_tex.ch))) *
+                  material.opacity_tex.scale + material.opacity_tex.bias;
+            }
+          }
+          if (material.opacity_threshold > 0.0f)
+            opacity = opacity < material.opacity_threshold ? 0.0f : 1.0f;
+        }
+        opacity = std::max(0.0f, std::min(1.0f, opacity));
+        diagnostic[pixel] = Add(diagnostic[pixel], Mul(emission, weights[i] * (attenuate_emission ? opacity : 1.0f)));
+        const float remaining = weights[i] * (1.0f - opacity);
+        if (remaining <= 1.0e-5f) continue;
+        if (layer >= 15 || !trace_continuation) {
+          std::cerr << "Emissive opacity diagnostic requires supported continuation tracing (maximum 16 layers).\n";
+          return false;
+        }
+        lrt_ray behind = ray;
+        float position[3];
+        float magnitude = 0.0f;
+        for (unsigned c = 0; c < 3; ++c) {
+          position[c] = ray.org[c] + ray.dir[c] * hit.t;
+          magnitude = std::max(magnitude, std::fabs(position[c]));
+        }
+        const float epsilon = std::max(1.0e-4f, magnitude * 3.0e-6f);
+        for (unsigned c = 0; c < 3; ++c)
+          behind.org[c] = position[c] + ray.dir[c] * epsilon;
+        behind.tmin = epsilon;
+        behind.tmax = ray.tmax - hit.t - epsilon;
+        if (behind.tmax <= behind.tmin) {
+          diagnostic[pixel] = Add(diagnostic[pixel], Mul(opt.bg, remaining));
+          continue;
+        }
+        next_rays.push_back(behind);
+        next_indices.push_back(pixel);
+        next_weights.push_back(remaining);
+      }
+      if (next_rays.empty()) break;
+      active_rays.swap(next_rays);
+      indices.swap(next_indices);
+      weights.swap(next_weights);
+      active_hits.assign(active_rays.size(), lrt_hit{});
+      if (!trace_continuation(active_rays, &active_hits)) return false;
+    }
+  }
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
@@ -567,31 +808,43 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
         size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
         Vec3 color{0, 0, 0};
         for (int sp = 0; sp < spp; ++sp) {
+          if (opt.diagnostic_emission) {
+            color = Add(color, diagnostic[base + size_t(sp)]);
+            continue;
+          }
           const lrt_hit &hit = hits[base + size_t(sp)];
           if (hit.prim_id != 0xFFFFFFFFu && hit.prim_id < s.ntris) {
             Vec3 bc = hit.prim_id < s.base_colors.size()
                           ? s.base_colors[hit.prim_id]
                           : Vec3{0.5f, 0.5f, 0.5f};
             const ResolvedMat *mat = nullptr;
+            Vec3 emission{0,0,0};
             if (materials && hit.prim_id < s.material_ids.size() &&
                 s.material_ids[hit.prim_id] < materials->size()) {
               mat = &(*materials)[s.material_ids[hit.prim_id]];
               bc = mat->base_color;
-              if (mat->tex_id >= 0 && textures &&
-                  static_cast<size_t>(mat->tex_id) < textures->size() &&
-                  hit.prim_id * 6u + 5u < s.tri_uvs.size()) {
-                const size_t uv = static_cast<size_t>(hit.prim_id) * 6u;
-                const float w0 = 1.0f - hit.u - hit.v;
-                float u = s.tri_uvs[uv] * w0 + s.tri_uvs[uv + 2u] * hit.u +
-                          s.tri_uvs[uv + 4u] * hit.v;
-                float v = s.tri_uvs[uv + 1u] * w0 +
-                          s.tri_uvs[uv + 3u] * hit.u +
-                          s.tri_uvs[uv + 5u] * hit.v;
-                mat->uv_xform.apply(&u, &v);
-                const Vec3 texel = (*textures)[size_t(mat->tex_id)].sample(u, v);
-                bc = Vec3{bc.x * texel.x, bc.y * texel.y, bc.z * texel.z};
+              emission=mat->emission;
+              const bool have_uv=hit.prim_id*6u+5u<s.tri_uvs.size();
+              float u=0,v=0;
+              if(have_uv) {
+                const size_t uv=size_t(hit.prim_id)*6u;
+                const float w0=1-hit.u-hit.v;
+                u=s.tri_uvs[uv]*w0+s.tri_uvs[uv+2]*hit.u+s.tri_uvs[uv+4]*hit.v;
+                v=s.tri_uvs[uv+1]*w0+s.tri_uvs[uv+3]*hit.u+s.tri_uvs[uv+5]*hit.v;
+                mat->uv_xform.apply(&u,&v);
+              }
+              if(have_uv && textures && mat->tex_id>=0 && size_t(mat->tex_id)<textures->size()) {
+                const Texture& texture=(*textures)[size_t(mat->tex_id)];
+                const Vec3 texel=texture.apply_value_transform(texture.sample(u,v));
+                bc=Vec3{bc.x*texel.x,bc.y*texel.y,bc.z*texel.z};
+              }
+              if(have_uv && textures && mat->emission_tex_id>=0 && size_t(mat->emission_tex_id)<textures->size()) {
+                const Texture& texture=(*textures)[size_t(mat->emission_tex_id)];
+                const Vec3 texel=texture.apply_value_transform(texture.sample(u,v));
+                emission=Vec3{emission.x*texel.x,emission.y*texel.y,emission.z*texel.z};
               }
             }
+
             // Smooth normal: barycentric-interpolate the triangle's vertex normals
             // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
             // normal when vertex normals are absent/degenerate.
@@ -626,15 +879,15 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
             Vec3 shaded = Add(Mul(bc, diffuse),
                               Mul(Vec3{1.0f, 1.0f, 1.0f},
                                   specular * (0.04f + 0.96f * metallic)));
-            if (mat) shaded = Add(shaded, mat->emission);
+            shaded = Add(shaded, emission);
             color = Add(color, shaded);
-          }
+          } else color=Add(color,opt.bg);
         }
         color = Mul(color, 1.0f / float(spp));
         size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
-        img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
-        img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
-        img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
+        img.data[pi + 0] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.x):uint8_t(std::max(0.0f,std::min(255.0f, color.x * 255.0f)));
+        img.data[pi + 1] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.y):uint8_t(std::max(0.0f,std::min(255.0f, color.y * 255.0f)));
+        img.data[pi + 2] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.z):uint8_t(std::max(0.0f,std::min(255.0f, color.z * 255.0f)));
         img.data[pi + 3] = 255;
       }
     }
