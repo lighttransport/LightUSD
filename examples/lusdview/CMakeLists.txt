@@ -432,6 +432,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
+  target_compile_definitions(lusdview_ptex_atlas_test PRIVATE
+      LIGHTUSD_PTEX_MIP_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/usdc/ptex-mip")
   target_link_libraries(lusdview_ptex_atlas_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC})
 

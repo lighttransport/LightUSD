@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "cpu/ptex-sample.hh"
 #include "displacement_bake.hh"
 #include "ptex_atlas.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -523,6 +525,96 @@ void RunVirtualFallbackDownsample() {
   CHECK(rects[0].reserved == 1 || rects[1].reserved == 1);
   CHECK(atlas.data.size() <= options.maxAtlasBytes);
 }
+// The CPU preview samples per-face mips from the source with a streamed page
+// cache. The reference texels were produced by OpenPtex 2.4.3 (see
+// tests/usdc/ptex-mip/manifest.json); this check is byte-exact.
+void RunCpuPtexMipSampler() {
+  const char* env = std::getenv("LIGHTUSD_PTEX_TEST_ASSET");
+  const std::string asset =
+      env ? env
+          : "/mnt/nvme02/data/island/textures/isMountainA/Color/mountain_geo.ptx";
+  if (!std::ifstream(asset).good()) {
+    std::printf("SKIP: pinned Island PTex asset not found (%s)\n",
+                asset.c_str());
+    return;
+  }
+#ifndef LIGHTUSD_PTEX_MIP_FIXTURE_DIR
+#define LIGHTUSD_PTEX_MIP_FIXTURE_DIR "tests/usdc/ptex-mip"
+#endif
+  const std::string fixture = LIGHTUSD_PTEX_MIP_FIXTURE_DIR;
+  auto read_fixture = [&](const char* name, std::vector<uint8_t>* out) {
+    std::ifstream in(fixture + "/" + name, std::ios::binary);
+    out->assign(std::istreambuf_iterator<char>(in),
+                std::istreambuf_iterator<char>());
+    return in.good() || in.eof();
+  };
+
+  lusdview::CpuPtexSampler sampler(4ull * 1024ull * 1024ull);
+  std::string error;
+  if (!sampler.OpenFile(asset, &error)) {
+    std::printf("FAIL: CPU PTex sampler open: %s\n", error.c_str());
+    ++failures;
+    return;
+  }
+  const auto& info = sampler.info();
+  CHECK(info.levels >= 3 && info.faces > 0);
+
+  struct Case { uint32_t mip; uint32_t w; uint32_t h; const char* file; };
+  const Case cases[] = {{1, 16, 8, "mountain-face0-mip1.rgba"},
+                        {2, 8, 4, "mountain-face0-mip2.rgba"}};
+  for (const Case& c : cases) {
+    std::vector<uint8_t> reference;
+    CHECK(read_fixture(c.file, &reference));
+    const uint8_t* raw = nullptr;
+    const auto* page = sampler.RawFace(0, c.mip, &raw, &error);
+    CHECK(page != nullptr);
+    if (!page || !raw) continue;
+    CHECK(page->width == c.w && page->height == c.h);
+    CHECK(page->channels == 3);
+    CHECK(reference.size() == size_t(c.w) * c.h * 3);
+    CHECK(reference.size() == page->data.size());
+    CHECK(std::memcmp(reference.data(), raw, reference.size()) == 0);
+
+    // Sampling at the texel centers returns exactly the non-base mip texel.
+    for (uint32_t y = 0; y < c.h && y < 2; ++y) {
+      for (uint32_t x = 0; x < c.w && x < 2; ++x) {
+        float rgb[3] = {0.0f, 0.0f, 0.0f};
+        CHECK(sampler.Sample(0, c.mip, (x + 0.5f) / float(c.w),
+                             (y + 0.5f) / float(c.h), false, rgb));
+        const size_t base = (size_t(y) * c.w + x) * 3;
+        CHECK(std::lround(rgb[0] * 255.0f) == reference[base + 0]);
+        CHECK(std::lround(rgb[1] * 255.0f) == reference[base + 1]);
+        CHECK(std::lround(rgb[2] * 255.0f) == reference[base + 2]);
+      }
+    }
+  }
+
+  // Mip selection is per face resolution. Face 0 is 32 texels wide and the
+  // file has four levels, so an 8-texel footprint clamps to mip 3.
+  CHECK(sampler.ChooseMip(0, 0.0f) == 0);
+  CHECK(sampler.ChooseMip(0, 1.0f / 32.0f) == 0);
+  CHECK(sampler.ChooseMip(0, 2.0f / 32.0f) == 1);
+  CHECK(sampler.ChooseMip(0, 4.0f / 32.0f) == 2);
+  CHECK(sampler.ChooseMip(0, 8.0f / 32.0f) == 3);
+
+  // Streamed residency: a 4 KiB budget holds two 32x16x3 pages (1536 B each),
+  // so four fetches evict and the resident/peak footprint stays bounded.
+  lusdview::CpuPtexSampler small(4ull * 1024ull);
+  CHECK(small.OpenFile(asset, &error));
+  for (uint32_t face = 0; face < 4 && face < info.faces; ++face) {
+    const uint8_t* raw = nullptr;
+    CHECK(small.RawFace(face, 0, &raw, &error) != nullptr);
+  }
+  const auto& st = small.stats();
+  CHECK(st.evictions > 0);
+  CHECK(st.residentBytes <= 4ull * 1024ull);
+  CHECK(st.peakResidentBytes <= 4ull * 1024ull);
+  std::printf("  CPU Ptex mip sampler: PASSED (face 0 mips 1-2 vs OpenPtex, "
+              "cache evictions=%llu, resident=%llu)\n",
+              static_cast<unsigned long long>(st.evictions),
+              static_cast<unsigned long long>(st.residentBytes));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -551,6 +643,7 @@ int main(int argc, char** argv) {
   RunPhysicalCacheReservation();
   RunPhysicalCacheCannotStarveFallback();
   RunVirtualFallbackDownsample();
+  RunCpuPtexMipSampler();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;

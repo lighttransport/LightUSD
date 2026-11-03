@@ -3447,6 +3447,13 @@ tangent frame, opacity): each must shade byte-identically to the same texture
 sampled with pre-transformed `st`, with a no-normal control proving the normal
 rows are not vacuous.
 
+The CPU preview's PTex path now streams per-face pages and selects a mip from
+the pixel footprint. `lusdview_ptex_atlas_test` compares face 0 mips 1-2 against
+OpenPtex 2.4.3 raw texels byte-for-byte (fixtures and provenance in
+`tests/usdc/ptex-mip/`), checks mip selection and a byte-bounded eviction, and
+`lusdview-cpu-ptex-routing` requires a minified quad to report non-base mip
+samples under `LIGHTUSD_CPU_PTEX_STATS=1`.
+
 `lusdview-cpu-coat-normal` isolates the OpenPBR coat lobe (black base and
 specular weight zero) and renders a plane with a coat normal map. A flat coat
 map must be neutral, a map decoding to `(0.6, 0, 0.8)` must shade

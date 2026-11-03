@@ -211,6 +211,9 @@ struct HostScene {
   int numMats = 0;
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
+  // Source DrawScene texture index -> packed table index (or -1). The CPU
+  // PTex sampler uses it to pair table entries with their source descriptors.
+  std::vector<int> sourceToTable;
   int numTextures = 0;
   // kRtLightParamFloats/light: type/flags/texture ids, transform basis,
   // derived radiance, shape size, shaping, shadow, dome metadata, IES LUTs,

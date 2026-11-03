@@ -2066,6 +2066,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   }
   out->texels = std::move(textureTable.texels);
   out->textures = std::move(textureTable.textures);
+  out->sourceToTable = textureTable.sourceToTable;
   out->matTex = std::move(textureTable.matTex);
   out->matTexParam = std::move(textureTable.matTexParam);
   out->numTextures = static_cast<int>(out->textures.size());

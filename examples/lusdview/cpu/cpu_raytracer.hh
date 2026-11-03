@@ -9,12 +9,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "gpu_scene.hh"
 #include "rt_camera.hh"
 #include "rt_scene_build.hh"  // HostScene, BuildHostScene, BuildProgress
+#include "ptex-sample.hh"     // streamed per-face PTex pages
 
 typedef struct lrt_tri_scene lrt_tri_scene;  // src/external/lightrt/lightrt_c_tri.h
 
@@ -64,7 +66,7 @@ class CpuRayTracer {
   bool traceSingle(const float invViewProj[16], const float camPos[3],
                    const float lightDir[3], const float clearColor[3],
                    float exposure, int renderMode, float depthScale, int w,
-                   int h, float sampleX, float sampleY,
+                   int h, float sampleX, float sampleY, float pixelAngle,
                    const RtCameraLens* lens, std::vector<uint8_t>* rgba,
                    std::string* err);
   void freeScene();
@@ -74,6 +76,8 @@ class CpuRayTracer {
   // world-space hit attributes corresponding one-to-one with scene_ triangles.
   std::vector<float> cpuTris_, cpuNrms_, cpuUv_, cpuUv1_;
   std::vector<int> cpuMat_, cpuInstance_, cpuSourceTri_;
+  // Per-table-texture streamed PTex sources (nullptr for non-Ptex/atlas-only).
+  std::vector<std::unique_ptr<CpuPtexSampler>> ptex_;
   lrt_tri_scene* scene_{nullptr};
   size_t triCount_{0};
   bool truncated_{false};

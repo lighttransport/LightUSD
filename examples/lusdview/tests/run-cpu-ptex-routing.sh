@@ -214,6 +214,43 @@ scene = scene.replace(
     '            asset inputs:surfaceMap = @./textures/mountain.ptx@', 1)
 (out / 'scene.usda').write_text(scene)
 (out / 'flat.usda').write_text(FLAT)
+# Same PTex quad with a large dark backdrop so the auto camera frames the
+# backdrop and the quad is minified: the CPU PTex sampler must select a
+# non-base face mip.
+backdrop = scene.replace(
+    'def Xform "World"\n{',
+    '''def Xform "World"
+{
+    def Mesh "Backdrop" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-120, -120, -40), (120, -120, -40),
+                            (120, 120, -40), (-120, 120, -40)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/_materials/Backdrop>
+    }
+''', 1)
+backdrop = backdrop.replace(
+    '    def Scope "_materials"\n    {',
+    '''    def Scope "_materials"
+    {
+        def Material "Backdrop"
+        {
+            token outputs:surface.connect = </World/_materials/Backdrop/S.outputs:surface>
+            def Shader "S"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.02, 0.02, 0.02)
+                float inputs:roughness = 1.0
+                token outputs:surface
+            }
+        }
+''', 1)
+(out / 'mip_scene.usda').write_text(backdrop)
 shutil.copyfile(ptx, out / 'textures' / 'mountain.ptx')
 PY
 
@@ -248,6 +285,7 @@ render() {
 
 render cpu ptex_cpu "$OUT/scene.usda"
 render cpu flat_cpu "$OUT/flat.usda"
+LIGHTUSD_CPU_PTEX_STATS=1 render cpu mip_quad "$OUT/mip_scene.usda"
 render vk ptex_vk "$OUT/scene.usda"
 
 python3 - "$OUT" "$FACE0_MEAN" <<'PY'
@@ -288,5 +326,18 @@ if max(abs(x - y) for x, y in zip(cpu, flat)) < 50.0:
     raise SystemExit('FAIL: the flat control is too close; the texture may be ignored')
 if max(abs(x - y) for x, y in zip(cpu, vk)) > 60.0:
     raise SystemExit('FAIL: CPU and Vulkan disagree on the visible Ptex material')
+
+# A minified quad must stream a non-base face mip.
+log = (out / 'mip_quad.log').read_text()
+stats = [line for line in log.splitlines() if line.startswith('[cpu-ptex]')]
+if not stats:
+    raise SystemExit('FAIL: the CPU renderer did not report PTex page stats')
+line = stats[0]
+fields = dict(part.split('=', 1) for part in line.split() if '=' in part)
+hist = [int(v) for v in fields.get('mips', '').split(',') if v.isdigit()]
+if len(hist) < 2 or sum(hist[1:]) == 0:
+    raise SystemExit('FAIL: the minified quad did not sample a non-base PTex mip: '
+                     + line)
+print('mip stats:', line)
 print('PASS: visible PTex material routing matches the decoded face on CPU and VK')
 PY
