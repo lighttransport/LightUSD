@@ -204,13 +204,60 @@ def test_aousd_composition_load():
     assert ok + len(rejected) == len(cases)
 
 
+# USD value types the corpus names but the current value/type model has no
+# representation for. `opaque` is metadata-oriented and `group` is its role
+# alias. Keep them explicit so implementing one of them fails this test until
+# the list is updated.
+KNOWN_UNSUPPORTED_DATA_TYPES = {"opaque", "group"}
+
+
+def _data_type_element(name):
+    """Strip array/list-op syntax to the element type the C API exposes."""
+    if name.endswith("[]"):
+        name = name[:-2]
+    if name.startswith("listop<") and name.endswith(">"):
+        name = name[7:-1]
+    return name
+
+
 def test_aousd_data_types_types():
-    # data_types JSON describes expected type parsing; verify our type helpers
+    # data_types JSON describes expected type parsing; drive the whole pinned
+    # table through the C API instead of a hand-picked sample.
     dt_root = AOUSD_ROOT / "data_types" / "tests"
     if not dt_root.is_dir():
         pytest.skip("no data_types")
     docs = sorted(dt_root.glob("*.json"))
     assert docs, "no data_types json"
-    # At least verify our type system can resolve core type names
-    for name in ["float", "double", "int", "point3f", "color3f", "matrix4d", "token", "asset"]:
-        assert lightusd.type_from_name(name) != 0
+    names = set()
+    aliases = []
+    for doc in docs:
+        data = json.loads(doc.read_text())
+        names.update(data.get("named_types", []))
+        aliases.extend(data.get("semantic_aliases", []))
+    assert len(names) >= 60, f"corpus type table unexpectedly small: {len(names)}"
+    assert aliases, "no semantic aliases"
+
+    unsupported = set()
+    for name in sorted(names):
+        element = _data_type_element(name)
+        tid = lightusd.type_from_name(element)
+        if tid == 0:
+            unsupported.add(element)
+            continue
+        assert lightusd.type_name(tid) == element, (
+            f"{name}: element {element} does not round-trip through type_name")
+    for alias, base, role in aliases:
+        element = _data_type_element(alias)
+        baseline = _data_type_element(base)
+        if element in unsupported or baseline in unsupported:
+            unsupported.update({element, baseline})
+            continue
+        tid = lightusd.type_from_name(element)
+        assert tid != 0 and lightusd.type_name(tid) == element, (
+            f"semantic alias {alias} ({role}) does not resolve")
+        assert lightusd.type_from_name(baseline) != 0, (
+            f"semantic alias {alias} base {base} does not resolve")
+    print(f"[aousd] data_types {len(names)} named, {len(aliases)} aliases, "
+          f"unsupported {sorted(unsupported)}")
+    assert unsupported == KNOWN_UNSUPPORTED_DATA_TYPES, (
+        f"unsupported type set changed: {sorted(unsupported)}; update the list")
