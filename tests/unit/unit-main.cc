@@ -320,6 +320,7 @@ TEST_LIST = {
     tydra_material_binding_validation_test },
   { "tydra_material_colorspace_token_test",
     tydra_material_colorspace_token_test },
+  { "tydra_lightrt_opacity_mode_test", tydra_lightrt_opacity_mode_test },
   { "tydra_default_material_assignment_test",
     tydra_default_material_assignment_test },
   { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },

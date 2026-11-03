@@ -2057,6 +2057,11 @@ int main(int argc, char **argv) {
         resolved.displacement_tex = job.displacement_tex;
         resolved.has_openpbr = job.has_openpbr;
         resolved.openpbr = job.openpbr;
+        // UsdPreviewSurface's default opacityMode is "transparent": alpha
+        // attenuates the diffuse lobe and the surface stays opaque. Only
+        // "presence" is true coverage; ResolveOpacityPresenceNext already
+        // distinguishes them for non-PreviewSurface materials as well.
+        resolved.openpbr.opacityTransparent = !job.opacity_presence;
         resolved.materialx_graph_json = job.materialx_graph_json;
         for (const std::string &api : job.prim.GetMeta().apiSchemas()) {
           if (api != "MeshLightAPI") continue;

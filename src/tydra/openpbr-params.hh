@@ -70,6 +70,10 @@ struct RealtimePbrMaterial {
   // OpenPBR geometry_thin_walled. Thin sheets transmit without entering a
   // volumetric medium; closed dielectric shells retain the default false.
   bool geometryThinWalled{false};
+  // UsdPreviewSurface inputs:opacityMode. The default "transparent" attenuates
+  // only the diffuse lobe and keeps the surface opaque; "presence" treats
+  // opacity as coverage (stochastic/dithered or cutout alpha).
+  bool opacityTransparent{false};
 };
 
 inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
@@ -144,7 +148,7 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   dst[53] = p.hasNormalInput ? 1.0f : 0.0f;
   dst[54] = alpha_mode;
   dst[55] = alpha_cutoff;
-  dst[56] = p.diffuseRoughness;
+  dst[56] = p.opacityTransparent ? 1.0f : 0.0f;
   dst[57] = p.specularAnisotropy;
   dst[58] = p.specularRotation;
   dst[59] = p.specularRoughnessAnisotropy;

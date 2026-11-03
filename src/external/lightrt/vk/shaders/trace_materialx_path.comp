@@ -413,8 +413,22 @@ void main(){
         if(graphs[gb+49u]>=0.0)subsurfaceScatterAnisotropy=clamp(gr[48].x,-0.95,0.95);
       }
       int alphaMode=int(round(materials[mb+54u]));
-      if(alphaMode==0)opacity=1.0;else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
-      if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      // UsdPreviewSurface opacityMode: "transparent" (slot 56 = 1) attenuates
+      // only diffuse/subsurface/sheen and keeps the specular surface opaque;
+      // "presence" is true coverage and may drop the hit. A textured opacity
+      // arrives through the graph's opacity route (3) and must not be forced
+      // back to 1 by the material-level Opaque alphaMode.
+      bool opacityTransparent=materials[mb+56u]>0.5;
+      if(opacityTransparent){
+        opacity=clamp(opacity,0.0,1.0);
+      }else{
+        if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
+        // A sampled (graph/texture) opacity is coverage even when the
+        // material-level alpha mode is Opaque; a constant opacity of 1 is a
+        // no-op, so this does not change opaque surfaces.
+        if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      }
+      float diffuseOpacity=opacityTransparent?opacity:1.0;
       radiance+=beta*emission;
       base*=1.0-0.2*clamp(coatWeight*coatDarkening,0.0,1.0);
       base*=mix(vec3(1),coatColor,clamp(coatWeight*coatAffectColor,0.0,1.0));
@@ -422,12 +436,12 @@ void main(){
       // A small sky term keeps headless previews legible when a scene has no
       // usable direct light; normal variation also makes blank-frame checks
       // distinguish actual shaded geometry from a flat clear-color image.
-      vec3 diffuseColor=base*(1.0-subsurface)*(1.0-metal)*(1.0-transmission);
+      vec3 diffuseColor=base*(1.0-subsurface)*(1.0-metal)*(1.0-transmission)*diffuseOpacity;
       float radiusGain=clamp(sqrt(dot(subsurfaceRadius,vec3(0.2126,0.7152,0.0722)))*8.0*(1.0+0.25*abs(subsurfaceAnisotropy)+0.25*abs(subsurfaceScatterAnisotropy)),0.0,1.0);
-      vec3 subsurfaceBrdf=subsurfaceColor*subsurface*(1.0-metal)*(1.0-transmission)*radiusGain;
+      vec3 subsurfaceBrdf=subsurfaceColor*subsurface*(1.0-metal)*(1.0-transmission)*radiusGain*diffuseOpacity;
       float dielectric=(ior-1.0)/(ior+1.0); vec3 f0=mix(vec3(dielectric*dielectric)*specColor*specWeight,base,metal);f0=thinFilm(f0,max(dot(h.n,-d),0.0),filmWeight,filmThickness,filmIor);
       float coatF=(coatIor-1.0)/(coatIor+1.0); vec3 coatF0=coatColor*(coatF*coatF),coatEnergy=coatF0*coatWeight;
-      vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission);
+      vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission)*diffuseOpacity;
       // With a non-zero transmission depth, color describes Beer absorption
       // through the medium, not a second tint at the dielectric interface.
       vec3 interfaceTransmission=transmissionDepth>0.0?vec3(1):transmissionColor;
