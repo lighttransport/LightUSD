@@ -4,12 +4,15 @@
 // LightUSD Next - USDC Crate Reader decode/allocation helpers
 
 #include "crate-reader-internal.hh"
+
+#include <algorithm>
 #include "../layer/int64-listop.hh"
 #include "safe-arithmetic.hh"
 #include "../execution.hh"
 #include "../writer/dtoa.hh"
 #include "../writer/value-printer.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -350,6 +353,18 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     if (!reader()->read_u32(k) || !reader()->read_u32(v)) return false;
     std::string key, val;
     if (!GetString(k, key) || !GetString(v, val)) return false;
+    // AOUSD Core 1.1: duplicate keys make the map invalid; a permissive
+    // reader continues with the LAST-encountered value for the key.
+    auto dup = std::find_if(out.begin(), out.end(),
+                            [&](const std::pair<std::string, std::string>& e) {
+                              return e.first == key;
+                            });
+    if (dup != out.end()) {
+      AddWarning("Duplicate variant selection key `" + key +
+                 "` in crate; keeping the last value");
+      dup->second = std::move(val);
+      continue;
+    }
     out.emplace_back(std::move(key), std::move(val));
   }
   return true;
