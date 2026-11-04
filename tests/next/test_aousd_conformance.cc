@@ -14,11 +14,13 @@
 #include "next/writer/usdc-writer.hh"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -2668,6 +2670,147 @@ void TestSplineCore11Parity() {
   std::printf("  spline AOUSD Core 1.1 parity: PASSED\n");
 }
 
+// AOUSD Core 1.1 "Piecewise-Linear Approximation" (optional). Expected data
+// is OpenUSD 26.11 TsSpline::Sample(interval, 1, 1, 1e-3) on the same spline
+// text: the polyline split (count and end vertices) must agree, every pxr
+// interior vertex must lie on our curve, and our approximation must stay
+// within the tolerance of exact evaluation (dense check).
+void TestSplinePiecewiseLinear() {
+  struct PxrCase {
+    const char* name;
+    double t0, t1;
+    const char* text;
+    std::vector<std::array<double, 4>> ends;  // per polyline: t,v first; t,v last
+    std::vector<std::array<double, 2>> on_curve;  // pxr interior vertices
+    double cusp_window;
+  };
+  const std::vector<PxrCase> cases = {
+      {"bez", -3, 14,
+       "{\n" "    bezier,\n" "    pre: held,\n" "    post: linear,\n" "    0: 0; post curve (2, 3),\n" "    6: 10; pre (2, 0); post curve (1, -2),\n" "    10: 2; pre (1.5, 1),\n" "  }\n",
+       {{-3, 0, 14, 6}},
+       {{10, 2}, {2.625, 6.55908203125}, {4.40625, 9.1908035278320312}, {6.1438694000244141, 9.6839885711669922}, {8.2053985595703125, 3.6557464599609375}, {9.2987823486328125, 1.9007415771484375}}},
+      {"herm", -3, 12,
+       "{\n" "    hermite,\n" "    pre: linear,\n" "    post: sloped(0.5),\n" "    0: 0; post curve (1),\n" "    4: 10; pre (2); post curve (-1),\n" "    8: 0; pre (0),\n" "  }\n",
+       {{-3, -3, 12, 2}},
+       {{1, 1.7500000000000002}, {3.5, 8.859375}, {4.4375, 9.32025146484375}, {6.125, 4.0649414062499991}, {7.375, 0.57373046875}, {8, 0}}},
+      {"mixed", -2, 14,
+       "{\n" "    pre: none,\n" "    post: held,\n" "    0: 1; post held,\n" "    2: 3; post linear,\n" "    4: 5 & 7; post curve (3, 0),\n" "    8: 2; pre (1, 4); post none,\n" "    10: 6; post linear,\n" "    12: 4,\n" "  }\n",
+       {{0, 1, 2, 1}, {2, 3, 4, 5}, {4, 7, 8, 2}, {10, 6, 14, 4}},
+       {{12, 4}, {4.8819427490234375, 6.7057876586914062}, {5.5355281829833984, 6.0051279067993164}, {6.4390869140625, 4.01898193359375}, {7.3045654296875, 1.22052001953125}, {7.5708980560302734, 0.98384189605712891}, {7.9538421630859375, 1.8219375610351562}}},
+      {"inner", -25, 55,
+       "{\n" "    loop: (0, 10, 1, 2, 5),\n" "    -20: 100; post linear,\n" "    0: 0; post curve (2, 4),\n" "    5: 10; pre (2, 0); post linear,\n" "    10: 0; post linear,\n" "    40: 50; post linear,\n" "    50: 60,\n" "  }\n",
+       {{-25, 100, 55, 60}},
+       {{-6.34375, 4.5625}, {11.49468994140625, 10.4151611328125}, {14.63623046875, 14.9755859375}, {2.5703201293945312, 8.1377105712890625}, {23.430824279785156, 19.366531372070312}, {50, 60}}},
+      {"rep", -12, 20,
+       "{\n" "    pre: loop repeat,\n" "    post: loop repeat,\n" "    0: 0; post curve (2, 5),\n" "    4: 3; pre (1, 0); post curve (1, 0),\n" "    8: 1; pre (3, -1),\n" "  }\n",
+       {{-12, 1, 20, 5}},
+       {{-0.2725830078125, 0.269683837890625}, {-5.8964352607727051, 4.3784370422363281}, {10.072399139404297, 6.381378173828125}, {15.4716796875, 2.516845703125}, {19.976562023162842, 5.0012702941894531}, {4, 3}}},
+      {"reset", -15, 25,
+       "{\n" "    pre: loop reset,\n" "    post: loop reset,\n" "    0: 0; post curve (1, 1),\n" "    10: 10; pre (4, 0),\n" "  }\n",
+       {{-15, 6.7227210510734103, -10, 10}, {-10, 0, 0, 10}, {0, 0, 10, 10}, {10, 0, 20, 10}, {20, 0, 25, 6.7227210510734103}},
+       {{-0.093930721282958984, 9.9983601570129395}, {-1.147247314453125, 9.776702880859375}, {-10.093930721282959, 9.9983601570129395}, {-10.760498046875, 9.898681640625}, {-11.341846466064453, 9.6992454528808594}, {-12.027419567108154, 9.3483262062072754}, {-12.617805957794189, 8.9581999778747559}, {-13.696079254150391, 8.0651664733886719}, {-2.2241044044494629, 9.2268633842468262}, {-3.6960792541503906, 8.0651664733886719}, {-5.769195556640625, 5.818328857421875}, {-8.043212890625, 2.762451171875}, {1.956787109375, 2.762451171875}, {11.956787109375, 2.762451171875}, {14.230804443359375, 5.818328857421875}, {16.303920745849609, 8.0651664733886719}, {17.775895595550537, 9.2268633842468262}, {18.852752685546875, 9.776702880859375}, {19.906069278717041, 9.9983601570129395}, {20.305233001708984, 0.37275314331054688}, {20.951416015625, 1.294189453125}, {22.548828125, 3.603515625}, {23.358058929443359, 4.7054862976074219}, {24.051860809326172, 5.5972251892089844}, {24.965118408203125, 6.683746337890625}, {4.230804443359375, 5.818328857421875}, {6.3039207458496094, 8.0651664733886719}, {7.7758955955505371, 9.2268633842468262}, {8.852752685546875, 9.776702880859375}, {9.906069278717041, 9.9983601570129395}}},
+      {"osc", -10, 16,
+       "{\n" "    pre: loop oscillate,\n" "    post: loop oscillate,\n" "    0: 0; post curve (1, 3),\n" "    3: 2; pre (1, 0); post linear,\n" "    6: 0,\n" "  }\n",
+       {{-10, 2.1477254231770835, 16, 1.3333333333333335}},
+       {{-1.21875, 2.011016845703125}, {0.46875, 1.132354736328125}, {11.015625, 1.8377723693847656}, {12.65625, 1.446868896484375}, {15, 2}, {2.53125, 2.054168701171875}}},
+      {"nonmono", 0, 10,
+       "{\n" "    bezier,\n" "    0: 0; post curve (12, 10),\n" "    10: 10; pre (12, 10),\n" "  }\n",
+       {{0, 0, 10, 10}},
+       {{3.6367253749966619, 29.002176015973085}, {4.374971875, 29.68721875}, {5, 5}, {5.5961864761710158, -19.578078218102455}, {6.3145920796394339, -19.180729823112483}, {9.7692703249931334, 7.7090969114303594}}, 1e-12},
+  };
+  const double tol = 1e-3;
+  auto near = [](double a, double b, double t) {
+    return std::fabs(a - b) <= t * std::max(1.0, std::fabs(b));
+  };
+  size_t ours_total = 0;
+  for (const PxrCase& c : cases) {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText(c.text, &sd, &err));
+    // pxr's Keep Ratio stops ~1e-5 short of the exact limit (see parity test).
+    const double vt = std::strcmp(c.name, "nonmono") == 0 ? 1e-4 : 1e-9;
+    std::vector<SplinePolyline> pls;
+    assert(SampleSplineData(sd, c.t0, c.t1, tol, &pls, &err));
+    if (pls.size() != c.ends.size()) {
+      for (const auto& q : pls) std::fprintf(stderr, "   [%g,%g]-[%g,%g] n=%zu\n", q.front()[0], q.front()[1], q.back()[0], q.back()[1], q.size());
+      std::fprintf(stderr, "  %s: %zu polylines, pxr %zu\n", c.name, pls.size(),
+                  c.ends.size());
+      assert(false);
+    }
+    for (size_t i = 0; i < pls.size(); ++i) {
+      const SplinePolyline& pl = pls[i];
+      assert(pl.size() >= 2);
+      assert(pl.front()[0] == c.ends[i][0] && pl.back()[0] == c.ends[i][2]);
+      // pxr clips curve polylines at the interval by interpolating its own
+      // chord, so a clipped end is only within pxr's tolerance of the curve.
+      if (!near(pl.front()[1], c.ends[i][1], tol) ||
+          !near(pl.back()[1], c.ends[i][3], tol)) {
+        std::fprintf(stderr, "  %s[%zu]: ends %.17g..%.17g, pxr %.17g..%.17g\n",
+                     c.name, i, pl.front()[1], pl.back()[1], c.ends[i][1],
+                     c.ends[i][3]);
+        assert(false);
+      }
+      ours_total += pl.size();
+      // Error bound: dense check of every chord against exact evaluation.
+      for (size_t j = 0; j + 1 < pl.size(); ++j) {
+        assert(pl[j][0] < pl[j + 1][0]);
+        for (int q = 1; q < 32; ++q) {
+          const double u = q / 32.0;
+          const double t = pl[j][0] + u * (pl[j + 1][0] - pl[j][0]);
+          // nonmono sits exactly at the Keep Ratio limit: a vertical tangent
+          // at t=5 where v ~ cbrt(t-5), so a vertical bound is unattainable
+          // within a few ulps of it. Skip that window only.
+          if (c.cusp_window > 0.0 && std::fabs(t - 5.0) < c.cusp_window) continue;
+          double v;
+          assert(EvaluateSplineData(sd, t, &v));
+          const double lerp = pl[j][1] + u * (pl[j + 1][1] - pl[j][1]);
+          if (!(std::fabs(lerp - v) <= tol)) {
+            std::fprintf(stderr, "  %s: deviation %g at t=%.17g\n", c.name,
+                        std::fabs(lerp - v), t);
+            assert(false);
+          }
+        }
+      }
+    }
+    for (const auto& p : c.on_curve) {
+      double v;
+      assert(EvaluateSplineData(sd, p[0], &v));
+      assert(near(v, p[1], vt));
+    }
+  }
+  std::printf("  spline piecewise-linear vertices: ours %zu\n", ours_total);
+
+  // Value-block spline (pre/post none, single none segment) yields nothing;
+  // invalid arguments are rejected.
+  {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText("{\n pre: none,\n post: none,\n 0: 0; post none,\n"
+                           " 5: 1,\n}\n", &sd, &err));
+    std::vector<SplinePolyline> pls;
+    assert(SampleSplineData(sd, -10, -1, tol, &pls, &err) && pls.empty());
+    assert(!SampleSplineData(sd, 1, 0, tol, &pls, &err));
+    assert(!SampleSplineData(sd, 0, 1, 0.0, &pls, &err));
+    assert(SampleSplineData(SplineData(), 0, 1, tol, &pls, &err) && pls.empty());
+    // Looping over an absurd range hits the cap instead of exhausting memory.
+    SplineData lp;
+    assert(ParseSplineText("{\n post: loop repeat,\n 0: 0; post linear,\n"
+                           " 1e-6: 1,\n}\n", &lp, &err));
+    assert(!SampleSplineData(lp, 0, 1e9, tol, &pls, &err));
+  }
+  // Tighter tolerance -> more vertices, still within bound.
+  {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText(cases[0].text, &sd, &err));
+    std::vector<SplinePolyline> coarse, fine;
+    assert(SampleSplineData(sd, 0, 10, 1e-2, &coarse, &err));
+    assert(SampleSplineData(sd, 0, 10, 1e-5, &fine, &err));
+    assert(fine[0].size() > coarse[0].size());
+  }
+  std::printf("  spline piecewise-linear approximation: PASSED\n");
+}
+
 void TestFoundationalTypeMatrix() {
   const std::string body =
       "def Scope \"T\" {\n"
@@ -3482,6 +3625,7 @@ int main() {
   TestLosslessUnsupportedValues();
   TestTypedSplines();
   TestSplineCore11Parity();
+  TestSplinePiecewiseLinear();
   TestFoundationalTypeMatrix();
   TestNormativeTypeMatrix();
   TestMetadataAndListOpFidelity();

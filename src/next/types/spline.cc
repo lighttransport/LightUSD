@@ -709,11 +709,9 @@ void ComputeAutoEaseTangents(SplineData& sd) {
   }
 }
 
-}  // namespace
-
-bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
-  if (!out) return false;
-
+// Bridge SplineData to the shared evaluator's Spline<double> (AutoEase
+// tangents resolved).
+void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
   // AutoEase knots carry placeholder tangents; derive the real ones first.
   bool has_auto = false;
   for (const SplineKnot& k : sd.knots) {
@@ -730,8 +728,8 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
     src = &work;
   }
 
-  // Bridge to the shared evaluator.
-  lightusd::Spline<double> sp;
+  lightusd::Spline<double>& sp = *out_sp;
+  sp = lightusd::Spline<double>();
   sp.curveType = (src->curve_type == 1) ? lightusd::SplineCurveType::Hermite
                                       : lightusd::SplineCurveType::Bezier;
   auto extrap = [](int m) {
@@ -774,8 +772,250 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
     }
     sp.knots.push_back(sk);
   }
+}
 
+}  // namespace
+
+bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
+  if (!out) return false;
+  lightusd::Spline<double> sp;
+  BuildEvalSpline(sd, &sp);
   return lightusd::EvaluateSpline(sp, time, out);
+}
+
+// ---------------------------------------------------------------------------
+// Piecewise-linear approximation (AOUSD Core 1.1 "Piecewise-Linear
+// Approximation", optional). Sample placement is implementation-defined; this
+// one splits [t_min, t_max] at every point where the spline may be non-smooth
+// (knot times of the inner-loop-expanded knot list, their copies in looping
+// extrapolation, the interval ends), then adaptively bisects each smooth piece
+// until the chord is within `tolerance` of the curve at the probe points.
+// Value discontinuities (dual values, held segments, loop reset, value
+// blocks) end a polyline, as OpenUSD TsSpline::Sample does.
+
+namespace {
+
+constexpr size_t kMaxSplineBreakpoints = size_t(1) << 20;
+constexpr size_t kMaxSplineSamples = size_t(1) << 24;
+constexpr int kMaxSplineSampleDepth = 48;
+// Accept a chord only when the estimated error is this fraction of the
+// tolerance, leaving headroom for the model error of Bezier pieces.
+constexpr double kSplineProbeMargin = 0.9;
+
+// Left-hand limit at `b`: the evaluator returns the right-hand value at knot
+// times (and within its 1e-15 knot-hit window), so step just outside that
+// window (error ~ slope * 1e-14, far below any useful tolerance).
+double LeftStep(double b) {
+  return std::max(4e-15, 8.0 * (b - std::nextafter(b, -HUGE_VAL)));
+}
+
+bool EvalLeft(const lightusd::Spline<double>& sp, double a, double b,
+              double* v) {
+  double t = b - LeftStep(b);
+  if (!(t > a)) t = 0.5 * (a + b);
+  return lightusd::EvaluateSpline(sp, t, v);
+}
+
+struct SubSpan {
+  double x0, y0, x1, y1;
+  int depth;
+};
+
+}  // namespace
+
+bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
+                      double tolerance, std::vector<SplinePolyline>* out,
+                      std::string* err) {
+  if (!out) return false;
+  out->clear();
+  if (!std::isfinite(t_min) || !std::isfinite(t_max) || t_min > t_max) {
+    if (err) *err = "SampleSplineData: invalid time interval";
+    return false;
+  }
+  if (!(tolerance > 0.0) || !std::isfinite(tolerance)) {
+    if (err) *err = "SampleSplineData: tolerance must be positive";
+    return false;
+  }
+
+  lightusd::Spline<double> base;
+  BuildEvalSpline(sd, &base);
+  const lightusd::Spline<double> sp =
+      lightusd::detail::HasInnerLoops(base)
+          ? lightusd::detail::ExpandInnerLoops(base)
+          : base;
+  if (sp.knots.empty()) return true;  // no value anywhere
+
+  // --- Breakpoints ---
+  std::vector<double> bp;
+  bp.push_back(t_min);
+  bp.push_back(t_max);
+  const double first = sp.knots.front().time;
+  const double last = sp.knots.back().time;
+  const double period = last - first;
+  std::vector<double> kb;  // knot-derived breakpoints (possible jumps)
+  auto add = [&](double t, bool knot) {
+    if (t > t_min && t < t_max) {
+      bp.push_back(t);
+      if (knot) kb.push_back(t);
+    }
+  };
+  // Feature times: knots, plus each Bezier segment's time-curve inflection,
+  // where dt/du is smallest (a vertical tangent at the Keep Ratio limit) --
+  // the value is least chord-like there, so make it a piece end.
+  // `is_knot` parallels `feat`: only knot copies can carry a value jump.
+  std::vector<double> feat;
+  std::vector<char> is_knot;
+  feat.reserve(sp.knots.size() * 2);
+  is_knot.reserve(sp.knots.size() * 2);
+  for (size_t i = 0; i < sp.knots.size(); ++i) {
+    const auto& k0 = sp.knots[i];
+    feat.push_back(k0.time);
+    is_knot.push_back(1);
+    if (i + 1 >= sp.knots.size() ||
+        sp.curveType != lightusd::SplineCurveType::Bezier ||
+        k0.nextInterpolationMode != lightusd::SplineInterpolationMode::Curve) {
+      continue;
+    }
+    const double t0 = k0.time, t3 = sp.knots[i + 1].time;
+    double w0 = k0.postTangentWidth, w1 = sp.knots[i + 1].preTangentWidth;
+    lightusd::detail::AntiRegress(t0, w0, w1, t3);
+    const double c1 = t0 + w0, c2 = t3 - w1;
+    const double A = c2 - 2.0 * c1 + t0, B = t3 - 2.0 * c2 + c1;
+    if (A != B) {
+      const double u = A / (A - B);
+      if (u > 0.0 && u < 1.0) {
+        const double t = lu_cubic_bezier(t0, c1, c2, t3, u);
+        if (t > t0 && t < t3) {
+          feat.push_back(t);
+          is_knot.push_back(0);
+        }
+      }
+    }
+  }
+  for (size_t i = 0; i < feat.size(); ++i) add(feat[i], is_knot[i] != 0);
+  auto is_loop = [](lightusd::SplineExtrapolationMode m) {
+    return m == lightusd::SplineExtrapolationMode::LoopRepeat ||
+           m == lightusd::SplineExtrapolationMode::LoopReset ||
+           m == lightusd::SplineExtrapolationMode::LoopOscillate;
+  };
+  const bool pre_loop = is_loop(sp.preExtrapolation) && t_min < first;
+  const bool post_loop = is_loop(sp.postExtrapolation) && t_max > last;
+  if (period > 0.0 && (pre_loop || post_loop)) {
+    const bool mirror =
+        sp.preExtrapolation == lightusd::SplineExtrapolationMode::LoopOscillate ||
+        sp.postExtrapolation == lightusd::SplineExtrapolationMode::LoopOscillate;
+    const double c_lo = pre_loop ? std::floor((t_min - first) / period) : 0.0;
+    const double c_hi = post_loop ? std::ceil((t_max - first) / period) : 0.0;
+    const double ncycles = c_hi - c_lo + 1.0;
+    if (!(ncycles * double(feat.size() * (mirror ? 2 : 1)) <
+          double(kMaxSplineBreakpoints))) {
+      if (err) *err = "SampleSplineData: interval spans too many loop copies";
+      return false;
+    }
+    for (double c = c_lo; c <= c_hi; c += 1.0) {
+      if (c == 0.0) continue;
+      const double shift = c * period;
+      for (size_t i = 0; i < feat.size(); ++i) {
+        add(feat[i] + shift, is_knot[i] != 0);
+        if (mirror) add(first + last - feat[i] + shift, is_knot[i] != 0);
+      }
+    }
+  }
+  std::sort(bp.begin(), bp.end());
+  bp.erase(std::unique(bp.begin(), bp.end()), bp.end());
+  std::sort(kb.begin(), kb.end());
+
+  // --- Sample each smooth piece ---
+  // Values closer than this are treated as continuous at a breakpoint.
+  const double jump_eps = tolerance * 1e-6;
+  size_t total = 0;
+  SplinePolyline* cur = nullptr;
+  auto close_line = [&]() { cur = nullptr; };
+  auto emit = [&](double t, double v) {
+    if (!cur) {
+      out->emplace_back();
+      cur = &out->back();
+    }
+    cur->push_back({t, v});
+    ++total;
+  };
+
+  if (bp.size() == 1) {  // degenerate interval
+    double v;
+    if (lightusd::EvaluateSpline(sp, t_min, &v)) emit(t_min, v);
+    return true;
+  }
+
+  std::vector<SubSpan> stack;
+  for (size_t i = 0; i + 1 < bp.size(); ++i) {
+    const double a = bp[i], b = bp[i + 1];
+    double ya, yb, ym;
+    if (!lightusd::EvaluateSpline(sp, 0.5 * (a + b), &ym) ||
+        !lightusd::EvaluateSpline(sp, a, &ya) || !EvalLeft(sp, a, b, &yb)) {
+      close_line();  // value block: gap in the approximation
+      continue;
+    }
+    if (cur && !cur->empty()) {
+      const SplineSample& p = cur->back();
+      if (p[0] != a || (std::fabs(p[1] - ya) > jump_eps &&
+                        std::binary_search(kb.begin(), kb.end(), a))) {
+        close_line();
+      }
+    }
+    if (!cur) emit(a, ya);
+
+    const double b_left = b - LeftStep(b);
+    // Iterative adaptive bisection, left-to-right order.
+    stack.clear();
+    stack.push_back({a, ya, b, yb, 0});
+    while (!stack.empty()) {
+      const SubSpan s = stack.back();
+      stack.pop_back();
+      bool flat = true;
+      double yq[3], eq[3];
+      bool okq[3];
+      for (int q = 0; q < 3; ++q) {
+        const double u = 0.25 * (q + 1);
+        const double x = s.x0 + u * (s.x1 - s.x0);
+        // Probes that round onto the piece end must see its left limit.
+        okq[q] = (x < b_left) ? lightusd::EvaluateSpline(sp, x, &yq[q])
+                              : EvalLeft(sp, a, b, &yq[q]);
+        eq[q] = okq[q] ? yq[q] - (s.y0 + u * (s.y1 - s.y0)) : 0.0;
+        if (!okq[q] || std::fabs(eq[q]) > kSplineProbeMargin * tolerance) {
+          flat = false;
+        }
+      }
+      if (flat) {
+        // The chord error of a cubic piece is e(u) = u(1-u)(alpha + beta u).
+        // Fit it to the quarter probes and bound its maximum, which catches
+        // peaks between probes (exact for hermite / polynomial pieces, a
+        // close model for Bezier pieces, whose time map is near-linear once
+        // subdivided).
+        const double beta = (eq[2] - eq[0]) * (32.0 / 3.0);
+        const double alpha = eq[0] * (16.0 / 3.0) - 0.25 * beta;
+        for (int q = 1; q < 32 && flat; ++q) {
+          const double u = q / 32.0;
+          if (std::fabs(u * (1.0 - u) * (alpha + beta * u)) >
+              kSplineProbeMargin * tolerance) {
+            flat = false;
+          }
+        }
+      }
+      const double xm = 0.5 * (s.x0 + s.x1);
+      if (flat || s.depth >= kMaxSplineSampleDepth || !(xm > s.x0) ||
+          !(xm < s.x1) || !okq[1]) {
+        emit(s.x1, s.y1);
+        if (total > kMaxSplineSamples) {
+          if (err) *err = "SampleSplineData: sample budget exceeded";
+          return false;
+        }
+        continue;
+      }
+      stack.push_back({xm, yq[1], s.x1, s.y1, s.depth + 1});
+      stack.push_back({s.x0, s.y0, xm, yq[1], s.depth + 1});
+    }
+  }
+  return true;
 }
 
 }  // namespace next

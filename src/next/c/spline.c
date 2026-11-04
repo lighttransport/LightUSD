@@ -39,13 +39,20 @@ double lu_solve_bezier_time_for_u(double t0, double t1, double t2, double t3,
   double u = (t3 > t0) ? (target_time - t0) / (t3 - t0) : 0.5;
   u = fmax(0.0, fmin(1.0, u));
 
+  /* A small time residual does not pin u where dt/du ~ 0 (the vertical
+   * tangent at the Keep Ratio limit, where u error ~ cbrt(residual)), so also
+   * require the Newton correction to be tiny; Newton converges only linearly
+   * there, hence the higher iteration floor. Ordinary segments converge
+   * quadratically and stop as early as before. */
+  const int iters = max_iter > 100 ? max_iter : 100;
   double lo = 0.0, hi = 1.0;
-  for (int i = 0; i < max_iter; i++) {
+  for (int i = 0; i < iters; i++) {
     const double bt = lu_cubic_bezier(t0, t1, t2, t3, u);
     const double err = bt - target_time;
-    if (fabs(err) < 1e-12) break;
-
     const double dt = lu_cubic_bezier_deriv(t0, t1, t2, t3, u);
+    if (err == 0.0 || hi - lo <= 1e-15) break;
+    if (fabs(err) < 1e-12 && fabs(err) <= 1e-14 * fabs(dt)) break;
+
     if (fabs(dt) > 1e-15) {
       const double u_new = u - err / dt;
       if (u_new >= lo && u_new <= hi) {
