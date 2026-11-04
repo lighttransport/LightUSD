@@ -120,9 +120,12 @@ bool CrossEdge(RefTexture* ref, int* face, float* u, float* v) {
     ru = 1.0f - vv;
     rv = uu;
   }
+  // Leave the other axis unclamped: a corner tap that is still outside the
+  // neighbour takes a second hop to the diagonal face. The final page
+  // sample clamps whatever remains.
   *face = adjacent;
-  *u = std::clamp(ru, 0.0f, 1.0f);
-  *v = std::clamp(rv, 0.0f, 1.0f);
+  *u = ru;
+  *v = rv;
   return true;
 }
 

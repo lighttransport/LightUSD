@@ -554,7 +554,8 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
       }
     }
     const std::string surf =
-        ::lightusd::next::GetSurfaceShader(stage, prim);
+        ::lightusd::next::GetSurfaceShaderWithRenderContextFallback(stage,
+                                                                    prim);
     if (!surf.empty()) {
       UsdPrim sp = stage.GetPrimAtPath(surf);
       if (sp.IsValid() &&

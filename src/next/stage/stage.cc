@@ -16,9 +16,11 @@ namespace next {
 
 namespace {
 
-// Instance flattening (InstanceFlattenMode::ExtractedPrototypes) rewrites each
-// instance member as `instanceable = true` + an internal reference to the
-// de-instanced prototype holder, and clears `instance_prototype`. The member's
+// Holder-mode instance flattening (InstanceFlattenMode::Holder; the layer's
+// instance_holder_links() flag) rewrites each instance member as
+// `instanceable = true` + an internal reference to the de-instanced prototype
+// holder, and clears `instance_prototype`. ExtractedPrototypes layers do not
+// set the flag, so their orphaned members are left as authored. The member's
 // subtree is not duplicated in the flattened layer, so child enumeration and
 // proxy lookup must resolve that holder. Only treat the reference as a
 // prototype source when the prim has no children of its own; a normally

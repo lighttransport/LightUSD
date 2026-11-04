@@ -80,8 +80,10 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
       const std::string candidate = resolve_against(fallback, &fallback_exists);
       if (fallback_exists) return candidate;
     }
-    if (config_.asset_resolver) return file;
-    return anchored;
+    // Nothing found: keep the anchored location (pre-fallback behaviour), never
+    // a bare relative path that would be looked up against the process CWD.
+    return ::lightusd::next::AssetResolver::NormalizePath(
+        ::lightusd::next::AssetResolver::JoinPath(base, file));
   }
   if (!anchor.empty() && ::lightusd::next::AssetResolver::IsPackagePath(anchor)) {
     return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
@@ -96,7 +98,15 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
     }
     return file;
   }
-  return resolve_against(base, nullptr);
+  if (config_.asset_resolver) {
+    bool exists = false;
+    const std::string candidate = resolve_against(base, &exists);
+    if (exists) return candidate;
+  }
+  // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
+  // an un-collapsed path would also defeat the `resolved_path` image dedup.
+  return ::lightusd::next::AssetResolver::NormalizePath(
+      ::lightusd::next::AssetResolver::JoinPath(base, file));
 }
 
 uint32_t RenderSceneConverter::Impl::AssetAnchorOf(const UsdPrim& prim) {

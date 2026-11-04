@@ -447,10 +447,12 @@ void main(){
       if(opacityTransparent){
         opacity=clamp(opacity,0.0,1.0);
       }else{
-        if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
-        // A sampled (graph/texture) opacity is coverage even when the
-        // material-level alpha mode is Opaque; a constant opacity of 1 is a
-        // no-op, so this does not change opaque surfaces.
+        // Opaque materials stay opaque unless the opacity is graph-routed
+        // (a sampled opacity is coverage even under a material-level Opaque
+        // alphaMode). Constant opacity on an Opaque material is ignored, as
+        // before, so existing OpenPBR/MaterialX assets are unchanged.
+        if(alphaMode==0&&!(graphs[gb]>0.0&&graphs[gb+4u]>=0.0))opacity=1.0;
+        else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
         if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
       }
       float diffuseOpacity=opacityTransparent?opacity:1.0;

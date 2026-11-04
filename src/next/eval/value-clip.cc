@@ -13,7 +13,11 @@
 #include <memory>
 #include <sstream>
 #if !defined(__EMSCRIPTEN__)
+#if defined(_WIN32)
 #include <filesystem>
+#else
+#include <sys/stat.h>
+#endif
 #endif
 
 namespace lightusd {
@@ -34,7 +38,20 @@ struct FileStamp {
 
 FileStamp StampFile(const std::string& path) {
   FileStamp stamp;
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+  // One stat() per check: this runs on every revalidating cache hit.
+  struct stat st;
+  if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return stamp;
+  stamp.valid = true;
+#if defined(__APPLE__)
+  stamp.mtime_ticks = int64_t(st.st_mtimespec.tv_sec) * 1000000000LL +
+                      int64_t(st.st_mtimespec.tv_nsec);
+#else
+  stamp.mtime_ticks = int64_t(st.st_mtim.tv_sec) * 1000000000LL +
+                      int64_t(st.st_mtim.tv_nsec);
+#endif
+  stamp.size_bytes = static_cast<uint64_t>(st.st_size);
+#elif !defined(__EMSCRIPTEN__)
   std::error_code ec;
   if (!std::filesystem::is_regular_file(path, ec) || ec) return stamp;
   const auto mtime = std::filesystem::last_write_time(path, ec);
