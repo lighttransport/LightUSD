@@ -2472,6 +2472,15 @@ if(LIGHTUSD_BUILD_TESTS)
                          TIMEOUT 90 LABELS "lusdrender;cpu;geometry;regression")
 
     add_test(
+      NAME tool-lusdrender-cpu-preview-opacity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_cpu_preview_opacity.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/cpu-preview-opacity)
+    set_tests_properties(tool-lusdrender-cpu-preview-opacity PROPERTIES
+                         TIMEOUT 60 LABELS "lusdrender;cpu;material;regression")
+
+    add_test(
       NAME tool-lusdrender-materialx-cpu-graph
       COMMAND ${LUSDR_PYTHON}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_cpu_graph.py

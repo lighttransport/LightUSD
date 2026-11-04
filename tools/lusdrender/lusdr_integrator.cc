@@ -333,19 +333,24 @@ bool FiniteColor(const Vec3 &v) {
 Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
                         const Vec3 &wo, const Vec3 &wi,
                         const Vec3 &radiance, const Options &opt,
-                        const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
+                        const lightusd::tydra::LightRtOpenPBRParams *openpbr,
+                        Vec3 *diffuse_out = nullptr) {
   const float ndotl = std::max(0.0f, Dot(normal, wi));
   if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
   if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
-    return Mul(Mul(tri.base_color, radiance), ndotl);
+    const Vec3 full = Mul(Mul(tri.base_color, radiance), ndotl);
+    if (diffuse_out) *diffuse_out = full;
+    return full;
   }
   OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
   float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
-  return Vec3{brdf.x * radiance.x * ndotl,
-              brdf.y * radiance.y * ndotl,
-              brdf.z * radiance.z * ndotl};
+  v3 fd, fs;
+  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &fd, &fs,
+                  &pdf);
+  const Vec3 diffuse = Mul(Mul(FromMtlxV3(fd), radiance), ndotl);
+  const Vec3 specular = Mul(Mul(FromMtlxV3(fs), radiance), ndotl);
+  if (diffuse_out) *diffuse_out = diffuse;
+  return Add(diffuse, specular);
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,6 +1410,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     n = Mul(n, -1.0f);
   }
   Vec3 view = Normalize(Mul(ray_dir, -1.0f));
+  // UsdPreviewSurface opacityMode. "transparent" (the default) reduces only the
+  // diffuse/subsurface contribution and alpha-blends that part with what lies
+  // behind, while the specular stays at full weight; "presence"/cutout keep the
+  // whole-shade coverage blend. Track the diffuse sum separately for that split.
+  const bool transparent_opacity =
+      !tri.opacity_presence && tri.opacity_threshold <= 0.0f;
+  Vec3 c_diffuse{0.0f, 0.0f, 0.0f};
   // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
   // An indirect bounce that lands on an analytic mesh light must not pick up its
   // emission: the shading point it came from already received that light through
@@ -1412,7 +1424,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   const Vec3 emitted = (gathered_directly && tri.area_light)
                            ? Vec3{0.0f, 0.0f, 0.0f}
                            : tri.emission;
-  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), emitted);
+  const Vec3 ambient_diffuse =
+      Mul(tri.base_color, opt.ambient * tri.occlusion);
+  Vec3 c = Add(ambient_diffuse, emitted);
+  c_diffuse = Add(c_diffuse, ambient_diffuse);
   if (ibl && ibl->valid) {
     Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
@@ -1452,6 +1467,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         opt.material_shading == Options::MaterialShading::LightRtBsdf
             ? EvalMaterialIblDiffuse(tri, n, view, diffuse, opt, tri_openpbr)
             : Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
+    c_diffuse = Add(c_diffuse, diff);
     c = Add(c, Add(diff, spec));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
     // its own (usually low) roughness, layered on top and weighted by the coat
@@ -1466,7 +1482,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       c = Add(c, Mul(cc_env, cc_spec * tri.clearcoat));
     }
   } else if (lights.has_dome) {
-    c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
+    const Vec3 dome_diffuse = Mul(Mul(tri.base_color, lights.env_color), 0.25f);
+    c_diffuse = Add(c_diffuse, dome_diffuse);
+    c = Add(c, dome_diffuse);
   }
   // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
   // in lightrt-bsdf mode -- the legacy shading path has no BSDF pdf to weigh
@@ -1593,10 +1611,14 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         (!opt.shadows ||
          !occluded(p, n, l,
                    std::max(0.0f, Length(Sub(camera.origin, p)) - 1.0e-3f)))) {
+      Vec3 direct_diffuse;
       c = Add(c, EvalMaterialDirect(tri, n, view, l, Vec3{1.0f, 1.0f, 1.0f},
-                                    opt, tri_openpbr));
+                                    opt, tri_openpbr, &direct_diffuse));
+      c_diffuse = Add(c_diffuse, direct_diffuse);
     }
     c = Add(c, sample_bsdf_bounce());
+    if (transparent_opacity)
+      return Add(Sub(c, c_diffuse), apply_opacity(c_diffuse));
     return apply_opacity(c);
   }
   // NEE: sample a point on the light, weigh the estimate against the chance the
@@ -1625,12 +1647,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     OpenPBRParams params = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
     float pdf_b = 0.0f;
-    v3 f = bsdf_eval(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
-                     &pdf_b);
-    const Vec3 brdf = FromMtlxV3(f);
+    v3 fd, fs;
+    bsdf_eval_lobes(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
+                    &fd, &fs, &pdf_b);
+    const Vec3 diffuse = FromMtlxV3(fd);
+    const Vec3 brdf = Add(diffuse, FromMtlxV3(fs));
     if (!FiniteColor(brdf)) return;
     const float w = bsdf_partner_runs ? PowerHeuristic(ls.pdf, pdf_b) : 1.0f;
     const float k = w * ndotl / ls.pdf;
+    c_diffuse = Add(c_diffuse, Vec3{diffuse.x * ls.radiance.x * k,
+                                    diffuse.y * ls.radiance.y * k,
+                                    diffuse.z * ls.radiance.z * k});
     c = Add(c, Vec3{brdf.x * ls.radiance.x * k, brdf.y * ls.radiance.y * k,
                     brdf.z * ls.radiance.z * k});
   };
@@ -1671,8 +1698,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     if (opt.shadows && light.shadow_enable && occluded(p, n, l, max_t)) {
       return;
     }
+    Vec3 direct_diffuse;
     c = Add(c, EvalMaterialDirect(tri, n, view, l, radiance, opt,
-                                  tri_openpbr));
+                                  tri_openpbr, &direct_diffuse));
+    c_diffuse = Add(c_diffuse, direct_diffuse);
   };
   for (const PreviewLight &light : lights.finite) {
     eval_light(light);
@@ -1693,6 +1722,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray), bounded recursion. Opaque hits (the
   // default opacity 1.0) skip this entirely, so opaque renders are unchanged.
+  // "transparent" opacityMode blends only the diffuse half and keeps the
+  // specular at full weight.
+  if (transparent_opacity)
+    return Add(Sub(c, c_diffuse), apply_opacity(c_diffuse));
   return apply_opacity(c);
 }
 
