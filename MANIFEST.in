@@ -68,6 +68,7 @@ recursive-include src *.h *.hh *.hpp *.inc *.txt
 include src/color-transform.cc src/logger.cc src/minijson.cc
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/mtlx-dom.cc
 include src/ptx-loader.cc
+recursive-include src/ptex *.c
 include src/core/path-expression.cc src/core/path-expression-eval.cc
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c

@@ -226,6 +226,9 @@ endif()
 set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     lighting_ies.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/ptex/lptex.c
+    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-sample.c
+    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-file.c
     ptex_atlas.cc
     texture_tools.cc
     displacement_bake.cc
@@ -445,6 +448,9 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       ptex_atlas.cc
       ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+      ${PROJECT_SOURCE_DIR}/src/ptex/lptex.c
+      ${PROJECT_SOURCE_DIR}/src/ptex/lptex-sample.c
+      ${PROJECT_SOURCE_DIR}/src/ptex/lptex-file.c
       ${PROJECT_SOURCE_DIR}/src/image-loader.cc
       ${PROJECT_SOURCE_DIR}/src/io-util.cc
       ${PROJECT_SOURCE_DIR}/src/external/miniz.c

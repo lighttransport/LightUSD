@@ -979,6 +979,19 @@ if(LIGHTUSD_NEXT_BUILD_FUZZERS)
         target_compile_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
         target_link_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
     endforeach()
+    # C11 Ptex core (src/ptex): self-contained, so the whole reader and
+    # sampler carry coverage instrumentation.
+    set(_lptex_src ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_executable(fuzz_lptex
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/lptex_fuzzmain.c
+        ${_lptex_src}/ptex/lptex.c
+        ${_lptex_src}/ptex/lptex-sample.c
+        ${_lptex_src}/external/miniz.c)
+    target_include_directories(fuzz_lptex PRIVATE ${_lptex_src})
+    target_compile_definitions(fuzz_lptex PRIVATE LPTEX_NO_FILEIO=1)
+    set_target_properties(fuzz_lptex PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    target_compile_options(fuzz_lptex PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_options(fuzz_lptex PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
 endif()
 
 # Tydra Next (render data conversion). Keep its target definition in its own

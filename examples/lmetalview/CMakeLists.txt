@@ -30,6 +30,9 @@ set(LMV_CORE_SOURCES
 # compressed blocks. Plain utility translation units, not the legacy library.
 list(APPEND LMV_CORE_SOURCES
     ${LMV_REPO_ROOT}/src/ptx-loader.cc
+    ${LMV_REPO_ROOT}/src/ptex/lptex.c
+    ${LMV_REPO_ROOT}/src/ptex/lptex-sample.c
+    ${LMV_REPO_ROOT}/src/ptex/lptex-file.c
     ${LMV_REPO_ROOT}/src/io-util.cc
     ${LMV_REPO_ROOT}/src/external/miniz.c)
 set_source_files_properties(${LMV_REPO_ROOT}/src/external/miniz.c
