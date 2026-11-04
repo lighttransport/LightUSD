@@ -5,9 +5,15 @@
 namespace lightusd {
 namespace next {
 
+std::string DictMetaLine(const std::string& key, const Value& v, int level,
+                         const USDAWriteOptions& opts);
+
+// `level`/`opts` indent a dictionary value's continuation lines like the
+// modeled dictionary fields (customData, ...); level < 0 prints it flat.
 template <class Emit>
 static void EmitExtensionField(const DecodedExtensionField& field, bool composed,
-                               const Emit& emit) {
+                               const Emit& emit, int level = -1,
+                               const USDAWriteOptions* opts = nullptr) {
   if (field.int64_list_op) {
     const auto& stack = *field.int64_list_op;
     if (composed || stack.ops.size() != 1) {
@@ -27,6 +33,11 @@ static void EmitExtensionField(const DecodedExtensionField& field, bool composed
            PrintValue(op.items[r], PrintOptions{}));
     }
     if (op.bits == 0) emit("prepend " + field.name + " = []");
+    return;
+  }
+  if (opts && level >= 0 && field.value.is_dictionary() &&
+      !(field.unregistered && !field.unregistered_source.empty())) {
+    emit(DictMetaLine(field.name, field.value, level, *opts));
     return;
   }
   emit(field.name + " = " +
@@ -168,7 +179,7 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   for (const auto& field : meta.unknownFields) {
     EmitExtensionField(field, opts.composed_stage_output, [&](const std::string& line) {
       lines.push_back(opts.indent + line);
-    });
+    }, 1, &opts);
   }
   if (meta.relocates_set || !meta.relocates.empty()) {
     if (meta.relocates.empty()) {
@@ -330,7 +341,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     }
   }
   for (const auto& field : m->unknownFields) {
-    EmitExtensionField(field, opts.composed_stage_output, kv);
+    EmitExtensionField(field, opts.composed_stage_output, kv, md, &opts);
   }
   WriteIndent(os, depth, opts.indent);
   os << ")";
@@ -1243,7 +1254,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
       kv(um.first + " = " + um.second);
     }
     for (const auto& field : meta.unknownFields()) {
-      EmitExtensionField(field, opts.composed_stage_output, kv);
+      EmitExtensionField(field, opts.composed_stage_output, kv, md, &opts);
     }
 
     // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):

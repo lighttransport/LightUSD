@@ -34,6 +34,11 @@ Each normative change in the v1.1.0 changelog was checked against OpenUSD
 | Native instancing: ignored non-arc specs/arcs under an instance, ancestral arcs, implied-arc sharing (spec examples 1-3 + variants) | Already conformant: prototype sharing, flatten and instance-proxy values identical to pxr; stable cases added as `tests/usda/aousd11-instancing-*` gate fixtures |
 | Schema families and versioning | **Implemented**: `ParseSchemaFamilyAndVersion` (spec grammar; agrees with OpenUSD except `_1`, which pxr splits as family `''`), and schema manifests reject a versioned schema inheriting its own family |
 
+Typed/applied schema-definition rules and the UI-hint relocation (`uiHints`)
+were audited separately in
+[doc/validation/aousd11-schema-defs-uihints-2026-11-04.md](../doc/validation/aousd11-schema-defs-uihints-2026-11-04.md)
+(26 rules: 12 agree, 8 fixed, 3 unspecified/OpenUSD-deviates, 3 n/a).
+
 Pinned by `TestSplineCore11Parity` and `TestSplinePiecewiseLinear` (tests/next/test_aousd_conformance.cc; the latter holds pxr 26.11 `Sample` output as expected data).
 
 **Spec erratum found:** the LZ4 framing table now gives "Number of Chunks:

@@ -339,7 +339,11 @@ bool ValidationRegistry::InheritsFrom(const std::string& name, const std::string
 }
 std::optional<ValidationPropertyView> ValidationRegistry::FindProperty(
     const PrimSpec& prim, const std::string& name) const {
-  std::vector<std::pair<std::string, std::string>> schemas = {{prim.type_name(), ""}};
+  std::vector<std::pair<std::string, std::string>> schemas;
+  // Core 1.1 "Typed Schemas": a typeName naming an abstract typed schema or a
+  // non-typed (API) schema leaves the composed prim typeless.
+  const auto typed = FindSchema(prim.type_name());
+  if (!typed || typed->kind == "concrete") schemas.emplace_back(prim.type_name(), "");
   for (const auto& api : prim.meta().apiSchemas()) {
     const size_t colon = api.find(':');
     schemas.emplace_back(api.substr(0, colon), colon == std::string::npos ? "" : api.substr(colon + 1));

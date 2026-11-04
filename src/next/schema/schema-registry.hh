@@ -47,6 +47,13 @@ class SchemaRegistry {
   /// True when the registry records an inheritance parent for `schema_type`
   /// (i.e. its ancestry is KNOWN — InheritsFrom answers are meaningful).
   bool HasParentEntry(const std::string& schema_type) const;
+  /// AOUSD Core 1.1 "Typed Schemas": a composed prim whose typeName names an
+  /// abstract typed schema (Imageable, Gprim, ...), an API schema, or an
+  /// unidentifiable name is typeless and receives no typed-schema fallbacks.
+  /// True only for a name that can be a concrete prim type here.
+  bool IsConcreteTypedSchemaName(const std::string& schema_type) const;
+  /// Abstract typed schemas known to the registry (OpenUSD v26.11 parity).
+  static bool IsAbstractTypedSchemaName(const std::string& schema_type);
 
  private:
   SchemaRegistry();

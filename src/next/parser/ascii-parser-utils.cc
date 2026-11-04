@@ -249,6 +249,22 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
       if (r.success) { m.sdrMetadata = std::move(r.value); m.authored |= PropMeta::kSdrMetadata; }
+    } else if (key == "uiHints") {
+      // AOUSD Core 1.1 UI-hint extension dictionary (see the prim parser).
+      ParseResult r = ParseDict(*lexer_);
+      if (r.success) {
+        m.unknownFields.erase(
+            std::remove_if(m.unknownFields.begin(), m.unknownFields.end(),
+                           [](const DecodedExtensionField& f) {
+                             return f.name == "uiHints";
+                           }),
+            m.unknownFields.end());
+        DecodedExtensionField field;
+        field.name = "uiHints";
+        field.value = std::move(r.value);
+        m.unknownFields.push_back(std::move(field));
+        m.authored |= PropMeta::kUnknownMeta;
+      }
     } else {
       // Unknown property metadata: consume the value structurally but
       // preserve its raw source text for verbatim re-emit (same treatment

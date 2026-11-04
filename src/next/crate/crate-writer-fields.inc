@@ -211,9 +211,15 @@
       }
       if (prim.meta().displayGroupOrderAuthored() ||
           !prim.meta().displayGroupOrder().empty()) {
+        // pxr's field type is VtStringArray (String rep + array bit), not
+        // std::vector<string>: a StringVector reads back as an opaque value
+        // pxr cannot print or extract.
         fieldset.push_back(WFieldCount());
-        WPushField(MakeStringVectorField(
-            "displayGroupOrder", prim.meta().displayGroupOrder()));
+        CrateField f;
+        f.token_index.value = InternToken("displayGroupOrder");
+        f.value_rep = EncodeValue(Value::MakeStringLikeArray(
+            prim.meta().displayGroupOrder(), TypeId::String));
+        WPushField(f);
       }
 
       auto batch_children = stream_child_tokens_.empty()

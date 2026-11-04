@@ -822,6 +822,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation_registry.cc)
     target_link_libraries(test_validation_registry PRIVATE lightusd_validation)
     add_test(NAME next_test_validation_registry COMMAND test_validation_registry)
+    add_executable(test_schema_prim_definition
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schema_prim_definition.cc)
+    target_link_libraries(test_schema_prim_definition PRIVATE lightusd_validation)
+    add_test(NAME next_test_schema_prim_definition COMMAND test_schema_prim_definition)
 
     add_executable(test_validation
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc

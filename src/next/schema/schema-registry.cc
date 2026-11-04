@@ -57,7 +57,51 @@ bool MatchDefinitionName(const PrimSpec& prim,
   return false;
 }
 
+bool IsAPISchemaTypeName(const std::string& name) {
+  return name.size() > 3 && name.compare(name.size() - 3, 3, "API") == 0;
+}
+
+// Rank of the applied schema `schema` within the prim's apiSchemas (list-op
+// resolved order), or -1. Instance-qualified entries match their family.
+// The Gaussian auto-applies rank after every authored entry.
+int AppliedSchemaRank(const PrimSpec& prim, const std::string& schema) {
+  int rank = 0;
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    if (applied == schema ||
+        (applied.size() > schema.size() &&
+         applied.compare(0, schema.size(), schema) == 0 &&
+         applied[schema.size()] == ':')) {
+      return rank;
+    }
+    ++rank;
+  }
+  if (HasAppliedSchema(prim, schema)) return rank;
+  return -1;
+}
+
 }  // namespace
+
+bool SchemaRegistry::IsAbstractTypedSchemaName(const std::string& name) {
+  // OpenUSD v26.11: every typed schema name in this registry that has no
+  // concrete prim definition (Usd.SchemaRegistry.FindConcretePrimDefinition).
+  static const char* kAbstract[] = {
+      "Typed", "APISchemaBase", "Imageable", "Xformable", "Boundable",
+      "Gprim", "PointBased", "Curves", "BoundableLightBase",
+      "NonboundableLightBase", "VolumeFieldBase", "FieldBase",
+      "VolumeFieldAsset", "FieldAsset", "RenderSettingsBase"};
+  for (const char* a : kAbstract) {
+    if (name == a) return true;
+  }
+  return false;
+}
+
+bool SchemaRegistry::IsConcreteTypedSchemaName(const std::string& name) const {
+  if (name.empty() || IsAbstractTypedSchemaName(name) ||
+      IsAPISchemaTypeName(name)) {
+    return false;
+  }
+  return IsKnownSchema(name);
+}
 
 SchemaRegistry::SchemaRegistry() {
 #define LIGHTUSD_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
@@ -508,7 +552,10 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
   // it ran out of parents).
   const std::string* schemas[16];
   size_t schema_count = 0;
-  const std::string* current = &prim.type_name();
+  // An abstract or API typeName leaves the prim typeless (Core 1.1 "Typed
+  // Schemas"): no typed chain at all.
+  const std::string* current =
+      IsConcreteTypedSchemaName(prim.type_name()) ? &prim.type_name() : nullptr;
   while (current && !current->empty() && schema_count < 16) {
     schemas[schema_count++] = current;
     const std::string* next = nullptr;
@@ -521,25 +568,41 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
     if (!next) break;
     current = next;
   }
-  auto in_chain = [&](const std::string& schema_type) {
+  auto chain_rank = [&](const std::string& schema_type) -> int {
     for (size_t i = 0; i < schema_count; ++i) {
-      if (*schemas[i] == schema_type) return true;
+      if (*schemas[i] == schema_type) return static_cast<int>(i);
     }
-    return false;
+    return -1;
   };
+  // Prim definition order (Core 1.1 "The Prim Definition" / "Fallback Value
+  // Resolution"): the typed schema (most-derived first) is strongest, then
+  // each applied schema in list-op resolved order. Pick the strongest
+  // matching definition rather than the first one registered.
+  const SchemaPropertyDefinition* best = nullptr;
+  int best_rank = 0;
   for (const SchemaPropertyDefinition& def : properties_) {
     if (!MatchDefinitionName(prim, def, property_name)) continue;
-    if (in_chain(def.schema_type)) return &def;
-    if (HasAppliedSchema(prim, def.schema_type)) return &def;
+    int rank = chain_rank(def.schema_type);
+    if (rank == 0) return &def;
+    if (rank < 0) {
+      const int applied = AppliedSchemaRank(prim, def.schema_type);
+      if (applied < 0) continue;
+      rank = 16 + applied;
+    }
+    if (!best || rank < best_rank) {
+      best = &def;
+      best_rank = rank;
+    }
   }
-  return nullptr;
+  return best;
 }
 
 std::vector<std::string> SchemaRegistry::PropertyNames(
     const PrimSpec& prim) const {
   std::vector<std::string> result;
   std::vector<std::string> schemas;
-  std::string current = prim.type_name();
+  std::string current =
+      IsConcreteTypedSchemaName(prim.type_name()) ? prim.type_name() : "";
   while (!current.empty()) {
     schemas.push_back(current);
     auto it = std::find_if(parents_.begin(), parents_.end(),

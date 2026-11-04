@@ -1132,6 +1132,25 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         prim->meta().sdrMetadata() = std::move(r.value);
         prim->meta().setSdrMetadataAuthored();
       }
+    } else if (key == "uiHints") {
+      // AOUSD Core 1.1 "User Interface Fields": domain-authored UI hints live
+      // in an extension `uiHints` dictionary that takes precedence over the
+      // deprecated core displayName/hidden fields. Keep it a typed dictionary
+      // extension field so USDC writes a real dictionary (not the private
+      // raw-text blob used for unknown prim metadata).
+      ParseResult r = ParseDict(*lexer_);
+      if (r.success) {
+        auto& fields = prim->meta().unknownFields();
+        fields.erase(std::remove_if(fields.begin(), fields.end(),
+                                    [](const DecodedExtensionField& f) {
+                                      return f.name == "uiHints";
+                                    }),
+                     fields.end());
+        DecodedExtensionField field;
+        field.name = "uiHints";
+        field.value = std::move(r.value);
+        fields.push_back(std::move(field));
+      }
     } else if (key == "clips") {
       ParseResult r = ParseDict(*lexer_);
       if (r.success) {
