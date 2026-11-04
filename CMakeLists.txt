@@ -1087,7 +1087,7 @@ if(LIGHTUSD_WITH_EXR)
     # it depends on neither miniz nor zlib.
     message(STATUS "LightUSD: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
-    file(GLOB TINYEXR_V3_SOURCES
+    file(GLOB TINYEXR_V3_SOURCES CONFIGURE_DEPENDS
          ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
 
     set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES

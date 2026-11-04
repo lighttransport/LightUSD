@@ -782,7 +782,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
       target_compile_options(test_storage PRIVATE -UNDEBUG)
     endif()
     add_test(NAME next_c11_storage COMMAND test_storage)
-    file(GLOB exr_test_sources ../external/tinyexr/src/*.c)
+    file(GLOB exr_test_sources CONFIGURE_DEPENDS ../external/tinyexr/src/*.c)
     add_executable(test_exr_codec ../../tests/next/test_exr_codec.c
       ../imageio/exr-codec.c ${exr_test_sources})
     target_include_directories(test_exr_codec PRIVATE ../external/tinyexr/include ../external/tinyexr/src)
