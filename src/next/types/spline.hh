@@ -120,6 +120,15 @@ using SplinePolyline = std::vector<SplineSample>;
 /// bound tracks the true bound closely). Vertex placement is
 /// implementation-defined, as the spec allows.
 ///
+/// Vertical-tangent exception: where the value curve has a true vertical
+/// tangent (a non-monotone Bezier segment exactly at the Keep Ratio limit,
+/// whose time curve has dt/du = 0 at its inflection, so the value grows like
+/// cbrt(t - t0) there), no finite vertex set can meet the vertical bound
+/// within a few ulps of that time. The sampler places a vertex at the
+/// inflection time and the bound holds everywhere else;
+/// TestSplinePiecewiseLinear (tests/next/test_aousd_conformance.cc) skips a
+/// +/-1e-12 time window around such a tangent when checking deviation.
+///
 /// Returns false (with `err`) on an invalid interval or tolerance, or when the
 /// interval spans more loop copies / samples than the internal caps.
 bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
