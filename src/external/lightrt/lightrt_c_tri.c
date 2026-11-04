@@ -755,7 +755,13 @@ static void *tri_aligned_alloc(size_t align, size_t size) {
     if (size >= TRI_HUGE_PAGE_SIZE) {
         size_t a = TRI_HUGE_PAGE_SIZE;
         size_t sz = (size + a - 1u) & ~(a - 1u);
-        void *p = aligned_alloc(a, sz);
+        void *p = NULL;
+#if defined(__ANDROID__)
+        /* aligned_alloc is only available starting at Android API 28. */
+        if (posix_memalign(&p, a, sz) != 0) p = NULL;
+#else
+        p = aligned_alloc(a, sz);
+#endif
         if (p) {
             (void)madvise(p, sz, MADV_HUGEPAGE);
             return p;
@@ -768,6 +774,10 @@ static void *tri_aligned_alloc(size_t align, size_t size) {
     /* mingw (incl. llvm-mingw UCRT) has no C11 aligned_alloc; use the Win32
      * _aligned_malloc/_aligned_free pair (declared in <malloc.h>). */
     return _aligned_malloc(size, align);
+#elif defined(__ANDROID__)
+    void *p = NULL;
+    if (posix_memalign(&p, align, size) != 0) return NULL;
+    return p;
 #else
     return aligned_alloc(align, size);
 #endif
