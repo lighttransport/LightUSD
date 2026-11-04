@@ -1,8 +1,44 @@
-# LightUSD Verification Plan against AOUSD Core Spec v1.0.1
+# LightUSD Verification Plan against AOUSD Core Spec v1.1.0
 
-**Spec**: USD Core Specification v1.0.1 (b7bc21a), AOUSD Core Spec Working Group, 2025-12-12
-**Target**: LightUSD (this repository, branch `spec-2026-mar`)
-**Date**: 2026-03-21
+**Spec**: USD Core Specification v1.1.0 (e8f44c0), AOUSD Core Spec Working Group,
+vendored verbatim at [core/1.1.0/core_spec.md](core/1.1.0/core_spec.md). The
+phase plan below was written against v1.0.1 (b7bc21a, 2025-12-12; vendored at
+[core/1.0.1](core/1.0.1/core_spec.md)) and still applies; the v1.1.0 deltas are
+audited in [the section below](#v110-delta-audit-2026-11-04).
+**Target**: LightUSD (this repository)
+**Supplemental corpus**: `aousd/core-spec-supplemental-public` tag
+`release/1.0.1.post0` (c15ae0c) — still the newest corpus release; upstream
+publishes no 1.1 corpus yet.
+
+## v1.1.0 delta audit (2026-11-04)
+
+Each normative change in the v1.1.0 changelog was checked against OpenUSD
+26.11 (the spec correlates with OpenUSD 25.08) on purpose-built layers.
+
+| v1.1.0 change | Result |
+|---|---|
+| `timeCodesPerSecond` auto-scaling across layer stacks (sublayer, reference + offset, `framesPerSecond` fallback) | Already conformant; values identical to pxr |
+| Value clip `times` out-of-range clamp | Already conformant |
+| Time sample query outside the authored range (hold) | Already conformant |
+| Variability does not affect value resolution | Already conformant |
+| Type-mismatch boundary (strongest opinion) | Already conformant |
+| Quaternion ordering (USDA `(w,i,j,k)`, crate `(i,j,k,w)`) | Already conformant (USDA->USDC->pxr round trip identical) |
+| Crate 0.13.0 (spline tangent algorithms): read, and write only when needed | Already conformant |
+| Duplicate keys in crate variant-selection maps / dictionaries | **Fixed**: variant selection maps now keep the last value (+warning); dictionaries already did |
+| Spline grammar: tangent optional after any `post` mode | **Fixed**: a bare `post curve` left the spline unevaluable |
+| Splines: linear extrapolation slope from the adjacent segment | **Fixed** |
+| Splines: loop reset at the period boundary | **Fixed** |
+| Splines: inner loops (`LoopParameters`) | **Fixed**: were parsed but never evaluated |
+| Splines: evaluation-time anti-regression must be Keep Ratio | **Fixed** (exact non-regressive limit; pxr stops ~1e-5 short, so values agree to ~1e-5) |
+| Piecewise-linear approximation | Optional (MAY); not implemented |
+| Native instancing / schema families and versioning | Not re-audited in this pass |
+
+Pinned by `TestSplineCore11Parity` (tests/next/test_aousd_conformance.cc).
+
+**Spec erratum found:** the LZ4 framing table now gives "Number of Chunks:
+8 bytes" and "Chunk Size: 1 byte", and the prose says a 64-bit chunk size.
+OpenUSD's `TfFastCompression` (and LightUSD) use a **1-byte** chunk count and
+an **int32** per-chunk size. LightUSD keeps the OpenUSD layout.
 
 ---
 

@@ -66,7 +66,7 @@ build options, and examples.
 - [USD Physics](doc/usd-physics.md)
 - [Composition](doc/composition.md)
 - [Python bindings](doc/python_binding.md)
-- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.0.1
+- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.1.0 (v1.0.1 plan + v1.1 delta audit)
 - [Testing](doc/testing-cpp.md)
 - [Release and CI](doc/ci.md)
 

@@ -41,9 +41,10 @@ def main():
         repo = Path(__file__).resolve().parents[2]
         run(clean, '--schema-definitions', str(repo/'doc/generated/openusd-schema-26.08.json'),
             '--shader-definitions', str(repo/'tools/lusdchecker/definitions/shaders.json'))
-        run(clean, '--profile', 'aousd-core-1.0.1')
+        run(clean, '--profile', 'aousd-core-1.1.0')
+        run(clean, '--profile', 'aousd-core-1.0.1')  # compatible alias
         future = write('future.usda', clean.read_text().replace('#usda 1.0', '#usda 1.2'))
-        run(future, '--profile', 'aousd-core-1.0.1', code=1, rule='checker.coverage.version')
+        run(future, '--profile', 'aousd-core-1.1.0', code=1, rule='checker.coverage.version')
         run(clean, '--profile', 'strict', '--core-only', code=2, rule='checker.usage')
         run(clean, '--core-only', '--profile', 'strict', code=2, rule='checker.usage')
         run(clean, '--profile', 'strict', '--skip-variants', code=2)
@@ -56,18 +57,18 @@ def main():
         assert sarif.returncode == 2
         assert not json.loads(sarif.stdout)['runs'][0]['invocations'][0]['executionSuccessful']
         fragment = write('fragment.usda', '#usda 1.0\nover "World" {}\n')
-        run(fragment, '--profile', 'aousd-core-1.0.1')
+        run(fragment, '--profile', 'aousd-core-1.1.0')
         run(fragment, '--strict', code=1)
         sphere = write('sphere.usda', HEADER + 'def Xform "World" {\n def Sphere "S" {\n float radius = 1\n }\n}\n')
         run(sphere, '--usdchecker-compat', code=1, rule='core.schema.attributeType')
         run(sphere, '--profile', 'strict', code=1, rule='core.schema.attributeType')
-        run(sphere, '--profile', 'aousd-core-1.0.1')
+        run(sphere, '--profile', 'aousd-core-1.1.0')
         unknown = write('unknown.usda', HEADER + 'def VendorThing "World" {}\n')
         r = run(unknown, '--profile', 'strict', code=1, rule='checker.coverage.schema')
         assert not r['complete'] and r['conformance'] == 'incomplete'
         baseline = write('baseline.json', json.dumps(r))
         run(unknown, '--profile', 'strict', '--baseline', str(baseline), code=1)
-        run(unknown, '--profile', 'aousd-core-1.0.1')
+        run(unknown, '--profile', 'aousd-core-1.1.0')
         schemas = write('schemas.json', json.dumps({'formatVersion': 1, 'schemas': [{
             'name': 'VendorThing', 'kind': 'concrete', 'inherits': 'Xform', 'properties': [
                 {'name': 'weight', 'type': 'double', 'kind': 'attribute', 'variability': 'varying'}]}]}))
@@ -185,7 +186,7 @@ def main():
         run(good_api, '--profile', 'strict')
         bad_api = write('typed-as-api.usda', HEADER + 'def Xform "World" (prepend apiSchemas = ["Sphere"]) {}')
         run(bad_api, '--profile', 'strict', code=1, rule='core.apiSchema.kind')
-        run(bad_api, '--profile', 'aousd-core-1.0.1')
+        run(bad_api, '--profile', 'aousd-core-1.1.0')
         wrong_kind = write('wrong-kind.usda', HEADER + 'def Sphere "World" { rel radius = </World> }')
         run(wrong_kind, '--profile', 'strict', code=1, rule='core.schema.propertyKind')
         # A baseline at time 1 does not accept the same error at time 2.

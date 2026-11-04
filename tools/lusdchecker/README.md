@@ -1,7 +1,7 @@
 # lusdchecker
 
 `lusdchecker` validates USDA, USDC, USDZ, and MaterialX `.mtlx` documents using
-LightUSD's dependency-free `next` core. It runs AOUSD Core 1.0.1 semantic checks and the
+LightUSD's dependency-free `next` core. It runs AOUSD Core 1.1.0 semantic checks and the
 available structural schema checks for UsdGeom/UsdSkel, UsdShade/MaterialX,
 UsdLux, and UsdPhysics (including the supported physics extensions).
 
@@ -101,7 +101,7 @@ into an error; JSON reports requested, checked, and skipped groups separately.
 
 ```sh
 build_ninja/lusdchecker --profile strict --json scene.usdz
-build_ninja/lusdchecker --profile aousd-core-1.0.1 --sarif scene.usda
+build_ninja/lusdchecker --profile aousd-core-1.1.0 --sarif scene.usda
 build_ninja/lusdchecker --all-time-samples --max-samples 10000 scene.usda
 ```
 
@@ -112,7 +112,7 @@ and exhausted coverage limits fail the gate with `complete: false`. Coverage
 findings cannot be suppressed by a baseline. `--strict` retains its original,
 smaller meaning: fail on warnings in the selected checks.
 
-`--profile aousd-core-1.0.1` runs the implemented normative document constraints
+`--profile aousd-core-1.1.0` runs the implemented normative document constraints
 for the pinned Core version. It accepts valid layer fragments without requiring
 asset-delivery metadata such as defaultPrim, upAxis, or metersPerUnit. It excludes
 schema recommendations and the ARKit profile. A passing result is scoped to the
@@ -275,7 +275,8 @@ required dependencies fail strict coverage. USDZ members are read in memory.
 
 Options:
 
-- `profile`: `default`, `strict`, or `aousd-core-1.0.1` (default: `default`).
+- `profile`: `default`, `strict`, or `aousd-core-1.1.0` (default: `default`;
+  `aousd-core-1.0.1` is accepted as a compatible alias).
 - `groups`: nonempty array of group names, defaulting to the CLI's defect-class
   groups. Full profiles reject coverage-reducing group/variant selections.
 - Boolean flags: `strict`, `strictParse`, `composed`, `allTimeSamples`,
@@ -299,6 +300,6 @@ JS argument types throw. Options JSON is limited to 16 MiB. The existing
 `LayerDocument.validateLoadedLayer(optionsJson)` remain available with their
 previous JSON-string contracts. `checkUSD` is the full checker API.
 
-A successful AOUSD result covers the engine's **implemented AOUSD Core 1.0.1
+A successful AOUSD result covers the engine's **implemented AOUSD Core 1.1.0
 constraints**, not complete specification certification. Native engine limits
 and coverage scope apply equally to WASM.

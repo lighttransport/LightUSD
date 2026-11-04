@@ -691,7 +691,7 @@ Remaining items (all Low severity):
 
 ## References
 
-- AOUSD Core Spec v1.0.1, Sections 10 (Composition), 12 (Value Resolution)
+- AOUSD Core Spec v1.1.0 (vendored at aousd/core/1.1.0), Sections 10 (Composition), 12 (Value Resolution)
 - OpenUSD source:
   - `pxr/usd/pcp/primIndex.cpp` — core composition algorithm
   - `pxr/usd/pcp/strengthOrdering.cpp` — node strength comparison

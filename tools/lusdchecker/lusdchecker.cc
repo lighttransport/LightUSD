@@ -178,7 +178,10 @@ lightusd::minijson::Value MakeReport(const Args& args,
   lightusd::minijson::Parse(JsonReport(args, result, warnings, valid, passes, limit), &report);
   report["reportVersion"] = 2;
   report["profile"] = args.profile;
-  report["conformanceScope"] = "implemented AOUSD Core 1.0.1 document constraints";
+  report["conformanceScope"] =
+      std::string("implemented AOUSD Core ") +
+      (args.profile == "aousd-core-1.0.1" ? "1.0.1" : "1.1.0") +
+      " document constraints";
   report["complete"] = result.complete && !limit;
   report["executionSuccessful"] = true;
   report["allTimeSamples"] = args.all_samples;
@@ -1463,7 +1466,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
       if (version != "1.0") {
         local.complete = false;
         AddIssue(&local, USDValidationSeverity::Error, "checker.coverage.version", source,
-                 "AOUSD Core 1.0.1 covers USDA 1.0; this document declares " + version);
+                 "AOUSD Core 1.1.0 covers USDA 1.0; this document declares " + version);
       }
     }
     if (crate && args.groups.crate) ValidateCrate(raw, size, source, max_memory, &local);
