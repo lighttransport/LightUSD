@@ -2577,6 +2577,97 @@ void TestTypedSplines() {
 // USDA -> USDC -> USDA round trip with no value/type loss and no spurious
 // structural additions (e.g. a `reorder properties` synthesized from the
 // crate `properties` field).
+// AOUSD Core 1.1 spline value resolution. Every expected value below was
+// produced by OpenUSD 26.11 (UsdAttribute::Get) on the same layer.
+void TestSplineCore11Parity() {
+  const std::string body =
+      "def \"S\" {\n"
+      "  double hermite.spline = {\n"
+      "    hermite,\n"
+      "    pre: linear,\n"
+      "    post: linear,\n"
+      "    0: 0; post curve (1),\n"
+      "    4: 10; pre (2); post curve (-1),\n"
+      "    8: 0; pre (0),\n"
+      "  }\n"
+      "  double reset.spline = {\n"
+      "    pre: loop reset,\n"
+      "    post: loop reset,\n"
+      "    0: 0; post linear,\n"
+      "    10: 10,\n"
+      "  }\n"
+      "  double bare.spline = {\n"
+      "    0: 0; post linear,\n"
+      "    5: 5; post curve,\n"
+      "    10: 0,\n"
+      "  }\n"
+      "  double inner.spline = {\n"
+      "    loop: (0, 10, 1, 2, 5),\n"
+      "    -20: 100; post linear,\n"
+      "    0: 0; post linear,\n"
+      "    5: 10; post linear,\n"
+      "    10: 0; post linear,\n"
+      "    40: 50; post linear,\n"
+      "    50: 60,\n"
+      "  }\n"
+      "  double innerx.spline = {\n"
+      "    pre: linear,\n"
+      "    post: loop repeat,\n"
+      "    loop: (0, 10, 1, 1, 5),\n"
+      "    0: 0; post linear,\n"
+      "    5: 10; post linear,\n"
+      "    10: 0,\n"
+      "  }\n"
+      "  double nonmono.spline = {\n"
+      "    bezier,\n"
+      "    0: 0; post curve (12, 10),\n"
+      "    10: 10; pre (12, 10),\n"
+      "  }\n"
+      "}\n";
+  LoadResult res = Parse(body, true);
+  assert(res.success);
+  AttributeEval eval(&res.stage);
+  const UsdPrim s = res.stage.GetPrimAtPath("/S");
+  auto at = [&](const char* name, double t) -> double {
+    EvalOptions o;
+    o.time = t;
+    EvalResult r = eval.EvalWith(s, name, o);
+    assert(r.success && r.value.as_double());
+    return *r.value.as_double();
+  };
+  auto near = [](double a, double b, double tol) {
+    return std::fabs(a - b) <= tol * std::max(1.0, std::fabs(b));
+  };
+  // Linear extrapolation takes the slope of the adjacent SEGMENT (the first
+  // knot's post tangent here), not the terminal knot's pre tangent.
+  assert(near(at("hermite", -12.0), -12.0, 1e-9));
+  assert(near(at("hermite", -0.5), -0.5, 1e-9));
+  // Loop reset: the last knot's time starts the next copy.
+  assert(near(at("reset", 10.0), 0.0, 1e-9));
+  assert(near(at("reset", 30.0), 0.0, 1e-9));
+  assert(near(at("reset", 15.0), 5.0, 1e-9));
+  // A bare `post curve` (tangent omitted) parses and stays evaluable.
+  (void)at("bare", 7.0);
+  // Inner loops: expansion, closing knot, kept outer knots.
+  const double inner_t[] = {-25, -15, -10.5, -10, -5, 9, 10, 15, 25, 29, 30, 31, 35, 45};
+  const double inner_v[] = {100, 47.5, 0.25, -5, 5, 6, 5, 15, 20, 16, 15, 18.5, 32.5, 55};
+  for (size_t i = 0; i < sizeof(inner_t) / sizeof(inner_t[0]); ++i) {
+    assert(near(at("inner", inner_t[i]), inner_v[i], 1e-9));
+  }
+  // Extrapolation runs over the expanded knot list.
+  const double ix_t[] = {-15, -10, 10, 19, 21, 25, 30, 40};
+  const double ix_v[] = {-15, -5, 5, 11, 12, 20, 15, 20};
+  for (size_t i = 0; i < sizeof(ix_t) / sizeof(ix_t[0]); ++i) {
+    assert(near(at("innerx", ix_t[i]), ix_v[i], 1e-9));
+  }
+  // Non-monotonic Bezier: evaluation-time Keep Ratio. pxr stops ~1e-5 short
+  // of the exact non-regressive limit, so compare at 1e-4.
+  assert(near(at("nonmono", 4.0), 29.97398957136784, 1e-4));
+  assert(near(at("nonmono", 6.0), -19.97398957136786, 1e-4));
+  assert(near(at("nonmono", 0.5), 4.920575533113868, 1e-4));
+  std::printf("  spline AOUSD Core 1.1 parity: PASSED\n");
+}
+
 void TestFoundationalTypeMatrix() {
   const std::string body =
       "def Scope \"T\" {\n"
@@ -3390,6 +3481,7 @@ int main() {
   TestCrateVersionMatrix();
   TestLosslessUnsupportedValues();
   TestTypedSplines();
+  TestSplineCore11Parity();
   TestFoundationalTypeMatrix();
   TestNormativeTypeMatrix();
   TestMetadataAndListOpFidelity();

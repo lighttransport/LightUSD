@@ -418,15 +418,20 @@ bool ParseSplineText(const std::string& text, SplineData* out,
           if (interp == "none") k.interp = 0;
           else if (interp == "held") k.interp = 1;
           else if (interp == "linear") k.interp = 2;
-          else if (interp == "curve") {
-            k.interp = 3;
+          else if (interp == "curve") k.interp = 3;
+          else {
+            *e = "Unknown spline interpolation: " + interp;
+            return false;
+          }
+          // AOUSD Core 1.1 SplineKnotParameter: `'post' InterpMode
+          // (InlinePadding+ SplineTangent)?` -- the tangent is optional for
+          // every mode (a bare `post curve` keeps the default tangent).
+          sc.skip_ws();
+          if (sc.peek() == '(') {
             if (!ParseTangent(sc, &k.post_tan_width, &k.post_tan_slope,
                               &k.post_algo, e)) {
               return false;
             }
-          } else {
-            *e = "Unknown spline interpolation: " + interp;
-            return false;
           }
         } else {
           *e = "Unknown spline knot spec: " + spec;

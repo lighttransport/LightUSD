@@ -120,6 +120,83 @@ inline void AntiRegress(double t0, double &tw0_post, double &tw1_pre, double t3)
   lu_spline_anti_regress(t0, &tw0_post, &tw1_pre, t3);
 }
 
+// Linear-extrapolation slope at the first (pre) or last (post) knot, from the
+// adjacent segment's interpolation mode (AOUSD Core 1.1).
+template <typename T>
+double EdgeSlope(const Spline<T> &spline, bool pre) {
+  const auto &k = spline.knots;
+  if (k.size() < 2) {
+    return pre ? static_cast<double>(k.front().preTangentSlope)
+               : static_cast<double>(k.back().postTangentSlope);
+  }
+  const auto &a = pre ? k[0] : k[k.size() - 2];
+  const auto &b = pre ? k[1] : k[k.size() - 1];
+  const double dt = b.time - a.time;
+  switch (a.nextInterpolationMode) {
+    case SplineInterpolationMode::Curve:
+      return pre ? static_cast<double>(a.postTangentSlope)
+                 : static_cast<double>(b.preTangentSlope);
+    case SplineInterpolationMode::Linear: {
+      if (!(dt > 0.0)) return 0.0;
+      const double vb = static_cast<double>(b.hasDualValue ? b.preValue : b.value);
+      return (vb - static_cast<double>(a.value)) / dt;
+    }
+    default:
+      return 0.0;  // held / value block
+  }
+}
+
+template <typename T>
+bool HasInnerLoops(const Spline<T> &spline) {
+  const auto &lp = spline.loopParams;
+  return lp.protoEnd > lp.protoStart &&
+         (lp.numPreLoops > 0 || lp.numPostLoops > 0) && !spline.knots.empty();
+}
+
+// Expand inner loops (OpenUSD Ts semantics, verified against pxr 26.11):
+// knots in [protoStart, protoEnd) are copied numPreLoops times before and
+// numPostLoops times after, each copy shifted by one period in time and by
+// valueOffset per iteration in value; a closing copy of the first prototype
+// knot ends the last iteration. Authored knots inside the looped span are
+// replaced; those outside it are kept.
+template <typename T>
+Spline<T> ExpandInnerLoops(const Spline<T> &spline) {
+  Spline<T> out = spline;
+  out.loopParams = SplineLoopParams();
+  const auto &lp = spline.loopParams;
+  const double period = lp.protoEnd - lp.protoStart;
+  const int npre = lp.numPreLoops > 0 ? lp.numPreLoops : 0;
+  const int npost = lp.numPostLoops > 0 ? lp.numPostLoops : 0;
+  std::vector<SplineKnot<T>> proto;
+  for (const auto &k : spline.knots) {
+    if (k.time >= lp.protoStart && k.time < lp.protoEnd) proto.push_back(k);
+  }
+  if (proto.empty()) return out;
+  const double span_start = lp.protoStart - npre * period;
+  const double span_end = lp.protoEnd + npost * period;
+  auto shifted = [&](const SplineKnot<T> &k, int i) {
+    SplineKnot<T> c = k;
+    c.time = k.time + i * period;
+    c.value = static_cast<T>(static_cast<double>(k.value) + i * lp.valueOffset);
+    c.preValue =
+        static_cast<T>(static_cast<double>(k.preValue) + i * lp.valueOffset);
+    return c;
+  };
+  std::vector<SplineKnot<T>> knots;
+  for (const auto &k : spline.knots) {
+    if (k.time < span_start) knots.push_back(k);
+  }
+  for (int i = -npre; i <= npost; ++i) {
+    for (const auto &k : proto) knots.push_back(shifted(k, i));
+  }
+  knots.push_back(shifted(proto.front(), npost + 1));
+  for (const auto &k : spline.knots) {
+    if (k.time > span_end) knots.push_back(k);
+  }
+  out.knots = std::move(knots);
+  return out;
+}
+
 }  // namespace detail
 
 ///
@@ -133,6 +210,12 @@ inline void AntiRegress(double t0, double &tw0_post, double &tw1_pre, double t3)
 template <typename T>
 bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   if (!result) return false;
+
+  // Inner loops (LoopParameters): evaluate the expanded knot list.
+  if (detail::HasInnerLoops(spline)) {
+    const Spline<T> expanded = detail::ExpandInnerLoops(spline);
+    return EvaluateSpline(expanded, time, result);
+  }
 
   const auto &knots = spline.knots;
 
@@ -161,8 +244,10 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
         *result = knots.front().value;
         return true;
       case SplineExtrapolationMode::Linear: {
-        // Use the pre-tangent slope of the first knot
-        double slope = knots.front().preTangentSlope;
+        // AOUSD Core 1.1 Linear Extrapolation: the slope comes from the first
+        // SEGMENT -- curve: its tangent at the terminal knot; linear: the
+        // segment slope; held / value-block: 0.
+        double slope = detail::EdgeSlope(spline, /*pre=*/true);
         double dt = time - firstTime;
         *result = static_cast<T>(static_cast<double>(knots.front().value) + slope * dt);
         return true;
@@ -211,7 +296,11 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   }
 
   // --- Post-extrapolation ---
-  if (time > lastTime) {
+  // Loop reset starts the next copy AT the last knot's time.
+  const bool reset_at_end =
+      time == lastTime && knots.size() > 1 &&
+      spline.postExtrapolation == SplineExtrapolationMode::LoopReset;
+  if (time > lastTime || reset_at_end) {
     switch (spline.postExtrapolation) {
       case SplineExtrapolationMode::None:
         return false;
@@ -219,7 +308,7 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
         *result = knots.back().value;
         return true;
       case SplineExtrapolationMode::Linear: {
-        double slope = knots.back().postTangentSlope;
+        double slope = detail::EdgeSlope(spline, /*pre=*/false);
         double dt = time - lastTime;
         *result = static_cast<T>(static_cast<double>(knots.back().value) + slope * dt);
         return true;
@@ -238,8 +327,10 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
           *result = knots.back().value;
           return true;
         }
-        double dt = time - lastTime;
-        double cycles = std::ceil(dt / period);
+        // Floor-based remap into [first, last): the last knot's time starts
+        // the next copy (loop reset is discontinuous there, matching OpenUSD
+        // Ts; repeat/oscillate values are unchanged by the convention).
+        double cycles = std::floor((time - firstTime) / period);
         double remapped = time - cycles * period;
 
         if (spline.postExtrapolation == SplineExtrapolationMode::LoopOscillate) {

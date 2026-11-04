@@ -67,24 +67,33 @@ double lu_solve_bezier_time_for_u(double t0, double t1, double t2, double t3,
   return fmax(0.0, fmin(1.0, u));
 }
 
-/* Anti-regression (Spec 12.5.3.5): shrink tangent widths if the time control
- * points would be non-monotonic. */
+/* Anti-regression at evaluation time (AOUSD Core 1.1 "Anti-Regression at
+ * Evaluation Time"): the Keep Ratio strategy. Backward-facing tangents are
+ * zero-length. With normalized widths a = w0/dt, b = w1/dt the Bezier time
+ * curve is monotone iff a + b <= 1 or (1 - a - b)^2 <= a*b; scaling both by s
+ * keeps the ratio, and the largest valid s is 1 / (a + b - sqrt(a*b)). */
 void lu_spline_anti_regress(double t0, double *tw0_post, double *tw1_pre,
                             double t3) {
   const double dt = t3 - t0;
-  if (dt <= 0.0) {
+  if (!(dt > 0.0)) {
     *tw0_post = 0.0;
     *tw1_pre = 0.0;
     return;
   }
-  const double total_width = *tw0_post + *tw1_pre;
-  if (total_width > dt) {
-    const double scale = dt / total_width;
-    *tw0_post *= scale;
-    *tw1_pre *= scale;
+  double a = fmax(0.0, *tw0_post) / dt;
+  double b = fmax(0.0, *tw1_pre) / dt;
+  if (a + b > 1.0) {
+    const double c = 1.0 - a - b;
+    if (c * c > a * b) {
+      const double s = 1.0 / (a + b - sqrt(a * b));
+      if (s < 1.0) {
+        a *= s;
+        b *= s;
+      }
+    }
   }
-  *tw0_post = fmax(0.0, *tw0_post);
-  *tw1_pre = fmax(0.0, *tw1_pre);
+  *tw0_post = a * dt;
+  *tw1_pre = b * dt;
 }
 
 
