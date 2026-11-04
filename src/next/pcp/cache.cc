@@ -2272,12 +2272,13 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
           clone.meta().instance_prototype().clear();
           clone.meta().references.clear();
           clone.meta().references.push_back("<" + *ref + ">");
-          // pxr flatten spells the prototype arc `add references = </FP_N>`.
+          // pxr flatten spells the prototype arc `append references = </FP_N>`
+          // (OpenUSD 7c0651a52 moved off the deprecated `add` list-op).
           ArcListOp &redit = clone.meta().ensure_arc_edits().references;
           redit = ArcListOp();
           redit.authored = true;
           redit.is_explicit = false;
-          redit.added.push_back("<" + *ref + ">");
+          redit.appended.push_back("<" + *ref + ">");
         }
         uint32_t new_idx = out->add_prim(std::move(clone));  // invalidates ptrs
         out->set_parent(new_idx, cw.dst_parent_idx);
@@ -2303,12 +2304,13 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
         auto &refs = mp->meta().references;
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
-        // pxr flatten spells the prototype arc `add references = </FP_N>`.
+        // pxr flatten spells the prototype arc `append references = </FP_N>`
+          // (OpenUSD 7c0651a52 moved off the deprecated `add` list-op).
         ArcListOp &redit = mp->meta().ensure_arc_edits().references;
         redit = ArcListOp();
         redit.authored = true;
         redit.is_explicit = false;
-        redit.added.push_back(ref);
+        redit.appended.push_back(ref);
       }
     }
   }

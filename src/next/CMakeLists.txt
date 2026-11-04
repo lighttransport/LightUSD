@@ -1772,7 +1772,9 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
             PROPERTIES LABELS "next;pxrdiff")
     endif()
     # Pinned OpenUSD oracle for the pxr differential gates below. Set
-    # LIGHTUSD_PXR_USDCAT to relocate it.
+    # LIGHTUSD_PXR_USDCAT to relocate it. The oracle must be >= v26.11: flatten
+    # now spells prototype arcs `append references` (OpenUSD 7c0651a52), which
+    # an older usdcat writes as `add references`.
     if(DEFINED ENV{LIGHTUSD_PXR_USDCAT})
         set(NEXT_PXR_USDCAT "$ENV{LIGHTUSD_PXR_USDCAT}")
     else()
@@ -1832,7 +1834,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     endif()
 
     # next-vs-pxr flatten differential gate: next_usdcat -f vs the PINNED
-    # OpenUSD 26.05 usdcat --flatten, compared semantically. Ratchet is 0:
+    # OpenUSD (>= 26.11) usdcat --flatten, compared semantically. Ratchet is 0:
     # any divergence not recorded (with reason) in
     # tests/next/next-pxr-flatten-xfail.txt fails; entries that start
     # passing are reported as XPASS for pruning.
