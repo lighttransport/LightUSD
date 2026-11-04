@@ -389,6 +389,12 @@ class HeadlessSession:
             '--frames='+str(prepared['time']),'--imageWidth',str(width),'--purposes',purposes,
             '--colorCorrectionMode','sRGB','--complexity',self.reference_complexity,'--background',('0,0,0' if display['background']=='black' else '1,1,1'),
             '--diagnostics',str(directory/'usdrecord-diagnostics.json')]
+        # usdrecord aborts on any TF error by default. Some field assets (for
+        # example Island's ocean .vdb) emit a non-fatal plugin error yet still
+        # write a usable image, so allow an explicit opt-out for that capture.
+        if (getattr(self, 'reference_allow_nonfatal', False) or
+                self.state.get('reference_allow_nonfatal')):
+            reference.remove('--abortOnError')
         candidate=[str(self.args.lusdrender.absolute()),prepared['wrapper'],str(directory/'lusdrender.png'),
             '-camera',prepared['camera_path'],'-w',str(width),'-height',str(height),'-timecode',str(prepared['time']),
             '-purpose','default'+(','+purposes if purposes else ''),'-bg',('0,0,0' if display['background']=='black' else '1,1,1'),

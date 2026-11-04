@@ -80,7 +80,7 @@ def beauty_lighting_rig(value):
 def load_config(path):
     if path.stat().st_size>1024*1024:raise ValueError('job config exceeds 1 MiB')
     config=json.loads(path.read_text())
-    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light'}
+    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light','reference_allow_nonfatal'}
     if not isinstance(config,dict) or set(config)-allowed or config.get('version')!=1:raise ValueError('invalid version 1 job config')
     scenes=config.get('scenes')
     if not isinstance(scenes,list) or not 1<=len(scenes)<=128:raise ValueError('scenes must contain 1..128 jobs')
@@ -172,6 +172,8 @@ def _run(args):
         ns.reference_population_roots=scene.get('isolate') if scene.get('reference_population_mask') else None
         ns.reference_complexity=scene.get('reference_complexity',config.get('reference_complexity','low'))
         session=HeadlessSession(ns)
+        if config.get('reference_allow_nonfatal'):
+            session.reference_allow_nonfatal=True
         if config.get('reference_camera_light'):
             # usdrecord only evaluates its camera light; both tools then share
             # that one light model for the beauty AOV.
