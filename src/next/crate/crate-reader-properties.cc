@@ -299,6 +299,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
             }
           }
         } else if (f.first == "timeSamples") {
+          ai.has_time_samples = true;
           if (!DecodeTimeSamples(f.second, &ai.time_samples)) {
             AddWarning("Failed to decode timeSamples on " + prim_path + "." +
                        ai.name);

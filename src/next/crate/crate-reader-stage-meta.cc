@@ -203,12 +203,25 @@ void CrateReader::Impl::DecodeStageMetadata(
         if (const bool* value = field.second.as_bool()) {
           layer.meta().autoPlay = *value;
           layer.meta().autoPlay_set = true;
+        } else {
+          // Older (legacy LightUSD) writers stored autoPlay as a token
+          // "true"/"false"; pxr reads and prints the token value verbatim.
+          auto t = field.second.as_token();
+          if (!t) t = field.second.as_string();
+          if (t && (*t == "true" || *t == "false")) {
+            layer.meta().autoPlay = *t == "true";
+            layer.meta().autoPlay_set = true;
+          }
         }
       } else if (field.first == "playbackMode") {
         auto value = field.second.as_token();
         if (!value) value = field.second.as_string();
         if (value) {
-          layer.meta().playbackMode = *value == "loop" ? "loop" : "none";
+          // Legacy writers stored the token with its USDA quotes ("\"loop\"").
+          std::string v = *value;
+          if (v.size() >= 2 && v.front() == '"' && v.back() == '"')
+            v = v.substr(1, v.size() - 2);
+          layer.meta().playbackMode = v == "loop" ? "loop" : "none";
           layer.meta().playbackMode_set = true;
         }
       } else if (field.first == "__lightusd_unknownMeta") {

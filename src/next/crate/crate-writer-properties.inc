@@ -860,7 +860,10 @@
             base_hash, name_table.get(slots[si + 1].name_id)));
       }
       const Value* val = prim.property_value(slot.name_id);
-      const bool has_ts = prim.has_time_samples(slot.name_id);
+      // An authored-but-empty `timeSamples = {}` keeps the slot flag with no
+      // samples; pxr round-trips it as an empty TimeSamples field.
+      const bool has_ts = prim.has_time_samples(slot.name_id) ||
+                          slot.is_time_sampled();
       flds.clear();
 
       CrateField tf;

@@ -992,7 +992,10 @@
             }
           }
         }
-        if (!root_children.empty()) {
+        // An entirely empty layer would otherwise write a zero-field FIELDS
+        // section, whose empty compressed int stream pxr fails to LZ4-decode
+        // (FAILED_TO_OPEN). pxr itself writes `primChildren = []` there.
+        if (!root_children.empty() || fieldset.empty()) {
           fieldset.push_back(WFieldCount());
           WPushField(MakeTokenVectorField("primChildren", root_children));
         }

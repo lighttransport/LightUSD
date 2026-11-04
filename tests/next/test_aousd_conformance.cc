@@ -1015,16 +1015,39 @@ void TestVariantSetListOpFidelity() {
          mixed.ordered == std::vector<std::string>{"ord"});
 
   const std::string usda = WriteUSDAToString(loaded.stage);
-  assert(usda.find("variantSets = [\"explicit\"]") != std::string::npos);
-  assert(usda.find("add variantSets = [\"add\"]") != std::string::npos);
-  assert(usda.find("prepend variantSets = [\"pre\"]") !=
+  assert(usda.find("variantSets = \"explicit\"") != std::string::npos);
+  assert(usda.find("add variantSets = \"add\"") != std::string::npos);
+  assert(usda.find("prepend variantSets = \"pre\"") !=
          std::string::npos);
-  assert(usda.find("append variantSets = [\"app\"]") !=
+  assert(usda.find("append variantSets = \"app\"") !=
          std::string::npos);
-  assert(usda.find("delete variantSets = [\"del\"]") !=
+  assert(usda.find("delete variantSets = \"del\"") !=
          std::string::npos);
-  assert(usda.find("reorder variantSets = [\"ord\"]") !=
+  assert(usda.find("reorder variantSets = \"ord\"") !=
          std::string::npos);
+
+  // pxr (Sdf_FileIOUtility::WriteNameVector) spells a single variantSets
+  // name without brackets; it must parse back to the same list ops.
+  assert(usda.find("variantSets = [") == std::string::npos);
+  {
+    LoadResult reparsed = LoadUSDAFromString(usda, LoadOptions());
+    assert(reparsed.success);
+    const UsdPrim rm = reparsed.stage.GetPrimAtPath("/Mixed");
+    assert(rm && rm.GetMeta().variantSetNameEdits().ordered ==
+                     std::vector<std::string>{"ord"});
+    const UsdPrim re = reparsed.stage.GetPrimAtPath("/Explicit");
+    assert(re && re.GetMeta().variantSetNameEdits().explicit_items ==
+                     std::vector<std::string>{"explicit"});
+  }
+  {
+    // Two or more names keep the bracketed list.
+    LoadResult two = Parse(
+        "def Scope \"Two\" (\n  prepend variantSets = [\"a\", \"b\"]\n) {}\n");
+    assert(two.success);
+    const std::string two_usda = WriteUSDAToString(two.stage);
+    assert(two_usda.find("prepend variantSets = [\"a\", \"b\"]") !=
+           std::string::npos);
+  }
 
   std::vector<uint8_t> rewritten;
   assert(WriteUSDCToMemory(rewritten, loaded.stage).success);
@@ -2018,7 +2041,9 @@ void TestAuthoredStateBits() {
     const std::string usda = WriteUSDAToString(r.stage);
     assert(usda.find("relocates = {}") != std::string::npos);
     assert(usda.find("subLayers = []") != std::string::npos);
-    assert(usda.find("variants = {}") != std::string::npos);
+    // pxr's USDA writer (Sdf_WritePrimMetadata) omits an empty variant
+    // selection map; only USDC keeps the authored-empty bit (below).
+    assert(usda.find("variants") == std::string::npos);
     // The USDA spelling itself re-parses to the same authored state.
     LoadResult again = LoadUSDAFromString(usda, LoadOptions{});
     assert(again.success);
@@ -3617,6 +3642,119 @@ void TestConcurrentValueClipCache() {
 #endif
 }
 
+std::vector<uint8_t> ReadUsdcFixture(const std::string& filename) {
+  std::string path = UsdaFixturePath(filename);
+  path.replace(path.rfind("/usda/"), 6, "/usdc/");
+  std::ifstream ifs(path, std::ios::binary);
+  assert(ifs);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)),
+                              std::istreambuf_iterator<char>());
+}
+
+// Field count stored at the head of a crate's FIELDS section (TOC lookup).
+uint64_t CrateFieldCount(const std::vector<uint8_t>& d) {
+  auto u64 = [&](size_t o) {
+    uint64_t v = 0;
+    assert(o + 8 <= d.size());
+    std::memcpy(&v, d.data() + o, 8);
+    return v;
+  };
+  const uint64_t toc = u64(16);
+  const uint64_t n = u64(toc);
+  for (uint64_t i = 0; i < n; ++i) {
+    const size_t o = toc + 8 + i * 32;
+    if (std::strncmp(reinterpret_cast<const char*>(d.data() + o), "FIELDS",
+                     16) == 0) {
+      return u64(u64(o + 16));
+    }
+  }
+  assert(false && "no FIELDS section");
+  return 0;
+}
+
+// Regressions from tests/run-usdcat-compare.sh vs OpenUSD usdcat.
+void TestUsdcatCompareParity() {
+  // Empty `timeSamples = {}` is an authored field (pxr keeps it) through
+  // USDA and USDC.
+  {
+    LoadResult r = Parse(
+        "def Xform \"muda\" {\n"
+        "  float xformOp:rotateZ:spin.timeSamples = {}\n"
+        "}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("float xformOp:rotateZ:spin.timeSamples = {") !=
+           std::string::npos);
+    // ...but a composed (flattened) stage drops it, like UsdStage::Flatten.
+    USDAWriteOptions composed;
+    composed.composed_stage_output = true;
+    assert(WriteUSDAToString(r.stage, composed).find("timeSamples") ==
+           std::string::npos);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success);
+    assert(WriteUSDAToString(back.stage).find("spin.timeSamples = {") !=
+           std::string::npos);
+  }
+  // pxr omits an empty `variants = {}`; single variantSets name unbracketed.
+  {
+    LoadResult r = Parse(
+        "def Xform \"hello\" (\n"
+        "  variants = {\n  }\n"
+        "  prepend variantSets = \"shadingVariant\"\n"
+        ") {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("variants =") == std::string::npos);
+    assert(usda.find("prepend variantSets = \"shadingVariant\"") !=
+           std::string::npos);
+  }
+  // reorder nameChildren with one name follows the same name-vector rule.
+  {
+    LoadResult r = Parse(
+        "def Xform \"P\" {\n  reorder nameChildren = [\"a\"]\n"
+        "  def \"a\" {}\n}\n");
+    assert(r.success);
+    assert(WriteUSDAToString(r.stage).find("reorder nameChildren = \"a\"") !=
+           std::string::npos);
+  }
+  // A single empty SdfPayload (crate 0.x) is pxr's `payload = None`.
+  {
+    const std::vector<uint8_t> d = ReadUsdcFixture("payload-002.usdc");
+    USDCLoadResult r = LoadUSDCFromMemory(d.data(), d.size());
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("payload = None") != std::string::npos);
+    assert(usda.find("@@") == std::string::npos);
+  }
+  // Legacy token-typed autoPlay / quoted playbackMode tokens.
+  {
+    const std::vector<uint8_t> a =
+        ReadUsdcFixture("usdz-schema-autoplay-001.usdc");
+    USDCLoadResult ra = LoadUSDCFromMemory(a.data(), a.size());
+    assert(ra.success);
+    assert(ra.stage.GetRootLayer()->meta().autoPlay_set &&
+           !ra.stage.GetRootLayer()->meta().autoPlay);
+    const std::vector<uint8_t> p =
+        ReadUsdcFixture("usdz-schema-playbackmode-001.usdc");
+    USDCLoadResult rp = LoadUSDCFromMemory(p.data(), p.size());
+    assert(rp.success);
+    assert(rp.stage.GetRootLayer()->meta().playbackMode == "loop");
+  }
+  // An empty layer must not write a zero-field FIELDS section (pxr cannot
+  // decode its empty compressed stream); pxr writes `primChildren = []`.
+  {
+    LoadResult r = Parse("");
+    assert(r.success);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+    assert(CrateFieldCount(crate) >= 1);
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success);
+  }
+}
+
 int main() {
   TestUnicodeAndPaths();
   TestPathGrammarProductions();
@@ -3655,6 +3793,7 @@ int main() {
   TestRemainingElectiveFieldCoverage();
   TestGeneratedElectiveAuthoredRoundtrips();
   TestUnregisteredListOpAuthoredRoundtrips();
+  TestUsdcatCompareParity();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
 }

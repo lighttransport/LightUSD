@@ -386,6 +386,14 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         return false;
       }
       const std::string prim = paths_.str(path_idx);
+      // pxr upgrades an empty single SdfPayload (no asset, no prim path) to
+      // an explicitly-empty payload list op (`payload = None`).
+      if (asset.empty() && (prim.empty() || prim == "/") && offset == 0.0 &&
+          scale == 1.0) {
+        // "\x01" "E": authored explicit-clear marker (see crate-reader-prim).
+        out = Value::MakeTokenArray({std::string("\x01" "E")});
+        return true;
+      }
       // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
       std::string arc;
       if (!asset.empty()) arc = "@" + asset + "@";

@@ -181,6 +181,7 @@ class PathPool {
     bool is_connection = false;  // implies `cold`
     bool uniform = false;
     bool custom = false;
+    bool has_time_samples = false;  // field present (may be empty)
     Value default_value;
     std::vector<std::pair<double, Value>> time_samples;
     std::unique_ptr<AttrCold> cold;

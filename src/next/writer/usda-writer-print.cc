@@ -10,6 +10,24 @@ std::string DictMetaLine(const std::string& key, const Value& v, int level,
 
 // `level`/`opts` indent a dictionary value's continuation lines like the
 // modeled dictionary fields (customData, ...); level < 0 prints it flat.
+// Sdf_FileIOUtility::WriteNameVector: pxr writes a single-name vector as a
+// bare quoted string and only brackets 2+ names. USDA uses it for every
+// variantSets list-op form and for reorder nameChildren/properties/rootPrims.
+template <typename Names, typename Get>
+static void WriteNameVectorUSDA(StreamWriter& os, const Names& names, Get get) {
+  const bool bracket = names.size() != 1;
+  if (bracket) os << "[";
+  for (size_t i = 0; i < names.size(); ++i) {
+    if (i) os << ", ";
+    os << EscapeUSDAString(get(names[i]));
+  }
+  if (bracket) os << "]";
+}
+static void WriteNameVectorUSDA(StreamWriter& os,
+                                const std::vector<std::string>& names) {
+  WriteNameVectorUSDA(os, names, [](const std::string& s) -> const std::string& { return s; });
+}
+
 template <class Emit>
 static void EmitExtensionField(const DecodedExtensionField& field, bool composed,
                                const Emit& emit, int level = -1,
@@ -352,14 +370,22 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
 void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name_id,
                       const PrimSpec& spec, int depth, const USDAWriteOptions& opts,
                       SegmentSink* segsink) {
+  // An authored-but-empty `timeSamples = {}` (slot flagged time-sampled,
+  // no samples) is still written, as pxr does.
+  static const std::vector<std::pair<double, uint32_t>> kNoSamples;
   const auto* samples = spec.time_samples(name_id);
-  if (!samples || samples->empty()) return;
+  if (!samples) samples = &kNoSamples;
 
   WriteIndent(os, depth, opts.indent);
 
   // Type name: prefer the declared name, else derive from the first sample.
   if (const std::string* decl = spec.property_type_name(name_id)) {
     os << *decl;
+  } else if (samples->empty()) {
+    const PropSlot* sl = spec.property(name_id);
+    const char* tn = sl ? GetTypeName(static_cast<TypeId>(sl->value_type)) : nullptr;
+    os << (tn ? tn : "token");
+    if (sl && sl->is_array()) os << "[]";
   } else {
     const Value* first_val = spec.time_sample_value(samples->front().second);
     if (first_val) {
@@ -536,7 +562,10 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   };
 
   // Check if this property has time samples
-  if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
+  // An authored-but-empty `timeSamples = {}` survives a layer round trip,
+  // but a composed stage (pxr UsdStage::Flatten) carries no empty samples.
+  if (slot.is_time_sampled() &&
+      (spec.has_time_samples(slot.name_id) || !opts.composed_stage_output)) {
     auto emit_ts_decl = [&]() { emit_decl(); };
     // An authored DEFAULT coexists with time samples as an independent
     // field (pxr keeps both; dropping it loses the value used outside the
@@ -1340,10 +1369,10 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
                   meta.variantSelection.substr(eq + 1));
         }
       }
+      // pxr (Sdf_WritePrimMetadata) omits an authored-but-empty
+      // variantSelection map entirely; match it.
       if (!sels.empty()) {
         write_variants(sels);
-      } else if (meta.variantSelectionsAuthored()) {
-        kv("variants = {}");
       }
     }
 
@@ -1355,12 +1384,9 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
                                   const std::vector<std::string>& names) {
         if (names.empty()) return;
         WriteIndent(os, md, opts.indent);
-        os << qualifier << "variantSets = [";
-        for (size_t i = 0; i < names.size(); ++i) {
-          if (i) os << ", ";
-          os << EscapeUSDAString(names[i]);
-        }
-        os << "]\n";
+        os << qualifier << "variantSets = ";
+        WriteNameVectorUSDA(os, names);
+        os << "\n";
       };
       if (variant_edits.is_explicit) {
         write_variant_op("", variant_edits.explicit_items);
@@ -1372,13 +1398,16 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
         write_variant_op("reorder ", variant_edits.ordered);
       }
     } else if (!variant_edits.authored && !meta.variantSets().empty()) {
+      // Deliberate divergence from pxr: a prim with `variantSet` blocks but
+      // no `variantSets` declaration gets an inferred prepend (the crate
+      // writer infers variantSetNames the same way). LightUSD composes such
+      // blocks; pxr's Pcp only composes declared sets, so writing the
+      // declaration keeps the output composing identically in both.
       WriteIndent(os, md, opts.indent);
-      os << "prepend variantSets = [";
-      for (size_t i = 0; i < meta.variantSets().size(); ++i) {
-        if (i) os << ", ";
-        os << EscapeUSDAString(meta.variantSets()[i].name);
-      }
-      os << "]\n";
+      os << "prepend variantSets = ";
+      WriteNameVectorUSDA(os, meta.variantSets(),
+                          [](const PrimVariantSetData& v) -> const std::string& { return v.name; });
+      os << "\n";
     }
 
     WriteIndent(os, depth, opts.indent);
@@ -1395,12 +1424,9 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
                          const std::vector<std::string>& names) {
     if (names.empty()) return;
     WriteIndent(os, content_depth, opts.indent);
-    os << "reorder " << field << " = [";
-    for (size_t i = 0; i < names.size(); ++i) {
-      if (i) os << ", ";
-      os << EscapeUSDAString(names[i]);
-    }
-    os << "]\n";
+    os << "reorder " << field << " = ";
+    WriteNameVectorUSDA(os, names);
+    os << "\n";
   };
   write_order("properties", meta.propertyOrder());
   write_order("nameChildren", meta.primOrder());
@@ -1465,12 +1491,9 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
 void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {
   if (meta.rootPrimOrder.empty()) return;
-  os << "reorder rootPrims = [";
-  for (size_t i = 0; i < meta.rootPrimOrder.size(); ++i) {
-    if (i) os << ", ";
-    os << EscapeUSDAString(meta.rootPrimOrder[i]);
-  }
-  os << "]\n\n";
+  os << "reorder rootPrims = ";
+  WriteNameVectorUSDA(os, meta.rootPrimOrder);
+  os << "\n\n";
 }
 
 // Serialize the layer-stage header metadata + all root prims serially (the

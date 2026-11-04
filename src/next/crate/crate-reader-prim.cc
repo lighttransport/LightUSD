@@ -589,7 +589,9 @@ void CrateReader::Impl::EmitPrimBody(
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
         // The writer gates timeSamples emission on the slot flag, so mark a
         // time-sampled attribute (the value lives in add_time_sample below).
-        if (!ai.time_samples.empty()) flags |= PropSlot::kFlagTimeSampled;
+        // An empty `timeSamples = {}` field is still authored (pxr keeps it).
+        if (ai.has_time_samples || !ai.time_samples.empty())
+          flags |= PropSlot::kFlagTimeSampled;
         const bool is_array =
             ai.type_name.size() >= 2 &&
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
