@@ -78,9 +78,22 @@ def main():
         for name in sorted(node):
             lines.append(pad + 'over "%s"\n' % name + pad + '{\n')
             if not node[name]:
+                # `outputs:surface` is the universal/native terminal;
+                # `outputs:glslfx:surface` is the Storm UsdPreviewSurface
+                # terminal authored by the Island look layers. Override both so
+                # neither renderer reaches the original PTex shader network.
                 lines.append(
                     pad + '    token outputs:surface.connect = '
                     '</__ViewControlFlatPtex/Flat.outputs:surface>\n')
+                lines.append(
+                    pad + '    token outputs:glslfx:surface.connect = '
+                    '</__ViewControlFlatPtex/Flat.outputs:surface>\n')
+                # Drop the RenderMan displacement/surface terminals so the
+                # original PTex displacement/Disney chains are unreachable.
+                lines.append(
+                    pad + '    token outputs:ri:displacement.connect = None\n')
+                lines.append(
+                    pad + '    token outputs:ri:surface.connect = None\n')
             else:
                 emit(node[name], depth + 1)
             lines.append(pad + '}\n')
