@@ -184,6 +184,10 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
   }
   if (mat.coatRoughnessTex >= 0) p->coatRoughness = 1.0f;
+  // Match tydra-next's BuildRealtimePbrMaterial: the metallic workflow selects
+  // Storm's preview F0/F90 model (slot-41 sentinel) in the RT shaders. Without
+  // this the legacy loader shades the same UsdPreviewSurface differently.
+  p->previewSurfaceMetallicWorkflow = !mat.useSpecularWorkflow;
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
