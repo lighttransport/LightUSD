@@ -129,7 +129,6 @@ std::string DictMetaLine(const std::string& key, const Value& v, int level,
 void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                     const USDAWriteOptions& opts) {
   os << "#usda 1.0\n";
-  os << "(\n";
 
   std::vector<std::string> lines;
 
@@ -281,6 +280,12 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                                       std::string::npos) < 0;
                    });
 
+  // pxr writes no `( )` block at all when the layer has no metadata.
+  if (lines.empty()) {
+    os << "\n";
+    return;
+  }
+  os << "(\n";
   for (size_t i = 0; i < lines.size(); ++i) {
     os << lines[i];
     if (i + 1 < lines.size()) {

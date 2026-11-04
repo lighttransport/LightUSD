@@ -641,6 +641,7 @@ Token Lexer::make_borrowed_token(TokenType type, std::string_view value,
 Token Lexer::scan_token() {
   has_borrowed_text_ = false;
   borrowed_text_ = {};
+  prev_token_end_ = pos_;
   skip_whitespace();
   token_start_ = pos_;
 

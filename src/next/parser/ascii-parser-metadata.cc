@@ -24,9 +24,24 @@ bool AsciiParser::Impl::ParseStageMetadata() {
     lexer_->next();
 
     // Parse metadata key-value pairs
+    bool need_sep = false;
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
       // pxr accepts `;` as an optional statement separator.
-      if (Match(TokenType::Semicolon)) continue;
+      if (Match(TokenType::Semicolon)) {
+        need_sep = false;
+        continue;
+      }
+      // Entries need a newline or `;` between them (pxr rejects
+      // `( defaultPrim = "A" upAxis = "Y" )`).
+      if (need_sep && !lexer_->newline_before_current()) {
+        // Spec/pxr reject it; lenient mode keeps loading (warns).
+        if (options_.strict_aousd_conformance) {
+          AddError("Expected newline or ';' between layer metadata entries");
+          return false;
+        }
+        AddWarning("Expected newline or ';' between layer metadata entries" " (OpenUSD rejects this)");
+      }
+      need_sep = true;
       // A bare (often triple-quoted) string is the layer COMMENT — pxr's
       // only accepted spelling (26.x rejects `comment = "..."`; the bare
       // string maps to `comment`, not `doc`).
@@ -169,12 +184,20 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         }
       } else if (key == "customLayerData") {
         ParseResult r = ParseDict(*lexer_);
+        if (!r.success) {
+          AddError(r.error);
+          return false;
+        }
         if (r.success) {
           layer_->meta().customLayerData = std::move(r.value);
           layer_->meta().customLayerData_set = true;
         }
       } else if (key == "expressionVariables") {
         ParseResult r = ParseDict(*lexer_);
+        if (!r.success) {
+          AddError(r.error);
+          return false;
+        }
         if (r.success) {
           layer_->meta().expressionVariables = std::move(r.value);
           layer_->meta().expressionVariables_set = true;

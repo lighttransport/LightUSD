@@ -93,6 +93,14 @@ public:
   /// Get specifier (Def, Over, Class)
   PrimSpecifier GetSpecifier() const;
 
+  /// Whether API schema `api_schema` (optionally the multiple-apply instance
+  /// `instance`) is applied to this composed prim, including built-in and
+  /// auto-applied schemas. See SchemaRegistry::HasAPI.
+  bool HasAPI(const std::string& api_schema,
+              const std::string& instance = std::string()) const;
+  /// Applied API schemas (built-in/auto-applied first, then authored).
+  std::vector<std::string> GetAppliedSchemas() const;
+
   /// Check whether this prim and all ancestors resolve active=true.
   bool IsActive() const;
 

@@ -3,6 +3,8 @@
 
 #include "schema-registry.hh"
 
+#include "../stage/stage.hh"
+
 #include <algorithm>
 #include <limits>
 
@@ -714,6 +716,95 @@ bool ParseSchemaFamilyAndVersion(const std::string& name, std::string* family,
   if (version) *version = static_cast<uint32_t>(v);
   if (has_version) *has_version = true;
   return true;
+}
+
+namespace {
+
+bool IsMultipleApplyAPI(const std::string& schema) {
+  static const char* kMulti[] = {
+      "CollectionAPI", "CoordSysAPI", "PhysicsLimitAPI", "PhysicsDriveAPI",
+      "PhysxLimitAPI", "PhysicsMimicJointAPI", "NewtonMimicAPI",
+      "UsdPhysicsLimitAPI", "SemanticsLabelsAPI", "AccessibilityAPI",
+      "PrimvarSamplingAPI"};
+  for (const char* m : kMulti) {
+    if (schema == m) return true;
+  }
+  return false;
+}
+
+// Built-in (typed-schema apiSchemas) and auto-applied API schemas of a prim
+// type, OpenUSD 26.11 parity for the schemas next models.
+std::vector<std::string> BuiltinAPISchemas(const std::string& type) {
+  static const char* kLightTypes[] = {
+      "DistantLight", "DomeLight", "DomeLight_1", "SphereLight", "RectLight",
+      "DiskLight", "CylinderLight", "GeometryLight", "PortalLight",
+      "PluginLight"};
+  for (const char* lt : kLightTypes) {
+    if (type == lt) return {"LightAPI"};
+  }
+  if (type == "ParticleField3DGaussianSplat") {
+    return {"ParticleFieldPositionAttributeAPI",
+            "ParticleFieldOrientationAttributeAPI",
+            "ParticleFieldScaleAttributeAPI",
+            "ParticleFieldOpacityAttributeAPI",
+            "ParticleFieldKernelGaussianEllipsoidAPI",
+            "ParticleFieldSphericalHarmonicsAttributeAPI"};
+  }
+  return {};
+}
+
+// API schemas that themselves include LightAPI (pxr builtin apiSchemas).
+bool IncludesLightAPI(const std::string& api) {
+  return api == "MeshLightAPI" || api == "VolumeLightAPI";
+}
+
+}  // namespace
+
+std::vector<std::string> SchemaRegistry::AppliedSchemas(
+    const PrimSpec& prim) const {
+  std::vector<std::string> out = BuiltinAPISchemas(prim.type_name());
+  auto push = [&out](const std::string& s) {
+    if (std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
+  };
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    push(applied);
+    if (IncludesLightAPI(applied)) push("LightAPI");
+  }
+  return out;
+}
+
+bool SchemaRegistry::HasAPI(const PrimSpec& prim, const std::string& api_schema,
+                            const std::string& instance) const {
+  if (api_schema.empty()) return false;
+  const bool multi = IsMultipleApplyAPI(api_schema);
+  if (!instance.empty() && !multi) return false;
+  for (const std::string& applied : AppliedSchemas(prim)) {
+    if (!multi) {
+      if (applied == api_schema) return true;
+      continue;
+    }
+    if (applied.size() <= api_schema.size() + 1 ||
+        applied.compare(0, api_schema.size(), api_schema) != 0 ||
+        applied[api_schema.size()] != ':') {
+      continue;
+    }
+    if (instance.empty() ||
+        applied.compare(api_schema.size() + 1, std::string::npos, instance) ==
+            0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool UsdPrim::HasAPI(const std::string& api_schema,
+                     const std::string& instance) const {
+  return spec_ && GetSchemaRegistry().HasAPI(*spec_, api_schema, instance);
+}
+
+std::vector<std::string> UsdPrim::GetAppliedSchemas() const {
+  if (!spec_) return {};
+  return GetSchemaRegistry().AppliedSchemas(*spec_);
 }
 
 }  // namespace next

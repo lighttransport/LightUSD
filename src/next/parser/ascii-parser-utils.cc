@@ -143,7 +143,22 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   lexer_->next();  // consume '('
   PrimSpec* prim = builder_->current();
 
+  bool need_sep = false;
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    if (Match(TokenType::Semicolon) || Match(TokenType::Comma)) {
+      need_sep = false;
+      continue;
+    }
+    // Entries need a newline or `;` between them (pxr grammar).
+    if (need_sep && !lexer_->newline_before_current()) {
+      // Spec/pxr reject it; lenient mode keeps loading (warns).
+      if (options_.strict_aousd_conformance) {
+        AddError("Expected newline or ';' between property metadata entries");
+        return;
+      }
+      AddWarning("Expected newline or ';' between property metadata entries" " (OpenUSD rejects this)");
+    }
+    need_sep = true;
     // Bare string = property COMMENT (`float x = 1 ( "note" )`) — pxr's only
     // accepted spelling, same mapping as the prim/layer metadata blocks.
     if (Check(TokenType::String)) {

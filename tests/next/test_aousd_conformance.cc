@@ -725,7 +725,7 @@ void TestAuthoredEmptyMetadata() {
          "USDC documentation must use the standard field and retain authored state");
 
   LoadResult empty_prim_strings = Parse(
-      "over \"P\" (kind = \"\" displayName = \"\" comment = \"\") {}\n",
+      "over \"P\" (\n  kind = \"\"\n  displayName = \"\"\n  comment = \"\"\n) {}\n",
       true);
   assert(empty_prim_strings.success);
   const UsdPrim empty_strings_prim =
@@ -734,8 +734,8 @@ void TestAuthoredEmptyMetadata() {
          empty_strings_prim.GetMeta().displayNameAuthored() &&
          empty_strings_prim.GetMeta().comment_authored());
   LoadResult weak_prim_strings = Parse(
-      "def \"P\" (kind = \"component\" displayName = \"Weak\" "
-      "comment = \"Weak comment\") {}\n",
+      "def \"P\" (\n  kind = \"component\"\n  displayName = \"Weak\"\n"
+      "  comment = \"Weak comment\"\n) {}\n",
       true);
   PrimSpec merged_strings("P");
   Compositor::CopyLocalOpinions(
@@ -3755,6 +3755,73 @@ void TestUsdcatCompareParity() {
   }
 }
 
+// Coordinator follow-ups: dictionary key order, metadata separators, empty
+// layer header, applied-API-schema query.
+void TestPxrTextFormRules() {
+  // (a) pxr VtDictionary is a std::map: dictionary keys print sorted.
+  {
+    LoadResult r = Parse(
+        "def \"P\" (\n  customData = {\n    int zeta = 1\n"
+        "    dictionary beta = {\n      int y = 1\n      int x = 2\n    }\n"
+        "    int alpha = 3\n  }\n) {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    const size_t a = usda.find("int alpha"), b = usda.find("dictionary beta"),
+                 z = usda.find("int zeta"), x = usda.find("int x"),
+                 y = usda.find("int y");
+    assert(a != std::string::npos && a < b && b < z && x < y);
+  }
+  // (b) Entries on one line need `;`: strict rejects, lenient warns.
+  {
+    const char* bad[] = {
+        "(\n  defaultPrim = \"A\" upAxis = \"Y\"\n)\n",
+        "def \"A\" ( kind = \"component\" active = true ) {}\n",
+        "def \"A\" (\n  customData = {\n    int a = 1 int b = 2\n  }\n) {}\n",
+        "def \"A\" {\n  float x = 1 ( doc = \"d\" hidden = true )\n}\n"};
+    for (const char* src : bad) {
+      assert(!Parse(src, true).success);
+      LoadResult lenient = Parse(src, false);
+      assert(lenient.success);
+    }
+    assert(!Parse(bad[1], false).warnings.empty());
+    assert(Parse("def \"A\" ( kind = \"component\"; active = true ) {}\n"
+                 "def \"B\" ( customData = { int a = 1; int b = 2 } ) {}\n",
+                 true).success);
+  }
+  // (c) No metadata -> no `( )` layer header (pxr spelling).
+  {
+    LoadResult r = Parse("def \"A\" {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.compare(0, 11, "#usda 1.0\n\n") == 0);
+    assert(usda.find("(") == std::string::npos);
+  }
+  // (d) Applied API schema query on composed prims.
+  {
+    LoadResult r = Parse(
+        "def SphereLight \"L\" {}\n"
+        "def Mesh \"M\" (\n"
+        "  prepend apiSchemas = [\"MaterialBindingAPI\", "
+        "\"CollectionAPI:lights\", \"MeshLightAPI\"]\n) {}\n"
+        "def ParticleField3DGaussianSplat \"G\" {}\n");
+    assert(r.success);
+    const UsdPrim l = r.stage.GetPrimAtPath("/L");
+    const UsdPrim m = r.stage.GetPrimAtPath("/M");
+    const UsdPrim g = r.stage.GetPrimAtPath("/G");
+    assert(l.HasAPI("LightAPI") && !l.HasAPI("ShapingAPI"));
+    assert(m.HasAPI("MaterialBindingAPI"));
+    assert(!m.HasAPI("MaterialBindingAPI", "x"));
+    assert(m.HasAPI("CollectionAPI") && m.HasAPI("CollectionAPI", "lights") &&
+           !m.HasAPI("CollectionAPI", "other"));
+    assert(m.HasAPI("MeshLightAPI") && m.HasAPI("LightAPI"));
+    assert(g.HasAPI("ParticleFieldPositionAttributeAPI"));
+    assert(!g.HasAPI("MaterialBindingAPI"));
+    const std::vector<std::string> applied = m.GetAppliedSchemas();
+    assert(applied.size() == 4 && applied[1] == "CollectionAPI:lights");
+    assert(!UsdPrim().HasAPI("LightAPI"));
+  }
+}
+
 int main() {
   TestUnicodeAndPaths();
   TestPathGrammarProductions();
@@ -3794,6 +3861,7 @@ int main() {
   TestGeneratedElectiveAuthoredRoundtrips();
   TestUnregisteredListOpAuthoredRoundtrips();
   TestUsdcatCompareParity();
+  TestPxrTextFormRules();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
 }

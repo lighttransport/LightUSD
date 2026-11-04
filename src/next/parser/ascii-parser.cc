@@ -863,8 +863,23 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
   };
 
+  bool need_sep = false;
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
-    if (Match(TokenType::Semicolon)) continue;
+    if (Match(TokenType::Semicolon)) {
+      need_sep = false;
+      continue;
+    }
+    // Entries need a newline or `;` between them (pxr grammar; OpenUSD
+    // rejects `( kind = "a" active = true )`).
+    if (need_sep && !lexer_->newline_before_current()) {
+      // Spec/pxr reject it; lenient mode keeps loading (warns).
+      if (options_.strict_aousd_conformance) {
+        AddError("Expected newline or ';' between prim metadata entries");
+        return false;
+      }
+      AddWarning("Expected newline or ';' between prim metadata entries" " (OpenUSD rejects this)");
+    }
+    need_sep = true;
     // A bare (often triple-quoted) string is the prim COMMENT — pxr's only
     // accepted spelling (26.x rejects `comment = "..."` as a non-metadata
     // field; the bare string maps to `comment`, not `doc`).
@@ -1116,18 +1131,30 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "customData") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().customData() = std::move(r.value);
         prim->meta().setCustomDataAuthored();
       }
     } else if (key == "assetInfo") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().assetInfo() = std::move(r.value);
         prim->meta().setAssetInfoAuthored();
       }
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().sdrMetadata() = std::move(r.value);
         prim->meta().setSdrMetadataAuthored();
@@ -1139,6 +1166,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       // extension field so USDC writes a real dictionary (not the private
       // raw-text blob used for unknown prim metadata).
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         auto& fields = prim->meta().unknownFields();
         fields.erase(std::remove_if(fields.begin(), fields.end(),
@@ -1153,6 +1184,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       }
     } else if (key == "clips") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().clips() = std::move(r.value);
         prim->meta().setClipsAuthored();

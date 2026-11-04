@@ -111,6 +111,18 @@ public:
     column_ = 1;
   }
 
+  /// True when a newline (or line comment) separates the previously scanned
+  /// token from the current (peeked) one. USDA statements in metadata lists
+  /// and dictionaries are separated by a newline or `;` (pxr grammar).
+  bool newline_before_current() {
+    (void)peek_view();
+    const size_t end = token_start_ < length_ ? token_start_ : length_;
+    for (size_t i = prev_token_end_; i < end; ++i) {
+      if (data_[i] == '\n' || data_[i] == '\r') return true;
+    }
+    return false;
+  }
+
   /// Peek at current token without consuming
   const Token& peek();
   TokenView peek_view();
@@ -281,6 +293,9 @@ private:
   bool fatal_ = false;
   bool position_reset_ = false;
   size_t token_start_ = 0;
+  // Byte position right after the previously scanned token (before the
+  // whitespace/comments preceding the current one).
+  size_t prev_token_end_ = 0;
 
   // Per-byte primitives, inline: they sit in every scanning loop.
   void advance() {

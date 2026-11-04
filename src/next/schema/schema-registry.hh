@@ -54,6 +54,18 @@ class SchemaRegistry {
   bool IsConcreteTypedSchemaName(const std::string& schema_type) const;
   /// Abstract typed schemas known to the registry (OpenUSD v26.11 parity).
   static bool IsAbstractTypedSchemaName(const std::string& schema_type);
+  /// UsdPrim::HasAPI semantics on a composed prim: true when `api_schema`
+  /// is applied — authored in the composed apiSchemas, built into the prim's
+  /// typed schema (e.g. LightAPI on SphereLight), or auto-applied (the 3D
+  /// Gaussian ParticleField APIs). For a multiple-apply schema an empty
+  /// `instance` matches any applied instance, otherwise only
+  /// "<api_schema>:<instance>". A single-apply schema never matches a
+  /// non-empty instance.
+  bool HasAPI(const PrimSpec& prim, const std::string& api_schema,
+              const std::string& instance = std::string()) const;
+  /// The prim's applied API schemas in pxr GetAppliedSchemas order: built-in
+  /// (typed-schema / auto-applied) entries first, then authored ones.
+  std::vector<std::string> AppliedSchemas(const PrimSpec& prim) const;
 
  private:
   SchemaRegistry();
