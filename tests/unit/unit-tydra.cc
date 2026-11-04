@@ -2455,6 +2455,17 @@ void tydra_lightrt_opacity_mode_test(void) {
   TEST_CHECK(packed[56] == 1.0f);
   TEST_CHECK(packed[42] == 0.4f);
   TEST_CHECK(packed[0] == 0.25f);
+
+  // UsdPreviewSurface metallic workflow is flagged with a 2.0 sentinel in slot
+  // 41 so the RT shader can use Storm's F0 = mix(SC*r2, SC, metallic) while
+  // OpenPBR keeps its diffuseRoughness value there.
+  RealtimePbrMaterial preview = presence;
+  preview.previewSurfaceMetallicWorkflow = true;
+  PackRealtimePbrMaterial(preview, true, 0.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[41] == 2.0f);
+  preview.previewSurfaceMetallicWorkflow = false;
+  PackRealtimePbrMaterial(preview, true, 0.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[41] == 0.2f);
 }
 
 void tydra_progress_cancellation_test(void) {

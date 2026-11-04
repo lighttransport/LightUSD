@@ -3287,9 +3287,9 @@ camera-attached constant-attenuation light as `UsdAppUtilsFrameRecorder`.
 [jobs/usd-assets-beauty-refcam.json](../tools/view_control/jobs/usd-assets-beauty-refcam.json)
 passes 8/9 frames (RiggedSimple 0.9879, mid-pose 0.9859, RiggedFigure
 0.981-0.984, TextureCoordinateTest 0.9575, NormalsTextureBiasAndScale 0.9652;
-RoughnessTest 0.0189/0.8864 after the UsdPreviewSurface
-transparent-opacity fix; its MAE passes and the remaining SSIM gap is the
-specular BRDF model). `beauty_lighting`
+RoughnessTest 0.0206/0.8896 after the UsdPreviewSurface
+transparent-opacity, Smith-G2, energy-compensation and preview-F0 fixes; its
+MAE passes and the remaining SSIM gap is Storm's alpha/opacity composition). `beauty_lighting`
 (`{"key":1.0,"fill":0.25}`) remains as an explicitly named camera-light
 approximation for the older wrapper runs. See
 [the default-contract report](validation/beauty-default-contract-2026-11-04.md).

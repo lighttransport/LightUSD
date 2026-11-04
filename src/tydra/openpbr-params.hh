@@ -74,6 +74,12 @@ struct RealtimePbrMaterial {
   // only the diffuse lobe and keeps the surface opaque; "presence" treats
   // opacity as coverage (stochastic/dithered or cutout alpha).
   bool opacityTransparent{false};
+  // UsdPreviewSurface metallic workflow (useSpecularWorkflow == 0). Storm's
+  // MaterialX graph computes F0 as mix(SC*r2, SC, metallic) with
+  // SC = mix(1, baseColor, metallic), which differs from the generic OpenPBR
+  // mix(iorF0*specularColor*specularWeight, baseColor, metallic). Packed as a
+  // 2.0 sentinel in slot 41 (diffuseRoughness stays in [0,1]).
+  bool previewSurfaceMetallicWorkflow{false};
 };
 
 inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
@@ -133,7 +139,7 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   StoreOpenPBR3(p.emissionColor, dst + 32);       dst[35] = p.emission;
   StoreOpenPBR3(p.normal, dst + 36);              dst[39] = p.opacity;
   dst[40] = p.metalness;
-  dst[41] = p.diffuseRoughness;
+  dst[41] = p.previewSurfaceMetallicWorkflow ? 2.0f : p.diffuseRoughness;
   dst[42] = p.specularRoughness;
   dst[43] = p.specularIor;
   dst[44] = p.coatRoughness;

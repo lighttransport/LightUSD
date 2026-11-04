@@ -55,6 +55,7 @@ inline bool BuildRealtimePbrMaterial(
         &s.roughness, &s.clearcoat, &s.clearcoat_roughness, &s.opacity,
         &s.normal, &s.displacement, &s.occlusion});
     p.hasNormalInput = ShaderParamHasTexture(s.normal);
+    p.previewSurfaceMetallicWorkflow = !s.use_specular_workflow;
   } else if (rm.shader_type == RenderMaterial::ShaderType::OpenPBR &&
              rm.openpbr) {
     const OpenPBRSurfaceShader &s = *rm.openpbr;
