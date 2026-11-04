@@ -105,6 +105,10 @@ std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
         tn::Value(static_cast<float>(friction[1])), "float");
     Set(material, "newton:rollingFriction",
         tn::Value(static_cast<float>(friction[2])), "float");
+    if (ActiveProfile().MjcOnly()) {
+      Set(material, "mjc:torsionalfriction", tn::Value(friction[1]), "double", true);
+      Set(material, "mjc:rollingfriction", tn::Value(friction[2]), "double", true);
+    }
     if (stiffness) {
       Set(material, "newton:contactStiffness", tn::Value(static_cast<float>(ke)), "float");
       Set(material, "newton:contactDamping", tn::Value(static_cast<float>(kd)), "float");
@@ -198,6 +202,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     if (inertia == "shell") {
       AddAPI(prim, "NewtonMassAPI");
       SetToken(prim, "newton:massModel", "shell", true);
+      if (profile.MjcOnly()) SetToken(prim, "mjc:inertia", inertia, true);
     } else if (inertia == "legacy" || inertia == "exact") {
       // MuJoCo's decoder infers convex without it.
       SetToken(prim, "mjc:inertia", inertia, true);
@@ -205,6 +210,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   } else if (!profile.legacy && StringFrom(src, "newton", "massModel", "") == "shell") {
     AddAPI(prim, "NewtonMassAPI");
     SetToken(prim, "newton:massModel", "shell", true);
+    if (profile.MjcOnly()) Set(prim, "mjc:shellinertia", tn::Value(true), "bool", true);
   }
   if (mjcf_source) {
     int32_t ivalue = 0;
@@ -238,7 +244,8 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     }
     if (ReadNumberFrom(src, "mjc", "margin", &dvalue)) {
       // mjc:margin/gap are deprecated aliases of newton:contactMargin/Gap.
-      if (profile.legacy) Set(prim, "mjc:margin", tn::Value(dvalue), "double", true);
+      if (profile.legacy || profile.MjcOnly())
+        Set(prim, "mjc:margin", tn::Value(dvalue), "double", true);
       Set(prim, "newton:contactMargin",
           tn::Value(static_cast<float>(dvalue)), "float");
     } else if (ReadNumberFrom(src, "newton", "contactMargin", &dvalue)) {
@@ -246,7 +253,8 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
           tn::Value(static_cast<float>(dvalue)), "float");
     }
     if (ReadNumberFrom(src, "mjc", "gap", &dvalue)) {
-      if (profile.legacy) Set(prim, "mjc:gap", tn::Value(dvalue), "double", true);
+      if (profile.legacy || profile.MjcOnly())
+        Set(prim, "mjc:gap", tn::Value(dvalue), "double", true);
       Set(prim, "newton:contactGap", tn::Value(static_cast<float>(dvalue)),
           "float");
     } else if (ReadNumberFrom(src, "newton", "contactGap", &dvalue)) {
@@ -317,6 +325,8 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     int32_t hull = 0;
     // Non-legacy profiles leave an unlimited MJCF hull unauthored (MuJoCo's
     // decoder would otherwise cap it at the authored value).
+    if (profile.MjcOnly() && ReadIntFrom(src, "newton", "maxHullVertices", &hull))
+      Set(prim, "mjc:maxhullvert", tn::Value(hull), "int", true);
     if (profile.legacy || ReadIntFrom(src, "newton", "maxHullVertices", &hull))
       Set(prim, "newton:maxHullVertices",
           tn::Value(JsonIntFrom(src, "newton", "maxHullVertices",

@@ -210,7 +210,8 @@ int main() {
     assert(lightusd_prim_is_valid(weld));
     auto drive = lightusd_stage_prim_at_path(stage, legacy ? "/World/Actuators/position_j1"
                                                            : "/World/MjcActuators/position_j1");
-    assert(lightusd_prim_is_valid(drive) == (std::string(profile) != "openusd"));
+    // openusd keeps MjcPhysics records (MjcActuator) but no Newton data.
+    assert(lightusd_prim_is_valid(drive));
     lightusd_string* usda = nullptr;
     assert(lightusd_stage_export_usda(stage, &usda) == LIGHTUSD_OK);
     const auto out = lightusd_string_view(usda);
@@ -390,6 +391,118 @@ int main() {
     assert(std::string(lightusd_last_error()).find("not finite") != std::string::npos);
     std::remove(stl.c_str());
     std::remove(xml.c_str());
+  }
+  // openusd profile: MuJoCo data without a UsdPhysics home is authored in the
+  // MjcPhysics schema (mjc:*, Mjc* APIs/prims) instead of being dropped, and
+  // survives USDA, USDC and USDZ reload. No newton:* data is authored.
+  {
+    const char* model = R"(<mujoco><option timestep=".004" iterations="7" impratio="2">
+<flag gravity="disable"/></option>
+<worldbody><body name="a" pos="0 0 1"><freejoint/>
+<geom name="ga" size=".05" margin=".01" gap=".002" priority="2" solref=".01 1.5" solimp=".8 .9 .01 .5 2" friction=".7 .02 .003"/>
+<body name="b" pos=".3 0 0"><joint name="h" axis="0 1 0" range="-30 30" armature=".25" damping="3" frictionloss=".4"
+ stiffness="5" springref="10" ref="2" margin=".03" solreflimit=".03 1.1"/>
+<geom name="gb" type="box" size=".05 .05 .05" shellinertia="true"/><site name="s"/></body>
+<body name="c" pos="0 .3 0"><joint name="k" axis="1 0 0"/><geom size=".04"/></body></body></worldbody>
+<tendon><fixed name="t" stiffness="4"><joint joint="h" coef="1"/><joint joint="k" coef="-1"/></fixed></tendon>
+<equality><joint joint1="k" joint2="h" polycoef=".1 2 0 0 0"/></equality>
+<contact><exclude body1="a" body2="b"/><pair geom1="ga" geom2="gb" condim="4"/></contact>
+<actuator><position joint="h" kp="9"/></actuator><sensor><jointpos joint="h"/></sensor>
+<keyframe><key name="home" qpos="0 0 1 1 0 0 0 .5 .25"/></keyframe>
+<custom><numeric name="n" data="1 2"/></custom></mujoco>)";
+    lightusd_import_options_init(&options);
+    options.format = LIGHTUSD_IMPORT_MJCF;
+    options.settings_json = "{\"profile\":\"openusd\"}";
+    lightusd_stage* imported = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(model), std::strlen(model),
+                                  "memory:ext.xml", &options, &imported) == LIGHTUSD_OK ||
+           (std::cerr << lightusd_last_error() << "\n", false));
+    auto number = [](lightusd_stage* st, const char* path, const char* name) {
+      lightusd_value_view v{};
+      if (lightusd_attr_get(lightusd_stage_prim_at_path(st, path), name, &v) != LIGHTUSD_OK ||
+          !v.data || v.is_array)
+        return std::nan("");
+      switch (v.storage) {
+        case LIGHTUSD_COMP_FLOAT64: return *static_cast<const double*>(v.data);
+        case LIGHTUSD_COMP_FLOAT32: return double(*static_cast<const float*>(v.data));
+        case LIGHTUSD_COMP_INT32: return double(*static_cast<const int32_t*>(v.data));
+        case LIGHTUSD_COMP_UINT8: return double(*static_cast<const uint8_t*>(v.data));
+        default: return std::nan("");
+      }
+    };
+    auto check = [&](lightusd_stage* st, const char* label) {
+      lightusd_string* text = nullptr;
+      assert(lightusd_stage_export_usda(st, &text) == LIGHTUSD_OK);
+      const auto view = lightusd_string_view(text);
+      const std::string usda(view.data, view.len);
+      lightusd_string_destroy(text);
+      if (std::getenv("LIGHTUSD_DUMP_OPENUSD_EXT")) std::cout << label << "\n" << usda << "\n";
+      assert(usda.find("newton:") == std::string::npos);
+      assert(usda.find("Newton") == std::string::npos);
+      for (const char* needle :
+           {"MjcSceneAPI", "MjcJointAPI", "MjcCollisionAPI",
+            "MjcMaterialAPI", "MjcSiteAPI", "MjcEqualityJointAPI", "PhysicsFilteredPairsAPI",
+            "def MjcActuator", "def MjcTendon", "def MjcKeyframe", "def MjcSensor", "mjc:solreflimit",
+            "mjc:solimp", "mjc:solref", "mjc:target", "mjc:path", "mjc:qpos",
+            "mjc:custom:n", "mjc:geom1", "mjc:shellinertia = 1"})
+        if (usda.find(needle) == std::string::npos) {
+          std::cerr << label << ": missing " << needle << "\n";
+          assert(false);
+        }
+      const char* scene = "/World/PhysicsScene";
+      const char* joint = "/World/Joints/h";
+      assert(number(st, scene, "mjc:option:timestep") == 0.004);
+      assert(number(st, scene, "mjc:option:iterations") == 7);
+      assert(number(st, scene, "mjc:option:impratio") == 2);
+      assert(number(st, scene, "mjc:flag:gravity") == 0);
+      // MJCF units (per radian), not NewtonJointAPI's per-degree damping.
+      assert(number(st, joint, "mjc:armature") == 0.25);
+      assert(number(st, joint, "mjc:damping") == 3);
+      assert(number(st, joint, "mjc:frictionloss") == 0.4);
+      assert(number(st, joint, "mjc:stiffness") == 5);
+      assert(number(st, joint, "mjc:margin") == 0.03);
+      assert(number(st, "/World/Links/a/ga", "mjc:margin") == 0.01);
+      assert(number(st, "/World/Links/a/ga", "mjc:gap") == 0.002);
+      assert(number(st, "/World/Links/a/ga", "mjc:priority") == 2);
+      assert(number(st, "/World/Joints/k", "mjc:coef0") == 0.1);
+      assert(number(st, "/World/Joints/k", "mjc:coef1") == 2);
+      assert(lightusd_rel_target_count(lightusd_stage_prim_at_path(st, "/World/Joints/k"),
+                                       "mjc:target") == 1);
+      // Unauthored MJCF values stay unauthored (no forced zero margin/gap).
+      assert(std::isnan(number(st, "/World/Joints/k", "mjc:armature")));
+      assert(std::isnan(number(st, "/World/Links/b/gb", "mjc:gap")));
+      bool torsional = false;
+      for (size_t i = 0; i < 4 && !torsional; ++i) {
+        const std::string path = "/World/PhysicsMaterials/PhysicsMaterial" +
+                                 (i ? "_" + std::to_string(i) : std::string());
+        torsional = number(st, path.c_str(), "mjc:torsionalfriction") == 0.02 &&
+                    number(st, path.c_str(), "mjc:rollingfriction") == 0.003;
+      }
+      assert(torsional);
+    };
+    check(imported, "imported");
+    lightusd_string* crate = nullptr;
+    assert(lightusd_stage_export_usdc(imported, &crate) == LIGHTUSD_OK);
+    const auto crate_view = lightusd_string_view(crate);
+    lightusd_stage* reloaded = nullptr;
+    assert(lightusd_stage_load_from_memory(reinterpret_cast<const uint8_t*>(crate_view.data),
+                                           crate_view.len, nullptr, &reloaded) == LIGHTUSD_OK);
+    lightusd_string_destroy(crate);
+    check(reloaded, "usdc");
+    lightusd_stage_destroy(reloaded);
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string base = std::string((tmp && *tmp) ? tmp : "/tmp") + "/lightusd_openusd_ext_" +
+                             std::to_string(reinterpret_cast<uintptr_t>(&options));
+    for (const char* ext : {".usda", ".usdc", ".usdz"}) {
+      const std::string file = base + ext;
+      assert(lightusd_stage_save(imported, file.c_str(), nullptr) == LIGHTUSD_OK);
+      reloaded = nullptr;
+      assert(lightusd_stage_load(file.c_str(), nullptr, &reloaded) == LIGHTUSD_OK);
+      check(reloaded, ext);
+      lightusd_stage_destroy(reloaded);
+      if (!std::getenv("LIGHTUSD_KEEP_OPENUSD_EXT")) std::remove(file.c_str());
+    }
+    lightusd_stage_destroy(imported);
   }
 #if defined(__linux__)
   // The walkers are iterative: a 1000-deep body chain plus a 512-vertex cable

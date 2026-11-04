@@ -60,7 +60,7 @@ struct Options {
   std::string format = "auto";
   std::string up_axis = "Z";
   // USD output profile: "newton" (Newton 1.8 / newton-usd-schemas 0.6 /
-  // MuJoCo 3.16 decoder parity), "openusd" (standard schemas only) or
+  // MuJoCo 3.16 decoder parity), "openusd" (standard schemas + MjcPhysics) or
   // "legacy" (historical output). See doc/usd-physics.md.
   std::string profile = "newton";
   // Keep mesh positions/normals/uvs/indices as typed buffers (Result::meshes)

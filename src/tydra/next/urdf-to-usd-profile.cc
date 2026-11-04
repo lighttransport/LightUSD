@@ -105,12 +105,14 @@ const SchemaProperty *FindSchemaProperty(const std::string &name) {
 }
 
 bool IsEngineName(const std::string &name) {
+  if (ActiveProfile().mjc && name.compare(0, 4, "mjc:") == 0) return false;
   return name.compare(0, 4, "mjc:") == 0 || name.compare(0, 7, "newton:") == 0 ||
          name.compare(0, 5, "physx") == 0 || name.compare(0, 5, "urdf:") == 0 ||
          name.compare(0, 9, "lightusd:") == 0;
 }
 
 bool IsEngineSchema(const std::string &schema) {
+  if (ActiveProfile().mjc && schema.compare(0, 3, "Mjc") == 0) return false;
   return schema.compare(0, 3, "Mjc") == 0 || schema.compare(0, 6, "Newton") == 0 ||
          schema.compare(0, 5, "Physx") == 0;
 }

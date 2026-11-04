@@ -23,13 +23,19 @@ using Matrix4 = std::array<double, 16>;  // row-major, translation in row 3
 // Output profile. `legacy` reproduces the historical converter output byte for
 // byte (the JSON bridge default). `newton` matches Newton 1.8 /
 // newton-usd-schemas 0.6 / mujoco-usd-converter 0.8 consumers and is the native
-// importer default. `openusd` authors only standard UsdPhysics/UsdGeom/UsdShade
-// data: engine extensions (mjc:*, newton:*, physx*) are omitted and reported.
+// importer default. `openusd` authors standard UsdPhysics/UsdGeom/UsdShade data
+// plus MuJoCo's published MjcPhysics schema (mjc:*, Mjc* APIs/prims, which a
+// stock OpenUSD stage keeps as authored data and MuJoCo's USD decoder reads);
+// Newton/PhysX/LightUSD/URDF extensions are omitted and reported.
 struct Profile {
   const char *name = "legacy";
   bool legacy = true;   // historical names, variability and aliases
   bool newton = false;  // Newton 1.8 parity APIs (NewtonJointAPI, ...)
-  bool engine = true;   // author MuJoCo/Newton/PhysX extension data at all
+  bool engine = true;   // author Newton/PhysX/LightUSD extension data
+  bool mjc = true;      // author MjcPhysics (mjc:*) data
+  // openusd: MjcPhysics is the only extension namespace, so data the newton
+  // profile keeps in newton:* is authored under its mjc:* equivalent.
+  bool MjcOnly() const { return !engine && mjc; }
 };
 bool ParseProfile(const std::string &name, Profile *out);
 const Profile &ActiveProfile();

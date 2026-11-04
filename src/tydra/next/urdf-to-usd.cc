@@ -9,6 +9,7 @@
 #include "next/types/value.hh"
 #include "next/reader/obj-reader.hh"
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -36,10 +37,12 @@ static bool ConvertPayloadLayer(
     return false;
   }
   ProfileScope profile_scope(profile);
-  // The openusd profile has no schema for MuJoCo/Newton-only records; say
-  // what was omitted instead of authoring empty engine-typed prims.
+  // The openusd profile keeps MjcPhysics records (tendons, MjcActuator,
+  // keyframes, sensors, contact pairs) but has no schema for Newton-only
+  // ones; say what was omitted instead of authoring empty engine-typed prims.
   auto engine_section = [&](const char *key, const char *what) {
     if (profile.engine) return true;
+    if (profile.mjc && std::strcmp(key, "actuators") != 0) return true;
     const Json *items = JsonArray(root, key);
     if (items && !items->empty())
       AppendWarn(warn, "openusd profile omits " + std::to_string(items->size()) + " " +
@@ -756,7 +759,7 @@ static bool ConvertPayloadLayer(
 
   // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX
   // knobs), authored only when it carries at least one entry.
-  if (const Json *custom = profile.engine ? JsonObject(root, "custom") : nullptr) {
+  if (const Json *custom = (profile.engine || profile.mjc) ? JsonObject(root, "custom") : nullptr) {
     std::vector<std::pair<std::string, const Json *>> numeric, text;
     if (const Json *items = JsonArray(*custom, "numeric")) {
       for (const Json &n : *items) {
@@ -786,7 +789,7 @@ static bool ConvertPayloadLayer(
   // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins; the
   // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
   // MjcActuator's mjc:instance.
-  if (const Json *plugins = profile.engine ? JsonArray(root, "plugins") : nullptr) {
+  if (const Json *plugins = (profile.engine || profile.mjc) ? JsonArray(root, "plugins") : nullptr) {
     std::vector<std::pair<std::string, std::string>> tokens;
     for (const Json &p : *plugins) {
       const std::string inst = JsonString(p, "instance");
