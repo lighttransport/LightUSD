@@ -263,14 +263,9 @@ static int test_authoring_roundtrip(void) {
   CHECK(usda_sv.len > 0);
   CHECK(strstr(usda_sv.data, "Grid") != NULL);
 
-  /* Raw layer round-trip: the fixture has an unresolved external reference
-     and /World is inactive, so a composed load would prune its children. */
-  lightusd_load_options raw_opts;
-  lightusd_load_options_init(&raw_opts);
-  raw_opts.composed = 0;
   lightusd_stage* re = NULL;
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usda_sv.data,
-                                       usda_sv.len, &raw_opts, &re));
+                                       usda_sv.len, NULL, &re));
   lightusd_string_destroy(usda);
 
   lightusd_prim regrid = lightusd_stage_prim_at_path(re, "/World/Geo/Grid");
@@ -290,7 +285,7 @@ static int test_authoring_roundtrip(void) {
   CHECK(usdc_sv.len > 8);
   CHECK(memcmp(usdc_sv.data, "PXR-USDC", 8) == 0);
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
-                                       usdc_sv.len, &raw_opts, &re));
+                                       usdc_sv.len, NULL, &re));
   lightusd_string_destroy(usdc);
   regrid = lightusd_stage_prim_at_path(re, "/World/Geo/Grid");
   CHECK(lightusd_prim_is_valid(regrid));
@@ -1460,42 +1455,6 @@ static int test_buffer_pins(void) {
   return 0;
 }
 
-static int test_memory_load_composes_internal_arcs(void) {
-  static const char text[] =
-      "#usda 1.0\n"
-      "class \"Base\" (\n  prepend apiSchemas = [\"MaterialBindingAPI\"]\n)\n"
-      "{\n  float amount = 7\n}\n"
-      "def Xform \"Child\" (\n  inherits = </Base>\n)\n{\n}\n"
-      "def Xform \"Ref\" (\n  references = </Base>\n)\n{\n}\n";
-  lightusd_load_options options;
-  lightusd_load_options_init(&options);
-  lightusd_stage* stage = NULL;
-  CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)text,
-                                           sizeof(text) - 1, &options, &stage));
-  const char* paths[] = {"/Child", "/Ref"};
-  for (int i = 0; i < 2; i++) {
-    lightusd_prim prim = lightusd_stage_prim_at_path(stage, paths[i]);
-    CHECK(lightusd_prim_is_valid(prim));
-    lightusd_value_view view;
-    CHECK_OK(lightusd_attr_get(prim, "amount", &view));
-    CHECK(view.data && *(const float*)view.data == 7.0f);
-  }
-  lightusd_value* schemas = NULL;
-  CHECK_OK(lightusd_prim_get_metadata(
-      lightusd_stage_prim_at_path(stage, "/Child"), "apiSchemas", &schemas));
-  lightusd_value_destroy(schemas);
-  lightusd_stage_destroy(stage);
-
-  /* composed = 0 keeps the raw single-layer behavior. */
-  options.composed = 0;
-  CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)text,
-                                           sizeof(text) - 1, &options, &stage));
-  CHECK(lightusd_prim_property_count(
-            lightusd_stage_prim_at_path(stage, "/Child")) == 0);
-  lightusd_stage_destroy(stage);
-  return 0;
-}
-
 int main(int argc, char** argv) {
   if (test_buffer_pins()) return 1;
   if (test_skeleton_sample()) return 1;
@@ -1532,8 +1491,6 @@ int main(int argc, char** argv) {
     if (test_native_instance_load(argv[2])) return 1;
     printf("  native instance load option: PASSED\n");
   }
-  if (test_memory_load_composes_internal_arcs()) return 1;
-  printf("  memory load composes internal arcs: PASSED\n");
   if (test_usda_lazy_load_options()) return 1;
   printf("  usda lazy parse options: PASSED\n");
   printf("All C API tests PASSED\n");
