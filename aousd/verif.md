@@ -31,7 +31,8 @@ Each normative change in the v1.1.0 changelog was checked against OpenUSD
 | Splines: inner loops (`LoopParameters`) | **Fixed**: were parsed but never evaluated |
 | Splines: evaluation-time anti-regression must be Keep Ratio | **Fixed** (exact non-regressive limit; pxr stops ~1e-5 short, so values agree to ~1e-5) |
 | Piecewise-linear approximation | Optional (MAY); not implemented |
-| Native instancing / schema families and versioning | Not re-audited in this pass |
+| Native instancing: ignored non-arc specs/arcs under an instance, ancestral arcs, implied-arc sharing (spec examples 1-3 + variants) | Already conformant: prototype sharing, flatten and instance-proxy values identical to pxr; stable cases added as `tests/usda/aousd11-instancing-*` gate fixtures |
+| Schema families and versioning | **Implemented**: `ParseSchemaFamilyAndVersion` (spec grammar; agrees with OpenUSD except `_1`, which pxr splits as family `''`), and schema manifests reject a versioned schema inheriting its own family |
 
 Pinned by `TestSplineCore11Parity` (tests/next/test_aousd_conformance.cc).
 

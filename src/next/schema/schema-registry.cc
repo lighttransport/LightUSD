@@ -631,5 +631,27 @@ const SchemaRegistry& GetSchemaRegistry() {
   return registry;
 }
 
+bool ParseSchemaFamilyAndVersion(const std::string& name, std::string* family,
+                                 uint32_t* version, bool* has_version) {
+  if (family) *family = name;
+  if (version) *version = 0;
+  if (has_version) *has_version = false;
+  if (name.empty()) return false;
+  size_t end = name.size();
+  size_t digits = end;
+  while (digits > 0 && name[digits - 1] >= '0' && name[digits - 1] <= '9') --digits;
+  // Need >= 1 digit, a '_' right before them, and a non-empty family.
+  if (digits == end || digits < 2 || name[digits - 1] != '_') return true;
+  uint64_t v = 0;
+  for (size_t i = digits; i < end; ++i) {
+    v = v * 10u + static_cast<uint64_t>(name[i] - '0');
+    if (v > UINT32_MAX) { v = UINT32_MAX; break; }
+  }
+  if (family) *family = name.substr(0, digits - 1);
+  if (version) *version = static_cast<uint32_t>(v);
+  if (has_version) *has_version = true;
+  return true;
+}
+
 }  // namespace next
 }  // namespace lightusd

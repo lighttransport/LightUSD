@@ -244,9 +244,25 @@ expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
   for (const auto& pair : candidate) {
     std::set<std::string> seen;
     std::string name = pair.first;
+    // AOUSD Core 1.1: a VERSIONED schema must not inherit from any schema in
+    // its own family (`Cylinder_2` may not inherit `Cylinder_1`/`Cylinder`).
+    std::string own_family;
+    uint32_t own_version = 0;
+    bool versioned = false;
+    ParseSchemaFamilyAndVersion(pair.first, &own_family, &own_version, &versioned);
     while (!name.empty()) {
       if (!seen.insert(name).second)
         return make_unexpected(std::string("cyclic schema inheritance: ") + name);
+      if (versioned && name != pair.first) {
+        std::string family;
+        uint32_t version = 0;
+        bool has_version = false;
+        ParseSchemaFamilyAndVersion(name, &family, &version, &has_version);
+        if (family == own_family)
+          return make_unexpected(std::string("versioned schema ") + pair.first +
+                                 " inherits from its own schema family (" +
+                                 name + ")");
+      }
       auto i = candidate.find(name);
       if (i == candidate.end()) {
         if (const auto builtin = BuiltinSchema(name)) { name = builtin->parent; continue; }

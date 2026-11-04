@@ -6,6 +6,7 @@
 #include "../layer/prim-spec.hh"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,16 @@ class SchemaRegistry {
 };
 
 const SchemaRegistry& GetSchemaRegistry();
+
+/// AOUSD Core 1.1 "Schema Families and Versioning": split a schema name into
+/// its family and optional version. `SchemaName <- Family ('_' Version)?`,
+/// matching the LAST `_<digits>` suffix; the family must be non-empty (so
+/// `_1` is the unversioned family `_1`, per the grammar's AsciiStart).
+/// `Gaussian_Splatting_3` -> (`Gaussian_Splatting`, 3); `MySchema_` and
+/// `Foo_1a` are unversioned. Versions saturate at UINT32_MAX like OpenUSD.
+/// Returns false only for an empty name.
+bool ParseSchemaFamilyAndVersion(const std::string& name, std::string* family,
+                                 uint32_t* version, bool* has_version);
 
 }  // namespace next
 }  // namespace lightusd
