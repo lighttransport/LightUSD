@@ -12,11 +12,11 @@ sampling; that stays a native-only OpenPtex check.
 import argparse
 from pathlib import Path
 
-from pxr import Sdf, Usd, UsdShade
+from pxr import Sdf, Usd, UsdGeom, UsdShade
 
 HEADER = '''#usda 1.0
 (
-__DEFAULT_PRIM__    subLayers = [
+__DEFAULT_PRIM____UNITS__    subLayers = [
         @__SOURCE__@
     ]
 )
@@ -64,7 +64,18 @@ def main():
     # the original bindings and every mesh on the same material.
     default_line = ('    defaultPrim = "%s"\n' % default_prim.GetName()
                     if default_prim else '')
+    # Layer metadata does not inherit through subLayers: a wrapper that omits
+    # metersPerUnit makes the stage default to 1.0 while Island is authored in
+    # centimetres, which mis-scales the harness camera and renders nothing.
+    units = ''
+    meters = UsdGeom.GetStageMetersPerUnit(stage)
+    if meters and abs(meters - 1.0) > 1e-9:
+        units += '    metersPerUnit = %s\n' % repr(meters)
+    up = UsdGeom.GetStageUpAxis(stage)
+    if up:
+        units += '    upAxis = "%s"\n' % up
     lines = [HEADER.replace('__DEFAULT_PRIM__', default_line)
+             .replace('__UNITS__', units)
              .replace('__SOURCE__', str(source))]
     # Group material paths into a nested over tree rooted at the root prims.
     tree = {}
