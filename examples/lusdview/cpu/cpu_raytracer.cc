@@ -386,15 +386,22 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   float u, float v, float out[3],
                                   int ptex_face = -1,
                                   const CpuPtexSampler* ptex = nullptr,
-                                  uint32_t ptex_mip = 0) {
+                                  uint32_t ptex_mip = 0,
+                                  const CpuPtexSampler::Footprint* ptex_fp =
+                                      nullptr) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
   }
   if (ptex && ptex_face >= 0 && ptex->valid()) {
     float rgb[3];
-    if (ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
-                     textures[static_cast<size_t>(texId)].srgb != 0, rgb)) {
+    const bool srgb = textures[static_cast<size_t>(texId)].srgb != 0;
+    const bool ok = ptex_fp
+        ? ptex->SampleFootprint(static_cast<uint32_t>(ptex_face), *ptex_fp,
+                                u, v, srgb, rgb)
+        : ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
+                       srgb, rgb);
+    if (ok) {
       out[0] = rgb[0];
       out[1] = rgb[1];
       out[2] = rgb[2];
@@ -483,13 +490,16 @@ inline void LogCpuPtexStats(
     const auto& st = source->stats();
     std::fprintf(stderr,
                  "[cpu-ptex] tex=%zu hits=%llu misses=%llu evictions=%llu "
-                 "resident=%llu peak=%llu samples=%llu mips=",
+                 "resident=%llu peak=%llu samples=%llu aniso=%llu taps=%llu "
+                 "mips=",
                  i, static_cast<unsigned long long>(st.hits),
                  static_cast<unsigned long long>(st.misses),
                  static_cast<unsigned long long>(st.evictions),
                  static_cast<unsigned long long>(st.residentBytes),
                  static_cast<unsigned long long>(st.peakResidentBytes),
-                 static_cast<unsigned long long>(st.samples));
+                 static_cast<unsigned long long>(st.samples),
+                 static_cast<unsigned long long>(st.anisotropicSamples),
+                 static_cast<unsigned long long>(st.anisotropicTaps));
     for (int m = 0; m < 16; ++m) {
       std::fprintf(stderr, "%s%llu", m ? "," : "",
                    static_cast<unsigned long long>(st.mipSamples[m]));
@@ -521,12 +531,17 @@ inline float SampleTextureBilinearChannel(
     const std::vector<HostTextureDesc>& textures,
     const std::vector<uint8_t>& texels, int texId, float u, float v,
     int channel, int ptex_face = -1, const CpuPtexSampler* ptex = nullptr,
-    uint32_t ptex_mip = 0) {
+    uint32_t ptex_mip = 0,
+    const CpuPtexSampler::Footprint* ptex_fp = nullptr) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) return 1.0f;
   if (ptex && ptex_face >= 0 && ptex->valid()) {
     float value = 0.0f;
-    if (ptex->SampleChannel(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
-                            channel, &value)) {
+    const bool ok = ptex_fp
+        ? ptex->SampleChannelFootprint(static_cast<uint32_t>(ptex_face),
+                                       *ptex_fp, u, v, channel, &value)
+        : ptex->SampleChannel(static_cast<uint32_t>(ptex_face), ptex_mip, u,
+                              v, channel, &value);
+    if (ok) {
       return value;
     }
   }
@@ -608,7 +623,9 @@ bool CpuSampleSemanticScalar(const HostScene& scene, int material_id, int tex,
                              const std::vector<float>& uv1, float* out,
                              int ptex_face = -1,
                              const CpuPtexSampler* ptex = nullptr,
-                             uint32_t ptex_mip = 0) {
+                             uint32_t ptex_mip = 0,
+                             const CpuPtexSampler::Footprint* ptex_fp =
+                                 nullptr) {
   if (tex < 0) return false;
   float uv[2];
   if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
@@ -617,7 +634,7 @@ bool CpuSampleSemanticScalar(const HostScene& scene, int material_id, int tex,
   }
   *out = SampleTextureBilinearChannel(scene.textures, scene.texels, tex,
                                       uv[0], uv[1], channel, ptex_face, ptex,
-                                      ptex_mip);
+                                      ptex_mip, ptex_fp);
   return true;
 }
 
@@ -627,7 +644,8 @@ bool CpuSampleSemanticRgb(const HostScene& scene, int material_id, int tex,
                           const std::vector<float>& uv1, float out[3],
                           int ptex_face = -1,
                           const CpuPtexSampler* ptex = nullptr,
-                          uint32_t ptex_mip = 0) {
+                          uint32_t ptex_mip = 0,
+                          const CpuPtexSampler::Footprint* ptex_fp = nullptr) {
   if (tex < 0) return false;
   float uv[2];
   if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
@@ -635,7 +653,7 @@ bool CpuSampleSemanticRgb(const HostScene& scene, int material_id, int tex,
     return false;
   }
   SampleTextureBilinear(scene.textures, scene.texels, tex, uv[0], uv[1], out,
-                        ptex_face, ptex, ptex_mip);
+                        ptex_face, ptex, ptex_mip, ptex_fp);
   return true;
 }
 
@@ -1534,6 +1552,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   const char* probe_path = std::getenv("LIGHTUSD_CPU_PTEX_PROBE");
   const bool probe_enabled = probe_path && probe_path[0] &&
                              sampleX == 0.0f && sampleY == 0.0f;
+  // Diagnostic A/B for the anisotropic PTex footprint: the probe needs the
+  // single-tap addressing contract, and this env switch restores the previous
+  // isotropic max-gradient mip + one bilinear tap for comparison.
+  const bool force_isotropic_ptex =
+      std::getenv("LIGHTUSD_CPU_PTEX_ISOTROPIC") != nullptr;
+  const bool use_ptex_footprint = !probe_enabled && !force_isotropic_ptex;
   std::vector<CpuPtexProbe> probes(
       probe_enabled ? static_cast<size_t>(w) * static_cast<size_t>(h)
                     : 0);
@@ -2139,6 +2163,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // world-space UV gradients give |duv/dpixel| at the hit distance; a
           // PTex sampler turns that into a per-face mip level.
           float uvPerPixel = 0.0f;
+          float grad_u[3] = {0.0f, 0.0f, 0.0f};
+          float grad_v[3] = {0.0f, 0.0f, 0.0f};
+          float worldFootprint = 0.0f;
+          bool have_grad = false;
           if (matId >= 0 &&
               static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size() &&
               static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size() &&
@@ -2161,8 +2189,13 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                          gu[2] * gu[2]);
               const float lv = std::sqrt(gv[0] * gv[0] + gv[1] * gv[1] +
                                          gv[2] * gv[2]);
-              uvPerPixel = pixelAngle * std::max(hit.t, 1.0e-4f) *
-                           std::max(lu, lv);
+              worldFootprint = pixelAngle * std::max(hit.t, 1.0e-4f);
+              uvPerPixel = worldFootprint * std::max(lu, lv);
+              for (int k = 0; k < 3; ++k) {
+                grad_u[k] = gu[k];
+                grad_v[k] = gv[k];
+              }
+              have_grad = true;
             }
           }
           auto ptexAt = [&](int tex) -> const CpuPtexSampler* {
@@ -2176,6 +2209,14 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                        ? sampler->ChooseMip(static_cast<uint32_t>(face),
                                             uvPerPixel)
                        : 0u;
+          };
+          auto ptexFpOf = [&](const CpuPtexSampler* sampler,
+                              int face) -> CpuPtexSampler::Footprint {
+            CpuPtexSampler::Footprint fp;
+            if (sampler && face >= 0 && have_grad)
+              fp = sampler->ComputeFootprint(static_cast<uint32_t>(face),
+                                             grad_u, grad_v, worldFootprint);
+            return fp;
           };
           // One hit frame serves the graph's tangent/bitangent nodes and the
           // material normal map. Only pay for it when either could be used.
@@ -2247,9 +2288,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               const int base_face = ptexFaceFor(static_cast<int>(tri));
               const CpuPtexSampler* base_src = ptexAt(baseTex);
               const uint32_t base_mip = ptexMipOf(base_src, base_face);
+              const CpuPtexSampler::Footprint base_fp =
+                  ptexFpOf(base_src, base_face);
               SampleTextureBilinear(hs_.textures, hs_.texels, baseTex,
                                     slot_uv[0], slot_uv[1], texCol, base_face,
-                                    base_src, base_mip);
+                                    base_src, base_mip,
+                                    use_ptex_footprint ? &base_fp : nullptr);
               if (probe_enabled && base_src && base_face >= 0) {
                 CpuPtexProbe& probe =
                     probes[static_cast<size_t>(y) * static_cast<size_t>(w) +
@@ -2359,10 +2403,13 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               float rgb[3];
               const int normal_face = ptexFaceFor(static_cast<int>(tri));
               const CpuPtexSampler* normal_src = ptexAt(normal_tex);
+              const CpuPtexSampler::Footprint normal_fp =
+                  ptexFpOf(normal_src, normal_face);
               SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
                                     slot_uv[0], slot_uv[1], rgb, normal_face,
                                     normal_src,
-                                    ptexMipOf(normal_src, normal_face));
+                                    ptexMipOf(normal_src, normal_face),
+                                    use_ptex_footprint ? &normal_fp : nullptr);
               tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
               tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
               tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
@@ -2421,9 +2468,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               float rgb[3];
               const int coat_face = ptexFaceFor(static_cast<int>(tri));
               const CpuPtexSampler* coat_src = ptexAt(coat_tex);
+              const CpuPtexSampler::Footprint coat_fp =
+                  ptexFpOf(coat_src, coat_face);
               SampleTextureBilinear(hs_.textures, hs_.texels, coat_tex,
                                     slot_uv[0], slot_uv[1], rgb, coat_face,
-                                    coat_src, ptexMipOf(coat_src, coat_face));
+                                    coat_src, ptexMipOf(coat_src, coat_face),
+                                    use_ptex_footprint ? &coat_fp : nullptr);
               // Packed coat-normal scale/bias (147/151); the loader stores the
               // usual 2/-1 when the texture authors defaults.
               float co_n[3];
@@ -2761,12 +2811,19 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               const CpuPtexSampler* sampler = lane_src(slot);
               return ptexMipOf(sampler, lane_face);
             };
+            CpuPtexSampler::Footprint lane_fps[16];
+            auto lane_fp = [&](size_t slot)
+                -> const CpuPtexSampler::Footprint* {
+              if (!use_ptex_footprint) return nullptr;
+              lane_fps[slot] = ptexFpOf(lane_src(slot), lane_face);
+              return &lane_fps[slot];
+            };
             float v = 0.0f;
             if (CpuSampleSemanticScalar(hs_, matId, lane_tex(1), tri_i, hit.u,
                                         hit.v, lane_set1(69, 1), 6,
                                         lane_channel(60), cpuUv_, cpuUv1_,
                                         &v, lane_face, lane_src(1),
-                                        lane_mip(1))) {
+                                        lane_mip(1), lane_fp(1))) {
               metallic = std::clamp(
                   metallic * (v * lane_scale(61, 0) + lane_bias(62, 0)),
                   0.0f, 1.0f);
@@ -2775,7 +2832,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                         hit.v, lane_set1(69, 2), 12,
                                         lane_channel(63), cpuUv_, cpuUv1_,
                                         &v, lane_face, lane_src(2),
-                                        lane_mip(2))) {
+                                        lane_mip(2), lane_fp(2))) {
               roughness = std::clamp(
                   roughness * (v * lane_scale(64, 0) + lane_bias(65, 0)),
                   0.03f, 1.0f);
@@ -2784,7 +2841,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             if (CpuSampleSemanticRgb(hs_, matId, lane_tex(4), tri_i, hit.u,
                                      hit.v, lane_set1(69, 4), 24, cpuUv_,
                                      cpuUv1_, rgb, lane_face, lane_src(4),
-                                     lane_mip(4))) {
+                                     lane_mip(4), lane_fp(4))) {
               for (int c = 0; c < 3; ++c) {
                 emission[c] = std::max(
                     0.0f, emission[c] *
@@ -2796,7 +2853,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                      tp != nullptr &&
                                          static_cast<int>(tp[130] + 0.5f) == 1,
                                      124, cpuUv_, cpuUv1_, rgb, lane_face,
-                                     lane_src(10), lane_mip(10))) {
+                                     lane_src(10), lane_mip(10), lane_fp(10))) {
               for (int c = 0; c < 3; ++c) {
                 specColor[c] = std::max(
                     0.0f, specColor[c] *
@@ -2807,7 +2864,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                         hit.v, lane_set1(99, 1), 78,
                                         lane_channel(97), cpuUv_, cpuUv1_,
                                         &v, lane_face, lane_src(7),
-                                        lane_mip(7))) {
+                                        lane_mip(7), lane_fp(7))) {
               coatWeight = std::clamp(
                   coatWeight * (v * lane_scale(100, 0) + lane_bias(104, 0)),
                   0.0f, 1.0f);
@@ -2815,7 +2872,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             if (CpuSampleSemanticRgb(hs_, matId, lane_tex(8), tri_i, hit.u,
                                      hit.v, lane_set1(99, 2), 84, cpuUv_,
                                      cpuUv1_, rgb, lane_face, lane_src(8),
-                                     lane_mip(8))) {
+                                     lane_mip(8), lane_fp(8))) {
               for (int c = 0; c < 3; ++c) {
                 coatColor[c] = std::max(
                     0.0f, coatColor[c] * (rgb[c] * lane_scale(108, c) +
@@ -2826,7 +2883,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                         hit.v, lane_set1(99, 3), 90,
                                         lane_channel(98), cpuUv_, cpuUv1_,
                                         &v, lane_face, lane_src(9),
-                                        lane_mip(9))) {
+                                        lane_mip(9), lane_fp(9))) {
               coatRoughness = std::clamp(
                   coatRoughness * (v * lane_scale(116, 0) + lane_bias(120, 0)),
                   0.03f, 1.0f);
@@ -2835,7 +2892,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                         hit.v, lane_set1(99, 0), 72,
                                         lane_channel(96), cpuUv_, cpuUv1_,
                                         &v, lane_face, lane_src(6),
-                                        lane_mip(6))) {
+                                        lane_mip(6), lane_fp(6))) {
               occlusion = std::clamp(
                   v * lane_scale(70, 0) + lane_bias(71, 0), 0.0f, 1.0f);
             }

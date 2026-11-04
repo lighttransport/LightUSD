@@ -251,6 +251,22 @@ backdrop = backdrop.replace(
         }
 ''', 1)
 (out / 'mip_scene.usda').write_text(backdrop)
+aniso = scene.replace(
+    'point3f[] points = [(-4, -4, 0), (4, -4, 0), (4, 4, 0), (-4, 4, 0)]',
+    'point3f[] points = [(-32, -1, 0), (32, -1, 0), (32, 1, 0), (-32, 1, 0)]')
+aniso = aniso.replace(
+    '    def Scope "_materials"',
+    '''    def Camera "Cam"
+    {
+        float focalLength = 35
+        float horizontalAperture = 36
+        float verticalAperture = 27
+        float2 clippingRange = (0.01, 1000)
+        double3 xformOp:translate = (0, 0, 12)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Scope "_materials"''', 1)
+(out / 'aniso_scene.usda').write_text(aniso)
 shutil.copyfile(ptx, out / 'textures' / 'mountain.ptx')
 PY
 
@@ -286,6 +302,37 @@ render() {
 render cpu ptex_cpu "$OUT/scene.usda"
 render cpu flat_cpu "$OUT/flat.usda"
 LIGHTUSD_CPU_PTEX_STATS=1 render cpu mip_quad "$OUT/mip_scene.usda"
+# Anisotropic footprint wiring: the production path must take multiple taps at
+# the minor-axis mip, and LIGHTUSD_CPU_PTEX_ISOTROPIC must restore the previous
+# single-tap max-gradient behavior.
+render_aniso() {
+  local name="$1"; shift
+  env "$@" LIGHTUSD_CPU_PTEX_STATS=1 xvfb-run -a -s "-screen 0 1280x800x24" \
+    "$BIN" --headless --backend vk --cpu-rt --frames 1 --size 128x128 \
+    --camera /World/Cam --screenshot "$OUT/$name.ppm" \
+    "$OUT/aniso_scene.usda" >"$OUT/$name.log" 2>&1
+}
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  printf '%s\n' "SKIP: xvfb-run unavailable for the anisotropic render"
+  exit "$SKIP"
+fi
+render_aniso aniso_cpu X=1
+render_aniso aniso_cpu_iso LIGHTUSD_CPU_PTEX_ISOTROPIC=1
+aniso_line=$(grep "cpu-ptex" "$OUT/aniso_cpu.log" | head -1)
+iso_line=$(grep "cpu-ptex" "$OUT/aniso_cpu_iso.log" | head -1)
+[ -n "$aniso_line" ] && [ -n "$iso_line" ] || {
+  echo "FAIL: missing PTex sampler stats for the anisotropic render"
+  tail -20 "$OUT/aniso_cpu.log"
+  exit 1
+}
+case "$aniso_line" in
+  *"aniso=0 "*) echo "FAIL: anisotropic footprint did not take extra taps"; exit 1;;
+esac
+case "$iso_line" in
+  *"aniso=0 "*) ;;
+  *) echo "FAIL: isotropic switch still used the anisotropic footprint"; exit 1;;
+esac
+echo "aniso wiring: $(echo "$aniso_line" | grep -o 'aniso=[0-9]* taps=[0-9]*') (forced iso: $(echo "$iso_line" | grep -o 'aniso=[0-9]* taps=[0-9]*'))"
 render vk ptex_vk "$OUT/scene.usda"
 
 python3 - "$OUT" "$FACE0_MEAN" <<'PY'

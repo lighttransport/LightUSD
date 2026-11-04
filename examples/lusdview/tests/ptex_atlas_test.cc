@@ -615,6 +615,78 @@ void RunCpuPtexMipSampler() {
               static_cast<unsigned long long>(st.residentBytes));
 }
 
+void RunCpuPtexAnisotropicSampler() {
+  // Two-level synthetic Ptex (face 0 = 4x2) with a row-varying value so a
+  // wrong mip or tap placement changes the result.
+  const std::vector<uint8_t> bytes =
+      SyntheticPtex(0, 1, /*verticalGradient=*/true, 1);
+  lusdview::CpuPtexSampler sampler(1ull * 1024ull * 1024ull);
+  std::string error;
+  CHECK(sampler.OpenMemory(bytes.data(), bytes.size(), &error));
+  CHECK(sampler.info().levels == 2 && sampler.info().faces == 2);
+
+  // Isotropic footprint: one texel in both directions selects mip 0 and a
+  // single bilinear tap, identical to the plain Sample path.
+  const float iso_gu[3] = {1.0f, 0.0f, 0.0f};
+  const float iso_gv[3] = {0.0f, 1.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint iso =
+      sampler.ComputeFootprint(0, iso_gu, iso_gv, 0.25f);
+  CHECK(iso.taps == 1);
+  CHECK(!iso.anisotropic());
+  CHECK(iso.mip == sampler.ChooseMip(0, 0.25f));
+  float plain[3], filtered[3];
+  CHECK(sampler.Sample(0, iso.mip, 0.375f, 0.25f, false, plain));
+  CHECK(sampler.SampleFootprint(0, iso, 0.375f, 0.25f, false, filtered));
+  for (int c = 0; c < 3; ++c) CHECK(std::fabs(plain[c] - filtered[c]) < 1e-6f);
+
+  // Anisotropic footprint: 4 texels along u, 1 along v. The mip must come from
+  // the minor (v) axis and the taps run along u; the old isotropic rule used
+  // max(|gu|,|gv|) and picked the coarser mip.
+  const float aniso_gu[3] = {4.0f, 0.0f, 0.0f};
+  const float aniso_gv[3] = {0.0f, 1.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint fp =
+      sampler.ComputeFootprint(0, aniso_gu, aniso_gv, 0.25f);
+  CHECK(fp.taps == 4);
+  CHECK(fp.anisotropic());
+  CHECK(std::fabs(fp.major - 1.0f) < 1e-6f);
+  CHECK(std::fabs(fp.minor - 0.25f) < 1e-6f);
+  CHECK(fp.mip == sampler.ChooseMip(0, fp.minor));
+  CHECK(fp.mip != sampler.ChooseMip(0, fp.major));
+  CHECK(std::fabs(fp.dir_u) > 0.99f && std::fabs(fp.dir_v) < 1e-6f);
+
+  // The filter output must equal the tent-weighted tap average computed with
+  // the plain sampler at the selected mip.
+  const float u = 0.3f, v = 0.25f;
+  float expected = 0.0f, weight_sum = 0.0f;
+  const float center = 0.5f * float(fp.taps - 1u);
+  for (uint32_t i = 0; i < fp.taps; ++i) {
+    const float offset = (float(i) - center) * fp.minor;
+    const float weight = float(fp.taps) * 0.5f - std::fabs(float(i) - center);
+    float tap[3] = {0.0f, 0.0f, 0.0f};
+    CHECK(sampler.Sample(0, fp.mip, u + offset * fp.dir_u,
+                         v + offset * fp.dir_v, false, tap));
+    expected += tap[0] * weight;
+    weight_sum += weight;
+  }
+  expected /= weight_sum;
+  CHECK(sampler.SampleFootprint(0, fp, u, v, false, filtered));
+  CHECK(std::fabs(filtered[0] - expected) < 2e-6f);
+
+  float channel = 0.0f;
+  CHECK(sampler.SampleChannelFootprint(0, fp, u, v, 0, &channel));
+  CHECK(std::fabs(channel - expected) < 2e-6f);
+
+  // Clamp: a very stretched footprint never exceeds eight taps.
+  const float stretch_gu[3] = {64.0f, 0.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint clamped =
+      sampler.ComputeFootprint(0, stretch_gu, aniso_gv, 0.25f);
+  CHECK(clamped.taps == 8);
+  CHECK(clamped.mip == sampler.ChooseMip(0, clamped.minor));
+
+  std::printf("  CPU Ptex anisotropic footprint: PASSED "
+              "(mip from minor, %u taps, tent-weighted)\n", fp.taps);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -644,6 +716,7 @@ int main(int argc, char** argv) {
   RunPhysicalCacheCannotStarveFallback();
   RunVirtualFallbackDownsample();
   RunCpuPtexMipSampler();
+  RunCpuPtexAnisotropicSampler();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;
