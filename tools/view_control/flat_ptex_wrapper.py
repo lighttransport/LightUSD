@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Author a flat-material wrapper for paired SDK/native beauty captures.
+
+Island's look layers terminate in RenderMan (`outputs:ri:surface`); the stock
+Storm build has no surface source for them, so it renders its fallback gray.
+This tool writes a wrapper that sublayers the source and overrides *only*
+`outputs:surface` on every Material with a shared constant UsdPreviewSurface.
+Both renderers then evaluate the same flat material, which makes the beauty AOV
+a lighting/BRDF/tonemap comparison. It deliberately does not compare PTex
+sampling; that stays a native-only OpenPtex check.
+"""
+import argparse
+from pathlib import Path
+
+from pxr import Sdf, Usd, UsdShade
+
+HEADER = '''#usda 1.0
+(
+__DEFAULT_PRIM__    subLayers = [
+        @__SOURCE__@
+    ]
+)
+'''
+
+FLAT = '''
+def Scope "__ViewControlFlatPtex"
+{
+    def Shader "Flat"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (__COLOR__)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:ior = 1.5
+        token outputs:surface
+    }
+}
+'''
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('source', type=Path)
+    parser.add_argument('output', type=Path)
+    parser.add_argument('--color', default='0.5,0.5,0.5',
+                        help='constant diffuseColor (default 0.5,0.5,0.5)')
+    args = parser.parse_args()
+    source = args.source.resolve(strict=True)
+    stage = Usd.Stage.Open(str(source))
+    default_prim = stage.GetDefaultPrim()
+    roots = [p.GetName() for p in stage.GetPseudoRoot().GetChildren()]
+    if not roots:
+        raise SystemExit('source stage has no root prims')
+    root_names = [default_prim.GetName()] if default_prim else roots
+
+    materials = []
+    for prim in stage.Traverse():
+        if prim.IsA(UsdShade.Material):
+            materials.append(prim.GetPath().pathString)
+    if not materials:
+        raise SystemExit('source stage has no UsdShade.Material prims')
+
+    # One shared flat shader; overriding each material's surface output keeps
+    # the original bindings and every mesh on the same material.
+    default_line = ('    defaultPrim = "%s"\n' % default_prim.GetName()
+                    if default_prim else '')
+    lines = [HEADER.replace('__DEFAULT_PRIM__', default_line)
+             .replace('__SOURCE__', str(source))]
+    # Group material paths into a nested over tree rooted at the root prims.
+    tree = {}
+    for path in materials:
+        parts = path.strip('/').split('/')
+        node = tree
+        for part in parts:
+            node = node.setdefault(part, {})
+    def emit(node, depth):
+        pad = '    ' * depth
+        for name in sorted(node):
+            lines.append(pad + 'over "%s"\n' % name + pad + '{\n')
+            if not node[name]:
+                lines.append(
+                    pad + '    token outputs:surface.connect = '
+                    '</__ViewControlFlatPtex/Flat.outputs:surface>\n')
+            else:
+                emit(node[name], depth + 1)
+            lines.append(pad + '}\n')
+    emit(tree, 0)
+    lines.append(FLAT.replace('__COLOR__', args.color))
+    args.output.write_text(''.join(lines))
+    print('wrote %s: %d materials overridden' % (args.output, len(materials)))
+
+
+if __name__ == '__main__':
+    main()
