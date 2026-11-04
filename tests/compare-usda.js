@@ -2258,6 +2258,8 @@ Options:
   -v, --verbose           Show detailed output
   -q, --quiet             Only show if files differ (exit code)
   --lusdcat <path>        Path to lusdcat executable
+  --lusdcat-arg <arg>     Extra argument passed to lusdcat before the input
+                          (repeatable; e.g. --rewrite-layer for next lusdcat)
   --usdcat <path>         Path to usdcat executable
   --base-dir <path>       Base directory for glob patterns (default: current dir)
   --summary               Show summary statistics only
@@ -2331,8 +2333,8 @@ function compareSingleFile(inputFile, options) {
     let content1, content2;
 
     // Run lusdcat with timeout
-    const runUsdTool = (exe, filePath) => {
-      return execFileSync(exe, [filePath], {
+    const runUsdTool = (exe, filePath, extraArgs = []) => {
+      return execFileSync(exe, [...extraArgs, filePath], {
         encoding: 'utf-8',
         maxBuffer: 100 * 1024 * 1024,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -2342,7 +2344,7 @@ function compareSingleFile(inputFile, options) {
 
     // Run lusdcat with timeout
     try {
-      content1 = runUsdTool(options.lusdcat, inputFile);
+      content1 = runUsdTool(options.lusdcat, inputFile, options.lusdcatArgs);
     } catch (e) {
       result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
@@ -2479,6 +2481,7 @@ function main() {
     assetPathBase2: null,
     floatTolerance: 1e-6,
     lusdcat: null,
+    lusdcatArgs: [],
     usdcat: null,
     baseDir: process.cwd(),
     continueOnError: false,
@@ -2526,6 +2529,9 @@ function main() {
         break;
       case '--lusdcat':
         options.lusdcat = args[++i];
+        break;
+      case '--lusdcat-arg':
+        options.lusdcatArgs.push(args[++i]);
         break;
       case '--usdcat':
         options.usdcat = args[++i];

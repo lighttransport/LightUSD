@@ -82,8 +82,13 @@ run_folder_comparison() {
     detailed_flag="--detailed-diff"
   fi
 
+  local lusdcat_arg_flags=()
+  local a
+  for a in $LUSDCAT_ARGS; do lusdcat_arg_flags+=(--lusdcat-arg "$a"); done
+
   node "$COMPARE_SCRIPT" \
     --lusdcat "$LUSDCAT_PATH" \
+    "${lusdcat_arg_flags[@]}" \
     --usdcat "$USDCAT_PATH" \
     --timeout "$TIMEOUT_MS" \
     --continue-on-error \
@@ -205,7 +210,8 @@ run_usdchecker_pass() {
   for f in "$SCRIPT_DIR"/usda/*.usda; do
     base=$(basename "$f")
 
-    if ! "$LUSDCAT_PATH" --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
+    # shellcheck disable=SC2086  # LUSDCAT_ARGS is a word list
+    if ! "$LUSDCAT_PATH" $LUSDCAT_ARGS --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
       skipped=$((skipped+1))   # fixture lusdcat cannot write standalone
       echo -e "${YELLOW}- usdchecker skip: $base (lusdcat cannot write standalone)${NC}"
       continue
@@ -272,6 +278,19 @@ main() {
   if ! check_executable "$USDCAT_PATH" "usdcat"; then
     exit 1
   fi
+
+  # The next-core lusdcat (tests/next/lusdcat.cc) prints only a
+  # "loaded: N prims" summary unless asked for output; --rewrite-layer prints
+  # the root layer as USDA, matching `usdcat <file>`. The legacy lusdcat
+  # prints USDA by default. Detect which one we have unless LUSDCAT_ARGS is set.
+  if [ -z "${LUSDCAT_ARGS+x}" ]; then
+    LUSDCAT_ARGS=""
+    if "$LUSDCAT_PATH" "$SCRIPT_DIR/usda/anytype-001.usda" 2>/dev/null \
+        | head -1 | grep -q '^loaded:'; then
+      LUSDCAT_ARGS="--rewrite-layer"
+    fi
+  fi
+  echo "  lusdcat args: ${LUSDCAT_ARGS:-<none>}"
 
   echo -e "${GREEN}✓ All prerequisites met${NC}"
   echo ""
@@ -361,6 +380,8 @@ OPTIONS:
 
 ENVIRONMENT VARIABLES:
   LUSDCAT_PATH            Override lusdcat path
+  LUSDCAT_ARGS            Extra lusdcat args (default: auto, --rewrite-layer
+                          for the next-core lusdcat; set empty to disable)
   USDCAT_PATH             Override usdcat path
   TIMEOUT_MS              Override timeout
   SHOW_DETAILED_DIFF      Set to 'false' to disable detailed diffs (default: true)
