@@ -9,7 +9,7 @@ on:
     branches: [ main ]
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 # ccache (installed and persisted per job by hendrikmuhs/ccache-action; the
 # root CMakeLists picks it up as the compiler launcher).

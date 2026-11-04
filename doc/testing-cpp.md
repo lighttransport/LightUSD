@@ -2803,3 +2803,13 @@ backend selection, transformed silhouettes and mesh occlusion, and monitors
 additional VRAM without changing other GPU processes. Build, Xvfb, validation
 layer and profiler instructions are in [lusdview.md](lusdview.md). These hardware
 checks are opt-in and are not part of the ordinary CPU regression suite.
+
+### Memory loader CI regressions
+
+Python `loads()` and `load_bytes()` parse authored layers without composition,
+so variant definitions and unresolved sublayer metadata survive roundtrips.
+After changing C memory-loader defaults, rebuild the Python extension and run
+`python3 -m pytest python/tests -k "not large and not usd_assets" -q`.
+The C API memory loader separately tests composed and uncomposed loads in
+`tests/c-api/test_lightusd_c.c`. Android CI builds lightrt at API 24; aligned
+allocations must use `posix_memalign` there (`aligned_alloc` requires API 28).
