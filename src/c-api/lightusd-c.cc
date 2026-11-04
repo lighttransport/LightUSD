@@ -802,16 +802,27 @@ lightusd_status lightusd_stage_load_from_memory(const uint8_t* data, size_t size
   *out = nullptr;
 
   n::LoadUSDOptions lo;
-  if (!ApplyLoadOptions(opts, &lo, nullptr)) {
+  lightusd::next::pcp::CompositionOptions co;
+  // Same instancing policy as lightusd_stage_load (see comment there).
+  co.flatten_instances = true;
+  co.instance_flatten_mode = lightusd::next::pcp::InstanceFlattenMode::Holder;
+  if (!ApplyLoadOptions(opts, &lo, &co)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "invalid v2 load options or zero resource limit");
   }
+  const bool composed = opts ? opts->composed != 0 : true;
 
   auto stage = std::unique_ptr<lightusd_stage>(new (std::nothrow) lightusd_stage());
   if (!stage) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
 
   std::string warn, err;
   if (!n::LoadUSDFromMemory(data, size, &stage->stage, lo, &warn, &err)) {
+    return Fail(LoadFailureStatus(err, LIGHTUSD_ERR_PARSE), err);
+  }
+  // Resolve internal arcs (inherits/references/specializes/variants) like the
+  // disk path; external arcs resolve only via resolver callbacks.
+  if (composed && n::StageNeedsComposition(stage->stage) &&
+      !n::ComposeLoadedStage(&stage->stage, &warn, &err, &co, "<memory>")) {
     return Fail(LoadFailureStatus(err, LIGHTUSD_ERR_PARSE), err);
   }
   stage->warnings = std::move(warn);
