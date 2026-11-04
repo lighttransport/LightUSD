@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    defaultPrim = "Asset"
+)
+
+def "Asset" (
+    references = @./aousd11-instancing-ignored-opinions-asset.usda@
+)
+{
+}
