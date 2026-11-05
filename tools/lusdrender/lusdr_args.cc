@@ -898,6 +898,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->cuda = true;
       opt->backend_explicit = true;
     }
+    OPT_MATCH(a == "-displayTransform" || a == "--displayTransform") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      const std::string mode = v;
+      if (mode == "srgb") opt->srgb_display_transform = true;
+      else if (mode == "filmic") opt->srgb_display_transform = false;
+      else {
+        std::cerr << "--displayTransform must be srgb or filmic.\n";
+        return false;
+      }
+    }
     OPT_MATCH(a == "-path-trace" || a == "--path-trace") {
       opt->path_trace = true;
     }

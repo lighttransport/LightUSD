@@ -9795,7 +9795,9 @@ int App::run(const std::string& initialFile, int maxFrames,
         const float camPos[3] = {eye.x, eye.y, eye.z};
         if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                               gui_.displacementScale(), nullptr,
-                              gui_.purposeVisibleMask())) {
+                              gui_.purposeVisibleMask(),
+                              std::getenv("LUSDVIEW_CPU_RT_NO_CULL") ? nullptr
+                                                                    : pv.m)) {
           LOGW("CPU ray tracing build failed at shutter time %.6f: %s",
                sampleTime, cerr.c_str());
           traced = false;
@@ -9852,10 +9854,16 @@ int App::run(const std::string& initialFile, int maxFrames,
         reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
-          LOGI("CPU RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(),
-               w, h, cpuTracer_.triangleCount(),
+          LOGI("CPU RT wrote %s (%dx%d, %zu tris%s, %zu/%zu instances "
+               "expanded/culled, %s)",
+               screenshot.c_str(), w, h, cpuTracer_.triangleCount(),
                cpuTracer_.truncated() ? ", truncated" : "",
-               cpuTracer_.deviceName());
+               cpuTracer_.expandedInstanceCount(),
+               cpuTracer_.culledInstanceCount(), cpuTracer_.deviceName());
+          LOGI("CPU RT instance TLAS: %zu BLAS groups, %zu/%zu instances "
+               "visible/culled",
+               cpuTracer_.blasGroupCount(), cpuTracer_.expandedInstanceCount(),
+               cpuTracer_.culledInstanceCount());
         } else {
           LOGW("CPU RT screenshot write failed: %s", werr.c_str());
         }

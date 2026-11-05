@@ -85,6 +85,12 @@ vec4 sampleTexture(int id, vec2 uv) {
     float v=wrapCoord(uv.y,textureDescs[d+4u]);
     x=u*float(max(w-1,0));y=v*float(max(h-1,0));
   }
+  // The packed texel rows are stored bottom-up (row 0 is the image's bottom
+  // row), while USD `st`/Storm address images top-down: v=0 is the top row.
+  // Sampling v directly mirrored every textured surface against the SDK
+  // reference, so flip the row here, after UDIM tile selection, so both the
+  // atlas tile row and the in-tile offset follow the same convention.
+  y=float(max(h-1,0))-y;
   ivec2 p0=ivec2(floor(x),floor(y)); ivec2 p1=min(p0+1,ivec2(w-1,h-1));
   vec2 f=fract(vec2(x,y));
   vec4 c[4]; ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
@@ -244,6 +250,9 @@ vec3 fresnelSchlick(float c,vec3 f0){return f0+(vec3(1)-f0)*pow(1.0-clamp(c,0.0,
 vec3 fresnelSchlickF90(float c,vec3 f0,vec3 f90){return mix(f0,f90,pow(1.0-clamp(c,0.0,1.0),5.0));}
 float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,q=nh*nh*(a2-1.0)+1.0;return a2/max(PI*q*q,1e-6);}
 float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}
+// UsdPreviewSurface (Storm previewSurface.glslfx) Geometric(): Schlick-GGX
+// with k = alpha/2, applied to both NdotE and NdotL.
+float ggxGPreview(float nv,float nl,float r){float a=max(r*r,0.002),k=a*0.5;float gv=nv/max(nv*(1.0-k)+k,1e-6),gl=nl/max(nl*(1.0-k)+k,1e-6);return gv*gl;}
 void rotatedBasis(vec3 n,vec3 tangent,float rotation,out vec3 t,out vec3 b){vec3 t0=normalize(tangent-n*dot(n,tangent));if(length(t0)<0.1)t0=normalize(abs(n.z)<0.9?cross(vec3(0,0,1),n):cross(vec3(0,1,0),n));vec3 b0=cross(n,t0);float a=radians(rotation);t=t0*cos(a)+b0*sin(a);b=-t0*sin(a)+b0*cos(a);}
 float ggxDAniso(float nh,float ht,float hb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),q=ht*ht/(ax*ax)+hb*hb/(ay*ay)+nh*nh;return 1.0/max(PI*ax*ay*q*q,1e-6);}
 float ggxG1Aniso(float nv,float vt,float vb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),vn2=max(nv*nv,1e-6),lambda=0.5*(-1.0+sqrt(1.0+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));return 1.0/max(1.0+lambda,1e-6);}
@@ -272,7 +281,7 @@ float ggxDirAlbedoEss(float nv,float alpha){
 // 1 + Fss*(1-Ess)/Ess.
 vec3 ggxEnergyComp(float nv,float alpha,vec3 F){float Ess=ggxDirAlbedoEss(nv,alpha);return 1.0+F*(1.0-Ess)/Ess;}
 vec3 sampleGgx(vec3 n,vec3 tangent,vec3 v,float rough,float aniso,float rotation,inout uint seed,out float pdf){float alpha=max(rough*rough,0.002),ax=max(alpha*(1.0+aniso),0.001),ay=max(alpha*(1.0-aniso),0.001),u1=rnd(seed),u2=rnd(seed),phi=atan(ay/ax*tan(2.0*PI*u2));if(u2>0.25&&u2<=0.75)phi+=PI;else if(u2>0.75)phi+=2.0*PI;float cp=cos(phi),sp=sin(phi),alpha2=1.0/(cp*cp/(ax*ax)+sp*sp/(ay*ay)),ct=sqrt(max((1.0-u1)/(1.0+(alpha2-1.0)*u1),0.0)),st=sqrt(max(1.0-ct*ct,0.0));vec3 t,b;rotatedBasis(n,tangent,rotation,t,b);vec3 h=normalize(t*(st*cp)+b*(st*sp)+n*ct);if(dot(h,v)<0.0)h=-h;vec3 l=reflect(-v,h);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);pdf=ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);return normalize(l);}
-vec3 ggxBrdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation,vec3 f0,vec3 f90){float nl=max(dot(n,l),0.0),nv=max(dot(n,v),1e-6);if(nl<=0.0)return vec3(0);vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),0.0);vec3 F=fresnelSchlickF90(vh,f0,f90);float g2=ggxG2Aniso(nv,nl,dot(v,t),dot(v,b),dot(l,t),dot(l,b),rough,aniso);float a=max(rough*rough,0.002),avgAlpha=max(a*sqrt(max(1.0-aniso*aniso,0.0)),1e-4);vec3 comp=ggxEnergyComp(nv,avgAlpha,F);return F*ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*g2*comp/max(4.0*nv*nl,1e-6);}
+vec3 ggxBrdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation,vec3 f0,vec3 f90,bool preview){float nl=max(dot(n,l),0.0),nv=max(dot(n,v),1e-6);if(nl<=0.0)return vec3(0);vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),0.0);vec3 F=fresnelSchlickF90(vh,f0,f90);float g2=preview?ggxGPreview(nv,nl,rough):ggxG2Aniso(nv,nl,dot(v,t),dot(v,b),dot(l,t),dot(l,b),rough,aniso);float a=max(rough*rough,0.002),avgAlpha=max(a*sqrt(max(1.0-aniso*aniso,0.0)),1e-4);vec3 comp=preview?vec3(1.0):ggxEnergyComp(nv,avgAlpha,F);return F*ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*g2*comp/max(4.0*nv*nl,1e-6);}
 float ggxPdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation){if(dot(n,l)<=0.0)return 0.0;vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);return ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);}
 vec3 thinFilm(vec3 f0,float ct,float weight,float thickness,float filmIor){float w=clamp(weight,0.0,1.0);if(w<=0.0||thickness<=0.0)return f0;float phase=2.0*PI*max(filmIor,1.0)*thickness*(1.0-clamp(ct,0.0,1.0));vec3 film=0.5+0.5*cos(phase*vec3(1.0,1.17,1.35)+vec3(0.0,2.1,4.2));return mix(f0,clamp(f0+(vec3(1)-f0)*film*0.65,vec3(0),vec3(1)),w);}
 float spectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.0||abbe<=0.0)return iorD;float lc=0.6562725,ld=0.5875618,lf=0.4861327,delta=(iorD-1.0)/max(abbe,1.0)*dispersion,ic=1.0/(lc*lc),id=1.0/(ld*ld),iff=1.0/(lf*lf),B=delta/max(iff-ic,1e-6),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return max(A+B/(lambda*lambda),1.0001);}
@@ -348,6 +357,10 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
 }
 float hgPhase(float cosTheta,float g){float gg=g*g,den=max(1.0+gg-2.0*g*cosTheta,1e-5);return (1.0-gg)/(4.0*PI*den*sqrt(den));}
 vec3 sampleHg(vec3 forward,float g,inout uint seed,out float pdf){float u=rnd(seed),v=rnd(seed),ct=abs(g)<1e-3?1.0-2.0*u:(1.0+g*g-pow((1.0-g*g)/max(1.0-g+2.0*g*u,1e-5),2.0))/(2.0*g);ct=clamp(ct,-1.0,1.0);float st=sqrt(max(1.0-ct*ct,0.0)),phi=2.0*PI*v;vec3 t=normalize(abs(forward.z)<0.9?cross(vec3(0,0,1),forward):cross(vec3(0,1,0),forward)),b=cross(forward,t),outDir=normalize(t*(st*cos(phi))+b*(st*sin(phi))+forward*ct);pdf=hgPhase(ct,g);return outDir;}
+// Storm's usdrecord uses colorCorrectionMode=sRGB: a plain sRGB transfer
+// of the scene-linear radiance, with no filmic shoulder and no exposure.
+vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);return mix(c*12.92,
+  1.055*pow(c,vec3(1.0/2.4))-0.055,greaterThan(c,vec3(0.0031308)));}
 vec3 tonemap(vec3 x){ x=max(x,vec3(0)); x=(x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14); return pow(clamp(x,0.0,1.0),vec3(1.0/2.2)); }
 
 void main(){
@@ -384,6 +397,9 @@ void main(){
       float dispersion=max(materials[mb+60u]*materials[mb+62u],0.0),dispersionAbbe=max(materials[mb+61u],0.0);
       float volumeDensity=max(materials[mb+75u],0.0),volumeEmissionScale=max(materials[mb+79u],0.0);vec3 volumeAlbedo=max(vec3(materials[mb+72u],materials[mb+73u],materials[mb+74u]),vec3(0)),volumeEmission=max(vec3(materials[mb+76u],materials[mb+77u],materials[mb+78u]),vec3(0));
       uint gb=h.mat*GRAPH_STRIDE;
+      // Diagnostic capture of the emission route so the graph path can be
+      // compared against the raw sampled texel.
+      vec3 dbgRoute4=vec3(0.0); float dbgRoute44=-1.0; int dbgRoute4Tex=-1;
       if(graphs[gb]>0.0){
         vec4 gr[49];evalGraphAll(h.mat,h.uv,h.n,h.p,
             normalize(pc.camera.xyz-h.p),pc.context.x,pc.context.y,gr);
@@ -432,6 +448,11 @@ void main(){
         if(graphs[gb+43u]>=0.0)volumeEmission=max(gr[42].rgb,vec3(0));
         if(graphs[gb+44u]>=0.0)volumeEmissionScale=max(gr[43].x,0.0);
         if(graphs[gb+45u]>=0.0)emission=max(graphs[gb+5u]>=0.0?gr[4].rgb:vec3(materials[mb+32u],materials[mb+33u],materials[mb+34u]),vec3(0))*max(gr[44].x,0.0);
+        dbgRoute4=gr[4].rgb; dbgRoute44=gr[44].x;
+        { int r4node=int(floor(graphs[gb+5u]+0.5f));
+          if(r4node>=0&&r4node<int(clamp(graphs[gb],0.0,64.0))){
+            uint np=gb+GRAPH_HEADER+uint(r4node)*GRAPH_NODE;
+            if(np+16u<graphs.length()) dbgRoute4Tex=int(floor(graphs[np+16u]+0.5f)); } }
         if(graphs[gb+46u]>=0.0)coatAffectColor=clamp(gr[45].x,0.0,1.0);
         if(graphs[gb+47u]>=0.0)coatAffectRoughness=clamp(gr[46].x,0.0,1.0);
         if(graphs[gb+48u]>=0.0)coatDarkening=clamp(gr[47].x,0.0,1.0);
@@ -454,6 +475,29 @@ void main(){
         if(alphaMode==0&&!(graphs[gb]>0.0&&graphs[gb+4u]>=0.0))opacity=1.0;
         else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
         if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      }
+      // Diagnostic AOVs (pc.context.w): 1 = material id, 2 = UV. Written
+      // instead of shaded radiance so the host can attribute a pixel to a
+      // material/texture without a separate render pass.
+      if(depth==0u&&pc.context.w>0.5&&pc.context.w<7.5){
+        if(pc.context.w<1.5) radiance=vec3(float(h.mat)/64.0);
+        else if(pc.context.w<2.5) radiance=vec3(h.uv.x,h.uv.y,0.0);
+        else if(pc.context.w<3.5) radiance=vec3(opacity);
+        else if(pc.context.w<4.5||pc.context.w<5.5){
+          // Continuation diagnostics: what the ray hits *behind* this surface.
+          Hit h2; bool hit2=traceClosest(h.p+d*1e-4,d,1e-4,1e30,h2);
+          radiance=pc.context.w<4.5?vec3(hit2?float(h2.mat)/64.0:1.0)
+                  :vec3(hit2?min(h2.t/100.0,1.0):1.0);
+        }
+        else if(pc.context.w<6.5) radiance=vec3(0.0);
+        else radiance=emission;
+        beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>9.5&&pc.context.w<12.5){
+        if(pc.context.w<10.5) radiance=dbgRoute4;
+        else if(pc.context.w<11.5) radiance=vec3(max(dbgRoute44,0.0));
+        else radiance=vec3(dbgRoute4Tex>=0?float(dbgRoute4Tex)/256.0:1.0);
+        beta=vec3(0.0); break;
       }
       float diffuseOpacity=opacityTransparent?opacity:1.0;
       radiance+=beta*emission;
@@ -479,7 +523,8 @@ void main(){
       f0=thinFilm(f0,max(dot(h.n,-d),0.0),filmWeight,filmThickness,filmIor);
       // Storm's metal layer uses generalized Schlick with F90 = the combined
       // specular color; the dielectric layer keeps F90 = 1.
-      vec3 f90=(materials[mb+41u]>1.5)?mix(vec3(1.0),base,metal):vec3(1.0);
+      bool preview=materials[mb+41u]>1.5;
+      vec3 f90=preview?mix(vec3(1.0),base,metal):vec3(1.0);
       float coatF=(coatIor-1.0)/(coatIor+1.0); vec3 coatF0=coatColor*(coatF*coatF),coatEnergy=coatF0*coatWeight;
       vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission)*diffuseOpacity;
       // With a non-zero transmission depth, color describes Beer absorption
@@ -489,17 +534,28 @@ void main(){
       if(depth==0u) radiance+=beta*(diffuseColor+subsurfaceBrdf+sheen*0.25)*(0.015+0.025*max(h.n.y,0.0));
       // Descriptor-backed analytic lights use the shared 16-float record.
       vec3 view=-d;
-      if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;bool blocked=traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1))*coatWeight;radiance+=beta*lr*nl*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat)*mis/max(lightPdf,1e-8);}}}
+      // Diagnostic: split the camera-light response into its diffuse and
+      // specular/coat parts so the lit term can be measured separately from
+      // the (already exact) emissive.
+      vec3 dbgDiffuseLit=vec3(0.0),dbgSpecLit=vec3(0.0);
+      if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;// The host marks the UsdAppUtilsFrameRecorder camera light
+        bool blocked=traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
+      if(depth==0u&&pc.context.w>7.5&&pc.context.w<9.5){radiance=pc.context.w<8.5?dbgDiffuseLit:dbgSpecLit;beta=vec3(0.0);break;}
       float xi=rnd(seed)*max(ws,1e-6),side=1.0;
       if(xi<wt){if(heroChannel<0&&dispersion>0.0&&dispersionAbbe>0.0){heroChannel=min(int(rnd(seed)*3.0),2);beta*=heroChannel==0?vec3(3,0,0):(heroChannel==1?vec3(0,3,0):vec3(0,0,3));}float spectral=spectralIor(ior,dispersionAbbe,dispersion,heroChannel<0?1:heroChannel),targetIor=front?spectral:1.0,eta=mediumIor/targetIor;vec3 q=refract(d,h.n,eta);bool tir=length(q)<0.1;if(tir)q=reflect(d,h.n);else{mediumIor=targetIor;if(front){vec3 absorption=transmissionDepth>0.0?-log(clamp(transmissionColor,vec3(1e-6),vec3(1)))/transmissionDepth:vec3(0);mediumSigmaS=transmissionScatter+volumeAlbedo*volumeDensity;mediumExt=absorption+mediumSigmaS+max(vec3(1)-volumeAlbedo,vec3(0))*volumeDensity;mediumEmission=volumeEmission*volumeEmissionScale;mediumG=transmissionScatterG;}else{mediumExt=vec3(0);mediumSigmaS=vec3(0);mediumEmission=vec3(0);mediumG=0.0;}}d=normalize(q);beta*=interfaceTransmission/max(wt/ws,1e-6);side=tir?1.0:-1.0;previousDelta=true;previousPdf=0.0;}
       else if(xi<wt+wss){d=cosineHemisphere(-h.n,seed);beta*=subsurfaceBrdf/max(wss/ws,1e-6);side=-1.0;previousDelta=true;previousPdf=0.0;}
-      else if(xi<wt+wss+wg){float pdf;d=sampleGgx(h.n,h.tangent,view,rough,aniso,anisoRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation,f0,f90);float selectedPdf=pdf*(wg/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+selectedPdf+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
-      else if(xi<wt+wss+wg+wc){float pdf;d=sampleGgx(h.n,h.tangent,view,coatRough,coatAniso,coatRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation,coatF0,vec3(1))*coatWeight;float selectedPdf=pdf*(wc/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+selectedPdf;previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else if(xi<wt+wss+wg){float pdf;d=sampleGgx(h.n,h.tangent,view,rough,aniso,anisoRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation,f0,f90,preview);float selectedPdf=pdf*(wg/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+selectedPdf+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else if(xi<wt+wss+wg+wc){float pdf;d=sampleGgx(h.n,h.tangent,view,coatRough,coatAniso,coatRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;float selectedPdf=pdf*(wc/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+selectedPdf;previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
       else {d=cosineHemisphere(h.n,seed);float nl=max(dot(h.n,d),0.0);previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=(diffuseColor+sheen)/max(wd/ws,1e-6);}
       o=h.p+h.n*(side*1e-4);
       if(depth>=pc.path.x){float p=clamp(max(beta.r,max(beta.g,beta.b)),0.05,0.95);if(rnd(seed)>p)break;beta/=p;}
     }
     sum+=radiance;
   }
-  vec3 c=tonemap(sum/float(max(pc.frame.z,1u))*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
+  vec3 avg=sum/float(max(pc.frame.z,1u));
+  // pc.context.z selects the display transform: 1 = Storm's plain sRGB
+  // encode (colorCorrectionMode=sRGB), 0 = the filmic beauty curve.
+  vec3 c=pc.context.w>0.5?clamp(sum,0.0,1.0)
+        :pc.context.z>0.5?linearToSrgb(avg)
+        :tonemap(avg*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
 }

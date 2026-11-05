@@ -3356,6 +3356,8 @@ int lrt_vk_rtx_scene_render_materialx_path(
     memcpy(pc.camera,d->camera,3u*sizeof(float)); memcpy(pc.clear_color,d->clear_color,3u*sizeof(float));
     pc.clear_color[3]=d->exposure; pc.frame[0]=d->width; pc.frame[1]=d->height;
     pc.context[0]=d->scene_time; pc.context[1]=d->scene_frame;
+    pc.context[3]=(float)d->debug_aov;
+    pc.context[2]=(float)d->display_transform;
     pc.frame[2]=d->samples?d->samples:1u; pc.frame[3]=d->max_depth?d->max_depth:1u;
     pc.path[0]=d->rr_depth; pc.path[1]=d->seed; pc.path[2]=d->nmaterials; pc.path[3]=d->nlights;
     stage = "dispatch";

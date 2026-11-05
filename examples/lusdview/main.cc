@@ -220,7 +220,10 @@ bool ParseFiniteNonNegativeFloat(const char* text, float* value) {
 // would size the stage/geometry limits far past anything sensible). Falls back
 // to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
 uint64_t HostMemoryCapacityBytes() {
-  constexpr uint64_t kTarget = (uint64_t{32} << 30);
+  // Default to half of the typical large-scene host (64 GiB on a 128 GiB
+  // Threadripper) rather than a hard 32 GiB ceiling, so Island-class scenes are
+  // not artificially capped while still bounding unbounded allocations.
+  constexpr uint64_t kTarget = (uint64_t{64} << 30);
   std::ifstream f("/proc/meminfo");
   std::string tok;
   while (f >> tok) {

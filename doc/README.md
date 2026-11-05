@@ -115,6 +115,7 @@ documents live in [archive/](archive/).
 - [Extended USD-assets, empty-view controls and analytic sphere checks](validation/usd-assets-extended-2026-11-03.md).
 - [Final USD-assets sampled diagnostic refresh](validation/usd-assets-native-parameters-2026-11-03.md).
 - [OpenUSD staging allocation defect and bounded control](validation/openusd-staging-buffer-2026-11-03.md).
+- [Storm Island zero-frame: AMD GPU device reset from over-capacity instancers](validation/storm-instancer-gpu-reset-2026-11-05.md).
 - [Island resource-closed subset validation](validation/island-subset-population-2026-11-03.md).
 - [Normal AOV interpretation control](validation/normal-aov-contract-2026-11-03.md).
 - [Original-source native roughness/metallic checks](validation/roughness-native-parameters-2026-11-03.md).

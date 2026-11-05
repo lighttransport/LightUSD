@@ -38,6 +38,15 @@ inline bool BuildRealtimePbrMaterial(
     const PreviewSurfaceShader &s = *rm.preview_surface;
     CopyShaderParam3ToOpenPBR(s.diffuse_color, p.baseColor);
     CopyShaderParam3ToOpenPBR(s.specular_color, p.specularColor);
+    // UsdPreviewSurface consults inputs:specularColor only when
+    // useSpecularWorkflow is on, and its schema fallback is (0,0,0). Carrying
+    // that zero into the packed block tinted the whole specular lobe to black
+    // in the default metallic workflow, which removed the specular response
+    // (and made roughness unobservable) for every preview-surface material.
+    // A bound texture is a multiplicative fallback, so neutralise it there too.
+    if (!s.use_specular_workflow || s.specular_color.texture_id >= 0) {
+      p.specularColor[0] = p.specularColor[1] = p.specularColor[2] = 1.0f;
+    }
     p.metalness = s.metallic.value.x;
     p.specularRoughness = s.roughness.value.x;
     p.specularIor = s.ior.value.x > 0.0f ? s.ior.value.x : 1.5f;

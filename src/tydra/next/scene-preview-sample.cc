@@ -578,7 +578,11 @@ std::array<float, 4> Build::shade(const std::string& path,
       u -= std::floor(u);
       v -= std::floor(v);
     }
-    const std::string key = file + (is_color ? ":color" : ":data");
+    const bool srgb = is_color && t.source_color_space != "raw" &&
+                      t.source_color_space != "data" &&
+                      t.source_color_space != "linear" &&
+                      (!t.color_transform_valid || t.source_gamma != 1.f);
+    const std::string key = file + (srgb ? ":srgb" : ":linear");
     if (failed_images.count(key)) return out;
     auto image = images.find(key);
     if (image == images.end()) {
@@ -586,8 +590,6 @@ std::array<float, 4> Build::shade(const std::string& path,
       if (images.size() >= 64 ||
           decoder.decoded_bytes() > opts.texture_budget_bytes * 3 / 4)
         images.clear();
-      const bool srgb = is_color && t.source_color_space != "raw" &&
-                        t.source_color_space != "data";
       dependencies.insert(file);
       bool ok = false;
       if (file.size() > 4 && (file.substr(file.size() - 4) == ".ptx" ||

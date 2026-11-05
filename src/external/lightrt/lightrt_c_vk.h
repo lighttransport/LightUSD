@@ -262,6 +262,12 @@ typedef struct lrt_vk_material_path_desc {
     float scene_frame;
     uint32_t width, height;
     uint32_t samples, max_depth, rr_depth, seed;
+    /* Diagnostic AOV written instead of shaded radiance (0 = colour):
+     * 1 = material id, 2 = first texture id of the material, 3 = UV. */
+    uint32_t debug_aov;
+    /* Display transform: 0 = filmic beauty curve, 1 = plain sRGB encode
+     * (usdrecord's colorCorrectionMode=sRGB). */
+    uint32_t display_transform;
 } lrt_vk_material_path_desc;
 
 /* Packed light ABI consumed by trace_materialx_path.comp. */

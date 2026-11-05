@@ -563,3 +563,6 @@ task.md
 
 # Small authored regression fixtures for ancestor variant strength.
 !tests/usda/pcp-ancestor-variant/*.usda
+
+# MuJoCo writes this warning log next to the tests that import MJCF.
+MUJOCO_LOG.TXT

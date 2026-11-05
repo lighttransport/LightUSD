@@ -146,6 +146,14 @@ LANES = {
 def scene(name, lane, textured, file_override=None, ambient_only=False):
     decl, ty, shader, file, value, channel = LANES[lane]
     text = HEADER
+    if lane == 'spec':
+        # inputs:specularColor is consulted only when useSpecularWorkflow is on;
+        # without the switch both scenes ignore the lane and the row is vacuous.
+        # The schema type is int, not bool.
+        text = text.replace(
+            'float inputs:specular = 1.0',
+            'float inputs:specular = 1.0\n'
+            '                int inputs:useSpecularWorkflow = 1')
     if ambient_only:
         # Light points up, so the +Y plane receives no direct light: the render
         # is the ambient term only and a 0.4 occlusion map must scale it to 0.4.

@@ -127,6 +127,11 @@ LANES = {
     'metal': ('inputs:base_metalness', 'float', '0.0', '0.8'),
     'rough': ('inputs:specular_roughness', 'float', '0.05', '0.9'),
     'emit': ('inputs:emission_color', 'color3f', '(0, 0, 0)', '(0, 1, 0)'),
+    # The specular and coat *colour* lanes: a dielectric specular lobe tinted
+    # red must differ from an untinted one, and a blue coat must differ from a
+    # white one. The coat lane needs a non-zero coat_weight or it is inert.
+    'spec': ('inputs:specular_color', 'color3f', '(0, 0, 0)', '(1, 0, 0)'),
+    'coat': ('inputs:coat_color', 'color3f', '(1, 1, 1)', '(0, 0, 1)'),
 }
 
 
@@ -138,10 +143,16 @@ def scene(name, lane, high):
     graph = (SCALAR_GRAPH if ty == 'float' else COLOR_GRAPH).replace(
         'LANEVALUE', hi if high else low)
     text = text.replace('CONNECT', connect).replace('GRAPH', graph)
+    if lane == 'coat':
+        text = text.replace(
+            'float inputs:emission_luminance = 1.0',
+            'float inputs:emission_luminance = 1.0\n'
+            '                float inputs:coat_weight = 1.0\n'
+            '                float inputs:coat_affect_color = 1.0')
     (root / f'{name}.usda').write_text(text)
 
 
-for lane in ('metal', 'rough', 'emit'):
+for lane in ('metal', 'rough', 'emit', 'spec', 'coat'):
     scene(f'{lane}_low', lane, False)
     scene(f'{lane}_high', lane, True)
 PY
@@ -174,7 +185,8 @@ render() {
   [ -s "$image" ] || { echo "FAIL: missing screenshot for $name"; exit 1; }
 }
 
-for name in metal_low metal_high rough_low rough_high emit_low emit_high; do
+for name in metal_low metal_high rough_low rough_high emit_low emit_high \
+            spec_low spec_high coat_low coat_high; do
   render "$name"
 done
 
@@ -196,15 +208,40 @@ def pixels(name):
     return body
 
 
-def mean_abs_diff(a, b):
+def diff_stats(a, b):
     pa, pb = pixels(a), pixels(b)
-    return sum(abs(x - y) for x, y in zip(pa, pb)) / len(pa)
+    ds = [abs(x - y) for x, y in zip(pa, pb)]
+    return sum(ds) / len(ds), max(ds)
 
 
-for lane in ('metal', 'rough', 'emit'):
-    diff = mean_abs_diff(f'{lane}_low', f'{lane}_high')
-    print(f'{lane}: graph-lane low/high mean abs diff {diff:.3f}')
-    if diff < 1.0:
+def channel_means(name):
+    pa = pixels(name)
+    n = len(pa) // 3
+    return (sum(pa[0::3]) / n, sum(pa[1::3]) / n, sum(pa[2::3]) / n)
+
+
+for lane in ('metal', 'rough', 'emit', 'spec', 'coat'):
+    mean, peak = diff_stats(f'{lane}_low', f'{lane}_high')
+    print(f'{lane}: graph-lane low/high mean abs diff {mean:.3f} peak {peak}')
+    # A lane that is ignored produces byte-identical renders (peak 0). The
+    # colour lanes tint only a small lobe, so the peak is the meaningful
+    # magnitude signal; the mean is dominated by background.
+    if peak < 3 or mean < 0.05:
         raise SystemExit(f'FAIL: the {lane} graph lane did not change the render')
-print('PASS: CPU preview consumes MaterialX metallic/roughness/emission routes')
+
+# Colour lanes must also move the image in the authored direction: a red
+# specular tint raises red relative to green, a blue coat raises blue relative
+# to red. A magnitude-only check could pass on unrelated noise.
+lr, lg, lb = channel_means('spec_low')
+hr, hg, hb = channel_means('spec_high')
+print(f'spec: red-green low {lr - lg:.3f} high {hr - hg:.3f}')
+if hr - hg <= lr - lg + 0.05:
+    raise SystemExit('FAIL: the specular colour lane did not tint red')
+lr, lg, lb = channel_means('coat_low')
+hr, hg, hb = channel_means('coat_high')
+print(f'coat: blue-red low {lb - lr:.3f} high {hb - hr:.3f}')
+if hb - hr <= lb - lr + 0.05:
+    raise SystemExit('FAIL: the coat colour lane did not tint blue')
+print('PASS: CPU preview consumes MaterialX metallic/roughness/emission/'
+      'specular-colour/coat-colour routes')
 PY

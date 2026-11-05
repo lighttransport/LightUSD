@@ -562,6 +562,9 @@ enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
   CaptureAov aov{CaptureAov::Color};
+  // Display transform for the beauty path: false = filmic curve (default),
+  // true = plain sRGB encode, matching usdrecord's colorCorrectionMode=sRGB.
+  bool srgb_display_transform{false};
   bool aov_explicit{false};
   bool all_render_products{false};
   std::string input;

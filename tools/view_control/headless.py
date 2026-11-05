@@ -403,6 +403,17 @@ class HeadlessSession:
         # so make the native candidate evaluate that same light.
         if self.state.get('reference_camera_light'):
             candidate.append('-referenceCameraLight')
+        # The candidate point-samples minified textures (no mip chain), so a
+        # single sample aliases badly against the SDK's mipmapped render. Let a
+        # job request an explicit supersample budget for a like-for-like
+        # comparison.
+        # Opt-in display transform: `srgb` reproduces usdrecord's
+        # colorCorrectionMode=sRGB (plain sRGB encode, no filmic shoulder).
+        if self.state.get('display_transform') == 'srgb':
+            candidate += ['-displayTransform', 'srgb']
+        candidate_samples=self.state.get('candidate_samples')
+        if candidate_samples:
+            candidate += ['-samples',str(int(candidate_samples))]
         if prepared.get('reference_population_mask'):
             reference+=['--mask',','.join(prepared['reference_population_mask']['paths'])]
         if self.diagnostic_emission:candidate.append('-diagnosticEmission')

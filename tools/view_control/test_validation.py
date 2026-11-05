@@ -174,3 +174,110 @@ class NativeLoadLimitsTests(unittest.TestCase):
                                     'scenes':[{'path':'scene.usda','native_load_limits':{'max_array_elements':67108864}}]}))
             config=load_config(p)
             self.assertEqual(config['scenes'][0]['native_load_limits']['max_array_elements'],67108864)
+
+
+class MtlxFilePrefixTests(unittest.TestCase):
+    """The doubled-fileprefix repair must detect, repair and be idempotent."""
+
+    MTLX = '''<materialx version="1.38" fileprefix="./textures/">
+  <input name="file" type="filename" value="./textures/a.jpg" />
+  <input name="file" type="filename" value="./textures/b.jpg" />
+</materialx>
+'''
+
+    def test_detects_repairs_and_is_idempotent(self):
+        import importlib.util
+        from pathlib import Path
+        import tempfile
+        here = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location(
+            'fix_mtlx', here / 'fix_mtlx_fileprefix.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'tex').mkdir()
+            (root / 'm.mtlx').write_text(self.MTLX)
+            self.assertEqual(mod.main([str(root), '--check']), 1)
+            self.assertEqual(mod.main([str(root)]), 0)
+            doubled = root / 'textures' / 'textures'
+            self.assertTrue(doubled.is_symlink())
+            self.assertEqual(doubled.resolve(), (root / 'textures').resolve())
+            self.assertEqual(mod.main([str(root), '--check']), 0)
+
+    def test_non_doubled_prefix_is_left_alone(self):
+        import importlib.util
+        from pathlib import Path
+        here = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location(
+            'fix_mtlx', here / 'fix_mtlx_fileprefix.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.doubled_prefixes(
+            '<materialx fileprefix="./tex/">\n'
+            '<input name="file" value="a.jpg"/></materialx>'), set())
+
+
+class CandidateSamplesTests(unittest.TestCase):
+    """A job may request an explicit candidate supersample budget."""
+
+    def _load(self, value):
+        import json, tempfile
+        from pathlib import Path
+        import importlib.util
+        here = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location(
+            'validation_mod', here / 'validation.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'job.json'
+            job = {'version': 1, 'assets_root': '.', 'scenes': [{'path': 'a.usda'}]}
+            if value is not None:
+                job['candidate_samples'] = value
+            p.write_text(json.dumps(job))
+            return mod.load_config(p)
+
+    def test_default_is_one(self):
+        self.assertEqual(self._load(None).get('candidate_samples', 1), 1)
+
+    def test_accepts_valid_budget(self):
+        self.assertEqual(self._load(4)['candidate_samples'], 4)
+
+    def test_rejects_out_of_range_and_non_int(self):
+        for bad in (0, 65, True, 2.5, '4'):
+            with self.assertRaises(ValueError):
+                self._load(bad)
+
+
+class DisplayTransformTests(unittest.TestCase):
+    """A job may opt into usdrecord's plain sRGB display transform."""
+
+    def _load(self, value):
+        import json, tempfile
+        from pathlib import Path
+        import importlib.util
+        here = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location(
+            'validation_mod', here / 'validation.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'job.json'
+            job = {'version': 1, 'assets_root': '.', 'scenes': [{'path': 'a.usda'}]}
+            if value is not None:
+                job['display_transform'] = value
+            p.write_text(json.dumps(job))
+            return mod.load_config(p)
+
+    def test_default_is_filmic(self):
+        self.assertEqual(self._load(None).get('display_transform', 'filmic'), 'filmic')
+
+    def test_accepts_srgb(self):
+        self.assertEqual(self._load('srgb')['display_transform'], 'srgb')
+
+    def test_rejects_unknown(self):
+        for bad in ('aces', 'linear', 1, True):
+            with self.assertRaises(ValueError):
+                self._load(bad)

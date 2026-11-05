@@ -4162,6 +4162,19 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # The same per-slot UV transform contract on the non-base semantic lanes
+    # (metallic, occlusion, clearcoat, emissive): each lane must match the
+    # pre-transformed-UV reference and must not be a no-op.
+    add_test(
+      NAME lusdview-cpu-lane-uv-transform
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-lane-uv-transform.sh"
+      )
+    set_tests_properties(lusdview-cpu-lane-uv-transform PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     # CPU authored tangent basis: a rotated primvars:tangents must shade the
     # same tangent-space normal like the equivalent geometry normal.
     add_test(
@@ -4192,7 +4205,8 @@ if(LIGHTUSD_BUILD_TESTS)
     # roughness/emission graph routes must affect the render.
     foreach(cpu_lane_test
         lusdview-cpu-material-lanes
-        lusdview-cpu-graph-lanes)
+        lusdview-cpu-graph-lanes
+        lusdview-cpu-graph-chain)
       string(REPLACE "lusdview-cpu-" "run-cpu-" cpu_lane_script
                      "${cpu_lane_test}")
       add_test(

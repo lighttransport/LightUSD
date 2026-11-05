@@ -206,6 +206,7 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   desc.camera[2] = camera.origin.z; desc.clear_color[0] = opt.bg.x;
   desc.clear_color[1] = opt.bg.y; desc.clear_color[2] = opt.bg.z;
   desc.exposure = 1.0f; desc.width = static_cast<uint32_t>(width);
+  desc.display_transform = opt.srgb_display_transform ? 1u : 0u;
   desc.scene_frame = std::isfinite(opt.timecode)
                          ? static_cast<float>(opt.timecode) : 0.0f;
   desc.scene_time = desc.scene_frame / 24.0f;
@@ -214,6 +215,20 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                      ? opt.path_trace_samples : static_cast<uint32_t>(std::max(1, opt.samples));
   desc.max_depth = opt.path_trace ? opt.path_trace_max_depth : 1u;
   desc.rr_depth = opt.path_trace_rr_depth; desc.seed = opt.path_trace_seed;
+  // Diagnostic AOV: LUSDVIEW_RT_DEBUG_AOV=material|uv writes that value
+  // instead of shaded colour (see lrt_vk_material_path_desc::debug_aov).
+  if (const char* aov = std::getenv("LUSDVIEW_RT_DEBUG_AOV"))
+    desc.debug_aov = std::strcmp(aov, "uv") == 0 ? 2u
+                     : std::strcmp(aov, "material") == 0 ? 1u
+                     : std::strcmp(aov, "opacity") == 0 ? 3u
+                     : std::strcmp(aov, "behind_material") == 0 ? 4u
+                     : std::strcmp(aov, "behind_depth") == 0 ? 5u
+                     : std::strcmp(aov, "emission") == 0 ? 7u
+                     : std::strcmp(aov, "lit_diffuse") == 0 ? 8u
+                     : std::strcmp(aov, "lit_spec") == 0 ? 9u
+                     : std::strcmp(aov, "route4") == 0 ? 10u
+                     : std::strcmp(aov, "route44") == 0 ? 11u
+                     : std::strcmp(aov, "route4_tex") == 0 ? 12u : 0u;
   std::vector<float> rgba(static_cast<size_t>(width) * static_cast<size_t>(h) * 4u);
   lrt_result err = LRT_RESULT_OK;
   if (lrt_vk_rtx_scene_render_materialx_path(vk, rtx, &desc, rgba.data(), &err) != 0) {

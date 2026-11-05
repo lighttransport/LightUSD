@@ -473,8 +473,45 @@ Beauty/material jobs automatically add a depth AOV when absent. PASS requires
 foreground in both views with common depth pixels; `implicit_aovs` records the
 witness. Empty or failed witnesses make otherwise matching images INCOMPLETE. This
 opaque geometry witness does not prove complete opacity-aware material visibility.
+### Candidate supersampling (`candidate_samples`)
+
+The native candidate point-samples textures (it has no mip chain), so on
+minified UVs a single sample aliases badly against the SDK's mipmapped capture.
+A job may request an explicit supersample budget:
+
+```json
+{ "candidate_samples": 4 }
+```
+
+It is validated to an integer in `[1, 64]`, defaults to 1 (no behaviour change),
+and is appended to the candidate command as `-samples N`. Measured effect on
+`AlphaBlendModeTest`: 0.9101 (1 spp) -> 0.9265 (4 spp). Guarded by
+`test_validation.py::CandidateSamplesTests`.
+
+### MaterialX `fileprefix` repair
+
+Some third-party MaterialX documents set both a `fileprefix` and fully prefixed
+`file` values, so the resolved path doubles (`./textures/./textures/x.jpg`). The
+SDK reference then substitutes fallback textures and its capture is marked
+INCOMPLETE even though the candidate matches. Run
+
+```bash
+python3 tools/view_control/fix_mtlx_fileprefix.py <assets-root>   # repair
+python3 tools/view_control/fix_mtlx_fileprefix.py <assets-root> --check
+```
+
+It never edits the document (which would change what the candidate reads); it
+creates an idempotent `textures/textures -> .` link so the doubled path
+resolves. `test_validation.py::MtlxFilePrefixTests` guards it. With the repair
+applied, `basicTextured.usda` moves from INCOMPLETE to PASS (0.0035 / 0.9601).
+
 The [extended USD-assets job](jobs/usd-assets-extended-materials.json) covers
 texture transforms, alpha, color spaces, MaterialX and two more sampled characters.
+Its colour AOV compares Storm's authored lights against the candidate's default
+rig, so those colour verdicts are not beauty evidence; use
+[`usd-assets-extended-materials-camlight.json`](jobs/usd-assets-extended-materials-camlight.json),
+which sets `reference_camera_light: true` and moves colour passes from 1/13 to
+6/13 without changing any material AOV.
 [Measured findings](../../doc/validation/usd-assets-extended-2026-11-03.md) retain
 unsupported channels, partial references and failed beauty comparisons.
 

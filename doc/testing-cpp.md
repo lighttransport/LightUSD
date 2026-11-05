@@ -511,10 +511,12 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-cpu-normal-map` | CPU normal map shades like the equivalent geometric normal | `xvfb-run` when headless |
 | `lusdview-cpu-graph-tangent` | MaterialX tangent/bitangent nodes use the hit triangle frame | `xvfb-run` when headless |
 | `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
+| `lusdview-cpu-lane-uv-transform` | CPU metallic/occlusion/clearcoat/emissive lanes apply the per-slot UV transform | `xvfb-run` when headless |
 | `lusdview-cpu-material-lanes` | CPU metallic/roughness/emissive/specular/coat/occlusion lanes match constant equivalents | `xvfb-run` when headless |
 | `lusdview-cpu-coat-normal` | CPU OpenPBR coat normal uses its own map/frame and affects only the coat lobe | `xvfb-run` when headless |
 | `lusdview-cpu-authored-tangent` | CPU normal-map shading uses `primvars:tangents` and its handedness | `xvfb-run` when headless |
 | `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
+| `lusdview-cpu-graph-chain` | CPU MaterialX multi-node chain (image→multiply→mix) equals its constant equivalent | `xvfb-run` when headless |
 | `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
 | `lusdview-cpu-ptex-element` | Real quad-topology element pixels match the independent OpenPtex decoder; no fallback | Island corpus, OpenPtex build, `xvfb-run` |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
@@ -1113,8 +1115,6 @@ features, SIMD, memory width, and threading identical. Compare repeated load
 and export timings as well as size; investigate repeatable regressions above
 5% rather than accepting a smaller binary on size alone.
 
-#### AOUSD Core supplemental inputs
-
 #### Lean-generated conformance vectors
 
 `verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
@@ -1131,6 +1131,8 @@ cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
 ```
 
 See `doc/validation/lean-verification-2026-11-06.md` and `verif/lean/README.md`.
+
+#### AOUSD Core supplemental inputs
 
 The official [Core supplemental repository](https://github.com/aousd/core-spec-supplemental-public)
 keeps releases under `releases/`, with the license at the checkout root.
@@ -1150,17 +1152,52 @@ ctest --test-dir build_ninja/next-debug -L aousd -V
 ```
 
 This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
-The supplemental bridge loads 54 file-format fixtures, checks expected prim
-population across 138 composition cases, and checks resolved samples in eight
-value-resolution cases. Composition cases whose `pcp.json` authors an `Errors`
-list are negative dependency cases: the secure loader must reject them (exactly
-one case, `ErrorInvalidPayload_root`, does), and any case without authored errors
-must load — a silent skip is a failure. Run the full corpus instead of the
-default 50-case cap with `LIGHTUSD_AOUSD_CAP=0`. Its data-type bridge runs the
-library's AOUSD type checks; it does not execute the upstream Python/OpenUSD test
-runner or compare every PCP field. Keep these coverage limits separate from full
-spec conformance. The 2026-11-03 run is recorded in
+The supplemental bridge loads 54 file-format fixtures, checks all 138
+composition cases, and checks resolved samples in eight value-resolution cases.
+Three composition roots contain invalid text paths and must be rejected:
+`BasicInherits_root`, `ErrorRelocateWithVariantSelection_root`, and
+`SubrootReferenceAndVariants_root`. Their classification in
+`tests/next/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
+accepted text, changed bytes, a different failure, or an unreadable binary
+dependency fails the gate. The release supplies no binary root for these three
+cases; all six available original binary dependencies are still required loads.
+With the stock oracle enabled, it independently confirms the text rejections
+and reads those binaries too. These three rejection cases are reported
+separately from the 135 structural comparisons, keeping all 138 cases covered.
+An upstream `Errors` list alone does not grant a case an exemption. Run the full
+corpus instead of the default 50-case cap with `LIGHTUSD_AOUSD_CAP=0`.
+Its data-type bridge runs the library's AOUSD type checks; it does not execute
+the upstream Python test runner or compare every PCP field. Keep these coverage
+limits separate from full spec conformance. The 2026-11-03 run is recorded in
 [the supplemental report](validation/aousd-supplemental-2026-11-03.md).
+
+The `lusdcat --dump-pcp-json -` default remains the corpus-compatible v1 JSON.
+Use `--pcp-json-version 2` for ordered prim/property stack arrays of
+`{"layer": "...", "path": "..."}` sites. This retains repeated layers and repeated
+sites reached through distinct reference offsets. External layer identifiers
+retain their relative directory components in v2. `next_pcp_json_contract` tests
+both versions, variant provenance and duplicate-site preservation.
+
+For an independent lossless comparison, install `usd-core==26.11` into an
+isolated directory and run:
+
+```bash
+python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
+python3 tests/next/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
+  --oracle-python "$(command -v python3)" \
+  --oracle-pythonpath build_ninja/stock-oracle
+python3 tests/next/run-aousd-supplemental.py \
+  --suite-root build_ninja/aousd-supplemental/releases/1.0.1 \
+  --next-usdcat build_ninja/next-debug/lusdcat --category composition \
+  --pcp-oracle-python "$(command -v python3)" \
+  --pcp-oracle-pythonpath build_ninja/stock-oracle
+```
+
+The oracle verifies the imported package distribution/version and uses stock
+Pcp in USD mode. This comparison counts property ordering and all stack sites;
+its default difference ceiling is zero and it has no engine allowlist. It is
+an active gap-detection gate; current differences are recorded in
+[the execution ledger](validation/lean-followup-status.md).
 
 Reference `customData` tests now require strict USDC loads, typed nested-value
 retention, qualified list-op identity, and memory/streaming writer roundtrips.
@@ -3472,6 +3509,24 @@ selector for the lanes the CPU samples (base colour, normal map including its
 tangent frame, opacity): each must shade byte-identically to the same texture
 sampled with pre-transformed `st`, with a no-normal control proving the normal
 rows are not vacuous.
+
+`lusdview-cpu-graph-chain` pins MaterialX graph *topology* rather than a single
+route: a three-node chain (`ND_image_color3` -> `ND_multiply_color3` ->
+`ND_mix_color3`) feeds `emission_color`, and the render must match, to within one
+channel step, a scene that authors the computed constant directly (white texture
+x 0.5, mixed 50/50 with 0.2 = 0.35). A white texture keeps the oracle
+independent of colour-space decoding, and an image-only control must differ, so
+a renderer that stops after the first node cannot pass.
+
+`lusdview-cpu-lane-uv-transform` extends the same contract to the non-base
+semantic lanes the CPU preview shades (metallic, roughness, occlusion,
+clearcoat, emissive): each lane must match the pre-transformed-`st` reference to
+within one channel step and must differ from its constant-lane control, so a
+lane that is silently ignored cannot pass. The roughness lane only became
+observable after the packed specular colour was neutralised for the metallic
+workflow, which had been zeroing the entire specular lobe (see the
+[gap-closure ledger](validation/gap-closure-status.md) and the
+[lane analysis](validation/cpu-preview-lanes-and-ptex-2026-11-04.md)).
 
 `lusdview-cpu-ptex-element` renders the real `isGardeniaA` bonsai element
 (quad topology, 53 meshes, 53 PTex maps), requires no representative-face

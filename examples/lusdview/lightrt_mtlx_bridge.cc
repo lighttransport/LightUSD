@@ -176,7 +176,14 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->emission = 1.0f;
   }
   if (mat.opacityTex >= 0) p->opacity = 1.0f;
-  if (mat.specularColorTex >= 0) {
+  // Match tydra-next's BuildRealtimePbrMaterial: inputs:specularColor is a
+  // UsdPreviewSurface *specular-workflow* input whose schema fallback is
+  // (0,0,0), so carrying it into the metallic workflow tints the whole
+  // specular lobe to black. A bound texture is a multiplicative fallback and
+  // is neutralised too. Without this the legacy and next loaders shade the
+  // same UsdPreviewSurface differently (measured 3 levels on the linked-light
+  // fixture).
+  if (!mat.useSpecularWorkflow || mat.specularColorTex >= 0) {
     p->specularColor[0] = p->specularColor[1] = p->specularColor[2] = 1.0f;
   }
   if (mat.coatWeightTex >= 0) p->coatWeight = 1.0f;

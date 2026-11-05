@@ -321,25 +321,25 @@ def "R" (references = </Model>; variants = {string look = "empty"}) {}
             with self.subTest(bulk=bulk), tempfile.TemporaryDirectory(
                     prefix='lightusd-composed-child-order-') as directory:
                 base = Path(directory)
-                (base / 'asset.usda').write_text('#usda 1.0\ndef "A" {\n def "b" {}\n' +
+                (base / 'asset.usd').write_text('#usda 1.0\ndef "A" {\n def "b" {}\n' +
                     ''.join(' def "n' + str(i) + '" {}\n' for i in range(bulk)) + '}\n')
-                (base / 'middle.usda').write_text('#usda 1.0\n'
-                    'def "P" (references = @asset.usda@</A>) {\n'
+                (base / 'middle.usd').write_text('#usda 1.0\n'
+                    'def "P" (references = @asset.usd@</A>) {\n'
                     ' reorder nameChildren = ["b", "a"]\n'
                     ' def "a" {}\n def "u" {}\n def "b" {}\n def "v" {}\n}\n')
-                root = base / 'root.usda'
-                root.write_text('#usda 1.0\n(subLayers = [@middle.usda@])\n'
+                root = base / 'root.usd'
+                root.write_text('#usda 1.0\n(subLayers = [@middle.usd@])\n'
                     'over "P" {\n def "extra" {}\n def "n1" {}\n}\n')
                 for binary in (False, True):
                     if binary:
                         crate_dir = base / 'crates'
                         crate_dir.mkdir()
-                        for name in ('asset.usda', 'middle.usda', 'root.usda'):
+                        for name in ('asset.usd', 'middle.usd', 'root.usd'):
                             rewrite = subprocess.run([ARGS.lusdcat, '--rewrite-layer',
                                 '--output-format', 'usdc', '-o', str(crate_dir / name),
                                 str(base / name)], capture_output=True, text=True)
                             self.assertEqual(rewrite.returncode, 0, rewrite.stderr)
-                        root = crate_dir / 'root.usda'
+                        root = crate_dir / 'root.usd'
                     result = subprocess.run([ARGS.lusdcat, '--dump-pcp-json', '-',
                         '--pcp-json-version', '2', str(root)], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)

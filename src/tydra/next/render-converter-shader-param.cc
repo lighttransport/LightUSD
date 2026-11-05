@@ -459,6 +459,19 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
 
     TextureNodeData tex_data;
     if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
+      // UsdUVTexture's sourceColorSpace schema only accepts "raw", "sRGB" and
+      // "auto". OpenUSD ignores any other token and falls back to "auto"; the
+      // ColorSpaceTests/UsdPreviewSurface README states this explicitly for
+      // "lin_ap1_scene" ("the current behavior of OpenUSD is that it seems to
+      // ignore the error and treat it as if it were set to auto"). Resolving
+      // such a token as a real colour space instead diverged from the SDK.
+      {
+        std::string &cs = tex_data.source_color_space;
+        if (!cs.empty() && cs != "auto" && cs != "raw" && cs != "sRGB" &&
+            cs != "srgb") {
+          cs = "auto";
+        }
+      }
       if (tex_data.source_color_space.empty() ||
           tex_data.source_color_space == "auto") {
         bool authored = false;

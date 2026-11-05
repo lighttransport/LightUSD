@@ -5019,6 +5019,11 @@ int BuildNextMaterial(const lightusd_stage* stageHandle,
     retainDiagnosticScalar("coat_anisotropy", s.coat_anisotropy);
     retainDiagnosticScalar("coat_roughness_anisotropy",
                            s.coat_roughness_anisotropy);
+    // The CPU coat lobe gates its base tint on coat_affect_color; without these
+    // the authored value never reaches the packed params and a MaterialX
+    // coat_color route is inert (measured: low/high rendered identically).
+    retainDiagnosticScalar("coat_affect_color", s.coat_affect_color);
+    retainDiagnosticScalar("coat_affect_roughness", s.coat_affect_roughness);
     retainDiagnosticScalar("transmission_dispersion",
                            s.transmission_dispersion);
     retainDiagnosticScalar("transmission_dispersion_scale",
