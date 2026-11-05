@@ -117,7 +117,8 @@
   // --- instancing ---------------------------------------------------------
 
   // Instanceable iff the COMPOSED `instanceable` value is true AND the prim
-  // actually has a composition arc (more than just its own root opinions).
+  // has a direct composition arc that contributes specs. Unresolved arcs and
+  // purely ancestral sources do not establish an instancing boundary.
   // `instanceable` is ordinary boolean metadata: the STRONGEST authored opinion
   // wins (srcs are strong-first), so a local `instanceable = false` override on
   // a prim that references an instanceable=true prototype de-instances it

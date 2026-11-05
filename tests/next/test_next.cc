@@ -1209,6 +1209,60 @@ def PhysicsJoint "Driven" (
   std::cout << "  physics schema tests passed!" << std::endl;
 }
 
+// Stock OpenUSD accepts an explicit arc clear, but every qualified None is
+// invalid (including deprecated add/reorder). This must hold in both profiles.
+void test_arc_none_qualifiers() {
+  for (bool strict : {false, true}) {
+    LoadOptions options;
+    options.parse_options.strict_aousd_conformance = strict;
+    for (const char* field : {"references", "payload", "inherits", "specializes"}) {
+      for (const char* qualifier : {"", "prepend ", "append ", "delete ", "reorder ", "add "}) {
+        const std::string source = "#usda 1.0\ndef \"P\" (\n" +
+            std::string(qualifier) + field + " = None\n) {}\n";
+        const auto loaded = LoadUSDAFromString(source, options);
+        assert(loaded.success == (qualifier[0] == '\0'));
+        if (qualifier[0] != '\0')
+          assert(loaded.error_summary.find("None") != std::string::npos);
+      }
+    }
+  }
+}
+
+void test_arc_and_relocate_variant_path_rejection() {
+  for (bool strict : {false, true}) {
+    LoadOptions options;
+    options.parse_options.strict_aousd_conformance = strict;
+    for (const char* field : {"references", "payload", "inherits", "specializes"}) {
+      for (const char* qualifier : {"", "prepend ", "append ", "delete ", "reorder ", "add "}) {
+        for (bool nested : {false, true}) {
+          const std::string metadata = std::string(qualifier) + field +
+              " = [</Target{look=a}Child>]";
+          const std::string source = nested
+              ? "#usda 1.0\ndef \"P\" {\n variantSet \"look\" = {\n \"a\" (" + metadata + ") {}\n }\n}\n"
+              : "#usda 1.0\ndef \"P\" (" + metadata + ") {}\n";
+          const auto loaded = LoadUSDAFromString(source, options);
+          assert(!loaded.success);
+          assert(loaded.error_summary.find("cannot contain variant selections") != std::string::npos);
+        }
+      }
+    }
+    for (bool layer : {false, true}) {
+      for (bool source : {false, true}) {
+        const std::string edit = source
+            ? "relocates = {</P{look=a}Child>: </P/Moved>}"
+            : "relocates = {</P/Child>: </P{look=a}Moved>}";
+        const std::string text = layer ? "#usda 1.0\n(" + edit + ")\ndef \"P\" {}\n"
+            : "#usda 1.0\ndef \"P\" (" + edit + ") {}\n";
+        const auto loaded = LoadUSDAFromString(text, options);
+        assert(!loaded.success);
+        assert(loaded.error_summary.find("cannot contain variant selections") != std::string::npos);
+      }
+    }
+    // A literal brace in an asset name is not a variant-selection path.
+    assert(LoadUSDAFromString("#usda 1.0\ndef \"P\" (references = @asset{v=a}.usd@</A>) {}\n", options).success);
+  }
+}
+
 void test_load_usd_from_memory() {
   std::cout << "Testing LoadUSDFromMemory..." << std::endl;
 
@@ -1600,7 +1654,7 @@ def Mesh "FromSub" {
   {
     std::ofstream ofs(root_path);
     ofs << "#usda 1.0\n( subLayers = [@./preview_sub.usda@] )\n"
-           "def Xform \"Root\" { def Scope \"Child\" {} }\n";
+           "def Xform \"Root\" { def Scope \"Child\" {}\n }\n";
   }
 
   StageSnapshot retained_preview;
@@ -2618,6 +2672,8 @@ int main() {
     test_arc_listops();
     test_arc_layer_offset_parse();
     test_physics_schema();
+    test_arc_none_qualifiers();
+    test_arc_and_relocate_variant_path_rejection();
     test_load_usd_from_memory();
     test_stage_change_set_aggregation();
     test_stage_session_variants();

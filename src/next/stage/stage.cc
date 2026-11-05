@@ -749,7 +749,8 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
       instance_root = GetPath().str();
     }
   }
-  const auto& indices = src->child_indices();
+  std::vector<uint32_t> ordered;
+  const auto& indices = layer_->ordered_child_indices(*src, &ordered);
   children.reserve(indices.size());
 
   for (uint32_t idx : indices) {
@@ -776,7 +777,8 @@ size_t UsdPrim::GetChildCount() const {
 UsdPrim UsdPrim::GetChildAt(size_t index) const {
   if (!spec_ || !layer_) return UsdPrim();
   const PrimSpec* src = ChildSourceSpec();
-  const auto& indices = src->child_indices();
+  std::vector<uint32_t> ordered;
+  const auto& indices = layer_->ordered_child_indices(*src, &ordered);
   if (index >= indices.size()) return UsdPrim();
   uint32_t idx = indices[index];
   const PrimSpec* child = layer_->prim(idx);
@@ -857,7 +859,8 @@ std::unique_ptr<Layer> Stage::ReleaseRootLayer() {
 
 void Stage::Traverse(void* context, VisitFn callback) const {
   if (!root_layer_ || !callback) return;
-  for (uint32_t idx : root_layer_->root_indices()) {
+  std::vector<uint32_t> ordered;
+  for (uint32_t idx : root_layer_->ordered_root_indices(&ordered)) {
     if (!TraverseImpl(idx, root_layer_.get(), context, callback)) break;
   }
 }
@@ -1006,7 +1009,8 @@ std::vector<UsdPrim> Stage::GetRootPrims() const {
   std::vector<UsdPrim> prims;
   if (!root_layer_) return prims;
 
-  const auto& indices = root_layer_->root_indices();
+  std::vector<uint32_t> ordered;
+  const auto& indices = root_layer_->ordered_root_indices(&ordered);
   prims.reserve(indices.size());
 
   for (uint32_t idx : indices) {
@@ -1033,6 +1037,7 @@ bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
   struct Frame {
     uint32_t idx;
     size_t child_pos;
+    std::vector<uint32_t> ordered;
   };
   std::vector<Frame> stack;
 
@@ -1042,14 +1047,15 @@ bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
   UsdPrim prim(spec, layer, prim_index);
   if (!callback(context, prim)) return false;
 
-  stack.push_back({prim_index, 0});
+  stack.push_back({prim_index, 0, {}});
 
   while (!stack.empty()) {
     Frame& f = stack.back();
     const PrimSpec* parent = layer->prim(f.idx);
     if (!parent) { stack.pop_back(); continue; }
 
-    const auto& children = parent->child_indices();
+    if (f.child_pos == 0) layer->ordered_child_indices(*parent, &f.ordered);
+    const auto& children = f.ordered.empty() ? parent->child_indices() : f.ordered;
     if (f.child_pos >= children.size()) {
       stack.pop_back();
       continue;
@@ -1062,7 +1068,7 @@ bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
     UsdPrim child_prim(child_spec, layer, child_idx);
     if (!callback(context, child_prim)) return false;
 
-    stack.push_back({child_idx, 0});
+    stack.push_back({child_idx, 0, {}});
   }
   return true;
 }

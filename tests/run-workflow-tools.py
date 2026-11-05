@@ -42,8 +42,8 @@ def main():
         work = Path(temp)
         scene = work / "root.usda"
         scene.write_text('''#usda 1.0
-(defaultPrim = "World" upAxis = "Y" metersPerUnit = 1)
-def Xform "World" (variants = { string display = "low" } prepend variantSets = "display") {
+(defaultPrim = "World"; upAxis = "Y"; metersPerUnit = 1)
+def Xform "World" (variants = { string display = "low" }; prepend variantSets = "display") {
   variantSet "display" = {
     "low" { custom int level = 1 }
     "high" { custom int level = 2 }

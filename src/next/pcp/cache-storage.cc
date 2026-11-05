@@ -307,7 +307,15 @@ auto Cache::Impl::SelectVariants(
   }
 
 auto Cache::Impl::IsInstanceableSources(const std::vector<Src> &srcs) const -> bool {
-    if (srcs.size() <= 1) return false;
+    bool has_contributing_arc = false;
+    for (size_t i = 1; i < srcs.size(); ++i) {
+      const Src &s = srcs[i];
+      if (Mapping(s.map_idx).MapsFrom(s.site) && !SpecsFor(s).empty()) {
+        has_contributing_arc = true;
+        break;
+      }
+    }
+    if (!has_contributing_arc) return false;
     for (const Src &s : srcs) {
       for (const SpecRef &sr : SpecsFor(s)) {
         const PrimMetadata &m = sr.spec->meta();
@@ -342,7 +350,7 @@ auto Cache::Impl::ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const -> 
       // positional ones (a child re-rooted under an arc) map from an ancestor
       // prefix. (A mapping can carry several pairs -- one per arc plus one per
       // relocate -- so this asks whether ANY of them starts at this site.)
-      if (!Mapping(s.map_idx).MapsFrom(s.site)) continue;
+      if (!Mapping(s.map_idx).MapsFrom(s.site) || SpecsFor(s).empty()) continue;
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;

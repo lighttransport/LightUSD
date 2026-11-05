@@ -272,11 +272,11 @@ def sortNames : List String → List String
 /-- Sorting the spec's input with `elemCompare` gives `derivedOrder`. -/
 theorem example_sorted : sortNames exampleNames = derivedOrder := by decide +kernel
 
-/-- The same with the library sort (`native_decide`: `List.mergeSort` is defined by
-well-founded recursion and does not reduce in the kernel). -/
+/-- The library sort, reduced with its kernel-checked recursion equations. -/
 theorem example_sorted_mergeSort :
     exampleNames.mergeSort (fun a b => (elemCompare a b).isLE) = derivedOrder := by
-  native_decide
+  simp +decide [exampleNames, List.mergeSort, List.MergeSort.Internal.splitInTwo_fst, List.MergeSort.Internal.splitInTwo_snd,
+    List.length_cons, List.length_nil, Nat.reduceAdd, Nat.reduceDiv, List.take, List.drop, List.merge]
 
 /-- The spec's listed order is not sorted under its own prose rules: the adjacent
 pair `foobar`, `foo00001bar` (L3552-3553) is inverted (digit before letter, L3522). -/

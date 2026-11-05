@@ -534,6 +534,31 @@ void TestNamespaceOrdering() {
   const std::vector<UsdPrim> children = b.GetChildren();
   assert(children.size() == 2 && children[0].GetName() == "D" &&
          children[1].GetName() == "C");
+  // Layer vectors retain authored order; Stage views apply restatements.
+  const Layer* raw = result.stage.GetRootLayer();
+  assert(raw && raw->prim(raw->root_indices()[0])->name() == "A");
+  const PrimSpec* raw_b = raw->prim_at_path("/B");
+  assert(raw_b && raw->prim(raw_b->child_indices()[0])->name() == "C");
+  assert(b.GetChildAt(0).GetName() == "D" && b.GetChildAt(1).GetName() == "C");
+  std::vector<std::string> traversal;
+  result.stage.Traverse([&](const UsdPrim& prim) {
+    traversal.push_back(prim.GetPath().str());
+    return true;
+  });
+  assert((traversal == std::vector<std::string>{"/B", "/B/D", "/B/C", "/A"}));
+
+  // Views respond to authoring without a stale derived-order cache. Clone and
+  // move preserve the authored links and metadata independently of the source.
+  Stage edited = result.stage.Clone();
+  Layer* edit_layer = edited.GetRootLayer();
+  edit_layer->prim_at_path_mutable("/B")->meta().editPrimOrder() = {"C", "D"};
+  assert(edit_layer->define_prim_at_path("/B/E", "Scope") != UINT32_MAX);
+  assert(edit_layer->remove_prim_at_path("/B/D"));
+  Stage moved = std::move(edited);
+  const auto edited_children = moved.GetPrimAtPath("/B").GetChildren();
+  assert(edited_children.size() == 2 && edited_children[0].GetName() == "C" &&
+         edited_children[1].GetName() == "E");
+  assert(result.stage.GetPrimAtPath("/B").GetChildAt(0).GetName() == "D");
   const std::vector<std::string> properties = b.GetPropertyNames();
   const auto y = std::find(properties.begin(), properties.end(), "y");
   const auto x = std::find(properties.begin(), properties.end(), "x");

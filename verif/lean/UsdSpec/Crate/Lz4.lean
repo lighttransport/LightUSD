@@ -334,6 +334,96 @@ theorem checkMatch_spec {xs : Bytes} {i d L : Nat} (h : checkMatch xs i d L = tr
   obtain ⟨⟨⟨⟨⟨a, b⟩, c⟩, e⟩, f⟩, g⟩ := h
   exact ⟨a, b, c, e, f, g⟩
 
+/-! ## General greedy end-of-block obligations -/
+
+private theorem matchLen_le (a : Array UInt8) (i d cap k : Nat) :
+    matchLen a i d cap k ≤ k + cap := by
+  induction cap generalizing k with
+  | zero => simp [matchLen]
+  | succ cap ih =>
+    simp only [matchLen]
+    split
+    · have := ih (k + 1); omega
+    · omega
+
+private theorem bestMatch_le (a : Array UInt8) (i W cap : Nat) :
+    (bestMatch a i W cap).2 ≤ cap := by
+  have aux : ∀ (xs : List Nat) (best : Nat × Nat), best.2 ≤ cap →
+      (xs.foldl (fun best j =>
+        let d := j + 1
+        let L := matchLen a i d cap 0
+        if best.2 < L then (d, L) else best) best).2 ≤ cap := by
+    intro xs
+    induction xs with
+    | nil => intro best h; exact h
+    | cons j xs ih =>
+      intro best h
+      simp only [List.foldl_cons]
+      split
+      · exact ih _ (by simpa using matchLen_le a i (j + 1) cap 0)
+      · exact ih _ h
+  exact aux _ (0, 0) (Nat.zero_le _)
+
+/-- The matcher emits exactly the unconsumed suffix, for any fuel/window. -/
+theorem greedyGo_outLen (xs : Bytes) (a : Array UInt8) (W : Nat) :
+    ∀ f i lit, lit ≤ i → i ≤ xs.length →
+      seqsOutLen (greedyGo xs a W f i lit).seqs +
+        (greedyGo xs a W f i lit).last.length + lit = xs.length := by
+  intro f
+  induction f with
+  | zero => intro i lit hl hi; simp [greedyGo, seqsOutLen]; omega
+  | succ f ih =>
+    intro i lit hl hi
+    simp only [greedyGo]
+    split
+    · split
+      · rename_i hn hc
+        have hm := (checkMatch_spec hc).2.2.2.2.1
+        have hr := ih (i + (bestMatch a i W (xs.length - 5 - i)).2)
+          (i + (bestMatch a i W (xs.length - 5 - i)).2) (Nat.le_refl _) hm
+        simp only [seqsOutLen, List.length_take, List.length_drop]
+        rw [Nat.min_eq_left (by omega)]
+        omega
+      · rename_i hn _
+        exact ih (i + 1) lit (by omega) (by omega)
+    · simp [seqsOutLen]; omega
+
+/-- Every emitted match satisfies both LZ4 end-of-block distance rules. -/
+theorem greedyGo_endRules (xs : Bytes) (a : Array UInt8) (W : Nat) :
+    ∀ f i lit, lit ≤ i → i ≤ xs.length →
+      endRulesAux xs.length lit (greedyGo xs a W f i lit).seqs = true := by
+  intro f
+  induction f with
+  | zero => intro i lit _ _; rfl
+  | succ f ih =>
+    intro i lit hl hi
+    simp only [greedyGo]
+    split
+    · split
+      · rename_i hn hc
+        have hm := (checkMatch_spec hc).2.2.2.2.1
+        have hb := bestMatch_le a i W (xs.length - 5 - i)
+        have hlen : ((xs.drop lit).take (i - lit)).length = i - lit := by
+          simp only [List.length_take, List.length_drop]
+          exact Nat.min_eq_left (by omega)
+        simp only [endRulesAux, hlen]
+        have hpos : lit + (i - lit) = i := by omega
+        rw [hpos]
+        simp only [decide_eq_true_eq, Bool.and_eq_true]
+        exact ⟨⟨hn, by omega⟩, ih _ _ (Nat.le_refl _) hm⟩
+      · rename_i hn _
+        exact ih (i + 1) lit (by omega) (by omega)
+    · rfl
+
+/-- LZ4 end rules for every input, including short and empty literal blocks. -/
+theorem greedyBlock_endRulesOk (W : Nat) (xs : Bytes) :
+    endRulesOk (greedyBlock W xs) = true := by
+  have hlen := greedyGo_outLen xs xs.toArray W xs.length 0 0 (by omega) (by omega)
+  simp only [Nat.add_zero] at hlen
+  unfold endRulesOk greedyBlock
+  rw [hlen]
+  exact greedyGo_endRules xs xs.toArray W xs.length 0 0 (by omega) (by omega)
+
 theorem greedyGo_valid (xs : Bytes) (a : Array UInt8) (W : Nat) :
     ∀ f i lit, ∀ s ∈ (greedyGo xs a W f i lit).seqs, ValidSeq s := by
   intro f

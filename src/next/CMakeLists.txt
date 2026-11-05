@@ -700,7 +700,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     add_executable(test_crate_dict
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_dict.cc
     )
-    target_link_libraries(test_crate_dict PRIVATE lightusd_next)
+    target_link_libraries(test_crate_dict PRIVATE lightusd_validation)
 
     add_executable(test_value_dict
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_value_dict.cc
@@ -1775,6 +1775,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     set_tests_properties(next_test_vr_edge_matrix
         PROPERTIES LABELS "next;aousd;pxrdiff")
 
+    add_test(NAME next_pcp_json_contract
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-pcp-json.py
+                --lusdcat $<TARGET_FILE:lusdcat>)
+    set_tests_properties(next_pcp_json_contract PROPERTIES LABELS "next;aousd;lean;pcp")
+
     add_test(NAME next_test_lean_vectors
         COMMAND test_lean_vectors
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -1798,6 +1803,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     set_tests_properties(next_lean_reflection_table
         PROPERTIES LABELS "next;aousd;lean")
 
+    add_test(NAME next_lean_reflection_checker_tests
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-check-lean-reflection.py)
+    set_tests_properties(next_lean_reflection_checker_tests
+        PROPERTIES LABELS "next;aousd;lean")
+
     # Optional: the Lean side itself (proofs + vector drift). Registered only
     # when `lake` is found; set LIGHTUSD_NEXT_LEAN=OFF to skip.
     option(LIGHTUSD_NEXT_LEAN "Register verif/lean build/check tests when lake is available" ON)
@@ -1818,6 +1828,13 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
             PROPERTIES LABELS "next;aousd;lean;generated" TIMEOUT 3600)
         set_tests_properties(next_lean_test next_lean_vectors_check
             PROPERTIES DEPENDS next_lean_build)
+        add_test(NAME next_lean_reflection_environment
+            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-reflection.py
+                --check --repo "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+                --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
+        set_tests_properties(next_lean_reflection_environment
+            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 120)
+
     endif()
 
     # usd-wg asset-corpus regression gate (mirrors the top-level

@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <limits>
 #include <set>
 #include <string>
 #include <memory>
@@ -132,6 +133,24 @@ struct JsonOut {
     Indent(level);
     buf += '}';
   }
+  // Version 2 preserves every site, including repeated layers, in strength order.
+  void StackArray(const std::vector<std::pair<std::string, std::string>>& entries,
+                  int level) {
+    if (entries.empty()) { buf += "[]"; return; }
+    buf += "[\n";
+    for (size_t i = 0; i < entries.size(); ++i) {
+      Indent(level + 1);
+      buf += "{\"layer\": "; Str(entries[i].first);
+      buf += ", \"path\": "; Str(entries[i].second);
+      buf += i + 1 < entries.size() ? "},\n" : "}\n";
+    }
+    Indent(level); buf += ']';
+  }
+  void Stack(const std::vector<std::pair<std::string, std::string>>& entries,
+             int level, int version) {
+    if (version == 2) StackArray(entries, level);
+    else StackObject(entries, level);
+  }
   void StringList(const std::vector<std::string> &items, int level) {
     if (items.empty()) { buf += "[]"; return; }
     buf += "[\n";
@@ -146,9 +165,11 @@ struct JsonOut {
 };
 
 // Layer identifier -> corpus spelling: path relative to the root layer's
-// directory when it lives under it, else the bare file name.
+// directory when it lives under it, else the bare file name in v1. v2
+// retains external relative paths so equal basenames remain distinct.
 struct LayerIdSpeller {
   std::filesystem::path root_dir;
+  bool preserve_external = false;
   std::string operator()(const std::string &id) const {
     std::error_code ec;
     std::filesystem::path p(id);
@@ -156,7 +177,10 @@ struct LayerIdSpeller {
     if (ec) abs = std::filesystem::absolute(p, ec);
     std::filesystem::path rel = abs.lexically_relative(root_dir);
     std::string r = rel.generic_string();
-    if (r.empty() || r == "." || r.compare(0, 2, "..") == 0) {
+    if (r.empty() || r == ".") {
+      return preserve_external ? abs.generic_string() : p.filename().generic_string();
+    }
+    if (!preserve_external && r.compare(0, 2, "..") == 0) {
       return p.filename().generic_string();
     }
     return r;
@@ -164,15 +188,16 @@ struct LayerIdSpeller {
 };
 
 bool DumpPcpJson(pcp::Cache &cache, const Stage &stage, const char *filename,
-                 const char *out_path, std::string *warn, std::string *err) {
+                 const char *out_path, int json_version, std::string *warn, std::string *err) {
   std::error_code ec;
   std::filesystem::path root_abs =
       std::filesystem::weakly_canonical(std::filesystem::path(filename), ec);
   if (ec) root_abs = std::filesystem::absolute(std::filesystem::path(filename), ec);
-  LayerIdSpeller spell{root_abs.parent_path()};
+  LayerIdSpeller spell{root_abs.parent_path(), json_version == 2};
 
   JsonOut j;
   j.buf += "{\n";
+  if (json_version == 2) j.buf += "    \"schemaVersion\": 2,\n";
   j.Indent(1); j.Str("Entry"); j.buf += ": ";
   j.Str(root_abs.filename().generic_string());
   j.buf += ",\n";
@@ -203,7 +228,7 @@ bool DumpPcpJson(pcp::Cache &cache, const Stage &stage, const char *filename,
       prim_stack.emplace_back(spell(e.layer_identifier), e.prim_path);
     }
     j.Indent(3); j.Str("Prim Stack"); j.buf += ": ";
-    j.StackObject(prim_stack, 3);
+    j.Stack(prim_stack, 3, json_version);
 
     std::vector<std::string> child_names;
     child_names.reserve(children.size());
@@ -239,13 +264,14 @@ bool DumpPcpJson(pcp::Cache &cache, const Stage &stage, const char *filename,
         bool truncated = false;
         std::vector<std::pair<std::string, std::string>> prop_stack;
         for (const pcp::PropertyOpinion &o : cache.GetPropertyStack(
-                 path, sorted_names[pi], 4096, &truncated, warn, err)) {
+                 path, sorted_names[pi], json_version == 2 ? (std::numeric_limits<size_t>::max)() : 4096,
+                 &truncated, warn, err)) {
           if (o.suppressed) continue;
           prop_stack.emplace_back(spell(o.layer_identifier),
                                   o.prim_path + "." + sorted_names[pi]);
         }
         j.Indent(4); j.Str(path.str() + "." + sorted_names[pi]); j.buf += ": ";
-        j.StackObject(prop_stack, 4);
+        j.Stack(prop_stack, 4, json_version);
         j.buf += (pi + 1 < sorted_names.size()) ? ",\n" : "\n";
       }
       j.Indent(3); j.buf += '}';
@@ -290,6 +316,7 @@ int main(int argc, char **argv) {
   // provenance JSON instead of the flattened USDA.
   bool dump_pcp = false;
   const char *dump_pcp_path = "-";
+  int pcp_json_version = 1;
   // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
   // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
@@ -414,6 +441,13 @@ int main(int argc, char **argv) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
     } else if (std::strcmp(argv[i], "--aousd-strict") == 0) {
       aousd_strict = true;
+    } else if (std::strcmp(argv[i], "--pcp-json-version") == 0) {
+      if (i + 1 >= argc || (std::strcmp(argv[i + 1], "1") != 0 &&
+                           std::strcmp(argv[i + 1], "2") != 0)) {
+        std::fprintf(stderr, "ERR : --pcp-json-version requires 1 or 2\n");
+        return 2;
+      }
+      pcp_json_version = argv[++i][0] - '0';
     } else if (std::strcmp(argv[i], "--dump-pcp-json") == 0) {
       dump_pcp = true;
       flatten = true;
@@ -560,11 +594,15 @@ int main(int argc, char **argv) {
                          "[--max-memory-mib N] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
-                         "[--dump-pcp-json [out.json|-]] "
+                         "[--dump-pcp-json [out.json|-]] [--pcp-json-version 1|2] "
                          "file.usd[acz]\n");
     return 2;
   }
 
+  if (pcp_json_version != 1 && !dump_pcp) {
+    std::fprintf(stderr, "ERR : --pcp-json-version 2 requires --dump-pcp-json\n");
+    return 2;
+  }
   if (rewrite_layer && flatten) {
     std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
                          "(rewrite-layer is a compose-free parse->write).\n");
@@ -913,7 +951,7 @@ int main(int argc, char **argv) {
   if (dump_pcp) {
     std::string dump_warn, dump_err;
     const bool dumped = DumpPcpJson(*pcp_cache, stage, filename, dump_pcp_path,
-                                    &dump_warn, &dump_err);
+                                    pcp_json_version, &dump_warn, &dump_err);
     emit_lines(dump_warn, "WARN : ");
     if (!dumped) {
       emit_lines(dump_err.empty() ? std::string("pcp dump failed") : dump_err,

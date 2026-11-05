@@ -1,0 +1,79 @@
+name: Lean verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'verif/lean/**'
+      - 'src/next/**'
+      - 'src/spline-eval.hh'
+      - 'tests/next/**'
+      - 'scripts/*lean*'
+      - '.github/workflows/lean-verification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'verif/lean/**'
+      - 'src/next/**'
+      - 'src/spline-eval.hh'
+      - 'tests/next/**'
+      - 'scripts/*lean*'
+      - '.github/workflows/lean-verification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proofs-and-reflection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install elan
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install stock OpenUSD oracle
+        run: python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
+      - name: Cache pinned Lean dependencies
+        uses: actions/cache@v4
+        with:
+          path: verif/lean/.lake
+          key: lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('verif/lean/lean-toolchain', 'verif/lean/lake-manifest.json', 'verif/lean/lakefile.toml') }}
+      - name: Fetch Mathlib compiled dependencies
+        working-directory: verif/lean
+        run: lake exe cache get
+      - name: Build all proofs
+        working-directory: verif/lean
+        run: lake build
+      - name: Runtime and committed-vector drift
+        working-directory: verif/lean
+        run: |
+          lake exe usdspec-test
+          lake exe usdspec-gen --out ../../tests/next/generated/lean --check
+      - name: Issue and exact declaration registries
+        run: |
+          bash scripts/check-lean-issues.sh
+          python3 scripts/test-check-lean-reflection.py
+          python3 scripts/check-lean-reflection.py --check --lake
+      - name: Configure Debug core and checker
+        run: |
+          cmake -S . -B build_ninja/lean-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NATIVE_PRODUCT=next \
+            -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON \
+            -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+      - name: Build production vector consumers and checker
+        run: cmake --build build_ninja/lean-ci --parallel 4 --target test_lean_vectors lusdchecker lusdcat
+      - name: Validate vectors and exported rule metadata
+        run: |
+          ctest --test-dir build_ninja/lean-ci -R '^next_test_lean_vectors$' --output-on-failure
+          python3 scripts/check-lean-reflection.py --check --lake \
+            --lusdchecker build_ninja/lean-ci/lusdchecker --require-lusdchecker
+      - name: Lossless PCP JSON contract against stock OpenUSD
+        run: |
+          python3 tests/next/test-pcp-json.py --lusdcat build_ninja/lean-ci/lusdcat \
+            --oracle-python "$(command -v python3)" \
+            --oracle-pythonpath build_ninja/stock-oracle

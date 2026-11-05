@@ -45,13 +45,13 @@ structure ArcInfo where
   deriving DecidableEq, Repr
 
 /-- Sort key: `(rank, depth-inverted, implied, index)`, smaller = stronger.
-`depthCap` bounds namespace depth so deeper arcs get a smaller key. -/
-def ArcInfo.key (a : ArcInfo) : List Nat :=
-  [a.kind.rank, 1024 - a.depth, if a.implied then 1 else 0, a.index]
+Negative integer depth preserves the ordering at every namespace depth. -/
+def ArcInfo.key (a : ArcInfo) : List Int :=
+  [a.kind.rank, -(a.depth : Int), if a.implied then 1 else 0, a.index]
 
 /-- Sibling comparison: `true` means `a` is at least as strong as `b`.
 SPEC: L5035-5064 (kind, then deeper namespace, then authored before implied,
-then arc-list order). Depths are below 1024 (LightUSD `max_namespace_depth`). -/
+then arc-list order), with no artificial depth bound. -/
 def ArcInfo.le (a b : ArcInfo) : Bool := decide (a.key ≤ b.key)
 
 structure Site where
@@ -156,14 +156,18 @@ theorem ArcInfo.le_trans {a b c : ArcInfo} (h₁ : a.le b = true) (h₂ : b.le c
   simp only [ArcInfo.le, decide_eq_true_eq] at *; exact List.le_trans h₁ h₂
 
 /-- Keys determine the four ordering fields, so two arcs that tie are
-indistinguishable by every spec tie-break (rank, depth < 1024, implied, index). -/
-theorem ArcInfo.key_inj {a b : ArcInfo} (ha : a.depth < 1024) (hb : b.depth < 1024)
+indistinguishable by every spec tie-break (rank, depth, implied, index). -/
+theorem ArcInfo.key_inj {a b : ArcInfo}
     (h : a.key = b.key) :
     a.kind.rank = b.kind.rank ∧ a.depth = b.depth ∧ a.implied = b.implied ∧ a.index = b.index := by
   simp only [ArcInfo.key, List.cons.injEq, and_true] at h
   obtain ⟨h1, h2, h3, h4⟩ := h
-  refine ⟨h1, by omega, ?_, h4⟩
+  refine ⟨by omega, by omega, ?_, by omega⟩
   cases ha' : a.implied <;> cases hb' : b.implied <;> simp_all
+
+/-- Namespace depths beyond 1024 remain distinguishable and deeper wins. -/
+example : (ArcInfo.mk .inherit 2049 false 0).le ⟨.inherit, 2048, false, 0⟩ = true ∧
+    (ArcInfo.mk .inherit 2048 false 0).le ⟨.inherit, 2049, false, 0⟩ = false := by decide
 
 /-! ## Spec examples (L5081-5374), decided mechanically -/
 section Examples

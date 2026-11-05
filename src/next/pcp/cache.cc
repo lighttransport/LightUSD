@@ -1475,6 +1475,7 @@ auto Cache::Impl::ComposeRootNames() const -> std::vector<std::string> {
       if (!ps) continue;
       if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
     }
+    ApplyStringListOrder(lp->meta().rootPrimOrder, &root_names);
   }
   // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
   // author a spec for the new name, so take the names from the root layer

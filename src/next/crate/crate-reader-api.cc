@@ -138,6 +138,26 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     result.errors.push_back({0, "Invalid filename"});
     return result;
   }
+  // Owned snapshot (no mmap): one descriptor, no zero-fill, size-checked
+  // against max_memory itself, so the separate size probe below is skipped.
+  if (!options_.use_mmap) {
+    bool unavailable = false;
+    std::string snapshot_err;
+    auto snapshot = CrateDataSource::ReadFileSnapshot(
+        filename, static_cast<uint64_t>(options_.max_memory), &unavailable,
+        &snapshot_err);
+    if (snapshot) {
+      source_ = std::move(snapshot);
+      source_->set_max_array_elements(options_.max_array_elements);
+      return ParseFromSource();
+    }
+    if (!unavailable) {
+      CrateReadResult result;
+      result.errors.push_back({0, snapshot_err});
+      return result;
+    }
+  }
+
   if (options_.max_memory) {
     std::ifstream probe(filename, std::ios::binary | std::ios::ate);
     if (!probe.is_open()) {

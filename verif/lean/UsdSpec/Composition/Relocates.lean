@@ -36,7 +36,12 @@ Coverage of the bullets (L4902-4917):
 * L4902 pseudo-root / root prim: PARTIAL. Source empty or a root prim is
   rejected (cache-layers.cc:119, 122 `sp.parent().str() == "/"`); a target that
   is `/` is rejected only indirectly (every source is under `/`, L121); a
-  *root-prim target* (`/A/B → /C`) is NOT rejected.
+  *root-prim target* (`/A/B → /C`) is deliberately accepted by OpenUSD
+  (`Pcp_IsValidRelocatesEntry` and `_IsValidRelocatesEntryForComposing`,
+  v26.11.1). Stock 26.11 relocates `/P/Child` to `/Moved` without errors.
+  SPEC-ISSUE: LEAN-515 — L4902 forbids root-prim paths without distinguishing
+  source and target, whereas OpenUSD forbids root-prim sources only. Preserve
+  this compatibility behavior; `OkRootOpenUsd` records the distinction.
 * L4903 prim paths: NOT checked here (paths are strings; a property path
   would pass).
 * L4904 target at an existing ancestor: YES, `IsPathAtOrUnder(src, dst)` (L121).
@@ -93,6 +98,22 @@ def isPrimName (s : String) : Bool :=
   !s.isEmpty && s.toList.all (fun c => c ∉ ['.', '{', '}', '/', '[', ']', ':', '='])
 
 def OkRoot (r : Relocate) : Prop := ¬ IsRootish r.src ∧ ∀ d ∈ r.dst, ¬ IsRootish d
+
+/-- OpenUSD compatibility for LEAN-515: root-prim targets are allowed; the
+source must be below a root prim and a nonempty target must be a prim path.
+Other path validity restrictions remain the responsibility of `OkPrim`. -/
+def OkRootOpenUsd (r : Relocate) : Prop :=
+  ¬ IsRootish r.src ∧ ∀ d ∈ r.dst, d ≠ []
+
+instance : DecidablePred OkRootOpenUsd := fun r => by
+  unfold OkRootOpenUsd IsRootish; infer_instance
+
+/-- Stock 26.11 accepts this root-target relocation, unlike literal L4902. -/
+theorem rootTarget_openUsd_only :
+    let r : Relocate := ⟨["P", "Child"], some ["Moved"]⟩
+    OkRootOpenUsd r ∧ ¬ OkRoot r := by
+  simp [OkRootOpenUsd, OkRoot, IsRootish]
+
 def OkPrim (r : Relocate) : Prop :=
   (∀ s ∈ r.src, isPrimName s = true) ∧ ∀ d ∈ r.dst, ∀ s ∈ d, isPrimName s = true
 def OkAncestor (r : Relocate) : Prop := ∀ d ∈ r.dst, ¬ StrictPrefix d r.src

@@ -2021,6 +2021,13 @@ void AddParserDiagnosticsToResult(const std::string &parser_warnings,
       if (colon != std::string::npos && colon > 5)
         location += ":" + line.substr(5, colon - 5);
     }
+    const size_t crate = line.find("Crate byte ");
+    if (crate != std::string::npos && crate < tag) {
+      const size_t offset = crate + 11;
+      const size_t colon = line.find(':', offset);
+      if (colon != std::string::npos && colon > offset && colon < tag)
+        location = "<crate>:" + line.substr(offset, colon - offset);
+    }
     size_t msg = tag + sizeof(kTag) - 1;
     while (msg < line.size() && line[msg] == ' ') ++msg;
     validation_detail::AddError(result, "core.dict.duplicateKey", location,

@@ -626,10 +626,10 @@ static int test_package_resolver_callback(void* userdata,
 static int test_dependency_boundary(void) {
   static const char source[] =
       "#usda 1.0\n(defaultPrim = \"World\")\n"
-      "def Xform \"World\" { asset info:readme = @readme.txt@ }\n";
+      "def Xform \"World\" { asset info:readme = @readme.txt@; }\n";
   static const char missing_source[] =
       "#usda 1.0\n(defaultPrim = \"World\")\n"
-      "def Xform \"World\" { asset info:readme = @missing.txt@ }\n";
+      "def Xform \"World\" { asset info:readme = @missing.txt@; }\n";
   static const uint8_t note[] = {'a', 0, 'b'};
   lightusd_asset_resolver* resolver = NULL;
   CHECK_OK(lightusd_asset_resolver_create(&resolver));
@@ -758,7 +758,7 @@ static int test_dependency_boundary(void) {
   {
     static const char dep_source[] =
         "#usda 1.0\n(defaultPrim = \"Base\")\n"
-        "def Xform \"Base\" { def Xform \"Child\" {} }\n";
+        "def Xform \"Base\" { def Xform \"Child\" {}\n }\n";
     static const char root_source[] =
         "#usda 1.0\ndef Xform \"Root\" (references = @dep.usda@) {}\n";
     const char* root_path = "resolver-load-root.usda";

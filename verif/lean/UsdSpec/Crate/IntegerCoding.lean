@@ -1,5 +1,6 @@
 import Std.Tactic.BVDecide
 import Mathlib.Data.List.Basic
+import Mathlib.Order.Basic
 /-!
 # Crate compressed integer arrays (AOUSD USD Core Specification v1.1.0)
 
@@ -234,6 +235,92 @@ lexicographic maximum of `(count, value)`. The spec fixes no tie-break
 def mostCommon [DecidableEq α] [LT α] [DecidableLT α] (ds : List α) (zero : α) : α :=
   ds.foldl (fun best d =>
     if ds.count d > ds.count best ∨ (ds.count d = ds.count best ∧ best < d) then d else best) zero
+
+/-- A candidate dominates another by frequency, then by value. -/
+def CommonBest [DecidableEq α] [LE α] (ds : List α) (best x : α) : Prop :=
+  ds.count x ≤ ds.count best ∧ (ds.count x = ds.count best → x ≤ best)
+
+omit [Add α] [Sub α] in
+private theorem commonBest_trans [LinearOrder α] [DecidableEq α] (ds : List α) {a b c : α}
+    (hab : CommonBest ds a b) (hbc : CommonBest ds b c) : CommonBest ds a c := by
+  obtain ⟨h1, h2⟩ := hab
+  obtain ⟨h3, h4⟩ := hbc
+  exact ⟨by omega, fun h => le_trans (h4 (by omega)) (h2 (by omega))⟩
+
+omit [Add α] [Sub α] in
+private theorem mostCommon_step [LinearOrder α] [DecidableEq α] (ds : List α) (b d : α) :
+    let r := if ds.count d > ds.count b ∨ (ds.count d = ds.count b ∧ b < d) then d else b
+    CommonBest ds r b ∧ CommonBest ds r d := by
+  dsimp
+  split
+  · rename_i h
+    constructor
+    · constructor
+      · omega
+      · intro he
+        rcases h with h | ⟨_, h⟩
+        · omega
+        · exact le_of_lt h
+    · exact ⟨Nat.le_refl _, fun _ => le_refl _⟩
+  · rename_i h
+    constructor
+    · exact ⟨Nat.le_refl _, fun _ => le_refl _⟩
+    · constructor
+      · omega
+      · intro he
+        exact le_of_not_gt (fun hb => h (Or.inr ⟨he, hb⟩))
+
+omit [Add α] [Sub α] in
+private theorem mostCommon_fold [LinearOrder α] [DecidableEq α] (ds xs : List α) (b : α) :
+    let r := xs.foldl (fun best d =>
+      if ds.count d > ds.count best ∨ (ds.count d = ds.count best ∧ best < d) then d else best) b
+    CommonBest ds r b ∧ (∀ x ∈ xs, CommonBest ds r x) ∧ (r = b ∨ r ∈ xs) := by
+  induction xs generalizing b with
+  | nil => simp [CommonBest]
+  | cons d xs ih =>
+    dsimp only [List.foldl_cons]
+    let next := if ds.count d > ds.count b ∨ (ds.count d = ds.count b ∧ b < d) then d else b
+    obtain ⟨hb, hd⟩ := mostCommon_step ds b d
+    obtain ⟨hr, hx, hm⟩ := ih next
+    refine ⟨commonBest_trans ds hr hb, ?_, ?_⟩
+    · intro x h
+      rcases List.mem_cons.mp h with rfl | h
+      · exact commonBest_trans ds hr hd
+      · exact hx x h
+    · rcases hm with h | h
+      · rw [h]
+        dsimp [next]
+        split
+        · exact Or.inr (by simp)
+        · exact Or.inl rfl
+      · exact Or.inr (List.mem_cons_of_mem _ h)
+
+omit [Add α] [Sub α] in
+/-- The selected delta has maximal frequency; ties choose the largest value.
+The empty-input result is the supplied zero. No frequency claim relies on examples. -/
+theorem mostCommon_spec [LinearOrder α] [DecidableEq α] (ds : List α) (zero : α) :
+    (∀ x ∈ ds, CommonBest ds (mostCommon ds zero) x) ∧
+    (mostCommon ds zero = zero ∨ mostCommon ds zero ∈ ds) := by
+  obtain ⟨_, hx, hm⟩ := mostCommon_fold ds ds zero
+  exact ⟨hx, hm⟩
+
+omit [Add α] [Sub α] in
+theorem mostCommon_nil [DecidableEq α] [LT α] [DecidableLT α] (zero : α) :
+    mostCommon [] zero = zero := rfl
+
+omit [Add α] [Sub α] in
+/-- A nonempty input always selects one of its actual deltas. -/
+theorem mostCommon_mem [LinearOrder α] [DecidableEq α] (ds : List α) (zero : α)
+    (hne : ds ≠ []) : mostCommon ds zero ∈ ds := by
+  obtain ⟨hx, hm⟩ := mostCommon_spec ds zero
+  rcases hm with h | h
+  · by_contra hz
+    have hz0 : ds.count zero = 0 := List.count_eq_zero.mpr (by simpa [h] using hz)
+    obtain ⟨x, xs, rfl⟩ := List.exists_cons_of_ne_nil hne
+    have hh := (hx x (by simp)).1
+    rw [h, hz0] at hh
+    simp at hh
+  · exact h
 
 /-! ### Coding a delta sequence -/
 

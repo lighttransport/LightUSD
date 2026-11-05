@@ -8,12 +8,15 @@
 #include "lazy-array.hh"
 #include "crate-allocation-budget.hh"
 #include "safe-arithmetic.hh"
+#include "../safe-file-size.hh"
 #include "stream-reader.hh"
 #include "../types/value.hh"
 #include "../types/array-builder.hh"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
+#include <new>
 #include <limits>
 #include <type_traits>
 
@@ -81,6 +84,112 @@ std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
   (void)filename;
   return nullptr;
 #endif
+}
+
+std::shared_ptr<CrateDataSource> CrateDataSource::ReadFileSnapshot(
+    const std::string& filename, uint64_t max_bytes, bool* unavailable,
+    std::string* err) {
+  if (unavailable) *unavailable = false;
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+  auto fail = [&](const std::string& message) {
+    if (err) *err = message;
+    return std::shared_ptr<CrateDataSource>();
+  };
+  int fd = -1;
+  do {
+    fd = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+  } while (fd < 0 && errno == EINTR);
+  if (fd < 0) return fail("Failed to open file: " + filename);
+  struct CloseFd {
+    int fd;
+    ~CloseFd() { ::close(fd); }
+  } close_fd{fd};
+  struct stat st;
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+    return fail("Invalid or oversized file size");
+  }
+  const uint64_t cap = max_bytes ? max_bytes : kMaxReadableFileBytes;
+  const uint64_t n64 = static_cast<uint64_t>(st.st_size);
+  if (max_bytes && n64 > max_bytes) {
+    return fail("File exceeds max_memory budget");
+  }
+  if (n64 > cap ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<off_t>::max)())) {
+    return fail("Invalid or oversized file size");
+  }
+  const size_t n = static_cast<size_t>(n64);
+  // Every byte is written by the read below before any use, so the buffer is
+  // never zero-filled. Large snapshots use a 2 MiB-aligned private anonymous
+  // mapping advised for transparent huge pages: copying hundreds of MiB into
+  // fresh 4 KiB pages costs one page fault per 4 KiB (~190K faults on the
+  // ALab secure load), which dominated the owned-copy cost. MADV_HUGEPAGE is
+  // only advice; without THP the mapping still works with normal pages.
+  std::unique_ptr<uint8_t[], CrateSnapshotDeleter> buf;
+  constexpr size_t kHugeBytes = size_t(2) << 20;
+  constexpr size_t kHugeMin = size_t(4) << 20;
+  if (n >= kHugeMin && n <= (std::numeric_limits<size_t>::max)() - 2 * kHugeBytes) {
+    const size_t span = ((n + kHugeBytes - 1) & ~(kHugeBytes - 1)) + kHugeBytes;
+    void* raw = ::mmap(nullptr, span, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw != MAP_FAILED) {
+      const uintptr_t aligned =
+          (reinterpret_cast<uintptr_t>(raw) + kHugeBytes - 1) & ~(kHugeBytes - 1);
+#if defined(MADV_HUGEPAGE)
+      (void)::madvise(reinterpret_cast<void*>(aligned), span - kHugeBytes,
+                      MADV_HUGEPAGE);
+#endif
+      buf = std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
+          reinterpret_cast<uint8_t*>(aligned),
+          CrateSnapshotDeleter{span, raw});
+    }
+  }
+  if (!buf) {
+    buf = std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
+        new (std::nothrow) uint8_t[n], CrateSnapshotDeleter{0, nullptr});
+  }
+  if (!buf) return fail("Failed to allocate file snapshot");
+  size_t done = 0;
+  while (done < n) {
+    const size_t want = std::min<size_t>(n - done, size_t(1) << 30);
+    const ssize_t got =
+        ::pread(fd, buf.get() + done, want, static_cast<off_t>(done));
+    if (got < 0) {
+      if (errno == EINTR) continue;
+      return fail("Failed to read file contents");
+    }
+    if (got == 0) return fail("File shrank while being read: " + filename);
+    done += static_cast<size_t>(got);
+  }
+  // A consistent snapshot must also not have grown past its fstat size.
+  uint8_t extra = 0;
+  ssize_t more = 0;
+  do {
+    more = ::pread(fd, &extra, 1, static_cast<off_t>(n));
+  } while (more < 0 && errno == EINTR);
+  if (more != 0) return fail("File changed while being read: " + filename);
+  std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
+  ds->snapshot_ = std::move(buf);
+  ds->snapshot_size_ = n;
+  return ds;
+#else
+  (void)filename;
+  (void)max_bytes;
+  (void)err;
+  if (unavailable) *unavailable = true;
+  return nullptr;
+#endif
+}
+
+void CrateSnapshotDeleter::operator()(uint8_t* p) const noexcept {
+  if (!p) return;
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+  if (mapped_bytes) {
+    ::munmap(mapped_base, mapped_bytes);
+    return;
+  }
+#endif
+  delete[] p;
 }
 
 bool CrateDataSource::MappedFileShrank(size_t* current_size) const {

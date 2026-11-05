@@ -121,7 +121,7 @@ void CConvertUnits() {
   upAxis = "Z"
   metersPerUnit = 1
 )
-def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, 0, -1) }
+def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, 0, -1); }
 def Xform "Robot" {
   matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 2, 3, 1))
   uniform token[] xformOpOrder = ["xformOp:transform"]
@@ -129,8 +129,8 @@ def Xform "Robot" {
     double radius.timeSamples = {0: 1, 10: 2}
     float physics:mass = 2
   }
-  def PhysicsPrismaticJoint "Slide" { float physics:upperLimit = 0.5  float drive:linear:physics:stiffness = 4 }
-  def PhysicsJoint "Generic" { float newton:armature = 1 }
+  def PhysicsPrismaticJoint "Slide" { float physics:upperLimit = 0.5; float drive:linear:physics:stiffness = 4; }
+  def PhysicsJoint "Generic" { float newton:armature = 1; }
 }
 )";
   lightusd_stage* stage = nullptr;

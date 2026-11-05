@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/asset-anchor.hh"
@@ -2040,6 +2041,109 @@ static void test_flatten_instances() {
   std::remove(asset.c_str());
   std::remove(root.c_str());
   std::cout << "  OK" << std::endl;
+}
+
+// Asset identity is anchored before every list-op comparison, while the
+// authored arc/owner remains available to expansion and payload callbacks.
+static void test_anchored_arc_listops() {
+  for (const char* field : {"references", "payload"}) {
+    for (int operation = 0; operation < 3; ++operation) {
+      AssetResolver resolver;
+      const std::string base = PcpScratchDirectory() + "/anchored-" + field +
+          "-" + std::to_string(operation) + "/";
+      PCP_CHECK(::mkdir(base.c_str(), 0700) == 0, "create anchored fixture directory");
+      PCP_CHECK(::mkdir((base + "one").c_str(), 0700) == 0, "create first authoring directory");
+      PCP_CHECK(::mkdir((base + "two").c_str(), 0700) == 0, "create second authoring directory");
+      auto remember = [&](const std::string& name, const std::string& text) {
+        std::ofstream stream(base + name, std::ios::binary);
+        stream << text;
+        PCP_CHECK(stream.good(), "write anchored arc fixture");
+        return base + name;
+      };
+      remember("one/ref.usda", "#usda 1.0\ndef \"Asset\" {\nint winner = 1\ndef \"One\" {}\n}\n");
+      remember("two/ref.usda", "#usda 1.0\ndef \"Asset\" {\nint winner = 2\ndef \"Two\" {}\n}\n");
+      std::string strong = "#usda 1.0\nover \"P\" (\nprepend " + std::string(field) +
+          " = @./ref.usda@</Asset>\n";
+      if (operation == 1)
+        strong += "delete " + std::string(field) + " = @../two/ref.usda@</Asset>\n";
+      strong += ") {}\n";
+      remember("one/edits.usda", strong);
+      remember("two/edits.usda", "#usda 1.0\nover \"P\" (\nprepend " + std::string(field) +
+          " = @./ref.usda@</Asset>\n) {}\n");
+      std::string root = "#usda 1.0\n(\nsubLayers = [@./one/edits.usda@, @./two/edits.usda@]\n)\n";
+      if (operation == 2)
+        root += "over \"P\" (\nreorder " + std::string(field) +
+            " = [@./two/ref.usda@</Asset>, @./one/ref.usda@</Asset>]\n) {}\n";
+      const std::string id = remember("root.usda", root);
+      Stage stage;
+      std::string warn, err;
+      PCP_CHECK(pcp::ComposeStageFromFile(id, resolver, &stage, {}, &warn, &err),
+                "anchored list-op stage composes: " + err);
+      PCP_CHECK(stage.GetPrimAtPath("/P/One").IsValid(), "strong anchored asset retained");
+      PCP_CHECK(stage.GetPrimAtPath("/P/Two").IsValid() == (operation != 1),
+                "relative assets in different folders stay distinct; anchored delete matches");
+      const auto prim = stage.GetPrimAtPath("/P");
+      const Value* winner = prim.IsValid() ? prim.GetPropertyValue("winner") : nullptr;
+      PCP_CHECK(winner && winner->as_int() && *winner->as_int() == (operation == 2 ? 2 : 1),
+                "anchored reorder changes arc strength without losing authoring identity");
+      for (const char* name : {"root.usda", "one/ref.usda", "one/edits.usda",
+                               "two/ref.usda", "two/edits.usda"})
+        std::remove((base + name).c_str());
+      ::rmdir((base + "one").c_str());
+      ::rmdir((base + "two").c_str());
+      ::rmdir(base.c_str());
+    }
+  }
+}
+
+// LEAN-533: authored instanceable metadata requires a direct contributing arc.
+static void test_instanceable_contributing_arcs() {
+  const std::string text = R"USD(#usda 1.0
+def "Bare" (instanceable = true) {
+  def "Local" {}
+}
+def "MissingInherit" (instanceable = true; inherits = </NoClass>) {
+  def "Local" {}
+}
+def "MissingReference" (instanceable = true; references = </NoAsset>) {
+  def "Local" {}
+}
+def "Asset" {
+  def "Remote" {}
+}
+def "Good" (instanceable = true; references = </Asset>) {
+  def "Local" {}
+}
+)USD";
+  std::string warn, err;
+  auto root = pcp::LoadLayerFromMemory("contributing-arcs.usda",
+      reinterpret_cast<const uint8_t*>(text.data()), text.size(), &warn, &err);
+  PCP_CHECK(bool(root), "contributing arc fixture parses: " + err);
+  if (!root) return;
+  for (size_t threads : {size_t(1), size_t(4)}) {
+    AssetResolver resolver;
+    pcp::CompositionOptions options;
+    options.num_threads = threads;
+    auto opened = pcp::Cache::Open(resolver, root, "", options);
+    PCP_CHECK(bool(opened), "contributing arc cache opens");
+    if (!opened) continue;
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    PCP_CHECK(cache.BuildStage(&stage, &warn, &err), "contributing arcs compose: " + err);
+    for (const char* name : {"Bare", "MissingInherit", "MissingReference"}) {
+      const std::string path = std::string("/") + name;
+      PCP_CHECK(stage.GetPrimAtPath(path + "/Local").IsValid(),
+                "non-instance retains its local child: " + path);
+      PCP_CHECK(cache.GetPrototype(Path(path)).empty(),
+                "non-contributing arc must not register a prototype: " + path);
+    }
+    PCP_CHECK(stage.GetPrimAtPath("/Good/Remote").IsValid(),
+              "contributing reference retains shared descendants");
+    PCP_CHECK(!stage.GetPrimAtPath("/Good/Local").IsValid(),
+              "actual instance excludes local descendants");
+    PCP_CHECK(!cache.GetPrototype(Path("/Good")).empty(),
+              "contributing reference registers a prototype");
+  }
 }
 
 static void test_instancing() {
@@ -4995,9 +5099,9 @@ static void test_p2_implied_subroot_class() {
 
 
 // `reorder nameChildren` / `reorder rootPrims` apply to the flattened child
-// order (pxr semantics: listed names move to the front in list order, the
-// rest keep authored order). Locked here because the audit once flagged
-// reorder as unimplemented.
+// order using Sdf run-preserving restatements. This example has no unordered
+// prefix; the CLI stock-oracle contract separately covers x,a,b -> x,b,a.
+// Locked here because the audit once flagged reorder as unimplemented.
 static void test_reorder_children() {
   std::cout << "test_reorder_children..." << std::endl;
   auto parse_to_layer = [](const char* usda) -> std::shared_ptr<Layer> {
@@ -5425,6 +5529,8 @@ int main() {
   test_variant_option_authored_state();
   test_variant_content_key_stable();
   test_variants_v2();
+  test_anchored_arc_listops();
+  test_instanceable_contributing_arcs();
   test_instancing();
   test_path_translation();
   test_flatten_instances();

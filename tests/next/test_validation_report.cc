@@ -36,7 +36,7 @@ void OwnedReport() {
 def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {
   float physics:mass = -1
 }
-def PhysicsRevoluteJoint "Joint" { rel physics:body1 = </Missing> }
+def PhysicsRevoluteJoint "Joint" { rel physics:body1 = </Missing>; }
 )";
   api::Stage stage;
   lightusd_stage* raw = nullptr;

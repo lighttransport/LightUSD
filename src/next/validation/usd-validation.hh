@@ -154,8 +154,8 @@ void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src);
 
 // Parser-level findings the Layer data model cannot retain: a duplicate
-// dictionary key collapses to its last value at parse time, so the USDA
-// parser reports it as a warning line tagged `[core.dict.duplicateKey]`.
+// dictionary key collapses to its last value at parse time, so USDA and USDC
+// readers report it as a warning line tagged `[core.dict.duplicateKey]`.
 // Scans `parser_warnings` (newline-separated) and adds each tagged line as an
 // error issue. Other warning lines are ignored.
 void AddParserDiagnosticsToResult(const std::string &parser_warnings,

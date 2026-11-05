@@ -163,7 +163,7 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "authored attribute variability must match its schema definition"},
       {"core.dict.duplicateKey", "core",
        "dictionary fields must not repeat a key at any nesting level "
-       "(USDA parser-level: the Layer keeps the last value, so the finding is "
+       "(reader-level: the Layer keeps the last value, so the finding is "
        "imported from the parser diagnostics)"},
       {"core.listop.deprecatedAdd", "core",
        "list-op fields should not use the deprecated `add` operation"},

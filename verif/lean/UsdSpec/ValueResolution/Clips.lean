@@ -329,21 +329,21 @@ theorem example_offset_spec :
     let tp : Template := ⟨"clip.", 3, none, ".usd", 101, 103, 1, some (1/2)⟩
     tp.expand.times = [(201/2, 201/2), (101, 101), (102, 102), (103, 103), (207/2, 207/2)] ∧
     tp.expand.active = [(203/2, 0), (205/2, 1), (207/2, 2)] := by
-  native_decide
+  decide +kernel
 
 /-- L6858-6866 example: start 12, end 25, `path/clipname.#.usd`, stride 6. -/
 theorem example_stride_spec :
     (({ pre := "path/clipname.", intWidth := 1, fracWidth := none, post := ".usd",
         start := 12, stop := 25, stride := 6 } : Template).expand.assetPaths) =
       ["path/clipname.12.usd", "path/clipname.18.usd", "path/clipname.24.usd"] := by
-  native_decide
+  decide +kernel
 
 /-- L6843-6847 example: `path/clipname.###.usd`, start 12 → `path/clipname.012.usd`. -/
 theorem example_padding_spec :
     (({ pre := "path/clipname.", intWidth := 3, fracWidth := none, post := ".usd",
         start := 12, stop := 12, stride := 1 } : Template).expand.assetPaths) =
       ["path/clipname.012.usd"] := by
-  native_decide
+  decide +kernel
 
 /-- SPEC-ISSUE: LEAN-761: the L6889-6909 example (start 0, end 2, stride 1)
 says the files resolve to `quad_001…quad_003`; the template rules give
@@ -352,7 +352,7 @@ theorem example_quad_ne_spec :
     let tp : Template := ⟨"./quad_", 3, none, ".usda", 0, 2, 1, none⟩
     tp.expand.assetPaths = ["./quad_000.usda", "./quad_001.usda", "./quad_002.usda"] ∧
     tp.expand.assetPaths ≠ ["./quad_001.usda", "./quad_002.usda", "./quad_003.usda"] := by
-  native_decide
+  decide +kernel
 
 /-- Template-derived active entries are sorted and `times` is `(t, t)`, so the
 timing curve is the identity on `[start, end]` (CL1 + CL5). -/

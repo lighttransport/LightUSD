@@ -358,50 +358,56 @@ void Layer::sort_prims_by_path() {
       prims_[parent_it->second].add_child_index(static_cast<uint32_t>(i));
     }
   }
-  apply_namespace_ordering();
+}
+
+namespace {
+const std::vector<uint32_t>& OrderedIndices(
+    const std::vector<uint32_t>& indices, const std::vector<std::string>& order,
+    const std::vector<PrimSpec>& prims, std::vector<uint32_t>* scratch) {
+  if (order.empty() || indices.empty() || !scratch) return indices;
+  std::vector<std::string> names;
+  std::unordered_map<std::string, uint32_t> by_name;
+  names.reserve(indices.size());
+  by_name.reserve(indices.size());
+  for (uint32_t idx : indices) {
+    if (idx < prims.size()) {
+      names.push_back(prims[idx].name());
+      by_name.emplace(names.back(), idx);
+    }
+  }
+  ApplyStringListOrder(order, &names);
+  scratch->clear();
+  scratch->reserve(names.size());
+  for (const std::string& name : names) {
+    const auto found = by_name.find(name);
+    if (found != by_name.end()) scratch->push_back(found->second);
+  }
+  return *scratch;
+}
+}  // namespace
+
+const std::vector<uint32_t>& Layer::ordered_root_indices(
+    std::vector<uint32_t>* scratch) const {
+  return OrderedIndices(root_indices_, meta_.rootPrimOrder, prims_, scratch);
+}
+
+const std::vector<uint32_t>& Layer::ordered_child_indices(
+    const PrimSpec& prim, std::vector<uint32_t>* scratch) const {
+  return OrderedIndices(prim.child_indices(), prim.meta().primOrder(), prims_, scratch);
 }
 
 void Layer::apply_namespace_ordering() {
-  auto apply = [](std::vector<uint32_t>* indices,
-                  const std::vector<std::string>& order,
-                  const std::vector<PrimSpec>& prims) {
-    if (!indices || order.empty() || indices->empty()) return;
-    std::vector<uint32_t> result;
-    std::unordered_set<uint32_t> in_result;
-    result.reserve(indices->size());
-    in_result.reserve(indices->size());
-    for (const std::string& wanted : order) {
-      for (uint32_t idx : *indices) {
-        if (idx < prims.size() && prims[idx].name() == wanted &&
-            !in_result.count(idx)) {
-          result.push_back(idx);
-          in_result.insert(idx);
-          break;
-        }
-      }
-    }
-    for (uint32_t idx : *indices) {
-      if (!in_result.count(idx)) {
-        result.push_back(idx);
-        in_result.insert(idx);
-      }
-    }
-    *indices = std::move(result);
-  };
-  apply(&root_indices_, meta_.rootPrimOrder, prims_);
+  std::vector<uint32_t> scratch;
+  if (!meta_.rootPrimOrder.empty() && !root_indices_.empty()) {
+    ordered_root_indices(&scratch);
+    root_indices_.swap(scratch);
+  }
   for (PrimSpec& prim : prims_) {
-    // Namespace ordering is a read-only finalization pass.  Bind metadata as
-    // const so overload resolution cannot select the mutable cold-field
-    // accessor, which materializes a PrimMetadataCold for otherwise ordinary
-    // prims.
-    const PrimMetadata& meta = prim.meta();
-    // No authored order: the children stay as linked (apply would return
-    // them unchanged; skip rebuilding the list).
-    if (meta.primOrder().empty() || prim.child_indices().empty()) continue;
-    std::vector<uint32_t> children = prim.child_indices();
-    apply(&children, meta.primOrder(), prims_);
+    if (static_cast<const PrimSpec&>(prim).meta().primOrder().empty() ||
+        prim.child_indices().empty()) continue;
+    ordered_child_indices(prim, &scratch);
     prim.clear_child_indices();
-    for (uint32_t child : children) prim.add_child_index(child);
+    for (uint32_t child : scratch) prim.add_child_index(child);
   }
 }
 
@@ -620,7 +626,6 @@ void Layer::finalize() {
     }
   }
 
-  apply_namespace_ordering();
 
   finalized_ = true;
 }

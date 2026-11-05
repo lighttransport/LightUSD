@@ -199,8 +199,16 @@ public:
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
 
-  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  /// Explicitly bake authored namespace restatements into hierarchy vectors.
+  /// Finalization preserves the original authored vectors for composition.
   void apply_namespace_ordering();
+
+  /// Ordered stage views without mutating authored hierarchy vectors. Scratch
+  /// is used only when a nonempty restatement exists; returned refs otherwise
+  /// point directly at the layer/spec, avoiding an allocation in the common case.
+  const std::vector<uint32_t>& ordered_root_indices(std::vector<uint32_t>* scratch) const;
+  const std::vector<uint32_t>& ordered_child_indices(
+      const PrimSpec& prim, std::vector<uint32_t>* scratch) const;
 
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed

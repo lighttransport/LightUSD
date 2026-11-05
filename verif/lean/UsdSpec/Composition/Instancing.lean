@@ -63,8 +63,8 @@ share (`ex_offset`).
 SPEC-ISSUE: LEAN-533 — L5521 counts arcs, but OpenUSD counts only arcs whose
 nodes provide opinions: an instanceable prim whose only arc is unresolved or
 targets a prim with no specs is *not* an instance (its local children are
-kept). LightUSD follows the literal reading and drops the children
-(`ex_unresolvedArc`).
+kept). LightUSD formerly followed the literal reading and dropped the children;
+the follow-up requires contributing direct arcs with specs (`ex_unresolvedArc`).
 -/
 
 namespace UsdSpec.Instancing

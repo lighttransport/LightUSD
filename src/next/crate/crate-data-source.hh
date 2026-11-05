@@ -50,6 +50,14 @@ inline bool SeekToPayload(StreamReader* r, ValueRep rep) {
 class Value;
 class CrateAllocationBudget;
 
+/// Owned file-snapshot storage is either new[] or (large files) a populated
+/// private anonymous mapping; the deleter remembers which.
+struct CrateSnapshotDeleter {
+  size_t mapped_bytes = 0;  // 0 = delete[]
+  void* mapped_base = nullptr;  // start of the mapping (>= the data pointer's page)
+  void operator()(uint8_t* p) const noexcept;
+};
+
 class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
@@ -71,6 +79,24 @@ class CrateDataSource : public LazyArraySource {
   /// referencing this source is gone. Tables can be installed later via
   /// set_tables(); version via set_version().
   static std::shared_ptr<CrateDataSource> MmapFile(const std::string& filename);
+
+  /// Copy `filename` into a private owned snapshot (the untrusted-input path:
+  /// the bytes never alias the file, so later writes/truncation by another
+  /// process cannot change or fault what was loaded).
+  ///
+  /// One open + fstat + positional reads straight into an uninitialized
+  /// buffer: no size-probe reopen and no zero-fill pass before the copy (the
+  /// std::string path touched every byte twice). The file must be a regular
+  /// file of 1..`max_bytes` bytes (0 = kMaxReadableFileBytes) and must keep
+  /// exactly its fstat size while being read; a short read or growth is an
+  /// error, never a silently truncated/partial snapshot.
+  ///
+  /// Returns nullptr with `*unavailable = true` on platforms without POSIX
+  /// file descriptors (callers fall back to the stream path); otherwise
+  /// nullptr means failure and `*err` says why.
+  static std::shared_ptr<CrateDataSource> ReadFileSnapshot(
+      const std::string& filename, uint64_t max_bytes, bool* unavailable,
+      std::string* err);
 
   ~CrateDataSource();
 
@@ -103,10 +129,15 @@ class CrateDataSource : public LazyArraySource {
   }
 
   const uint8_t* base() const override {
-    return mmap_base_ ? mmap_base_
-                      : reinterpret_cast<const uint8_t*>(bytes_.data());
+    if (mmap_base_) return mmap_base_;
+    if (snapshot_) return snapshot_.get();
+    return reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  size_t size() const override {
+    if (mmap_base_) return mmap_size_;
+    if (snapshot_) return snapshot_size_;
+    return bytes_.size();
+  }
   CrateVersion version() const override { return version_; }
   void DiscardRange(uint64_t offset, uint64_t length) const override;
 
@@ -138,10 +169,13 @@ class CrateDataSource : public LazyArraySource {
   CrateDataSource(const CrateDataSource&) = delete;
   CrateDataSource& operator=(const CrateDataSource&) = delete;
 
-  // Backing is exactly one of: an owned byte string (mmap_base_ == nullptr) or
-  // a read-only memory mapping (mmap_base_ != nullptr). base()/size() abstract
-  // over both so every reader stays backing-agnostic.
+  // Backing is exactly one of: an owned byte string, an owned file snapshot
+  // (snapshot_ != nullptr) or a read-only memory mapping (mmap_base_ !=
+  // nullptr). base()/size() abstract over all three so every reader stays
+  // backing-agnostic.
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
+  std::unique_ptr<uint8_t[], CrateSnapshotDeleter> snapshot_;  // snapshot mode: file copy
+  size_t snapshot_size_ = 0;
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
 #if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \

@@ -550,6 +550,11 @@ bool CrateReader::Impl::DecodeDictionaryUncached(ValueRep rep, Value& out,
                !UnpackValue(vr, cv, depth + 1)) {
       return false;
     }
+    if (d->find(key)) {
+      AddWarning("Crate byte " + std::to_string(val_start) +
+                 ": [core.dict.duplicateKey] Duplicate dictionary key `" + key +
+                 "`; keeping the last value");
+    }
     d->set(std::move(key), std::move(cv));
 
     if (!reader()->seek(next_entry_pos)) return false;  // resume after this value

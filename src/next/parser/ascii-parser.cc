@@ -634,6 +634,7 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
 // optional token does not eat the next one. Returns false if no arc token.
 bool AsciiParser::Impl::ReadArcRef(std::string* out) {
   std::string ref;
+  std::string prim_path;
   if (Check(TokenType::String)) {
     std::string asset;
     lexer_->expect(TokenType::String, asset);
@@ -641,13 +642,22 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
     if (Check(TokenType::PathRef)) {
       std::string pr;
       lexer_->expect(TokenType::PathRef, pr);
+      prim_path = pr;
       ref += "<" + pr + ">";
     }
   } else if (Check(TokenType::PathRef)) {
     std::string pr;
     lexer_->expect(TokenType::PathRef, pr);
+    prim_path = pr;
     ref = "<" + pr + ">";
   } else {
+    return false;
+  }
+  // Arc targets are prim paths without variant selections, even when the
+  // arc itself is authored inside a selected variant. Check the path token,
+  // not the asset identifier (which may legitimately contain braces).
+  if (prim_path.find('{') != std::string::npos) {
+    AddError("Composition-arc paths cannot contain variant selections");
     return false;
   }
   // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
@@ -779,6 +789,11 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
                          PrimMetadata& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Check(TokenType::None)) {
+      if (qual != ArcQual::Explicit) {
+        AddError("None is only valid for an explicit composition-arc list");
+        lexer_->next();
+        return;
+      }
       // `references = None`: an explicit-clear list op. Consume the token
       // (leaving it un-consumed desynchronizes the metadata loop) and record
       // an authored empty explicit edit.
@@ -995,6 +1010,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (!lexer_->expect(TokenType::PathRef, src)) break;
           if (!Match(TokenType::Colon)) break;
           if (!lexer_->expect(TokenType::PathRef, dst)) break;
+          if (src.find('{') != std::string::npos || dst.find('{') != std::string::npos) {
+            AddError("Relocates paths cannot contain variant selections");
+            return false;
+          }
           if (prim) {
             auto abs = [&](const std::string& p) {
               if (p.empty() || p[0] == '/') return p;

@@ -7,6 +7,7 @@ aousd/core-spec-supplemental-public checkout, or a standalone release.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -20,9 +21,9 @@ def run(command):
 
 
 # Per-prim keys of the corpus pcp.json that the structural compare covers.
-# Every stack is a JSON object keyed by layer (strongest first; a layer that
-# contributes several sites keeps its first position and last site), so the
-# compare is dict-equality plus key order.
+# Legacy v1 stacks are objects keyed by layer, collapsing repeated sites.
+# Lossless v2 stacks are strongest-first arrays of layer/path pairs; their
+# comparison preserves order, multiplicity and every authored site.
 PCP_COMPARED_KEYS = ("Prim Stack", "Child names", "Property names",
                      "Property stacks")
 
@@ -42,8 +43,19 @@ def load_pcp_allowlist(path):
 
 
 def diff_stack(expected, actual):
-    """Ordered-object compare of a prim/property stack. Returns a short
-    description of the first difference or None."""
+    """Compare ordered v1 objects or lossless v2 site arrays.
+
+    Return the first difference, including multiplicity, or None.
+    """
+    if isinstance(expected, list) or isinstance(actual, list):
+        if not isinstance(expected, list) or not isinstance(actual, list):
+            return 'stack schema differs (ordered sites versus collapsed layer object)'
+        for i, (left, right) in enumerate(zip(expected, actual)):
+            if left != right:
+                return f'site {i}: expected {left!r} got {right!r}'
+        if len(expected) != len(actual):
+            return f'site count expected {len(expected)} got {len(actual)}'
+        return None
     exp_keys = list(expected)
     act_keys = list(actual)
     if exp_keys != act_keys:
@@ -117,6 +129,59 @@ def diff_pcp(expected, actual, strict_order=False):
     return diffs
 
 
+
+def verify_invalid_text_case(case_dir, expected, classification, next_usdcat,
+                             oracle_python=None, oracle_version="26.11", oracle_env=None):
+    """Verify a hash-pinned negative root and all available binary dependencies.
+
+    Classifications are not composition exemptions: changed bytes, accepted text,
+    a different failure, or an unreadable binary dependency fails the gate.
+    """
+    errors = []
+    text = case_dir / classification['text']
+    if not text.is_file() or hashlib.sha256(text.read_bytes()).hexdigest() != classification['sha256']:
+        return ['invalid-text fixture hash differs; independent reclassification required']
+    if pathlib.Path(classification['text']) != pathlib.Path('usda') / expected['Entry']:
+        errors.append('entry path differs from the reviewed text root')
+    binary_root = case_dir / expected['Entry']
+    if binary_root.is_file() != classification['binaryRootPresent']:
+        errors.append('binary root presence differs from the reviewed release')
+    for flags in (['-l'], ['--dump-pcp-json', '-', '--pcp-json-version', '2']):
+        result = subprocess.run([next_usdcat, *flags, str(text)], capture_output=True, text=True)
+        if result.returncode == 0 or classification['nextDiagnostic'] not in result.stderr:
+            errors.append('negative text did not produce the required rejection: ' + ' '.join(flags))
+    oracle_script = str(pathlib.Path(__file__).with_name('dump-pcp-oracle.py'))
+    if oracle_python:
+        result = subprocess.run([oracle_python, oracle_script, '--expected-version',
+            oracle_version, str(text)], capture_output=True, text=True, env=oracle_env)
+        try:
+            report = json.loads(result.stdout)
+            if (result.returncode != 3 or report.get('status') != 'parse-error' or
+                    classification['stockDiagnostic'] not in report.get('error', '')):
+                errors.append('stock oracle did not confirm the classified text rejection')
+        except ValueError:
+            errors.append('stock rejection oracle failed: ' + result.stderr[-800:])
+    binaries = classification['binaryDependencies']
+    available = {path.name for path in case_dir.glob('*.usd') if path != binary_root}
+    if available != set(binaries):
+        errors.append('available original binary dependencies differ from the reviewed release')
+    for name, digest in binaries.items():
+        path = case_dir / name
+        if (not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest or
+                path.read_bytes()[:8] != b'PXR-USDC'):
+            errors.append('original binary dependency missing or changed: ' + name)
+            continue
+        result = run([next_usdcat, '-l', str(path)])
+        if result.returncode:
+            errors.append('original binary dependency failed to load: ' + name + ': ' + result.stderr[-800:])
+        if oracle_python:
+            result = subprocess.run([oracle_python, oracle_script, '--expected-version',
+                oracle_version, str(path)], capture_output=True, text=True, env=oracle_env)
+            if result.returncode:
+                errors.append('stock binary dependency check failed: ' + name + ': ' + result.stderr[-800:])
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite-root",
@@ -146,6 +211,14 @@ def main():
                         help="file of `<case> <reason>` lines known to differ")
     parser.add_argument("--pcp-strict-order", action="store_true",
                         help="count property-name order-only differences")
+    parser.add_argument("--pcp-oracle-python",
+                        help="also compare lossless v2 JSON against stock OpenUSD")
+    parser.add_argument("--pcp-oracle-pythonpath",
+                        help="isolated site-packages directory for the stock oracle interpreter")
+    parser.add_argument("--pcp-oracle-version", default="26.11",
+                        help="required usd-core wheel version (default: 26.11)")
+    parser.add_argument("--max-pcp-oracle-diff", type=int, default=0,
+                        help="lossless oracle difference ceiling; default zero")
     parser.add_argument("--pcp-diff-lines", type=int, default=4,
                         help="differences to print per case")
     args = parser.parse_args()
@@ -162,6 +235,23 @@ def main():
     categories = set(args.category or
                      ("data_types", "file_formats", "composition",
                       "value_resolution"))
+    if args.max_pcp_oracle_diff < 0:
+        parser.error('--max-pcp-oracle-diff must be nonnegative')
+    if args.pcp_oracle_pythonpath and not args.pcp_oracle_python:
+        parser.error('--pcp-oracle-pythonpath requires --pcp-oracle-python')
+    if args.pcp_oracle_python and 'composition' not in categories:
+        parser.error('--pcp-oracle-python requires the composition category')
+    invalid_manifest = json.loads(pathlib.Path(__file__).with_name(
+        'aousd-invalid-text.json').read_text(encoding='utf-8'))
+    invalid_cases = invalid_manifest['cases']
+    invalid_rejections = 0
+    oracle_results = {}
+    oracle_compared = 0
+    oracle_env = os.environ.copy()
+    if args.pcp_oracle_pythonpath:
+        oracle_env['PYTHONPATH'] = str(pathlib.Path(args.pcp_oracle_pythonpath).resolve())
+        oracle_env.pop('LD_LIBRARY_PATH', None)
+        oracle_env.pop('PXR_PLUGINPATH_NAME', None)
     failures = []
     counts = {}
     pcp_compared = 0
@@ -196,12 +286,27 @@ def main():
 
     if "composition" in categories:
         cases = sorted((root / "composition" / "tests" / "assets").glob("*/pcp.json"))
+        if len(cases) != invalid_manifest['compositionCases']:
+            parser.error('composition case count differs from the pinned release; no cases may be silently omitted')
+        if not set(invalid_cases).issubset({case.parent.name for case in cases}):
+            parser.error('reviewed invalid-text cases are missing from the supplemental suite')
         if args.case:
             selected = set(args.case)
             cases = [case for case in cases if case.parent.name in selected]
+        if args.case and set(args.case) != {case.parent.name for case in cases}:
+            parser.error('one or more --case names do not exist in the supplemental suite')
         for expected_path in cases:
             expected = json.loads(expected_path.read_text(encoding="utf-8"))
             case_dir = expected_path.parent
+            classification = invalid_cases.get(case_dir.name)
+            if classification:
+                errors = verify_invalid_text_case(case_dir, expected, classification,
+                    args.next_usdcat, args.pcp_oracle_python, args.pcp_oracle_version, oracle_env)
+                if errors:
+                    failures.append(('invalid_text', case_dir, '\n'.join(errors)))
+                else:
+                    invalid_rejections += 1
+                continue
             entry = case_dir / expected["Entry"]
             text_entry = case_dir / "usda" / expected["Entry"]
             if text_entry.is_file():
@@ -223,6 +328,33 @@ def main():
             if result.returncode:
                 failures.append(("composition", expected_path.parent,
                                  result.stderr))
+            if args.pcp_oracle_python:
+                oracle_compared += 1
+                oracle_command = [args.pcp_oracle_python,
+                    str(pathlib.Path(__file__).with_name('dump-pcp-oracle.py')),
+                    '--expected-version', args.pcp_oracle_version,
+                    '--variant-fallback', 'standin=render,proxy', str(entry)]
+                oracle = subprocess.run(oracle_command, capture_output=True,
+                                        text=True, env=oracle_env)
+                lossless_command = [args.next_usdcat, '--instance-mode', 'native',
+                    '--variant-fallback', 'standin=render,proxy',
+                    '--dump-pcp-json', '-', '--pcp-json-version', '2', str(entry)]
+                lossless = subprocess.run(lossless_command, capture_output=True, text=True)
+                if oracle.returncode or lossless.returncode:
+                    oracle_results[case_dir.name] = [('<root>', '<oracle>',
+                        f'oracle exit {oracle.returncode}, next exit {lossless.returncode}: ' +
+                        (oracle.stderr or oracle.stdout or lossless.stderr)[-800:])]
+                else:
+                    try:
+                        truth = json.loads(oracle.stdout)
+                        actual_v2 = json.loads(lossless.stdout)
+                        if truth.get('schemaVersion') != 2 or actual_v2.get('schemaVersion') != 2:
+                            raise ValueError('lossless comparison requires schemaVersion 2')
+                        differences = diff_pcp(truth, actual_v2, strict_order=True)
+                        if differences:
+                            oracle_results[case_dir.name] = differences
+                    except (ValueError, TypeError) as error:
+                        oracle_results[case_dir.name] = [('<root>', '<oracle>', str(error))]
             if args.compare_pcp:
                 compare_command = [args.next_usdcat, "--instance-mode", "native",
                                    "--variant-fallback", "standin=render,proxy",
@@ -271,6 +403,9 @@ def main():
                                  pathlib.Path(args.aousd_value_test),
                                  result.stderr or "sampled-value oracle failed"))
 
+    if invalid_rejections:
+        print(f"AOUSD classified invalid text: {invalid_rejections} verified rejection(s); "
+              "all reviewed original binary dependencies loaded")
     for category in sorted(counts):
         print(f"AOUSD supplemental {category}: {counts[category]} cases")
     composition_failures = [f for f in failures if f[0] == "composition"]
@@ -310,6 +445,17 @@ def main():
         if args.max_pcp_diff is not None and xpass:
             print("AOUSD pcp compare: allowlist entries now pass (prune)",
                   file=sys.stderr)
+            pcp_blocking = True
+    if args.pcp_oracle_python:
+        print(f'AOUSD lossless PCP oracle: {oracle_compared} compared, '
+              f'{oracle_compared - len(oracle_results)} matching, '
+              f'{len(oracle_results)} differing (strict order, no allowlist)')
+        for name, differences in sorted(oracle_results.items()):
+            print(f'  ORACLE-DIFF: {name}: {len(differences)} difference(s)')
+            for path, key, message in differences[:max(args.pcp_diff_lines, 0)]:
+                print(f'    {path} [{key}]: {message}')
+        if len(oracle_results) > args.max_pcp_oracle_diff:
+            print('AOUSD lossless PCP oracle: difference ceiling exceeded', file=sys.stderr)
             pcp_blocking = True
     if len(composition_failures) > args.max_composition_fail:
         blocking.extend(composition_failures)

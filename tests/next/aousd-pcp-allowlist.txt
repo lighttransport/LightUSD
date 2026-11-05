@@ -6,19 +6,11 @@
 # matching reports XPASS and must be pruned.
 #
 # Reason tags:
-#   ORACLE-PARSE: pxr aborted on a text-parse error (Composing is empty or
-#     partial in the corpus); next parses and composes the file.
-#   ORACLE-INSTANCE: pxr answers instance-proxy paths from the prototype's
-#     prim index (per-instance local opinions do not appear).
 #   CHILD-ORDER: pxr composes child names weakest-first with relocate
 #     arrivals ahead of a node's local names; next emits strongest/local first.
 #     Name SETS match. Engine child-order rule, deliberately not changed here.
 #   ENGINE-*: a real src/next/pcp composition difference (site attribution,
 #     arc ordering, selection, error policy). Not touched by the dump work.
-BasicInherits_root ORACLE-PARSE: pxr rejects `inherits = </ModelWithVariant{vset=sel}_class>`; corpus Composing is empty
-ErrorRelocateWithVariantSelection_root ORACLE-PARSE: pxr rejects relocates with variant selections; corpus Composing is empty
-SubrootReferenceAndVariants_root ORACLE-PARSE: pxr rejects the subroot reference with a variant selection; corpus Composing is empty
-BasicInstancingAndNestedInstances_root ORACLE-INSTANCE: /Set_1/PropInstance2/geom lists only prop.usd (prototype index); next also lists set.usd's local over
 BasicListEditing_root CHILD-ORDER: /A child order (reorder nameChildren across layers)
 RelocatePrimsWithSameName_root CHILD-ORDER: relocated arrivals before Ref*_Child
 TrickyMultipleRelocations4_root CHILD-ORDER: /RearLegRig [Knee_bone, Legs]
@@ -40,11 +32,7 @@ ElidedAncestralRelocates_root ENGINE-RELOCATE: elided ancestral relocate keeps t
 TrickyVariantOverrideOfRelocatedPrim_root ENGINE-RELOCATE: variant override of a relocated prim (root.usd /Model{..}RelocatedSphere opinions) is not composed by next
 RelocateToNone_root ENGINE-RELOCATE: pxr refuses a reference to a relocation-deleted child (root-only stack); next composes model.usd
 ErrorArcCycle_root ENGINE-CYCLE: ancestral reference cycle; pxr stops at /AnotherParent/AnotherChild, next also composes /AnotherParent/AnotherChild/AnotherChild
-ErrorInconsistentProperties_root ENGINE-ERROR-POLICY: pxr drops the ref.usd spec of a property whose type conflicts; next keeps the weaker opinion in the stack
 BasicSpecializesAndVariants_root ENGINE-VARIANT-SELECTION: /Model/Looks/Brass selects {v=from_metal} through specializes instead of {v=from_brass}
-BasicVariantWithReference_root ENGINE-VARIANT-SELECTION: /ModelRef selects {vset=with_children}, pxr {vset=without_children}
 TrickySpookyVariantSelectionInClass_root ENGINE-VARIANT-SELECTION: /Char/Anim/RightLeg composes {LegRigStyle=1Leg} with the spooky class selection, pxr {LegRigStyle=2Leg}
 TrickyVariantWeakerSelection2_root ENGINE-VARIANT-SELECTION: class-authored root-node variant selection; next applies it on the standalone class index and orders /bob{geotype=cube} before the class variant
 TrickyVariantWeakerSelection4_root ENGINE-VARIANT-SELECTION: same as TrickyVariantWeakerSelection2_root
-RelativePathReferences_root ENGINE-LISTOP-DEDUP: identical `@./ref.usd@</Ref>` prepended from sub1/ and sub2/ is deduplicated before anchoring; sub2/ref.usd never composes
-RelativePathPayloads_root ENGINE-LISTOP-DEDUP: same as RelativePathReferences_root for payloads

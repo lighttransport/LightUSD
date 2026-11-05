@@ -185,7 +185,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                   ? layer_stacks[src.stack_idx].variant_authoring_layer
                   : (layer_id.empty() ? layer_stacks[src.stack_idx].identifier
                                       : layer_id);
-          applied_variants_[SourcesKey(src.stack_idx, src.site)].push_back(
+          applied_variants_[AppliedVariantKey(src)].push_back(
               AppliedVariant{set_name, vd->name, selection, authoring_layer});
 
           // Subtree content: model as a reference-style Variant source into the

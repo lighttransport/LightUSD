@@ -57,3 +57,25 @@ registered only when `lake` is found; `next_test_lean_vectors*` always run).
   generators and only for dyadic inputs so C++ `double` comparison is exact.
 * Floating-point rounding behaviour of the C++ implementation is out of scope:
   parity is checked numerically by the vectors, not proven.
+
+## Independent follow-up
+
+The follow-up ledger is [lean-followup-status.md](../../doc/validation/lean-followup-status.md).
+General proofs now characterize `mostCommon` and establish the greedy LZ4
+compressor's end-of-block rules. Strength ordering uses unbounded integer depth
+keys. All previously native-decided examples now use kernel-checked proofs;
+the checked theorem dependencies contain only standard Lean axioms. These
+changes do not establish the remaining parser, PATHS, NFC, or prim-index
+proof obligations listed in the ledger.
+
+For exact validator references, run:
+
+```sh
+python3 scripts/check-lean-reflection.py --check --lake \
+  --lusdchecker build_ninja/checker/lusdchecker --require-lusdchecker
+python3 scripts/test-check-lean-reflection.py
+```
+
+Run these commands from the repository root after building Lean and the checker.
+The dedicated Lean CI workflow runs proofs, runtime tests, vector drift, and
+required checker reflection.

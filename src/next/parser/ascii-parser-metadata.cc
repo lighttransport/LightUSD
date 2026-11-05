@@ -148,6 +148,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             if (!lexer_->expect(TokenType::PathRef, src)) break;
             if (!Match(TokenType::Colon)) break;
             if (!lexer_->expect(TokenType::PathRef, dst)) break;
+            if (src.find('{') != std::string::npos || dst.find('{') != std::string::npos) {
+              AddError("Relocates paths cannot contain variant selections");
+              return false;
+            }
             layer_->meta().relocates.emplace_back(src, dst);
             Match(TokenType::Comma);
           }

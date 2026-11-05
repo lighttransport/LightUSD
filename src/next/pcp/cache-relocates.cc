@@ -407,7 +407,14 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
     // TrickySpookyVariantSelection, verified vs pcp.txt prim stacks.)
     std::vector<Src> deferred_content;
     std::set<uint32_t> arrival_stacks;
+    // Apply the same instance-descendant source policy for direct path
+    // queries as for stage traversal. Local overs below an instanceable host
+    // are not part of its shared prototype, even when the queried child also
+    // exists in a contributing reference. Unresolved arcs do not make a host
+    // instanceable (IsInstanceableSources checks actual contributing specs).
+    const bool instanceable = IsInstanceableSources(psrcs);
     for (const Src &ps : psrcs) {
+      if (instanceable && !Mapping(ps.map_idx).MapsFrom(ps.site)) continue;
       // Variant sources are inline opinions on the prim itself; they do not
       // (yet) carry child prims, so they don't propagate to children.
       if (ps.variant) continue;

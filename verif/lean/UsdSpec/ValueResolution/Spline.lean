@@ -761,13 +761,13 @@ def aeK (t v : ℚ) (pv : ℚ := v) : Knot :=
 theorem autoEase_mono :
     autoEaseSpec (some (aeK 0 0)) (aeK 1 1) (some (aeK 4 10)) = (27/16, 1/3, 27/16, 1) ∧
     autoEasePxr (some (aeK 0 0)) (aeK 1 1) (some (aeK 4 10)) = (27/16, 1/3, 27/16, 1) := by
-  native_decide
+  decide +kernel
 
 /-- pxr probe "mono-asym": the `3·prevSlope` clamp binds → slope 1. -/
 theorem autoEase_clamp :
     autoEasePxr (some (aeK 0 0)) (aeK 3 1) (some (aeK 4 10)) = (1, 1, 1, 1/3) ∧
     autoEaseSpec (some (aeK 0 0)) (aeK 3 1) (some (aeK 4 10)) = (1, 1, 1, 1/3) := by
-  native_decide
+  decide +kernel
 
 /-- SPEC-ISSUE: LEAN-741 (a): dual-valued next knot. Pseudocode blends toward
 `nextKnot.value`; pxr toward `GetPreValue()` (37/48 = 0.770833…, probe
@@ -775,7 +775,7 @@ theorem autoEase_clamp :
 theorem autoEase_nextDual_ne :
     autoEaseSpec (some (aeK 0 0)) (aeK 1 1) (some (aeK 4 10 2)) = (27/16, 1/3, 27/16, 1) ∧
     autoEasePxr (some (aeK 0 0)) (aeK 1 1) (some (aeK 4 10 2)) = (37/48, 1/3, 37/48, 1) := by
-  native_decide
+  decide +kernel
 
 /-- SPEC-ISSUE: LEAN-741 (b): missing neighbour. Pseudocode zeroes *both*
 slopes; pxr leaves the off-the-end tangent (slope 9, width 5) untouched (probe
@@ -783,7 +783,7 @@ slopes; pxr leaves the off-the-end tangent (slope 9, width 5) untouched (probe
 theorem autoEase_noPrev_ne :
     autoEaseSpec none (aeK 1 1) (some (aeK 4 10)) = (0, 5, 0, 1) ∧
     autoEasePxr none (aeK 1 1) (some (aeK 4 10)) = (9, 5, 0, 1) := by
-  native_decide
+  decide +kernel
 
 /-! ## Evaluation examples (all cross-checked against pxr v26.11, probes c1/c2) -/
 
@@ -796,32 +796,32 @@ theorem example_repeat :
     eval { pre := .loopRepeat, post := .loopRepeat, knots := triK } 5 = some 3 ∧
     eval { pre := .loopRepeat, post := .loopRepeat, knots := triK } (-1) = some (3/2) ∧
     eval { pre := .loopRepeat, post := .loopRepeat, knots := triK } 8 = some 2 := by
-  native_decide
+  decide +kernel
 
 /-- pxr "reset": the join belongs to the next copy (t=4 → 0, LEAN-745). -/
 theorem example_reset :
     eval { pre := .loopReset, post := .loopReset, knots := triK } 4 = some 0 ∧
     eval { pre := .loopReset, post := .loopReset, knots := triK } 7 = some (5/2) := by
-  native_decide
+  decide +kernel
 
 /-- pxr "osc": t=5 → 2.5, t=12 → 1, t=−3 → 2.5. -/
 theorem example_oscillate :
     eval { pre := .loopOscillate, post := .loopOscillate, knots := triK } 5 = some (5/2) ∧
     eval { pre := .loopOscillate, post := .loopOscillate, knots := triK } 12 = some 1 ∧
     eval { pre := .loopOscillate, post := .loopOscillate, knots := triK } (-3) = some (5/2) := by
-  native_decide
+  decide +kernel
 
 /-- pxr "inner": `loop: (0, 4, 1, 2, 10)` over 0:0, 2:4, 4:1, 6:100. -/
 theorem example_inner :
     let sp : Spline := { loop := some ⟨0, 4, 1, 2, 10⟩, knots := triK ++ [kn 6 100] }
     eval sp (-1) = some (-3) ∧ eval sp 5 = some 12 ∧ eval sp 13 = some 30 ∧ eval sp (-5) = some (-10) := by
-  native_decide
+  decide +kernel
 
 /-- pxr "linexcurve" (Hermite): t=2 → 5, linear extrapolation uses the tangent
 slopes on the inside: t=−2 → −5, t=6 → 3. -/
 theorem example_hermite :
     let sp : Spline := { curve := .hermite, pre := .linear, post := .linear, knots := [⟨0, 1, 1, 0, 0, 0, 3, .curve⟩, ⟨4, 5, 5, 0, -1, 0, 0, .curve⟩] }
     eval sp 2 = some 5 ∧ eval sp (-2) = some (-5) ∧ eval sp 6 = some 3 := by
-  native_decide
+  decide +kernel
 
 end UsdSpec.Spline

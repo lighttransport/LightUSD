@@ -7,12 +7,8 @@ markers) names, per rule id, the fully-qualified Lean 4 declaration that
 formalizes the rule. This script parses that C++ table directly (no build
 needed) and checks that every declaration exists in verif/lean/UsdSpec/**.
 
-Resolution is tolerant on purpose: a name ``UsdSpec.A.B.decl`` is accepted when
-some ``.lean`` file whose module path is a prefix of ``UsdSpec.A.B`` (or whose
-filename matches ``A`` / ``B``) declares ``decl`` with ``def``, ``theorem``,
-``lemma``, ``structure``, ``inductive``, ``abbrev``, ``class`` or ``instance``,
-with a namespace chain (``namespace X`` ... ``end X``) that yields the last two
-name components. ``structure`` fields are not declarations.
+Resolution uses exact namespace-qualified declaration names. File/module names
+do not introduce declaration aliases. Structure fields are not declarations.
 
 Optionally ``--lusdchecker PATH`` runs ``PATH --dump-rules`` and verifies that
 its ``Lean:`` lines agree with the table (same rule -> same declaration).
@@ -21,6 +17,7 @@ Exit 1 listing every missing declaration (or dump-rules mismatch).
 """
 import argparse
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -36,7 +33,7 @@ SECTION_RE = re.compile(r'^\s*section(?:\s+([\w.]+))?\s*$')
 
 
 def parse_table(path):
-    text = open(path, encoding='utf-8').read()
+    text = Path(path).read_text(encoding='utf-8')
     begin = text.find('BEGIN LEAN_REFLECTION_TABLE')
     end = text.find('END LEAN_REFLECTION_TABLE')
     if begin < 0 or end < 0 or end < begin:
@@ -48,17 +45,15 @@ def parse_table(path):
 
 
 def lean_declarations(lean_root):
-    """Map fully-qualified declaration name -> file (every namespace prefix)."""
+    """Map exact namespace-qualified declaration names to source files."""
     decls = {}
     for dirpath, _dirs, files in os.walk(lean_root):
         for name in files:
             if not name.endswith('.lean'):
                 continue
             path = os.path.join(dirpath, name)
-            rel = os.path.relpath(path, os.path.dirname(lean_root))
-            module = rel[:-len('.lean')].replace(os.sep, '.')
             ns_stack = []  # (kind, name) with kind in {'namespace', 'section'}
-            for line in open(path, encoding='utf-8'):
+            for line in Path(path).read_text(encoding='utf-8').splitlines():
                 m = NS_RE.match(line)
                 if m:
                     ns_stack.append(('namespace', m.group(1)))
@@ -66,6 +61,9 @@ def lean_declarations(lean_root):
                 m = SECTION_RE.match(line)
                 if m:
                     ns_stack.append(('section', m.group(1)))
+                    continue
+                if line.strip() == "mutual":
+                    ns_stack.append(("mutual", None))
                     continue
                 m = END_RE.match(line)
                 if m:
@@ -79,23 +77,11 @@ def lean_declarations(lean_root):
                 decl = m.group(2)
                 full = f'{prefix}.{decl}' if prefix else decl
                 decls.setdefault(full, path)
-                # Module-qualified alias (`UsdSpec.ListOp.Legacy.applyLegacy`
-                # where the file is UsdSpec/ListOp/Legacy.lean with
-                # `namespace UsdSpec.ListOp`).
-                decls.setdefault(f'{module}.{decl}', path)
     return decls
 
 
 def resolve(ref, decls):
-    if ref in decls:
-        return decls[ref]
-    parts = ref.split('.')
-    if len(parts) >= 2:
-        tail = '.'.join(parts[-2:])
-        for full, path in decls.items():
-            if full == tail or full.endswith('.' + tail):
-                return path
-    return None
+    return decls.get(ref)
 
 
 def check_dump_rules(binary, rows):
@@ -134,6 +120,10 @@ def main():
     ap.add_argument('--check', action='store_true',
                     help='exit 1 on any missing declaration (default behavior; '
                          'kept for symmetry with the other --check scripts)')
+    ap.add_argument('--require-lusdchecker', action='store_true',
+                    help='fail if the checker binary is missing')
+    ap.add_argument('--lake', nargs='?', const='lake',
+                    help='also resolve every name in the compiled Lean environment')
     ap.add_argument('-v', '--verbose', action='store_true')
     args = ap.parse_args()
 
@@ -153,8 +143,26 @@ def main():
     problems = []
     if args.lusdchecker and os.path.exists(args.lusdchecker):
         problems = check_dump_rules(args.lusdchecker, rows)
+    elif args.require_lusdchecker:
+        problems.append('required lusdchecker binary is missing: ' + str(args.lusdchecker))
     elif args.lusdchecker and args.verbose:
         print(f'note: {args.lusdchecker} not found; --dump-rules cross-check skipped')
+
+    if args.lake:
+        refs = sorted(set(ref for _, ref in rows))
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'.]*", ref) for ref in refs):
+            problems.append('invalid Lean declaration name in reflection table')
+        else:
+            source = 'import UsdSpec\n' + ''.join('#check ' + ref + '\n' for ref in refs)
+            try:
+                checked = subprocess.run([args.lake, 'env', 'lean', '--stdin'],
+                                         cwd=os.path.join(repo, 'verif', 'lean'),
+                                         input=source, capture_output=True, text=True)
+                if checked.returncode:
+                    problems.append('Lean declaration resolution failed:\n' +
+                                    checked.stdout + checked.stderr)
+            except OSError as error:
+                problems.append('cannot run Lean declaration resolution: ' + str(error))
 
     for rule, ref in missing:
         print(f'MISSING: {rule} -> {ref} (no such declaration under verif/lean/UsdSpec)')

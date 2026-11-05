@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
   const std::filesystem::path dir(argv[1]);
   if (!std::filesystem::create_directory(dir, ec)) return 2;
 
-  const std::string source = "#usda 1.0\n(defaultPrim = \"World\" upAxis = \"Y\" metersPerUnit = 1)\ndef Xform \"World\" { asset info:readme = @readme.txt@ }\n";
+  const std::string source = "#usda 1.0\n(defaultPrim = \"World\"; upAxis = \"Y\"; metersPerUnit = 1)\ndef Xform \"World\" { asset info:readme = @readme.txt@; }\n";
   const std::string note = "A package-local dependency.\n";
   lightusd::api::AssetResolver resolver;
   if (lightusd::api::CreateAssetResolver(&resolver) != LIGHTUSD_OK ||

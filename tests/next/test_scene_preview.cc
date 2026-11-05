@@ -512,7 +512,11 @@ def PointInstancer "Instances" {
   const auto raw_token = colored.find("sourceColorSpace=\"raw\"");
   Require(raw_token != std::string::npos, "source colorspace fixture");
   colored.replace(raw_token, std::string("sourceColorSpace=\"raw\"").size(),
-                  "sourceColorSpace=\"lin_rec709_scene\"");
+                  "sourceColorSpace=\"auto\"");
+  const auto file_token = colored.find("inputs:file=@color.ppm@");
+  Require(file_token != std::string::npos, "texture file fixture");
+  colored.replace(file_token, std::string("inputs:file=@color.ppm@").size(),
+                  "inputs:file=@color.ppm@ (colorSpace=\"lin_rec709_scene\")");
   Write(scratch / "color.usda", colored);
   Write(scratch / "color.ppm",
         std::string("P6\n1 1\n255\n") + char(128) + char(128) + char(128));

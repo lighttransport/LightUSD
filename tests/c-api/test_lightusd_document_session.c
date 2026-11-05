@@ -126,7 +126,7 @@ static void test_session_controls(const char* filename) {
   FILE* file = fopen(payload, "wb");
   assert(file);
   assert(fputs("#usda 1.0\ndef Xform \"Payload\" {\n"
-               "def Xform \"Child\" { float[] values = [1,2,3,4] }\n}\n", file) >= 0);
+               "def Xform \"Child\" { float[] values = [1,2,3,4]; }\n}\n", file) >= 0);
   assert(fclose(file) == 0);
   file = fopen(filename, "wb");
   assert(file);
@@ -321,7 +321,7 @@ static void test_parent_path_config(const char* filename) {
   memcpy(payload + length, ".payload.usda", sizeof(".payload.usda"));
   FILE* file = fopen(payload, "wb");
   assert(file);
-  assert(fputs("#usda 1.0\ndef Xform \"Source\" { def Xform \"Child\" {} }\n", file) >= 0);
+  assert(fputs("#usda 1.0\ndef Xform \"Source\" { def Xform \"Child\" {}\n }\n", file) >= 0);
   assert(fclose(file) == 0);
   file = fopen(filename, "wb");
   assert(file);
@@ -366,8 +366,8 @@ static void test_open_config(const char* filename) {
   assert(fputs("#usda 1.0\ndef Xform \"Root\" (\n"
       " variants = { string look = \"low\" }\n prepend variantSets = \"look\"\n) {\n"
       " variantSet \"look\" = {\n"
-      "  \"low\" { def Xform \"Low\" {} }\n"
-      "  \"high\" { def Xform \"High\" {} }\n }\n}\n", file) >= 0);
+      "  \"low\" { def Xform \"Low\" {}\n }\n"
+      "  \"high\" { def Xform \"High\" {}\n }\n }\n}\n", file) >= 0);
   assert(fclose(file) == 0);
   lightusd_document_session* session = NULL;
   lightusd_document_snapshot* snapshot = NULL;
@@ -443,7 +443,7 @@ static void test_payload_callbacks(const char* filename) {
   FILE* file = fopen(filename, "wb");
   assert(file);
   assert(fputs("#usda 1.0\n"
-      "def Xform \"Source\" { def Xform \"Child\" {} }\n"
+      "def Xform \"Source\" { def Xform \"Child\" {}\n }\n"
       "def Xform \"A\" (prepend payload = </Source>) {}\n"
       "def Xform \"B\" (prepend payload = </Source>) {}\n", file) >= 0);
   assert(fclose(file) == 0);
@@ -528,17 +528,17 @@ static void test_batch_edits(const char* filename) {
   FILE* file = fopen(filename, "wb");
   assert(file);
   assert(fputs("#usda 1.0\n"
-      "def Xform \"Source\" { def Xform \"Child\" {} }\n"
+      "def Xform \"Source\" { def Xform \"Child\" {}\n }\n"
       "def Xform \"A\" (\n prepend payload = </Source>\n"
       " variants = { string look = \"low\" }\n prepend variantSets = \"look\"\n) {\n"
       " variantSet \"look\" = {\n"
-      "  \"low\" { def Xform \"Low\" {} }\n"
-      "  \"high\" { def Xform \"High\" {} }\n }\n}\n"
+      "  \"low\" { def Xform \"Low\" {}\n }\n"
+      "  \"high\" { def Xform \"High\" {}\n }\n }\n}\n"
       "def Xform \"B\" (\n prepend payload = </Source>\n"
       " variants = { string look = \"low\" }\n prepend variantSets = \"look\"\n) {\n"
       " variantSet \"look\" = {\n"
-      "  \"low\" { def Xform \"Low\" {} }\n"
-      "  \"high\" { def Xform \"High\" {} }\n }\n}\n", file) >= 0);
+      "  \"low\" { def Xform \"Low\" {}\n }\n"
+      "  \"high\" { def Xform \"High\" {}\n }\n }\n}\n", file) >= 0);
   assert(fclose(file) == 0);
   int cancel = 0;
   lightusd_document_options options;
@@ -751,7 +751,7 @@ static void test_geometry_release(const char* filename) {
       " point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n"
       " int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n"
       " string label = \"retained\"\n}\n"
-      "def Mesh \"N\" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] }\n"
+      "def Mesh \"N\" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]; }\n"
       "def Mesh \"A\" {\n point3f[] points = [(0,0,0)]\n"
       " point3f[] points.timeSamples = {1: [(0,0,0)], 2: [(1,0,0)]}\n}\n", file) >= 0);
   assert(fclose(file) == 0);

@@ -721,12 +721,22 @@ struct Cache::Impl {
   std::unordered_map<std::string, std::unique_ptr<PrimSpec>> composed_cache_;
   std::unordered_map<std::string, std::vector<std::string>> composed_children_;
   // Diagnostics only (Cache::GetPrimStack): every variant option the serial
-  // expansion applied, keyed by SourcesKey(stack, site) of the host source,
+  // expansion applied, keyed by physical host and its mapped composed path,
   // in application order. pxr's prim stack lists the variant node site
   // (`/Host{set=name}`) even when the option authors nothing, which the Src
   // list (content/inline sources only) cannot reconstruct. Worker Impls fill
   // their own copy; it is not merged, so a parallel compose leaves it empty
   // for prims warmed by workers (GetPrimStack falls back to the Src list).
+  // A referenced host can select differently at different composed paths.
+  // Keep diagnostic records scoped to that mapped path, not just the physical site.
+  std::string AppliedVariantKey(uint32_t stack, const std::string& site,
+                                const std::string& target) const {
+    return SourcesKey(stack, site) + ":target:" + target;
+  }
+  std::string AppliedVariantKey(const Src& source) const {
+    return AppliedVariantKey(source.stack_idx, source.site,
+                             Mapping(source.map_idx).Apply(source.site));
+  }
   struct AppliedVariant {
     std::string set_name;
     std::string variant_name;
