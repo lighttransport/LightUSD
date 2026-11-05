@@ -169,6 +169,82 @@ CHAIN_GRAPH = '''
             }
 '''
 
+# Wider topology: one image fans out to two branches, each scaled and clamped
+# independently, then mixed. With a pure-white 1x1 source the arithmetic is
+# exact under any decode:
+#   A  = 1
+#   M1 = A * 0.1 = 0.1  -> clamp(0.05, 0.5) = 0.1
+#   M2 = A * 2.0 = 2.0  -> clamp(0.05, 0.5) = 0.5
+#   mix(0.1, 0.5, factor 0.5) = 0.3
+# All values stay inside the responsive part of the preview curve (0.9 and 2.0
+# both saturate the output, which would make the comparison vacuous). A renderer
+# that drops the fan-out, a clamp or the mix lands elsewhere; the no-clamp
+# control computes mix(0.1, 2.0, 0.5) = 1.05 and saturates, so it must differ.
+WIDE_GRAPH = """
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </World/_materials/M/NodeGraph/Mix.outputs:out>
+
+                def Shader "Image"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @./tex.bmp@ (
+                        colorSpace = "raw"
+                    )
+                    string inputs:uaddressmode = "periodic"
+                    string inputs:vaddressmode = "periodic"
+                    color3f outputs:out
+                }
+
+                def Shader "Low"
+                {
+                    uniform token info:id = "ND_multiply_color3"
+                    color3f inputs:in1.connect = </World/_materials/M/NodeGraph/Image.outputs:out>
+                    color3f inputs:in2 = (0.1, 0.1, 0.1)
+                    color3f outputs:out
+                }
+
+                def Shader "LowClamp"
+                {
+                    uniform token info:id = "ND_clamp_color3"
+                    color3f inputs:in.connect = </World/_materials/M/NodeGraph/Low.outputs:out>
+                    float inputs:low = 0.05
+                    float inputs:high = 0.5
+                    color3f outputs:out
+                }
+
+                def Shader "High"
+                {
+                    uniform token info:id = "ND_multiply_color3"
+                    color3f inputs:in1.connect = </World/_materials/M/NodeGraph/Image.outputs:out>
+                    color3f inputs:in2 = (2.0, 2.0, 2.0)
+                    color3f outputs:out
+                }
+
+                def Shader "HighClamp"
+                {
+                    uniform token info:id = "ND_clamp_color3"
+                    color3f inputs:in.connect = </World/_materials/M/NodeGraph/High.outputs:out>
+                    float inputs:low = 0.05
+                    float inputs:high = 0.5
+                    color3f outputs:out
+                }
+
+                def Shader "Mix"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:fg.connect = </World/_materials/M/NodeGraph/LowClamp.outputs:out>
+                    color3f inputs:bg.connect = </World/_materials/M/NodeGraph/HighClamp.outputs:out>
+                    float inputs:mix = 0.5
+                    color3f outputs:out
+                }
+            }
+"""
+
+WIDE_NOCLAMP_GRAPH = WIDE_GRAPH.replace(
+    'color3f inputs:bg.connect = </World/_materials/M/NodeGraph/HighClamp.outputs:out>',
+    'color3f inputs:bg.connect = </World/_materials/M/NodeGraph/High.outputs:out>')
+
 SHALLOW_GRAPH = '''
             def NodeGraph "NodeGraph"
             {
@@ -196,6 +272,9 @@ def scene(name, base_color, graph):
 scene('chain', None, CHAIN_GRAPH)
 scene('constant', '(0.35, 0.35, 0.35)', '')
 scene('shallow', None, SHALLOW_GRAPH)
+scene('wide', None, WIDE_GRAPH)
+scene('wide_constant', '(0.3, 0.3, 0.3)', '')
+scene('wide_noclamp', None, WIDE_NOCLAMP_GRAPH)
 PY
 
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
@@ -226,7 +305,7 @@ render() {
   [ -s "$image" ] || { echo "FAIL: missing screenshot for $name"; exit 1; }
 }
 
-for name in chain constant shallow; do
+for name in chain constant shallow wide wide_constant wide_noclamp; do
   render "$name"
 done
 
@@ -262,6 +341,17 @@ print(f'chain vs image-only control: {control}')
 if control < 3:
     raise SystemExit('FAIL: the multiply/mix links did not change the render; '
                      'the chain is not being evaluated')
+wide = max_diff('wide', 'wide_constant')
+print(f'fan-out + two clamps + mix vs constant-equivalent: max channel diff {wide}')
+if wide > 1:
+    raise SystemExit('FAIL: the wide MaterialX graph does not evaluate to its '
+                     'constant equivalent')
+wide_control = max_diff('wide', 'wide_noclamp')
+print(f'wide graph vs no-clamp control: {wide_control}')
+if wide_control < 3:
+    raise SystemExit('FAIL: the clamps did not change the render; the wide '
+                     'graph is not being evaluated')
 print('PASS: deep MaterialX chain matches its constant equivalent and the '
       'intermediate links participate')
+print('PASS: fan-out with two clamps and a mix matches its constant equivalent')
 PY

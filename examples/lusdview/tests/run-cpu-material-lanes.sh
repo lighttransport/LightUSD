@@ -143,7 +143,8 @@ LANES = {
 }
 
 
-def scene(name, lane, textured, file_override=None, ambient_only=False):
+def scene(name, lane, textured, file_override=None, ambient_only=False,
+          value_override=None):
     decl, ty, shader, file, value, channel = LANES[lane]
     text = HEADER
     if lane == 'spec':
@@ -164,7 +165,7 @@ def scene(name, lane, textured, file_override=None, ambient_only=False):
         texture = TEXTURE.format(name=shader,
                                  file=file_override or f'{file}.bmp')
     else:
-        extra = f'                {ty} {decl} = {value}\n'
+        extra = f'                {ty} {decl} = {value_override or value}\n'
         texture = ''
     text = text.replace('EXTRA', extra).replace('SCALARS', texture)
     (root / f'{name}.usda').write_text(text)
@@ -173,6 +174,12 @@ def scene(name, lane, textured, file_override=None, ambient_only=False):
 for lane in ('metal', 'rough', 'emit', 'spec', 'coat'):
     scene(f'{lane}_tex', lane, True)
     scene(f'{lane}_const', lane, False)
+# Roughness must be *observable*, not merely equal to its constant: if the
+# lane were ignored both of these would render identically. The packed
+# specular colour used to zero the whole specular term, which made 0.03 and
+# 1.0 byte-identical; this control keeps that regression from returning.
+scene('rough_low', 'rough', False, value_override='0.03')
+scene('rough_high', 'rough', False, value_override='1.0')
 scene('occl_neutral', 'occl', True, 'occl_white.bmp', ambient_only=True)
 scene('occl_none', 'occl', False, ambient_only=True)
 scene('occl_dark', 'occl', True, 'occl_dark.bmp', ambient_only=True)
@@ -208,7 +215,7 @@ render() {
 
 for name in metal_tex metal_const rough_tex rough_const emit_tex emit_const \
             spec_tex spec_const coat_tex coat_const \
-            occl_neutral occl_none occl_dark; do
+            occl_neutral occl_none occl_dark rough_low rough_high; do
   render "$name"
 done
 
@@ -248,6 +255,11 @@ for lane in ('metal', 'rough', 'emit', 'spec', 'coat'):
     print(f'{lane}: texture-vs-constant max diff {diff}')
     if diff > 1:
         raise SystemExit(f'FAIL: the {lane} texture lane does not match its constant')
+
+rough_range = max_diff('rough_low', 'rough_high')
+print(f'roughness: low(0.03) vs high(1.0) max diff {rough_range}')
+if rough_range < 20:
+    raise SystemExit('FAIL: roughness does not change the render')
 
 neutral = max_diff('occl_neutral', 'occl_none')
 dark = center_luma('occl_dark') / max(center_luma('occl_neutral'), 1e-6)
