@@ -565,6 +565,9 @@ struct Options {
   // Display transform for the beauty path: false = filmic curve (default),
   // true = plain sRGB encode, matching usdrecord's colorCorrectionMode=sRGB.
   bool srgb_display_transform{false};
+  // Exposure applied before the filmic curve (exp2). 1.0 is the historical
+  // default; lower values bring the preview closer to a plain sRGB encode.
+  float exposure{1.0f};
   bool aov_explicit{false};
   bool all_render_products{false};
   std::string input;

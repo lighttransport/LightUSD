@@ -909,6 +909,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
     }
+    OPT_MATCH(a == "-exposure" || a == "--exposure") {
+      const char *v = need_value(a.c_str());
+      double parsed = 0.0;
+      if (!v || !ParseDoubleStrict(v, &parsed) || !std::isfinite(parsed) ||
+          parsed < -8.0 || parsed > 8.0) {
+        std::cerr << "--exposure requires a number in [-8, 8].\n";
+        return false;
+      }
+      opt->exposure = static_cast<float>(parsed);
+    }
     OPT_MATCH(a == "-path-trace" || a == "--path-trace") {
       opt->path_trace = true;
     }
