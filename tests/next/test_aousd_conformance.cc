@@ -85,18 +85,20 @@ void TestUnicodeAndPaths() {
   assert(unicode.stage.GetPrimAtPath("/München").IsValid());
 
   const std::string invalid =
-      "def Xform \"Root\" { rel r = </Root//Child> }\n";
+      "def Xform \"Root\" {\n  rel r = </Root//Child>\n}\n";
   assert(Parse(invalid, false).success);
   LoadResult strict = Parse(invalid, true);
   assert(!strict.success);
   assert(strict.error_summary.find("Invalid AOUSD path") != std::string::npos);
 
-  // Table-driven boundaries from AOUSD Core §8.3. In particular, absolute
-  // paths use PrimFirstPathElements (at most one property element), while
-  // relative paths permit relational-property chains.
+  // Table-driven boundaries from AOUSD Core §8.3. A property is always the
+  // terminal element (L3449-3450): the PEG's `PathElements <- PrimElements
+  // (PropElements)*` would admit relative chains like `.relationship.attribute`,
+  // but the spec tables never list one and OpenUSD SdfPath rejects them
+  // (verif/lean LEAN-203, UsdSpec.PathGrammar.peg_property_asymmetry).
   const char* valid_paths[] = {
       "/", ".", "..", "../..", "../../Sibling", "../.points",
-      "Descendant", ".property", ".relationship.attribute",
+      "Descendant", ".property",
       "/City{ selection = NewYork }",
       "/City/Street{selection=5thAvenue}",
       "/City/Street{selection=}",
@@ -104,6 +106,7 @@ void TestUnicodeAndPaths() {
   for (const char* path : valid_paths) assert(IsValidPathString(path));
   const char* invalid_paths[] = {
       "", "./Descendant/Prim", "/New York/New York", "/abc/123",
+      ".relationship.attribute", "a.b.c",
       "/City/Street{=}", "/abc{123=}", "/Root/", "/Root//Child",
       "/Prim/namespace:", "/Prim.:property", "/Prim.namespace::property",
       "/Prim.abc:123", "/Prim.relationship.attribute",
@@ -2401,10 +2404,10 @@ void TestGeneratedElectiveAuthoredRoundtrips() {
     else if (name == "allowedTokens" || name == "displayGroupOrder") value = "[]";
     const std::string assignment = name + " = " + value;
     const bool layer = scope == "Layer", prim = scope == "Prim";
-    const std::string absent = layer || prim ? "def Scope \"P\" {}\n" : "def Scope \"P\" { int a = 1 }\n";
+    const std::string absent = layer || prim ? "def Scope \"P\" {}\n" : "def Scope \"P\" { int a = 1\n}\n";
     const std::string source = layer ? "(" + assignment + ")\n" + absent : prim ?
         "def Scope \"P\" (" + assignment + ") {}\n" :
-        "def Scope \"P\" { int a = 1 (" + assignment + ") }\n";
+        "def Scope \"P\" { int a = 1 (" + assignment + ")\n}\n";
     LoadResult loaded = Parse(source, true), bare = Parse(absent, true);
     if (!loaded.success) std::cerr << "elective parse: " << scope << "." << name << "\n";
     assert(loaded.success && bare.success);
@@ -2437,11 +2440,6 @@ void TestUnregisteredListOpAuthoredRoundtrips() {
             std::string(scope) == "Prim" ? "def Scope \"P\" (" + assignment + ") {}\n" :
             "def Scope \"P\" { variantSet \"v\" = { \"a\" (" + assignment + ") {} } }\n";
         LoadResult loaded = Parse(source);
-        if (std::string(scope) == "Layer" && qualifier[0]) {
-          // Layer metadata has no generic list-edit authoring grammar.
-          assert(!loaded.success);
-          continue;
-        }
         if (!loaded.success) std::cerr << "extension parse: " << scope << ": " << assignment << "\n";
         assert(loaded.success);
         const std::string canonical = WriteUSDAToString(loaded.stage);
@@ -3462,14 +3460,14 @@ void TestPathGrammarProductions() {
       {"/Pri{m", false},
       {"/Prim}", false},
       // Relative forms: parent chains need '/'; '.' never precedes '/'.
-      {".a.b", true},
+      {".a.b", false},  // property is terminal (LEAN-203; OpenUSD rejects)
       {"..points", false},
       {"../", false},
       {"../../", false},
       {"a/b.p", true},
-      {"a/b.p.q", true},
-      // Absolute paths take at most ONE property element
-      // (PrimFirstPathElements); relative paths permit chains.
+      {"a/b.p.q", false},
+      // At most ONE property element in every form: the PEG's relative
+      // `(PropElements)*` contradicts L3449-3450 (verif/lean LEAN-203).
       {"/a/b.p.q", false},
       {"/.points", false},
       // Namespaced property elements inside longer paths.
@@ -3819,6 +3817,61 @@ void TestPxrTextFormRules() {
     const std::vector<std::string> applied = m.GetAppliedSchemas();
     assert(applied.size() == 4 && applied[1] == "CollectionAPI:lights");
     assert(!UsdPrim().HasAPI("LightAPI"));
+  }
+  // (e) pxr-accepted forms: list ops on unregistered layer metadata (an
+  // explicit value overrides the edits, as in pxr usdcat) and the legacy
+  // `rel r.default = </t>` statement.
+  {
+    const char* src =
+        "(\n  foo = [6, 5, 4]\n  append foo = [3, 2, 1]\n"
+        "  append foo = [1, 2, 3]\n)\n";
+    for (bool strict : {true, false}) assert(Parse(src, strict).success);
+    const std::string usda = WriteUSDAToString(Parse(src).stage);
+    assert(usda.find("foo = [6, 5, 4]") != std::string::npos);
+    assert(usda.find("append foo") == std::string::npos);
+    assert(!Parse("(\n  append upAxis = \"Y\"\n)\n").success);
+    const std::string edits = WriteUSDAToString(
+        Parse("(\n  append bar = [2]\n  prepend bar = [3]\n"
+              "  append bar = [4]\n)\n", true).stage);
+    assert(edits.find("append bar = [4]") != std::string::npos &&
+           edits.find("prepend bar = [3]") != std::string::npos &&
+           edits.find("append bar = [2]") == std::string::npos);
+    const char* rel =
+        "def \"a\" {\n  rel r.default = </a>\n  rel q.default = <../b>\n}\n";
+    for (bool strict : {true, false}) assert(Parse(rel, strict).success);
+    const std::string ru = WriteUSDAToString(Parse(rel).stage);
+    assert(ru.find("    rel r\n    rel r.default = </a>\n") !=
+           std::string::npos);
+    assert(ru.find("rel q.default = <../b>") != std::string::npos);
+    LoadResult rt = Parse(ru, true);
+    assert(rt.success && WriteUSDAToString(rt.stage) == ru);
+  }
+  // (f) pxr-rejected forms: strict errors, default mode warns and loads.
+  {
+    const char* bad[] = {
+        "def \"a\" {\n  def \"b\" {\n  }}\n",
+        "def \"a\" {\n  int x = 1 }\n",
+        "def \"a\" (\n  prepend apiSchemas = []\n) {}\n",
+        "def \"a\" (\n  prepend references = []\n) {}\n",
+        "def \"a\" (\n  append inherits = []\n) {}\n",
+        "def \"a\" (\n  delete specializes = []\n) {}\n",
+        "def \"a\" (\n  prepend variantSets = []\n) {}\n",
+        "def \"a\" (\n  prepend foo = []\n) {}\n",
+        "def \"a\" {\n  prepend rel r = []\n}\n",
+        "def \"a\" {\n  prepend int x.connect = []\n}\n",
+        "def \"a\" {\n  int x (\n    append foo = []\n  )\n}\n",
+        "def \"a\" {\n  float x\n  reorder properties = []\n}\n",
+        "(\n  prepend foo = []\n)\n",
+        "def \"a\" {\n  varying float x = 1\n}\n"};
+    for (const char* src : bad) {
+      assert(!Parse(src, true).success);
+      LoadResult lenient = Parse(src, false);
+      assert(lenient.success && !lenient.warnings.empty());
+    }
+    // Explicit empty lists and `;`-separated statements stay valid.
+    assert(Parse("def \"a\" (\n  apiSchemas = []\n  references = []\n) {\n"
+                 "  rel r = []\n  int x = 1; }\n",
+                 true).success);
   }
 }
 

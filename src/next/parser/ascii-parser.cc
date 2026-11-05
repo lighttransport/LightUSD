@@ -153,6 +153,8 @@ void AsciiParser::Impl::RunSubtreeParse(
     }
   }
   if (ok) {
+    for (std::string& d : sub.lexer_->diagnostics)
+      sub.warnings_.push_back(std::move(d));
     fragment->warnings = std::move(sub.warnings_);
     fragment->layer = std::move(sub.layer_);
   } else {
@@ -517,6 +519,8 @@ bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
   }
 
   timer.lap("join_stitch");
+  for (std::string& d : lexer_->diagnostics) warnings_.push_back(std::move(d));
+  lexer_->diagnostics.clear();
   // Finalize the layer
   builder_->finalize();
   timer.lap("finalize");
@@ -913,6 +917,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
     if (!Match(TokenType::Equals)) {
       AddError("Expected '=' after metadata key");
+      return false;
+    }
+    if (arc_qual != ArcQual::Explicit &&
+        !CheckQualifiedEmptyList(key.c_str())) {
       return false;
     }
 

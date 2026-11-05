@@ -720,6 +720,20 @@ struct Cache::Impl {
   // keyed by prim path. Populated by ComposePrim, dropped by Invalidate.
   std::unordered_map<std::string, std::unique_ptr<PrimSpec>> composed_cache_;
   std::unordered_map<std::string, std::vector<std::string>> composed_children_;
+  // Diagnostics only (Cache::GetPrimStack): every variant option the serial
+  // expansion applied, keyed by SourcesKey(stack, site) of the host source,
+  // in application order. pxr's prim stack lists the variant node site
+  // (`/Host{set=name}`) even when the option authors nothing, which the Src
+  // list (content/inline sources only) cannot reconstruct. Worker Impls fill
+  // their own copy; it is not merged, so a parallel compose leaves it empty
+  // for prims warmed by workers (GetPrimStack falls back to the Src list).
+  struct AppliedVariant {
+    std::string set_name;
+    std::string variant_name;
+    std::string selection;  // `{set=name}`, prefixed by enclosing nested ones
+    std::string authoring_layer;
+  };
+  std::unordered_map<std::string, std::vector<AppliedVariant>> applied_variants_;
   std::unordered_map<Site, std::set<std::string>, SiteHash> site_to_indices;
   std::unordered_map<std::string, std::vector<Site>> index_to_sites;
 

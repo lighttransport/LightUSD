@@ -1,12 +1,225 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "../layer/int64-listop.hh"
+#include <algorithm>
 #include <unordered_set>
 #include <string_view>
 #include "cache-internal.hh"
 namespace lightusd {
 namespace next {
 namespace pcp {
+
+std::string Cache::Impl::SpellSitePath(uint32_t stack,
+                                       const std::string &site) const {
+  static const char kSelf[] = "/__self__";
+  static const size_t kSelfLen = sizeof(kSelf) - 1;
+  // Walk owner chain leaf -> outermost (the suffixes stack inside-out).
+  std::string suffix;
+  uint32_t cur = stack;
+  std::string cur_site = site;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    if (cur >= layer_stacks.size()) break;
+    const LayerStack &st = layer_stacks[cur];
+    if (st.variant_owner_stack == 0xFFFFFFFFu) break;
+    // Rest of the path below the content root: "/__self__/a/b" -> "a/b",
+    // "/__self__" -> "". A site outside the sentinel keeps its spelling.
+    std::string rest;
+    if (cur_site.compare(0, kSelfLen, kSelf) == 0 &&
+        (cur_site.size() == kSelfLen || cur_site[kSelfLen] == '/')) {
+      rest = cur_site.size() > kSelfLen + 1 ? cur_site.substr(kSelfLen + 1)
+                                            : std::string();
+    } else {
+      rest = cur_site;
+    }
+    suffix = st.variant_selection + rest + suffix;
+    cur_site = st.variant_owner_site;
+    cur = st.variant_owner_stack;
+  }
+  return cur_site + suffix;
+}
+
+std::vector<std::string> Cache::GetRootLayerStackIdentifiers() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  if (impl_->layer_stacks.empty()) return {};
+  return impl_->layer_stacks[0].layer_identifiers;
+}
+
+std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
+                                                std::string* warn,
+                                                std::string* err) {
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  std::vector<PrimStackEntry> out;
+  const auto& sources = impl_->SourcesForPath(path, warn, err);
+  PropNameTable& table = GetPropNameTable();
+  auto variant_property_names = [](const PrimVariantData& vd) {
+    std::vector<std::string> names;
+    for (const auto& p : vd.properties) names.push_back(p.name);
+    // Relationships are unordered in the variant record; keep them stable.
+    std::vector<std::string> rels;
+    for (const auto& kv : vd.relationships) rels.push_back(kv.first);
+    std::sort(rels.begin(), rels.end());
+    names.insert(names.end(), rels.begin(), rels.end());
+    return names;
+  };
+  // Locate the spec authoring `vd` among `specs` and spell its site suffix.
+  auto locate_option = [&](const std::vector<SpecRef>& specs,
+                           const PrimVariantData* vd, std::string* layer,
+                           std::string* suffix) -> bool {
+    auto walk = [&](auto&& self, const std::vector<PrimVariantSetData>& sets,
+                    std::string* out_suffix, size_t depth) -> bool {
+      if (depth > 256) return false;
+      for (const auto& set : sets) for (const auto& variant : set.variants) {
+        const std::string component = "{" + set.name + "=" + variant.name + "}";
+        if (&variant == vd) { *out_suffix = component; return true; }
+        std::string nested;
+        if (self(self, variant.variantSets, &nested, depth + 1)) {
+          *out_suffix = component + nested; return true;
+        }
+      }
+      return false;
+    };
+    for (const auto& spec : specs) {
+      if (walk(walk, spec.spec->meta().variantSets(), suffix, 0)) {
+        *layer = spec.layer_id();
+        return true;
+      }
+    }
+    return false;
+  };
+  // Host key of a variant-arc source: the (stack, site) whose option it
+  // carries (inline opinions sit on the host itself; subtree content lives in
+  // a stack that records its owner).
+  auto variant_host_key = [&](const Src& s) -> std::string {
+    if (s.variant) return Cache::Impl::SourcesKey(s.stack_idx, s.site);
+    const LayerStack& st = impl_->layer_stacks[s.stack_idx];
+    if (st.variant_owner_stack == 0xFFFFFFFFu) return std::string();
+    return Cache::Impl::SourcesKey(st.variant_owner_stack, st.variant_owner_site);
+  };
+  // pxr orders a site's arcs L, I, V, R, P, S: its variant nodes follow the
+  // inherit subtree. A host's applied-variant record is therefore held back
+  // past the inherit sources that follow it and flushed at the host's own
+  // first variant-arc source, at the first reference/payload/specialize
+  // source after it, or at the end (an option that authored nothing has no
+  // source of its own).
+  auto emit_applied = [&](const std::string& key, uint32_t stack_idx,
+                          const std::string& site,
+                          const std::vector<SpecRef>& specs) {
+    const auto rec = impl_->applied_variants_.find(key);
+    if (rec == impl_->applied_variants_.end()) return;
+    const std::string host = impl_->SpellSitePath(stack_idx, site);
+    for (const auto& applied : rec->second) {
+      PrimStackEntry item;
+      item.layer_identifier = applied.authoring_layer;
+      item.prim_path = host + applied.selection;
+      item.arc = "variant";
+      // Inline names of the option, located through the authoring spec.
+      for (const auto& spec : specs) {
+        bool found = false;
+        for (const auto& set : spec.spec->meta().variantSets()) {
+          if (set.name != applied.set_name) continue;
+          for (const auto& variant : set.variants) {
+            if (variant.name != applied.variant_name) continue;
+            item.property_names = variant_property_names(variant);
+            found = true;
+            break;
+          }
+          if (found) break;
+        }
+        if (found) break;
+      }
+      out.push_back(std::move(item));
+    }
+  };
+  struct PendingHost {
+    std::string key;
+    uint32_t stack_idx;
+    std::string site;
+    const std::vector<SpecRef>* specs;
+  };
+  std::vector<PendingHost> pending;  // in host order
+  auto flush_pending = [&](const std::string* only_key) {
+    std::vector<PendingHost> keep;
+    for (PendingHost& host : pending) {
+      if (only_key && host.key != *only_key) {
+        keep.push_back(std::move(host));
+        continue;
+      }
+      emit_applied(host.key, host.stack_idx, host.site, *host.specs);
+    }
+    pending.swap(keep);
+  };
+  for (size_t si = 0; si < sources.size(); ++si) {
+    const Src& source = sources[si];
+    if (!pending.empty()) {
+      if (source.arc_kind == ArcType::Variant) {
+        // A pending host's own variant source: flush just that host (its
+        // inherited classes' variants stay ahead of a stronger host's, as
+        // pxr defers the root variant past the class's). An ancestral
+        // variant (host not pending) is weaker than every direct one.
+        const std::string key = variant_host_key(source);
+        bool pending_host = false;
+        for (const PendingHost& host : pending) {
+          if (host.key == key) { pending_host = true; break; }
+        }
+        flush_pending(pending_host ? &key : nullptr);
+      } else if (source.arc_kind != ArcType::Inherit) {
+        flush_pending(nullptr);
+      }
+    }
+    if (source.variant) {
+      // Inline option opinions on the host prim. Already listed from the
+      // applied-variant record of the host source when that exists (serial
+      // expansion); otherwise attribute them to the authoring spec here.
+      const auto rec = impl_->applied_variants_.find(
+          Cache::Impl::SourcesKey(source.stack_idx, source.site));
+      if (rec != impl_->applied_variants_.end()) continue;
+      PrimStackEntry item;
+      std::string suffix;
+      if (!locate_option(impl_->SpecsFor(source), source.variant,
+                         &item.layer_identifier, &suffix)) {
+        continue;
+      }
+      item.prim_path = impl_->SpellSitePath(source.stack_idx, source.site) + suffix;
+      item.arc = "variant";
+      item.property_names = variant_property_names(*source.variant);
+      out.push_back(std::move(item));
+      continue;
+    }
+    if (source.suppress_site_specs) continue;
+    const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+    const bool variant_content = st.variant_owner_stack != 0xFFFFFFFFu;
+    const std::vector<SpecRef>& specs = impl_->SpecsFor(source);
+    for (const auto& spec : specs) {
+      PrimStackEntry item;
+      // A variant-content layer is synthetic: pxr attributes the site to the
+      // layer that authored the option.
+      item.layer_identifier = variant_content ? st.variant_authoring_layer
+                                              : spec.layer_id();
+      item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                            spec.spec->path().str());
+      item.arc = ArcTypeName(source.arc_kind);
+      for (const auto& slot : spec.spec->properties().slots()) {
+        item.property_names.emplace_back(table.get(slot.name_id));
+      }
+      // Relationships live in an unordered table: their authored interleaving
+      // with attributes is not recoverable, so they follow (sorted).
+      if (spec.spec->has_relationship_data()) {
+        std::vector<std::string> rels = spec.spec->relationship_names();
+        item.property_names.insert(item.property_names.end(),
+                                   std::make_move_iterator(rels.begin()),
+                                   std::make_move_iterator(rels.end()));
+      }
+      out.push_back(std::move(item));
+    }
+    // Variant nodes of this host site, including options that author
+    // nothing: held back until the flush rule above places them.
+    const std::string key = Cache::Impl::SourcesKey(source.stack_idx, source.site);
+    if (!impl_->applied_variants_.count(key)) continue;
+    pending.push_back(PendingHost{key, source.stack_idx, source.site, &specs});
+  }
+  flush_pending(nullptr);
+  return out;
+}
 
 std::vector<PropertyOpinion> Cache::GetPropertyStack(
     const Path& path, const std::string& property, size_t limit,
@@ -21,8 +234,15 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
   };
   for (const auto& source : sources) {
     if (source.variant) {
+      // Inline attribute opinions, plus relationships authored on the option
+      // (no value; targets compose separately).
+      const VariantProperty* attr = nullptr;
       for (const auto& p : source.variant->properties) {
-        if (p.name != property) continue;
+        if (p.name == property) { attr = &p; break; }
+      }
+      const bool rel = !attr &&
+                       source.variant->relationships.count(property) != 0;
+      if (attr || rel) {
         PropertyOpinion item;
         // Inline variants keep a pointer to their authored option. Locate its
         // owning spec instead of attributing a weak-layer option to the root.
@@ -39,7 +259,7 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
           }
           return false;
         };
-        item.prim_path = source.site;
+        item.prim_path = impl_->SpellSitePath(source.stack_idx, source.site);
         for (const auto& spec : impl_->SpecsFor(source)) {
           std::string suffix;
           if (locate(locate, spec.spec->meta().variantSets(), &suffix, 0)) {
@@ -54,18 +274,53 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
         if (source.expression_variables()) {
           item.expression_variables = *source.expression_variables();
         }
-        item.has_default = !p.value.is_empty();
-        item.default_value = p.value;
+        if (attr) {
+          item.has_default = !attr->value.is_empty();
+          item.default_value = attr->value;
+        }
         append(std::move(item));
       }
       continue;
     }
     for (const auto& spec : impl_->SpecsFor(source)) {
       const auto* slot = spec.spec->property(property);
-      if (!slot) continue;
+      if (!slot) {
+        // A relationship authored here (targets, list-op edits, or an empty
+        // declaration) is an opinion too, without a value or samples.
+        const bool is_relationship =
+            spec.spec->has_relationship_data() &&
+            (spec.spec->relationship(property) != nullptr ||
+             spec.spec->relationship_edits().count(property) != 0);
+        if (!is_relationship) continue;
+        PropertyOpinion item;
+        const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+        item.layer_identifier = st.variant_owner_stack != 0xFFFFFFFFu
+                                    ? st.variant_authoring_layer
+                                    : spec.layer_id();
+        item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                              spec.spec->path().str());
+        item.arc = ArcTypeName(source.arc_kind);
+        const LayerOffset time = source.offset().Compose(spec.layer_offset);
+        item.offset = time.offset;
+        item.scale = time.scale;
+        item.suppressed = source.suppress_site_specs;
+        if (source.expression_variables()) {
+          item.expression_variables = *source.expression_variables();
+        }
+        append(std::move(item));
+        continue;
+      }
       PropertyOpinion item;
-      item.layer_identifier = spec.layer_id();
-      item.prim_path = spec.spec->path().str();
+      {
+        const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+        // Variant-content layers are synthetic: report the authoring layer
+        // and the pxr `/Owner{set=name}child` site spelling.
+        item.layer_identifier = st.variant_owner_stack != 0xFFFFFFFFu
+                                    ? st.variant_authoring_layer
+                                    : spec.layer_id();
+        item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                              spec.spec->path().str());
+      }
       item.arc = ArcTypeName(source.arc_kind);
       const LayerOffset time = source.offset().Compose(spec.layer_offset);
       item.offset = time.offset;

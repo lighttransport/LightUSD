@@ -10,6 +10,12 @@ audited in [the section below](#v110-delta-audit-2026-11-04).
 `release/1.0.1.post0` (c15ae0c) — still the newest corpus release; upstream
 publishes no 1.1 corpus yet.
 
+## Formal verification (2026-11-06)
+
+A Lean 4 formalization of v1.1.0 lives in [verif/lean](../verif/lean/README.md);
+findings, LightUSD fixes and reflection gates are summarized in
+[doc/validation/lean-verification-2026-11-06.md](../doc/validation/lean-verification-2026-11-06.md).
+
 ## v1.1.0 delta audit (2026-11-04)
 
 Each normative change in the v1.1.0 changelog was checked against OpenUSD

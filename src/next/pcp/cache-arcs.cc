@@ -171,7 +171,22 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                           std::vector<Src> *out, std::vector<Src> *spec_out,
                           std::map<std::string, std::string> *sels,
                           const ArcChain &chain, std::string *warn,
-                          std::string *err) {
+                          std::string *err,
+                          const std::string &selection_prefix) {
+          // pxr spelling of this option's site relative to the host:
+          // enclosing nested selections first (`{outer=a}{set=name}`).
+          const std::string selection =
+              selection_prefix + "{" + set_name + "=" + vd->name + "}";
+          // Layer that authored the option, for diagnostics: a nested option
+          // lives in the synthetic variant-content layer of its owner, so
+          // resolve through the owner chain to the real file.
+          const std::string &authoring_layer =
+              layer_stacks[src.stack_idx].variant_owner_stack != 0xFFFFFFFFu
+                  ? layer_stacks[src.stack_idx].variant_authoring_layer
+                  : (layer_id.empty() ? layer_stacks[src.stack_idx].identifier
+                                      : layer_id);
+          applied_variants_[SourcesKey(src.stack_idx, src.site)].push_back(
+              AppliedVariant{set_name, vd->name, selection, authoring_layer});
 
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
@@ -193,6 +208,11 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
             layer_stacks[cstack].variant_owner_key =
                 layer_stacks[src.stack_idx].cache_key;
             layer_stacks[cstack].variant_owner_site = src.site;
+            layer_stacks[cstack].variant_owner_stack = src.stack_idx;
+            layer_stacks[cstack].variant_set_name = set_name;
+            layer_stacks[cstack].variant_name = vd->name;
+            layer_stacks[cstack].variant_selection = selection;
+            layer_stacks[cstack].variant_authoring_layer = authoring_layer;
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
@@ -268,7 +288,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                 if (nvd.name == chosen) {
                   ApplyVariantOption(src, frame, nvs.name, &nvd, owner,
                                      vdepth + 1, layer_id, out, spec_out, sels,
-                                     chain, warn, err);
+                                     chain, warn, err, selection);
                   break;
                 }
               }

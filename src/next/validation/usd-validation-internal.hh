@@ -457,6 +457,14 @@ void ValidateCompositionMetadata(const PrimSpec &ps,
                                  const std::string &prim_location,
                                  const PrimSpecifierByPath &prim_specifiers,
                                  USDValidationResult *result);
+// core.listop.duplicateItems / core.listop.deprecatedAdd /
+// core.listop.deprecatedReorder over every list-op field of a PrimSpec.
+void ValidateListOpFields(const PrimSpec &ps, const std::string &prim_location,
+                          USDValidationResult *result);
+// core.schema.familyVersion for a schema name (typeName / apiSchemas entry).
+void ValidateSchemaNameGrammar(const std::string &name, const char *what,
+                               const std::string &location,
+                               USDValidationResult *result);
 std::vector<AppliedSchema> CollectAppliedSchemas(const PrimSpec &ps);
 std::set<std::string> CollectAppliedCollectionInstances(
     const std::vector<AppliedSchema> &schemas);

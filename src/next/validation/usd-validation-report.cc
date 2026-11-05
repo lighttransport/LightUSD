@@ -161,6 +161,23 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "attribute is declared with a different type than its schema defines"},
       {"core.schema.variability", "core",
        "authored attribute variability must match its schema definition"},
+      {"core.dict.duplicateKey", "core",
+       "dictionary fields must not repeat a key at any nesting level "
+       "(USDA parser-level: the Layer keeps the last value, so the finding is "
+       "imported from the parser diagnostics)"},
+      {"core.listop.deprecatedAdd", "core",
+       "list-op fields should not use the deprecated `add` operation"},
+      {"core.listop.deprecatedReorder", "core",
+       "list-op fields should not use the deprecated `reorder` operation"},
+      {"core.listop.duplicateItems", "core",
+       "each list-op sequence (explicit/prepended/appended/deleted) must hold "
+       "unique items"},
+      {"core.schema.familyVersion", "core",
+       "prim typeName and apiSchemas entries must parse per the schema "
+       "family/version grammar"},
+      {"core.schema.selfFamilyInherit", "core",
+       "a versioned schema definition must not inherit from its own family "
+       "(enforced when a schema manifest is loaded)"},
       {"core.dependency.unresolvable", "core",
        "authored asset dependencies must be resolvable (usdchecker MissingReferenceValidator)"},
       {"core.layer.colorConfiguration", "core",
@@ -190,7 +207,7 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
       {"core.layer.owner", "core",
        "owner must be a non-empty string"},
       {"core.layer.subLayerOffset", "core",
-       "subLayer offsets must be finite with non-zero scale"},
+       "subLayer offsets must be finite with positive scale"},
       {"core.layer.subLayers", "core",
        "subLayers entries must be non-empty asset paths"},
       {"core.layer.timeCodeRange", "core",

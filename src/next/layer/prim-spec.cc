@@ -57,7 +57,8 @@ bool IsPlainPropMeta(const PropMeta& m) {
          m.unauthoredValuesIndex == -1 && m.weight == 0.0 && !m.hidden &&
          m.allowedTokens.empty() && m.customData.is_empty() &&
          m.assetInfo.is_empty() && m.sdrMetadata.is_empty() &&
-         m.unknownMeta.empty() && m.unknownFields.empty();
+         m.unknownMeta.empty() && m.unknownFields.empty() &&
+         m.relDefault.empty();
 }
 
 // The pool is never freed (shared entries may outlive any owner) and only

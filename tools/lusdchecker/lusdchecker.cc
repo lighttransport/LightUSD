@@ -197,6 +197,7 @@ lightusd::minijson::Value MakeReport(const Args& args,
     Json& row = report["issues"][i];
     row["category"] = meta.category;
     row["specification"] = meta.specification;
+    if (!meta.lean_ref.empty()) row["leanRef"] = meta.lean_ref;
     row["referenceErrors"] = Json::array();
     for (const auto& reference : meta.reference_errors) row["referenceErrors"].push_back(reference);
     row["sourceAsset"] = issue.source_asset.empty() ? args.input : issue.source_asset;
@@ -1171,7 +1172,13 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
       return ReportError(args, "checker.definitions", error);
     auto loaded = registry.LoadSchemaDefinitions(text);
-    if (!loaded) return ReportError(args, "checker.definitions", loaded.error());
+    // The registry enforces AOUSD 1.1 L8300-8306 at manifest load time; report
+    // that rejection under its rule id rather than the generic usage error.
+    if (!loaded)
+      return ReportError(args,
+                         loaded.error().find("inherits from its own schema family") != std::string::npos
+                             ? "core.schema.selfFamilyInherit" : "checker.definitions",
+                         loaded.error());
   }
   for (const auto& file : args.shader_files) {
     std::string text;
@@ -1195,6 +1202,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
       const auto metadata = lightusd::next::GetValidationRuleMetadata(rules[i].id);
       std::cout << "[" << rules[i].group << ":" << rules[i].id << "]:\n\tDoc: " << rules[i].doc
                 << "\n\tCategory: " << metadata.category << '\n';
+      if (!metadata.lean_ref.empty()) std::cout << "\tLean: " << metadata.lean_ref << '\n';
     }
     for (const auto& rule : registry.validators())
       std::cout << "[extension:" << rule.id << "]:\n\tDoc: " << rule.description << '\n';
@@ -1529,6 +1537,9 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
                  "requested validation group was inapplicable: " + name);
       }
     }
+  }
+  if (args.groups.core) {
+    lightusd::next::AddParserDiagnosticsToResult(parser_warnings, &result);
   }
   if (args.usdchecker_compat) {
     lightusd::next::ApplyUsdcheckerCompatSeverities(&result);

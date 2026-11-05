@@ -54,8 +54,14 @@ struct ValidationRuleMetadata {
   std::string category;  // normative, schema, recommendation, profile, coverage
   std::string specification;
   std::vector<std::string> reference_errors;
+  // Fully-qualified Lean 4 declaration (verif/lean/UsdSpec) that formalizes
+  // the rule; empty when the rule has no formal counterpart.
+  std::string lean_ref;
 };
 ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule);
+// The Lean declaration reflected by `rule` ("" when none); see
+// verif/lean/REFLECTION.md.
+std::string GetValidationRuleLeanRef(const std::string& rule);
 
 // All pointers are borrowed for the synchronous callback. A context never
 // grants mutable access to the input. An absent stage means authored-layer

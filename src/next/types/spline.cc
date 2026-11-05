@@ -317,6 +317,8 @@ bool ParseSplineText(const std::string& text, SplineData* out,
     } else {
       // Knot: <time> : <value> [& <postValue>] [; <specs>] [{ customData }]
       SplineKnot k;
+      // A knot authored without `post` interpolates held (spec L2092, pxr Ts).
+      k.interp = 1;
       if (!sc.number(&k.time)) {
         *e = "Expected knot time";
         return false;

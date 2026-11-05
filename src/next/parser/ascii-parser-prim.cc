@@ -313,9 +313,34 @@ bool AsciiParser::Impl::ParsePrim() {
 bool AsciiParser::Impl::ParsePrimContents() {
   if (!builder_->current()) return false;
 
-  while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+  // pxr requires a newline (or `;`) after every prim-body statement, so
+  // `int x = 1 }` and a child's `}}` on one line are rejected.
+  bool need_sep = false;
+  auto check_sep = [&]() -> bool {
+    if (!need_sep || AtEnd() || lexer_->newline_before_current() ||
+        lexer_->has_error()) {
+      return true;  // a lexer error is reported by the statement parser
+    }
+    if (options_.strict_aousd_conformance) {
+      AddError("Expected newline or ';' after prim body statement");
+      return false;
+    }
+    AddWarning("Expected newline or ';' after prim body statement"
+               " (OpenUSD rejects this)");
+    return true;
+  };
+  while (true) {
+    if (Check(TokenType::CloseBrace) || AtEnd()) {
+      if (!check_sep()) return false;
+      break;
+    }
     // pxr accepts `;` as an optional statement separator in prim bodies.
-    if (Match(TokenType::Semicolon)) continue;
+    if (Match(TokenType::Semicolon)) {
+      need_sep = false;
+      continue;
+    }
+    if (!check_sep()) return false;
+    need_sep = true;
     const Token& tok = lexer_->peek();
 
     // Re-fetch each iteration: parsing a nested child prim (below) appends to
@@ -439,6 +464,13 @@ bool AsciiParser::Impl::ParseAttribute(
       variability_authored = true;
       lexer_->next();
     } else if (tok.type == TokenType::Varying) {
+      // pxr 26.x and the AOUSD grammar (AttributeVariability) only know
+      // `uniform`; `varying` is a legacy spelling of the default.
+      if (options_.strict_aousd_conformance) {
+        AddError("'varying' variability keyword is not valid USDA");
+        return false;
+      }
+      AddWarning("'varying' variability keyword (OpenUSD rejects this)");
       is_varying = true;
       variability_authored = true;
       lexer_->next();
@@ -662,6 +694,10 @@ bool AsciiParser::Impl::ParseAttribute(
         AddError("Expected '=' after connect");
         return false;
       }
+      if (!explicit_connection &&
+          !CheckQualifiedEmptyList("attribute connections")) {
+        return false;
+      }
       flags |= PropSlot::kFlagConnection;
       if (is_array) flags |= PropSlot::kFlagArray;
       PrimSpec* cur = builder_->current();
@@ -832,6 +868,35 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
     }
   }
 
+  // Legacy `rel r.default = </target>` (pxr RelationshipDefault): sets the
+  // relationship's `default` field, not its targets.
+  if (Check(TokenType::Dot)) {
+    lexer_->next();
+    const Token& sfx = lexer_->peek();
+    if (!(sfx.type == TokenType::Identifier && sfx.value == "default")) {
+      AddError("Expected 'default' after '.' in relationship statement");
+      return false;
+    }
+    lexer_->next();
+    if (!Match(TokenType::Equals)) {
+      AddError("Expected '=' after relationship '.default'");
+      return false;
+    }
+    std::string target;
+    if (!lexer_->expect(TokenType::PathRef, target)) {
+      AddError("Expected a path for relationship '.default'");
+      return false;
+    }
+    if (PrimSpec* prim = builder_->current()) {
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+      // Kept as authored (pxr re-emits relative paths verbatim).
+      prim->ensure_property_meta(rel_name).relDefault = target;
+    }
+    return true;
+  }
+
   ParsePropertyMetadata(rel_name);
 
   if (!Match(TokenType::Equals)) {
@@ -845,6 +910,9 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
     return true;
   }
 
+  if (!explicit_list && !CheckQualifiedEmptyList("relationship targets")) {
+    return false;
+  }
   std::vector<Path> targets;
   const bool value_block = Check(TokenType::None);
   const ::lightusd::next::PrimSpec* owner = builder_->current();

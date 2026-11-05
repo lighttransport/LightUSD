@@ -71,7 +71,8 @@
                           std::vector<Src> *out, std::vector<Src> *spec_out,
                           std::map<std::string, std::string> *sels,
                           const ArcChain &chain, std::string *warn,
-                          std::string *err);
+                          std::string *err,
+                          const std::string &selection_prefix = std::string());
 
   // Does `path` land in namespace edited by `stack`'s relocates? Source-side
   // hits are PROHIBITED arc targets (pxr: cannot address pre-relocation

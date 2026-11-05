@@ -12,12 +12,16 @@
 //     -f  flatten (compose sublayers/references/payloads/... via pcp, print USDA)
 // Contract: exit 0 = loaded; diagnostics on stderr prefixed "WARN : " / "ERR : ".
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
+#include <map>
+#include <set>
 #include <string>
 #include <memory>
 #include <vector>
@@ -69,8 +73,223 @@ static void emit_crate_limit_hint(const std::string &err,
   std::_Exit(0);
 }
 
+// --- --dump-pcp-json -------------------------------------------------------
+// Emits the composed prim/property provenance in the shape of the AOUSD
+// supplemental corpus `pcp.json` (pxr testPcp output serialized by Python):
+//   {"Entry": "<root basename>",
+//    "Composing": {"/Prim": {"Prim Stack": {"<layer>": "<site>", ...},
+//                            "Child names": [...], "Property names": [...],
+//                            "Property stacks": {"/Prim.p": {"<layer>": "<site>.p"}}},
+//    "Layer Stack": ["<layer>", ...]}
+// Stacks are JSON OBJECTS keyed by layer (strongest first): a layer that
+// contributes several sites keeps its first position and its LAST (weakest)
+// site, exactly as the corpus generator's dict assignment collapsed them.
+// Layer identifiers are spelled relative to the root layer's directory.
+namespace {
+
+struct JsonOut {
+  std::string buf;
+  void Str(const std::string &s) {
+    buf += '"';
+    for (unsigned char c : s) {
+      switch (c) {
+        case '"': buf += "\\\""; break;
+        case '\\': buf += "\\\\"; break;
+        case '\n': buf += "\\n"; break;
+        case '\r': buf += "\\r"; break;
+        case '\t': buf += "\\t"; break;
+        default:
+          if (c < 0x20) {
+            char tmp[8];
+            std::snprintf(tmp, sizeof(tmp), "\\u%04x", unsigned(c));
+            buf += tmp;
+          } else {
+            buf += static_cast<char>(c);
+          }
+      }
+    }
+    buf += '"';
+  }
+  void Indent(int level) { buf.append(static_cast<size_t>(level) * 4, ' '); }
+  // {"k": "v", ...} with the corpus' first-position/last-value collapse.
+  void StackObject(const std::vector<std::pair<std::string, std::string>> &entries,
+                   int level) {
+    std::vector<std::string> order;
+    std::map<std::string, std::string> last;
+    for (const auto &e : entries) {
+      if (!last.count(e.first)) order.push_back(e.first);
+      last[e.first] = e.second;
+    }
+    if (order.empty()) { buf += "{}"; return; }
+    buf += "{\n";
+    for (size_t i = 0; i < order.size(); ++i) {
+      Indent(level + 1);
+      Str(order[i]);
+      buf += ": ";
+      Str(last[order[i]]);
+      buf += (i + 1 < order.size()) ? ",\n" : "\n";
+    }
+    Indent(level);
+    buf += '}';
+  }
+  void StringList(const std::vector<std::string> &items, int level) {
+    if (items.empty()) { buf += "[]"; return; }
+    buf += "[\n";
+    for (size_t i = 0; i < items.size(); ++i) {
+      Indent(level + 1);
+      Str(items[i]);
+      buf += (i + 1 < items.size()) ? ",\n" : "\n";
+    }
+    Indent(level);
+    buf += ']';
+  }
+};
+
+// Layer identifier -> corpus spelling: path relative to the root layer's
+// directory when it lives under it, else the bare file name.
+struct LayerIdSpeller {
+  std::filesystem::path root_dir;
+  std::string operator()(const std::string &id) const {
+    std::error_code ec;
+    std::filesystem::path p(id);
+    std::filesystem::path abs = std::filesystem::weakly_canonical(p, ec);
+    if (ec) abs = std::filesystem::absolute(p, ec);
+    std::filesystem::path rel = abs.lexically_relative(root_dir);
+    std::string r = rel.generic_string();
+    if (r.empty() || r == "." || r.compare(0, 2, "..") == 0) {
+      return p.filename().generic_string();
+    }
+    return r;
+  }
+};
+
+bool DumpPcpJson(pcp::Cache &cache, const Stage &stage, const char *filename,
+                 const char *out_path, std::string *warn, std::string *err) {
+  std::error_code ec;
+  std::filesystem::path root_abs =
+      std::filesystem::weakly_canonical(std::filesystem::path(filename), ec);
+  if (ec) root_abs = std::filesystem::absolute(std::filesystem::path(filename), ec);
+  LayerIdSpeller spell{root_abs.parent_path()};
+
+  JsonOut j;
+  j.buf += "{\n";
+  j.Indent(1); j.Str("Entry"); j.buf += ": ";
+  j.Str(root_abs.filename().generic_string());
+  j.buf += ",\n";
+  j.Indent(1); j.Str("Composing"); j.buf += ": {";
+
+  // Pre-order walk of the composed namespace (explicit stack, sibling order).
+  std::vector<UsdPrim> stack;
+  {
+    std::vector<UsdPrim> roots = stage.GetRootPrims();
+    for (size_t i = roots.size(); i-- > 0;) stack.push_back(roots[i]);
+  }
+  bool first_prim = true;
+  while (!stack.empty()) {
+    UsdPrim prim = stack.back();
+    stack.pop_back();
+    const Path &path = prim.GetPath();
+    const std::vector<UsdPrim> children = prim.GetChildren();
+    for (size_t i = children.size(); i-- > 0;) stack.push_back(children[i]);
+
+    j.buf += first_prim ? "\n" : ",\n";
+    first_prim = false;
+    j.Indent(2); j.Str(path.str()); j.buf += ": {\n";
+
+    const std::vector<pcp::PrimStackEntry> entries =
+        cache.GetPrimStack(path, warn, err);
+    std::vector<std::pair<std::string, std::string>> prim_stack;
+    for (const pcp::PrimStackEntry &e : entries) {
+      prim_stack.emplace_back(spell(e.layer_identifier), e.prim_path);
+    }
+    j.Indent(3); j.Str("Prim Stack"); j.buf += ": ";
+    j.StackObject(prim_stack, 3);
+
+    std::vector<std::string> child_names;
+    child_names.reserve(children.size());
+    for (const UsdPrim &c : children) child_names.push_back(c.GetName());
+    if (!child_names.empty()) {
+      j.buf += ",\n";
+      j.Indent(3); j.Str("Child names"); j.buf += ": ";
+      j.StringList(child_names, 3);
+    }
+
+    // pxr PcpPrimIndex::ComputePrimPropertyNames: the weakest-first union of
+    // each contributing spec's authored property names (no propertyOrder for
+    // USD). Schema built-ins are not authored, so they do not appear.
+    std::vector<std::string> prop_names;
+    {
+      std::set<std::string> seen;
+      for (size_t ei = entries.size(); ei-- > 0;) {
+        for (const std::string &name : entries[ei].property_names) {
+          if (seen.insert(name).second) prop_names.push_back(name);
+        }
+      }
+    }
+    if (!prop_names.empty()) {
+      j.buf += ",\n";
+      j.Indent(3); j.Str("Property names"); j.buf += ": ";
+      j.StringList(prop_names, 3);
+      j.buf += ",\n";
+      j.Indent(3); j.Str("Property stacks"); j.buf += ": {\n";
+      // The corpus keys property stacks by sorted property path.
+      std::vector<std::string> sorted_names = prop_names;
+      std::sort(sorted_names.begin(), sorted_names.end());
+      for (size_t pi = 0; pi < sorted_names.size(); ++pi) {
+        bool truncated = false;
+        std::vector<std::pair<std::string, std::string>> prop_stack;
+        for (const pcp::PropertyOpinion &o : cache.GetPropertyStack(
+                 path, sorted_names[pi], 4096, &truncated, warn, err)) {
+          if (o.suppressed) continue;
+          prop_stack.emplace_back(spell(o.layer_identifier),
+                                  o.prim_path + "." + sorted_names[pi]);
+        }
+        j.Indent(4); j.Str(path.str() + "." + sorted_names[pi]); j.buf += ": ";
+        j.StackObject(prop_stack, 4);
+        j.buf += (pi + 1 < sorted_names.size()) ? ",\n" : "\n";
+      }
+      j.Indent(3); j.buf += '}';
+    }
+    j.buf += "\n";
+    j.Indent(2); j.buf += '}';
+  }
+  j.buf += first_prim ? "},\n" : "\n    },\n";
+
+  std::vector<std::string> layer_stack;
+  for (const std::string &id : cache.GetRootLayerStackIdentifiers()) {
+    layer_stack.push_back(spell(id));
+  }
+  j.Indent(1); j.Str("Layer Stack"); j.buf += ": ";
+  j.StringList(layer_stack, 1);
+  j.buf += "\n}\n";
+
+  std::FILE *fp = stdout;
+  const bool to_file = out_path && std::strcmp(out_path, "-") != 0;
+  if (to_file) {
+    fp = std::fopen(out_path, "wb");
+    if (!fp) {
+      *err += std::string("cannot open --dump-pcp-json output: ") + out_path + "\n";
+      return false;
+    }
+  }
+  const bool wrote = std::fwrite(j.buf.data(), 1, j.buf.size(), fp) == j.buf.size();
+  const bool flushed = std::fflush(fp) == 0;
+  const bool closed = to_file ? (std::fclose(fp) == 0) : true;
+  if (!wrote || !flushed || !closed) {
+    *err += "write failed for --dump-pcp-json output\n";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 int main(int argc, char **argv) {
   bool flatten = false;
+  // --dump-pcp-json [<out.json>|-]: after composing, emit the corpus-shaped
+  // provenance JSON instead of the flattened USDA.
+  bool dump_pcp = false;
+  const char *dump_pcp_path = "-";
   // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
   // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
@@ -195,6 +414,19 @@ int main(int argc, char **argv) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
     } else if (std::strcmp(argv[i], "--aousd-strict") == 0) {
       aousd_strict = true;
+    } else if (std::strcmp(argv[i], "--dump-pcp-json") == 0) {
+      dump_pcp = true;
+      flatten = true;
+      // Optional output argument: "-" (stdout) or a *.json path. Anything else
+      // is left for the positional input file.
+      if (i + 1 < argc) {
+        const char *next = argv[i + 1];
+        const size_t n = std::strlen(next);
+        if (std::strcmp(next, "-") == 0 ||
+            (n > 5 && std::strcmp(next + n - 5, ".json") == 0)) {
+          dump_pcp_path = argv[++i];
+        }
+      }
     } else if (std::strcmp(argv[i], "--require-prim") == 0 && i + 1 < argc) {
       required_prims.emplace_back(argv[++i]);
     } else if (std::strcmp(argv[i], "--instance-mode") == 0 && i + 1 < argc) {
@@ -328,6 +560,7 @@ int main(int argc, char **argv) {
                          "[--max-memory-mib N] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
+                         "[--dump-pcp-json [out.json|-]] "
                          "file.usd[acz]\n");
     return 2;
   }
@@ -335,6 +568,12 @@ int main(int argc, char **argv) {
   if (rewrite_layer && flatten) {
     std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
                          "(rewrite-layer is a compose-free parse->write).\n");
+    return 2;
+  }
+  if (dump_pcp && (compose_only || rewrite_layer || out_path || low_memory ||
+                   batch_roots >= 0 || output_format != OutputFormat::Auto)) {
+    std::fprintf(stderr, "ERR : --dump-pcp-json cannot be combined with "
+                         "output/compose-only/batched/low-memory options\n");
     return 2;
   }
   if (compose_only && (!flatten || out_path ||
@@ -503,6 +742,9 @@ int main(int argc, char **argv) {
   std::string warn, err;
   Stage stage;
   bool ok = false;
+  // --dump-pcp-json keeps the composition cache alive past BuildStage so the
+  // per-prim provenance (prim/property stacks) can be queried afterwards.
+  std::unique_ptr<pcp::Cache> pcp_cache;
   if (flatten) {
     AssetResolver resolver;
     // Anchor relative asset paths (references/payloads/sublayers) to the input
@@ -587,7 +829,35 @@ int main(int argc, char **argv) {
       if (fast_exit) ExitAfterSuccessfulWrite();
       return 0;
     }
-    if (batch_roots >= 0) {
+    if (dump_pcp) {
+      // Serial expansion: the applied-variant provenance GetPrimStack reads
+      // is recorded by the Impl that expands the arcs, not merged from
+      // workers.
+      opts.num_threads = 1;
+      opts.background_reclaim = false;
+      opts.release_layers_during_fill = false;
+      opts.release_build_sources = false;
+      pcp::LayerLoadOptions lopts;
+      lopts.max_memory = opts.max_layer_memory;
+      lopts.max_array_elements = opts.max_array_elements;
+      lopts.usdc_limits = opts.usdc_limits;
+      lopts.max_archive_entries = opts.max_archive_entries;
+      lopts.usdc_lazy_arrays = opts.usdc_lazy_arrays;
+      lopts.usdc_use_mmap = opts.usdc_use_mmap;
+      lopts.strict_aousd_conformance = opts.strict_aousd_conformance;
+      lopts.usda_parse_options = opts.usda_parse_options;
+      lopts.parse_num_threads = opts.usda_parse_options.num_threads;
+      std::shared_ptr<Layer> root = pcp::LoadLayerFromFile(filename, &warn, &err, lopts);
+      if (root) {
+        auto opened = pcp::Cache::Open(resolver, std::move(root), filename, opts);
+        if (!opened) {
+          err += opened.error() + "\n";
+        } else {
+          pcp_cache.reset(new pcp::Cache(std::move(*opened)));
+          ok = pcp_cache->BuildStage(&stage, &warn, &err);
+        }
+      }
+    } else if (batch_roots >= 0) {
       pcp::BatchedComposeOptions bopts;
       bopts.max_frontier = batch_frontier;
       bopts.target_batch_prims = batch_prims;
@@ -639,6 +909,24 @@ int main(int argc, char **argv) {
   // Composition errors are accumulated non-fatally; surface them as warnings
   // in flatten mode (the file still loaded).
   if (!err.empty()) emit_lines(err, "WARN : ");
+
+  if (dump_pcp) {
+    std::string dump_warn, dump_err;
+    const bool dumped = DumpPcpJson(*pcp_cache, stage, filename, dump_pcp_path,
+                                    &dump_warn, &dump_err);
+    emit_lines(dump_warn, "WARN : ");
+    if (!dumped) {
+      emit_lines(dump_err.empty() ? std::string("pcp dump failed") : dump_err,
+                 "ERR : ");
+      return 1;
+    }
+    if (!dump_err.empty()) emit_lines(dump_err, "WARN : ");
+    if (timing) std::fprintf(stderr, "[lusdcat] load+compose=%.1fms dump=%.1fms\n",
+                             ms(t_loaded - t_start), ms(Clock::now() - t_loaded));
+    stage = Stage();
+    pcp_cache.reset();
+    return 0;
+  }
 
   if (compose_only) {
     std::printf("composed: %zu prims\n", stage.GetStats().prim_count);

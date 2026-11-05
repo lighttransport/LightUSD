@@ -53,6 +53,19 @@ struct PropertyOpinion {
   std::vector<std::string> connections;
 };
 
+// One contributing prim spec site (pxr "prim stack" entry): the layer and the
+// prim path inside it, strongest first. Variant-content sites are spelled the
+// pxr way (`/Owner{set=name}child`) and attributed to the layer that authored
+// the selected option.
+struct PrimStackEntry {
+  std::string layer_identifier;
+  std::string prim_path;
+  std::string arc;
+  // Property (attribute + relationship) names the spec authors, in authored
+  // order. pxr's composed property order is the weakest-first union of these.
+  std::vector<std::string> property_names;
+};
+
 class Cache {
  public:
   // Called once after namespace discovery, but before the (potentially
@@ -158,6 +171,17 @@ class Cache {
   std::vector<PropertyOpinion> GetPropertyStack(const Path& prim_path,
       const std::string& property, size_t max_opinions, bool* truncated,
       std::string* warn, std::string* err);
+
+  /// Strong-to-weak contributing prim spec sites of `prim_path` (pxr's
+  /// PcpPrimIndex prim stack: one entry per layer that holds a spec at each
+  /// composition node's site). Suppressed relocation-source sites are omitted.
+  std::vector<PrimStackEntry> GetPrimStack(const Path& prim_path,
+                                           std::string* warn,
+                                           std::string* err);
+
+  /// Resolved identifiers of the root layer stack (root layer first, then
+  /// its sublayers strongest-first), as composed by Open.
+  std::vector<std::string> GetRootLayerStackIdentifiers() const;
 
   /// Approximate logical residency owned by the composition cache. Source
   /// layers are counted once even when several layer stacks reference them.

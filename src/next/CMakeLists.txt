@@ -853,6 +853,17 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_include_directories(test_vr_edge_matrix PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
 
+    # Lean-generated conformance vectors (tests/next/generated/lean/*.inc,
+    # produced by `lake exe usdspec-gen` in verif/lean; never skips).
+    add_executable(test_lean_vectors
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lean_vectors.cc
+    )
+    target_link_libraries(test_lean_vectors PRIVATE lightusd_next)
+    target_compile_definitions(test_lean_vectors PRIVATE
+        LIGHTUSD_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+    target_include_directories(test_lean_vectors PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
+
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crash_regressions.cc
@@ -1727,7 +1738,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                     --next-usdcat "$<TARGET_FILE:next_usdcat>"
                     --aousd-test "$<TARGET_FILE:test_aousd_conformance>"
                     --aousd-value-test "$<TARGET_FILE:test_aousd_value_resolution>"
-                    --max-composition-fail 0)
+                    --max-composition-fail 0
+                    # pcp.json structural gate (prim/property stacks, child and
+                    # property names via `lusdcat --dump-pcp-json`): every
+                    # divergence is ledgered in the allowlist; ratchet 0.
+                    --compare-pcp
+                    --pcp-allowlist
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/aousd-pcp-allowlist.txt
+                    --max-pcp-diff 0)
         set_tests_properties(next_aousd_supplemental
             PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
     endif()
@@ -1756,6 +1774,51 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(next_test_vr_edge_matrix
         PROPERTIES LABELS "next;aousd;pxrdiff")
+
+    add_test(NAME next_test_lean_vectors
+        COMMAND test_lean_vectors
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_lean_vectors
+        PROPERTIES LABELS "next;aousd;lean")
+    add_test(NAME next_test_lean_vectors_combine_chain
+        COMMAND test_lean_vectors --combine-chain
+                "${LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT}/data_types/tests/combine_chain"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_lean_vectors_combine_chain
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd;lean")
+    # Validator rule -> Lean declaration table (validation-context.cc
+    # kLeanReflectionTable) must name declarations that exist in verif/lean.
+    # Pure source check (no lake); cross-checks `lusdchecker --dump-rules`
+    # when that binary exists in this build tree.
+    add_test(NAME next_lean_reflection_table
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-reflection.py
+                --check --repo "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+                --lusdchecker "${CMAKE_BINARY_DIR}/lusdchecker"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_lean_reflection_table
+        PROPERTIES LABELS "next;aousd;lean")
+
+    # Optional: the Lean side itself (proofs + vector drift). Registered only
+    # when `lake` is found; set LIGHTUSD_NEXT_LEAN=OFF to skip.
+    option(LIGHTUSD_NEXT_LEAN "Register verif/lean build/check tests when lake is available" ON)
+    find_program(LIGHTUSD_LAKE_EXECUTABLE NAMES lake HINTS $ENV{HOME}/.elan/bin)
+    if(LIGHTUSD_NEXT_LEAN AND LIGHTUSD_LAKE_EXECUTABLE)
+        set(_lean_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../verif/lean")
+        add_test(NAME next_lean_build
+            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} build
+            WORKING_DIRECTORY ${_lean_dir})
+        add_test(NAME next_lean_test
+            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} exe usdspec-test
+            WORKING_DIRECTORY ${_lean_dir})
+        add_test(NAME next_lean_vectors_check
+            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} exe usdspec-gen --check
+                    --out "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/generated/lean"
+            WORKING_DIRECTORY ${_lean_dir})
+        set_tests_properties(next_lean_build next_lean_test next_lean_vectors_check
+            PROPERTIES LABELS "next;aousd;lean;generated" TIMEOUT 3600)
+        set_tests_properties(next_lean_test next_lean_vectors_check
+            PROPERTIES DEPENDS next_lean_build)
+    endif()
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when

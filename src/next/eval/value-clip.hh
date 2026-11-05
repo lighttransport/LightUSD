@@ -90,6 +90,13 @@ struct ValueClipResolutionInfo {
   double upper_stage_time = 0.0;
 };
 
+namespace value_clip_detail {
+/// Index (assetIndex value) of the clip active at `stage_time`.
+int ActiveIndex(const ValueClipSet& set, double stage_time);
+/// Clip time mapped from `stage_time` through `times` (identity when empty).
+double ClipTime(const ValueClipSet& set, double stage_time);
+}  // namespace value_clip_detail
+
 bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         std::string* error = nullptr);
 

@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include <vector>
 
 namespace lightusd {
 namespace next {
@@ -277,6 +278,11 @@ public:
 
   /// Reject invalid AOUSD paths and malformed Unicode immediately.
   bool strict_aousd_conformance = false;
+
+  /// Recoverable diagnostics raised by the stateless value parsers (which only
+  /// receive the lexer), e.g. a duplicate dictionary key. Each entry is a
+  /// complete warning line; the USDA parser drains them into its warning list.
+  std::vector<std::string> diagnostics;
 
 private:
   const char* data_;

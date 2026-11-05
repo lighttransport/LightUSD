@@ -1439,7 +1439,7 @@ void test_stage_session_payloads_and_cancel() {
   const char* payload_path = "/tmp/lightusd_next_session_payload.usda";
   {
     std::ofstream ofs(payload_path);
-    ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 7 }\n";
+    ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 7\n}\n";
   }
   {
     std::ofstream ofs(root_path);
@@ -1477,7 +1477,7 @@ void test_stage_session_payloads_and_cancel() {
   StageSnapshot before_reload = session.GetSnapshot();
   {
     std::ofstream ofs(payload_path);
-    ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 8 }\n";
+    ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 8\n}\n";
   }
   StageEditResult reload = session.ReloadLayer(payload_path);
   assert(reload);

@@ -781,10 +781,31 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
   return result;
 }
 
+// Rule id -> Lean declaration (verif/lean/UsdSpec/**). Kept sorted by rule
+// id; scripts/check-lean-reflection.py parses this table and verifies every
+// declaration exists in the Lean sources (ctest next_lean_reflection_table).
+// BEGIN LEAN_REFLECTION_TABLE
+static const std::pair<const char*, const char*> kLeanReflectionTable[] = {
+    {"core.dict.duplicateKey", "UsdSpec.Dict.WellFormed"},
+    {"core.layer.subLayerOffset", "UsdSpec.LayerOffset.valid"},
+    {"core.listop.deprecatedAdd", "UsdSpec.ListOp.Legacy.applyLegacy"},
+    {"core.listop.deprecatedReorder", "UsdSpec.ListOp.Legacy.applyLegacy"},
+    {"core.listop.duplicateItems", "UsdSpec.Composable"},
+    {"core.schema.familyVersion", "UsdSpec.Schema.parseFamilyVersion"},
+    {"core.schema.selfFamilyInherit", "UsdSpec.Schema.versionedMayInherit"},
+};
+// END LEAN_REFLECTION_TABLE
+
+std::string GetValidationRuleLeanRef(const std::string& rule) {
+  for (const auto& row : kLeanReflectionTable)
+    if (rule == row.first) return row.second;
+  return std::string();
+}
+
 ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
   ValidationRuleMetadata m;
   m.category = "recommendation";
-  const std::string spec = "https://github.com/aousd/specifications-public/blob/main/core/1.0.1/core_spec.md";
+  const std::string spec = "https://github.com/aousd/specifications-public/blob/main/core/1.1.0/core_spec.md";
   if (Starts(rule, "checker.")) m.category = "coverage";
   else if (Starts(rule, "arkit.")) m.category = "profile";
   else if (Starts(rule, "geom.") || Starts(rule, "shade.") || Starts(rule, "physics.") ||
@@ -811,9 +832,12 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
       "core.composition.inherits", "core.composition.specializes",
       "core.composition.reference", "core.composition.payload",
       "core.composition.variantSet", "core.composition.variantCycle",
-      "core.composition.propertyKindMismatch", "core.composition.error"};
+      "core.composition.propertyKindMismatch", "core.composition.error",
+      "core.listop.duplicateItems", "core.dict.duplicateKey",
+      "core.schema.familyVersion", "core.schema.selfFamilyInherit"};
     if (normative.count(rule)) { m.category = "normative"; m.specification = spec; }
   }
+  m.lean_ref = GetValidationRuleLeanRef(rule);
   // Rule -> specification reference errors, from the C11 core (binary search
   // over the rule-sorted rows).
   size_t ref_index = 0, ref_count = 0;

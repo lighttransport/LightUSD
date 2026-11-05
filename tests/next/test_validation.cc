@@ -6,6 +6,7 @@
 // group toggling controls which rules run.
 
 #include "next/validation/usd-validation.hh"
+#include "next/validation/validation-context.hh"
 #include "next/pcp/layer-registry.hh"
 
 #include <cstring>
@@ -843,6 +844,153 @@ static void test_parse_failure() {
   CHECK(!err.empty(), "parse error message reported");
 }
 
+static void test_listop_rules() {
+  std::cout << "[core.listop.*]\n";
+  const std::string usda = R"(#usda 1.0
+
+class "Base"
+{
+}
+
+def Xform "Proto"
+{
+}
+
+def Xform "Root" (
+    add references = [</Proto>, </Proto>]
+    prepend inherits = [</Base>, </Base>]
+    reorder apiSchemas = ["MaterialBindingAPI"]
+    prepend apiSchemas = ["MaterialBindingAPI", "CollectionAPI:a", "CollectionAPI:a"]
+)
+{
+    rel targets = [</Proto>, </Proto>]
+    float inputs:a = 1
+    float inputs:b = 2
+    float inputs:a.connect = [</Root.inputs:b>, </Root.inputs:b>]
+}
+)";
+  USDValidationResult result;
+  CHECK(Validate(usda, ValidationOptions(), &result), "parses");
+  // references(added), inherits(prepended), apiSchemas(prepended),
+  // relationship(explicit), connection(explicit): one error each.
+  CHECK(CountErrors(result, "core.listop.duplicateItems") == 5,
+        "repeated items in every list-op sequence flagged once each");
+  CHECK(CountWarnings(result, "core.listop.deprecatedAdd") == 1,
+        "deprecated `add` warns");
+  CHECK(CountWarnings(result, "core.listop.deprecatedReorder") == 1,
+        "deprecated `reorder` warns");
+  if (CountErrors(result, "core.listop.duplicateItems") != 5) DumpIssues(result);
+
+  const std::string clean = R"(#usda 1.0
+
+def Xform "Root" (
+    prepend references = [</A>, </B>]
+    append apiSchemas = ["MaterialBindingAPI"]
+    delete apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel targets = [</Root>]
+}
+def Xform "A" {}
+def Xform "B" {}
+)";
+  USDValidationResult ok;
+  CHECK(Validate(clean, ValidationOptions(), &ok), "clean parses");
+  CHECK(CountErrors(ok, "core.listop.duplicateItems") == 0 &&
+            CountWarnings(ok, "core.listop.deprecatedAdd") == 0 &&
+            CountWarnings(ok, "core.listop.deprecatedReorder") == 0,
+        "same item across different sequences is allowed; no false positives");
+}
+
+static void test_dict_duplicate_key() {
+  std::cout << "[core.dict.duplicateKey]\n";
+  const std::string usda = R"(#usda 1.0
+(
+    customLayerData = {
+        string tool = "a"
+        string tool = "b"
+    }
+)
+
+def Xform "Root" (
+    customData = {
+        string a = "x"
+        dictionary nested = {
+            int k = 1
+            int k = 2
+        }
+    }
+)
+{
+    float v = 1 (
+        customData = { int once = 1 }
+    )
+}
+)";
+  USDValidationResult result;
+  std::string warn, err;
+  const bool ok = ValidateUSDFromMemoryAgainstAOUSDCore(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "input.usda", ValidationOptions(), &result, &warn, &err);
+  CHECK(ok, "parses (duplicate keys collapse to the last value)");
+  CHECK(warn.find("[core.dict.duplicateKey]") != std::string::npos,
+        "parser reports the duplicate key as a tagged warning");
+  CHECK(CountErrors(result, "core.dict.duplicateKey") == 2,
+        "layer-level and nested prim-level duplicate keys flagged");
+  if (CountErrors(result, "core.dict.duplicateKey") != 2) DumpIssues(result);
+  bool located = false;
+  for (const auto &issue : result.issues)
+    if (issue.rule_id == "core.dict.duplicateKey" &&
+        issue.location.rfind("<parser>:", 0) == 0 &&
+        issue.message.find("`k`") != std::string::npos)
+      located = true;
+  CHECK(located, "duplicate key issue carries the parser line and key");
+}
+
+static void test_schema_family_rules() {
+  std::cout << "[core.schema.familyVersion]\n";
+  const std::string usda = R"(#usda 1.0
+
+def Xform "Root" (
+    prepend apiSchemas = ["MaterialBindingAPI", "Schéma_1", "CollectionAPI:a"]
+)
+{
+}
+
+def Xform_2 "Versioned"
+{
+}
+)";
+  USDValidationResult result;
+  CHECK(Validate(usda, ValidationOptions(), &result), "parses");
+  CHECK(CountErrors(result, "core.schema.familyVersion") == 1,
+        "non-ASCII apiSchemas entry flagged; versioned typeName accepted");
+  if (CountErrors(result, "core.schema.familyVersion") != 1) DumpIssues(result);
+
+  Layer layer;
+  PrimSpec prim("Root", "9Xform");
+  prim.set_path(Path("/Root"));
+  const uint32_t index = layer.add_prim(std::move(prim));
+  layer.add_root(index);
+  layer.finalize();
+  const USDValidationResult typed = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(typed, "core.schema.familyVersion") == 1,
+        "typeName starting with a digit flagged");
+
+  const auto meta = GetValidationRuleMetadata("core.schema.familyVersion");
+  CHECK(meta.category == "normative" &&
+            meta.lean_ref == "UsdSpec.Schema.parseFamilyVersion",
+        "rule metadata carries category and Lean reference");
+  CHECK(GetValidationRuleMetadata("core.layer.subLayerOffset").lean_ref ==
+            "UsdSpec.LayerOffset.valid",
+        "subLayerOffset reflects UsdSpec.LayerOffset.valid");
+  CHECK(GetValidationRuleMetadata("core.prim.name").lean_ref.empty(),
+        "rules without a formal counterpart have an empty lean_ref");
+  CHECK(GetValidationRuleMetadata("core.prim.name").specification.find(
+            "core/1.1.0/") != std::string::npos,
+        "normative citation targets core 1.1.0");
+}
+
 static void test_report_formatting() {
   std::cout << "[report formatting]\n";
   const std::string usda = R"(#usda 1.0
@@ -935,6 +1083,9 @@ int main() {
   test_arkit_rules();
   test_parse_failure();
   test_vol_render_rules();
+  test_listop_rules();
+  test_dict_duplicate_key();
+  test_schema_family_rules();
   test_report_formatting();
 
   if (g_fail) {

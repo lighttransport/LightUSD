@@ -115,6 +115,20 @@ struct LayerStack {
   // Stable keys survive parallel cache adoption without index remapping.
   std::string variant_owner_key;
   std::string variant_owner_site;
+  // Provenance of a variant-content stack, for pxr-style site spelling
+  // (`/Owner{set=name}child`) in diagnostics (Cache::GetPrimStack /
+  // GetPropertyStack). `variant_owner_stack` is the stack hosting the owner
+  // site (itself possibly variant content for nested sets); UINT32_MAX for
+  // every non-variant stack. `variant_authoring_layer` is the resolved id of
+  // the layer whose spec authored the selected option.
+  uint32_t variant_owner_stack = 0xFFFFFFFFu;
+  std::string variant_set_name;
+  std::string variant_name;
+  // `{set=name}` with the enclosing nested selections in front, e.g.
+  // `{standin=anim}{shadingVariant=spooky}` for an option nested inside an
+  // option (pxr spells nested variant sites that way).
+  std::string variant_selection;
+  std::string variant_authoring_layer;
   LayerOffset offset;                           // cumulative time offset to root
   // Variables authored by this stack, composed weakest-to-strongest.
   Value expression_variables;

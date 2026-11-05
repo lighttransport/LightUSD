@@ -153,6 +153,14 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
 void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src);
 
+// Parser-level findings the Layer data model cannot retain: a duplicate
+// dictionary key collapses to its last value at parse time, so the USDA
+// parser reports it as a warning line tagged `[core.dict.duplicateKey]`.
+// Scans `parser_warnings` (newline-separated) and adds each tagged line as an
+// error issue. Other warning lines are ignored.
+void AddParserDiagnosticsToResult(const std::string &parser_warnings,
+                                  USDValidationResult *result);
+
 // One row of the rule registry: a stable rule identifier, the group that
 // emits it, and a one-line description. Powers `lusdchecker --dump-rules`
 // (the counterpart of `usdchecker --dumpRules`).

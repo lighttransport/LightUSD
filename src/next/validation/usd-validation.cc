@@ -2002,6 +2002,32 @@ USDValidationResult ValidateLayerAgainstAOUSDCore(
   return ValidateLayerImpl(layer, options, /* is_root_layer */ true);
 }
 
+void AddParserDiagnosticsToResult(const std::string &parser_warnings,
+                                  USDValidationResult *result) {
+  if (!result) return;
+  static const char kTag[] = "[core.dict.duplicateKey]";
+  size_t pos = 0;
+  while (pos < parser_warnings.size()) {
+    size_t end = parser_warnings.find('\n', pos);
+    if (end == std::string::npos) end = parser_warnings.size();
+    const std::string line = parser_warnings.substr(pos, end - pos);
+    pos = end + 1;
+    const size_t tag = line.find(kTag);
+    if (tag == std::string::npos) continue;
+    // "Line N: [rule] message" -> location "<parser>:N", message after tag.
+    std::string location = "<parser>";
+    if (line.compare(0, 5, "Line ") == 0) {
+      const size_t colon = line.find(':', 5);
+      if (colon != std::string::npos && colon > 5)
+        location += ":" + line.substr(5, colon - 5);
+    }
+    size_t msg = tag + sizeof(kTag) - 1;
+    while (msg < line.size() && line[msg] == ' ') ++msg;
+    validation_detail::AddError(result, "core.dict.duplicateKey", location,
+                                line.substr(msg));
+  }
+}
+
 bool ValidateUSDFromMemoryAgainstAOUSDCore(
     const uint8_t *data, size_t size, const std::string &filename,
     const ValidationOptions &options, USDValidationResult *result,
@@ -2013,8 +2039,11 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
     return false;
   }
 
+  std::string local_warn;
+  std::string *warn_sink = warn ? warn : &local_warn;
+  const size_t warn_start = warn_sink->size();
   std::shared_ptr<Layer> layer =
-      pcp::LoadLayerFromMemory(filename, data, size, warn, err,
+      pcp::LoadLayerFromMemory(filename, data, size, warn_sink, err,
                                pcp::LayerLoadOptions());
   if (!layer) {
     if (err && err->empty()) {
@@ -2024,6 +2053,8 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
   }
 
   *result = ValidateLayerAgainstAOUSDCore(*layer, options);
+  if (options.core)
+    AddParserDiagnosticsToResult(warn_sink->substr(warn_start), result);
   return true;
 }
 

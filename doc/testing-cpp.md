@@ -1115,6 +1115,23 @@ and export timings as well as size; investigate repeatable regressions above
 
 #### AOUSD Core supplemental inputs
 
+#### Lean-generated conformance vectors
+
+`verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
+emits X-macro tables into `tests/next/generated/lean/` (committed). The
+`next_test_lean_vectors` ctest replays them against `src/next` and never
+skips; `next_test_lean_vectors_combine_chain` replays the corpus list-op
+chains. When `lake` is on `PATH` or in `~/.elan/bin`, `next_lean_build`,
+`next_lean_test` and `next_lean_vectors_check` also run (the first build
+needs `lake exe cache get` for Mathlib). `next_lean_reflection_table`
+checks validator `lean_ref` links. Regenerate after changing the model:
+
+```bash
+cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
+```
+
+See `doc/validation/lean-verification-2026-11-06.md` and `verif/lean/README.md`.
+
 The official [Core supplemental repository](https://github.com/aousd/core-spec-supplemental-public)
 keeps releases under `releases/`, with the license at the checkout root.
 Download the pinned public release into an ignored build directory, then point

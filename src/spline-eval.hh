@@ -197,6 +197,46 @@ Spline<T> ExpandInnerLoops(const Spline<T> &spline) {
   return out;
 }
 
+
+// Left limit of the (non-looped, already expanded) spline at knot time `s`
+// where s is in (first, last]. Used for oscillating reflection: time reversal
+// turns right limits into left limits, so a mirrored knot reads its pre-value
+// (dual-valued knot) or the held value of the segment ending there (OpenUSD
+// Ts, SPEC-ISSUE LEAN-747). Returns false for a value-blocked segment.
+template <typename T>
+bool EvalLeftLimitAtKnot(const Spline<T> &spline, size_t j, T *result) {
+  const auto &k = spline.knots;
+  const auto &a = k[j - 1];
+  const auto &b = k[j];
+  switch (a.nextInterpolationMode) {
+    case SplineInterpolationMode::None:
+      return false;
+    case SplineInterpolationMode::Held:
+      *result = a.value;
+      return true;
+    default:
+      *result = b.hasDualValue ? b.preValue : b.value;
+      return true;
+  }
+}
+
+}  // namespace detail
+
+template <typename T>
+bool EvaluateSpline(const Spline<T> &spline, double time, T *result);
+
+namespace detail {
+
+// Evaluate at a time reached through oscillating reflection: left limits.
+template <typename T>
+bool EvaluateSplineMirrored(const Spline<T> &spline, double s, T *result) {
+  const auto &k = spline.knots;
+  for (size_t j = 1; j < k.size(); ++j) {
+    if (std::abs(s - k[j].time) < 1e-15) return EvalLeftLimitAtKnot(spline, j, result);
+  }
+  return EvaluateSpline(spline, s, result);
+}
+
 }  // namespace detail
 
 ///
@@ -214,6 +254,18 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   // Inner loops (LoopParameters): evaluate the expanded knot list.
   if (detail::HasInnerLoops(spline)) {
     const Spline<T> expanded = detail::ExpandInnerLoops(spline);
+    // OpenUSD: the closing knot of the looped span keeps its value even under
+    // `post: none` when it ends the knot list.
+    const auto &lp = spline.loopParams;
+    const double closing =
+        lp.protoEnd + (lp.numPostLoops > 0 ? lp.numPostLoops : 0) *
+                          (lp.protoEnd - lp.protoStart);
+    if (expanded.postExtrapolation == SplineExtrapolationMode::None &&
+        expanded.knots.size() > 1 && expanded.knots.back().time == closing &&
+        time == closing) {
+      *result = expanded.knots.back().value;
+      return true;
+    }
     return EvaluateSpline(expanded, time, result);
   }
 
@@ -280,7 +332,12 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
         }
 
         T val{};
-        if (!EvaluateSpline(spline, remapped, &val)) return false;
+        const bool mirrored =
+            spline.preExtrapolation == SplineExtrapolationMode::LoopOscillate &&
+            static_cast<int>(cycles) % 2 != 0;
+        if (!(mirrored ? detail::EvaluateSplineMirrored(spline, remapped, &val)
+                       : EvaluateSpline(spline, remapped, &val)))
+          return false;
 
         if (spline.preExtrapolation == SplineExtrapolationMode::LoopRepeat) {
           // Apply value offset
@@ -296,11 +353,11 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   }
 
   // --- Post-extrapolation ---
-  // Loop reset starts the next copy AT the last knot's time.
-  const bool reset_at_end =
-      time == lastTime && knots.size() > 1 &&
-      spline.postExtrapolation == SplineExtrapolationMode::LoopReset;
-  if (time > lastTime || reset_at_end) {
+  // The last knot's time belongs to post-extrapolation (OpenUSD Ts,
+  // SPEC-ISSUE LEAN-745): `post: none` gives no value there and loop reset
+  // starts the next copy AT the last knot's time.
+  const bool at_end = time == lastTime && knots.size() > 1;
+  if (time > lastTime || at_end) {
     switch (spline.postExtrapolation) {
       case SplineExtrapolationMode::None:
         return false;
@@ -341,7 +398,12 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
         }
 
         T val{};
-        if (!EvaluateSpline(spline, remapped, &val)) return false;
+        const bool mirrored =
+            spline.postExtrapolation == SplineExtrapolationMode::LoopOscillate &&
+            static_cast<int>(cycles) % 2 != 0;
+        if (!(mirrored ? detail::EvaluateSplineMirrored(spline, remapped, &val)
+                       : EvaluateSpline(spline, remapped, &val)))
+          return false;
 
         if (spline.postExtrapolation == SplineExtrapolationMode::LoopRepeat) {
           double offset = cycles * (static_cast<double>(knots.back().value) -
@@ -370,8 +432,9 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
     idx = static_cast<size_t>(std::distance(knots.begin(), it)) - 1;
   }
 
-  // Exact knot hit
+  // Exact knot hit. A knot starting a value-blocked segment has no value.
   if (std::abs(time - knots[idx].time) < 1e-15) {
+    if (knots[idx].nextInterpolationMode == SplineInterpolationMode::None) return false;
     *result = knots[idx].value;
     return true;
   }

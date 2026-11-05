@@ -37,8 +37,31 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
   return true;
 }
 
+bool AsciiParser::Impl::CheckQualifiedEmptyList(const char* what) {
+  if (!Check(TokenType::OpenBracket)) return true;
+  const Lexer::SavedState saved = lexer_->save_state();
+  lexer_->next();
+  const bool empty_list = Check(TokenType::CloseBracket);
+  lexer_->restore_state(saved);
+  if (!empty_list) return true;
+  const std::string msg =
+      std::string("Empty list after a list-op qualifier for ") + what;
+  if (options_.strict_aousd_conformance) {
+    AddError(msg);
+    return false;
+  }
+  AddWarning(msg + " (OpenUSD rejects this)");
+  return true;
+}
+
 bool AsciiParser::Impl::ParseOrderList(std::vector<std::string>* out) {
-  if (!out || !Match(TokenType::Equals) || !Match(TokenType::OpenBracket)) {
+  if (out && Check(TokenType::Equals)) {
+    lexer_->next();
+    if (!CheckQualifiedEmptyList("reorder")) return false;
+  } else {
+    out = nullptr;  // force the error below
+  }
+  if (!out || !Match(TokenType::OpenBracket)) {
     AddError("Expected '= [...]' after reorder field");
     return false;
   }
@@ -185,6 +208,9 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       continue;
     }
     if (!Match(TokenType::Equals)) break;
+    if (!qualifier.empty() && !CheckQualifiedEmptyList(key.c_str())) {
+      return;
+    }
     if (key == "permission" && qualifier.empty()) {
       // Unquoted token (`permission = private`).
       std::string v;

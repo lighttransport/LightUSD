@@ -64,6 +64,12 @@
   // copy/move (see SpecsMemo in cache.cc), so child-build/worker-seed/merge
   // copies can never carry a stale or cross-Impl pointer.
   const std::vector<SpecRef> &SpecsFor(const Src &s) const ;
+  // pxr-style spelling of a site in `stack`'s namespace for diagnostics:
+  // a variant-content site `/__self__/child` becomes `/Owner{set=name}child`
+  // (owner resolved through nested variant-content stacks). Non-variant
+  // stacks return `site` unchanged. Iterative; a malformed owner chain stops
+  // at the depth limit.
+  std::string SpellSitePath(uint32_t stack, const std::string &site) const;
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const ;
 

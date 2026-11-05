@@ -22,6 +22,23 @@ bool Path::is_valid() const {
 
 Path Path::Parse(const std::string& path_str) {
   if (path_str.empty() || !IsValidPathString(path_str)) return Path();
+  // The grammar allows inline padding inside a variant selection
+  // (`{ set = variant }`); the canonical form has none (OpenUSD SdfPath, and
+  // verif/lean `PathGrammar.printPath`). Padding is only legal inside braces
+  // of a path that already validated, so dropping it there is exact.
+  if (path_str.find('{') != std::string::npos &&
+      path_str.find_first_of(" \t") != std::string::npos) {
+    std::string out;
+    out.reserve(path_str.size());
+    bool in_sel = false;
+    for (char c : path_str) {
+      if (c == '{') in_sel = true;
+      else if (c == '}') in_sel = false;
+      if (in_sel && (c == ' ' || c == '\t')) continue;
+      out.push_back(c);
+    }
+    return Path(std::move(out));
+  }
   return Path(path_str);
 }
 

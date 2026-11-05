@@ -326,6 +326,10 @@ struct PropMeta {
   // verbatim so pipeline-specific opinions round-trip.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   std::vector<DecodedExtensionField> unknownFields;
+  // Legacy relationship default target (`rel r.default = </t>`; pxr keeps it
+  // as the relationship's `default` field and re-emits that statement). Not a
+  // `( ... )` metadata entry, so it is excluded from empty()/authored.
+  std::string relDefault;
 
   bool empty() const;
 };

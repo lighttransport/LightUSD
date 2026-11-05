@@ -52,6 +52,15 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         layer_->meta().comment_set = true;
         continue;
       }
+      // pxr accepts a list-op qualifier on UNREGISTERED layer metadata
+      // (`append foo = [1, 2]`) and keeps it as a list-op field; registered
+      // keys reject it.
+      const char* qualifier = nullptr;
+      if (Match(TokenType::Prepend)) qualifier = "prepend";
+      else if (Match(TokenType::Append)) qualifier = "append";
+      else if (Match(TokenType::Add)) qualifier = "add";
+      else if (Match(TokenType::Delete)) qualifier = "delete";
+      else if (Match(TokenType::Reorder)) qualifier = "reorder";
       std::string key;
       if (!lexer_->expect(TokenType::Identifier, key)) {
         AddError("Expected metadata key");
@@ -61,6 +70,24 @@ bool AsciiParser::Impl::ParseStageMetadata() {
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after metadata key");
         return false;
+      }
+      if (qualifier) {
+        static const char* const kRegistered[] = {
+            "defaultPrim", "upAxis", "metersPerUnit", "timeCodesPerSecond",
+            "startTimeCode", "endTimeCode", "framesPerSecond",
+            "kilogramsPerUnit", "relocates", "colorConfiguration",
+            "colorManagementSystem", "renderSettingsPrimPath", "doc",
+            "documentation", "comment", "hasOwnedSubLayers", "owner",
+            "autoPlay", "playbackMode", "customLayerData",
+            "expressionVariables", "subLayers"};
+        for (const char* r : kRegistered) {
+          if (key == r) {
+            AddError(std::string("List-op qualifier '") + qualifier +
+                     "' is not valid for layer metadata " + key);
+            return false;
+          }
+        }
+        if (!CheckQualifiedEmptyList(key.c_str())) return false;
       }
 
       // Parse value based on known metadata keys
@@ -280,8 +307,36 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             vend--;
           }
           if (vend > vstart) {
-            layer_->meta().unknownMeta.emplace_back(
-                key, std::string(base + vstart, vend - vstart));
+            // pxr folds every opinion on one key into a single list-op
+            // field: an explicit value replaces all edits, and a repeated
+            // qualifier replaces the earlier one of that kind.
+            auto& um = layer_->meta().unknownMeta;
+            const std::string name =
+                qualifier ? std::string(qualifier) + " " + key : key;
+            auto same_key = [&](const std::string& n) {
+              if (n == key) return true;
+              const size_t sp = n.find(' ');
+              return sp != std::string::npos && n.compare(sp + 1, std::string::npos, key) == 0;
+            };
+            bool has_explicit = false;
+            for (const auto& e : um) has_explicit |= (e.first == key);
+            if (!qualifier) {
+              um.erase(std::remove_if(um.begin(), um.end(),
+                                      [&](const std::pair<std::string, std::string>& e) {
+                                        return same_key(e.first);
+                                      }),
+                       um.end());
+            }
+            if (!qualifier || !has_explicit) {
+              auto it = std::find_if(
+                  um.begin(), um.end(),
+                  [&](const std::pair<std::string, std::string>& e) {
+                    return e.first == name;
+                  });
+              std::string raw(base + vstart, vend - vstart);
+              if (it != um.end()) it->second = std::move(raw);
+              else um.emplace_back(name, std::move(raw));
+            }
           }
         }
         AddWarning("Unknown stage metadata (preserved): " + key);

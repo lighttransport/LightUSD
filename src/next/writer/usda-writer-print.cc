@@ -698,6 +698,13 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
       os << "]";
     }
   };
+  // Legacy `rel r.default = </t>` follows the declaration (pxr's form).
+  auto WriteRelDefault = [&]() {
+    const PropMeta* pm = spec.property_meta(name_id);
+    if (!pm || pm->relDefault.empty()) return;
+    WriteIndent(os, depth, opts.indent);
+    os << "rel " << name << ".default = <" << pm->relDefault << ">\n";
+  };
 
   // Authored list-op edits re-emit their qualifiers (a bare explicit list
   // changes composition semantics for delete/prepend against weaker layers).
@@ -738,6 +745,7 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
       WritePropMeta(os, spec, name_id, depth, opts);
       os << "\n";
     }
+    WriteRelDefault();
     return;
   }
 
@@ -757,6 +765,7 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   }
   WritePropMeta(os, spec, name_id, depth, opts);
   os << "\n";
+  WriteRelDefault();
 }
 
 // Forward declaration

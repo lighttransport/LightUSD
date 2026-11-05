@@ -272,6 +272,10 @@ bool ExpandTemplate(DictView  dict, ValueClipSet* out, std::string* error) {
   return !out->asset_paths.empty();
 }
 
+}  // namespace
+
+namespace value_clip_detail {
+
 int ActiveIndex(const ValueClipSet& set, double time) {
   if (set.active.empty()) return set.asset_paths.empty() ? -1 : 0;
   int result = set.active.front().second;
@@ -284,11 +288,10 @@ int ActiveIndex(const ValueClipSet& set, double time) {
 
 double ClipTime(const ValueClipSet& set, double time) {
   if (set.times.empty()) return time;
-  // Stage times strictly OUTSIDE the authored `times` range map to the
-  // boundary STAGE time (AOUSD supplemental value-resolution reference
-  // semantics), which the clip's own sample range then clamps.
-  if (time < set.times.front().first) return set.times.front().first;
-  if (time > set.times.back().first) return set.times.back().first;
+  // Stage times strictly OUTSIDE the authored `times` range clamp to the
+  // boundary CLIP time (spec L6983-6990, OpenUSD Usd_Clip).
+  if (time < set.times.front().first) return set.times.front().second;
+  if (time > set.times.back().first) return set.times.back().second;
   auto hi = std::lower_bound(
       set.times.begin(), set.times.end(), time,
       [](const std::pair<double, double>& p, double t) { return p.first < t; });
@@ -307,6 +310,11 @@ double ClipTime(const ValueClipSet& set, double time) {
   return a.second + (b.second - a.second) * alpha;
 }
 
+}  // namespace value_clip_detail
+
+namespace {
+using value_clip_detail::ActiveIndex;
+using value_clip_detail::ClipTime;
 }  // namespace
 
 bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,

@@ -192,8 +192,10 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
         set_error(out_error, "LZ4 compression failed for chunk");
         return 0;
       }
-      const int32_t chunk_size_i32 = (int32_t)chunk_sz;
-      memcpy(dst + out_pos, &chunk_size_i32, sizeof(int32_t));
+      /* The i32 prefix is the COMPRESSED size of the chunk, as OpenUSD
+       * TfFastCompression writes and as our reader expects (verif/lean
+       * LEAN-421). Reserve it, compress, then back-patch. */
+      const size_t size_pos = out_pos;
       out_pos += sizeof(int32_t);
       const size_t remaining = dst_cap - out_pos;
       const int cap = remaining > (size_t)0x7FFFFFFF ? 0x7FFFFFFF : (int)remaining;
@@ -204,6 +206,8 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
         set_error(out_error, "LZ4 compression failed for chunk");
         return 0;
       }
+      const int32_t chunk_size_i32 = (int32_t)compressed;
+      memcpy(dst + size_pos, &chunk_size_i32, sizeof(int32_t));
       out_pos += (size_t)compressed;
       in_offset += chunk_sz;
     }
