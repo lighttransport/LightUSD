@@ -351,6 +351,26 @@ def "R" (references = </Model>; variants = {string look = "empty"}) {}
                     self.assertEqual(document['Composing']['/P']['Child names'], expected)
 
 
+    def test_each_layer_orders_the_accumulated_raw_root_names(self):
+        with tempfile.TemporaryDirectory(prefix='lightusd-composed-root-order-') as directory:
+            base = Path(directory)
+            (base / 'weak.usd').write_text('#usda 1.0\ndef "b" {}\n')
+            (base / 'middle.usd').write_text('#usda 1.0\n'
+                'reorder rootPrims = ["b", "a"]\n'
+                'def "a" {}\ndef "u" {}\ndef "b" {}\ndef "v" {}\n')
+            root = base / 'root.usd'
+            root.write_text('#usda 1.0\n(subLayers = [@middle.usd@, @weak.usd@])\n'
+                'def "extra" {}\n')
+            result = subprocess.run([ARGS.lusdcat, '--dump-pcp-json', '-',
+                '--pcp-json-version', '2', str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            document = json.loads(result.stdout)
+            truth = self.assert_stock_matches(root, document)
+            self.assertEqual(list(document['Composing']), ['/b', '/a', '/u', '/v', '/extra'])
+            if truth is not None:
+                self.assertEqual(list(document['Composing']), list(truth['Composing']))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--lusdcat', required=True)
