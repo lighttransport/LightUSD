@@ -139,6 +139,16 @@ bool ComputeColorSpaceName(const UsdPrim &prim, const std::string &property,
         return true;
       }
     }
+    // Property-scoped UsdColorSpaceAPI form: a `<property>:colorSpace:name`
+    // attribute on the same prim (e.g. `inputs:file:colorSpace:name`). It needs
+    // no applied schema; it names the color space of that one attribute.
+    std::string token;
+    if (GetStringLike(prim, property + ":colorSpace:name", &token) &&
+        !token.empty()) {
+      *name = ::lightusd::color::CanonicalizeToken(token);
+      if (authored) *authored = true;
+      return true;
+    }
   }
   for (UsdPrim current = prim; current.IsValid(); current = current.GetParent()) {
     if (!HasAPISchema(current, "ColorSpaceAPI")) continue;

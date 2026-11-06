@@ -472,17 +472,42 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           cs = "auto";
         }
       }
-      if (tex_data.source_color_space.empty() ||
-          tex_data.source_color_space == "auto") {
+      // An authored UsdColorSpaceAPI `colorSpace` (file metadata, the
+      // `inputs:file:colorSpace:name` attribute, or an applied ColorSpaceAPI on
+      // an enclosing prim) takes precedence over `sourceColorSpace`, including an
+      // explicit raw/sRGB token. This is the opinion the ColorSpaceTests/
+      // UsdPreviewSurface asset documents and builds its expected values on.
+      {
         bool authored = false;
         std::string inherited;
         (void)::lightusd::next::color_management::ComputeColorSpaceName(
             texture_prim, "inputs:file", &inherited, &authored);
         if (authored) {
           tex_data.source_color_space = inherited;
-        } else {
+        } else if (tex_data.source_color_space.empty() ||
+                   tex_data.source_color_space == "auto") {
           (void)MaterialXConfiguredColorSpace(
               texture_prim, &tex_data.source_color_space);
+        }
+      }
+      // "auto" resolves to sRGB only for 8-bit images; floating-point formats
+      // (.hdr/.exr/.pfm) hold scene-linear data and must not be decoded again.
+      if (tex_data.source_color_space.empty() ||
+          tex_data.source_color_space == "auto") {
+        auto lower_ext_is = [&](const char *ext) {
+          const std::string &f = tex_data.file;
+          const size_t n = std::strlen(ext);
+          if (f.size() < n) return false;
+          for (size_t i = 0; i < n; ++i) {
+            char ch = f[f.size() - n + i];
+            if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
+            if (ch != ext[i]) return false;
+          }
+          return true;
+        };
+        if (lower_ext_is(".hdr") || lower_ext_is(".exr") ||
+            lower_ext_is(".pfm")) {
+          tex_data.source_color_space = "raw";
         }
       }
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);

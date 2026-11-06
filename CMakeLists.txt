@@ -2539,6 +2539,20 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-colorspace-regression
                          PROPERTIES SKIP_RETURN_CODE 77)
 
+    # Analytic oracle for the usd-assets ColorSpaceTests/UsdPreviewSurface tile grid
+    # (all 25 tiles must equal the asset's stated {200,100,50}); skips (77)
+    # without the usd-assets checkout or a Vulkan renderer.
+    add_test(
+      NAME tool-lusdrender-uvtexture-colorspace-tiles
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_uvtexture_colorspace_tiles.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/uvtexture-colorspace-tiles
+    )
+    set_tests_properties(tool-lusdrender-uvtexture-colorspace-tiles
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                         LABELS "lusdrender;gpu;colorspace")
+
     # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
     # edge-on and render black.
     add_test(
