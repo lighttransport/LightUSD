@@ -16,6 +16,9 @@ layout(binding=6, scalar) readonly buffer Texels { uint texels[]; };
 layout(binding=7, scalar) readonly buffer TextureDescs { int textureDescs[]; };
 layout(binding=8, scalar) readonly buffer Lights { float lights[]; };
 layout(binding=9, scalar) writeonly buffer Output { float outputPixels[]; };
+// Per-triangle Ptex data (8 floats): face id, corner uv x3, valid flag. A 1-float
+// dummy buffer means the scene has no Ptex material.
+layout(binding=10, scalar) readonly buffer PtexTri { float ptexTri[]; };
 
 layout(push_constant, scalar) uniform Push {
   mat4 invViewProj;
@@ -64,6 +67,33 @@ float wrapCoord(float x, int mode) {
   if (mode == 2) { float q=mod(x,2.0); if(q<0.0)q+=2.0; return q<=1.0?q:2.0-q; }
   return fract(x);
 }
+// Ptex face and face-local (u,v) of the current hit, set by setPtexHit().
+uint gPtexFace=0xffffffffu; vec2 gPtexUV=vec2(0.0);
+uint ptexByte(int off,uint texel){return texels[uint(off)+texel]>>24u;}
+// Ptex atlas lookup. The descriptor's reserved ints carry (rect-table texel
+// offset + 1, face count); the per-face rectangle (x,y,w,h as little-endian
+// uint16) lives in the alpha bytes of the 8 texels at that offset + face*8.
+// Atlas rows are top-first, so the face-local v is flipped: y = (1-v).
+vec4 samplePtexAtlas(int off,int w,int h,int tableTexel,int faceCount,int srgb){
+  uint face=gPtexFace;
+  if(face>=uint(faceCount))face=0u;
+  uint tb=uint(tableTexel)+face*8u;
+  float rx=float(ptexByte(off,tb)|(ptexByte(off,tb+1u)<<8u)),ry=float(ptexByte(off,tb+2u)|(ptexByte(off,tb+3u)<<8u));
+  float rw=float(ptexByte(off,tb+4u)|(ptexByte(off,tb+5u)<<8u)),rh=float(ptexByte(off,tb+6u)|(ptexByte(off,tb+7u)<<8u));
+  if(rw<1.0||rh<1.0)return vec4(1.0);
+  // Ptex-correct bilinear: texel centers at (i+0.5)/w, taps clamped to the face
+  // (identical to OpenPtex within a face; no cross-face blending). The rect's
+  // clamp gutter makes a coordinate beyond the first/last center replicate.
+  vec2 fp=clamp(vec2(clamp(gPtexUV.x,0.0,1.0)*rw-0.5,(1.0-clamp(gPtexUV.y,0.0,1.0))*rh-0.5),vec2(0.0),vec2(rw-1.0,rh-1.0));
+  vec2 px=vec2(rx,ry)+fp;
+  ivec2 p0=ivec2(floor(px)),p1=min(p0+1,ivec2(w-1,h-1));vec2 f=fract(px);
+  vec4 c[4];ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
+  for(int i=0;i<4;++i){uint q=texels[uint(off+p[i].y*w+p[i].x)];c[i]=vec4(q&255u,(q>>8)&255u,(q>>16)&255u,(q>>24)&255u)/255.0;}
+  vec4 r=mix(mix(c[0],c[1],f.x),mix(c[2],c[3],f.x),f.y);
+  r.a=1.0;
+  if(srgb!=0)r.rgb=srgbToLinear(r.rgb);
+  return r;
+}
 vec4 sampleTexture(int id, vec2 uv) {
   uint d=uint(id)*TEX_DESC_STRIDE;
   if (id < 0 || d+5u >= textureDescs.length()) return vec4(1.0);
@@ -71,6 +101,7 @@ vec4 sampleTexture(int id, vec2 uv) {
   if (off < 0 || w < 1 || h < 1) return vec4(1.0);
   float x,y;
   int udimMeta=textureDescs[d+6u];
+  if(udimMeta>0)return samplePtexAtlas(off,w,h,udimMeta-1,textureDescs[d+7u],textureDescs[d+5u]);
   if(udimMeta<0){
     uint origin=uint(-udimMeta-1),grid=uint(textureDescs[d+7u]);
     int minU=int(origin&65535u),minV=int(origin>>16u);
@@ -297,6 +328,7 @@ vec3 applyGraphNormal(vec3 n,vec3 tangent,vec3 encoded){vec3 t,b;rotatedBasis(n,
 bool domeRotated(uint lb){vec3 rx=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);return dot(rx,rx)>0.25;}
 vec3 domeToLocal(uint lb,vec3 w){if(!domeRotated(lb))return w;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return vec3(dot(w,rx),dot(w,ry),dot(w,rz));}
 vec3 domeToWorld(uint lb,vec3 v){if(!domeRotated(lb))return v;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return v.x*rx+v.y*ry+v.z*rz;}
+void setPtexHit(Hit h){gPtexFace=0xffffffffu;uint pb=h.prim*8u;if(pb+7u<uint(ptexTri.length())&&ptexTri[pb+7u]>0.5){gPtexFace=uint(ptexTri[pb]+0.5);float w=1.0-h.bary.x-h.bary.y;gPtexUV=vec2(ptexTri[pb+1u],ptexTri[pb+2u])*w+vec2(ptexTri[pb+3u],ptexTri[pb+4u])*h.bary.x+vec2(ptexTri[pb+5u],ptexTri[pb+6u])*h.bary.y;}}
 vec3 environmentRadiance(vec3 dir,bool primary){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;if(primary&&lights[lb+13u]>0.5)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec3 ld=domeToLocal(lb,dir);vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,acos(clamp(ld.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
 float rawLightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
 // A dome is picked as often as all other lights together (power-weighting by
@@ -403,7 +435,7 @@ void main(){
     float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}
+      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
@@ -520,6 +552,14 @@ void main(){
         else radiance=emission;
         beta=vec3(0.0); break;
       }
+      // Ptex diagnostics: 13 = (u, v, face), 14 = base colour after the graph route.
+      if(depth==0u&&pc.context.w>12.5&&pc.context.w<14.5){
+        // 13: exact (u, v, face+1) as raw floats: z = 0 on a miss (clear colour),
+        // -1 on a hit without Ptex data, face+1 otherwise.
+        if(pc.context.w<13.5)radiance=gPtexFace==0xffffffffu?vec3(0.0,0.0,-1.0):vec3(gPtexUV,float(gPtexFace)+1.0);
+        else radiance=base;  // 14: base colour after the graph route
+        beta=vec3(0.0); break;
+      }
       if(depth==0u&&pc.context.w>9.5&&pc.context.w<12.5){
         if(pc.context.w<10.5) radiance=dbgRoute4;
         else if(pc.context.w<11.5) radiance=vec3(max(dbgRoute44,0.0));
@@ -582,7 +622,8 @@ void main(){
   vec3 avg=sum/float(max(pc.frame.z,1u));
   // pc.context.z selects the display transform: 1 = Storm's plain sRGB
   // encode (colorCorrectionMode=sRGB), 0 = the filmic beauty curve.
-  vec3 c=pc.context.w>0.5?clamp(sum,0.0,1.0)
+  vec3 c=(pc.context.w>12.5&&pc.context.w<13.5)?sum  // ptex AOV: exact, unclamped ids
+        :pc.context.w>0.5?clamp(sum,0.0,1.0)
         :pc.context.z>0.5?linearToSrgb(avg)
         :tonemap(avg*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
 }

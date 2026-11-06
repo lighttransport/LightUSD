@@ -69,6 +69,22 @@ bool WriteGpuDataAov(const Options& opt, int w, int h, int spp, const Sample& sa
 
 }  // namespace
 
+// The descriptor MaterialX path is the beauty contract, but it builds one
+// acceleration structure and the packed vertex/material buffers for the whole
+// scene. Mid-size scenes above the mesh-chunk limit used to fall back to the
+// legacy chunked shading path (no MaterialX graphs/lights), which made the
+// beauty result depend on scene size. Keep chunking as the memory fallback
+// above this bound and for non-colour AOVs.
+size_t GpuMaterialPathLimit() {
+  size_t limit = size_t(1000000);
+  if (const char *s = std::getenv("LUSDR_GPU_MATERIAL_PATH_TRIANGLES")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) limit = static_cast<size_t>(n);
+  }
+  return limit;
+}
+
 bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
                       int threads, bool build_cpu_scene, GpuTriScene *out,
@@ -82,6 +98,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
     std::vector<float>().swap(out->flat_verts);
     std::vector<float>().swap(out->flat_attrs);
     std::vector<uint32_t>().swap(out->flat_idx);
+    std::vector<float>().swap(out->flat_ptex);
     std::vector<Vec3>().swap(out->base_colors);
     std::vector<uint32_t>().swap(out->material_ids);
     std::vector<float>().swap(out->tri_uvs);
@@ -147,6 +164,9 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
     out->vn2.reserve(total_tris);
   }
   out->base_colors.reserve(total_tris);
+  bool any_ptex = false;
+  for (const auto &g : geos) any_ptex = any_ptex || !g.ptex_tri.empty();
+  if (any_ptex) out->flat_ptex.reserve(total_tris * 8u);
   uint32_t base_idx = 0;
   for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
     const auto &g = geos[mesh_idx];
@@ -207,6 +227,17 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       for (uint32_t corner : uv_idx) {
         out->tri_uvs.push_back(perVertexUv ? g.uvs[corner * 2u] : 0.0f);
         out->tri_uvs.push_back(perVertexUv ? g.uvs[corner * 2u + 1u] : 0.0f);
+      }
+    }
+    if (any_ptex) {
+      // Keep flat_ptex in triangle order: meshes without Ptex data get zeroed
+      // entries (valid flag 0), so one buffer indexes by global triangle id.
+      const size_t ntri_g = g.indices.size() / 3u;
+      if (g.ptex_tri.size() == ntri_g * 8u) {
+        out->flat_ptex.insert(out->flat_ptex.end(), g.ptex_tri.begin(),
+                              g.ptex_tri.end());
+      } else {
+        out->flat_ptex.insert(out->flat_ptex.end(), ntri_g * 8u, 0.0f);
       }
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();

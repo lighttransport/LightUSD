@@ -45,21 +45,6 @@ size_t GpuChunkLimit() {
   return limit;
 }
 
-// The descriptor MaterialX path is the beauty contract, but it builds one
-// acceleration structure and the packed vertex/material buffers for the whole
-// scene. Mid-size scenes above the mesh-chunk limit used to fall back to the
-// legacy chunked shading path (no MaterialX graphs/lights), which made the
-// beauty result depend on scene size. Keep chunking as the memory fallback
-// above this bound and for non-colour AOVs.
-size_t GpuMaterialPathLimit() {
-  size_t limit = size_t(1000000);
-  if (const char *s = std::getenv("LUSDR_GPU_MATERIAL_PATH_TRIANGLES")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) limit = static_cast<size_t>(n);
-  }
-  return limit;
-}
 
 bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                       const Options &opt, const GpuTriScene &geometry,
@@ -158,6 +143,12 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
       continue;
     }
     d[1] = image->width; d[2] = image->height;
+    if (t.isPtex) {
+      // Reserved ints carry (rect-table texel offset + 1, face count); the
+      // shader reads each face rectangle from the atlas's alpha-byte table.
+      d[6] = static_cast<int32_t>(t.ptexRectTexelOffset) + 1;
+      d[7] = static_cast<int32_t>(t.ptexFaces);
+    }
     const size_t pixels = static_cast<size_t>(std::max(image->width, 0)) *
                           static_cast<size_t>(std::max(image->height, 0));
     for (size_t p = 0; p < pixels; ++p) texels.push_back(packed_pixel(*image, p));
@@ -222,6 +213,27 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   desc.texture_descs = texture_descs.empty() ? nullptr : texture_descs.data();
   desc.ntextures = static_cast<uint32_t>(scene.textures.size());
   desc.lights = lights.empty() ? nullptr : lights.data();
+  if (!geometry.flat_ptex.empty()) {
+    desc.ptex_tri = geometry.flat_ptex.data();
+    desc.nptex_tri_floats = static_cast<uint32_t>(geometry.flat_ptex.size());
+  }
+  if (opt.stats) {
+    size_t ptex_textures = 0, valid_tris = 0;
+    for (size_t i = 0; i < scene.textures.size(); ++i) {
+      if (!scene.textures[i].isPtex) continue;
+      ++ptex_textures;
+      std::cerr << "  ptex texture " << i << ": atlas "
+                << scene.textures[i].image.width << "x"
+                << scene.textures[i].image.height << " faces="
+                << scene.textures[i].ptexFaces << " rectTexelOffset="
+                << scene.textures[i].ptexRectTexelOffset << "\n";
+    }
+    for (size_t t = 7; t < geometry.flat_ptex.size(); t += 8)
+      if (geometry.flat_ptex[t] > 0.5f) ++valid_tris;
+    std::cerr << "Vulkan ptex: textures=" << ptex_textures
+              << " triangles_with_face=" << valid_tris << "/" << geometry.ntris
+              << "\n";
+  }
   desc.nlights = static_cast<uint32_t>(lights.size() / 16u);
   std::memcpy(desc.inv_view_proj, inv_vp.m, sizeof(desc.inv_view_proj));
   desc.camera[0] = camera.origin.x; desc.camera[1] = camera.origin.y;
@@ -250,13 +262,26 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                      : std::strcmp(aov, "lit_spec") == 0 ? 9u
                      : std::strcmp(aov, "route4") == 0 ? 10u
                      : std::strcmp(aov, "route44") == 0 ? 11u
-                     : std::strcmp(aov, "route4_tex") == 0 ? 12u : 0u;
+                     : std::strcmp(aov, "route4_tex") == 0 ? 12u
+                     : std::strcmp(aov, "ptex") == 0 ? 13u
+                     : std::strcmp(aov, "base") == 0 ? 14u : 0u;
   std::vector<float> rgba(static_cast<size_t>(width) * static_cast<size_t>(h) * 4u);
   lrt_result err = LRT_RESULT_OK;
   if (lrt_vk_rtx_scene_render_materialx_path(vk, rtx, &desc, rgba.data(), &err) != 0) {
     std::cerr << "Vulkan MaterialX/path dispatch failed (" << int(err) << "): "
               << lrt_vk_engine_last_error(vk) << "\n";
     return false;
+  }
+  // LUSDR_VK_DUMP_F32=<file>: raw float RGBA (int32 w, int32 h, then w*h*4 floats)
+  // before 8-bit conversion, so debug AOVs can carry exact values (ids, linear
+  // colour) for verification oracles.
+  if (const char *dump = std::getenv("LUSDR_VK_DUMP_F32")) {
+    if (std::FILE *f = std::fopen(dump, "wb")) {
+      const int32_t dims[2] = {int32_t(width), int32_t(h)};
+      std::fwrite(dims, sizeof(dims[0]), 2, f);
+      std::fwrite(rgba.data(), sizeof(float), rgba.size(), f);
+      std::fclose(f);
+    }
   }
   lightusd::Image out;
   out.width = width; out.height = h; out.channels = 4; out.bpp = 8;

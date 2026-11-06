@@ -254,6 +254,11 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
     };
     if (!src.is_udim) {
       convert_image(src.width, src.height, src.channels, src.pixels, &dst.image);
+      if (src.is_ptex) {
+        dst.isPtex = true;
+        dst.ptexFaces = src.ptex_faces;
+        dst.ptexRectTexelOffset = src.ptex_rect_texel_offset;
+      }
     } else {
       dst.isUdim = true;
       for (const Texture::UdimTile &tile : src.udim_tiles) {

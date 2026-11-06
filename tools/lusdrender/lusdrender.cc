@@ -1715,11 +1715,13 @@ int main(int argc, char **argv) {
       // (Instancing on the GPU backends). No per-prototype BLAS sharing yet.
       // Displacement textures are shared across roots; traversal records are
       // intentionally root-local below.
+      size_t gpu_triangles_so_far = 0;
       TextureCache tc;
       tc.textures = &gpu_textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
       tc.options = &opt;
+      tc.triangles_so_far = &gpu_triangles_so_far;
       std::unordered_map<std::string, ResolvedMat> material_cache;
       lightusd::next::EvalOptions mesh_eval;
       mesh_eval.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
@@ -1923,16 +1925,39 @@ int main(int argc, char **argv) {
                   (face < job.subset_faces.size() && job.subset_faces[face])) &&
                  !holes.count(static_cast<int32_t>(face));
         };
+        // Ptex: when the bound base-color texture is a Ptex atlas, record per
+        // triangle (face id, three intrinsic corner uv, valid) so the descriptor
+        // shader can address the face rectangle. Faces are the authored USD
+        // faces; quads use the ordinal uvs lusdview uses (0,1)(1,1)(1,0)(0,0)
+        // and sample with y = 1 - v. Non-quad faces get a zeroed (invalid) entry.
+        const bool want_ptex = job.tex_id >= 0 &&
+            size_t(job.tex_id) < gpu_textures.size() &&
+            gpu_textures[size_t(job.tex_id)].is_ptex;
+        static const float kPtexCorner[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+        const auto push_ptex = [&](size_t face, int32_t count, int32_t k) {
+          if (!want_ptex) return;
+          if (count == 4) {
+            geo.ptex_tri.insert(geo.ptex_tri.end(), {
+                float(face), kPtexCorner[0][0], kPtexCorner[0][1],
+                kPtexCorner[k][0], kPtexCorner[k][1],
+                kPtexCorner[k + 1][0], kPtexCorner[k + 1][1], 1.0f});
+          } else {
+            geo.ptex_tri.insert(geo.ptex_tri.end(), 8u, 0.0f);
+          }
+        };
         if (count_values.empty()) {
           valid_geometry = index_values.size() % 3 == 0;
           for (size_t corner = 0; valid_geometry && corner < index_values.size(); ++corner)
             if (visible_face(corner / 3)) valid_geometry = emit(corner, corner / 3);
+          if (want_ptex) geo.ptex_tri.assign(geo.indices.size() / 3u * 8u, 0.0f);
         } else {
           size_t offset = 0, face = 0;
           for (int32_t count : count_values) {
             if (count < 0 || size_t(count) > index_values.size() - offset) { valid_geometry = false; break; }
-            for (int32_t k = 1; visible_face(face) && valid_geometry && k + 1 < count; ++k)
+            for (int32_t k = 1; visible_face(face) && valid_geometry && k + 1 < count; ++k) {
               valid_geometry = emit(offset, face) && emit(offset + size_t(k), face) && emit(offset + size_t(k + 1), face);
+              if (valid_geometry) push_ptex(face, count, k);
+            }
             offset += size_t(count);
             ++face;
           }
@@ -1946,8 +1971,13 @@ int main(int argc, char **argv) {
         if (split) nv = uint32_t(geo.positions.size() / 3);
         const auto* orientation=prim.GetPropertyValue("orientation");
         if (orientation && orientation->as_token() && *orientation->as_token()=="leftHanded")
-          for(size_t triangle=0;triangle+2<geo.indices.size();triangle+=3)
+          for(size_t triangle=0;triangle+2<geo.indices.size();triangle+=3) {
             std::swap(geo.indices[triangle+1],geo.indices[triangle+2]);
+            if (geo.ptex_tri.size() >= (triangle/3+1)*8u) {
+              float *pt = geo.ptex_tri.data() + (triangle/3)*8u;
+              std::swap(pt[3], pt[5]); std::swap(pt[4], pt[6]);
+            }
+          }
 
         }
 
@@ -2132,6 +2162,7 @@ int main(int argc, char **argv) {
           break;
         }
         gpu_materials.push_back(std::move(resolved));
+        gpu_triangles_so_far += geo.indices.size() / 3u;
         geos.push_back(std::move(geo));
       }
     }

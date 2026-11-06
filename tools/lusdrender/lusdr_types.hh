@@ -69,6 +69,11 @@ struct Texture {
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
+  // Ptex texture: `pixels` is the RGBA8 face atlas (with gutters) followed by an
+  // alpha-byte face-rectangle table (8 texels per face) at `ptex_rect_texel_offset`.
+  bool is_ptex{false};
+  uint32_t ptex_faces{0};
+  uint32_t ptex_rect_texel_offset{0};
   // Full authored color transform for color textures. The destination is
   // lusdrender's display-linear Rec.709 shading space. `srgb` remains as the
   // compatibility fallback for legacy textures that do not carry a transform.
@@ -840,6 +845,9 @@ struct RTPreviewStats {
     // a graph image node selects its set through the Texcoord node flag.
     std::vector<float> uvs1;
     std::vector<uint32_t> indices;
+    // Optional Ptex data, 8 floats per triangle parallel to `indices`: face id,
+    // three corner (u,v), valid flag. Empty unless the mesh binds a Ptex texture.
+    std::vector<float> ptex_tri;
     uint32_t source_material_id{UINT32_MAX}; // survives bounded GPU chunking
   };
   size_t meshes{0};
@@ -1121,6 +1129,10 @@ struct TextureCache {
   std::vector<std::string> *material_diagnostic_examples{nullptr};
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
   size_t *texture_mip_fallbacks{nullptr};
+  // Triangles emitted so far by the caller (nullptr = unknown). Ptex atlases are
+  // only built while this is within GpuMaterialPathLimit(): above it the scene
+  // takes the chunked path, which never samples them.
+  const size_t *triangles_so_far{nullptr};
 };
 
 // Semantic texture lanes whose UV set the descriptor material path can select.

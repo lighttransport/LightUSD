@@ -257,6 +257,13 @@ typedef struct lrt_vk_material_path_desc {
     uint32_t ntextures;
     const float *lights;
     uint32_t nlights;
+    /* Optional per-triangle Ptex data, 8 floats per triangle in triangle order:
+     * face id, uv0.xy, uv1.xy, uv2.xy, valid flag (>0.5). NULL / 0 = none; the
+     * shader then sees a one-float dummy buffer. Textures flagged Ptex in
+     * texture_descs (reserved ints: rect-table texel offset + 1, face count)
+     * sample their atlas through this. */
+    const float *ptex_tri;
+    uint32_t nptex_tri_floats;
     float inv_view_proj[16];
     float camera[3];
     float clear_color[3];

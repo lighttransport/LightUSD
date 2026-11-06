@@ -705,8 +705,11 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         out->shader_type = RenderMaterial::ShaderType::OpenPBR;
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractPxrDisneyAsOpenPBR(stage, child, out->openpbr.get(), scene);
-        out->openpbr->nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, child);
+        // The RenderMan network (PxrPtexture/PxrColorCorrect/...) is not a
+        // MaterialX graph, so it must not be handed to the MaterialX graph
+        // compiler: its unknown node categories made every such material fall
+        // back to flat color. The extracted OpenPBR parameters carry the
+        // texture bindings through the ordinary texture-sample route.
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;

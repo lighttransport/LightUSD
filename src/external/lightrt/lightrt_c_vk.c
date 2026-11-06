@@ -3253,13 +3253,13 @@ typedef struct material_path_push {
 } material_path_push;
 
 static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e) {
-    VkDescriptorType types[10];
+    VkDescriptorType types[11];
     uint32_t i;
     if (e->material_path_pipe.valid) return &e->material_path_pipe;
     types[0] = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 1; i < 10; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    for (i = 1; i < 11; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     if (!vk_pipeline_build(e, trace_materialx_path_spv,
-                           sizeof(trace_materialx_path_spv), 10, types,
+                           sizeof(trace_materialx_path_spv), 11, types,
                            (uint32_t)sizeof(material_path_push), NULL,
                            &e->material_path_pipe)) return NULL;
     return &e->material_path_pipe;
@@ -3273,15 +3273,15 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     VkDescriptorPoolSize ps[2];
     VkDescriptorPoolCreateInfo pci;
     VkDescriptorSetAllocateInfo ai;
-    VkDescriptorBufferInfo bi[9];
-    VkWriteDescriptorSet w[10];
+    VkDescriptorBufferInfo bi[10];
+    VkWriteDescriptorSet w[11];
     VkWriteDescriptorSetAccelerationStructureKHR asw;
     uint32_t i;
     memset(ps, 0, sizeof(ps));
     ps[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     ps[0].descriptorCount = 1;
     ps[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps[1].descriptorCount = 9;
+    ps[1].descriptorCount = 10;
     memset(&pci, 0, sizeof(pci));
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 1; pci.poolSizeCount = 2; pci.pPoolSizes = ps;
@@ -3300,21 +3300,21 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[0].pNext = &asw;
     w[0].dstSet = *out_set; w[0].dstBinding = 0; w[0].descriptorCount = 1;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 0; i < 9; ++i) {
+    for (i = 0; i < 10; ++i) {
         bi[i].buffer = buffers[i].buf; bi[i].offset = 0; bi[i].range = VK_WHOLE_SIZE;
         w[i+1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i+1].dstSet = *out_set; w[i+1].dstBinding = i+1;
         w[i+1].descriptorCount = 1; w[i+1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[i+1].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(e->device, 10, w, 0, NULL);
+    vkUpdateDescriptorSets(e->device, 11, w, 0, NULL);
     return 1;
 }
 
 int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *d, float *out_rgba, lrt_result *err) {
-    vk_buffer b[9]; size_t sizes[9]; const void *data[9];
+    vk_buffer b[10]; size_t sizes[10]; const void *data[10];
     VkDescriptorPool pool = VK_NULL_HANDLE; VkDescriptorSet set;
     material_path_push pc; vk_pipeline *pipe; uint32_t i, pixels; int ok = 0;
     const char *stage = "validate";
@@ -3345,7 +3345,9 @@ int lrt_vk_rtx_scene_render_materialx_path(
     sizes[7]=(size_t)d->nlights*LRT_VK_MATERIAL_PATH_LIGHT_FLOATS*sizeof(float);
     data[7]=d->lights;
     sizes[8]=(size_t)pixels*4u*sizeof(float); data[8]=NULL;
-    stage = "buffers"; for (i=0;i<9;++i) {
+    /* Per-triangle Ptex data; a 4-byte dummy when absent (shader checks length). */
+    sizes[9]=(size_t)d->nptex_tri_floats*sizeof(float); data[9]=d->ptex_tri;
+    stage = "buffers"; for (i=0;i<10;++i) {
         size_t n=sizes[i]?sizes[i]:4u;
         if(!vk_buffer_create(e,n,&b[i])) goto done;
         if(sizes[i]&&data[i]&&!vk_buffer_write(e,&b[i],data[i],sizes[i])) goto done;
@@ -3367,7 +3369,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
 done:
     if (!ok && e->err[0] == '\0') vk_set_err(e, stage);
     if(pool!=VK_NULL_HANDLE&&!e->device_lost)vkDestroyDescriptorPool(e->device,pool,NULL);
-    for(i=0;i<9;++i)vk_buffer_destroy(e,&b[i]);
+    for(i=0;i<10;++i)vk_buffer_destroy(e,&b[i]);
     if(err)*err=ok?LRT_RESULT_OK:LRT_RESULT_OUT_OF_MEMORY;
     return ok?0:-1;
 }

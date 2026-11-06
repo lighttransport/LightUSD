@@ -2553,6 +2553,21 @@ if(LIGHTUSD_BUILD_TESTS)
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
                          LABELS "lusdrender;gpu;colorspace")
 
+    # Vulkan descriptor-path Ptex oracle: a real Island quad mesh rendered with
+    # -vkr, every visible pixel's base colour checked against OpenPtex. Skips (77)
+    # without the Island corpus, OpenPtex sources (LIGHTUSD_PTEX_INCLUDE), g++ or
+    # Vulkan.
+    add_test(
+      NAME tool-lusdrender-vkr-ptex-openptex
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_vkr_ptex.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/vkr-ptex-openptex
+    )
+    set_tests_properties(tool-lusdrender-vkr-ptex-openptex
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                         LABELS "lusdrender;gpu;ptex")
+
     # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
     # edge-on and render black.
     add_test(

@@ -670,6 +670,10 @@ void CollectLightsNext(const lightusd::next::Stage &stage,
 
 lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
 
+// Largest triangle count the Vulkan descriptor MaterialX path takes (default 1M,
+// LUSDR_GPU_MATERIAL_PATH_TRIANGLES). Also bounds speculative Ptex atlas builds.
+size_t GpuMaterialPathLimit();
+
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
