@@ -83,7 +83,10 @@ def test_snapshot_empty_declarations_and_dictionary():
     stage = lightusd.loads('''#usda 1.0
 def MjcKeyframe "State" {
     double mjc:unset
-    dictionary newton:custom = { string name = "value" int[] data = [1, 2] }
+    dictionary newton:custom = {
+        string name = "value"
+        int[] data = [1, 2]
+    }
 }
 ''')
     data = physics.inspect(stage)

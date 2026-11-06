@@ -6,8 +6,16 @@ import lightusd
 from lightusd import physics
 
 VALID = '''#usda 1.0
-( defaultPrim = "Body" upAxis = "Z" metersPerUnit = 1 )
-def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {
+(
+    defaultPrim = "Body"
+    upAxis = "Z"
+    metersPerUnit = 1
+)
+
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
     float physics:mass = 1
     float3 physics:diagonalInertia = (1, 2, 3)
     quatf physics:principalAxes = (1, 0, 0, 0)
@@ -30,7 +38,10 @@ def test_valid_report_and_checked_groups():
 
 def test_invalid_physics_report_is_owned_and_has_native_rules():
     stage = lightusd.loads(VALID.replace('physics:mass = 1', 'physics:mass = -1') + '''
-def PhysicsRevoluteJoint "Joint" { rel physics:body1 = </Missing> }
+def PhysicsRevoluteJoint "Joint"
+{
+    rel physics:body1 = </Missing>
+}
 ''')
     before = stage.export_usda()
     report = physics.validate(stage)
@@ -77,7 +88,12 @@ def test_validation_sample_limit_reports_incomplete():
 
 def test_report_limits_cannot_turn_failure_into_success():
     source = '#usda 1.0\n' + ''.join(
-        f'def Xform "B{i}" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {{ float physics:mass = -1 }}\n'
+        f'def Xform "B{i}" (\n'
+        f'    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]\n'
+        f')\n'
+        f'{{\n'
+        f'    float physics:mass = -1\n'
+        f'}}\n'
         for i in range(2000))
     stage = lightusd.loads(source)
     report = physics.validate(stage, include_core=False, max_issues=3)
@@ -132,7 +148,12 @@ def test_invalid_inertia_still_fails(attribute):
 
 
 def test_joint_quaternion_does_not_use_mass_fallback():
-    stage = lightusd.loads('#usda 1.0\ndef PhysicsRevoluteJoint "Joint" { quatf physics:localRot0 = (0, 0, 0, 0) }')
+    stage = lightusd.loads(
+        '#usda 1.0\n'
+        'def PhysicsRevoluteJoint "Joint"\n'
+        '{\n'
+        '    quatf physics:localRot0 = (0, 0, 0, 0)\n'
+        '}\n')
     assert not physics.validate(stage, include_core=False).valid
 
 
@@ -182,8 +203,14 @@ def test_oversized_solver_array_is_rejected():
 
 
 JOINT_LIMITS = VALID + '''
-def Xform "Base" {}
-def PhysicsJoint "D6" (prepend apiSchemas = ["PhysicsLimitAPI:rotX", "PhysicsLimitAPI:transY"]) {
+def Xform "Base"
+{
+}
+
+def PhysicsJoint "D6" (
+    prepend apiSchemas = ["PhysicsLimitAPI:rotX", "PhysicsLimitAPI:transY"]
+)
+{
     rel physics:body0 = </Base>
     rel physics:body1 = </Body>
     float limit:rotX:physics:low = %s
@@ -191,7 +218,11 @@ def PhysicsJoint "D6" (prepend apiSchemas = ["PhysicsLimitAPI:rotX", "PhysicsLim
     float limit:transY:physics:low = 1
     float limit:transY:physics:high = -1
 }
-def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, 0, 0) }
+
+def PhysicsScene "Scene"
+{
+    vector3f physics:gravityDirection = (0, 0, 0)
+}
 '''
 
 
@@ -256,13 +287,25 @@ def test_schema_variability_mismatch_is_reported():
 
 
 NEWTON_BODY = '''#usda 1.0
-( defaultPrim = "Body" upAxis = "Z" metersPerUnit = 1 )
-def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "NewtonMassAPI"]) {
+(
+    defaultPrim = "Body"
+    upAxis = "Z"
+    metersPerUnit = 1
+)
+
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "NewtonMassAPI"]
+)
+{
     float physics:mass = 1
     float3 physics:diagonalInertia = (%s)
     double[] newton:inertia = [%s]
 }
-def PhysicsRevoluteJoint "J" (prepend apiSchemas = ["NewtonJointAPI"]) {
+
+def PhysicsRevoluteJoint "J" (
+    prepend apiSchemas = ["NewtonJointAPI"]
+)
+{
     float newton:limitStiffness = %s
     float newton:armature = %s
 }
@@ -292,15 +335,31 @@ def test_composed_load_validates_sublayer_targets(tmp_path):
     # Validation sees the composed stage: a joint targeting bodies defined in
     # a sublayer resolves (and only fails when composition is skipped).
     (tmp_path / 'bodies.usda').write_text('''#usda 1.0
-def Xform "World" {
-    def Xform "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
-    def Xform "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
+def Xform "World"
+{
+    def Xform "A" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+    }
+    def Xform "B" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+    }
 }
 ''')
     (tmp_path / 'robot.usda').write_text('''#usda 1.0
-( subLayers = [@./bodies.usda@] upAxis = "Z" metersPerUnit = 1 )
-over "World" {
-    def PhysicsRevoluteJoint "J" {
+(
+    subLayers = [@./bodies.usda@]
+    upAxis = "Z"
+    metersPerUnit = 1
+)
+
+over "World"
+{
+    def PhysicsRevoluteJoint "J"
+    {
         rel physics:body0 = </World/A>
         rel physics:body1 = </World/B>
     }
