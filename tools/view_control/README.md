@@ -246,7 +246,23 @@ PYTHONPATH=/path/to/native/python python3 tools/view_control/dynamics.py \
 
 `--engine mujoco-mjcf --engine mujoco-usd` additionally requires
 `--mujoco-worker` built from `tests/next/mujoco-bounded-dynamics.cc` and the
-MuJoCo USD decoder `--mujoco-plugin`. Each process is bounded by `--timeout`.
+MuJoCo USD decoder `--mujoco-plugin`. `setup_mujoco_usd.sh` builds both
+reproducibly (USD-enabled libmujoco, decoder plugin, worker) and applies the two
+OpenUSD-compatibility fixes (a `namespace pxr = PXR_NS` forced include for
+OpenUSD dists whose `PXR_NS` is not `pxr`, and the missing
+`mjcPhysics/generatedSchema.usda`):
+
+```sh
+MUJOCO_SRC=/path/to/mujoco OPENUSD_DIST=/path/to/OpenUSD/dist \
+  tools/view_control/setup_mujoco_usd.sh          # prints the two exports below
+export LIGHTUSD_MUJOCO_WORKER=... LIGHTUSD_MUJOCO_USD_PLUGIN=...
+python3 tools/view_control/check_mujoco_usd_matrix.py   # or: ctest -R tool-mujoco-usd-matrix
+```
+
+`check_mujoco_usd_matrix.py` asserts the documented verdicts on both the MJCF
+control and the converted USD (default-`solref` contact FAILS identically on
+both; the stiff-contact control passes) and exits 77 (ctest SKIP) when the
+consumer is not built. Each process is bounded by `--timeout`.
 The output retains source/conversion hashes, exact commands, trajectories and
 per-contract failures. A matching failed trajectory remains a failure. Contact
 must reach impact and settle; incomplete dynamics cannot certify whole robots.

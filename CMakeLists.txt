@@ -2436,6 +2436,15 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-view-control-headless PROPERTIES
       TIMEOUT 30 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
       LABELS "tools;headless;mcp")
+    # MuJoCo consumer matrix (source MJCF vs converted USD). Skips (77) unless
+    # LIGHTUSD_MUJOCO_WORKER / LIGHTUSD_MUJOCO_USD_PLUGIN point at a build made by
+    # tools/view_control/setup_mujoco_usd.sh.
+    add_test(NAME tool-mujoco-usd-matrix
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/view_control/check_mujoco_usd_matrix.py)
+    set_tests_properties(tool-mujoco-usd-matrix PROPERTIES
+      TIMEOUT 600 SKIP_RETURN_CODE 77 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;physics;mujoco")
     set(LUSDR_SPARSE_QJS_ARG)
     if(LIGHTUSD_WITH_QJS)
       set(LUSDR_SPARSE_QJS_ARG --with-qjs)
