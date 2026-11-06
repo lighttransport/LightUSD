@@ -175,18 +175,11 @@ static bool ConvertPayloadLayer(
   std::set<std::string> static_links;                          // by source name
   std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
   std::map<std::string, std::set<std::string>> link_children;  // by USD name
-  // Fixed-base articulation APIs belong on the world-anchoring joint (or
-  // its ancestor), not on a body in the flat sibling Links scope.
-  std::set<std::string> static_sources, anchored_children;
-  for (const Json& link : links) {
-    bool fixed = false;
-    if (ReadBool(link, "static", &fixed) && fixed)
-      static_sources.insert(JsonString(link, "name"));
-  }
-  for (const Json& joint : joints)
-    if (static_sources.count(JsonString(joint, "parent")))
-      anchored_children.insert(JsonString(joint, "child"));
-  std::map<std::string, const Json*> anchored_articulation_links;
+  // The articulation root API belongs on the root BODY, including a fixed
+  // base. MuJoCo's USD decoder treats any prim carrying the API as a body, so
+  // authoring it on the world-anchoring joint created a zero-mass body and
+  // failed compilation. The reference MuJoCo converter also applies it to the
+  // top-level body. `author_articulation` is shared by both base kinds.
   const auto author_articulation = [&](tn::PrimSpec* target, const Json& link) {
     AddAPIs(target, {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
     if (self_collision_authored)
@@ -305,14 +298,8 @@ static bool ConvertPayloadLayer(
         Set(prim, "mjc:gravcomp", tn::Value(gravcomp), "double");
       bool articulation_root = false;
       ReadBool(link, "articulationRoot", &articulation_root);
-      if (!is_static && (!child_links.count(source) || articulation_root)) {
-        bool floating_base = false;
-        ReadBool(link, "floating", &floating_base);
-        if (!floating_base && anchored_children.count(source))
-          anchored_articulation_links[source] = &link;
-        else
-          author_articulation(prim, link);
-      }
+      if (!is_static && (!child_links.count(source) || articulation_root))
+        author_articulation(prim, link);
       if (const Json* inertial = JsonObject(link, "inertial")) {
         float mass = 0.0f;
         bool zero_mass = false;
@@ -530,9 +517,6 @@ static bool ConvertPayloadLayer(
       if (err) *err = "Failed to add joint `" + name + "`";
       return false;
     }
-    const auto articulation = anchored_articulation_links.find(child);
-    if (articulation != anchored_articulation_links.end() && static_links.count(parent))
-      author_articulation(prim, *articulation->second);
     SetSourceDisplayName(prim, JsonString(joint, "name"));
     {
       std::set<std::string> children;

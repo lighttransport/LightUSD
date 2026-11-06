@@ -4,17 +4,20 @@ import lightusd
 
 
 @pytest.mark.parametrize('joint',['<joint name="root" type="hinge"/>','<joint name="root" type="slide"/>',''])
-def test_world_anchored_articulation_root_is_on_joint(joint):
+def test_world_anchored_articulation_root_is_on_base_body(joint):
+    # MuJoCo's USD decoder treats any ArticulationRootAPI prim as a body, so a
+    # fixed-base articulation must put the API on the base body rather than on
+    # the world-anchoring joint. The reference MuJoCo converter does the same.
     xml=f'<mujoco><worldbody><body name="body">{joint}<geom size=".1" mass="1"/></body></worldbody></mujoco>'
     stage=lightusd.load_bytes(xml.encode(),format='mjcf',profile='newton')
     body=stage.prim_at('/World/Links/body')
-    assert 'PhysicsArticulationRootAPI' not in (body.metadata('apiSchemas') or ())
+    apis=body.metadata('apiSchemas') or ()
+    assert 'PhysicsArticulationRootAPI' in apis
+    assert 'NewtonArticulationRootAPI' in apis
     roots=[p for p in stage if 'PhysicsArticulationRootAPI' in (p.metadata('apiSchemas') or ())]
-    assert len(roots)==1
-    assert roots[0].type_name.startswith('Physics') and roots[0].type_name.endswith('Joint')
-    assert roots[0].relationship('physics:body1').targets==('/World/Links/body',)
-    if 'physics:body0' in roots[0].relationships:
-        assert not roots[0].relationship('physics:body0').targets
+    assert [p.path for p in roots]==[body.path]
+    assert not [p for p in stage if p.type_name.endswith('Joint')
+                and 'PhysicsArticulationRootAPI' in (p.metadata('apiSchemas') or ())]
 
 
 def test_floating_articulation_root_stays_on_body():
