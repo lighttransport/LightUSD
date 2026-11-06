@@ -5,7 +5,7 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
-from validation import sample_times,load_config
+from validation import sample_times,load_config,apply_capture_options
 try:
     from aov import compare_data,read_pfm
 except ModuleNotFoundError as error:
@@ -106,6 +106,21 @@ class ValidationTests(unittest.TestCase):
             path.write_text(json.dumps(dict(base,reference_camera_light=True,
                 beauty_lighting={'key':1.0})))
             with self.assertRaises(ValueError):load_config(path)
+
+    def test_capture_options_survive_a_scene_state(self):
+        # Job-level capture options must survive the per-scene state import;
+        # otherwise reference_camera_light/exposure silently stop reaching the
+        # candidate for jobs whose scenes carry a saved camera.
+        state={'camera':{},'time':0}
+        apply_capture_options(state, {'reference_camera_light':True,
+                                      'exposure':2.0,
+                                      'display_transform':'srgb'})
+        self.assertIs(state['reference_camera_light'],True)
+        self.assertEqual(state['exposure'],2.0)
+        self.assertEqual(state['display_transform'],'srgb')
+        untouched={}
+        apply_capture_options(untouched, {})
+        self.assertEqual(untouched,{})
 
     def test_config_rejects_unknown_and_unbounded_options(self):
         with tempfile.TemporaryDirectory() as tmp:

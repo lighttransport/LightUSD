@@ -182,16 +182,10 @@ def _run(args):
         session=HeadlessSession(ns)
         if config.get('reference_allow_nonfatal'):
             session.reference_allow_nonfatal=True
-        if config.get('reference_camera_light'):
-            # usdrecord only evaluates its camera light; both tools then share
-            # that one light model for the beauty AOV.
-            session.state['reference_camera_light']=True
-        if config.get('exposure') is not None:
-            session.state['exposure'] = config['exposure']
-        if config.get('display_transform') == 'srgb':
-            # Reproduce usdrecord's colorCorrectionMode=sRGB (plain sRGB encode)
-            # instead of the filmic beauty curve, for A/B measurement.
-            session.state['display_transform']='srgb'
+        # usdrecord only evaluates its camera light; both tools then share that
+        # one light model for the beauty AOV. Exposure/display transform are
+        # A/B capture options as well.
+        apply_capture_options(session.state, config)
         def worker(request,name):
             (directory/(name+'-request.json')).write_text(json.dumps(request)+'\n')
             output=directory/(name+'.json')
@@ -221,6 +215,7 @@ def _run(args):
             if scene.get('state'):
                 from headless import import_state
                 session.state=import_state(scene['state'],source)
+                apply_capture_options(session.state, config)
             frozen_camera=None
             for fi,time in enumerate(times):
                 frame={'time':time,'aovs':{}};entry['frames'].append(frame)
@@ -358,6 +353,21 @@ def _run(args):
         finally:session.close()
     result['passed']=all(s.get('frames') and all(f.get('verdict')=='PASS' for f in s['frames']) and 'error' not in s for s in result['scenes'])
     save();return {'passed':result['passed'],'manifest':str(out/'validation.json'),'report':str(out/'index.html')}
+
+
+def apply_capture_options(state, config):
+    """Copy job-level capture options into a render state.
+
+    These options describe the capture contract, not the scene's saved view
+    state, so they must also be re-applied after a per-scene state import.
+    """
+    if config.get('reference_camera_light'):
+        state['reference_camera_light']=True
+    if config.get('exposure') is not None:
+        state['exposure']=config['exposure']
+    if config.get('display_transform')=='srgb':
+        state['display_transform']='srgb'
+    return state
 
 
 def run(args):
