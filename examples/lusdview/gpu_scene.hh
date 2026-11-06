@@ -654,6 +654,11 @@ struct MaterialXGraphRuntimeCPU {
   }();
   bool valid{false};
   bool hasImages{false};
+  // UV set (0/1) that feeds the normal route's tangent basis. The beauty path
+  // packs this into the graph header's reserved float; the shader uses the
+  // matching per-vertex tangent when perturbing the shading normal. 0 keeps the
+  // historical primary-set tangent for graphs without normal maps.
+  int normal_uv_set{0};
 };
 
 // Baked constant fallback for raster/RT backends. Texture-connected inputs keep

@@ -112,7 +112,13 @@ void RouteSemanticTextures(lusdview::DrawMaterialCPU *mat) {
   route(2, mat->roughnessSample);
   route(3, mat->opacitySample);
   route(4, mat->emissiveSample);
+  const bool had_normal_route = graph.output[5] >= 0;
   route(5, mat->normalSample);
+  // The normal route's tangent basis must follow the UV set that feeds its
+  // normal map. Only the semantic fallback knows that here; an authored graph
+  // keeps its primary-set tangent.
+  if (!had_normal_route && mat->normalSample.tex >= 0)
+    graph.normal_uv_set = mat->normalSample.uvSet;
   route(10, mat->specularColorSample);
   route(13, mat->coatWeightSample);
   route(15, mat->coatRoughnessSample);

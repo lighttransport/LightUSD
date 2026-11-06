@@ -59,6 +59,9 @@ write_bmp(root / 'swatch.bmp', [[(255, 0, 0), (0, 255, 0)],
                                 [(0, 0, 255), (255, 255, 255)]])
 # Neutral base-colour texture for the mixed-lane scenes.
 write_bmp(root / 'white.bmp', [[(255, 255, 255)]])
+# Tangent-space normal maps: a strong +u tilt and a flat normal.
+write_bmp(root / 'tilt.bmp', [[(243, 128, 199)]])
+write_bmp(root / 'flat.bmp', [[(128, 128, 255)]])
 
 IDENTITY = '[(0, 0), (1, 0), (1, 1), (0, 1)]'
 TRANSPOSED = '[(0, 0), (0, 1), (1, 1), (1, 0)]'
@@ -250,6 +253,119 @@ mixed_scene('mixed', 'st', 'st1', IDENTITY, TRANSPOSED)
 mixed_scene('mixed_pre', 'st', 'st', TRANSPOSED, TRANSPOSED)
 # Non-vacuous control: emissive reads the identity `st1`.
 mixed_scene('mixed_ctl', 'st', 'st1', IDENTITY, IDENTITY)
+
+# --- Normal maps on a second UV set: the tangent basis must follow the set the
+# normal texture samples. A constant tilted tangent-space normal is rotated by
+# the UV mapping, so the same lookup must match whether it is written as `st1`
+# or as a pre-transformed `st`.
+NORMAL_TEMPLATE = """#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Xform "World"
+{
+    def DistantLight "Key"
+    {
+        float inputs:intensity = 6.0
+        float3 xformOp:rotateXYZ = (0, -90, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def Mesh "Quad" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        texCoord2f[] primvars:st = ST ( interpolation = "faceVarying" )
+        texCoord2f[] primvars:st1 = ST1 ( interpolation = "faceVarying" )
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/_materials/M>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "M"
+        {
+            token outputs:surface.connect = </World/_materials/M/Surface.outputs:surface>
+
+            def Shader "baseReader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "nrmReader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "NRMVAR"
+                float2 outputs:result
+            }
+
+            def Shader "Base"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./white.bmp@ (
+                    colorSpace = "raw"
+                )
+                token inputs:sourceColorSpace = "raw"
+                float2 inputs:st.connect = </World/_materials/M/baseReader.outputs:result>
+                float4 inputs:scale = (1, 1, 1, 1)
+                float4 inputs:bias = (0, 0, 0, 0)
+                float3 outputs:rgb
+            }
+
+            def Shader "Nrm"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./NRMFILE@ (
+                    colorSpace = "raw"
+                )
+                token inputs:sourceColorSpace = "raw"
+                float2 inputs:st.connect = </World/_materials/M/nrmReader.outputs:result>
+                float4 inputs:scale = (2, 2, 2, 1)
+                float4 inputs:bias = (-1, -1, -1, 0)
+                float3 outputs:rgb
+            }
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/_materials/M/Base.outputs:rgb>
+                normal3f inputs:normal.connect = </World/_materials/M/Nrm.outputs:rgb>
+                float inputs:roughness = 0.6
+                float inputs:metallic = 0.0
+                token outputs:surface
+            }
+        }
+    }
+}
+"""
+
+
+def normal_scene(name, nrm_var, nrm_file, st, st1):
+    text = (NORMAL_TEMPLATE.replace('NRMVAR', nrm_var)
+                             .replace('NRMFILE', nrm_file)
+                             .replace('ST1', st1)
+                             .replace('ST ', st))
+    (root / f'{name}.usda').write_text(text)
+
+
+# Normal map reads `st1` (transposed); base colour keeps `st` (identity).
+normal_scene('normal_st1', 'st1', 'tilt.bmp', IDENTITY, TRANSPOSED)
+# Same normal lookup written into `st` with `st` transposed.
+normal_scene('normal_pre', 'st', 'tilt.bmp', TRANSPOSED, TRANSPOSED)
+# Non-vacuous control: flat normal map, so the tilt must change the render.
+normal_scene('normal_flat', 'st1', 'flat.bmp', IDENTITY, IDENTITY)
 PY
 
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
@@ -280,7 +396,7 @@ render() {
   [ -s "$image" ] || { echo "FAIL: missing screenshot for $name"; exit 1; }
 }
 
-for name in st1 pretransformed control mixed mixed_pre mixed_ctl; do
+for name in st1 pretransformed control mixed mixed_pre mixed_ctl normal_st1 normal_pre normal_flat; do
   render "$name"
 done
 
@@ -309,7 +425,7 @@ render_legacy() {
   }
 }
 
-for name in st1 pretransformed control mixed mixed_pre mixed_ctl; do
+for name in st1 pretransformed control mixed mixed_pre mixed_ctl normal_st1 normal_pre normal_flat; do
   render_legacy "$name"
 done
 
@@ -329,7 +445,7 @@ render_vk() {
   fi
   [ -s "$image" ] && grep -q 'backend: LightRT VK' "$log"
 }
-for name in st1 pretransformed control mixed mixed_pre mixed_ctl; do
+for name in st1 pretransformed control mixed mixed_pre mixed_ctl normal_st1 normal_pre normal_flat; do
   if ! render_vk "$name"; then
     echo "SKIP: -vkr ray-query backend unavailable"
     VKR=0
@@ -479,8 +595,24 @@ def check_mixed(label, diff_fn):
                          'identity control identically; the check is vacuous')
 
 
+def check_normal(label, diff_fn):
+    same = diff_fn('normal_st1', 'normal_pre')
+    print(f'{label}: normal map on st1 vs the same lookup through st: '
+          f'max channel diff {same}')
+    if same > 1:
+        raise SystemExit(f'FAIL: {label} derived the normal-map tangent basis '
+                         'from the wrong UV set')
+    tilt = diff_fn('normal_st1', 'normal_flat')
+    print(f'{label}: tilted vs flat normal map: {tilt}')
+    if tilt < 5:
+        raise SystemExit(f'FAIL: {label} ignored the normal map; the tilt '
+                         'control is vacuous')
+
+
 check_mixed('lusdview', max_diff)
 check_mixed('lusdrender', legacy_diff)
+check_normal('lusdview', max_diff)
+check_normal('lusdrender', legacy_diff)
 if vkr_enabled:
     same = vk_diff('st1', 'pretransformed')
     print(f'lusdrender -vkr: st1 vs the same lookup through st: '
@@ -494,6 +626,7 @@ if vkr_enabled:
         raise SystemExit('FAIL: vkr rendered st1 and the identity control '
                          'identically; the check is vacuous')
     check_mixed('lusdrender -vkr', vk_diff)
+    check_normal('lusdrender -vkr', vk_diff)
 else:
     print('SKIP: -vkr ray-query backend unavailable')
 

@@ -220,7 +220,7 @@ void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}
 }
 
-struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec2 uv; vec2 uvb; uint mat; };
+struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec3 tangentb; vec2 uv; vec2 uvb; uint mat; };
 bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   rayQueryEXT q; rayQueryInitializeEXT(q,scene,gl_RayFlagsOpaqueEXT,0xff,o,tmin,d,tmax);
   while(rayQueryProceedEXT(q)){}
@@ -244,6 +244,9 @@ bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   vec2 uw0=vec2(vertices[i0*10u+8u],vertices[i0*10u+9u]),uw1=vec2(vertices[i1*10u+8u],vertices[i1*10u+9u]),uw2=vec2(vertices[i2*10u+8u],vertices[i2*10u+9u]);
   h.uvb=uw0*w+uw1*h.bary.x+uw2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
   h.tangent=abs(det)>1e-8?normalize(((p1-p0)*duv2.y-(p2-p0)*duv1.y)/det):normalize(abs(h.n.z)<0.9?cross(h.n,vec3(0,0,1)):cross(h.n,vec3(0,1,0)));
+  // Tangent basis of the second UV set, for a normal map that samples it.
+  vec2 dwuv1=uw1-uw0,dwuv2=uw2-uw0;float detb=dwuv1.x*dwuv2.y-dwuv1.y*dwuv2.x;
+  h.tangentb=abs(detb)>1e-8?normalize(((p1-p0)*dwuv2.y-(p2-p0)*dwuv1.y)/detb):h.tangent;
   h.mat=min(triMaterials[h.prim],max(pc.path.z,1u)-1u); return true;
 }
 
@@ -410,7 +413,7 @@ void main(){
         if(graphs[gb+3u]>=0.0)rough=clamp(gr[2].x,0.02,1.0);
         if(graphs[gb+4u]>=0.0)opacity=clamp(gr[3].x,0.0,1.0);
         if(graphs[gb+5u]>=0.0)emission=max(gr[4].rgb,vec3(0))*max(materials[mb+35u],0.0);
-        if(graphs[gb+6u]>=0.0)h.n=applyGraphNormal(h.n,h.tangent,gr[5].xyz);
+        if(graphs[gb+6u]>=0.0)h.n=applyGraphNormal(h.n,graphs[gb+50u]>=0.5?h.tangentb:h.tangent,gr[5].xyz);
         if(graphs[gb+7u]>=0.0)subsurface=clamp(gr[6].x,0.0,1.0);
         if(graphs[gb+8u]>=0.0)subsurfaceColor=max(gr[7].rgb,vec3(0));
         if(graphs[gb+9u]>=0.0)subsurfaceRadius=max(gr[8].rgb,vec3(1e-5));

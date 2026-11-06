@@ -78,6 +78,9 @@ require(shader, r"op\s*==\s*21\)\s*value\[i\]\s*=\s*vec4\(graphs\[p\+14u\]\s*>=\
 require(shader, r"vertices\[i0\*10u", "Vulkan 10-float vertex stride")
 require(shader, r"vec2 uv; vec2 uvb;", "Vulkan Hit carries the second UV set")
 require(shader, r"evalGraphAll\(h\.mat,h\.uv,h\.uvb", "Vulkan graph receives both UV sets")
+require(shader, r"vec3 tangent; vec3 tangentb;", "Vulkan Hit carries the second tangent")
+require(shader, r"graphs\[gb\+50u\]\s*>=\s*0\.5\s*\?\s*h\.tangentb\s*:\s*h\.tangent",
+        "Vulkan normal route selects the UV-set tangent")
 if re.search(r"base\s*\+\s*46\s*\+\s*i\s*\*\s*21", kernel):
     raise SystemExit("GPU material ABI mismatch: stale CUDA/HIP graph header")
 if ("(int)(graph[base + 1 + route] + 0.5f)" in kernel or
