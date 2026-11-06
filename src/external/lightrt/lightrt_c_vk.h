@@ -240,6 +240,9 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
 typedef struct lrt_vk_material_path_desc {
     const float *vertices;
     uint32_t nverts;
+    /* Floats per vertex in `vertices`: pos3, nrm3, uv2 and, when the stride is
+     * 10, a second uv set (uv2). 0 keeps the historical 8-float layout. */
+    uint32_t vertex_stride_floats;
     const uint32_t *indices;
     const uint32_t *triangle_materials;
     uint32_t ntris;

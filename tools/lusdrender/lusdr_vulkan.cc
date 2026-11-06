@@ -187,7 +187,8 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   const light3d::Mat4 inv_vp = (proj * view).inverse();
   lrt_vk_material_path_desc desc{};
   desc.vertices = geometry.flat_attrs.data();
-  desc.nverts = static_cast<uint32_t>(geometry.flat_attrs.size() / 8u);
+  desc.vertex_stride_floats = 10u;
+  desc.nverts = static_cast<uint32_t>(geometry.flat_attrs.size() / 10u);
   desc.indices = geometry.flat_idx.data();
   desc.triangle_materials = geometry.material_ids.data();
   desc.ntris = geometry.ntris; desc.materials = materials.data();

@@ -3330,7 +3330,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
         if (err) *err = LRT_RESULT_NOT_BUILT; return -1;
     }
     pixels = d->width * d->height; memset(b, 0, sizeof(b));
-    sizes[0]=(size_t)d->nverts*8u*sizeof(float); data[0]=d->vertices;
+    sizes[0]=(size_t)d->nverts*(d->vertex_stride_floats?d->vertex_stride_floats:8u)*sizeof(float); data[0]=d->vertices;
     sizes[1]=(size_t)d->ntris*3u*sizeof(uint32_t); data[1]=d->indices;
     sizes[2]=(size_t)d->ntris*sizeof(uint32_t); data[2]=d->triangle_materials;
     sizes[3]=(size_t)d->nmaterials*d->material_stride_floats*sizeof(float); data[3]=d->materials;

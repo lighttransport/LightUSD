@@ -817,6 +817,10 @@ struct RTPreviewStats {
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> uvs;
+    // Secondary texture-coordinate set, parallel to `uvs` when present. The
+    // vkr material path uploads both sets (pos/nrm/uv/uv1 = 10 floats/vertex);
+    // a graph image node selects its set through the Texcoord node flag.
+    std::vector<float> uvs1;
     std::vector<uint32_t> indices;
     uint32_t source_material_id{UINT32_MAX}; // survives bounded GPU chunking
   };
@@ -1056,6 +1060,12 @@ struct MeshJobNext {
   // preference list. Used to pick which mesh primvar feeds `st` so a texture
   // bound to a secondary set (e.g. `uvSet1`) is not silently sampled with `st`.
   std::string uv_primvar;
+  // A second UV primvar referenced by another textured lane (first name that
+  // differs from `uv_primvar`). Read into the geometry's secondary stream; the
+  // per-lane `uv_set_bits` below say which lanes sample it.
+  std::string uv_primvar1;
+  // Two bits per RtTexUvLane: 0 = primary stream, 1 = secondary stream.
+  uint32_t uv_set_bits{0};
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
@@ -1095,8 +1105,37 @@ struct TextureCache {
   size_t *texture_mip_fallbacks{nullptr};
 };
 
+// Semantic texture lanes whose UV set the descriptor material path can select.
+// Two bits per lane; 0 = the job's primary UV stream, 1 = the secondary stream.
+// Matches the DrawTexSampleCPU slots that MakeDrawScene stamps and the
+// MaterialX Texcoord node's second-set flag.
+enum RtTexUvLane : uint32_t {
+  kRtTexUvBase = 0,
+  kRtTexUvSpecular,
+  kRtTexUvNormal,
+  kRtTexUvCoatNormal,
+  kRtTexUvDisplacement,
+  kRtTexUvRoughness,
+  kRtTexUvMetallic,
+  kRtTexUvEmissive,
+  kRtTexUvOcclusion,
+  kRtTexUvOpacity,
+  kRtTexUvCoatWeight,
+  kRtTexUvCoatRoughness,
+  kRtTexUvLaneCount
+};
+inline uint32_t RtTexUvSet(uint32_t bits, uint32_t lane) {
+  return (bits >> (lane * 2u)) & 3u;
+}
+inline void SetRtTexUvSet(uint32_t *bits, uint32_t lane, uint32_t set) {
+  const uint32_t shift = lane * 2u;
+  *bits = (*bits & ~(3u << shift)) | ((set & 3u) << shift);
+}
+
 struct ResolvedMat {
   std::string uv_primvar;
+  std::string uv_primvar1;
+  uint32_t uv_set_bits{0};
   Vec3 base_color{0.55f, 0.55f, 0.55f};
   int32_t tex_id{-1};
   float roughness{0.55f};

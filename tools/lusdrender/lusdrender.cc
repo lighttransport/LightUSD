@@ -1815,7 +1815,7 @@ int main(int argc, char **argv) {
         lightusd::tydra::next::ValueArrayRead<int32_t> index_values, count_values;
         lightusd::tydra::next::ReadIntArray(prim, "faceVertexIndices", mesh_eval, &index_values);
         lightusd::tydra::next::ReadIntArray(prim, "faceVertexCounts", mesh_eval, &count_values);
-        MeshFloatAttribute uvs, normals;
+        MeshFloatAttribute uvs, uvs1, normals;
         bool have_uvs = false;
         if (!job.uv_primvar.empty()) {
           have_uvs = ReadMeshFloatAttribute(prim, "primvars:" + job.uv_primvar,
@@ -1826,6 +1826,15 @@ int main(int argc, char **argv) {
             if (ReadMeshFloatAttribute(prim, "primvars:" + name, mesh_eval,
                 2, nv, index_values.size(), &uvs)) { have_uvs = true; break; }
           }
+        }
+        // Secondary UV stream: the second primvar a textured lane references.
+        // A graph image node flagged with UV set 1 samples it; every other lane
+        // keeps sampling the primary stream.
+        bool have_uvs1 = false;
+        if (!job.uv_primvar1.empty()) {
+          have_uvs1 = ReadMeshFloatAttribute(prim,
+              "primvars:" + job.uv_primvar1, mesh_eval, 2, nv,
+              index_values.size(), &uvs1);
         }
         bool have_normals = lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
             (ReadMeshFloatAttribute(prim, "primvars:normals", mesh_eval,
@@ -1850,23 +1859,28 @@ int main(int argc, char **argv) {
                  attribute.interpolation == "uniform";
         };
         const bool split = (have_uvs && corner_attribute(uvs)) ||
+                           (have_uvs1 && corner_attribute(uvs1)) ||
                            (have_normals && corner_attribute(normals));
         const std::vector<float> original_positions = split
             ? std::move(geo.positions) : std::vector<float>();
         geo.normals.assign(split ? 0 : size_t(nv) * 3, 0.0f);
         geo.uvs.assign(split ? 0 : size_t(nv) * 2, 0.0f);
+        geo.uvs1.assign(have_uvs1 ? (split ? 0 : size_t(nv) * 2) : 0u,
+                        0.0f);
         matrix4d inverse_world;
         const bool invertible = lightusd::inverse(job.world, inverse_world, 1.0e-12);
-        std::map<std::array<size_t, 3>, uint32_t> corners;
+        std::map<std::array<size_t, 4>, uint32_t> corners;
         auto emit = [&](size_t corner, size_t face) {
           const int32_t point = index_values[corner];
           if (point < 0 || uint32_t(point) >= nv) return false;
-          size_t uv_index = SIZE_MAX, normal_index = SIZE_MAX;
+          size_t uv_index = SIZE_MAX, normal_index = SIZE_MAX, uv1_index = SIZE_MAX;
           if (have_uvs && !uvs.TupleIndex(size_t(point), corner, face, &uv_index)) return false;
+          if (have_uvs1 && !uvs1.TupleIndex(size_t(point), corner, face, &uv1_index)) return false;
           if (have_normals && !normals.TupleIndex(size_t(point), corner, face, &normal_index)) return false;
           uint32_t vertex = uint32_t(point);
           if (split) {
-            const std::array<size_t, 3> key{size_t(point), uv_index, normal_index};
+            const std::array<size_t, 4> key{size_t(point), uv_index,
+                                            normal_index, uv1_index};
             const auto found = corners.find(key);
             if (found != corners.end()) { geo.indices.push_back(found->second); return true; }
             if (geo.positions.size() / 3 >= UINT32_MAX) return false;
@@ -1875,9 +1889,12 @@ int main(int argc, char **argv) {
             for (size_t k = 0; k < 3; ++k) geo.positions.push_back(original_positions[size_t(point) * 3 + k]);
             geo.normals.resize(geo.positions.size(), 0.0f);
             geo.uvs.resize(size_t(vertex + 1) * 2, 0.0f);
+            if (have_uvs1) geo.uvs1.resize(size_t(vertex + 1) * 2, 0.0f);
           }
           if (have_uvs) for (size_t k = 0; k < 2; ++k)
             geo.uvs[size_t(vertex) * 2 + k] = uvs.values[uv_index * 2 + k];
+          if (have_uvs1) for (size_t k = 0; k < 2; ++k)
+            geo.uvs1[size_t(vertex) * 2 + k] = uvs1.values[uv1_index * 2 + k];
           if (have_normals && invertible) {
             Vec3 n{normals.values[normal_index * 3], normals.values[normal_index * 3 + 1], normals.values[normal_index * 3 + 2]};
             if (!skin_normals.empty()) {
@@ -2063,6 +2080,9 @@ int main(int argc, char **argv) {
         // distinguishes them for non-PreviewSurface materials as well.
         resolved.openpbr.opacityTransparent = !job.opacity_presence;
         resolved.materialx_graph_json = job.materialx_graph_json;
+        resolved.uv_primvar = job.uv_primvar;
+        resolved.uv_primvar1 = job.uv_primvar1;
+        resolved.uv_set_bits = job.uv_set_bits;
         for (const std::string &api : job.prim.GetMeta().apiSchemas()) {
           if (api != "MeshLightAPI") continue;
           float intensity = 1.0f, exposure = 0.0f;

@@ -313,13 +313,38 @@ for name in st1 pretransformed control mixed mixed_pre mixed_ctl; do
   render_legacy "$name"
 done
 
-python3 - "$OUT" <<'PY'
+# The same scenes through the Vulkan ray-query material path (-vkr), which now
+# carries a second UV stream in the vertex ABI and selects it through the graph
+# Texcoord node's second-set flag. Requires a device with VK_KHR_ray_query.
+VKR=1
+render_vk() {
+  local name="$1" image="$OUT/vk_$1.png" log="$OUT/vk_$1.log"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-180s}" \
+      "$RENDER" "$OUT/$name.usda" "$image" -vkr -w 96 -height 96 \
+      -bg 0,0,0 -largeSceneProfile off -smooth >"$log" 2>&1
+  else
+    "$RENDER" "$OUT/$name.usda" "$image" -vkr -w 96 -height 96 \
+      -bg 0,0,0 -largeSceneProfile off -smooth >"$log" 2>&1
+  fi
+  [ -s "$image" ] && grep -q 'backend: LightRT VK' "$log"
+}
+for name in st1 pretransformed control mixed mixed_pre mixed_ctl; do
+  if ! render_vk "$name"; then
+    echo "SKIP: -vkr ray-query backend unavailable"
+    VKR=0
+    break
+  fi
+done
+
+python3 - "$OUT" "$VKR" <<'PY'
 import pathlib
 import struct
 import sys
 import zlib
 
 out = pathlib.Path(sys.argv[1])
+vkr_enabled = len(sys.argv) > 2 and sys.argv[2] == '1'
 
 
 def pixels(name):
@@ -420,6 +445,14 @@ def legacy_diff(a, b):
     return max(abs(x - y) for x, y in zip(legacy_pixels(a), legacy_pixels(b)))
 
 
+def vk_pixels(name):
+    return png_rgb(out / f'vk_{name}.png')
+
+
+def vk_diff(a, b):
+    return max(abs(x - y) for x, y in zip(vk_pixels(a), vk_pixels(b)))
+
+
 same = legacy_diff('st1', 'pretransformed')
 print(f'lusdrender: st1 vs the same lookup through st: max channel diff {same}')
 if same > 1:
@@ -448,6 +481,22 @@ def check_mixed(label, diff_fn):
 
 check_mixed('lusdview', max_diff)
 check_mixed('lusdrender', legacy_diff)
+if vkr_enabled:
+    same = vk_diff('st1', 'pretransformed')
+    print(f'lusdrender -vkr: st1 vs the same lookup through st: '
+          f'max channel diff {same}')
+    if same > 1:
+        raise SystemExit('FAIL: the vkr material path did not carry the second '
+                         'UV set into the sampled texture')
+    control = vk_diff('st1', 'control')
+    print(f'lusdrender -vkr: st1 vs identity-st control: {control}')
+    if control < 5:
+        raise SystemExit('FAIL: vkr rendered st1 and the identity control '
+                         'identically; the check is vacuous')
+    check_mixed('lusdrender -vkr', vk_diff)
+else:
+    print('SKIP: -vkr ray-query backend unavailable')
+
 print('PASS: a texture can select the second UV set and matches the equivalent '
       'pre-transformed lookup, including one material mixing two UV sets')
 PY

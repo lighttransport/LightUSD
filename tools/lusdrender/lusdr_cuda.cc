@@ -311,12 +311,17 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       mat.hasLightRtOpenPBR = material_src.has_openpbr;
       mat.lightRtOpenPBR = material_src.openpbr;
       mat.materialXNodeGraphJson = material_src.materialx_graph_json;
-      const auto set_sample = [&](int texture, int channel,
+      const auto set_sample = [&](uint32_t lane, int texture, int channel,
                                   const ScalarTex *scalar,
                                   lusdview::DrawTexSampleCPU *sample,
                                   bool color_slot = false) {
         sample->tex = texture;
         sample->channel = channel;
+        // Which geometry UV stream this lane samples, recorded per material by
+        // ResolveMeshMaterialTydraNext. RouteSemanticTextures turns it into the
+        // Texcoord node's second-set flag consumed by the vkr shader.
+        sample->uvSet =
+            static_cast<int>(RtTexUvSet(material_src.uv_set_bits, lane));
         sample->uv.m00 = material_src.uv_xform.rc * material_src.uv_xform.sx;
         sample->uv.m01 = -material_src.uv_xform.rs * material_src.uv_xform.sy;
         sample->uv.m10 = material_src.uv_xform.rs * material_src.uv_xform.sx;
@@ -333,32 +338,35 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
           sample->bias[0] = scalar->bias;
         }
       };
-      set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample, true);
-      set_sample(material_src.specular_tex_id, -1, nullptr, &mat.specularColorSample, true);
-      set_sample(material_src.normal_tex_id, -1, nullptr, &mat.normalSample);
-      set_sample(material_src.coat_normal_tex_id, -1, nullptr,
-                 &mat.coatNormalSample);
-      set_sample(material_src.displacement_tex.id,
+      set_sample(kRtTexUvBase, material_src.tex_id, -1, nullptr,
+                 &mat.baseColorSample, true);
+      set_sample(kRtTexUvSpecular, material_src.specular_tex_id, -1, nullptr,
+                 &mat.specularColorSample, true);
+      set_sample(kRtTexUvNormal, material_src.normal_tex_id, -1, nullptr,
+                 &mat.normalSample);
+      set_sample(kRtTexUvCoatNormal, material_src.coat_normal_tex_id, -1,
+                 nullptr, &mat.coatNormalSample);
+      set_sample(kRtTexUvDisplacement, material_src.displacement_tex.id,
                  material_src.displacement_tex.ch,
                  &material_src.displacement_tex, &mat.displacementSample);
-      set_sample(material_src.rough_tex.id, material_src.rough_tex.ch,
-                 &material_src.rough_tex,
+      set_sample(kRtTexUvRoughness, material_src.rough_tex.id,
+                 material_src.rough_tex.ch, &material_src.rough_tex,
                  &mat.roughnessSample);
-      set_sample(material_src.metal_tex.id, material_src.metal_tex.ch,
-                 &material_src.metal_tex,
+      set_sample(kRtTexUvMetallic, material_src.metal_tex.id,
+                 material_src.metal_tex.ch, &material_src.metal_tex,
                  &mat.metallicSample);
-      set_sample(material_src.emission_tex_id, -1, nullptr,
+      set_sample(kRtTexUvEmissive, material_src.emission_tex_id, -1, nullptr,
                  &mat.emissiveSample, true);
-      set_sample(material_src.occ_tex.id, material_src.occ_tex.ch,
-                 &material_src.occ_tex,
+      set_sample(kRtTexUvOcclusion, material_src.occ_tex.id,
+                 material_src.occ_tex.ch, &material_src.occ_tex,
                  &mat.occlusionSample);
-      set_sample(material_src.opacity_tex.id, material_src.opacity_tex.ch,
-                 &material_src.opacity_tex,
+      set_sample(kRtTexUvOpacity, material_src.opacity_tex.id,
+                 material_src.opacity_tex.ch, &material_src.opacity_tex,
                  &mat.opacitySample);
-      set_sample(material_src.clearcoat_tex.id,
+      set_sample(kRtTexUvCoatWeight, material_src.clearcoat_tex.id,
                  material_src.clearcoat_tex.ch, &material_src.clearcoat_tex,
                  &mat.coatWeightSample);
-      set_sample(material_src.clearcoat_rough_tex.id,
+      set_sample(kRtTexUvCoatRoughness, material_src.clearcoat_rough_tex.id,
                  material_src.clearcoat_rough_tex.ch,
                  &material_src.clearcoat_rough_tex,
                  &mat.coatRoughnessSample);

@@ -106,7 +106,7 @@ vec4 graphInput(int idx, vec4 fallback, vec4 values[64], int count) {
 vec3 rgbToHsv(vec3 c){vec4 K=vec4(0,-1.0/3.0,2.0/3.0,-1),p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g)),q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y),e=1e-10;return vec3(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);}
 vec3 hsvToRgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(0,2.0/3.0,1.0/3.0))*6.0-3.0);return c.z*mix(vec3(1),clamp(p-1.0,0.0,1.0),c.y);}
 vec3 mtlxBlackbody(float kelvin){float temperature=clamp(kelvin,800.0,25000.0),t=1000.0/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.0?-0.2661239*t3-0.2343580*t2+0.8776956*t+0.179910:-3.0258469*t3+2.1070379*t2+0.2226347*t+0.240390,x2=x*x,x3=x2*x,y=temperature<2222.0?-1.1063814*x3-1.34811020*x2+2.18555832*x-0.20219683:(temperature<4000.0?-0.9549476*x3-1.37418593*x2+2.09137015*x-0.16748867:3.0817580*x3-5.87338670*x2+3.75112997*x-0.37001483);if(y<=0.0)return vec3(1);float X=x/y,Z=(1.0-x-y)/y;return max(vec3(3.2406*X-1.5372-.4986*Z,-.9689*X+1.8758+.0415*Z,.0557*X-.2040+1.0570*Z),vec3(0));}
-void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
+void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
                   vec3 viewDirection, float sceneTime, float sceneFrame,
                   out vec4 routed[49]) {
   for(uint r=0u;r<GRAPH_OUTPUTS;++r) routed[r]=vec4(0.0);
@@ -140,7 +140,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
     // Texcoord is a geometry source, not an image node. Using `tuv` here
     // accidentally applied the generic image-input routing sentinel and could
     // collapse explicitly connected texcoord graphs to (0,0).
-    else if(op==21) value[i]=vec4(uv,0,1);
+    else if(op==21) value[i]=vec4(graphs[p+14u]>=0.5?uvb:uv,0,1);
     else if(op==22) value[i]=floor(a); else if(op==23) value[i]=ceil(a); else if(op==24) value[i]=fract(a);
     else if(op==25) value[i]=step(b,a); else if(op==26) value[i]=smoothstep(b,c,a);
     else if(op==27) value[i]=vec4(cross(a.xyz,b.xyz),1); else if(op==28) value[i]=vec4(length(a.xyz));
@@ -220,7 +220,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}
 }
 
-struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec2 uv; uint mat; };
+struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec2 uv; vec2 uvb; uint mat; };
 bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   rayQueryEXT q; rayQueryInitializeEXT(q,scene,gl_RayFlagsOpaqueEXT,0xff,o,tmin,d,tmax);
   while(rayQueryProceedEXT(q)){}
@@ -228,19 +228,21 @@ bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   h.t=rayQueryGetIntersectionTEXT(q,true); h.prim=rayQueryGetIntersectionPrimitiveIndexEXT(q,true);
   h.bary=rayQueryGetIntersectionBarycentricsEXT(q,true);
   uint i0=indices[h.prim*3u],i1=indices[h.prim*3u+1u],i2=indices[h.prim*3u+2u];
-  vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
-  vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
-  vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+  vec3 p0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);
+  vec3 p1=vec3(vertices[i1*10u],vertices[i1*10u+1u],vertices[i1*10u+2u]);
+  vec3 p2=vec3(vertices[i2*10u],vertices[i2*10u+1u],vertices[i2*10u+2u]);
   float w=1.0-h.bary.x-h.bary.y; h.p=o+d*h.t;
-  vec3 n0=vec3(vertices[i0*8u+3u],vertices[i0*8u+4u],vertices[i0*8u+5u]);
-  vec3 n1=vec3(vertices[i1*8u+3u],vertices[i1*8u+4u],vertices[i1*8u+5u]);
-  vec3 n2=vec3(vertices[i2*8u+3u],vertices[i2*8u+4u],vertices[i2*8u+5u]);
+  vec3 n0=vec3(vertices[i0*10u+3u],vertices[i0*10u+4u],vertices[i0*10u+5u]);
+  vec3 n1=vec3(vertices[i1*10u+3u],vertices[i1*10u+4u],vertices[i1*10u+5u]);
+  vec3 n2=vec3(vertices[i2*10u+3u],vertices[i2*10u+4u],vertices[i2*10u+5u]);
   vec3 interpolated=n0*w+n1*h.bary.x+n2*h.bary.y;
   // Test the unnormalized vector: normalize(0) can produce NaNs and hide
   // emissive diagnostic geometry when the source has no usable normals.
   h.n=dot(interpolated,interpolated)>1e-12?normalize(interpolated):normalize(cross(p1-p0,p2-p0));
-  vec2 uv0=vec2(vertices[i0*8u+6u],vertices[i0*8u+7u]),uv1=vec2(vertices[i1*8u+6u],vertices[i1*8u+7u]),uv2=vec2(vertices[i2*8u+6u],vertices[i2*8u+7u]);
-  h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
+  vec2 uv0=vec2(vertices[i0*10u+6u],vertices[i0*10u+7u]),uv1=vec2(vertices[i1*10u+6u],vertices[i1*10u+7u]),uv2=vec2(vertices[i2*10u+6u],vertices[i2*10u+7u]);
+  h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;
+  vec2 uw0=vec2(vertices[i0*10u+8u],vertices[i0*10u+9u]),uw1=vec2(vertices[i1*10u+8u],vertices[i1*10u+9u]),uw2=vec2(vertices[i2*10u+8u],vertices[i2*10u+9u]);
+  h.uvb=uw0*w+uw1*h.bary.x+uw2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
   h.tangent=abs(det)>1e-8?normalize(((p1-p0)*duv2.y-(p2-p0)*duv1.y)/det):normalize(abs(h.n.z)<0.9?cross(h.n,vec3(0,0,1)):cross(h.n,vec3(0,1,0)));
   h.mat=min(triMaterials[h.prim],max(pc.path.z,1u)-1u); return true;
 }
@@ -314,9 +316,9 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
     int triId=int(round(lights[lb+7u]));
     if(triId>=0&&uint(triId)<indices.length()/3u){
       uint ti=uint(triId)*3u,i0=indices[ti],i1=indices[ti+1u],i2=indices[ti+2u];
-      vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
-      vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
-      vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+      vec3 p0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);
+      vec3 p1=vec3(vertices[i1*10u],vertices[i1*10u+1u],vertices[i1*10u+2u]);
+      vec3 p2=vec3(vertices[i2*10u],vertices[i2*10u+1u],vertices[i2*10u+2u]);
       float su=sqrt(rnd(seed)),v=rnd(seed);samplePos=p0*(1.0-su)+p1*(su*(1.0-v))+p2*(su*v);
       vec3 crossE=cross(p1-p0,p2-p0);area=0.5*length(crossE);if(area<=1e-10)return false;
       lightNormal=normalize(crossE);delta=false;targetTri=triId;
@@ -401,7 +403,7 @@ void main(){
       // compared against the raw sampled texel.
       vec3 dbgRoute4=vec3(0.0); float dbgRoute44=-1.0; int dbgRoute4Tex=-1;
       if(graphs[gb]>0.0){
-        vec4 gr[49];evalGraphAll(h.mat,h.uv,h.n,h.p,
+        vec4 gr[49];evalGraphAll(h.mat,h.uv,h.uvb,h.n,h.p,
             normalize(pc.camera.xyz-h.p),pc.context.x,pc.context.y,gr);
         if(graphs[gb+1u]>=0.0)base=max(gr[0].rgb,vec3(0));
         if(graphs[gb+2u]>=0.0)metal=clamp(gr[1].x,0.0,1.0);

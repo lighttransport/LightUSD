@@ -132,7 +132,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   }
   out->flat_verts.reserve(total_pos);
   out->flat_idx.reserve(total_idx);
-  out->flat_attrs.reserve(total_vertices * 8u);
+  out->flat_attrs.reserve(total_vertices * 10u);
   out->normals.reserve(total_tris);
   for (const auto &g : geos) {
     const size_t nv = g.positions.size() / 3u;
@@ -158,13 +158,16 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       out->flat_verts.insert(out->flat_verts.end(), {px, py, pz});
       const bool has_n = g.normals.size() == size_t(nv) * 3u;
       const bool has_uv = g.uvs.size() == size_t(nv) * 2u;
+      const bool has_uv1 = g.uvs1.size() == size_t(nv) * 2u;
       out->flat_attrs.insert(out->flat_attrs.end(),
           {px, py, pz,
            has_n ? g.normals[j * 3u] : 0.0f,
            has_n ? g.normals[j * 3u + 1u] : 0.0f,
            has_n ? g.normals[j * 3u + 2u] : 0.0f,
            has_uv ? g.uvs[j * 2u] : 0.0f,
-           has_uv ? g.uvs[j * 2u + 1u] : 0.0f});
+           has_uv ? g.uvs[j * 2u + 1u] : 0.0f,
+           has_uv1 ? g.uvs1[j * 2u] : 0.0f,
+           has_uv1 ? g.uvs1[j * 2u + 1u] : 0.0f});
     }
     for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
       if (g.indices[j] >= nv) {

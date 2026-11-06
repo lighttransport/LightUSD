@@ -22,7 +22,7 @@ namespace lusdr {
 // the caller owns it and must lrt_tri_scene_free() it.
 struct GpuTriScene {
   std::vector<float> flat_verts;    // 3*nverts unique positions (indexed input)
-  std::vector<float> flat_attrs;    // 8*nverts: pos,nrm,uv for shaded Vulkan RT
+  std::vector<float> flat_attrs;    // 10*nverts: pos,nrm,uv,uv1 for shaded Vulkan RT
   std::vector<uint32_t> flat_idx;   // 3*ntris vertex ids
   uint32_t ntris = 0;
   std::vector<Vec3> base_colors;    // per-triangle base color

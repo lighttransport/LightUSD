@@ -1592,6 +1592,8 @@ void ApplyDisplayPrimvarsNext(const lightusd::next::UsdPrim &mesh,
 void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   if (!job) return;
   job->uv_primvar = r.uv_primvar;
+  job->uv_primvar1 = r.uv_primvar1;
+  job->uv_set_bits = r.uv_set_bits;
   job->base_color = r.base_color;
   job->tex_id = r.tex_id;
   job->roughness = r.roughness;
@@ -1628,6 +1630,8 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
 ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   ResolvedMat r;
   r.uv_primvar = job.uv_primvar;
+  r.uv_primvar1 = job.uv_primvar1;
+  r.uv_set_bits = job.uv_set_bits;
   r.base_color = job.base_color;
   r.tex_id = job.tex_id;
   r.roughness = job.roughness;
@@ -1929,6 +1933,21 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
   }
 
   using NextMat = lightusd::tydra::next::RenderMaterial;
+  // Record which textured lanes sample a UV primvar other than the material's
+  // primary one. `scratch.textures[i].uv_primvar` is the UsdPrimvarReader
+  // varname for that texture, so the comparison is exact rather than inferred
+  // from image identity. Two sets are representable; a third collapses to the
+  // secondary stream.
+  auto note_uv_set = [&](uint32_t lane, int32_t tydra_tex) {
+    if (tydra_tex < 0 || size_t(tydra_tex) >= scratch.textures.size()) return;
+    const std::string &name = scratch.textures[size_t(tydra_tex)].uv_primvar;
+    if (name.empty() || resolved.uv_primvar.empty() ||
+        name == resolved.uv_primvar) {
+      return;
+    }
+    SetRtTexUvSet(&resolved.uv_set_bits, lane, 1);
+    if (resolved.uv_primvar1.empty()) resolved.uv_primvar1 = name;
+  };
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
       rm.preview_surface) {
     const auto &s = *rm.preview_surface;
@@ -1985,6 +2004,17 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                             &resolved.clearcoat_rough_tex);
     LoadRenderScalarTexture(scratch, s.displacement, tc, false,
                             &resolved.displacement_tex);
+    note_uv_set(kRtTexUvBase, s.diffuse_color.texture_id);
+    note_uv_set(kRtTexUvSpecular, s.specular_color.texture_id);
+    note_uv_set(kRtTexUvNormal, s.normal.texture_id);
+    note_uv_set(kRtTexUvDisplacement, s.displacement.texture_id);
+    note_uv_set(kRtTexUvRoughness, s.roughness.texture_id);
+    note_uv_set(kRtTexUvMetallic, s.metallic.texture_id);
+    note_uv_set(kRtTexUvEmissive, s.emissive_color.texture_id);
+    note_uv_set(kRtTexUvOcclusion, s.occlusion.texture_id);
+    note_uv_set(kRtTexUvOpacity, s.opacity.texture_id);
+    note_uv_set(kRtTexUvCoatWeight, s.clearcoat.texture_id);
+    note_uv_set(kRtTexUvCoatRoughness, s.clearcoat_roughness.texture_id);
   } else if (rm.shader_type == NextMat::ShaderType::OpenPBR && rm.openpbr) {
     const auto &s = *rm.openpbr;
     resolved.materialx_graph_json = s.nodegraph_json;
@@ -2024,6 +2054,15 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                             &resolved.clearcoat_tex);
     LoadRenderScalarTexture(scratch, s.coat_roughness, tc, false,
                             &resolved.clearcoat_rough_tex);
+    note_uv_set(kRtTexUvBase, s.base_color.texture_id);
+    note_uv_set(kRtTexUvNormal, s.normal.texture_id);
+    note_uv_set(kRtTexUvCoatNormal, s.coat_normal.texture_id);
+    note_uv_set(kRtTexUvRoughness, s.base_roughness.texture_id);
+    note_uv_set(kRtTexUvMetallic, s.base_metalness.texture_id);
+    note_uv_set(kRtTexUvEmissive, s.emission_color.texture_id);
+    note_uv_set(kRtTexUvOpacity, s.opacity.texture_id);
+    note_uv_set(kRtTexUvCoatWeight, s.coat_weight.texture_id);
+    note_uv_set(kRtTexUvCoatRoughness, s.coat_roughness.texture_id);
   }
 
   // Data-only materials (notably opacity-only diagnostics) still choose the
@@ -2222,6 +2261,11 @@ void ResolveMeshMaterialCached(
         &job->vertex_color, &job->displacement, &job->displacement_tex);
     auto material = stage.GetPrimAtPath(key);
     auto surface = ConnectedPrimNext(stage, material, "outputs:surface");
+    struct LaneUv {
+      uint32_t lane;
+      std::string name;
+    };
+    std::vector<LaneUv> lane_uvs;
     for (const auto& input :
          {std::pair<const char*, bool>{"inputs:diffuseColor", job->tex_id >= 0},
           {"inputs:emissiveColor", job->emission_tex_id >= 0},
@@ -2233,10 +2277,24 @@ void ResolveMeshMaterialCached(
       const auto texture = ConnectedPrimNext(stage, surface, input.first);
       const std::string uv = ResolveUvPrimvarNext(stage, texture);
       if (uv.empty()) continue;
-      job->uv_primvar = uv;
-      if (job->uv_xform.identity)
-        job->uv_xform = ResolveUvXform(stage, texture);
-      break;
+      if (job->uv_primvar.empty()) {
+        job->uv_primvar = uv;
+        if (job->uv_xform.identity)
+          job->uv_xform = ResolveUvXform(stage, texture);
+      }
+      const uint32_t lane =
+          std::strcmp(input.first, "inputs:diffuseColor") == 0 ? kRtTexUvBase
+          : std::strcmp(input.first, "inputs:emissiveColor") == 0 ? kRtTexUvEmissive
+          : std::strcmp(input.first, "inputs:normal") == 0 ? kRtTexUvNormal
+          : std::strcmp(input.first, "inputs:opacity") == 0 ? kRtTexUvOpacity
+          : std::strcmp(input.first, "inputs:roughness") == 0 ? kRtTexUvRoughness
+          : kRtTexUvMetallic;
+      lane_uvs.push_back({lane, uv});
+    }
+    for (const LaneUv &entry : lane_uvs) {
+      if (entry.name == job->uv_primvar) continue;
+      SetRtTexUvSet(&job->uv_set_bits, entry.lane, 1);
+      if (job->uv_primvar1.empty()) job->uv_primvar1 = entry.name;
     }
   };
 
