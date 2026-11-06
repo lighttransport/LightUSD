@@ -6508,6 +6508,7 @@ lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim,
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl) {
   std::string env_path = opt.env_file;
+  lightusd::next::UsdPrim env_dome;
   Vec3 scale{1.0f, 1.0f, 1.0f};
   bool rotated = false;
   bool have_dome = false;  // a DomeLight prim was found (may be textureless)
@@ -6520,6 +6521,7 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
           FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
       if (!dome.IsValid()) continue;
       have_dome = true;
+      env_dome = dome;
       if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
         auto ap = v->as_asset_path();
@@ -6587,9 +6589,15 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
     env.pixels.assign(size_t(env.width) * size_t(env.height), scale);
   } else {
     std::string path = env_path;
-    if (!lightusd::next::AssetResolver::IsAbsolutePath(path) &&
-        !base_dir.empty()) {
-      path = base_dir + "/" + path;
+    if (!lightusd::next::AssetResolver::IsAbsolutePath(path)) {
+      // Resolve against the layer that authored the dome. The input file may be
+      // a wrapper in a different directory (the validation jobs reference the
+      // converted asset through one), so the scene-file directory is wrong.
+      if (env_dome.IsValid()) path = AnchorAssetNext(env_dome, path);
+      if (!lightusd::next::AssetResolver::IsAbsolutePath(path) &&
+          !base_dir.empty()) {
+        path = base_dir + "/" + path;
+      }
     }
     if (!LoadEnvImageFromFile(path, scale, &env)) return false;
     env = RemapProbeToLatlong(std::move(env), probe_format);

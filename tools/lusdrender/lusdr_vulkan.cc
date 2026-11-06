@@ -45,6 +45,22 @@ size_t GpuChunkLimit() {
   return limit;
 }
 
+// The descriptor MaterialX path is the beauty contract, but it builds one
+// acceleration structure and the packed vertex/material buffers for the whole
+// scene. Mid-size scenes above the mesh-chunk limit used to fall back to the
+// legacy chunked shading path (no MaterialX graphs/lights), which made the
+// beauty result depend on scene size. Keep chunking as the memory fallback
+// above this bound and for non-colour AOVs.
+size_t GpuMaterialPathLimit() {
+  size_t limit = size_t(1000000);
+  if (const char *s = std::getenv("LUSDR_GPU_MATERIAL_PATH_TRIANGLES")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) limit = static_cast<size_t>(n);
+  }
+  return limit;
+}
+
 bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                       const Options &opt, const GpuTriScene &geometry,
                       const lusdview::DrawScene &scene,
@@ -515,7 +531,15 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       const CameraFrame &camera, int height) {
   const size_t total_triangles = GpuTriangleCount(geos);
   const size_t chunk_limit = GpuChunkLimit();
-  if (total_triangles > chunk_limit && !opt.path_trace) {
+  const bool want_material_path =
+      opt.aov == CaptureAov::Color && !opt.diagnostic_emission &&
+      opt.gpu_shade != Options::GpuShadeMode::Cpu && opt.vulkan_rt;
+  // An explicit LUSDR_GPU_TRIANGLE_CHUNK is an operator/test request to
+  // exercise the chunked path and must win over the material-path preference.
+  const bool chunk_forced = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK") != nullptr;
+  if (total_triangles > chunk_limit && !opt.path_trace &&
+      !(want_material_path && !chunk_forced &&
+        total_triangles <= GpuMaterialPathLimit())) {
     return RunVulkanLightRTChunked(opt, base_colors, geos, materials, textures, camera, height,
                                    chunk_limit);
   }
