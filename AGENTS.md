@@ -240,6 +240,23 @@ For elevated GPU execution, AMD/RADV or NVIDIA PRIME/offload selection, and
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
+**Run tests headless on Linux (required for agents and recommended for manual runs).** Many
+`lusdview`/GL/Vulkan tests create windows, which pop up on the developer's desktop and steal
+focus. Prefix every `ctest` (and any GUI command) with `scripts/xctest.sh`; it runs the command
+inside a private Xvfb with `DISPLAY`/`WAYLAND_DISPLAY` removed (GLFW prefers Wayland and would
+otherwise ignore the virtual display):
+
+```sh
+scripts/xctest.sh ctest --test-dir build_ninja -j4 --output-on-failure
+scripts/xctest.sh ctest --test-dir build_ninja -R '^lusdview' --output-on-failure
+```
+
+Xvfb has only software GL (llvmpipe) and no Vulkan, so a few `lusdview` tests report `SKIP`
+there (e.g. `lusdview-skinning-screenshot-diff`, `lusdview-instanced-prototype-skinning`,
+`lusdview-uv-set-routing`); run those on a real GPU display only with the developer's consent
+(`XCTEST_REAL_DISPLAY=1 scripts/xctest.sh ...`). On macOS/Windows the script just runs the
+command.
+
 The stable `next` module (`src/next/`, `tests/next/`) is also a standalone CMake project with its own Debug test build. With the default native product (`LIGHTUSD_NATIVE_PRODUCT=next`), its tests are registered in the main native `ctest` tree and the unified `lusdcat` CLI is built there; the standalone project remains the way to run the full `next` Debug suite (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
 
 ### Web/WASM regression procedure

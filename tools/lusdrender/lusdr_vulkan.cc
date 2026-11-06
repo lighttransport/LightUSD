@@ -182,6 +182,11 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
               << " geometry=" << geometry_lights << "\n";
     for (size_t li = 0; li < lights.size() / 16u; ++li) {
       const size_t lb = li * 16u;
+      std::cerr << "  light " << li << ": type=" << lights[lb + 3u]
+                << " radiance=" << lights[lb + 8u] << "," << lights[lb + 9u]
+                << "," << lights[lb + 10u] << " dir=" << lights[lb + 4u] << ","
+                << lights[lb + 5u] << "," << lights[lb + 6u]
+                << " env_tex=" << lights[lb + 15u] << "\n";
       if (static_cast<int>(lights[lb + 3u]) ==
           static_cast<int>(lusdview::DrawLightCPU::Type::Geometry)) {
         std::cerr << "  first geometry light: tri=" << lights[lb + 7u]

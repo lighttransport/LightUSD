@@ -6468,6 +6468,17 @@ void CollectLightsNext(const lightusd::next::Stage &stage,
         (kind != PreviewLight::Kind::Sphere || radius > 1.0e-5f)) {
       dst.radiance = Mul(dst.radiance, 1.0f / dst.area);
     }
+    // UsdLux DistantLight: unless normalized, `intensity` is the radiance of the
+    // sun disk, so the delivered irradiance is intensity * solid angle of the
+    // cone (angle = full apex angle in degrees, default 0.53). Hydra Storm
+    // applies exactly this factor (hdSt/light.cpp), which turns the 50000
+    // schema fallback into ~3.4. It is only RECORDED here; -distantSolidAngle
+    // applies it, because the default contract treats intensity as irradiance.
+    if (kind == PreviewLight::Kind::Distant && !normalize) {
+      const float angle_deg = ReadCamFloatNext(prim, "inputs:angle", 0.53f);
+      dst.solid_angle_scale =
+          2.0f * kPi * (1.0f - std::cos(angle_deg / 180.0f * kPi * 0.5f));
+    }
     dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
     cache->finite.push_back(std::move(dst));
   }
@@ -6607,6 +6618,98 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
   ibl->rx = rx;
   ibl->ry = ry;
   ibl->rz = rz;
+  return true;
+}
+
+// GPU descriptor path: the first DomeLight as an analytic dome entry of the
+// LightCache plus its latlong texture appended to *textures. The CPU path takes
+// the dome as IBL (BuildNextIbl) and must not see this entry, so this is only
+// called by the Vulkan caller. The dome is hidden from camera rays: UsdAppUtils
+// FrameRecorder renders against an explicit backdrop, and a previously absent
+// dome never painted the background here either.
+bool CollectDomeLightForGpu(const lightusd::next::Stage &stage, double time,
+                            LightCache *cache,
+                            std::vector<Texture> *textures) {
+  if (!cache || !textures || cache->has_dome) return false;
+  lightusd::next::UsdPrim dome;
+  matrix4d dome_world = matrix4d::identity();
+  for (const lightusd::next::UsdPrim &root : stage.GetRootPrims()) {
+    dome = FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
+    if (dome.IsValid()) break;
+  }
+  if (!dome.IsValid()) return false;
+  const float intensity = ReadCamFloatNext(dome, "inputs:intensity", 1.0f);
+  const float exposure = ReadCamFloatNext(dome, "inputs:exposure", 0.0f);
+  Vec3 color{1.0f, 1.0f, 1.0f};
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:color"))
+    if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+  const float e = intensity * std::exp2(exposure);
+  PreviewLight light;
+  light.kind = PreviewLight::Kind::Dome;
+  light.radiance = Mul(color, e);
+  light.power = std::max(0.0f, Luminance(light.radiance));
+  light.camera_hidden = true;
+  std::string file;
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:texture:file")) {
+    auto ap = v->as_asset_path();
+    if (!ap) ap = v->as_string();
+    if (ap) file = *ap;
+  }
+  std::string format;
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:texture:format")) {
+    auto t = v->as_token();
+    if (!t) t = v->as_string();
+    if (t) format = *t;
+  }
+  if (!file.empty() && (format.empty() || format == "automatic" || format == "latlong")) {
+    const std::string path = lightusd::next::AssetResolver::IsAbsolutePath(file)
+                                 ? file : AnchorAssetNext(dome, file);
+    auto res = lightusd::image::LoadImageFromFile(path);
+    if (res && res.value().image.bpp == 8 && res.value().image.width > 0 &&
+        res.value().image.height > 0 && res.value().image.channels > 0 &&
+        res.value().image.data.size() >=
+            size_t(res.value().image.width) * size_t(res.value().image.height) *
+                size_t(res.value().image.channels)) {
+      const lightusd::Image &img = res.value().image;
+      Texture tex;
+      tex.width = img.width;
+      tex.height = img.height;
+      tex.channels = img.channels;
+      tex.pixels = img.data;
+      tex.srgb = true;
+      tex.wrap_s = WrapMode::Repeat;
+      tex.wrap_t = WrapMode::Clamp;
+      light.texture_id = int(textures->size());
+      textures->push_back(std::move(tex));
+    } else {
+      std::cerr << "WARN: GPU dome texture not usable (8-bit latlong only): "
+                << path << "\n";
+    }
+  } else if (!file.empty()) {
+    std::cerr << "WARN: GPU dome texture format '" << format
+              << "' unsupported; using a uniform dome\n";
+  }
+  // Dome local axes in world space (normalized rows of the world rotation).
+  Vec3 ax{float(dome_world.m[0][0]), float(dome_world.m[0][1]), float(dome_world.m[0][2])};
+  Vec3 ay{float(dome_world.m[1][0]), float(dome_world.m[1][1]), float(dome_world.m[1][2])};
+  Vec3 az{float(dome_world.m[2][0]), float(dome_world.m[2][1]), float(dome_world.m[2][2])};
+  const float la = Length(ax), lb = Length(ay), lc = Length(az);
+  if (la > 1.0e-8f && lb > 1.0e-8f && lc > 1.0e-8f) {
+    ax = Mul(ax, 1.0f / la);
+    ay = Mul(ay, 1.0f / lb);
+    az = Mul(az, 1.0f / lc);
+    const float dev = std::fabs(ax.x - 1.0f) + std::fabs(ax.y) + std::fabs(ax.z) +
+                      std::fabs(ay.x) + std::fabs(ay.y - 1.0f) + std::fabs(ay.z) +
+                      std::fabs(az.x) + std::fabs(az.y) + std::fabs(az.z - 1.0f);
+    if (dev > 1.0e-6f) {
+      cache->dome_rotated = true;
+      cache->dome_rx = ax;
+      cache->dome_ry = ay;
+      cache->dome_rz = az;
+    }
+  }
+  cache->dome = std::move(light);
+  cache->has_dome = true;
   return true;
 }
 

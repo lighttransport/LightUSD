@@ -80,7 +80,7 @@ def beauty_lighting_rig(value):
 def load_config(path):
     if path.stat().st_size>1024*1024:raise ValueError('job config exceeds 1 MiB')
     config=json.loads(path.read_text())
-    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light','reference_allow_nonfatal','candidate_samples','display_transform','exposure'}
+    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light','distant_solid_angle','reference_camera_light_add','no_light_shadows','distant_scale','reference_allow_nonfatal','candidate_samples','display_transform','exposure'}
     if not isinstance(config,dict) or set(config)-allowed or config.get('version')!=1:raise ValueError('invalid version 1 job config')
     scenes=config.get('scenes')
     if not isinstance(scenes,list) or not 1<=len(scenes)<=128:raise ValueError('scenes must contain 1..128 jobs')
@@ -120,6 +120,17 @@ def load_config(path):
     beauty_lighting_rig(config.get('beauty_lighting'))
     if type(config.get('reference_camera_light',False)) is not bool:
         raise ValueError('reference_camera_light must be boolean')
+    if type(config.get('reference_camera_light_add',False)) is not bool:
+        raise ValueError('reference_camera_light_add must be boolean')
+    if config.get('reference_camera_light_add') and config.get('reference_camera_light'):
+        raise ValueError('reference_camera_light and reference_camera_light_add are alternatives')
+    ds=config.get('distant_scale',1.0)
+    if type(ds) not in (int,float) or not 0.0 <= float(ds) <= 1000.0:
+        raise ValueError('distant_scale must be a number in [0, 1000]')
+    if type(config.get('no_light_shadows',False)) is not bool:
+        raise ValueError('no_light_shadows must be boolean')
+    if type(config.get('distant_solid_angle',False)) is not bool:
+        raise ValueError('distant_solid_angle must be boolean')
     if config.get('display_transform','filmic') not in ('filmic','srgb'):
         raise ValueError('display_transform must be filmic or srgb')
     exposure=config.get('exposure',1.0)
@@ -363,6 +374,16 @@ def apply_capture_options(state, config):
     """
     if config.get('reference_camera_light'):
         state['reference_camera_light']=True
+    if config.get('distant_solid_angle'):
+        state['distant_solid_angle']=True
+    if config.get('reference_camera_light_add'):
+        state['reference_camera_light_add']=True
+    if config.get('no_light_shadows'):
+        state['no_light_shadows']=True
+    if config.get('distant_scale') is not None:
+        state['distant_scale']=config['distant_scale']
+    if config.get('candidate_samples',1)>1:
+        state['candidate_samples']=config['candidate_samples']
     if config.get('exposure') is not None:
         state['exposure']=config['exposure']
     if config.get('display_transform')=='srgb':

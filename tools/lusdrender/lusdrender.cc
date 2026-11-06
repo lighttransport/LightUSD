@@ -2407,13 +2407,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (opt.reference_camera_light) {
-      // UsdAppUtilsFrameRecorder replaces the stage lighting with a single
-      // camera-attached GlfSimpleLight (diffuse/specular 1, attenuation
-      // (1,0,0) = constant) plus SCENE_AMBIENT. Reproduce that light here so
-      // the paired usdrecord capture compares one lighting model. Authored
-      // lights are deliberately ignored because the SDK capture ignores them.
-      gpu_lights = LightCache{};
+    const auto make_reference_camera_light = [&]() {
       PreviewLight camera_light;
       camera_light.kind = PreviewLight::Kind::Point;
       camera_light.position = camera.origin;
@@ -2423,7 +2417,36 @@ int main(int argc, char **argv) {
       camera_light.radiance.z = 1.0f;
       camera_light.constant_attenuation = true;
       camera_light.shadow_enable = false;
-      gpu_lights.finite.push_back(camera_light);
+      return camera_light;
+    };
+    if (opt.reference_camera_light) {
+      // UsdAppUtilsFrameRecorder replaces the stage lighting with a single
+      // camera-attached GlfSimpleLight (diffuse/specular 1, attenuation
+      // (1,0,0) = constant) plus SCENE_AMBIENT. Reproduce that light here so
+      // the paired usdrecord capture compares one lighting model. Authored
+      // lights are deliberately ignored because the SDK capture ignores them.
+      gpu_lights = LightCache{};
+      gpu_lights.finite.push_back(make_reference_camera_light());
+    } else if (opt.vulkan) {
+      if (opt.distant_solid_angle) {
+        for (PreviewLight &l : gpu_lights.finite) {
+          if (l.kind == PreviewLight::Kind::Distant) {
+            l.radiance = Mul(l.radiance, l.solid_angle_scale * opt.distant_scale);
+          }
+        }
+      }
+      if (opt.no_light_shadows) {
+        for (PreviewLight &l : gpu_lights.finite) l.shadow_enable = false;
+      }
+      if (!std::getenv("LUSDR_GPU_NO_DOME")) {
+        CollectDomeLightForGpu(stage, opt.timecode, &gpu_lights, &gpu_textures);
+      }
+    }
+    // -referenceCameraLightAdd: the same camera light, kept IN ADDITION to the
+    // authored lights (what usdrecord actually renders: its camera light plus
+    // the stage lights). Independent of the replace mode above.
+    if (opt.reference_camera_light_add && !opt.reference_camera_light) {
+      gpu_lights.finite.push_back(make_reference_camera_light());
     }
 
 #ifdef HAVE_D3D11

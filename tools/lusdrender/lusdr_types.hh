@@ -471,6 +471,11 @@ struct PreviewLight {
   int tri_id{-1};
   int texture_id{-1};
   std::string texture_file;
+  // Dome only: lights the scene but is not painted on primary-ray misses.
+  bool camera_hidden{false};
+  // Distant only: UsdLux solid-angle factor (1 when normalized); applied only
+  // under -distantSolidAngle.
+  float solid_angle_scale{1.0f};
 };
 
 struct LightCache {
@@ -677,6 +682,19 @@ struct Options {
   // -referenceCameraLight: ignore authored lights and use only the
   // UsdAppUtilsFrameRecorder camera light (constant attenuation, radiance 1).
   bool reference_camera_light{false};
+  // -distantSolidAngle: scale unnormalized DistantLights by their cone's solid
+  // angle (UsdLux/Hydra Storm semantics) instead of treating intensity as
+  // irradiance.
+  bool distant_solid_angle{false};
+  // -distantScale: empirical extra factor on unnormalized distant lights when
+  // -distantSolidAngle is set (calibration against Storm; 1 = none).
+  float distant_scale{1.0f};
+  // -referenceCameraLightAdd: add the reference camera light to the authored
+  // lights instead of replacing them (vkr path).
+  bool reference_camera_light_add{false};
+  // -noLightShadows: authored distant lights cast no shadows (Storm default;
+  // vkr descriptor path).
+  bool no_light_shadows{false};
   int vulkan_device{-1};           // -vkDevice: physical-device index (-1 = auto)
   enum class GpuShadeMode { Auto, Cpu, Preview };
   GpuShadeMode gpu_shade{GpuShadeMode::Auto};  // -gpuShade cpu|preview

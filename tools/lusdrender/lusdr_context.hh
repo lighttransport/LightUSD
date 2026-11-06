@@ -673,6 +673,12 @@ lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
+// Vulkan descriptor path: add the stage DomeLight as an analytic dome entry
+// (plus its latlong texture) instead of IBL. No-op if one is already present.
+bool CollectDomeLightForGpu(const lightusd::next::Stage &stage, double time,
+                            LightCache *cache,
+                            std::vector<Texture> *textures);
+
 bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
 
 std::string SubstituteFrame(const std::string &path, long frame);

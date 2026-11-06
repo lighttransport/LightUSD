@@ -291,11 +291,33 @@ float ggxPdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rot
 vec3 thinFilm(vec3 f0,float ct,float weight,float thickness,float filmIor){float w=clamp(weight,0.0,1.0);if(w<=0.0||thickness<=0.0)return f0;float phase=2.0*PI*max(filmIor,1.0)*thickness*(1.0-clamp(ct,0.0,1.0));vec3 film=0.5+0.5*cos(phase*vec3(1.0,1.17,1.35)+vec3(0.0,2.1,4.2));return mix(f0,clamp(f0+(vec3(1)-f0)*film*0.65,vec3(0),vec3(1)),w);}
 float spectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.0||abbe<=0.0)return iorD;float lc=0.6562725,ld=0.5875618,lf=0.4861327,delta=(iorD-1.0)/max(abbe,1.0)*dispersion,ic=1.0/(lc*lc),id=1.0/(ld*ld),iff=1.0/(lf*lf),B=delta/max(iff-ic,1e-6),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return max(A+B/(lambda*lambda),1.0001);}
 vec3 applyGraphNormal(vec3 n,vec3 tangent,vec3 encoded){vec3 t,b;rotatedBasis(n,tangent,0.0,t,b);vec3 q=encoded*2.0-1.0;return normalize(t*q.x+b*q.y+n*q.z);}
-vec3 environmentRadiance(vec3 dir){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec2 uv=vec2(atan(dir.z,dir.x)/(2.0*PI)+0.5,acos(clamp(dir.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
-float lightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
+// Dome frame: a rotated dome packs its local X/Y axes (world space) in the
+// position/direction slots; an all-zero slot means identity. lights[lb+13] > 0.5
+// hides the dome from primary (camera) rays while it still lights the scene.
+bool domeRotated(uint lb){vec3 rx=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);return dot(rx,rx)>0.25;}
+vec3 domeToLocal(uint lb,vec3 w){if(!domeRotated(lb))return w;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return vec3(dot(w,rx),dot(w,ry),dot(w,rz));}
+vec3 domeToWorld(uint lb,vec3 v){if(!domeRotated(lb))return v;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return v.x*rx+v.y*ry+v.z*rz;}
+vec3 environmentRadiance(vec3 dir,bool primary){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;if(primary&&lights[lb+13u]>0.5)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec3 ld=domeToLocal(lb,dir);vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,acos(clamp(ld.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
+float rawLightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
+// A dome is picked as often as all other lights together (power-weighting by
+// 4*pi*radiance would starve a distant/point key light); with no other light it
+// keeps its own weight so a dome-only scene is unchanged.
+float gOtherW=-1.0;
+float lightWeight(uint li){if(int(round(lights[li*LIGHT_STRIDE+3u]))!=6)return rawLightWeight(li);if(gOtherW<0.0){gOtherW=0.0;for(uint k=0u;k<pc.path.w;++k)if(int(round(lights[k*LIGHT_STRIDE+3u]))!=6)gOtherW+=rawLightWeight(k);}return gOtherW>1e-12?gOtherW:rawLightWeight(li);}
 float totalLightWeight(){float total=0.0;for(uint li=0u;li<pc.path.w;++li)total+=lightWeight(li);return total;}
 uint sampleLightIndex(inout uint seed,out float selectionPdf){float total=totalLightWeight();if(total<=1e-12){uint li=min(uint(rnd(seed)*float(max(pc.path.w,1u))),max(pc.path.w,1u)-1u);selectionPdf=1.0/float(max(pc.path.w,1u));return li;}float target=rnd(seed)*total,accum=0.0;for(uint li=0u;li<pc.path.w;++li){float w=lightWeight(li);accum+=w;if(target<=accum){selectionPdf=w/total;return li;}}uint last=max(pc.path.w,1u)-1u;selectionPdf=lightWeight(last)/total;return last;}
-float environmentPdf(){float total=totalLightWeight(),dome=0.0;for(uint li=0u;li<pc.path.w;++li)if(int(round(lights[li*LIGHT_STRIDE+3u]))==6)dome+=lightWeight(li);return total>1e-12?dome/(total*4.0*PI):0.0;}
+// Direct lighting evaluates every delta light (point=0, distant=5) every time and
+// samples ONE of the remaining lights (area/dome/geometry) stochastically, so a
+// sun + camera-light rig has no selection noise. The dome keeps an equal share
+// against the other non-delta lights.
+bool isDeltaLight(uint li){int t=int(round(lights[li*LIGHT_STRIDE+3u]));return t==0||t==5;}
+uint deltaLightCount(){uint n=0u;for(uint li=0u;li<pc.path.w;++li)if(isDeltaLight(li))++n;return n;}
+uint deltaLightIndex(uint k){uint n=0u;for(uint li=0u;li<pc.path.w;++li)if(isDeltaLight(li)){if(n==k)return li;++n;}return 0u;}
+float gOtherS=-1.0;
+float stochWeight(uint li){int t=int(round(lights[li*LIGHT_STRIDE+3u]));if(t==0||t==5)return 0.0;if(t!=6)return rawLightWeight(li);if(gOtherS<0.0){gOtherS=0.0;for(uint k=0u;k<pc.path.w;++k){int kt=int(round(lights[k*LIGHT_STRIDE+3u]));if(kt!=6&&kt!=0&&kt!=5)gOtherS+=rawLightWeight(k);}}return gOtherS>1e-12?gOtherS:rawLightWeight(li);}
+float totalStochWeight(){float total=0.0;for(uint li=0u;li<pc.path.w;++li)total+=stochWeight(li);return total;}
+uint sampleStochIndex(inout uint seed,out float selectionPdf){float total=totalStochWeight();selectionPdf=0.0;if(total<=1e-12)return 0u;float target=rnd(seed)*total,accum=0.0;uint last=0u;for(uint li=0u;li<pc.path.w;++li){float w=stochWeight(li);if(w<=0.0)continue;last=li;accum+=w;if(target<=accum){selectionPdf=w/total;return li;}}selectionPdf=stochWeight(last)/total;return last;}
+float environmentPdf(){float total=totalStochWeight(),dome=0.0;for(uint li=0u;li<pc.path.w;++li)if(int(round(lights[li*LIGHT_STRIDE+3u]))==6)dome+=stochWeight(li);return total>1e-12?dome/(total*4.0*PI):0.0;}
 float powerHeuristic(float a,float b){float aa=a*a,bb=b*b;return aa/max(aa+bb,1e-20);}
 bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
                        out vec3 radiance,out float tmax,
@@ -306,9 +328,9 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
   conditionalPdf=1.0;delta=true;targetTri=-1;if(type==8)return false;
   if(type==6){
     float z=1.0-2.0*rnd(seed),phi=2.0*PI*rnd(seed),r=sqrt(max(0.0,1.0-z*z));
-    l=vec3(r*cos(phi),z,r*sin(phi));int tid=int(round(lights[lb+15u]));
-    if(tid>=0){vec2 uv=vec2(atan(l.z,l.x)/(2.0*PI)+0.5,
-        acos(clamp(l.y,-1.0,1.0))/PI);radiance*=sampleTexture(tid,uv).rgb;}
+    vec3 ld=vec3(r*cos(phi),z,r*sin(phi));l=domeToWorld(lb,ld);int tid=int(round(lights[lb+15u]));
+    if(tid>=0){vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,
+        acos(clamp(ld.y,-1.0,1.0))/PI);radiance*=sampleTexture(tid,uv).rgb;}
     tmax=1e30;conditionalPdf=1.0/(4.0*PI);delta=false;return true;
   }
   if(type==5){l=normalize(-vec3(lights[lb+4u],lights[lb+5u],
@@ -381,7 +403,7 @@ void main(){
     float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d)*mis;break;}
+      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
@@ -543,8 +565,8 @@ void main(){
       // specular/coat parts so the lit term can be measured separately from
       // the (already exact) emissive.
       vec3 dbgDiffuseLit=vec3(0.0),dbgSpecLit=vec3(0.0);
-      if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;// The host marks the UsdAppUtilsFrameRecorder camera light
-        bool blocked=traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
+      uint deltaCount=pc.path.w>0u?deltaLightCount():0u;for(uint dk=0u;pc.path.w>0u&&dk<=deltaCount;++dk){float selectionPdf=1.0;uint li=0u;if(dk<deltaCount)li=deltaLightIndex(dk);else{li=sampleStochIndex(seed,selectionPdf);if(selectionPdf<=0.0)break;}vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;// The host marks the UsdAppUtilsFrameRecorder camera light
+        bool noShadow=int(round(lights[li*LIGHT_STRIDE+3u]))==5&&lights[li*LIGHT_STRIDE+14u]<-1.5;bool blocked=!noShadow&&traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
       if(depth==0u&&pc.context.w>7.5&&pc.context.w<9.5){radiance=pc.context.w<8.5?dbgDiffuseLit:dbgSpecLit;beta=vec3(0.0);break;}
       float xi=rnd(seed)*max(ws,1e-6),side=1.0;
       if(xi<wt){if(heroChannel<0&&dispersion>0.0&&dispersionAbbe>0.0){heroChannel=min(int(rnd(seed)*3.0),2);beta*=heroChannel==0?vec3(3,0,0):(heroChannel==1?vec3(0,3,0):vec3(0,0,3));}float spectral=spectralIor(ior,dispersionAbbe,dispersion,heroChannel<0?1:heroChannel),targetIor=front?spectral:1.0,eta=mediumIor/targetIor;vec3 q=refract(d,h.n,eta);bool tir=length(q)<0.1;if(tir)q=reflect(d,h.n);else{mediumIor=targetIor;if(front){vec3 absorption=transmissionDepth>0.0?-log(clamp(transmissionColor,vec3(1e-6),vec3(1)))/transmissionDepth:vec3(0);mediumSigmaS=transmissionScatter+volumeAlbedo*volumeDensity;mediumExt=absorption+mediumSigmaS+max(vec3(1)-volumeAlbedo,vec3(0))*volumeDensity;mediumEmission=volumeEmission*volumeEmissionScale;mediumG=transmissionScatterG;}else{mediumExt=vec3(0);mediumSigmaS=vec3(0);mediumEmission=vec3(0);mediumG=0.0;}}d=normalize(q);beta*=interfaceTransmission/max(wt/ws,1e-6);side=tir?1.0:-1.0;previousDelta=true;previousPdf=0.0;}

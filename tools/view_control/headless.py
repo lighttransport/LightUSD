@@ -403,6 +403,15 @@ class HeadlessSession:
         # so make the native candidate evaluate that same light.
         if self.state.get('reference_camera_light'):
             candidate.append('-referenceCameraLight')
+        if self.state.get('distant_scale') is not None:
+            candidate += ['-distantScale', str(float(self.state['distant_scale']))]
+        if self.state.get('no_light_shadows'):
+            candidate.append('-noLightShadows')
+        if self.state.get('reference_camera_light_add'):
+            candidate.append('-referenceCameraLightAdd')
+        # Opt-in: UsdLux/Storm distant-light solid-angle semantics.
+        if self.state.get('distant_solid_angle'):
+            candidate.append('-distantSolidAngle')
         # The candidate point-samples minified textures (no mip chain), so a
         # single sample aliases badly against the SDK's mipmapped render. Let a
         # job request an explicit supersample budget for a like-for-like

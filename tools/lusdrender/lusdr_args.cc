@@ -232,6 +232,13 @@ void PrintUsage(const char *prog) {
       << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -distantSolidAngle    Scale unnormalized DistantLights by their cone's solid\n"
+         "                        angle (UsdLux/Storm semantics; vkr path).\n"
+      << "  -distantScale <F>     Extra factor on -distantSolidAngle lights (default 1).\n"
+      << "  -noLightShadows       Authored distant lights cast no shadows (Storm\n"
+         "                        default; vkr path).\n"
+      << "  -referenceCameraLightAdd Add the reference camera light to the authored\n"
+         "                        lights instead of replacing them (vkr path).\n"
       << "  -referenceCameraLight Use only UsdAppUtilsFrameRecorder's camera\n"
       << "                        light (constant attenuation, radiance 1),\n"
       << "                        ignoring authored lights; for paired\n"
@@ -847,6 +854,26 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     OPT_MATCH(a == "-vk" || a == "--vk") {
       opt->vulkan = true;
       opt->backend_explicit = true;
+    }
+    OPT_MATCH(a == "-distantSolidAngle" || a == "--distantSolidAngle") {
+      opt->distant_solid_angle = true;
+    }
+    OPT_MATCH(a == "-distantScale" || a == "--distantScale") {
+      const char *v = need_value(a.c_str());
+      double parsed = 0.0;
+      if (!v || !ParseDoubleStrict(v, &parsed) || !std::isfinite(parsed) ||
+          parsed < 0.0 || parsed > 1000.0) {
+        std::cerr << "--distantScale requires a number in [0, 1000].\n";
+        return false;
+      }
+      opt->distant_scale = static_cast<float>(parsed);
+    }
+    OPT_MATCH(a == "-noLightShadows" || a == "--noLightShadows") {
+      opt->no_light_shadows = true;
+    }
+    OPT_MATCH(a == "-referenceCameraLightAdd" ||
+              a == "--referenceCameraLightAdd") {
+      opt->reference_camera_light_add = true;
     }
     OPT_MATCH(a == "-referenceCameraLight" ||
               a == "--referenceCameraLight") {

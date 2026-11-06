@@ -114,8 +114,18 @@ class ValidationTests(unittest.TestCase):
         state={'camera':{},'time':0}
         apply_capture_options(state, {'reference_camera_light':True,
                                       'exposure':2.0,
-                                      'display_transform':'srgb'})
+                                      'display_transform':'srgb',
+                                      'distant_solid_angle':True,
+                                      'reference_camera_light_add':True,
+                                      'no_light_shadows':True,
+                                      'distant_scale':0.5,
+                                      'candidate_samples':8})
         self.assertIs(state['reference_camera_light'],True)
+        self.assertIs(state['distant_solid_angle'],True)
+        self.assertIs(state['reference_camera_light_add'],True)
+        self.assertIs(state['no_light_shadows'],True)
+        self.assertEqual(state['distant_scale'],0.5)
+        self.assertEqual(state['candidate_samples'],8)
         self.assertEqual(state['exposure'],2.0)
         self.assertEqual(state['display_transform'],'srgb')
         untouched={}

@@ -197,10 +197,25 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       dst.geometryTriOffset = src.tri_id;
       dst.geometryTriCount = src.tri_id >= 0 ? 1 : 0;
     }
+    if (src.kind == PreviewLight::Kind::Dome) {
+      dst.envmapTexture = src.texture_id;
+      // The Vulkan descriptor path reads length as "hidden from camera" and
+      // position/direction as the dome's local X/Y axes (zero = identity).
+      dst.length = src.camera_hidden ? 1.0f : 0.0f;
+      if (lights.dome_rotated) {
+        dst.position[0] = lights.dome_rx.x; dst.position[1] = lights.dome_rx.y;
+        dst.position[2] = lights.dome_rx.z;
+        dst.direction[0] = lights.dome_ry.x; dst.direction[1] = lights.dome_ry.y;
+        dst.direction[2] = lights.dome_ry.z;
+      }
+    }
     dst.shadowEnable = src.shadow_enable;
     // angle is unused for point lights; -1 marks constant (no 1/d^2) falloff
     // for the reference camera light.
     dst.angle = src.constant_attenuation ? -1.0f : 0.0f;
+    // Distant lights: angle == -2 tells the Vulkan descriptor path to skip the
+    // shadow ray (Storm renders without shadows by default).
+    if (src.kind == PreviewLight::Kind::Distant && !src.shadow_enable) dst.angle = -2.0f;
     scene->lights.push_back(std::move(dst));
   };
   for (const PreviewLight &light : lights.finite) append_light(light);
