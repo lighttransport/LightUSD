@@ -4175,6 +4175,19 @@ if(LIGHTUSD_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300
                          LABELS "lusdview;rt;cpu-rt")
 
+    # Second UV set (multi-UV): a texture whose UsdPrimvarReader names `st1`
+    # must sample the second set, matching the equivalent pre-transformed `st`
+    # lookup, with an identity-st control that must differ.
+    add_test(
+      NAME lusdview-cpu-multi-uv
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-multi-uv.sh"
+      )
+    set_tests_properties(lusdview-cpu-multi-uv PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
     # CPU authored tangent basis: a rotated primvars:tangents must shade the
     # same tangent-space normal like the equivalent geometry normal.
     add_test(
