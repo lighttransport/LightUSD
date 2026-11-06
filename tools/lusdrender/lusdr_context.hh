@@ -319,6 +319,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             int height,
                             const std::vector<Texture> *textures = nullptr,
                             const std::vector<float> *tri_uvs = nullptr,
+                            const std::vector<float> *tri_uvs1 = nullptr,
                             const lrt_tlas *tlas = nullptr,
                             const std::vector<Blas> *blas = nullptr,
                             const std::vector<InstanceRT> *instances = nullptr,
@@ -763,6 +764,10 @@ struct LegacyMaterialTex {
   uint8_t metallic_ch{0};
   uint8_t occlusion_ch{0};
   uint8_t opacity_ch{0};
+  // UV primvar each textured lane reads (UsdPrimvarReader inputs:varname).
+  // Empty = the lane has no texture. `AddMeshTriangles` matches these against
+  // the mesh's texcoord slot names to select the per-lane UV set.
+  std::array<std::string, kUvLaneCount> uv_names;
 };
 
 // Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
@@ -788,6 +793,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       LightCache *lights = nullptr,
                       std::vector<float> *tri_uvs = nullptr,
+                      std::vector<float> *tri_uvs1 = nullptr,
                       const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                       const PurposeVisibilityMap *pv = nullptr);
 
@@ -797,6 +803,7 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      const std::unordered_set<std::string> *skip_paths,
                      LightCache *lights,
                      std::vector<float> *tri_uvs = nullptr,
+                     std::vector<float> *tri_uvs1 = nullptr,
                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                      const PurposeVisibilityMap *pv = nullptr);
 
@@ -805,6 +812,7 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         const std::unordered_set<std::string> *skip_paths,
                         LightCache *lights,
                         std::vector<float> *tri_uvs = nullptr,
+                        std::vector<float> *tri_uvs1 = nullptr,
                         const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                         const PurposeVisibilityMap *pv = nullptr);
 

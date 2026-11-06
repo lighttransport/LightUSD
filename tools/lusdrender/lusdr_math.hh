@@ -91,6 +91,33 @@ inline uint32_t CapturePrimId(const std::string& path) {
   return (h % 16777215u) + 1u;
 }
 
+// Per-lane texture-coordinate set selection for the legacy CPU path. A material
+// may bind textures whose UsdPrimvarReader names different UV primvars; tydra
+// exports each mesh UV primvar as `texcoords[slot]`, so each textured lane can
+// reference its own slot. Two bits per lane (slot 0/1; 2/3 fall back to 0) fit
+// in one uint32 that travels with the triangle.
+enum LegacyUvLane : uint32_t {
+  kUvLaneDiffuse = 0,
+  kUvLaneEmissive,
+  kUvLaneNormal,
+  kUvLaneRough,
+  kUvLaneMetal,
+  kUvLaneOcc,
+  kUvLaneOpacity,
+  kUvLaneClearcoat,
+  kUvLaneClearcoatRough,
+  kUvLaneSpecular,
+  kUvLaneCount
+};
+
+inline uint32_t UvLaneSlot(uint32_t bits, uint32_t lane) {
+  return (bits >> (lane * 2u)) & 3u;
+}
+inline void SetUvLaneSlot(uint32_t *bits, uint32_t lane, uint32_t slot) {
+  const uint32_t shift = lane * 2u;
+  *bits = (*bits & ~(3u << shift)) | ((slot & 3u) << shift);
+}
+
 struct TriInfo {
   uint32_t capture_prim_id{0};
   Vec3 p0;
@@ -139,6 +166,9 @@ struct TriInfo {
   float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow F0)
   int32_t specular_tex_id{-1};       // specularColor texture, or -1
+  // 2 bits per LegacyUvLane: which mesh texcoord slot each textured lane
+  // samples. 0 = primary stream, 1 = secondary (see UvLaneSlot).
+  uint32_t uv_lane_slot{0};
   float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
   uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
@@ -195,6 +225,7 @@ struct TriMat {
   float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow)
   int32_t specular_tex_id{-1};
+  uint32_t uv_lane_slot{0};
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
@@ -280,6 +311,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.clearcoat_rough_tex_bias = m.clearcoat_rough_tex_bias;
   t.specular_color = m.specular_color;
   t.specular_tex_id = m.specular_tex_id;
+  t.uv_lane_slot = m.uv_lane_slot;
   t.ior = m.ior;
   t.use_specular_workflow = m.use_specular_workflow;
   t.openpbr_id = m.openpbr_id;
@@ -334,6 +366,7 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.clearcoat_rough_tex_bias = t.clearcoat_rough_tex_bias;
   m.specular_color = t.specular_color;
   m.specular_tex_id = t.specular_tex_id;
+  m.uv_lane_slot = t.uv_lane_slot;
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
   m.openpbr_id = t.openpbr_id;
@@ -400,7 +433,8 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.specular_color.x == b.specular_color.x &&
          a.specular_color.y == b.specular_color.y &&
          a.specular_color.z == b.specular_color.z &&
-         a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
+         a.specular_tex_id == b.specular_tex_id &&
+         a.uv_lane_slot == b.uv_lane_slot && a.ior == b.ior &&
          a.use_specular_workflow == b.use_specular_workflow &&
          a.openpbr_id == b.openpbr_id &&
          a.backface_id == b.backface_id && a.area_light == b.area_light;

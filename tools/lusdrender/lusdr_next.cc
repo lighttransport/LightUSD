@@ -6999,6 +6999,7 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
+      /*tri_uvs1*/ nullptr,
       ctx.use_tlas ? ctx.tlas : nullptr,
       ctx.use_tlas ? &ctx.blas : nullptr,
       ctx.use_tlas ? &ctx.instances : nullptr,

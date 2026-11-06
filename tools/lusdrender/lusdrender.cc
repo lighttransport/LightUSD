@@ -2676,6 +2676,9 @@ int main(int argc, char **argv) {
   const std::vector<LegacyMaterialTex> legacy_mat_tex =
       BuildLegacyTextures(render_scene, &legacy_textures);
   std::vector<float> tri_uvs;
+  // Second UV set, allocated lazily by AddMeshTriangles only when a textured
+  // lane references a different primvar than the material's first UV set.
+  std::vector<float> tri_uvs1;
   const bool want_uvs = !legacy_textures.empty();
   if (want_uvs) {
     // tri_uvs must stay parallel to `tris`; any triangles the direct-primitive
@@ -2690,6 +2693,7 @@ int main(int argc, char **argv) {
   CollectAllGeometry(render_scene, &vertices, &tris, &bounds,
                      opt.direct_prims ? &direct_scene.direct_paths : nullptr,
                      &light_cache, want_uvs ? &tri_uvs : nullptr,
+                     want_uvs ? &tri_uvs1 : nullptr,
                      want_uvs ? &legacy_mat_tex : nullptr, &purpose_vis);
     const bool has_direct = direct_scene.spheres ||
                           direct_scene.has_round_curves() ||
@@ -2800,7 +2804,8 @@ int main(int argc, char **argv) {
       RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
                   ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
                   legacy_textures.empty() ? nullptr : &legacy_textures,
-                  tri_uvs.empty() ? nullptr : &tri_uvs, /*tlas*/ nullptr,
+                  tri_uvs.empty() ? nullptr : &tri_uvs,
+                  tri_uvs1.empty() ? nullptr : &tri_uvs1, /*tlas*/ nullptr,
                   /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
                   /*tri_normals*/ nullptr, &volumes);
   const auto render_t1 = std::chrono::steady_clock::now();

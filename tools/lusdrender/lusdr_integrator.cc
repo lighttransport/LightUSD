@@ -1099,6 +1099,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
            const std::vector<Texture> *textures,
            const std::vector<float> *tri_uvs,
+           const std::vector<float> *tri_uvs1,
            const lrt_tlas *tlas,
            const std::vector<Blas> *blas,
            const std::vector<InstanceRT> *instances,
@@ -1200,99 +1201,154 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const size_t base = size_t(hit.prim_id) * 6;
         if (base + 5 < tri_uvs->size()) {
           const float w1 = hit.u, w2 = hit.v, w0 = 1.0f - w1 - w2;
-          const float *uv = &(*tri_uvs)[base];
-          float u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
-          float v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
-          float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
-          const bool have_fp = ComputeUVFootprint(
-              ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
-              hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
-              &dudy, &dvdy);
-          if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
-            const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
-            Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : dt.sample(u, v, 0.0f);
-            t = Vec3{t.x * dt.scale.x + dt.bias.x, t.y * dt.scale.y + dt.bias.y,
-                     t.z * dt.scale.z + dt.bias.z};
-            hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
-                                      hit_tri.base_color.y * t.y,
-                                      hit_tri.base_color.z * t.z};
+          // One interpolated UV sample per stream, each with its own ray
+          // differential footprint. A lane selects stream 0 or 1 through
+          // TriMat::uv_lane_slot, so two textures can read two UV sets.
+          struct UvSample {
+            float u{0.0f}, v{0.0f};
+            float dudx{0.0f}, dvdx{0.0f}, dudy{0.0f}, dvdy{0.0f};
+            bool have_fp{false};
+            const float *corners{nullptr};
+          };
+          auto sample_stream = [&](const std::vector<float> *stream) {
+            UvSample out;
+            if (!stream || base + 5 >= stream->size()) return out;
+            const float *uv = &(*stream)[base];
+            out.corners = uv;
+            out.u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
+            out.v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
+            out.have_fp = ComputeUVFootprint(
+                ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
+                hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &out.dudx,
+                &out.dvdx, &out.dudy, &out.dvdy);
+            return out;
+          };
+          const UvSample uv0 = sample_stream(tri_uvs);
+          const UvSample uv1 = sample_stream(tri_uvs1);
+          auto lane = [&](uint32_t id) -> const UvSample & {
+            return (uv1.corners && UvLaneSlot(hit_tri.uv_lane_slot, id) == 1)
+                       ? uv1 : uv0;
+          };
+          {
+            const UvSample &s = lane(kUvLaneDiffuse);
+            if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
+              const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
+              Vec3 t = s.have_fp ? dt.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : dt.sample(s.u, s.v, 0.0f);
+              t = Vec3{t.x * dt.scale.x + dt.bias.x,
+                       t.y * dt.scale.y + dt.bias.y,
+                       t.z * dt.scale.z + dt.bias.z};
+              hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
+                                        hit_tri.base_color.y * t.y,
+                                        hit_tri.base_color.z * t.z};
+            }
           }
-          if (hit_tri.rough_tex_id >= 0) {
-            float r = SampleScalarTexAniso(
-                *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.rough_tex_scale,
-                hit_tri.rough_tex_bias);
-            if (std::isfinite(r)) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneRough);
+            if (hit_tri.rough_tex_id >= 0) {
+              float r = SampleScalarTexAniso(
+                  *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.rough_tex_scale, hit_tri.rough_tex_bias);
+              if (std::isfinite(r)) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.metal_tex_id >= 0) {
-            float m = SampleScalarTexAniso(
-                *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.metal_tex_scale,
-                hit_tri.metal_tex_bias);
-            if (std::isfinite(m)) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneMetal);
+            if (hit_tri.metal_tex_id >= 0) {
+              float m = SampleScalarTexAniso(
+                  *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.metal_tex_scale, hit_tri.metal_tex_bias);
+              if (std::isfinite(m)) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.emission_tex_id >= 0 &&
-              size_t(hit_tri.emission_tex_id) < textures->size()) {
-            const Texture &et = (*textures)[size_t(hit_tri.emission_tex_id)];
-            Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : et.sample(u, v, 0.0f);
-            e=et.apply_value_transform(e);
-            hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
-                                    hit_tri.emission.y * e.y,
-                                    hit_tri.emission.z * e.z};
+          {
+            const UvSample &s = lane(kUvLaneEmissive);
+            if (hit_tri.emission_tex_id >= 0 &&
+                size_t(hit_tri.emission_tex_id) < textures->size()) {
+              const Texture &et = (*textures)[size_t(hit_tri.emission_tex_id)];
+              Vec3 e = s.have_fp ? et.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : et.sample(s.u, s.v, 0.0f);
+              e = et.apply_value_transform(e);
+              hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
+                                      hit_tri.emission.y * e.y,
+                                      hit_tri.emission.z * e.z};
+            }
           }
-          if (hit_tri.specular_tex_id >= 0 &&
-              size_t(hit_tri.specular_tex_id) < textures->size()) {
-            const Texture &st = (*textures)[size_t(hit_tri.specular_tex_id)];
-            Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : st.sample(u, v, 0.0f);
-            s=st.apply_value_transform(s);
-            hit_tri.specular_color = Vec3{hit_tri.specular_color.x * s.x,
-                                          hit_tri.specular_color.y * s.y,
-                                          hit_tri.specular_color.z * s.z};
+          {
+            const UvSample &s = lane(kUvLaneSpecular);
+            if (hit_tri.specular_tex_id >= 0 &&
+                size_t(hit_tri.specular_tex_id) < textures->size()) {
+              const Texture &st = (*textures)[size_t(hit_tri.specular_tex_id)];
+              Vec3 v = s.have_fp ? st.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : st.sample(s.u, s.v, 0.0f);
+              v = st.apply_value_transform(v);
+              hit_tri.specular_color = Vec3{hit_tri.specular_color.x * v.x,
+                                            hit_tri.specular_color.y * v.y,
+                                            hit_tri.specular_color.z * v.z};
+            }
           }
-          if (hit_tri.occ_tex_id >= 0) {
-            float o = SampleScalarTexAniso(
-                *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.occ_tex_scale,
-                hit_tri.occ_tex_bias);
-            if (std::isfinite(o)) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneOcc);
+            if (hit_tri.occ_tex_id >= 0) {
+              float o = SampleScalarTexAniso(
+                  *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.occ_tex_scale, hit_tri.occ_tex_bias);
+              if (std::isfinite(o)) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.opacity_tex_id >= 0) {
-            float a = SampleScalarTexAniso(
-                *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
-                hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
-            if (std::isfinite(a)) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneOpacity);
+            if (hit_tri.opacity_tex_id >= 0) {
+              float a = SampleScalarTexAniso(
+                  *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, s.u,
+                  s.v, s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
+              if (std::isfinite(a)) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.clearcoat_tex_id >= 0) {
-            float cc = SampleScalarTexAniso(
-                *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
-                hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
-            if (std::isfinite(cc)) hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneClearcoat);
+            if (hit_tri.clearcoat_tex_id >= 0) {
+              float cc = SampleScalarTexAniso(
+                  *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, s.u,
+                  s.v, s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
+              if (std::isfinite(cc))
+                hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.clearcoat_rough_tex_id >= 0) {
-            float cr = SampleScalarTexAniso(
-                *textures, hit_tri.clearcoat_rough_tex_id,
-                hit_tri.clearcoat_rough_ch, u, v, have_fp, dudx, dvdx, dudy,
-                dvdy, kMaxAniso, hit_tri.clearcoat_rough_tex_scale,
-                hit_tri.clearcoat_rough_tex_bias);
-            if (std::isfinite(cr))
-              hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneClearcoatRough);
+            if (hit_tri.clearcoat_rough_tex_id >= 0) {
+              float cr = SampleScalarTexAniso(
+                  *textures, hit_tri.clearcoat_rough_tex_id,
+                  hit_tri.clearcoat_rough_ch, s.u, s.v, s.have_fp, s.dudx,
+                  s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.clearcoat_rough_tex_scale,
+                  hit_tri.clearcoat_rough_tex_bias);
+              if (std::isfinite(cr))
+                hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.normal_tex_id >= 0 &&
-              size_t(hit_tri.normal_tex_id) < textures->size()) {
-            const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
-            Vec3 Nt = SampleTangentNormalAniso(nt, u, v, have_fp, dudx, dvdx,
-                                               dudy, dvdy, kMaxAniso);
-            hit_tri.n = PerturbNormalStorm(hit_tri.p0, hit_tri.p1, hit_tri.p2,
-                                           hit_tri.n, uv[0], uv[1], uv[2], uv[3],
-                                           uv[4], uv[5], Nt);
+          {
+            const UvSample &s = lane(kUvLaneNormal);
+            if (hit_tri.normal_tex_id >= 0 &&
+                size_t(hit_tri.normal_tex_id) < textures->size()) {
+              const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
+              Vec3 Nt = SampleTangentNormalAniso(nt, s.u, s.v, s.have_fp, s.dudx,
+                                                 s.dvdx, s.dudy, s.dvdy,
+                                                 kMaxAniso);
+              hit_tri.n = PerturbNormalStorm(
+                  hit_tri.p0, hit_tri.p1, hit_tri.p2, hit_tri.n, s.corners[0],
+                  s.corners[1], s.corners[2], s.corners[3], s.corners[4],
+                  s.corners[5], Nt);
+            }
           }
         }
       }
@@ -1374,7 +1430,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     behind_camera.zfar = std::max(0.0f, camera.zfar - hit_t - eps);
     const Vec3 behind =
         Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
-              ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
+              ray_dir, textures, tri_uvs, tri_uvs1, tlas, blas, instances, rd,
+              depth + 1,
               tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
               nullptr, diagnostic_exhausted);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
@@ -1566,8 +1623,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     bounce_rd.valid = false;
     float bounce_hit_t = bounce_camera.zfar;
     Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
-                        opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
-                        instances, bounce_rd, depth + 1, tri_colors,
+                        opt, bounce_org, wi, textures, tri_uvs, tri_uvs1, tlas,
+                        blas, instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
                         triangle_chunks, &bounce_hit_t, diagnostic_exhausted);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
@@ -2146,6 +2203,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             int height,
                             const std::vector<Texture> *textures,
                             const std::vector<float> *tri_uvs,
+                            const std::vector<float> *tri_uvs1,
                             const lrt_tlas *tlas,
                             const std::vector<Blas> *blas,
                             const std::vector<InstanceRT> *instances,
@@ -2202,8 +2260,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           }
           float primary_hit_t = ray_camera.zfar;
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, ray_camera, opt,
-                            org, dir, textures, tri_uvs, tlas, blas, instances,
-                            rd, 0, tri_colors, tri_normals, openpbr_mats,
+                            org, dir, textures, tri_uvs, tri_uvs1, tlas, blas,
+                            instances, rd, 0, tri_colors, tri_normals,
+                            openpbr_mats,
                             false, triangle_chunks, &primary_hit_t,
                             opt.diagnostic_emission ? &diagnostic_exhausted : nullptr);
           if (!data_aov && backplates) {

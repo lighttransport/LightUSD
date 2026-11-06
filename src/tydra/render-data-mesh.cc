@@ -1870,6 +1870,13 @@ bool ListUVNames(const RenderMaterial &material,
   // Check UsdPreviewSurface shader
   if (material.surfaceShader.has_value()) {
     fun_vec3(material.surfaceShader->diffuseColor);
+    // Emissive and specular colour textures also sample a mesh UV primvar. They
+    // used to be omitted here, so a material whose only textured lane was
+    // emissive (or specular) got no UV slot at all -- the mesh then exported
+    // without texcoords and every lookup collapsed to (0, 0). Keep the field
+    // order canonical (diffuse, emissive, specular, ...) so slot ids stay stable.
+    fun_vec3(material.surfaceShader->emissiveColor);
+    fun_vec3(material.surfaceShader->specularColor);
     fun_vec3(material.surfaceShader->normal);
     fun_float(material.surfaceShader->metallic);
     fun_float(material.surfaceShader->roughness);
