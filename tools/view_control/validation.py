@@ -80,7 +80,7 @@ def beauty_lighting_rig(value):
 def load_config(path):
     if path.stat().st_size>1024*1024:raise ValueError('job config exceeds 1 MiB')
     config=json.loads(path.read_text())
-    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light','reference_allow_nonfatal','candidate_samples','display_transform'}
+    allowed={'version','assets_root','size','backend','time_sampling','aovs','thresholds','scenes','camera_policy','data_backend','native_curve_segments','native_load_limits','process_limits','reference_complexity','beauty_lighting','reference_camera_light','reference_allow_nonfatal','candidate_samples','display_transform','exposure'}
     if not isinstance(config,dict) or set(config)-allowed or config.get('version')!=1:raise ValueError('invalid version 1 job config')
     scenes=config.get('scenes')
     if not isinstance(scenes,list) or not 1<=len(scenes)<=128:raise ValueError('scenes must contain 1..128 jobs')
@@ -122,6 +122,9 @@ def load_config(path):
         raise ValueError('reference_camera_light must be boolean')
     if config.get('display_transform','filmic') not in ('filmic','srgb'):
         raise ValueError('display_transform must be filmic or srgb')
+    exposure=config.get('exposure',1.0)
+    if type(exposure) not in (int,float) or not -8.0 <= float(exposure) <= 8.0:
+        raise ValueError('exposure must be a number in [-8, 8]')
     samples=config.get('candidate_samples',1)
     if type(samples) is not int or not 1<=samples<=64:
         raise ValueError('candidate_samples must be an integer in [1, 64]')
@@ -183,6 +186,8 @@ def _run(args):
             # usdrecord only evaluates its camera light; both tools then share
             # that one light model for the beauty AOV.
             session.state['reference_camera_light']=True
+        if config.get('exposure') is not None:
+            session.state['exposure'] = config['exposure']
         if config.get('display_transform') == 'srgb':
             # Reproduce usdrecord's colorCorrectionMode=sRGB (plain sRGB encode)
             # instead of the filmic beauty curve, for A/B measurement.

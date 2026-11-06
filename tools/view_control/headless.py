@@ -407,6 +407,10 @@ class HeadlessSession:
         # single sample aliases badly against the SDK's mipmapped render. Let a
         # job request an explicit supersample budget for a like-for-like
         # comparison.
+        # Opt-in exposure (exp2 scale before the filmic curve). Absent means the
+        # renderer default, so existing jobs are unchanged.
+        if self.state.get('exposure') is not None:
+            candidate += ['-exposure', str(float(self.state['exposure']))]
         # Opt-in display transform: `srgb` reproduces usdrecord's
         # colorCorrectionMode=sRGB (plain sRGB encode, no filmic shoulder).
         if self.state.get('display_transform') == 'srgb':

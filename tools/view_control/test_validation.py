@@ -281,3 +281,36 @@ class DisplayTransformTests(unittest.TestCase):
         for bad in ('aces', 'linear', 1, True):
             with self.assertRaises(ValueError):
                 self._load(bad)
+
+
+class ExposureTests(unittest.TestCase):
+    """A job may override the beauty exposure (exp2 scale)."""
+
+    def _load(self, value):
+        import json, tempfile
+        from pathlib import Path
+        import importlib.util
+        here = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location(
+            'validation_mod', here / 'validation.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'job.json'
+            job = {'version': 1, 'assets_root': '.', 'scenes': [{'path': 'a.usda'}]}
+            if value is not None:
+                job['exposure'] = value
+            p.write_text(json.dumps(job))
+            return mod.load_config(p)
+
+    def test_default_is_one(self):
+        self.assertEqual(self._load(None).get('exposure', 1.0), 1.0)
+
+    def test_accepts_range(self):
+        for v in (-8, -0.5, 0, 1.0, 2.25, 8):
+            self.assertEqual(self._load(v)['exposure'], v)
+
+    def test_rejects_out_of_range_and_non_numeric(self):
+        for bad in (9, -9, '1', True, None if False else [1]):
+            with self.assertRaises(ValueError):
+                self._load(bad)

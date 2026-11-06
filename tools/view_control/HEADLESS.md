@@ -488,6 +488,21 @@ and is appended to the candidate command as `-samples N`. Measured effect on
 `AlphaBlendModeTest`: 0.9101 (1 spp) -> 0.9265 (4 spp). Guarded by
 `test_validation.py::CandidateSamplesTests`.
 
+### Exposure (`exposure`)
+
+The beauty path applies `exp2(exposure)` before its filmic curve. A job may
+override it (default 1.0):
+
+```json
+{ "exposure": 1.25 }
+```
+
+Validated to a number in `[-8, 8]`, passed as `-exposure <n>`, and omitted
+entirely when absent so existing jobs are unchanged. Measured on
+`usduvtexture_color_test`: 1.0 -> 0.9446, 1.25 -> 0.9469 (the frame wants more
+light, but 2.0 regresses TextureCoordinateTest and RoughnessTest). Guarded by
+`test_validation.py::ExposureTests`.
+
 ### MaterialX `fileprefix` repair
 
 Some third-party MaterialX documents set both a `fileprefix` and fully prefixed
