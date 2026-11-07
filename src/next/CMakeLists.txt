@@ -860,7 +860,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
 
     # Lean-generated conformance vectors (tests/next/generated/lean/*.inc,
-    # produced by `lake exe usdspec-gen` in verif/lean; never skips).
+    # produced by `lake exe usdspec-gen` in the usdspec-conformance repo; never skips).
     add_executable(test_lean_vectors
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lean_vectors.cc
     )
@@ -1786,18 +1786,6 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                 --lusdcat $<TARGET_FILE:lusdcat>)
     set_tests_properties(next_pcp_json_contract PROPERTIES LABELS "next;aousd;lean;pcp")
 
-    add_test(NAME next_lean_primindex_vectors
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-prim-index-vectors.py
-                --lusdcat $<TARGET_FILE:lusdcat>)
-    set_tests_properties(next_lean_primindex_vectors
-        PROPERTIES LABELS "next;aousd;lean;pcp;generated" TIMEOUT 180)
-
-    add_test(NAME next_lean_layerstack_vectors
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-layer-stack-vectors.py
-                --lusdcat $<TARGET_FILE:lusdcat>)
-    set_tests_properties(next_lean_layerstack_vectors
-        PROPERTIES LABELS "next;aousd;lean;pcp;generated" TIMEOUT 180)
-
     add_test(NAME next_test_lean_vectors
         COMMAND test_lean_vectors
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -1809,75 +1797,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(next_test_lean_vectors_combine_chain
         PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd;lean")
-    # Validator rule -> Lean declaration table (validation-context.cc
-    # kLeanReflectionTable) must name declarations that exist in verif/lean.
-    # Pure source check (no lake); cross-checks `lusdchecker --dump-rules`
-    # when that binary exists in this build tree.
-    add_test(NAME next_lean_reflection_table
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-reflection.py
-                --check --repo "${CMAKE_CURRENT_SOURCE_DIR}/../.."
-                --lusdchecker "${CMAKE_BINARY_DIR}/lusdchecker"
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(next_lean_reflection_table
-        PROPERTIES LABELS "next;aousd;lean")
-
-    add_test(NAME next_lean_reflection_checker_tests
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-check-lean-reflection.py)
-    set_tests_properties(next_lean_reflection_checker_tests
-        PROPERTIES LABELS "next;aousd;lean")
-
-    add_test(NAME next_lean_spec_citations
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-spec-citations.py
-                --max-unverified 0)
-    set_tests_properties(next_lean_spec_citations
-        PROPERTIES LABELS "next;aousd;lean")
-
-    add_test(NAME next_lean_model_split
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-model-split.py)
-    set_tests_properties(next_lean_model_split
-        PROPERTIES LABELS "next;aousd;lean")
-
-    # Optional: the Lean side itself (proofs + vector drift). Registered only
-    # when `lake` is found; set LIGHTUSD_NEXT_LEAN=OFF to skip.
-    option(LIGHTUSD_NEXT_LEAN "Register verif/lean build/check tests when lake is available" ON)
-    find_program(LIGHTUSD_LAKE_EXECUTABLE NAMES lake HINTS $ENV{HOME}/.elan/bin)
-    if(LIGHTUSD_NEXT_LEAN AND LIGHTUSD_LAKE_EXECUTABLE)
-        set(_lean_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../verif/lean")
-        add_test(NAME next_lean_unicode_conformance
-            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-lean-unicode-data.py
-                --conformance --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
-        set_tests_properties(next_lean_unicode_conformance
-            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 600)
-        add_test(NAME next_lean_build
-            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} build
-            WORKING_DIRECTORY ${_lean_dir})
-        add_test(NAME next_lean_test
-            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} exe usdspec-test
-            WORKING_DIRECTORY ${_lean_dir})
-        add_test(NAME next_lean_vectors_check
-            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} exe usdspec-gen --check
-                    --out "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/generated/lean"
-            WORKING_DIRECTORY ${_lean_dir})
-        set_tests_properties(next_lean_build next_lean_test next_lean_vectors_check
-            PROPERTIES LABELS "next;aousd;lean;generated" TIMEOUT 3600)
-        set_tests_properties(next_lean_test next_lean_vectors_check
-            PROPERTIES DEPENDS next_lean_build)
-        add_test(NAME next_lean_axioms
-            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} env lean Audit/Axioms.lean
-            WORKING_DIRECTORY ${_lean_dir})
-        add_test(NAME next_lean_axiom_audit_tests
-            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-lean-axioms.py
-                --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
-        set_tests_properties(next_lean_axioms next_lean_axiom_audit_tests
-            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 3600)
-        add_test(NAME next_lean_reflection_environment
-            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-reflection.py
-                --check --repo "${CMAKE_CURRENT_SOURCE_DIR}/../.."
-                --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
-        set_tests_properties(next_lean_reflection_environment
-            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 120)
-
-    endif()
+    # The Lean model, proofs, registry gates and Lean-vector replays against
+    # stock OpenUSD now live in the separate usdspec-conformance repository
+    # (generators there are the source of truth for tests/next/generated/lean;
+    # next_test_lean_vectors above consumes the pinned copy of those files).
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when

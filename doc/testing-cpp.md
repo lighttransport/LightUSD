@@ -1115,6 +1115,16 @@ features, SIMD, memory width, and threading identical. Compare repeated load
 and export timings as well as size; investigate repeatable regressions above
 5% rather than accepting a smaller binary on size alone.
 
+> **Moved.** The Lean model (`verif/lean`), its proofs, the findings registry, the
+> citation/model-split/reflection gates, the Unicode gate and the replays of
+> Lean vectors against stock OpenUSD (`next_lean_build`, `next_lean_*_vectors`,
+> `next_lean_reflection_*`, `next_lean_axioms`, `next_lean_unicode_conformance`, ...)
+> now live in the separate `usdspec-conformance` repository. Only the C++
+> consumers (`next_test_lean_vectors*`, `next_test_name_order`) remain here, reading
+> the pinned copy in `tests/next/generated/lean/`. Paths and test names in the
+> Lean-specific text below that refer to `verif/lean`, `scripts/*lean*` or
+> `next_lean_*` describe that repository.
+
 The Lean Unicode gate requires a verified official UCD cache. Before running
 Lean-labelled CTest checks, run `python3 scripts/fetch-lean-unicode-data.py` from
 the repository root. This fetches only missing files and verifies every SHA256
