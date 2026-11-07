@@ -48,12 +48,12 @@ if(NOT TARGET lightusd_gpu_rt_common)
       "const char* kKernelSrc = R\"CUDA(${LIGHTUSD_GPU_RT_KERNEL_CONTENT})CUDA\";\n")
   endif()
 
+  include(${PROJECT_SOURCE_DIR}/cmake/lightusd-ptex.cmake)
   set(LIGHTUSD_GPU_RT_SOURCES
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lighting_ies.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex.c
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-sample.c
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-file.c
+    ${LIGHTUSD_PTEX_C_SOURCES}
+    ${LIGHTUSD_PTEX_C_FILE_SOURCES}
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/ptex_atlas.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/texture_tools.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_bridge.cc

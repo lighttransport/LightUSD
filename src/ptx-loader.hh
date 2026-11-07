@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Minimal, lazy Ptex container reader used by the renderers. A thin C++
-// wrapper over the portable C11 core in src/ptex/lptex.h (see doc/ptex.md).
+// wrapper over the portable vendored C11 library (external/textools/ptex, see doc/ptex.md).
 #pragma once
 
 #include <cstdint>
@@ -10,7 +10,7 @@
 
 #include "io-util.hh"
 
-struct lptex_reader;
+struct tptex_texture;
 
 namespace lightusd {
 namespace ptx {
@@ -67,7 +67,7 @@ class Reader {
                 FaceImage* out, std::string* err) const;
 
  private:
-  lptex_reader* reader_ = nullptr;
+  tptex_texture* reader_ = nullptr;
   std::unique_ptr<io::MMapFileHandle> mapped_file_;
   Info info_;
 

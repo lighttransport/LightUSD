@@ -223,12 +223,12 @@ endif()
 # Keep all scene/material packing and runtime shader implementations behind one
 # target so the CLI renderer cannot drift from the viewer's OpenPBR/MaterialX
 # ABI.  In particular this target has no GLFW, ImGui, OpenGL, or X11 dependency.
+include(${PROJECT_SOURCE_DIR}/cmake/lightusd-ptex.cmake)
 set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     lighting_ies.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex.c
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-sample.c
-    ${PROJECT_SOURCE_DIR}/src/ptex/lptex-file.c
+    ${LIGHTUSD_PTEX_C_SOURCES}
+    ${LIGHTUSD_PTEX_C_FILE_SOURCES}
     ptex_atlas.cc
     texture_tools.cc
     displacement_bake.cc
@@ -448,9 +448,8 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       ptex_atlas.cc
       ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
-      ${PROJECT_SOURCE_DIR}/src/ptex/lptex.c
-      ${PROJECT_SOURCE_DIR}/src/ptex/lptex-sample.c
-      ${PROJECT_SOURCE_DIR}/src/ptex/lptex-file.c
+      ${LIGHTUSD_PTEX_C_SOURCES}
+      ${LIGHTUSD_PTEX_C_FILE_SOURCES}
       ${PROJECT_SOURCE_DIR}/src/image-loader.cc
       ${PROJECT_SOURCE_DIR}/src/io-util.cc
       ${PROJECT_SOURCE_DIR}/src/external/miniz.c

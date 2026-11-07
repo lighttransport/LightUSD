@@ -2293,6 +2293,31 @@ if(LIGHTUSD_BUILD_TESTS)
     endforeach()
   endif()
 
+  # Vendored tptex (Ptex) self-tests: unit tests of the reader, writer, half,
+  # utils and filters (the upstream differential suite runs in tinyexr).
+  # Self-contained; links its own sources, no textools gate needed.
+  file(GLOB LIGHTUSD_TPTEX_ALL_SOURCES CONFIGURE_DEPENDS
+       ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/src/*.c)
+  file(GLOB LIGHTUSD_TPTEX_TEST_SOURCES CONFIGURE_DEPENDS
+       ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/test/*.c)
+  add_executable(textools_ptex_test ${LIGHTUSD_TPTEX_TEST_SOURCES}
+                 ${LIGHTUSD_TPTEX_ALL_SOURCES} ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+  target_include_directories(textools_ptex_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/include
+    ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/src)
+  target_compile_definitions(textools_ptex_test PRIVATE _LARGEFILE64_SOURCE=1)
+  # (cmake/lightusd-ptex.cmake sets TPTEX_MINIZ_HEADER="external/miniz.h" on these
+  # sources, resolved from the src/ root.)
+  target_include_directories(textools_ptex_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_features(textools_ptex_test PRIVATE c_std_11)
+  if(NOT MSVC)
+    target_compile_options(textools_ptex_test PRIVATE -ffp-contract=off -w)
+    target_link_libraries(textools_ptex_test PRIVATE m)
+  endif()
+  add_test(NAME textools-ptex COMMAND textools_ptex_test)
+  set_tests_properties(textools-ptex PROPERTIES LABELS "textools;ptex"
+    ENVIRONMENT "TPTEX_TEST_TMPDIR=${CMAKE_CURRENT_BINARY_DIR}")
+
   # (The lusdview unit tests are registered inside
   # examples/lusdview/CMakeLists.txt, where their targets are in scope; that
   # works because enable_testing() is now called before that subdirectory is

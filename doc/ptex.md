@@ -1,118 +1,90 @@
 # Ptex in LightUSD
 
-LightUSD reads Ptex (`.ptx`) textures with its own small C11 library in
-`src/ptex/`. It does not link OpenPtex. OpenPtex is used only as an
-independent test oracle (`tests/verification/repros/ptex-*-compare.cc`).
+LightUSD reads Ptex (`.ptx`) textures with **tptex**, a pure C11 port of Disney's
+Ptex that lives in tinyexr (`tools/ptex`) and is vendored here, unmodified, at
+`src/external/textools/ptex` (see its `README.lightusd.md` for the synced commit).
+tptex is differentially tested against upstream OpenPtex 2.4.3 in tinyexr
+(`make ptex-compare`: half conversion exhaustively, utils, reader, writer and
+filters). OpenPtex is also used here as an independent oracle for the renderers
+(`tests/verification/repros/ptex-*-compare.cc`, `tool-lusdrender-vkr-ptex-openptex`).
 
 | File | Contents |
 |---|---|
-| `src/ptex/lptex.h`, `lptex.c` | Container reader and face decoder (memory only) |
-| `src/ptex/lptex-sample.h`, `lptex-sample.c` | Stateless sampling math |
-| `src/ptex/lptex-file.c` | `lptex_open_file()`; built only with file IO |
-| `src/ptx-loader.{hh,cc}` | C++ `lightusd::ptx::Reader` wrapper (unchanged API) |
-| `examples/lusdview/cpu/ptex-sample.hh` | `CpuPtexSampler`: LRU page cache + mutex over `lptex-sample` |
+| `src/external/textools/ptex/include/tptex.h` | Reader API (memory or file input), face info, metadata |
+| `.../tptex_sample.{h,c}` | Stateless seam-aware sampling math (ported from the former `lptex-sample`) |
+| `.../tptex_write.h`, `tptex_filter.h` | Writer and PtexFilter equivalents (not linked into the renderers) |
+| `src/ptx-loader.{hh,cc}` | C++ `lightusd::ptx::Reader` adapter (API unchanged) |
+| `examples/lusdview/cpu/ptex-sample.hh` | `CpuPtexSampler`: LRU page cache + mutex over `tptex_sample` |
 
-## Reader API (`lptex.h`)
+## What tptex covers
 
-```c
-lptex_reader* r = NULL;
-lptex_status st = lptex_open_memory(bytes, size, NULL /*options*/, &r);
-const lptex_info* info = lptex_reader_info(r);   /* type, channels, levels, faces, face_info[] */
-lptex_image img;
-st = lptex_read_face(r, face, level, max_bytes, &img);  /* or lptex_read_face_into(dst) */
-lptex_image_free(r, &img);
-lptex_close(r);
-```
+Everything upstream Ptex reads: format version 1; u8/u16/half/float data; quad and
+triangle meshes; constant, zip, difference-zip and tiled faces; stored reduction
+levels and on-the-fly reductions (upstream's alternating-axis rule, triangle
+reduction, half/float included); the average-colour block; metadata (small and large,
+lazily loaded); edit blocks; border and edge-filter modes. Big-endian hosts work
+(explicit little-endian parsing and byte swapping; upstream refuses them).
 
-- The reader borrows `bytes`. `lptex_open_file()` owns them instead: it maps
-  the file with POSIX `mmap`, or reads it with `read`/`fread` when mapping is
-  not possible.
-- `lptex_options.allocator` takes `{alloc, free, user}`. Leaving it NULL means
-  `malloc`/`free`. All reader state and decode scratch come from it.
-- Errors are `lptex_status` codes. `lptex_status_str()` returns a static
-  message (the same text the old C++ reader produced), so no string is ever
-  allocated.
-- Decoded images are channel-interleaved, with rows v-major starting at v = 0.
-  This matches OpenPtex `getData`.
-
-Covered: format version 1; u8/u16/half/float data; constant faces; zip and
-difference-zip faces; tiled faces; per-level face ordering; generated
-(reduced) integer mips for levels that a writer stored only partially, using
-OpenPtex's axis-alternating truncating reduction. Not covered: metadata
-(skipped), edit blocks, and dynamic reduction of half/float data or triangle
-meshes. Those cases return `LPTEX_E_REDUCTION_UNSUPPORTED`.
+`lightusd::ptx::Reader::ReadFace(face, level, ...)` returns the face at
+`(ures - level, vres - level)` texels, each axis clamped at 1. Versus the former
+reader this changes results only where the old code generated its own reductions
+for non-conforming data: reductions now follow upstream exactly (for example a fully
+reduced 1×1 face is the stored average colour).
 
 ## Guarantees
 
-- No global or static mutable state, no exceptions, no `volatile` and no
-  atomics. The reader is immutable after open, so `lptex_read_face*()` is
-  reentrant and safe to call concurrently on one reader without locks.
-- Every size, offset and count read from the file is checked with
-  overflow-safe add/mul before use. Multi-byte fields are read with
-  little-endian byte loads (no struct punning). zlib blocks must inflate to
-  exactly the expected size. `max_bytes` bounds every decoded face, including
-  the parent levels used for generated mips (recursion depth is at most 32).
-  A level whose face count is larger than the face table is rejected.
-- Reduction-level faces are located by rank under the exact former
-  `std::sort` comparator: `min(w,h) >> level` descending, then face index
-  ascending. That comparator is a strict total order, so the rank equals the
-  sorted position. It costs O(faces) per read and needs no allocation.
-- Sampling functions guard float-to-int conversions (NaN and inf are defined
-  behaviour). For finite inputs the `std::min/max/clamp` semantics are kept
-  bit-for-bit.
-- The code is C11 and `-pedantic` clean on GCC 15, GCC 14, Clang 21
-  (`-Weverything` minus `-Wpadded`, `-Wunsafe-buffer-usage`,
-  `-Wdeclaration-after-statement` and `-Wswitch-default`), emcc, and 32-bit
-  (`-m32 -Wconversion`).
+- No global mutable state, atomics, `volatile`, threads or `alloca`. Memory comes from an
+  optional allocator. `stdio`/POSIX I/O is confined to `tptex_file.c`.
+- Every size, offset and count read from a file is overflow-checked and bounded by
+  `tptex_limits` and the input size. Corrupt files fail with a status, never undefined
+  behaviour (ASan/UBSan fuzzing in tinyexr and the hostile-mutation phase of `cmp_reader`).
+- The adapter opens textures `TPTEX_OPEN_NO_LAZY`: every level header and all metadata
+  are loaded at open and a malformed level or metadata block only fails the reads that
+  need it. After that `ReadFace` does not mutate the texture, so it may be called
+  concurrently on one `Reader` (the memory and `pread` inputs are stateless).
+- Floating-point code is built with `-ffp-contract=off` so results do not depend on FMA
+  fusion across compilers or targets.
 
-C++ users keep `lightusd::ptx::Reader` (`OpenFile`, `OpenMemory`, `ReadFace`)
-and `lusdview::CpuPtexSampler`. Only private members changed.
+## Sampling (`tptex_sample.h`)
 
-## Sampling (`lptex-sample.h`)
-
-These functions are pure, over a caller page callback
-`int fetch(void* user, uint32_t face, uint32_t mip, lptex_image* page)`.
-The page is borrowed only until the next fetch.
-
-- `lptex_cross_edge()` and `lptex_resolve_tap()`: adjacency remap with the
-  `PtexSeparableFilter::applyAcrossEdge` rotation, plus a second hop for
-  corners. Subface adjacency is not followed.
-- `lptex_sample_rgb()` and `lptex_sample_channel()`: bilinear sampling where
-  each tap follows the seam into the neighbouring face.
-- `lptex_compute_uv_footprint()` and `lptex_sample_footprint_*()`: the
-  anisotropic footprint. The mip comes from the minor axis, and up to 8
-  tent-weighted taps are taken along the major axis.
-- `lptex_choose_mip()`, `lptex_srgb_to_linear()` and `lptex_half_to_float()`.
-
-The cache policy stays outside the C core. `CpuPtexSampler` keeps its LRU,
-its mutex and its statistics.
+Pure functions over a caller page callback
+`int fetch(void* user, uint32_t face, uint32_t mip, tptex_image* page)`; the page is
+borrowed only until the next fetch. `tptex_cross_edge`/`tptex_resolve_tap` (adjacency
+remap with the `PtexSeparableFilter::applyAcrossEdge` rotation plus a corner hop; subface
+adjacency is not followed), `tptex_sample_rgb`/`_channel` (seam-aware bilinear),
+`tptex_compute_uv_footprint` and `tptex_sample_footprint_*` (anisotropic: minor-axis mip,
+up to 8 tent-weighted taps along the major axis), `tptex_choose_mip`,
+`tptex_srgb_to_linear`, `tptex_sample_half_to_float`. Cache policy stays with the caller.
+These are behaviour-identical to the previous `lptex_*` functions, so renders are
+unchanged. The full upstream filters (`tptex_filter.h`) are available but not yet used by
+the viewers.
 
 ## Build
 
-`cmake/lightusd-render-support.cmake` adds `lptex.c` and `lptex-sample.c` to
-`lightusd_ptex_objects` (C11, no extensions). That object library is embedded
-in both the legacy and the next/tydra archives. `LIGHTUSD_PTEX_ENABLE_FILEIO`
-adds `lptex-file.c`. It defaults to OFF for Emscripten/WASI and ON elsewhere.
-When it is OFF, `LPTEX_NO_FILEIO` is defined and `Reader::OpenFile` uses only
-the mmap path.
+`cmake/lightusd-ptex.cmake` lists the tptex sources the renderers need (reader, half,
+utils, status, allocator, memory input, inflate against the in-tree miniz, sampler) and
+`cmake/lightusd-render-support.cmake` builds them into `lightusd_ptex_objects`, embedded in
+the legacy and next/tydra archives. `LIGHTUSD_PTEX_ENABLE_FILEIO` adds `tptex_file.c`
+(default OFF for Emscripten/WASI, ON elsewhere); when OFF, `TPTEX_NO_FILEIO` is defined and
+`Reader::OpenFile` uses only the mmap path.
 
 ## Tests
 
-- `unit-test-lightusd ptx_reader_*`: the existing assertions, plus
-  `ptx_reader_legacy_differential_test`. That test compares lptex and the C++
-  wrapper against a frozen copy of the pre-rewrite reader
-  (`tests/unit/ptx-legacy-reader.inc`). It checks open status and message,
-  info, and every face × level × budget for bytes and status. The inputs are
-  the synthetic fixtures, 400 randomized multi-face containers (all types,
-  encodings, tiles, partial reduction levels), 24 corruptions of each, and the
-  lmetalview fixture.
-  - `LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx` adds real files. Faces are sampled
-    when a file has more than about 1500.
-  - `LIGHTUSD_PTX_DUMP_CORPUS=dir` writes the generated corpus, for example
-    as fuzzer seeds.
-- `fuzz_lptex` (`-DLIGHTUSD_NEXT_BUILD_FUZZERS=ON`, Clang): libFuzzer with
-  ASan/UBSan over open, decode with a 1 MiB budget, and seam-aware sampling.
+- `unit-test-lightusd ptx_reader_*`. `ptx_reader_legacy_differential_test` compares the
+  tptex-backed `lightusd::ptx::Reader` with a frozen copy of the pre-rewrite reader
+  (`tests/unit/ptx-legacy-reader.inc`) on the synthetic fixtures, 400 randomized
+  containers, corruptions of each, and the lmetalview fixture. Hand-built and real files
+  must match at every level, the randomized corpus at level 0; corrupted inputs are
+  informational because tptex follows upstream Ptex where the legacy reader was more
+  permissive. Env: `LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx` adds real files,
+  `LIGHTUSD_PTX_DUMP_CORPUS=dir` dumps the corpus (fuzzer seeds).
+- `fuzz_tptex` (`-DLIGHTUSD_NEXT_BUILD_FUZZERS=ON`, Clang; `tests/fuzzer/tptex_fuzzmain.c`):
+  libFuzzer with ASan/UBSan over open (lazy and eager), face decode at stored and reduced
+  resolutions, metadata, seam-aware sampling and all filters. The legacy `src/ptex` core and
+  `fuzz_lptex` are gone; the frozen reference reader lives in `tests/unit/ptx-legacy-reader.inc`.
 - The lusdview ctests `lusdview-cpu-ptex-element`, `lusdview-cpu-ptex-routing`,
-  `lusdview-ptex-camera-demand` and `lusdview_ptex_atlas_test`, and the
-  OpenPtex oracle described in
-  `doc/validation/island-ptex-release-control-2026-11-03.md`.
+  `lusdview-ptex-camera-demand`, `lusdview_ptex_atlas_test`, and the OpenPtex oracle
+  `tool-lusdrender-vkr-ptex-openptex`
+  (`doc/validation/island-ptex-release-control-2026-11-03.md`).
+- tptex's own suite (unit tests, upstream differential, fuzzing) runs in tinyexr; its unit
+  tests are also vendored under `src/external/textools/ptex/test`.

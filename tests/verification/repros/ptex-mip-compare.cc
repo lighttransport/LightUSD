@@ -4,8 +4,9 @@
 // Build (OpenPtex 2.4.3 source at /tmp/gap-ptex-upstream, Debug library already
 // built by the Ptex decoder report):
 //   gcc -c -O1 -I<repo>/src/external <repo>/src/external/miniz.c -o miniz.o
-//   gcc -std=c11 -c -O2 <repo>/src/ptex/lptex.c <repo>/src/ptex/lptex-sample.c
-//       <repo>/src/ptex/lptex-file.c   (and link the three .o files below)
+//   T=<repo>/src/external/textools/ptex/src   (vendored tptex)
+//   gcc -std=c11 -c -O2 -ffp-contract=off -I<repo>/src/external \
+//       -DTPTEX_MINIZ_HEADER='"miniz.h"' $T/tptex_{alloc,half,inflate,io,reader,sample,status,utils,file}.c
 //   g++ -std=c++17 -O2 -I<repo>/src -I<repo>/examples/lusdview //       -I<ptex-src>/src/ptex ptex-mip-compare.cc //       <repo>/src/ptx-loader.cc <repo>/src/io-util.cc miniz.o //       -L<ptex-build>/src/ptex -lPtex -lz -o ptex-mip-ref
 //   LD_LIBRARY_PATH=<ptex-build>/src/ptex ./ptex-mip-ref \
 //       /mnt/nvme02/data/island/textures/isMountainA/Color/mountain_geo.ptx

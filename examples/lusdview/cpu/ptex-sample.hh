@@ -8,7 +8,7 @@
 // byte-for-byte with an independent decoder (OpenPtex).
 //
 // All sampling math (adjacency, footprint, bilinear taps) lives in the C11
-// core src/ptex/lptex-sample.{h,c}; this class only owns the page cache,
+// core src/ptex/tptex_sample.{h,c}; this class only owns the page cache,
 // its mutex and the statistics.
 #pragma once
 
@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "ptx-loader.hh"
-#include "ptex/lptex-sample.h"
+#include "external/textools/ptex/include/tptex_sample.h"
 
 namespace lusdview {
 
@@ -79,6 +79,8 @@ class CpuPtexSampler {
  public:
 
   bool valid() const { return reader_ != nullptr; }
+  // Underlying container reader (for atlas construction); null until opened.
+  const lightusd::ptx::Reader* reader() const { return reader_.get(); }
   const lightusd::ptx::Info& info() const {
     static const lightusd::ptx::Info empty;
     return reader_ ? reader_->info() : empty;
@@ -90,8 +92,8 @@ class CpuPtexSampler {
   uint32_t ChooseMip(uint32_t face, float uv_per_pixel) const {
     const lightusd::ptx::Info& pi = info();
     if (face >= pi.faces || pi.levels == 0) return 0;
-    const lptex_face_info fi = ToC(pi.faceInfo[face]);
-    return lptex_choose_mip(&fi, pi.levels, uv_per_pixel);
+    const tptex_face_info fi = ToC(pi.faceInfo[face]);
+    return tptex_choose_mip(&fi, pi.levels, uv_per_pixel);
   }
 
   // Anisotropic UV footprint for one pixel: the image of the isotropic
@@ -117,9 +119,9 @@ class CpuPtexSampler {
     if (!out) return;
     *out = Footprint{};
     if (face >= pi.faces || pi.levels == 0) return;
-    const lptex_face_info fi = ToC(pi.faceInfo[face]);
-    lptex_footprint fp;
-    lptex_compute_uv_footprint(&fi, pi.levels, gu, gv, world_footprint, &fp);
+    const tptex_face_info fi = ToC(pi.faceInfo[face]);
+    tptex_footprint fp;
+    tptex_compute_uv_footprint(&fi, pi.levels, gu, gv, world_footprint, &fp);
     out->major = fp.major;
     out->minor = fp.minor;
     out->dir_u = fp.dir_u;
@@ -155,8 +157,8 @@ class CpuPtexSampler {
  private:
   bool SampleLocked(uint32_t face, uint32_t mip, float u, float v, bool srgb,
                     float out_rgb[3]) const {
-    const lptex_sample_source src = Source();
-    if (!lptex_sample_rgb(&src, face, mip, u, v, srgb ? 1 : 0, out_rgb,
+    const tptex_sample_source src = Source();
+    if (!tptex_sample_rgb(&src, face, mip, u, v, srgb ? 1 : 0, out_rgb,
                           &crossFaceTaps_))
       return false;
     CountSamples(mip, 1);
@@ -180,8 +182,8 @@ class CpuPtexSampler {
  private:
   bool SampleChannelLocked(uint32_t face, uint32_t mip, float u, float v,
                            int channel, float* out) const {
-    const lptex_sample_source src = Source();
-    if (!lptex_sample_channel(&src, face, mip, u, v, channel, out,
+    const tptex_sample_source src = Source();
+    if (!tptex_sample_channel(&src, face, mip, u, v, channel, out,
                               &crossFaceTaps_))
       return false;
     CountSamples(mip, 1);
@@ -208,18 +210,19 @@ class CpuPtexSampler {
   uint64_t crossFaceTaps() const { return crossFaceTaps_; }
 
  private:
-  static lptex_face_info ToC(const lightusd::ptx::FaceInfo& f) {
-    lptex_face_info c;
-    c.ures = f.ures;
-    c.vres = f.vres;
-    c.adj_edges = f.adjEdges;
+  static tptex_face_info ToC(const lightusd::ptx::FaceInfo& f) {
+    tptex_face_info c;
+    c.res.ulog2 = static_cast<int8_t>(f.ures);
+    c.res.vlog2 = static_cast<int8_t>(f.vres);
+    c.adjedges = f.adjEdges;
     c.flags = f.flags;
-    for (int e = 0; e < 4; ++e) c.adj_faces[e] = f.adjFaces[e];
+    for (int e = 0; e < 4; ++e)
+      c.adjfaces[e] = f.adjFaces[e] == 0xffffffffu ? -1 : static_cast<int32_t>(f.adjFaces[e]);
     return c;
   }
 
-  static lptex_footprint ToC(const Footprint& fp) {
-    lptex_footprint c;
+  static tptex_footprint ToC(const Footprint& fp) {
+    tptex_footprint c;
     c.major = fp.major;
     c.minor = fp.minor;
     c.dir_u = fp.dir_u;
@@ -229,24 +232,24 @@ class CpuPtexSampler {
     return c;
   }
 
-  // Page provider for lptex-sample: a view of the cached page, valid until
+  // Page provider for tptex_sample: a view of the cached page, valid until
   // the next fetch (the C core samples each page before fetching another).
   static int FetchPage(void* user, uint32_t face, uint32_t mip,
-                       lptex_image* page) {
+                       tptex_image* page) {
     const auto* self = static_cast<const CpuPtexSampler*>(user);
     const lightusd::ptx::FaceImage* img = self->FetchLocked(face, mip);
     if (!img) return 0;
     page->width = img->width;
     page->height = img->height;
     page->channels = img->channels;
-    page->type = static_cast<lptex_type>(img->dataType);
+    page->type = static_cast<tptex_data_type>(img->dataType);
     page->data = const_cast<uint8_t*>(img->data.data());
     page->size = img->data.size();
     return 1;
   }
 
-  lptex_sample_source Source() const {
-    lptex_sample_source src;
+  tptex_sample_source Source() const {
+    tptex_sample_source src;
     src.faces = cFaces_.empty() ? nullptr : cFaces_.data();
     src.nfaces = static_cast<uint32_t>(cFaces_.size());
     src.levels = info().levels;
@@ -262,14 +265,14 @@ class CpuPtexSampler {
 
   bool SampleFootprintLocked(uint32_t face, const Footprint& fp, float u,
                              float v, bool srgb, float out_rgb[3]) const {
-    const lptex_sample_source src = Source();
-    const lptex_footprint cfp = ToC(fp);
+    const tptex_sample_source src = Source();
+    const tptex_footprint cfp = ToC(fp);
     if (fp.anisotropic()) {
       ++stats_.anisotropicSamples;
-      stats_.anisotropicTaps += lptex_footprint_taps(&cfp);
+      stats_.anisotropicTaps += tptex_footprint_taps(&cfp);
     }
     uint32_t n = 0;
-    const int ok = lptex_sample_footprint_rgb(&src, face, &cfp, u, v,
+    const int ok = tptex_sample_footprint_rgb(&src, face, &cfp, u, v,
                                               srgb ? 1 : 0, out_rgb,
                                               &crossFaceTaps_, &n);
     CountSamples(fp.mip, n);
@@ -279,14 +282,14 @@ class CpuPtexSampler {
   bool SampleChannelFootprintLocked(uint32_t face, const Footprint& fp,
                                     float u, float v, int channel,
                                     float* out) const {
-    const lptex_sample_source src = Source();
-    const lptex_footprint cfp = ToC(fp);
+    const tptex_sample_source src = Source();
+    const tptex_footprint cfp = ToC(fp);
     if (fp.anisotropic()) {
       ++stats_.anisotropicSamples;
-      stats_.anisotropicTaps += lptex_footprint_taps(&cfp);
+      stats_.anisotropicTaps += tptex_footprint_taps(&cfp);
     }
     uint32_t n = 0;
-    const int ok = lptex_sample_footprint_channel(&src, face, &cfp, u, v,
+    const int ok = tptex_sample_footprint_channel(&src, face, &cfp, u, v,
                                                   channel, out,
                                                   &crossFaceTaps_, &n);
     CountSamples(fp.mip, n);
@@ -348,7 +351,7 @@ class CpuPtexSampler {
   mutable lightusd::ptx::FaceImage transient_;
   mutable Stats stats_;
   mutable uint64_t crossFaceTaps_{0};
-  std::vector<lptex_face_info> cFaces_;
+  std::vector<tptex_face_info> cFaces_;
   mutable std::mutex mutex_;
 };
 

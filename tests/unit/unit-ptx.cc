@@ -81,8 +81,12 @@ std::vector<uint8_t> SyntheticPtex(uint32_t encoding = 1, bool tiled = false, bo
         Put32(&tile_header,(encoding<<30)|uint32_t(compressed.size()));
         auto tile_header_z=Deflate(tile_header);
         std::vector<uint8_t> block;
-        block.push_back(bad_tile?255:uint8_t(level==0?2:1));
-        block.push_back(uint8_t(level==0?2:1));
+        // one tile covering the whole face: tile res == face res (upstream layout)
+        uint8_t ul=0,vl=0;
+        while((1u<<ul)<w)++ul;
+        while((1u<<vl)<h)++vl;
+        block.push_back(bad_tile?255:ul);
+        block.push_back(vl);
         Put32(&block,uint32_t(tile_header_z.size()));
         block.insert(block.end(),tile_header_z.begin(),tile_header_z.end());
         block.insert(block.end(),compressed.begin(),compressed.end());
@@ -206,16 +210,22 @@ void ptx_reader_synthetic_fixture_test(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Differential test: the C11 lptex core must decode byte-identically to the
-// frozen pre-rewrite C++ reader (ptx-legacy-reader.inc), including the same
-// success/failure outcome and message, on valid and corrupted inputs.
+// Differential test: the tptex-backed lightusd::ptx::Reader must accept every
+// container the frozen pre-rewrite C++ reader (ptx-legacy-reader.inc) accepts,
+// report the same info, and decode every face/level the legacy reader decodes
+// byte-identically, on valid and corrupted inputs. tptex may additionally
+// accept inputs or levels the legacy reader refused (it follows upstream Ptex:
+// dynamic reductions, edit blocks); those are counted, not failed.
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
-#include "ptex/lptex.h"
+#include "external/textools/ptex/include/tptex.h"
+#ifndef TPTEX_NO_FILEIO
+#include "external/textools/ptex/include/tptex_file.h"
+#endif
 #include "ptx-legacy-reader.inc"
 
 namespace {
@@ -284,8 +294,11 @@ std::vector<uint8_t> RandomPtex(uint64_t seed) {
       uint32_t enc = rng.Below(4);
       std::vector<uint8_t> data;
       if (enc == 3) {
-        const uint8_t tlu = static_cast<uint8_t>(rng.Below(3));
-        const uint8_t tlv = static_cast<uint8_t>(rng.Below(3));
+        // upstream layout: tile resolution never exceeds the face's, and tiles
+        // cover it exactly (both are powers of two)
+        auto log2u = [](uint32_t v) { uint8_t l = 0; while ((1u << l) < v) ++l; return l; };
+        const uint8_t tlu = std::min<uint8_t>(static_cast<uint8_t>(rng.Below(3)), log2u(w));
+        const uint8_t tlv = std::min<uint8_t>(static_cast<uint8_t>(rng.Below(3)), log2u(h));
         const uint32_t tw = 1u << tlu, th = 1u << tlv;
         const uint32_t nx = (w + tw - 1) / tw, ny = (h + th - 1) / th;
         std::vector<uint8_t> th_bytes, tiles;
@@ -337,51 +350,53 @@ std::vector<uint8_t> RandomPtex(uint64_t seed) {
   return out;
 }
 
-struct DiffStats { size_t files = 0, opened = 0, reads = 0, ok_reads = 0, mismatches = 0; };
+struct DiffStats {
+  size_t files = 0, opened = 0, reads = 0, ok_reads = 0, mismatches = 0;
+  size_t extra_open = 0, extra_reads = 0;  // accepted by tptex only
+  size_t divergences = 0;                  // informational (see DiffBuffer)
+};
 
 // Compare one buffer under both readers. Returns false on the first mismatch.
+// mode 0: informational (corrupted inputs: tptex follows upstream Ptex and may
+// legitimately diverge from the permissive legacy reader; only crashes matter,
+// which the sanitizer builds and fuzzers catch). mode 1: level 0 must match.
+// mode 2: every level must match (conformant, hand-built or real files).
+enum { kInformational = 0, kLevel0 = 1, kAllLevels = 2 };
 bool DiffBuffer(const uint8_t* data, size_t size, const char* label,
                 DiffStats* st, const size_t* budgets, size_t nbudgets,
-                uint32_t face_stride = 1) {
+                uint32_t face_stride = 1, int mode = kAllLevels) {
   ++st->files;
   ptx_legacy::Reader legacy;
   std::string lerr;
   const bool lok = ptx_legacy::Reader::OpenMemory(data, size, &legacy, &lerr);
-  lptex_reader* r = nullptr;
-  const lptex_status s = lptex_open_memory(data, size, nullptr, &r);
-  const bool nok = s == LPTEX_OK;
-  if (lok != nok || (!lok && lerr != lptex_status_str(s))) {
-    TEST_MSG("%s: open mismatch legacy=%d '%s' lptex=%d '%s'", label, lok,
-             lerr.c_str(), nok, lptex_status_str(s));
-    lptex_close(r);
-    ++st->mismatches;
-    return false;
-  }
   lightusd::ptx::Reader wrapped;
   std::string werr;
   const bool wok = lightusd::ptx::Reader::OpenMemory(data, size, &wrapped, &werr);
-  if (wok != lok || werr != lerr) {
-    TEST_MSG("%s: wrapper open mismatch '%s' vs '%s'", label, werr.c_str(), lerr.c_str());
-    lptex_close(r);
+  if (lok && !wok) {
+    if (mode == kInformational) { ++st->divergences; return true; }
+    TEST_MSG("%s: legacy opens but tptex rejects: '%s'", label, werr.c_str());
     ++st->mismatches;
     return false;
   }
-  if (!lok) return true;
+  if (!lok) {
+    if (wok) ++st->extra_open;
+    return true;
+  }
   ++st->opened;
-  const lptex_info* ni = lptex_reader_info(r);
   const auto& li = legacy.info();
-  bool same = ni->faces == li.faces && ni->levels == li.levels &&
-              ni->channels == li.channels && uint32_t(ni->type) == uint32_t(li.dataType) &&
-              ni->mesh_type == li.meshType && ni->alpha_channel == li.alphaChannel;
+  const auto& ni = wrapped.info();
+  bool same = ni.faces == li.faces && ni.levels == li.levels &&
+              ni.channels == li.channels && ni.dataType == static_cast<lightusd::ptx::DataType>(li.dataType) &&
+              ni.meshType == li.meshType && ni.alphaChannel == li.alphaChannel;
   for (uint32_t f = 0; same && f < li.faces; ++f) {
     const auto& a = li.faceInfo[f];
-    const lptex_face_info& b = ni->face_info[f];
-    same = a.ures == b.ures && a.vres == b.vres && a.adjEdges == b.adj_edges &&
-           a.flags == b.flags && std::memcmp(a.adjFaces, b.adj_faces, 16) == 0;
+    const auto& b = ni.faceInfo[f];
+    same = a.ures == b.ures && a.vres == b.vres && a.adjEdges == b.adjEdges &&
+           a.flags == b.flags && std::memcmp(a.adjFaces, b.adjFaces, 16) == 0;
   }
   if (!same) {
+    if (mode == kInformational) { ++st->divergences; return true; }
     TEST_MSG("%s: info mismatch", label);
-    lptex_close(r);
     ++st->mismatches;
     return false;
   }
@@ -393,40 +408,27 @@ bool DiffBuffer(const uint8_t* data, size_t size, const char* label,
         ptx_legacy::FaceImage limg;
         std::string e;
         const bool a = legacy.ReadFace(face, level, budgets[bi], &limg, &e);
-        lptex_image nimg;
-        const lptex_status rs = lptex_read_face(r, face, level, budgets[bi], &nimg);
-        const bool b = rs == LPTEX_OK;
-        bool eq = a == b;
-        if (eq && a) {
-          eq = limg.width == nimg.width && limg.height == nimg.height &&
-               limg.channels == nimg.channels && limg.data.size() == nimg.size &&
-               (nimg.size == 0 || std::memcmp(limg.data.data(), nimg.data, nimg.size) == 0);
+        lightusd::ptx::FaceImage wimg;
+        std::string we;
+        const bool c = wrapped.ReadFace(face, level, budgets[bi], &wimg, &we);
+        if (a) {
           ++st->ok_reads;
-        } else if (eq) {
-          eq = e == lptex_status_str(rs);
+          const bool must = mode == kAllLevels || (mode == kLevel0 && level == 0);
+          if (!must) {
+            if (!c || wimg.data != limg.data) ++st->divergences;
+          } else if (!c || wimg.data != limg.data || wimg.width != limg.width ||
+              wimg.height != limg.height || wimg.channels != limg.channels) {
+            TEST_MSG("%s: face %u level %u budget %zu: legacy ok, tptex %s '%s'", label,
+                     face, level, budgets[bi], c ? "differs" : "fails", we.c_str());
+            ++st->mismatches;
+            return false;
+          }
+        } else if (c) {
+          ++st->extra_reads;
         }
-        if (eq) {
-          lightusd::ptx::FaceImage wimg;
-          std::string we;
-          const bool c = wrapped.ReadFace(face, level, budgets[bi], &wimg, &we);
-          eq = c == a && (a ? wimg.data == limg.data && wimg.width == limg.width &&
-                                  wimg.height == limg.height
-                            : we == e);
-        }
-        if (!eq) {
-          TEST_MSG("%s: face %u level %u budget %zu: legacy=%d '%s' lptex=%d '%s'",
-                   label, face, level, budgets[bi], a, e.c_str(), b,
-                   lptex_status_str(rs));
-          lptex_image_free(r, &nimg);
-          lptex_close(r);
-          ++st->mismatches;
-          return false;
-        }
-        lptex_image_free(r, &nimg);
       }
     }
   }
-  lptex_close(r);
   return true;
 }
 
@@ -452,30 +454,38 @@ void ptx_reader_legacy_differential_test(void) {
       for (int mixed = 0; mixed < 2; ++mixed)
         corpus.push_back(SyntheticPtex(enc, tiled != 0, false, mixed != 0));
   corpus.push_back(SyntheticPtex(2, true, true));
+  const size_t kHandBuilt = corpus.size();  // entries before this are hand-built and conformant
   for (uint64_t seed = 0; seed < 400; ++seed) corpus.push_back(RandomPtex(seed));
+  const size_t kRandomEnd = corpus.size();  // later entries are real files
   if (const char* root = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR")) {
     const std::string fixture = std::string(root) + "/examples/lmetalview/tests/textures/ptex_faces.ptx";
     auto bytes = ReadAll(fixture);
     TEST_CHECK(!bytes.empty());
-#ifndef LPTEX_NO_FILEIO
-    // The C file opener must see the same container as the memory path.
-    lptex_reader* fr = nullptr;
-    TEST_CHECK(lptex_open_file(fixture.c_str(), nullptr, &fr) == LPTEX_OK);
-    if (fr) {
-      lptex_image a, b;
-      lptex_reader* mr = nullptr;
-      TEST_CHECK(lptex_open_memory(bytes.data(), bytes.size(), nullptr, &mr) == LPTEX_OK);
-      TEST_CHECK(lptex_read_face(fr, 0, 0, 1u << 20, &a) == LPTEX_OK);
-      TEST_CHECK(lptex_read_face(mr, 0, 0, 1u << 20, &b) == LPTEX_OK);
-      TEST_CHECK(a.size == b.size && std::memcmp(a.data, b.data, a.size) == 0);
-      lptex_image_free(fr, &a);
-      lptex_image_free(mr, &b);
-      lptex_close(mr);
-      lptex_close(fr);
+#ifndef TPTEX_NO_FILEIO
+    // The file opener must see the same container as the memory path.
+    {
+      tptex_texture* ft = nullptr;
+      tptex_options fopt;
+      tptex_options_init(&fopt);
+      fopt.flags = TPTEX_OPEN_NO_LAZY;
+      TEST_CHECK(tptex_open_file(fixture.c_str(), &fopt, &ft) == TPTEX_OK);
+      tptex_texture* mt = nullptr;
+      TEST_CHECK(tptex_open_memory(bytes.data(), bytes.size(), &fopt, &mt) == TPTEX_OK);
+      if (ft && mt) {
+        const size_t px = tptex_pixel_size(ft);
+        tptex_face_info fi;
+        TEST_CHECK(tptex_get_face_info(ft, 0, &fi) == TPTEX_OK);
+        std::vector<uint8_t> a(px << (fi.res.ulog2 + fi.res.vlog2)), b(a.size());
+        TEST_CHECK(tptex_get_data(ft, 0, fi.res, a.data(), 0) == TPTEX_OK);
+        TEST_CHECK(tptex_get_data(mt, 0, fi.res, b.data(), 0) == TPTEX_OK);
+        TEST_CHECK(a == b);
+      }
+      tptex_close(mt);
+      tptex_close(ft);
+      tptex_texture* nt = nullptr;
+      TEST_CHECK(tptex_open_file((std::string(root) + "/no-such.ptx").c_str(), nullptr, &nt) != TPTEX_OK);
+      TEST_CHECK(tptex_open_file(root, nullptr, &nt) != TPTEX_OK);  // a directory
     }
-    TEST_CHECK(lptex_open_file((std::string(root) + "/no-such.ptx").c_str(), nullptr, &fr) ==
-               LPTEX_E_OPEN_FAILED);
-    TEST_CHECK(lptex_open_file(root, nullptr, &fr) == LPTEX_E_FILE_TOO_LARGE);
 #endif
     if (!bytes.empty()) corpus.push_back(std::move(bytes));
   }
@@ -492,7 +502,8 @@ void ptx_reader_legacy_differential_test(void) {
   char label[64];
   for (size_t i = 0; i < corpus.size(); ++i) {
     std::snprintf(label, sizeof(label), "corpus[%zu]", i);
-    TEST_CHECK(DiffBuffer(corpus[i].data(), corpus[i].size(), label, &st, budgets, 2));
+    TEST_CHECK(DiffBuffer(corpus[i].data(), corpus[i].size(), label, &st, budgets, 2, 1,
+                          (i < kHandBuilt || i >= kRandomEnd) ? kAllLevels : kLevel0));
   }
   // Deterministic corruption: byte flips and truncations of every corpus entry.
   Rng rng{12345};
@@ -508,7 +519,7 @@ void ptx_reader_legacy_differential_test(void) {
           bytes[rng.Below(uint32_t(bytes.size()))] ^= static_cast<uint8_t>(1u << rng.Below(8));
       }
       std::snprintf(label, sizeof(label), "mutant[%zu.%d]", i, m);
-      TEST_CHECK(DiffBuffer(bytes.data(), bytes.size(), label, &st, budgets, 2));
+      TEST_CHECK(DiffBuffer(bytes.data(), bytes.size(), label, &st, budgets, 2, 1, kInformational));
     }
   }
   // Optional real files, every face and level: LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx
@@ -535,7 +546,7 @@ void ptx_reader_legacy_differential_test(void) {
       std::printf("  %s: %zu face/level decodes identical\n", path.c_str(), st.ok_reads - before);
     }
   }
-  std::printf("  ptx differential: %zu buffers, %zu opened, %zu reads (%zu decoded), %zu mismatches\n",
-              st.files, st.opened, st.reads, st.ok_reads, st.mismatches);
+  std::printf("  ptx differential: %zu buffers, %zu opened (+%zu tptex-only), %zu reads (%zu decoded, +%zu tptex-only), %zu informational divergences, %zu mismatches\n",
+              st.files, st.opened, st.extra_open, st.reads, st.ok_reads, st.extra_reads, st.divergences, st.mismatches);
   TEST_CHECK(st.mismatches == 0);
 }

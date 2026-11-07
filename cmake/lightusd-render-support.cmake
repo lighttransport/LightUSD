@@ -9,29 +9,29 @@ function(lightusd_add_render_support)
     return()
   endif()
   set(support "${LIGHTUSD_RENDER_SUPPORT_DIR}")
-  # Ptex: portable C11 core (src/ptex) plus the thin C++ lightusd::ptx
-  # wrapper. lptex-file.c is the only file-IO piece; memory-only builds
-  # (wasm/WASI) leave it out and define LPTEX_NO_FILEIO.
+  # Ptex: vendored portable C11 tptex (src/external/textools/ptex) plus the thin
+  # C++ lightusd::ptx wrapper (src/ptx-loader.cc). tptex_file.c is the only
+  # file-IO piece; memory-only builds (wasm/WASI) leave it out and define
+  # TPTEX_NO_FILEIO.
   if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
-    set(_lptex_fileio_default OFF)
+    set(_tptex_fileio_default OFF)
   else()
-    set(_lptex_fileio_default ON)
+    set(_tptex_fileio_default ON)
   endif()
   option(LIGHTUSD_PTEX_ENABLE_FILEIO
-         "Build lptex_open_file() (src/ptex/lptex-file.c)" ${_lptex_fileio_default})
-  set(_lptex_sources
-      "${support}/ptex/lptex.c"
-      "${support}/ptex/lptex-sample.c")
+         "Build tptex_open_file() (textools/ptex/src/tptex_file.c)" ${_tptex_fileio_default})
+  include("${LIGHTUSD_RENDER_SUPPORT_DIR}/../cmake/lightusd-ptex.cmake")
+  set(_tptex_sources ${LIGHTUSD_PTEX_C_SOURCES})
   if(LIGHTUSD_PTEX_ENABLE_FILEIO)
-    list(APPEND _lptex_sources "${support}/ptex/lptex-file.c")
+    list(APPEND _tptex_sources ${LIGHTUSD_PTEX_C_FILE_SOURCES})
   endif()
   add_library(lightusd_ptex_objects OBJECT
-      ${_lptex_sources}
+      ${_tptex_sources}
       "${support}/ptx-loader.cc" "${support}/external/miniz.c")
   set_target_properties(lightusd_ptex_objects PROPERTIES
       C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   if(NOT LIGHTUSD_PTEX_ENABLE_FILEIO)
-    target_compile_definitions(lightusd_ptex_objects PUBLIC LPTEX_NO_FILEIO=1)
+    target_compile_definitions(lightusd_ptex_objects PUBLIC TPTEX_NO_FILEIO=1)
   endif()
   # Vendored miniz.c has to define the _LARGEFILE*_SOURCE feature-test macros
   # before its first include so the 64-bit stdio entry points get declared;

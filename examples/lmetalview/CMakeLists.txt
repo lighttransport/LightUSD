@@ -28,11 +28,11 @@ set(LMV_CORE_SOURCES
 
 # Ptex reader support (the same lazy reader lusdview uses) + miniz for its
 # compressed blocks. Plain utility translation units, not the legacy library.
+include(${LMV_REPO_ROOT}/cmake/lightusd-ptex.cmake)
 list(APPEND LMV_CORE_SOURCES
     ${LMV_REPO_ROOT}/src/ptx-loader.cc
-    ${LMV_REPO_ROOT}/src/ptex/lptex.c
-    ${LMV_REPO_ROOT}/src/ptex/lptex-sample.c
-    ${LMV_REPO_ROOT}/src/ptex/lptex-file.c
+    ${LIGHTUSD_PTEX_C_SOURCES}
+    ${LIGHTUSD_PTEX_C_FILE_SOURCES}
     ${LMV_REPO_ROOT}/src/io-util.cc
     ${LMV_REPO_ROOT}/src/external/miniz.c)
 set_source_files_properties(${LMV_REPO_ROOT}/src/external/miniz.c
