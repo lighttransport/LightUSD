@@ -1,4 +1,4 @@
-# tptex vendor import (pristine snapshot)
+# tptex vendor import
 
 Upstream: tinyexr `release` branch, `tools/ptex` (https://github.com/syoyo/tinyexr).
 Imported 2026-11-07 at tinyexr commit **`b3b5dcf`** (local branch `release`, unpushed
@@ -24,7 +24,9 @@ not use them); the `unit-test-lightusd` ptx tests build them from this directory
 
 ## lightusd-local patches
 
-None.
+- `test/test_tptex_utils.c`: use C11 `<math.h>`'s `NAN` for the NaN conversion
+  test. MSVC rejects a constant `0.0f / 0.0f` with C2124. This is a test-only
+  portability patch; preserve it during re-sync until included upstream.
 
 ## Re-sync
 

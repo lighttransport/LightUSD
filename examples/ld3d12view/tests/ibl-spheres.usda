@@ -15,11 +15,41 @@ def Xform "World"
         float inputs:intensity = 1
     }
 
-    def Sphere "S0" { double radius = 0.45  double3 xformOp:translate = (-2.4, 0, 0)  uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R0> }
-    def Sphere "S1" { double radius = 0.45  double3 xformOp:translate = (-1.2, 0, 0)  uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R1> }
-    def Sphere "S2" { double radius = 0.45  double3 xformOp:translate = (0, 0, 0)     uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R2> }
-    def Sphere "S3" { double radius = 0.45  double3 xformOp:translate = (1.2, 0, 0)   uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R3> }
-    def Sphere "S4" { double radius = 0.45  double3 xformOp:translate = (2.4, 0, 0)   uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R4> }
+    def Sphere "S0"
+    {
+        double radius = 0.45
+        double3 xformOp:translate = (-2.4, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/Looks/R0>
+    }
+    def Sphere "S1"
+    {
+        double radius = 0.45
+        double3 xformOp:translate = (-1.2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/Looks/R1>
+    }
+    def Sphere "S2"
+    {
+        double radius = 0.45
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/Looks/R2>
+    }
+    def Sphere "S3"
+    {
+        double radius = 0.45
+        double3 xformOp:translate = (1.2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/Looks/R3>
+    }
+    def Sphere "S4"
+    {
+        double radius = 0.45
+        double3 xformOp:translate = (2.4, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/Looks/R4>
+    }
 
     def Scope "Looks"
     {

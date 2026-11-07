@@ -5,6 +5,7 @@
  * properties. Bit-exactness against the real upstream functions is checked by
  * compare/cmp_utils.cc (make ptex-compare).
  */
+#include <math.h>
 #include <string.h>
 
 #include "../include/tptex_half.h"
@@ -149,9 +150,8 @@ static void test_convert(void) {
   TPTEX_CHECK(back[2] == 255.f * (1.f / 255.f));
   /* clamping and NaN handling */
   {
-    float in[3] = {-4.0f, 7.0f, 0.0f / 0.0f};
+    float in[3] = {-4.0f, 7.0f, NAN};
     uint8_t o[3];
-    in[2] = in[2] * 0.0f; /* NaN */
     tptex_convert_from_float(o, in, TPTEX_UINT8, 3);
     TPTEX_CHECK_EQ_U(o[0], 0); TPTEX_CHECK_EQ_U(o[1], 255); TPTEX_CHECK_EQ_U(o[2], 0);
   }
