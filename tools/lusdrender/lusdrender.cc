@@ -1715,13 +1715,11 @@ int main(int argc, char **argv) {
       // (Instancing on the GPU backends). No per-prototype BLAS sharing yet.
       // Displacement textures are shared across roots; traversal records are
       // intentionally root-local below.
-      size_t gpu_triangles_so_far = 0;
       TextureCache tc;
       tc.textures = &gpu_textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
       tc.options = &opt;
-      tc.triangles_so_far = &gpu_triangles_so_far;
       std::unordered_map<std::string, ResolvedMat> material_cache;
       lightusd::next::EvalOptions mesh_eval;
       mesh_eval.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
@@ -1933,23 +1931,16 @@ int main(int argc, char **argv) {
         const bool want_ptex = job.tex_id >= 0 &&
             size_t(job.tex_id) < gpu_textures.size() &&
             gpu_textures[size_t(job.tex_id)].is_ptex;
-        static const float kPtexCorner[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
         const auto push_ptex = [&](size_t face, int32_t count, int32_t k) {
           if (!want_ptex) return;
-          if (count == 4) {
-            geo.ptex_tri.insert(geo.ptex_tri.end(), {
-                float(face), kPtexCorner[0][0], kPtexCorner[0][1],
-                kPtexCorner[k][0], kPtexCorner[k][1],
-                kPtexCorner[k + 1][0], kPtexCorner[k + 1][1], 1.0f});
-          } else {
-            geo.ptex_tri.insert(geo.ptex_tri.end(), 8u, 0.0f);
-          }
+          geo.ptex_tri.push_back(count == 4 ? MakePtexTriRef(uint32_t(face), k - 1, false)
+                                            : kPtexTriInvalid);
         };
         if (count_values.empty()) {
           valid_geometry = index_values.size() % 3 == 0;
           for (size_t corner = 0; valid_geometry && corner < index_values.size(); ++corner)
             if (visible_face(corner / 3)) valid_geometry = emit(corner, corner / 3);
-          if (want_ptex) geo.ptex_tri.assign(geo.indices.size() / 3u * 8u, 0.0f);
+          if (want_ptex) geo.ptex_tri.assign(geo.indices.size() / 3u, kPtexTriInvalid);
         } else {
           size_t offset = 0, face = 0;
           for (int32_t count : count_values) {
@@ -1973,10 +1964,9 @@ int main(int argc, char **argv) {
         if (orientation && orientation->as_token() && *orientation->as_token()=="leftHanded")
           for(size_t triangle=0;triangle+2<geo.indices.size();triangle+=3) {
             std::swap(geo.indices[triangle+1],geo.indices[triangle+2]);
-            if (geo.ptex_tri.size() >= (triangle/3+1)*8u) {
-              float *pt = geo.ptex_tri.data() + (triangle/3)*8u;
-              std::swap(pt[3], pt[5]); std::swap(pt[4], pt[6]);
-            }
+            if (geo.ptex_tri.size() > triangle/3 &&
+                geo.ptex_tri[triangle/3] != kPtexTriInvalid)
+              geo.ptex_tri[triangle/3] ^= 2u;  // winding swapped
           }
 
         }
@@ -2162,7 +2152,6 @@ int main(int argc, char **argv) {
           break;
         }
         gpu_materials.push_back(std::move(resolved));
-        gpu_triangles_so_far += geo.indices.size() / 3u;
         geos.push_back(std::move(geo));
       }
     }

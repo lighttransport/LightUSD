@@ -28,7 +28,7 @@ struct GpuTriScene {
   std::vector<Vec3> base_colors;    // per-triangle base color
   std::vector<uint32_t> material_ids;  // source mesh/material per triangle
   std::vector<float> tri_uvs;          // six floats per triangle
-  std::vector<float> flat_ptex;        // 8 floats per triangle when any mesh binds Ptex
+  std::vector<uint32_t> flat_ptex;     // PtexTriRef per triangle when any mesh binds Ptex
   std::vector<Vec3> normals;        // per-triangle flat face normal (fallback)
   std::vector<Vec3> vn0, vn1, vn2;  // per-triangle vertex normals (smooth shading)
   bool has_vertex_normals{false};   // false => the vn streams are omitted

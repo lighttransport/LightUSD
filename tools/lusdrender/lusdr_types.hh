@@ -4,6 +4,7 @@
 // Includes lusdr_math.hh; the RenderContext aggregator lives in lusdr_context.hh.
 #pragma once
 
+#include "cpu/ptex-sample.hh"  // lusdview::CpuPtexSampler (lazy Ptex source)
 #include <array>
 #include <memory>
 #include <string>
@@ -45,6 +46,41 @@ using lightusd::tydra::RenderScene;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
+// Compact per-triangle Ptex reference for fan-triangulated quads: 4 bytes encode
+// which authored face a triangle came from and which of its two fan triangles it
+// is, so both the GPU shader and the CPU shader can rebuild the face-local (u,v)
+// of its corners. bits 31..2 = face id, bit 1 = winding swapped (left-handed
+// mesh), bit 0 = fan triangle (0: corners 0,1,2; 1: corners 0,2,3).
+// 0xFFFFFFFF marks a triangle without Ptex data (non-quad face).
+constexpr uint32_t kPtexTriInvalid = 0xFFFFFFFFu;
+inline uint32_t MakePtexTriRef(uint32_t face, int fan_triangle, bool swapped) {
+  return face >= (1u << 30) ? kPtexTriInvalid
+                            : (face << 2) | (swapped ? 2u : 0u) |
+                                  uint32_t(fan_triangle & 1);
+}
+inline uint32_t PtexTriFace(uint32_t ref) { return ref >> 2; }
+// Intrinsic (u,v) of a quad's corner ordinal 0..3, as lusdview assigns them
+// ((0,1),(1,1),(1,0),(0,0)); sampling then flips v to address top-first rows.
+inline void PtexCornerUv(uint32_t ordinal, float *u, float *v) {
+  static const float kU[4] = {0, 1, 1, 0}, kV[4] = {1, 1, 0, 0};
+  *u = kU[ordinal & 3u];
+  *v = kV[ordinal & 3u];
+}
+// Face-local (u,v) at barycentric (b1, b2) of the triangle (weights of vertices
+// 1 and 2; vertex 0 gets 1-b1-b2).
+inline void PtexTriUv(uint32_t ref, float b1, float b2, float *u, float *v) {
+  const uint32_t k = (ref & 1u) + 1u;
+  uint32_t i1 = k, i2 = k + 1u;
+  if (ref & 2u) { const uint32_t t = i1; i1 = i2; i2 = t; }
+  float u0, v0, u1, v1, u2, v2;
+  PtexCornerUv(0, &u0, &v0);
+  PtexCornerUv(i1, &u1, &v1);
+  PtexCornerUv(i2, &u2, &v2);
+  const float w0 = 1.0f - b1 - b2;
+  *u = u0 * w0 + u1 * b1 + u2 * b2;
+  *v = v0 * w0 + v1 * b1 + v2 * b2;
+}
+
 struct Texture {
   int width{0}, height{0}, channels{0};
   std::vector<uint8_t> pixels;  // mip 0: width*height*channels, top-left
@@ -69,11 +105,17 @@ struct Texture {
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
-  // Ptex texture: `pixels` is the RGBA8 face atlas (with gutters) followed by an
-  // alpha-byte face-rectangle table (8 texels per face) at `ptex_rect_texel_offset`.
+  // Ptex texture (.ptx): a lazy source, no pixels. `ptex` owns the container
+  // reader and a bounded decoded-page cache; the chunked CPU shader samples it
+  // directly (per-face mips, cross-face taps) and the Vulkan descriptor path
+  // builds a face atlas from it on demand. `ptex_bytes` keeps memory-opened data
+  // alive; `ptex_path` labels diagnostics.
   bool is_ptex{false};
   uint32_t ptex_faces{0};
-  uint32_t ptex_rect_texel_offset{0};
+  uint32_t ptex_max_face_edge{512};
+  std::shared_ptr<lusdview::CpuPtexSampler> ptex;
+  std::shared_ptr<std::vector<uint8_t>> ptex_bytes;
+  std::string ptex_path;
   // Full authored color transform for color textures. The destination is
   // lusdrender's display-linear Rec.709 shading space. `srgb` remains as the
   // compatibility fallback for legacy textures that do not carry a transform.
@@ -845,9 +887,9 @@ struct RTPreviewStats {
     // a graph image node selects its set through the Texcoord node flag.
     std::vector<float> uvs1;
     std::vector<uint32_t> indices;
-    // Optional Ptex data, 8 floats per triangle parallel to `indices`: face id,
-    // three corner (u,v), valid flag. Empty unless the mesh binds a Ptex texture.
-    std::vector<float> ptex_tri;
+    // Optional Ptex reference per triangle, parallel to `indices` / 3 (empty
+    // unless the mesh binds a Ptex texture). See PtexTriRef below.
+    std::vector<uint32_t> ptex_tri;
     uint32_t source_material_id{UINT32_MAX}; // survives bounded GPU chunking
   };
   size_t meshes{0};
@@ -1129,10 +1171,6 @@ struct TextureCache {
   std::vector<std::string> *material_diagnostic_examples{nullptr};
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
   size_t *texture_mip_fallbacks{nullptr};
-  // Triangles emitted so far by the caller (nullptr = unknown). Ptex atlases are
-  // only built while this is within GpuMaterialPathLimit(): above it the scene
-  // takes the chunked path, which never samples them.
-  const size_t *triangles_so_far{nullptr};
 };
 
 // Semantic texture lanes whose UV set the descriptor material path can select.

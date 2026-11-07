@@ -1106,11 +1106,11 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     return id;
   };
 
-  int32_t id = -1;
-  // Ptex (.ptx): build the face atlas and carry its face-rectangle table. Only
-  // the Vulkan descriptor path samples it (per-triangle face id + face-local uv);
-  // every other backend keeps treating a .ptx as an undecodable image so its
-  // constant fallback is unchanged rather than sampling an atlas as a 2D map.
+  // Ptex (.ptx): a lazy source (container reader + bounded page cache), no
+  // pixels. Only the Vulkan paths consume it: the chunked CPU shader samples it
+  // directly and the descriptor path builds a face atlas on demand
+  // (MakeDrawScene). Other backends keep treating a .ptx as an undecodable image
+  // so their constant fallback is unchanged.
   const auto ends_with_ptx = [&](const std::string &path) {
     if (path.size() < 4) return false;
     std::string ext = path.substr(path.size() - 4);
@@ -1118,54 +1118,50 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     return ext == ".ptx";
   };
   if (ends_with_ptx(asset_path) && tc.options && tc.options->vulkan &&
-      !std::getenv("LUSDR_NO_PTEX_ATLAS") &&
-      (!tc.triangles_so_far || *tc.triangles_so_far <= GpuMaterialPathLimit())) {
-    std::vector<uint8_t> bytes;
-    ::lightusd::ptx::Reader ptx;
+      !std::getenv("LUSDR_NO_PTEX")) {
+    auto sampler = std::make_shared<lusdview::CpuPtexSampler>(
+        size_t(64) * 1024 * 1024);
+    std::shared_ptr<std::vector<uint8_t>> held;
     std::string ptx_err;
-    if (DecoderFor(tc).ReadAssetBytes(asset_path, &bytes) &&
-        ::lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &ptx,
-                                            &ptx_err)) {
-      lusdview::PtexAtlasOptions atlas_options;
-      uint32_t max_edge = 0;
-      for (const ::lightusd::ptx::FaceInfo &fi : ptx.info().faceInfo)
-        max_edge = std::max(max_edge, std::max(fi.width(), fi.height()));
-      atlas_options.maxFaceEdge = std::max(1u, std::min(max_edge, 512u));
-      if (tc.options->texture_max_size > 0)
-        atlas_options.maxFaceEdge = std::min(
-            atlas_options.maxFaceEdge,
-            static_cast<uint32_t>(tc.options->texture_max_size));
-      atlas_options.maxAtlasBytes = 256ull * 1024ull * 1024ull;
-      light3d::Image atlas;
-      std::vector<lusdview::DrawPtexFaceRectCPU> rects;
-      lusdview::PtexAtlasBuildStats atlas_stats;
-      if (lusdview::BuildPtexAtlas(ptx, atlas_options, srgb, &atlas, &rects,
-                                   &atlas_stats, &ptx_err)) {
-        Texture t;
-        t.width = atlas.width;
-        t.height = atlas.height;
-        t.channels = 4;
-        t.pixels = std::move(atlas.data);
-        t.is_ptex = true;
-        t.ptex_faces = ptx.info().faces;
-        t.ptex_rect_texel_offset = atlas_stats.rectTexelOffset;
-        t.wrap_s = WrapMode::Clamp;
-        t.wrap_t = WrapMode::Clamp;
-        t.srgb = srgb;
-        t.scale = scale;
-        t.bias = bias;
-        id = int32_t(tc.textures->size());
-        tc.textures->push_back(std::move(t));
+    bool opened = false;
+    if (std::FILE *probe = std::fopen(asset_path.c_str(), "rb")) {
+      std::fclose(probe);
+      opened = sampler->OpenFile(asset_path, &ptx_err);
+    } else {
+      std::vector<uint8_t> bytes;
+      if (DecoderFor(tc).ReadAssetBytes(asset_path, &bytes)) {
+        held = std::make_shared<std::vector<uint8_t>>(std::move(bytes));
+        opened = sampler->OpenMemory(held->data(), held->size(), &ptx_err);
       }
     }
-    if (id < 0 && ptx_err.size()) std::cerr << "WARN: Ptex atlas: " << ptx_err << "\n";
-    tc.by_key[key] = id;
-    if (id < 0) {
+    int32_t ptex_id = -1;
+    if (opened) {
+      Texture t;
+      t.is_ptex = true;
+      t.ptex_faces = sampler->info().faces;
+      if (tc.options->texture_max_size > 0)
+        t.ptex_max_face_edge = std::min(512u, uint32_t(tc.options->texture_max_size));
+      t.ptex = std::move(sampler);
+      t.ptex_bytes = std::move(held);
+      t.ptex_path = asset_path;
+      t.wrap_s = WrapMode::Clamp;
+      t.wrap_t = WrapMode::Clamp;
+      t.srgb = srgb;
+      t.scale = scale;
+      t.bias = bias;
+      ptex_id = int32_t(tc.textures->size());
+      tc.textures->push_back(std::move(t));
+    } else if (!ptx_err.empty()) {
+      std::cerr << "WARN: Ptex: " << ptx_err << "\n";
+    }
+    tc.by_key[key] = ptex_id;
+    if (ptex_id < 0) {
       if (tc.missing_textures) (*tc.missing_textures)++;
       std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
     }
-    return id;
+    return ptex_id;
   }
+  int32_t id = -1;
   if (IsUdimPattern(asset_path)) {
     Texture udim;
     udim.is_udim = true;

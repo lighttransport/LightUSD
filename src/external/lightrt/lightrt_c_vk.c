@@ -3345,8 +3345,13 @@ int lrt_vk_rtx_scene_render_materialx_path(
     sizes[7]=(size_t)d->nlights*LRT_VK_MATERIAL_PATH_LIGHT_FLOATS*sizeof(float);
     data[7]=d->lights;
     sizes[8]=(size_t)pixels*4u*sizeof(float); data[8]=NULL;
-    /* Per-triangle Ptex data; a 4-byte dummy when absent (shader checks length). */
-    sizes[9]=(size_t)d->nptex_tri_floats*sizeof(float); data[9]=d->ptex_tri;
+    /* Per-triangle Ptex reference; a one-entry 0xFFFFFFFF dummy when absent. */
+    {
+        static const uint32_t no_ptex = 0xFFFFFFFFu;
+        const int have = d->ptex_tri && d->nptex_tri;
+        sizes[9]=have?(size_t)d->nptex_tri*sizeof(uint32_t):sizeof(no_ptex);
+        data[9]=have?(const void *)d->ptex_tri:(const void *)&no_ptex;
+    }
     stage = "buffers"; for (i=0;i<10;++i) {
         size_t n=sizes[i]?sizes[i]:4u;
         if(!vk_buffer_create(e,n,&b[i])) goto done;

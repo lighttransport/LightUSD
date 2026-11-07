@@ -16,9 +16,10 @@ layout(binding=6, scalar) readonly buffer Texels { uint texels[]; };
 layout(binding=7, scalar) readonly buffer TextureDescs { int textureDescs[]; };
 layout(binding=8, scalar) readonly buffer Lights { float lights[]; };
 layout(binding=9, scalar) writeonly buffer Output { float outputPixels[]; };
-// Per-triangle Ptex data (8 floats): face id, corner uv x3, valid flag. A 1-float
-// dummy buffer means the scene has no Ptex material.
-layout(binding=10, scalar) readonly buffer PtexTri { float ptexTri[]; };
+// Per-triangle Ptex reference (uint32): bits 31..2 face id, bit 1 winding swapped,
+// bit 0 fan triangle (0: corners 0,1,2; 1: corners 0,2,3); 0xFFFFFFFF = none. A
+// one-entry 0xFFFFFFFF dummy means the scene has no Ptex material.
+layout(binding=10, scalar) readonly buffer PtexTri { uint ptexTri[]; };
 
 layout(push_constant, scalar) uniform Push {
   mat4 invViewProj;
@@ -328,7 +329,8 @@ vec3 applyGraphNormal(vec3 n,vec3 tangent,vec3 encoded){vec3 t,b;rotatedBasis(n,
 bool domeRotated(uint lb){vec3 rx=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);return dot(rx,rx)>0.25;}
 vec3 domeToLocal(uint lb,vec3 w){if(!domeRotated(lb))return w;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return vec3(dot(w,rx),dot(w,ry),dot(w,rz));}
 vec3 domeToWorld(uint lb,vec3 v){if(!domeRotated(lb))return v;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return v.x*rx+v.y*ry+v.z*rz;}
-void setPtexHit(Hit h){gPtexFace=0xffffffffu;uint pb=h.prim*8u;if(pb+7u<uint(ptexTri.length())&&ptexTri[pb+7u]>0.5){gPtexFace=uint(ptexTri[pb]+0.5);float w=1.0-h.bary.x-h.bary.y;gPtexUV=vec2(ptexTri[pb+1u],ptexTri[pb+2u])*w+vec2(ptexTri[pb+3u],ptexTri[pb+4u])*h.bary.x+vec2(ptexTri[pb+5u],ptexTri[pb+6u])*h.bary.y;}}
+vec2 ptexCornerUv(uint o){return o==0u?vec2(0.0,1.0):(o==1u?vec2(1.0,1.0):(o==2u?vec2(1.0,0.0):vec2(0.0,0.0)));}
+void setPtexHit(Hit h){gPtexFace=0xffffffffu;if(h.prim>=uint(ptexTri.length()))return;uint r=ptexTri[h.prim];if(r==0xffffffffu)return;gPtexFace=r>>2u;uint i1=(r&1u)+1u,i2=i1+1u;if((r&2u)!=0u){uint t=i1;i1=i2;i2=t;}float w=1.0-h.bary.x-h.bary.y;gPtexUV=ptexCornerUv(0u)*w+ptexCornerUv(i1)*h.bary.x+ptexCornerUv(i2)*h.bary.y;}
 vec3 environmentRadiance(vec3 dir,bool primary){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;if(primary&&lights[lb+13u]>0.5)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec3 ld=domeToLocal(lb,dir);vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,acos(clamp(ld.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
 float rawLightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
 // A dome is picked as often as all other lights together (power-weighting by

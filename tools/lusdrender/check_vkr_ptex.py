@@ -19,10 +19,11 @@ varies. Skips (77) without the Island corpus, an OpenPtex build, or Vulkan.
 usage: check_vkr_ptex.py <lusdrender> [--output DIR]
 Environment (defaults in brackets):
   LIGHTUSD_ISLAND         Island root       [/mnt/nvme02/data/island]
-  LIGHTUSD_PTEX_INCLUDE   OpenPtex src/ptex (headers + .cpp; 2.3/2.4) [<repo>/../../ptex-aarch64/src/ptex]
+  LIGHTUSD_PTEX_INCLUDE   OpenPtex src/ptex (headers + .cpp; >=2.4) [<repo>/../../ptex-aarch64/src/ptex]
 """
 import argparse
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -67,6 +68,12 @@ def main():
                     ('OpenPtex sources', include / 'PtexReader.cpp')):
         if not p.exists():
             skip(f'{what} not found: {p}')
+    version_header = include / 'PtexVersion.h'
+    version = version_header.read_text() if version_header.is_file() else ''
+    major = re.search(r'#define\s+PtexLibraryMajorVersion\s+(\d+)', version)
+    minor = re.search(r'#define\s+PtexLibraryMinorVersion\s+(\d+)', version)
+    if not major or not minor or (int(major[1]), int(minor[1])) < (2, 4):
+        skip('OpenPtex >=2.4 sources required; 2.3 crashes on the mip oracle')
     if not subprocess.run(['which', 'g++'], capture_output=True).returncode == 0:
         skip('g++ not available')
 
@@ -99,7 +106,6 @@ def main():
         print('FAIL: the Ptex texture failed to load'); return 1
     if 'MaterialX graph fallback' in log:
         print('FAIL: the Ptex material fell back to flat colour (graph compile)'); return 1
-    import re
     m = re.search(r'Vulkan ptex: textures=(\d+) triangles_with_face=(\d+)/(\d+)', log)
     if not m or int(m.group(1)) < 1 or int(m.group(2)) != int(m.group(3)) or int(m.group(3)) == 0:
         print(f'FAIL: Ptex wiring: {m.group(0) if m else "no ptex stats line"}'); return 1
@@ -136,7 +142,43 @@ def main():
     print(run.stdout.strip(), run.stderr.strip())
     if run.returncode != 0:
         print('FAIL: base colour differs from OpenPtex'); return 1
-    print(f'PASS: {n} visible Ptex pixels match OpenPtex')
+    print(f'descriptor path: {n} visible Ptex pixels match OpenPtex')
+
+    # Chunked path: force chunking (LUSDR_GPU_TRIANGLE_CHUNK) so hits are shaded
+    # on the CPU through the lazy Ptex source (per-face mips from the ray-
+    # differential footprint, cross-face taps), then verify the dumped
+    # (face, mip, u, v, rgb) samples with the full OpenPtex model.
+    chunk_probe = out / 'chunk-probe.txt'
+    chunk_probe.unlink(missing_ok=True)
+    env = dict(os.environ, LUSDR_GPU_TRIANGLE_CHUNK='3000', LUSDR_PTEX_PROBE=str(chunk_probe))
+    cmd = [args.lusdrender, str(element), str(out / 'chunk.png'), '-w', '320', '-height', '240',
+           '-autoframe', '-bg', '0,0,0', '-stats', '-vkr', '-mask', MASK]
+    run = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+    clog = run.stdout + run.stderr
+    (out / 'chunk.log').write_text(clog)
+    if run.returncode != 0 or 'GPU chunks' not in clog:
+        print(clog[-1500:]); print('FAIL: chunked render did not run through the chunk path'); return 1
+    if not chunk_probe.is_file() or chunk_probe.stat().st_size < 1000:
+        print('FAIL: the chunked path produced no Ptex samples'); return 1
+    samples = [line.split() for line in chunk_probe.read_text().splitlines()
+               if line.strip() and not line.startswith('#')]
+    if not any(len(row) == 11 and int(row[4]) > 0 for row in samples):
+        print('FAIL: chunked Ptex sampling never selected a nonzero mip'); return 1
+    chunk_verifier = out / 'ptex-element-verify'
+    build = subprocess.run(
+        ['g++', '-std=c++17', '-O2', '-pthread', f'-I{include}',
+         str(REPO / 'tests/verification/repros/ptex-element-probe-verify.cc'),
+         *map(str, sources), '-lz', '-o', str(chunk_verifier)],
+        capture_output=True, text=True)
+    if build.returncode != 0:
+        print(build.stderr[-2000:]); print('FAIL: could not build the cross-face verifier'); return 1
+    run = subprocess.run([str(chunk_verifier), str(chunk_probe)],
+                         env=dict(os.environ, PTEX_VERIFY_MIN_TEXTURES='1'),
+                         capture_output=True, text=True)
+    print('chunked path:', (run.stdout + run.stderr).strip().replace('\n', ' | '))
+    if run.returncode != 0:
+        print('FAIL: chunked-path Ptex samples differ from OpenPtex'); return 1
+    print(f'PASS: descriptor ({n} px) and chunked paths match OpenPtex')
     return 0
 
 

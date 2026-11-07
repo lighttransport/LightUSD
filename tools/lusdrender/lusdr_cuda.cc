@@ -4,6 +4,7 @@
 // file also bridges semantic texture slots to the descriptor graph ABI.
 #if defined(HAVE_CUDA_RT) || defined(HAVE_HIP)
 
+#include "ptex_atlas.hh"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -252,13 +253,34 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         if (channels > 3) image->data[p * 4u + 3u] = pixels[p * size_t(channels) + 3u];
       }
     };
-    if (!src.is_udim) {
-      convert_image(src.width, src.height, src.channels, src.pixels, &dst.image);
-      if (src.is_ptex) {
-        dst.isPtex = true;
-        dst.ptexFaces = src.ptex_faces;
-        dst.ptexRectTexelOffset = src.ptex_rect_texel_offset;
+    if (src.is_ptex) {
+      // Lazy Ptex source: build the face atlas only now, for textures a
+      // DrawScene consumer (the Vulkan descriptor path) actually binds.
+      if (src.ptex && src.ptex->reader()) {
+        const lightusd::ptx::Reader &reader = *src.ptex->reader();
+        lusdview::PtexAtlasOptions atlas_options;
+        uint32_t max_edge = 0;
+        for (const lightusd::ptx::FaceInfo &fi : reader.info().faceInfo)
+          max_edge = std::max(max_edge, std::max(fi.width(), fi.height()));
+        atlas_options.maxFaceEdge = std::max(1u, std::min(max_edge, src.ptex_max_face_edge));
+        atlas_options.maxAtlasBytes = 256ull * 1024ull * 1024ull;
+        lusdview::PtexAtlasBuildStats atlas_stats;
+        std::string atlas_err;
+        if (lusdview::BuildPtexAtlas(reader, atlas_options, src.srgb,
+                                     &dst.image, &dst.ptexFaceRects,
+                                     &atlas_stats, &atlas_err)) {
+          dst.isPtex = true;
+          dst.ptexFaces = src.ptex_faces;
+          dst.ptexRectTexelOffset = atlas_stats.rectTexelOffset;
+          dst.ptexAtlasBytes = dst.image.data.size();
+          dst.ptexDownsampledFaces = atlas_stats.downsampledFaces;
+        } else {
+          std::cerr << "WARN: Ptex atlas for " << src.ptex_path << ": "
+                    << atlas_err << "\n";
+        }
       }
+    } else if (!src.is_udim) {
+      convert_image(src.width, src.height, src.channels, src.pixels, &dst.image);
     } else {
       dst.isUdim = true;
       for (const Texture::UdimTile &tile : src.udim_tiles) {

@@ -4,10 +4,13 @@
 // generation and shading are shared with the HIP backend (lusdr_gpu_common).
 #ifdef HAVE_VULKAN
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "image-writer.hh"
 #include "lightrt_mtlx_bridge.hh"
@@ -215,7 +218,7 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   desc.lights = lights.empty() ? nullptr : lights.data();
   if (!geometry.flat_ptex.empty()) {
     desc.ptex_tri = geometry.flat_ptex.data();
-    desc.nptex_tri_floats = static_cast<uint32_t>(geometry.flat_ptex.size());
+    desc.nptex_tri = static_cast<uint32_t>(geometry.flat_ptex.size());
   }
   if (opt.stats) {
     size_t ptex_textures = 0, valid_tris = 0;
@@ -228,8 +231,8 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                 << scene.textures[i].ptexFaces << " rectTexelOffset="
                 << scene.textures[i].ptexRectTexelOffset << "\n";
     }
-    for (size_t t = 7; t < geometry.flat_ptex.size(); t += 8)
-      if (geometry.flat_ptex[t] > 0.5f) ++valid_tris;
+    for (uint32_t ref : geometry.flat_ptex)
+      if (ref != kPtexTriInvalid) ++valid_tris;
     std::cerr << "Vulkan ptex: textures=" << ptex_textures
               << " triangles_with_face=" << valid_tris << "/" << geometry.ntris
               << "\n";
@@ -344,6 +347,9 @@ bool RunVulkanLightRTChunked(
     hit.u = hit.v = 0.0f;
     hit.prim_id = LRT_TRI_NO_HIT;
   }
+  // Retain only triangles visible to primary rays for Ptex differentials.
+  // Diagnostic continuation separately retains complete chunks below.
+  std::unordered_map<uint32_t, std::array<Vec3, 3>> ptex_positions;
   GpuTriScene shade;
   struct DiagnosticChunk {
     uint32_t first{0};
@@ -387,6 +393,16 @@ bool RunVulkanLightRTChunked(
     if(opt.aov==CaptureAov::Color && (opt.diagnostic_emission || opt.gpu_shade!=Options::GpuShadeMode::Cpu)) {
       shade.material_ids.insert(shade.material_ids.end(),scene.material_ids.begin(),scene.material_ids.end());
       shade.tri_uvs.insert(shade.tri_uvs.end(),scene.tri_uvs.begin(),scene.tri_uvs.end());
+      if (!scene.flat_ptex.empty() || !shade.flat_ptex.empty()) {
+        // Keep the Ptex references in global triangle order across chunks.
+        shade.flat_ptex.resize(global_first, kPtexTriInvalid);
+        if (scene.flat_ptex.empty()) {
+          shade.flat_ptex.insert(shade.flat_ptex.end(), scene.ntris, kPtexTriInvalid);
+        } else {
+          shade.flat_ptex.insert(shade.flat_ptex.end(), scene.flat_ptex.begin(),
+                                 scene.flat_ptex.end());
+        }
+      }
     }
     std::fill(chunk_hits.begin(), chunk_hits.end(), lrt_hit{});
     for (lrt_hit &hit : chunk_hits) {
@@ -446,12 +462,31 @@ bool RunVulkanLightRTChunked(
       lrt_vk_engine_destroy(vk);
       return false;
     }
+    std::unordered_set<uint32_t> visible_ptex;
     for (size_t i = 0; i < nrays; ++i) {
       if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
           chunk_hits[i].t < hits[i].t) {
         hits[i] = chunk_hits[i];
         hits[i].prim_id += static_cast<uint32_t>(global_first);
+        const uint32_t local = chunk_hits[i].prim_id;
+        if (!opt.diagnostic_emission && local < scene.flat_ptex.size() &&
+            scene.flat_ptex[local] != kPtexTriInvalid &&
+            ptex_positions.find(hits[i].prim_id) == ptex_positions.end()) {
+          std::array<Vec3, 3> positions;
+          for (size_t corner = 0; corner < 3; ++corner) {
+            const size_t vertex = size_t(scene.flat_idx[size_t(local) * 3u + corner]) * 3u;
+            positions[corner] = {scene.flat_verts[vertex], scene.flat_verts[vertex + 1u],
+                                 scene.flat_verts[vertex + 2u]};
+          }
+          ptex_positions.emplace(hits[i].prim_id, positions);
+        }
       }
+      if (ptex_positions.find(hits[i].prim_id) != ptex_positions.end())
+        visible_ptex.insert(hits[i].prim_id);
+    }
+    for (auto it = ptex_positions.begin(); it != ptex_positions.end();) {
+      if (!visible_ptex.count(it->first)) it = ptex_positions.erase(it);
+      else ++it;
     }
     if (scene.scene) lrt_tri_scene_free(scene.scene);
     if (opt.diagnostic_emission) {
@@ -470,6 +505,14 @@ bool RunVulkanLightRTChunked(
   const bool shade_materials=opt.diagnostic_emission || opt.gpu_shade!=Options::GpuShadeMode::Cpu;
   GpuTraceContinuation continuation;
   GpuTrianglePositions triangle_positions;
+  if (!ptex_positions.empty()) {
+    triangle_positions = [&ptex_positions](uint32_t id, Vec3* positions) {
+      auto it = ptex_positions.find(id);
+      if (it == ptex_positions.end()) return false;
+      std::copy(it->second.begin(), it->second.end(), positions);
+      return true;
+    };
+  }
   if (opt.diagnostic_emission) {
     triangle_positions = [&diagnostic_chunks](uint32_t id, Vec3* positions) {
       auto end = std::upper_bound(

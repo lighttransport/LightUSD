@@ -3800,6 +3800,16 @@ workflow, which had been zeroing the entire specular lobe (see the
 [gap-closure ledger](validation/gap-closure-status.md) and the
 [lane analysis](validation/cpu-preview-lanes-and-ptex-2026-11-04.md)).
 
+`tool-lusdrender-vkr-ptex-openptex` checks both Vulkan Ptex routes against
+OpenPtex: the descriptor atlas path and forced mesh chunks with lazy CPU
+sampling. Chunked sampling selects per-face mips from ray differentials;
+only currently visible Ptex triangles retain positions for this calculation.
+`LUSDR_PTEX_PROBE` records face, mip, intrinsic UV and linear RGB for the
+independent verifier. `LUSDR_NO_PTEX=1` disables Ptex loading. Descriptor atlas
+face edges honor `-texMaxSize` up to 512 texels. The test requires the
+optional Island corpus, OpenPtex >=2.4 sources and a working Vulkan ray-query device.
+Instanced/streamed paths and non-base Ptex slots remain unsupported.
+
 `lusdview-cpu-ptex-element` renders the real `isGardeniaA` bonsai element
 (quad topology, 53 meshes, 53 PTex maps), requires no representative-face
 fallback, and verifies every visible base-colour sample with a probe dump

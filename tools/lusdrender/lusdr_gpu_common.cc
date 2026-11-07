@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // lusdrender — shared LightRT GPU-backend helpers (see lusdr_gpu_common.hh).
+#include <cstdio>
+#include <set>
+#include <mutex>
 #include "lusdr_gpu_common.hh"
 
 #include <algorithm>
@@ -98,7 +101,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
     std::vector<float>().swap(out->flat_verts);
     std::vector<float>().swap(out->flat_attrs);
     std::vector<uint32_t>().swap(out->flat_idx);
-    std::vector<float>().swap(out->flat_ptex);
+    std::vector<uint32_t>().swap(out->flat_ptex);
     std::vector<Vec3>().swap(out->base_colors);
     std::vector<uint32_t>().swap(out->material_ids);
     std::vector<float>().swap(out->tri_uvs);
@@ -166,7 +169,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   out->base_colors.reserve(total_tris);
   bool any_ptex = false;
   for (const auto &g : geos) any_ptex = any_ptex || !g.ptex_tri.empty();
-  if (any_ptex) out->flat_ptex.reserve(total_tris * 8u);
+  if (any_ptex) out->flat_ptex.reserve(total_tris);
   uint32_t base_idx = 0;
   for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
     const auto &g = geos[mesh_idx];
@@ -230,14 +233,14 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       }
     }
     if (any_ptex) {
-      // Keep flat_ptex in triangle order: meshes without Ptex data get zeroed
-      // entries (valid flag 0), so one buffer indexes by global triangle id.
+      // Keep flat_ptex in triangle order: meshes without Ptex data get invalid
+      // entries, so one buffer indexes by global triangle id.
       const size_t ntri_g = g.indices.size() / 3u;
-      if (g.ptex_tri.size() == ntri_g * 8u) {
+      if (g.ptex_tri.size() == ntri_g) {
         out->flat_ptex.insert(out->flat_ptex.end(), g.ptex_tri.begin(),
                               g.ptex_tri.end());
       } else {
-        out->flat_ptex.insert(out->flat_ptex.end(), ntri_g * 8u, 0.0f);
+        out->flat_ptex.insert(out->flat_ptex.end(), ntri_g, kPtexTriInvalid);
       }
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
@@ -319,6 +322,7 @@ bool BuildGpuTriChunk(
         std::vector<float>().swap(released.normals);
         std::vector<float>().swap(released.uvs);
         std::vector<uint32_t>().swap(released.indices);
+        std::vector<uint32_t>().swap(released.ptex_tri);
       }
       ++*mesh_index;
       *tri_index = 0;
@@ -364,6 +368,10 @@ bool BuildGpuTriChunk(
     const size_t index_count = take * 3u;
     dst.positions.reserve(index_count * 3u);
     dst.indices.reserve(index_count);
+    if (src.ptex_tri.size() == ntri) {
+      dst.ptex_tri.assign(src.ptex_tri.begin() + std::ptrdiff_t(*tri_index),
+                          src.ptex_tri.begin() + std::ptrdiff_t(*tri_index + take));
+    }
     if (per_vertex_normals) dst.normals.reserve(index_count * 3u);
     if (per_vertex_uvs) dst.uvs.reserve(index_count * 2u);
     bool sequential = first_index + index_count <= src.indices.size() &&
@@ -444,6 +452,7 @@ bool BuildGpuTriChunk(
       std::vector<float>().swap(released.normals);
       std::vector<float>().swap(released.uvs);
       std::vector<uint32_t>().swap(released.indices);
+      std::vector<uint32_t>().swap(released.ptex_tri);
       ++*mesh_index;
       *tri_index = 0;
     }
@@ -648,6 +657,107 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
   }
   });
 }
+
+namespace {
+
+// Optional per-sample Ptex probe for verification oracles: with
+// LUSDR_PTEX_PROBE=<file>, every Ptex base-colour sample is appended in the
+// format tests/verification/repros/ptex-element-probe-verify.cc reads
+// ("x y tex face mip srgb u v r g b", plus "# texture <id> <path>" headers).
+struct PtexProbe {
+  std::mutex mutex;
+  std::FILE *file{nullptr};
+  std::set<size_t> announced;
+  PtexProbe() {
+    if (const char *path = std::getenv("LUSDR_PTEX_PROBE")) file = std::fopen(path, "w");
+  }
+  ~PtexProbe() { if (file) std::fclose(file); }
+};
+PtexProbe &Probe() {
+  static PtexProbe probe;
+  return probe;
+}
+
+// Base-colour sample of a lazy Ptex texture at a hit of the chunked path. The
+// face and face-local (u,v) come from the triangle's compact reference; the mip
+// is selected per face from the ray-differential UV footprint (the same
+// machinery the other lanes use), then sampled with the C11 core (per-face mips,
+// cross-face taps). Returns false when the triangle has no Ptex face.
+bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
+                       const GpuTriScene &s,
+                       const GpuTrianglePositions &triangle_positions,
+                       const std::vector<lrt_ray> &rays, int w, int h, int spp,
+                       int x, int y, int sp, const lrt_hit &hit, Vec3 *out) {
+  if (!texture.is_ptex || !texture.ptex || !texture.ptex->valid()) return false;
+  if (hit.prim_id >= s.flat_ptex.size()) return false;
+  const uint32_t ref = s.flat_ptex[hit.prim_id];
+  if (ref == kPtexTriInvalid) return false;
+  const uint32_t face = PtexTriFace(ref);
+  if (face >= texture.ptex->info().faces) return false;
+  float u, v;
+  PtexTriUv(ref, hit.u, hit.v, &u, &v);
+
+  uint32_t mip = 0;
+  Vec3 positions[3];
+  bool have_positions = false;
+  if (triangle_positions) {
+    have_positions = triangle_positions(hit.prim_id, positions);
+  } else if (size_t(hit.prim_id) * 3u + 2u < s.flat_idx.size()) {
+    have_positions = true;
+    for (size_t corner = 0; corner < 3; ++corner) {
+      const size_t vertex = size_t(s.flat_idx[size_t(hit.prim_id) * 3u + corner]) * 3u;
+      if (vertex + 2 >= s.flat_verts.size()) { have_positions = false; break; }
+      positions[corner] = {s.flat_verts[vertex], s.flat_verts[vertex + 1], s.flat_verts[vertex + 2]};
+    }
+  }
+  if (have_positions && w > 1 && h > 1) {
+    const size_t sp_idx = size_t(sp);
+    const size_t pixel_base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+    const size_t nx = (size_t(y) * size_t(w) + (size_t(x) + 1 < size_t(w) ? size_t(x) + 1 : size_t(x) - 1)) * size_t(spp) + sp_idx;
+    const size_t ny = ((size_t(y) + 1 < size_t(h) ? size_t(y) + 1 : size_t(y) - 1) * size_t(w) + size_t(x)) * size_t(spp) + sp_idx;
+    if (nx < rays.size() && ny < rays.size() && pixel_base + sp_idx < rays.size()) {
+      const lrt_ray &ray = rays[pixel_base + sp_idx];
+      RayDiff differential;
+      differential.ox = {rays[nx].org[0], rays[nx].org[1], rays[nx].org[2]};
+      differential.dx = {rays[nx].dir[0], rays[nx].dir[1], rays[nx].dir[2]};
+      differential.oy = {rays[ny].org[0], rays[ny].org[1], rays[ny].org[2]};
+      differential.dy = {rays[ny].dir[0], rays[ny].dir[1], rays[ny].dir[2]};
+      differential.valid = true;
+      uint32_t i1 = (ref & 1u) + 1u, i2 = i1 + 1u;
+      if (ref & 2u) std::swap(i1, i2);
+      float u0, v0, u1, v1, u2, v2;
+      PtexCornerUv(0, &u0, &v0);
+      PtexCornerUv(i1, &u1, &v1);
+      PtexCornerUv(i2, &u2, &v2);
+      float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+      if (ComputeUVFootprint({ray.org[0], ray.org[1], ray.org[2]},
+                             {ray.dir[0], ray.dir[1], ray.dir[2]}, differential,
+                             positions[0], positions[1], positions[2],
+                             Normalize(Cross(Sub(positions[1], positions[0]),
+                                             Sub(positions[2], positions[0]))),
+                             u0, v0, u1, v1, u2, v2, &dudx, &dvdx, &dudy, &dvdy)) {
+        const float per_pixel = std::max(std::hypot(dudx, dvdx), std::hypot(dudy, dvdy));
+        if (std::isfinite(per_pixel) && per_pixel > 0.0f)
+          mip = texture.ptex->ChooseMip(face, per_pixel);
+      }
+    }
+  }
+  float rgb[3];
+  if (!texture.ptex->Sample(face, mip, u, v, texture.srgb, rgb)) return false;
+  PtexProbe &probe = Probe();
+  if (probe.file) {
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    if (probe.announced.insert(texture_id).second)
+      std::fprintf(probe.file, "# texture %zu %s\n", texture_id, texture.ptex_path.c_str());
+    std::fprintf(probe.file, "%d %d %zu %u %u %d %.7f %.7f %.7f %.7f %.7f\n", x, y,
+                 texture_id, face, mip, texture.srgb ? 1 : 0, double(u), double(v),
+                 double(rgb[0]), double(rgb[1]), double(rgb[2]));
+  }
+  *out = texture.apply_value_transform(Vec3{rgb[0], rgb[1], rgb[2]});
+  return true;
+}
+
+}  // namespace
 
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
@@ -867,10 +977,17 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                 v=s.tri_uvs[uv+1]*w0+s.tri_uvs[uv+3]*hit.u+s.tri_uvs[uv+5]*hit.v;
                 mat->uv_xform.apply(&u,&v);
               }
-              if(have_uv && textures && mat->tex_id>=0 && size_t(mat->tex_id)<textures->size()) {
+              if(textures && mat->tex_id>=0 && size_t(mat->tex_id)<textures->size()) {
                 const Texture& texture=(*textures)[size_t(mat->tex_id)];
-                const Vec3 texel=texture.apply_value_transform(texture.sample(u,v));
-                bc=Vec3{bc.x*texel.x,bc.y*texel.y,bc.z*texel.z};
+                Vec3 texel{1,1,1};
+                bool sampled=false;
+                if(texture.is_ptex) {
+                  sampled=SampleGpuPtexBase(texture,size_t(mat->tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel);
+                } else if(have_uv) {
+                  texel=texture.apply_value_transform(texture.sample(u,v));
+                  sampled=true;
+                }
+                if(sampled) bc=Vec3{bc.x*texel.x,bc.y*texel.y,bc.z*texel.z};
               }
               if(have_uv && textures && mat->emission_tex_id>=0 && size_t(mat->emission_tex_id)<textures->size()) {
                 const Texture& texture=(*textures)[size_t(mat->emission_tex_id)];
