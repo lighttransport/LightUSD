@@ -566,3 +566,6 @@ task.md
 
 # MuJoCo writes this warning log next to the tests that import MJCF.
 MUJOCO_LOG.TXT
+
+# Machine-local validation report (contains interpreter and tool paths).
+/doc/validation/usd-assets-beauty-contract-2026-11-04-results.json
