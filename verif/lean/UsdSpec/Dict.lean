@@ -128,7 +128,7 @@ def mergeVal : DVal α → Option (DVal α) → DVal α
 end
 
 /-- Combining `∪`. SPEC: L1241-1269: `mergeStrong S W` (bullets 1-3 of L1246-1252)
-followed by the entries of `W` whose keys are not in `S` (bullet 4, L1253). -/
+followed by the entries of `W` whose keys are not in `S` (bullet 4, L1254). -/
 def merge (s w : Dict α) : Dict α :=
   mergeStrong s w ++ w.filter (fun kv => !decide (kv.1 ∈ keys s))
 
@@ -202,7 +202,7 @@ example : resolveDict [[("b", DVal.leaf false)], [("a", DVal.leaf true)]]
 
 /-- The four bullets of L1246-1253 on a small example: `x` only in `S`, `y` in
 both (stronger wins, L1249-1250), `z` in both as dictionaries (combined,
-L1251-1252), `w` only in `W` (L1253). -/
+L1251-1252), `w` only in `W` (L1254). -/
 example :
     merge [("x", DVal.leaf 1), ("y", DVal.leaf 2), ("z", DVal.dict [("p", DVal.leaf 3)])]
           [("w", DVal.leaf 9), ("y", DVal.leaf 8), ("z", DVal.dict [("q", DVal.leaf 7)])]

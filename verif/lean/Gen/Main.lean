@@ -8,6 +8,8 @@ import Gen.Vectors.Spline
 import Gen.Vectors.Clips
 import Gen.Vectors.Lz4
 import Gen.Vectors.Usda
+import Gen.Vectors.PrimIndex
+import Gen.Vectors.LayerStack
 
 /-!
 `usdspec-gen --out DIR [--check]`
@@ -19,7 +21,7 @@ different file).
 open Gen
 
 def allFiles : List (String × String) :=
-  ListOpVec.files ++ IntCodeVec.files ++ OffsetVec.files ++ PathSchemaVec.files ++ CrateVec.files ++ VrVec.files ++ SplineVec.files ++ ClipVec.files ++ Lz4Vec.files ++ UsdaVec.files
+  ListOpVec.files ++ IntCodeVec.files ++ OffsetVec.files ++ PathSchemaVec.files ++ CrateVec.files ++ VrVec.files ++ SplineVec.files ++ ClipVec.files ++ Lz4Vec.files ++ UsdaVec.files ++ PrimIndexVec.files ++ LayerStackVec.files
 
 def main (args : List String) : IO UInt32 := do
   let mut out : Option String := none

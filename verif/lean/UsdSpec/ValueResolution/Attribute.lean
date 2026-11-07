@@ -32,7 +32,7 @@ Readings formalized:
   `timeSamples > spline > default > clips`;
 * `anchored` — L7006-7011: each spec contributes its local value, then the
   clips it anchors (definitionally the same as `perSpec`: `perSpec_eq_anchored`);
-* `perFieldA` — L6325-6331 read as "the strongest opinion of `timeSamples`
+* `perFieldA` — L6326-6332 read as "the strongest opinion of `timeSamples`
   across the stack, else of `spline`, else `default`, else `clips`";
 * `perFieldB` — L6492-6503: `timeSamples`, `spline`, `clips` across the stack,
   `default` only when no time-varying source exists.
@@ -40,6 +40,8 @@ Readings formalized:
 `readings_disagree` shows by `decide` where they differ. OpenUSD 26.11.1
 (pxr python, layer stacks `w`, `x`, `y`, `z`) agrees with `perSpec`/`anchored`
 on all of them. SPEC-ISSUE: LEAN-702.
+Not modelled: value blocks / fallback (L6313-6316, L7364-7372) and the
+uniform-attribute clip exclusion (~L6304-6309).
 -/
 
 namespace UsdSpec.ValueResolution.Attribute
@@ -64,7 +66,7 @@ inductive Query
 /-- Local (non-clip) value of a spec at a numeric time: `timeSamples > spline > default`. -/
 def Opinion.localValue (o : Opinion) : Option ℚ := o.timeSamples <|> o.spline <|> o.default
 
-/-- Default-time query: the strongest `default` (L6340-6342). Common to all readings. -/
+/-- Default-time query: the strongest `default` (L6338-6340). Common to all readings. -/
 def atDefault (os : List Opinion) : Option ℚ := strongest (os.map (·.default))
 
 /-- L6325-6336, per spec. -/
@@ -75,12 +77,12 @@ def perSpec (os : List Opinion) : Option ℚ :=
 def anchored (os : List Opinion) : Option ℚ :=
   strongest (os.flatMap fun o => [o.localValue, o.clips])
 
-/-- L6325-6331 read per field across the whole stack. -/
+/-- L6326-6332 read per field across the whole stack. -/
 def perFieldA (os : List Opinion) : Option ℚ :=
   strongest (os.map (·.timeSamples)) <|> strongest (os.map (·.spline)) <|>
     strongest (os.map (·.default)) <|> strongest (os.map (·.clips))
 
-/-- L6492-6503 (time-varying sources first), then `default` (L6487-6488). -/
+/-- L6492-6503 (time-varying sources first), then `default` (L6484-6487). -/
 def perFieldB (os : List Opinion) : Option ℚ :=
   strongest (os.map (·.timeSamples)) <|> strongest (os.map (·.spline)) <|>
     strongest (os.map (·.clips)) <|> strongest (os.map (·.default))
@@ -131,7 +133,7 @@ def readingResults (r : List Opinion → Option ℚ) : List (Option ℚ) :=
 
 /-- SPEC-ISSUE: LEAN-702 — the three stated source orders are pairwise
 inconsistent; only the per-spec / clip-anchoring reading matches OpenUSD.
-`perFieldA` (L6325-6331 across the stack) is wrong on `w` and `y`; `perFieldB`
+`perFieldA` (L6326-6332 across the stack) is wrong on `w` and `y`; `perFieldB`
 (L6492-6503) is wrong on `w`, `x` and `z`. -/
 theorem readings_disagree :
     readingResults perSpec = pxrResult ∧

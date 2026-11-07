@@ -1,0 +1,1119 @@
+{"generator": "Gen.Vectors.LayerStack",
+ "cases":
+ [{"layers": ["root.usda"],
+   "issues": [],
+   "id": "two-r0-a0",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "two-r0-a1",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "two-r0-a2",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "two-r0-a3",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "two-r0-a4",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r1-a0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r1-a1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r1-a2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r1-a3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r1-a4",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [],
+   "id": "two-r2-a0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r2-a1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "two-r2-a2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "a.usda", "kind": "cycle"}],
+   "id": "two-r2-a3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "a.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r2-a4",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r3-a0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r3-a1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "a.usda", "kind": "cycle"}],
+   "id": "two-r3-a2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"},
+    {"layer": "a.usda", "kind": "cycle"}],
+   "id": "two-r3-a3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "a.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r3-a4",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r4-a0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r4-a1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "a.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r4-a2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "a.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r4-a3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues":
+   [{"layer": "a.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"},
+    {"layer": "root.usda", "kind": "cycle"}],
+   "id": "two-r4-a4",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a0-b0",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a0-b1",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a0-b2",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a0-b3",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a1-b0",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a1-b1",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a1-b2",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a1-b3",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a2-b0",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a2-b1",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a2-b2",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a2-b3",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a3-b0",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a3-b1",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a3-b2",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [],
+   "id": "three-r0-a3-b3",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a0-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a0-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a0-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a0-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a1-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a1-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a1-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a1-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a2-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a2-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a2-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a2-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a3-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a3-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a3-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r1-a3-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [],
+   "id": "three-r2-a0-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [],
+   "id": "three-r2-a0-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [],
+   "id": "three-r2-a0-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [],
+   "id": "three-r2-a0-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r2-a1-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r2-a1-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r2-a1-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r2-a1-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r2-a2-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r2-a2-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r2-a2-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r2-a2-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda", "b.usda"],
+   "issues": [],
+   "id": "three-r2-a3-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "a.usda", "b.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r2-a3-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "a.usda", "b.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r2-a3-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "a.usda", "b.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r2-a3-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [],
+   "id": "three-r3-a0-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r3-a0-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda", "a.usda"],
+   "issues": [],
+   "id": "three-r3-a0-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r3-a0-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [],
+   "id": "three-r3-a1-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r3-a1-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda", "a.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r3-a1-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r3-a1-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [],
+   "id": "three-r3-a2-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r3-a2-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda", "a.usda"],
+   "issues": [{"layer": "a.usda", "kind": "cycle"}],
+   "id": "three-r3-a2-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r3-a2-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [],
+   "id": "three-r3-a3-b0",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda": "#usda 1.0\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "root.usda", "kind": "cycle"}],
+   "id": "three-r3-a3-b1",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "b.usda", "a.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r3-a3-b2",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "b.usda"],
+   "issues": [{"layer": "b.usda", "kind": "cycle"}],
+   "id": "three-r3-a3-b3",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@b.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "b.usda"}]},
+  {"layers": ["root.usda", "a.usda", "c.usda", "b.usda", "c.usda"],
+   "issues": [],
+   "id": "diamond",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "c.usda": "#usda 1.0\ndef \"P\" { int marker = 3\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@c.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@c.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "c.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "c.usda"}]},
+  {"layers": ["root.usda", "a.usda", "c.usda", "b.usda", "c.usda", "a.usda"],
+   "issues":
+   [{"layer": "a.usda", "kind": "cycle"}, {"layer": "c.usda", "kind": "cycle"}],
+   "id": "diamond-cycle",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@, @b.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "c.usda":
+    "#usda 1.0\n(subLayers = [@a.usda@])\ndef \"P\" { int marker = 3\n}\n",
+    "b.usda":
+    "#usda 1.0\n(subLayers = [@c.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "a.usda":
+    "#usda 1.0\n(subLayers = [@c.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "a.usda"},
+    {"path": "/P", "layer": "c.usda"},
+    {"path": "/P", "layer": "b.usda"},
+    {"path": "/P", "layer": "c.usda"},
+    {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda", "a.usda"],
+   "issues": [{"layer": "missing.usda", "kind": "missing"}],
+   "id": "missing-sibling",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@missing.usda@, @a.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "a.usda": "#usda 1.0\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/P", "layer": "a.usda"}]},
+  {"layers": ["root.usda"],
+   "issues":
+   [{"layer": "root.usda", "kind": "cycle"},
+    {"layer": "missing.usda", "kind": "missing"}],
+   "id": "cycle-and-missing",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@root.usda@, @missing.usda@])\ndef \"P\" { int marker = 0\n}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"layers":
+   ["root.usda",
+    "l1.usda",
+    "l2.usda",
+    "l3.usda",
+    "l4.usda",
+    "l5.usda",
+    "l6.usda",
+    "l7.usda",
+    "l8.usda",
+    "l9.usda",
+    "l10.usda",
+    "l11.usda",
+    "l12.usda",
+    "l13.usda",
+    "l14.usda",
+    "l15.usda",
+    "l16.usda",
+    "l17.usda",
+    "l18.usda",
+    "l19.usda",
+    "l20.usda",
+    "l21.usda",
+    "l22.usda",
+    "l23.usda",
+    "l24.usda"],
+   "issues": [],
+   "id": "deep-25-layers",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(subLayers = [@l1.usda@])\ndef \"P\" { int marker = 0\n}\n",
+    "l9.usda":
+    "#usda 1.0\n(subLayers = [@l10.usda@])\ndef \"P\" { int marker = 9\n}\n",
+    "l8.usda":
+    "#usda 1.0\n(subLayers = [@l9.usda@])\ndef \"P\" { int marker = 8\n}\n",
+    "l7.usda":
+    "#usda 1.0\n(subLayers = [@l8.usda@])\ndef \"P\" { int marker = 7\n}\n",
+    "l6.usda":
+    "#usda 1.0\n(subLayers = [@l7.usda@])\ndef \"P\" { int marker = 6\n}\n",
+    "l5.usda":
+    "#usda 1.0\n(subLayers = [@l6.usda@])\ndef \"P\" { int marker = 5\n}\n",
+    "l4.usda":
+    "#usda 1.0\n(subLayers = [@l5.usda@])\ndef \"P\" { int marker = 4\n}\n",
+    "l3.usda":
+    "#usda 1.0\n(subLayers = [@l4.usda@])\ndef \"P\" { int marker = 3\n}\n",
+    "l24.usda": "#usda 1.0\ndef \"P\" { int marker = 24\n}\n",
+    "l23.usda":
+    "#usda 1.0\n(subLayers = [@l24.usda@])\ndef \"P\" { int marker = 23\n}\n",
+    "l22.usda":
+    "#usda 1.0\n(subLayers = [@l23.usda@])\ndef \"P\" { int marker = 22\n}\n",
+    "l21.usda":
+    "#usda 1.0\n(subLayers = [@l22.usda@])\ndef \"P\" { int marker = 21\n}\n",
+    "l20.usda":
+    "#usda 1.0\n(subLayers = [@l21.usda@])\ndef \"P\" { int marker = 20\n}\n",
+    "l2.usda":
+    "#usda 1.0\n(subLayers = [@l3.usda@])\ndef \"P\" { int marker = 2\n}\n",
+    "l19.usda":
+    "#usda 1.0\n(subLayers = [@l20.usda@])\ndef \"P\" { int marker = 19\n}\n",
+    "l18.usda":
+    "#usda 1.0\n(subLayers = [@l19.usda@])\ndef \"P\" { int marker = 18\n}\n",
+    "l17.usda":
+    "#usda 1.0\n(subLayers = [@l18.usda@])\ndef \"P\" { int marker = 17\n}\n",
+    "l16.usda":
+    "#usda 1.0\n(subLayers = [@l17.usda@])\ndef \"P\" { int marker = 16\n}\n",
+    "l15.usda":
+    "#usda 1.0\n(subLayers = [@l16.usda@])\ndef \"P\" { int marker = 15\n}\n",
+    "l14.usda":
+    "#usda 1.0\n(subLayers = [@l15.usda@])\ndef \"P\" { int marker = 14\n}\n",
+    "l13.usda":
+    "#usda 1.0\n(subLayers = [@l14.usda@])\ndef \"P\" { int marker = 13\n}\n",
+    "l12.usda":
+    "#usda 1.0\n(subLayers = [@l13.usda@])\ndef \"P\" { int marker = 12\n}\n",
+    "l11.usda":
+    "#usda 1.0\n(subLayers = [@l12.usda@])\ndef \"P\" { int marker = 11\n}\n",
+    "l10.usda":
+    "#usda 1.0\n(subLayers = [@l11.usda@])\ndef \"P\" { int marker = 10\n}\n",
+    "l1.usda":
+    "#usda 1.0\n(subLayers = [@l2.usda@])\ndef \"P\" { int marker = 1\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "l1.usda"},
+    {"path": "/P", "layer": "l2.usda"},
+    {"path": "/P", "layer": "l3.usda"},
+    {"path": "/P", "layer": "l4.usda"},
+    {"path": "/P", "layer": "l5.usda"},
+    {"path": "/P", "layer": "l6.usda"},
+    {"path": "/P", "layer": "l7.usda"},
+    {"path": "/P", "layer": "l8.usda"},
+    {"path": "/P", "layer": "l9.usda"},
+    {"path": "/P", "layer": "l10.usda"},
+    {"path": "/P", "layer": "l11.usda"},
+    {"path": "/P", "layer": "l12.usda"},
+    {"path": "/P", "layer": "l13.usda"},
+    {"path": "/P", "layer": "l14.usda"},
+    {"path": "/P", "layer": "l15.usda"},
+    {"path": "/P", "layer": "l16.usda"},
+    {"path": "/P", "layer": "l17.usda"},
+    {"path": "/P", "layer": "l18.usda"},
+    {"path": "/P", "layer": "l19.usda"},
+    {"path": "/P", "layer": "l20.usda"},
+    {"path": "/P", "layer": "l21.usda"},
+    {"path": "/P", "layer": "l22.usda"},
+    {"path": "/P", "layer": "l23.usda"},
+    {"path": "/P", "layer": "l24.usda"}]}]}

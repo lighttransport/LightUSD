@@ -60,7 +60,7 @@ undefined: OpenUSD compares (arc kind, target layer-stack site, layer offset),
 not the authoring site — so a variant arc on the prim itself never shares
 (`ex_variantOnly`) and a reference differing only by layer offset does not
 share (`ex_offset`).
-SPEC-ISSUE: LEAN-533 — L5521 counts arcs, but OpenUSD counts only arcs whose
+SPEC-ISSUE: LEAN-533 — L5522 counts arcs, but OpenUSD counts only arcs whose
 nodes provide opinions: an instanceable prim whose only arc is unresolved or
 targets a prim with no specs is *not* an instance (its local children are
 kept). LightUSD formerly followed the literal reading and dropped the children;
@@ -101,7 +101,7 @@ structure Prim where
 def instanceableValue (p : Prim) : Bool :=
   ((p.opinions.filter (·.hasSpecs)).filterMap (·.instanceable)).head?.getD false
 
-/-- Literal L5521 condition: the prim index contains a composition arc. -/
+/-- Literal L5522 condition: the prim index contains a composition arc. -/
 def hasArcLiteral (p : Prim) : Bool := p.opinions.any (·.arc.isSome)
 
 /-- OpenUSD `Pcp_ChildNodeIsInstanceable`: direct, introduced by an arc, has specs. -/
@@ -207,7 +207,7 @@ theorem key_indep_nondirect (p q : Prim) (hr : p.rootLayer = q.rootLayer)
   unfold Shares key
   rw [hr, hv, ← keyArcs_filter_direct p.opinions, hd, keyArcs_filter_direct]
 
-/-- Implied arcs that provide no opinions do not enter the key (L5784-5786). -/
+/-- Implied arcs that provide no opinions do not enter the key (L5792-5794). -/
 theorem keyArcs_drop_noSpecs (ops : List Opinion) :
     keyArcs (ops.filter (·.hasSpecs)) = keyArcs ops := by
   induction ops with
@@ -250,7 +250,7 @@ def e1_A1_Sphere : List Opinion := [loc "root.usda" "/Asset_1/Sphere", dref "ass
 example : isInstance e1_A1 ∧ isInstance e1_A2 ∧ isInstance e1_A3 := by decide
 example : Shares e1_A1 e1_A2 := by decide
 example : ¬ Shares e1_A1 e1_A3 ∧ ¬ Shares e1_A2 e1_A3 := by decide
-/-- The table "Opinions for `/Asset_1/Sphere` and `/Asset_2/Sphere`" (L5605-5609). -/
+/-- The table "Opinions for `/Asset_1/Sphere` and `/Asset_2/Sphere`" (L5618-5626). -/
 example : descendantSites e1_A1_Sphere = [S "asset.usda" "/Asset/Sphere"] := by decide
 example : prototypeOf [e1_A1, e1_A2, e1_A3] e1_A1 = some 0 ∧
     prototypeOf [e1_A1, e1_A2, e1_A3] e1_A2 = some 0 ∧
@@ -263,7 +263,7 @@ def e2_R : Prim := ⟨"root.usda", [aref "group_2.usda" "/Group_2/Asset" (some t
 
 example : isInstance e2_L ∧ isInstance e2_R ∧ Shares e2_L e2_R := by decide
 
-/-! ### Example 3 (implied arcs), L5713-5795. The inherit of `/class_Asset` in
+/-! ### Example 3 (implied arcs), L5704-5795. The inherit of `/class_Asset` in
 asset.usda is implied into group_N.usda (which has an `over`, so it provides
 opinions) and into root.usda (no spec). -/
 
@@ -274,13 +274,13 @@ def e3 (g : String) (classSpecs : Bool) : Prim :=
 
 example : isInstance (e3 "1" true) ∧ isInstance (e3 "2" true) := by decide
 example : ¬ Shares (e3 "1" true) (e3 "2" true) := by decide
-/-- "If those prims were removed from those layers, the two would be able to share" (L5784-5786). -/
+/-- "If those prims were removed from those layers, the two would be able to share" (L5792-5794). -/
 example : Shares (e3 "1" false) (e3 "2" false) := by decide
 
 /-! ## OpenUSD v26.11 edge cases (scratch probes; see ISSUES.md LEAN-531..533) -/
 
 /-- `instanceable = true` reached only through an ancestral reference: not an
-instance in OpenUSD or LightUSD; an instance under the literal L5521 reading. -/
+instance in OpenUSD or LightUSD; an instance under the literal L5522 reading. -/
 def ex_ancestralOnly : Prim := ⟨"root.usda", [aref "grp.usda" "/G/A" (some true)], []⟩
 example : isInstance ex_ancestralOnly = false ∧ isInstanceLiteral ex_ancestralOnly = true := by decide
 

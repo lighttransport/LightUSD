@@ -6,18 +6,18 @@ import UsdSpec.ListOp.Legacy
 
 SPEC: core_spec.md L12558-12636 (List Operations).
 
-Header bits (L12581-12592): Make Explicit `0x1`, Add Explicit Items `0x2`, Add Items
+Header bits (L12587-12595): Make Explicit `0x1`, Add Explicit Items `0x2`, Add Items
 `0x4`, Delete Items `0x8`, Reorder Items `0x10`, Prepend Items `0x20`, Append Items
 `0x40` — identical to OpenUSD `crateFile.cpp` `_ListOpHeader::_Bits` (L481-488).
-Wire order of the item vectors (L12594-12602): explicit, added, prepended, appended,
+Wire order of the item vectors (L12597-12605): explicit, added, prepended, appended,
 deleted, ordered — identical to OpenUSD `_Writer::Write(SdfListOp<T>)` (L1581-1587)
 and the reader (L1147-1156), and to LightUSD `kInt64ListOpBits = {2,4,32,64,8,16}`
 (`src/next/layer/int64-listop.hh` L19) and `crate-reader-decode.cc` L315-330.
 So the spec's order is right (no issue for the order).
 
-Each vector: `u64 count` then `count` uncompressed elements (L12604-12612). Elements
+Each vector: `u64 count` then `count` uncompressed elements (L12607-12615). Elements
 are modelled as `UInt64` words (Int64/UInt64 list ops; token/string/path list ops
-carry u32 indices — width is a parameter of the real format, not of the framing).
+carry u32 indices — width is a parameter of the real format; this model fixes 8-byte elements (4-byte-element list ops are not covered)).
 
 What the spec leaves open (SPEC-ISSUE: LEAN-414): the meaning of header byte
 combinations a canonical writer never emits. OpenUSD's reader applies the
@@ -25,9 +25,12 @@ combinations a canonical writer never emits. OpenUSD's reader applies the
 clears all lists when the mode changes (`listOp.cpp` `_SetExplicit` L378-389,
 `SetExplicitItems` L303-308 sets explicit, `SetAddedItems` etc. set non-explicit).
 So `0x02` alone reads as an explicit op, and `0x22` (explicit items + prepended)
-reads as a composable op whose explicit items are silently dropped. LightUSD's
-`Int64ListOp::is_explicit()` is `(bits & 3) != 0`. `pxrRead` models the OpenUSD
-reader.
+reads as a composable op whose explicit items are silently dropped. `pxrRead`
+models this compatibility reader separately from raw `decode`. LightUSD now
+normalizes the wire mode before constructing its native list-op representation
+(`crate/listop-wire.hh`), whose Int64 `is_explicit()` uses `(bits & 3) != 0` on the
+normalized header. Generated mode vectors and stock 26.11 tests cover every legal
+header with empty and populated vectors across six production reader families.
 -/
 
 namespace UsdSpec.Crate.ListOpEncoding
@@ -179,7 +182,7 @@ def ofSpec : UsdSpec.ListOp UInt64 → CrateListOp
   | .explicit items => ⟨true, items, [], [], [], [], []⟩
   | .comp c => ⟨false, [], [], c.prepended, c.appended, c.deleted, []⟩
 
-/-- Legacy `added` / `ordered` are dropped (no normative semantics, L12630-12634). -/
+/-- Legacy `added` / `ordered` are dropped (no normative semantics, L12632-12635). -/
 def toSpec (o : CrateListOp) : UsdSpec.ListOp UInt64 :=
   if o.isExplicit then .explicit o.explicit else .comp ⟨o.deleted, o.prepended, o.appended⟩
 

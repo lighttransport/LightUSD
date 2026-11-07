@@ -6,7 +6,7 @@ import UsdSpec.ListOp.Apply
 SPEC: core_spec.md L1699-1708 ("Deprecated Operations"): `reorder` and `add`
 "are not normatively specified. Supporting them would prevent list operations
 from being closed under combination." The crate encoding keeps both for
-compatibility only (L12634-12637: "no normative semantic").
+compatibility only (L12632-12635: "no normative semantic").
 
 LightUSD still *reads* and *applies* both, in `ApplyStringListOp`
 (src/next/layer/prim-spec-storage.cc:352-384) and `ApplyInt64Op` (:182-241):

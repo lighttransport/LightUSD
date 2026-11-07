@@ -1,8 +1,9 @@
+import UsdSpec.Usda.Quoted
 /-!
 # USDA text format — subset parser and printer (milestone M4)
 
 SPEC: core_spec.md L9569-11375 (text format PEG). This module covers the
-productions below and nothing else; the full 166-rule PEG is milestone M5.
+productions below and nothing else; the full PEG is `Usda/Rules.lean`; this hand-written parser is a subset not proved equivalent to it (its scanners are ASCII-only for identifiers and accept `[0-9.\-e+]*` for numbers).
 
 | rule | spec line | covered as |
 |---|---|---|
@@ -20,24 +21,29 @@ productions below and nothing else; the full 166-rule PEG is milestone M5.
 | `AttributeSpec` + `SpecialAttributeType` | L10466, L10454 | `double name = n`, `double name.timeSamples = { n: n, }` |
 | `TimeSample`/`TimeSampleMap` | L10187, L10192 | `Number: Number` |
 
-Simplifications (documented, not spec deviations): strings are `"..."` without escapes
-or `"`/`\\`/newline; numbers are kept as their lexeme `-?[0-9]+(.[0-9]+)?` (exact, no
+Simplifications: quoted strings use the proven codec in `Usda/Quoted.lean`;
+hexadecimal and short-octal source escapes remain unsupported. Numbers are kept as their lexeme `-?[0-9]+(.[0-9]+)?` (exact, no
 `Float`); `None` lists parse as `[]`; whitespace (incl. newlines and `;` statement
 separators of `Sequence<T>`, L10084) is skipped everywhere a padding rule appears; no
 comments. Single-item `ReferenceList`/`InheritsOrSpecializesList` without brackets is
 accepted; the printer always brackets.
 
-Grammar fact recorded while formalizing (SPEC-ISSUE: LEAN-801, candidate): `ListValue`
+Grammar fact recorded while formalizing (SPEC-ISSUE: LEAN-801, verified syntax
+note): `ListValue`
 (L10123) requires a non-empty `List<ListItem>`, so `ListOpValue` (L10383) cannot be
 `[]`; e.g. `prepend apiSchemas = []` is not in the language. pxr 26.11's parser also
 rejects it (`parse error matching ... ListOf<ListValueItem>`), so this is consistent
 with the reference but means an authored empty prepend/append token list op has no
 text form, while `ReferenceList`/`InheritsOrSpecializesList` (L10824, L10854) do admit
-`[]`.
+`[]`. Their grammar acceptance does not imply semantic acceptance for qualified
+empty arc edits: stock 26.11 rejects `prepend references = []` separately.
 
 `parse (print x) = some x` is checked by `#guard` on examples (including the text
 pxr 26.11 `Sdf.Layer.ExportToString` produced for an equivalent layer); the list-op
-keyword and specifier productions are proven; the general theorem is not.
+keyword and specifier productions are proven. GrammarProofs.lean also proves
+lexical inverses and general list composition, instantiated for path-reference
+lists. PrimProofs/LayerProofs prove the general supported-AST inverse under
+explicit lexical admissibility conditions, with arbitrary quoted dictionary keys.
 -/
 
 namespace UsdSpec.Usda
@@ -96,7 +102,7 @@ structure Layer where
 /-! ## Printer (pxr-style canonical layout) -/
 
 def ind (n : Nat) : String := String.ofList (List.replicate (4 * n) ' ')
-def q (s : String) : String := "\"" ++ s ++ "\""
+def q (s : String) : String := quoteString s
 
 def Specifier.print : Specifier → String
   | .def_ => "def" | .over => "over" | .class_ => "class"
@@ -118,9 +124,9 @@ def bracket (n : Nat) (xs : List String) : String :=
 
 mutual
 def DVal.printItem (n : Nat) : String × DVal → String
-  | (k, .int i) => ind n ++ "int " ++ k ++ " = " ++ toString i ++ "\n"
-  | (k, .str s) => ind n ++ "string " ++ k ++ " = " ++ q s ++ "\n"
-  | (k, .dict d) => ind n ++ "dictionary " ++ k ++ " = " ++ DVal.printDict n d ++ "\n"
+  | (k, .int i) => ind n ++ "int " ++ q k ++ " = " ++ toString i ++ "\n"
+  | (k, .str s) => ind n ++ "string " ++ q k ++ " = " ++ q s ++ "\n"
+  | (k, .dict d) => ind n ++ "dictionary " ++ q k ++ " = " ++ DVal.printDict n d ++ "\n"
 def DVal.printDict (n : Nat) : List (String × DVal) → String
   | [] => "{\n" ++ ind n ++ "}"
   | items => "{\n" ++ DVal.printItems (n + 1) items ++ ind n ++ "}"
@@ -194,7 +200,7 @@ def delimited (o c : Char) : P String := fun cs =>
     else none
   | [] => none
 
-def str : P String := delimited '"' '"'
+def str : P String := fun cs => parseQuotedChars (ws cs)
 def asset : P String := delimited '@' '@'
 def pathRef : P String := delimited '<' '>'
 
@@ -434,6 +440,11 @@ def roundtrips (l : Layer) : Bool :=
   | none => false
 
 /-! ## Proven pieces -/
+
+/-- Quoted values round-trip for arbitrary payloads and arbitrary following input. -/
+theorem str_q (s : String) (rest : List Char) :
+    str ((q s).toList ++ rest) = some (s, rest) := by
+  simpa [str, q, quoteString, ws, isWs] using parseQuotedChars_quoteString s rest
 
 theorem qual_print (qu : Qual) (rest : List Char) (hq : qu ≠ .explicit) :
     qual (qu.print.toList ++ 'r' :: rest) = some (qu, ' ' :: 'r' :: rest) := by

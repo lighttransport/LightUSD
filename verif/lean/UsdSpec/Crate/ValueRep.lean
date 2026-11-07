@@ -1,8 +1,13 @@
-import Std.Tactic.BVDecide
+import Init.Data.SInt.Lemmas
+import UsdSpec.Core.BvKernel
 /-!
 # Crate value representations (AOUSD USD Core Specification v1.1.0)
 
-SPEC: core_spec.md L12049-12201 (Value Representations, Inlined Value Representation).
+SPEC: core_spec.md L12049-12136 (Value Representations, Inlined Value Representation).
+Modelled: flag/type/payload packing and a few inline layouts. NOT modelled:
+offset reps and array reps (L12138-12201), compressed arrays, the float-exactness
+test, and the must-inline type list (L12112-12126); `encF32Bits` is the identity
+on bit patterns, so the pxr_* theorems check hard-coded patterns only.
 
 The spec (L12056-12077) says: payload = "first 6 bytes", type = "penultimate byte",
 flags = "last byte", with Array = "The last bit", Inlined = "The second last bit",
@@ -53,22 +58,96 @@ def unpack (x : UInt64) : Rep where
   isCompressed := (x >>> 61) &&& 1 == 1
   isArrayEdit := (x >>> 60) &&& 1 == 1
 
+private theorem toBitVec_ite (b : Bool) (x y : UInt64) :
+    (if b then x else y).toBitVec = if b then x.toBitVec else y.toBitVec := by
+  cases b <;> rfl
+
+private theorem getLsbD_ite (b : Bool) {n : Nat} (x y : BitVec n) (j : Nat) :
+    (if b then x else y).getLsbD j = if b then x.getLsbD j else y.getLsbD j := by
+  cases b <;> rfl
+
+private theorem pack_payload_mask (r : Rep) :
+    pack r &&& payloadMask = r.payload &&& payloadMask := by
+  cases r
+  apply UInt64.toBitVec_inj.mp
+  simp only [pack, bit, payloadMask, UInt64.toBitVec_or, UInt64.toBitVec_and,
+    UInt64.toBitVec_shiftLeft, UInt64.toBitVec_shiftRight, UInt64.toBitVec_ofNat,
+    UInt64.toBitVec_toUInt8, UInt8.toBitVec_toUInt64, toBitVec_ite, getLsbD_ite]
+  apply BitVec.eq_of_getLsbD_eq
+  intro j hj
+  interval_cases j <;>
+    simp only [BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_setWidth,
+      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_ofNat, toBitVec_ite, getLsbD_ite] <;>
+    simp [← BitVec.getLsbD_eq_getElem, getLsbD_ite, Nat.testBit_eq_decide_div_mod_eq]
+
+private theorem pack_type (r : Rep) : (pack r >>> 48).toUInt8 = r.ty := by
+  cases r
+  apply UInt8.toBitVec_inj.mp
+  simp only [pack, bit, payloadMask, UInt64.toBitVec_or, UInt64.toBitVec_and,
+    UInt64.toBitVec_shiftLeft, UInt64.toBitVec_shiftRight, UInt64.toBitVec_ofNat,
+    UInt64.toBitVec_toUInt8, UInt8.toBitVec_toUInt64, toBitVec_ite, getLsbD_ite]
+  apply BitVec.eq_of_getLsbD_eq
+  intro j hj
+  interval_cases j <;>
+    simp only [BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_setWidth,
+      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_ofNat, toBitVec_ite, getLsbD_ite] <;>
+    simp [← BitVec.getLsbD_eq_getElem, getLsbD_ite, Nat.testBit_eq_decide_div_mod_eq]
+
+private theorem pack_flags (r : Rep) :
+  ((pack r).toBitVec.getLsbD 63, (pack r).toBitVec.getLsbD 62,
+   (pack r).toBitVec.getLsbD 61, (pack r).toBitVec.getLsbD 60) =
+  (r.isArray, r.isInlined, r.isCompressed, r.isArrayEdit) := by
+  cases r
+  simp only [pack, bit, payloadMask, UInt64.toBitVec_or, UInt64.toBitVec_and,
+    UInt64.toBitVec_shiftLeft, UInt64.toBitVec_ofNat, UInt8.toBitVec_toUInt64,
+    toBitVec_ite, BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_setWidth,
+    BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ofNat, getLsbD_ite]
+  simp [← BitVec.getLsbD_eq_getElem, getLsbD_ite, Nat.testBit_eq_decide_div_mod_eq]
+
+private theorem payload_mask_id (p : UInt64) (h : p < 0x1000000000000) :
+    p &&& payloadMask = p := by
+  apply UInt64.toNat.inj
+  simp only [UInt64.toNat_and]
+  change p.toNat &&& (2^48 - 1) = p.toNat
+  exact Nat.and_two_pow_sub_one_of_lt_two_pow (UInt64.lt_iff_toNat_lt.mp h)
+
 theorem unpack_pack (r : Rep) (h : r.payload < 0x1000000000000) : unpack (pack r) = r := by
   obtain ⟨p, t, a, i, c, e⟩ := r
-  simp only at h
-  cases a <;> cases i <;> cases c <;> cases e <;>
-    simp only [unpack, pack, bit, payloadMask, Rep.mk.injEq, ↓reduceIte, Bool.false_eq_true] <;>
-    bv_decide
+  let rep : Rep := ⟨p, t, a, i, c, e⟩
+  have flags := pack_flags rep
+  simp only [Prod.mk.injEq] at flags
+  simp only [unpack, Rep.mk.injEq]
+  refine ⟨?_, pack_type rep, ?_, ?_, ?_, ?_⟩
+  · rw [pack_payload_mask, payload_mask_id p h]
+  · simpa [BvKernel.flagBit] using flags.1
+  · simpa [BvKernel.flagBit] using flags.2.1
+  · simpa [BvKernel.flagBit] using flags.2.2.1
+  · simpa [BvKernel.flagBit] using flags.2.2.2
 
 /-- Bits 56..59 are unused by every version in the spec window; any u64 with them zero
 round-trips through `unpack`. -/
 theorem pack_unpack (x : UInt64) (h : (x >>> 56) &&& 0xF = 0) : pack (unpack x) = x := by
-  simp only [pack, unpack, bit, payloadMask]
-  by_cases a : (x >>> 63) &&& 1 == 1 <;> by_cases i : (x >>> 62) &&& 1 == 1 <;>
-    by_cases c : (x >>> 61) &&& 1 == 1 <;> by_cases e : (x >>> 60) &&& 1 == 1 <;>
-    simp only [a, i, c, e, ↓reduceIte, Bool.false_eq_true] <;>
-    simp only [beq_iff_eq] at a i c e <;>
-    bv_decide
+  have reserved (j : Nat) (hj : j < 4) : x.toBitVec.getLsbD (56 + j) = false := by
+    have hb := congrArg (fun n : UInt64 => n.toBitVec.getLsbD j) h
+    interval_cases j <;>
+      simpa [UInt64.toBitVec_and, UInt64.toBitVec_shiftRight, UInt64.toBitVec_ofNat,
+        BitVec.getLsbD_and, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_ofNat,
+        Nat.testBit_eq_decide_div_mod_eq] using hb
+  have h56 := reserved 0 (by decide)
+  have h57 := reserved 1 (by decide)
+  have h58 := reserved 2 (by decide)
+  have h59 := reserved 3 (by decide)
+  apply UInt64.toBitVec_inj.mp
+  simp only [pack, unpack, bit, payloadMask, BvKernel.flagBit,
+    UInt64.toBitVec_or, UInt64.toBitVec_and, UInt64.toBitVec_shiftLeft,
+    UInt64.toBitVec_shiftRight, UInt64.toBitVec_ofNat,
+    UInt64.toBitVec_toUInt8, UInt8.toBitVec_toUInt64, toBitVec_ite]
+  apply BitVec.eq_of_getLsbD_eq
+  intro j hj
+  interval_cases j <;>
+    simp [← BitVec.getLsbD_eq_getElem, BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_setWidth,
+      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_ofNat,
+      getLsbD_ite, Nat.testBit_eq_decide_div_mod_eq, h56, h57, h58, h59]
 
 /-! ## The literal spec readings -/
 
@@ -124,11 +203,24 @@ def inlined (ty : UInt8) (ival : UInt32) : UInt64 :=
 def ival (x : UInt64) : UInt32 := x.toUInt32
 
 theorem ival_inlined (ty : UInt8) (v : UInt32) : ival (inlined ty v) = v := by
-  simp only [ival, inlined, pack, bit, payloadMask, ↓reduceIte]; bv_decide
+  simp only [ival, inlined, pack, bit, payloadMask, ↓reduceIte]
+  apply UInt32.toBitVec_inj.mp
+  simp only [UInt64.toBitVec_toUInt32, UInt64.toBitVec_or, UInt64.toBitVec_and,
+    UInt64.toBitVec_shiftLeft, UInt64.toBitVec_ofNat,
+    UInt8.toBitVec_toUInt64, UInt32.toBitVec_toUInt64]
+  apply BitVec.eq_of_getLsbD_eq
+  intro i hi
+  interval_cases i <;>
+     simp only [BitVec.getLsbD_or, BitVec.getLsbD_and, BitVec.getLsbD_setWidth,
+      BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight, BitVec.getLsbD_ofNat] <;> simp [← BitVec.getLsbD_eq_getElem, getLsbD_ite, Nat.testBit_eq_decide_div_mod_eq]
 
 theorem unpack_inlined (ty : UInt8) (v : UInt32) :
     unpack (inlined ty v) = ⟨v.toUInt64, ty, false, true, false, false⟩ := by
-  apply unpack_pack; simp only; bv_decide
+  apply unpack_pack
+  have hv := UInt32.toNat_lt_size v
+  apply UInt64.lt_iff_toNat_lt.mpr
+  simpa only [UInt32.toNat_toUInt64] using
+    (Nat.lt_trans hv (by decide : UInt32.size < (0x1000000000000 : UInt64).toNat))
 
 /-- `int` (and every integral type in int32 range): the int32 bit pattern. -/
 def encInt32 (i : Int32) : UInt32 := i.toUInt32
@@ -153,20 +245,56 @@ def decVecI8 (dim : Nat) (v : UInt32) : List Int8 :=
 theorem decVecI8_encVecI8_3 (a b c : Int8) : decVecI8 3 (encVecI8 [a, b, c]) = [a, b, c] := by
   simp only [decVecI8, encVecI8, List.take_succ_cons, List.take_zero,
     List.map_cons, List.map_nil, List.cons.injEq, and_true]
-  refine ⟨?_, ?_, ?_⟩ <;> bv_decide
+  refine ⟨?_, ?_, ?_⟩
+  all_goals
+    apply Int8.toBitVec_inj.mp
+    simp only [UInt8.toBitVec_toInt8, Int8.toBitVec_toUInt8,
+      UInt8.toBitVec_toUInt32, UInt16.toBitVec_toUInt32,
+      UInt32.toBitVec_toUInt8, UInt32.toBitVec_toUInt16,
+      UInt32.toBitVec_or, UInt32.toBitVec_shiftLeft, UInt32.toBitVec_shiftRight,
+      UInt32.toBitVec_ofNat]
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    interval_cases i <;>
+      simp only [BitVec.getLsbD_or, BitVec.getLsbD_setWidth,
+        BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight] <;> simp
 
 theorem decVecI8_encVecI8_4 (a b c d : Int8) :
     decVecI8 4 (encVecI8 [a, b, c, d]) = [a, b, c, d] := by
   simp only [decVecI8, encVecI8, List.take_succ_cons, List.take_zero,
     List.map_cons, List.map_nil, List.cons.injEq, and_true]
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> bv_decide
+  refine ⟨?_, ?_, ?_, ?_⟩
+  all_goals
+    apply Int8.toBitVec_inj.mp
+    simp only [UInt8.toBitVec_toInt8, Int8.toBitVec_toUInt8,
+      UInt8.toBitVec_toUInt32, UInt16.toBitVec_toUInt32,
+      UInt32.toBitVec_toUInt8, UInt32.toBitVec_toUInt16,
+      UInt32.toBitVec_or, UInt32.toBitVec_shiftLeft, UInt32.toBitVec_shiftRight,
+      UInt32.toBitVec_ofNat]
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    interval_cases i <;>
+      simp only [BitVec.getLsbD_or, BitVec.getLsbD_setWidth,
+        BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight] <;> simp
 
 /-- `GfVec2h`: fits in 4 bytes, so the two binary16 bit patterns, component 0 low
 (L12091-12094; observed `half2 (0.5, 1.5)` → payload `0x3e003800`). -/
 def encVec2h (h0 h1 : UInt16) : UInt32 := h0.toUInt32 ||| (h1.toUInt32 <<< 16)
 def decVec2h (v : UInt32) : UInt16 × UInt16 := (v.toUInt16, (v >>> 16).toUInt16)
 theorem decVec2h_encVec2h (h0 h1 : UInt16) : decVec2h (encVec2h h0 h1) = (h0, h1) := by
-  simp only [decVec2h, encVec2h, Prod.mk.injEq]; constructor <;> bv_decide
+  simp only [decVec2h, encVec2h, Prod.mk.injEq]; constructor
+  all_goals
+    apply UInt16.toBitVec_inj.mp
+    simp only [UInt8.toBitVec_toInt8, Int8.toBitVec_toUInt8,
+      UInt8.toBitVec_toUInt32, UInt16.toBitVec_toUInt32,
+      UInt32.toBitVec_toUInt8, UInt32.toBitVec_toUInt16,
+      UInt32.toBitVec_or, UInt32.toBitVec_shiftLeft, UInt32.toBitVec_shiftRight,
+      UInt32.toBitVec_ofNat]
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    interval_cases i <;>
+      simp only [BitVec.getLsbD_or, BitVec.getLsbD_setWidth,
+        BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ushiftRight] <;> simp
 
 /-- Square matrices with zero off-diagonal and int8 diagonal: the diagonal as int8
 bytes (L12099-12101); same layout as `encVecI8`. -/

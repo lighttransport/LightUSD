@@ -6,7 +6,8 @@ import Mathlib.Data.Fintype.EquivFin
 SPEC: core_spec.md L1271-1708 (6.6.3 List Operations).
 
 Every definition is executable (`#eval`, `decide`) and transcribed bullet-for-bullet
-from the LaTeX math blocks of the spec. Element sequences are plain `List α`; the
+from the LaTeX math blocks of the spec (`combine`; `apply`, `WellFormed` and the
+bridge theorems are derived, not spec text; some results need `[Infinite α]`). Element sequences are plain `List α`; the
 spec's uniqueness requirement (L1308-1337) is carried as `List.Nodup` hypotheses
 where a theorem needs it, never as a subtype.
 
@@ -85,6 +86,150 @@ def apply : ListOp α → List α → List α
       ++ w.filter (fun x => x ∉ c.appended ∧ x ∉ c.deleted ∧ x ∉ c.prepended)
       ++ c.appended
 
+/-- The admissibility condition from L1298-1337: explicit sequences are unique,
+and each composable sub-sequence is unique. Overlap between different
+composable fields is allowed by the spec. -/
+def WellFormed : ListOp α → Prop
+  | .explicit items => items.Nodup
+  | .comp c => c.appended.Nodup ∧ c.prepended.Nodup ∧ c.deleted.Nodup
+
+private theorem nodup_filter {β : Type} (xs : List β) (p : β → Bool)
+    (h : xs.Nodup) : (xs.filter p).Nodup := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    rw [List.nodup_cons] at h
+    obtain ⟨hnot, hnodup⟩ := h
+    simp only [List.filter_cons]
+    split_ifs with hp
+    · rw [List.nodup_cons]
+      exact ⟨fun hx => hnot ((List.mem_filter.mp hx).1), ih hnodup⟩
+    · exact ih hnodup
+
+private theorem nodup_append_of_disjoint {β : Type} [DecidableEq β]
+    (xs ys : List β) (hx : xs.Nodup) (hy : ys.Nodup)
+    (hxy : ∀ x ∈ xs, x ∉ ys) : (xs ++ ys).Nodup := by
+  rw [List.nodup_append]
+  refine ⟨hx, hy, ?_⟩
+  intro x hx y hy' hxy'
+  subst y
+  exact hxy x hx hy'
+
+/-- Applying a well-formed list operation to a unique weaker ordering preserves
+element uniqueness, as required by the list-operation domain (L1271-1337).
+The pre/app overlap is removed from the prepended run, and each weaker element
+shadowed by any authored edit is removed before the appended run. -/
+theorem apply_nodup (L : ListOp α) (weaker : List α)
+    (hL : WellFormed L) (hw : weaker.Nodup) : (apply L weaker).Nodup := by
+  cases L with
+  | explicit items => exact hL
+  | comp c =>
+    obtain ⟨ha, hp, hd⟩ := hL
+    let pre := c.prepended.filter (· ∉ c.appended)
+    let middle := weaker.filter
+      (fun x => x ∉ c.appended ∧ x ∉ c.deleted ∧ x ∉ c.prepended)
+    have hpre : pre.Nodup := nodup_filter _ _ hp
+    have hmiddle : middle.Nodup := nodup_filter _ _ hw
+    have hpm : ∀ x ∈ pre, x ∉ middle := by
+      intro x hx hm
+      have hxpre : x ∈ c.prepended := (List.mem_filter.mp hx).1
+      have hmpre := of_decide_eq_true (List.mem_filter.mp hm).2
+      rcases hmpre with ⟨_, _, hmpre⟩
+      exact hmpre hxpre
+    have hpa : ∀ x ∈ pre, x ∉ c.appended := by
+      intro x hx
+      exact of_decide_eq_true (List.mem_filter.mp hx).2
+    have hma : ∀ x ∈ middle, x ∉ c.appended := by
+      intro x hx
+      exact (of_decide_eq_true (List.mem_filter.mp hx).2).1
+    have hfirst := nodup_append_of_disjoint pre middle hpre hmiddle hpm
+    have hlast := nodup_append_of_disjoint (pre ++ middle) c.appended hfirst ha
+      (by
+        intro x hx ha'
+        rcases List.mem_append.mp hx with hp' | hm'
+        · exact hpa x hp' ha'
+        · exact hma x hm' ha')
+    simpa [apply, pre, middle, List.append_assoc] using hlast
+
+/-- The combining operation is closed over the spec's well-formed list-op
+domain (L1421-1483): every output sequence remains duplicate-free. -/
+theorem combine_wellFormed (S W : ListOp α)
+    (hS : WellFormed S) (hW : WellFormed W) : WellFormed (S ⊔ W) := by
+  cases S with
+  | explicit e => exact hS
+  | comp s =>
+    cases W with
+    | explicit e =>
+      obtain ⟨hsA, hsP, hsD⟩ := hS
+      have hpre : (s.prepended.filter (· ∉ s.appended)).Nodup :=
+        nodup_filter _ _ hsP
+      have hmid : (e.filter (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧
+          x ∉ s.prepended)).Nodup := nodup_filter _ _ hW
+      have hpm : ∀ x ∈ s.prepended.filter (· ∉ s.appended),
+          x ∉ e.filter (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧
+            x ∉ s.prepended) := by
+        intro x hx hm
+        have hxpre := (List.mem_filter.mp hx).1
+        have hmid' := of_decide_eq_true (List.mem_filter.mp hm).2
+        exact hmid'.2.2 hxpre
+      have hpa : ∀ x ∈ s.prepended.filter (· ∉ s.appended), x ∉ s.appended := by
+        intro x hx; exact of_decide_eq_true (List.mem_filter.mp hx).2
+      have hma : ∀ x ∈ e.filter (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧
+          x ∉ s.prepended), x ∉ s.appended := by
+        intro x hx
+        exact (of_decide_eq_true (List.mem_filter.mp hx).2).1
+      have hfirst := nodup_append_of_disjoint
+        (s.prepended.filter (· ∉ s.appended))
+        (e.filter (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧
+          x ∉ s.prepended)) hpre hmid hpm
+      have hlast := nodup_append_of_disjoint
+        (s.prepended.filter (· ∉ s.appended) ++
+          e.filter (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧
+            x ∉ s.prepended)) s.appended hfirst hsA
+        (by
+          intro x hx ha
+          rcases List.mem_append.mp hx with hp | he
+          · exact hpa x hp ha
+          · exact hma x he ha)
+      simpa [WellFormed, combine, List.append_assoc] using hlast
+    | comp c =>
+      obtain ⟨hsA, hsP, hsD⟩ := hS
+      obtain ⟨hcA, hcP, hcD⟩ := hW
+      let d1 := c.deleted.filter (fun x => x ∉ s.prepended ∧ x ∉ s.appended)
+      let d2 := s.deleted.filter
+        (fun x => x ∉ s.prepended ∧ x ∉ s.appended ∧ x ∉ c.deleted)
+      let p1 := s.prepended.filter (· ∉ s.appended)
+      let p2 := c.prepended.filter
+        (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧ x ∉ s.prepended)
+      let a1 := c.appended.filter
+        (fun x => x ∉ s.appended ∧ x ∉ s.deleted ∧ x ∉ s.prepended)
+      let a2 := s.appended
+      have hd1 : d1.Nodup := nodup_filter _ _ hcD
+      have hd2 : d2.Nodup := nodup_filter _ _ hsD
+      have hp1 : p1.Nodup := nodup_filter _ _ hsP
+      have hp2 : p2.Nodup := nodup_filter _ _ hcP
+      have ha1 : a1.Nodup := nodup_filter _ _ hcA
+      have ha2 : a2.Nodup := hsA
+      have hdd : ∀ x ∈ d1, x ∉ d2 := by
+        intro x hx hy
+        have hxC := (List.mem_filter.mp hx).1
+        have hyP := of_decide_eq_true (List.mem_filter.mp hy).2
+        exact hyP.2.2 hxC
+      have hpp : ∀ x ∈ p1, x ∉ p2 := by
+        intro x hx hy
+        have hxP := (List.mem_filter.mp hx).1
+        have hyP := of_decide_eq_true (List.mem_filter.mp hy).2
+        exact hyP.2.2 hxP
+      have haa : ∀ x ∈ a1, x ∉ a2 := by
+        intro x hx hy
+        exact (of_decide_eq_true (List.mem_filter.mp hx).2).1 hy
+      have hdel := nodup_append_of_disjoint d1 d2 hd1 hd2 hdd
+      have hpre := nodup_append_of_disjoint p1 p2 hp1 hp2 hpp
+      have happ := nodup_append_of_disjoint a1 a2 ha1 ha2 haa
+      simpa [WellFormed, combine, d1, d2, p1, p2, a1, a2] using
+        (show (a1 ++ a2).Nodup ∧ (p1 ++ p2).Nodup ∧ (d1 ++ d2).Nodup
+          from ⟨happ, hpre, hdel⟩)
+
 /-- Reduced form. SPEC: L1607-1625. -/
 def reduce : ListOp α → ListOp α
   | .explicit e => .explicit e
@@ -93,6 +238,15 @@ def reduce : ListOp α → ListOp α
         deleted := c.deleted.filter (fun x => x ∉ c.appended ∧ x ∉ c.prepended),
         prepended := c.prepended.filter (· ∉ c.appended),
         appended := c.appended }
+
+/-- Reduction preserves the spec's per-sequence uniqueness invariant. -/
+theorem reduce_wellFormed (L : ListOp α) (hL : WellFormed L) :
+    WellFormed (reduce L) := by
+  cases L with
+  | explicit items => exact hL
+  | comp c =>
+    obtain ⟨ha, hp, hd⟩ := hL
+    exact ⟨ha, nodup_filter _ _ hp, nodup_filter _ _ hd⟩
 
 /-- A list op is reduced when no element repeats across sequences. SPEC: L1609-1612. -/
 def IsReduced : ListOp α → Prop

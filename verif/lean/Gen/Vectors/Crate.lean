@@ -82,6 +82,28 @@ def listOpRows : String := Id.run do
     id := id + 1
   return out
 
+/-- All legal raw headers, with populated and empty present vectors. Expected
+mode and retained vectors come from the OpenUSD setter model, not raw `decode`. -/
+def listOpModeRows : String := Id.run do
+  let mut out := ""
+  let mut id := 0
+  for empty in [false, true] do
+    for code in List.range 128 do
+      let h := UInt8.ofNat code
+      let items (run : Nat) : List UInt64 := if empty then [] else [UInt64.ofNat (run + 10)]
+      let raw : ListOpEncoding.CrateListOp :=
+        ⟨ListOpEncoding.has h 1, items 0, items 1, items 2, items 3, items 4, items 5⟩
+      let mut wire := [h]
+      for (bit, run) in ListOpEncoding.wireBits.zip (List.range 6) do
+        if ListOpEncoding.has h bit then wire := wire ++ ListOpEncoding.encodeVec (items run)
+      let effective := ListOpEncoding.pxrRead raw h
+      out := out ++ row "LEAN_CRATE_LISTOP_MODE" [toString id, cstr (hex8 h),
+        cstr (bytesHex wire), b01 effective.isExplicit, cstr (ints effective.explicit),
+        cstr (ints effective.added), cstr (ints effective.prepended),
+        cstr (ints effective.appended), cstr (ints effective.deleted), cstr (ints effective.ordered)]
+      id := id + 1
+  return out
+
 def files : List (String × String) :=
   [ ("crate-valuerep-vectors.inc", header "Gen.Vectors.Crate" ++
       "// LEAN_VALUEREP(id, u64_hex, type, is_array, is_inlined, is_compressed, payload_hex)\n" ++
@@ -90,6 +112,7 @@ def files : List (String × String) :=
     ("crate-listop-vectors.inc", header "Gen.Vectors.Crate" ++
       "// LEAN_CRATE_LISTOP(id, header_hex, wire_hex, is_explicit, explicit, added, prepended,\n" ++
       "//   appended, deleted, ordered) spec L12558-12636; uint64 items, u64 LE on the wire.\n" ++
-      listOpRows) ]
+      listOpRows ++ "// LEAN_CRATE_LISTOP_MODE: same columns; expected OpenUSD setter semantics.\n" ++
+      listOpModeRows) ]
 
 end Gen.CrateVec

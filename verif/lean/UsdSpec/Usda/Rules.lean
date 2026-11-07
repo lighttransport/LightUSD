@@ -399,7 +399,7 @@ theorem attr_special_unreachable :
     ∧ accepts usda "AttributeSpec" "float a.timeSamples = { }" = false
     ∧ accepts usdaRepaired "AttributeSpec" "float a.timeSamples = { }" = true := by decide +kernel
 
-/-- LEAN-808 witness: `customData` is a keyword (L9941), so it is no `KeyValueMetadata`
+/-- LEAN-808 witness: `customData` is a keyword (L9953), so it is no `KeyValueMetadata`
 (L10369) and only `ReferenceParameter` (L10839) has a rule for it.
 SPEC-ISSUE: LEAN-808 — prim/property/layer `customData = {...}` has no production. -/
 theorem customData_metadata_rejected :

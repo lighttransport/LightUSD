@@ -88,7 +88,7 @@ def printFamilyVersion (family : String) (version : Option Nat) : String :=
   | some n => String.ofList (family.toList ++ '_' :: natChars n)
 
 /-- "Within a schema family, a versioned schema must not inherit from another schema
-in the same family." SPEC: L8300-8306. `true` when the inheritance is allowed by
+in the same family." SPEC: L8299-8305. `true` when the inheritance is allowed by
 this rule (unparseable names impose no constraint here). -/
 def versionedMayInherit (child parent : String) : Bool :=
   match parseFamilyVersion child, parseFamilyVersion parent with
@@ -121,7 +121,7 @@ example : parseFamilyVersion "1Mesh" = none := by decide +kernel
 example : parseFamilyVersion "Mesh-1" = none := by decide +kernel
 example : parseFamilyVersion "Mésh" = none := by decide +kernel
 
-/-- SPEC: L8300-8306. `Cylinder_2` must not inherit from `Cylinder_1` or `Cylinder`,
+/-- SPEC: L8299-8305. `Cylinder_2` must not inherit from `Cylinder_1` or `Cylinder`,
 but may inherit from `Gprim`; the rule only constrains *versioned* children. -/
 example : versionedMayInherit "Cylinder_2" "Cylinder_1" = false := by decide +kernel
 example : versionedMayInherit "Cylinder_2" "Cylinder" = false := by decide +kernel
@@ -309,7 +309,7 @@ itself (`printFamilyVersion f none = f` definitionally). -/
 theorem parse_print_unversioned (f : String) (hu : parseFamilyVersion f = some (f, none)) :
     parseFamilyVersion (printFamilyVersion f none) = some (f, none) := hu
 
-/-- Two versions of one family may not inherit from each other. SPEC: L8300-8306. -/
+/-- Two versions of one family may not inherit from each other. SPEC: L8299-8305. -/
 theorem versionedMayInherit_same_family (f : String) (hf : isSchemaName f = true) (n m : Nat) :
     versionedMayInherit (printFamilyVersion f (some n)) (printFamilyVersion f (some m)) = false := by
   unfold versionedMayInherit

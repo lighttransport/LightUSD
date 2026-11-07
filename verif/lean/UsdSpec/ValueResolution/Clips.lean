@@ -44,12 +44,12 @@ Spec issues (rows in ISSUES.md):
 
 namespace UsdSpec.Clips
 
-/-- Explicit clip-set metadata. SPEC: L6648-6690. -/
+/-- Explicit clip-set metadata. SPEC: L6645-6688. -/
 structure ClipSet where
   assetPaths : List String
-  /-- `(stageTime, assetIndex)` pairs, L6684-6687. -/
+  /-- `(stageTime, assetIndex)` pairs, L6677-6681. -/
   active : List (ℚ × ℕ)
-  /-- `(stageTime, clipTime)` pairs, L6688-6691. -/
+  /-- `(stageTime, clipTime)` pairs, L6683-6688. -/
   times : List (ℚ × ℚ)
   primPath : String := ""
   manifestAssetPath : String := ""
@@ -74,6 +74,54 @@ def activePos : List (ℚ × ℕ) → ℚ → ℕ
   | _ :: f :: rest, t => if f.1 ≤ t then activePos (f :: rest) t + 1 else 0
 
 def SortedS {β} (l : List (ℚ × β)) : Prop := l.Pairwise fun a b => a.1 ≤ b.1
+
+/-- OpenUSD compatibility preprocessing, separate from the literal authored-list
+interval model above: activation times are sorted and duplicate times reject
+the clip set, even if their asset indices agree. LEAN-767; v26.11.1 clipSet.cpp.
+This does not model asset-index bounds or filesystem resolution. -/
+def sortedActive (l : List (ℚ × ℕ)) : List (ℚ × ℕ) :=
+  l.mergeSort (fun a b => decide (a.1 ≤ b.1))
+
+def prepareActive (l : List (ℚ × ℕ)) : Option (List (ℚ × ℕ)) :=
+  let sorted := sortedActive l
+  if sorted.Pairwise (fun a b => a.1 ≠ b.1) then some sorted else none
+
+def pxrActiveIndex (l : List (ℚ × ℕ)) (t : ℚ) : Option ℕ :=
+  (prepareActive l).bind (fun sorted => activeIndex sorted t)
+
+theorem sortedActive_sorted (l : List (ℚ × ℕ)) : SortedS (sortedActive l) := by
+  have h := List.pairwise_mergeSort
+    (le := fun a b : ℚ × ℕ => decide (a.1 ≤ b.1))
+    (by intro a b c hab hbc; exact decide_eq_true (le_trans (of_decide_eq_true hab) (of_decide_eq_true hbc)))
+    (by intro a b; simpa using le_total a.1 b.1) l
+  simpa [SortedS, sortedActive] using h
+
+theorem prepareActive_sound {l sorted : List (ℚ × ℕ)}
+    (h : prepareActive l = some sorted) :
+    SortedS sorted ∧ sorted.Perm l ∧ sorted.Pairwise (fun a b => a.1 ≠ b.1) := by
+  unfold prepareActive at h
+  dsimp only at h
+  split at h
+  next unique =>
+    cases h
+    exact ⟨sortedActive_sorted l, List.mergeSort_perm l _, unique⟩
+  next => contradiction
+
+theorem prepareActive_complete (l : List (ℚ × ℕ))
+    (unique : l.Pairwise (fun a b => a.1 ≠ b.1)) :
+    prepareActive l = some (sortedActive l) := by
+  have sorted_unique : (sortedActive l).Pairwise (fun a b => a.1 ≠ b.1) :=
+    ((List.mergeSort_perm l _).pairwise_iff (fun h => Ne.symm h)).mpr unique
+  simp [prepareActive, sorted_unique]
+
+example : pxrActiveIndex [(10, 1), (0, 0)] 9 = some 0 := by
+  norm_num [pxrActiveIndex, prepareActive, sortedActive, List.mergeSort_pair, activeIndex]
+example : pxrActiveIndex [(10, 1), (0, 0)] 10 = some 1 := by
+  norm_num [pxrActiveIndex, prepareActive, sortedActive, List.mergeSort_pair, activeIndex]
+example : prepareActive [(0, 0), (0, 1)] = none := by
+  norm_num [prepareActive, sortedActive, List.mergeSort_pair]
+example : prepareActive [(0, 0), (0, 0)] = none := by
+  norm_num [prepareActive, sortedActive, List.mergeSort_pair]
 
 /-- CL2: the selected entry moves forward monotonically with stage time (no
 sortedness needed for the position; the index column itself is monotone when
@@ -134,7 +182,7 @@ def walk : List (ℚ × ℚ) → ℚ → ℚ
     if t < s1 then lerp s0 c0 s1 c1 t else walk ((s1, c1) :: rest) t
 
 /-- Stage time → clip time. Before the first entry the first clip time,
-after the last the last clip time (L6983-6990, v1.1 clamp); no `times` →
+after the last the last clip time (L6984-6991, v1.1 clamp); no `times` →
 identity (SPEC-ISSUE: LEAN-768: the spec does not say; OpenUSD and LightUSD use
 identity). -/
 def clipTime (l : List (ℚ × ℚ)) (t : ℚ) : ℚ :=
@@ -142,7 +190,7 @@ def clipTime (l : List (ℚ × ℚ)) (t : ℚ) : ℚ :=
   | [] => t
   | (s0, c0) :: _ => if t < s0 then c0 else walk l t
 
-/-- CL4 before the first entry. CLAIM L6983-6985: "If the queried stage time is
+/-- CL4 before the first entry. CLAIM L6984-6985: "If the queried stage time is
 before the first entry …, the clip time is clamped to the clip time of the
 first entry." -/
 theorem clipTime_clamp_before (s0 c0 : ℚ) (rest : List (ℚ × ℚ)) (t : ℚ) (h : t < s0) :
@@ -162,7 +210,7 @@ theorem walk_after : ∀ (l : List (ℚ × ℚ)) (e : ℚ × ℚ) (_ : SortedS (
     simp only [walk, this, ite_false]
     exact walk_after (b :: rest) e (List.pairwise_cons.1 hs).2 t h
 
-/-- CL4 after the last entry. CLAIM L6985-6987. -/
+/-- CL4 after the last entry. CLAIM L6986-6988. -/
 theorem clipTime_clamp_after (l : List (ℚ × ℚ)) (e : ℚ × ℚ) (hs : SortedS (l ++ [e])) (t : ℚ)
     (h : e.1 ≤ t) : clipTime (l ++ [e]) t = e.2 := by
   cases l with
@@ -177,7 +225,7 @@ theorem clipTime_clamp_after (l : List (ℚ × ℚ)) (e : ℚ × ℚ) (hs : Sort
     exact walk_after (a :: rest) e hs t h
 
 /-- CL5 affine within a segment: "times between these entries will be
-linearly interpolated" (L6973-6978). -/
+linearly interpolated" (L6978-6979). -/
 theorem clipTime_affine (s0 c0 s1 c1 : ℚ) (rest : List (ℚ × ℚ)) (t : ℚ) (h0 : s0 ≤ t) (h1 : t < s1) :
     clipTime ((s0, c0) :: (s1, c1) :: rest) t = c0 + (t - s0) / (s1 - s0) * (c1 - c0) := by
   simp [clipTime, not_lt.2 h0, walk, h1, lerp]
@@ -354,8 +402,9 @@ theorem example_quad_ne_spec :
     tp.expand.assetPaths ≠ ["./quad_001.usda", "./quad_002.usda", "./quad_003.usda"] := by
   decide +kernel
 
-/-- Template-derived active entries are sorted and `times` is `(t, t)`, so the
-timing curve is the identity on `[start, end]` (CL1 + CL5). -/
+/-- Every templated time `t` yields a `(t, t)` entry in the derived `times`
+(CL1 + CL5). This proves membership only; sortedness of the derived entries and
+that `clipTime` is the identity on `[start, end]` are not proved here. -/
 theorem template_identity (tp : Template) (hv : tp.valid) (t : ℚ) (ht : t ∈ tp.times) :
     (t, t) ∈ tp.expand.times := by
   simp only [Template.expand]

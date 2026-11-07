@@ -70,7 +70,7 @@ def inverse (o : LayerOffset) (_h : o.scale ≠ 0) : LayerOffset :=
   ⟨-o.offset / o.scale, 1 / o.scale⟩
 
 /-- A valid layer offset has positive scale. SPEC: L4295-4298, L4455-4458,
-L6531-6533 ("`scale` must be a positive none zero value"). -/
+L6527-6531 ("`scale` must be a positive none zero value"). -/
 def valid (o : LayerOffset) : Prop := 0 < o.scale
 
 instance : DecidablePred valid := fun o => by unfold valid; infer_instance
@@ -202,7 +202,7 @@ theorem sublayerAdjust_self (t : ℚ) (ht : t ≠ 0) (o : LayerOffset) :
   ext <;> simp [sublayerAdjust, div_self ht]
 
 /-- Positive tcps keep a valid offset valid (the "composition error" note of
-L5491-5493 can only fire for non-positive tcps). -/
+L5491-5493 cannot fire when both tcps are positive). -/
 theorem valid_sublayerAdjust {p s : ℚ} (hp : 0 < p) (hs : 0 < s) {o : LayerOffset}
     (ho : LayerOffset.valid o) : LayerOffset.valid (sublayerAdjust p s o) := by
   unfold LayerOffset.valid sublayerAdjust at *; simp only; positivity
@@ -243,7 +243,7 @@ structure ChainLink where
 
 /-- The recursive (normative, L5466) formulation. `cumulativeFrom cum p links`:
 `cum` is the parent's effective offset, `p` the parent's effective tcps
-(L5489-5490: "the sublayer's effective timecodes-per-second becomes the parent
+(L5488-5489: "the sublayer's effective timecodes-per-second becomes the parent
 value for its children"). -/
 def cumulativeFrom (cum : LayerOffset) (parentTcps : ℚ) : List ChainLink → LayerOffset
   | [] => cum

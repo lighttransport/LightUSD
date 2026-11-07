@@ -1,4 +1,5 @@
-import Std.Tactic.BVDecide
+import Init.Data.SInt.Lemmas
+import UsdSpec.Core.BvKernel
 import Mathlib.Data.List.Basic
 import Mathlib.Order.Basic
 /-!
@@ -164,15 +165,15 @@ theorem rd8_le8 (u : UInt8) (r : List UInt8) : rd8 (le8 u ++ r) = some (u, r) :=
 theorem rd16_le16 (u : UInt16) (r : List UInt8) : rd16 (le16 u ++ r) = some (u, r) := by
   simp only [le16, rd16, List.cons_append, List.nil_append, Option.some.injEq, Prod.mk.injEq,
     and_true]
-  bv_decide
+  exact BvKernel.joinBytes16 u
 theorem rd32_le32 (u : UInt32) (r : List UInt8) : rd32 (le32 u ++ r) = some (u, r) := by
   simp only [le32, rd32, List.cons_append, List.nil_append, Option.some.injEq, Prod.mk.injEq,
     and_true]
-  bv_decide
+  exact BvKernel.joinBytes32 u
 theorem rd64_le64 (u : UInt64) (r : List UInt8) : rd64 (le64 u ++ r) = some (u, r) := by
   simp only [le64, rd64, List.cons_append, List.nil_append, Option.some.injEq, Prod.mk.injEq,
     and_true]
-  bv_decide
+  exact BvKernel.joinBytes64 u
 
 /-! ## Width-generic layout
 
@@ -458,11 +459,21 @@ theorem decodeDelta32_encodeDelta32 (c d : Int32) (rest : List UInt8) :
   split_ifs with h0 h1 h2
   · subst h0; rfl
   · simp only [decodeDelta32, rd8_le8, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    have bounds : (-128 : Int) ≤ d.toInt ∧ d.toInt ≤ 127 := by
+      simpa [Int32.le_iff_toInt_le, Int32.toInt_neg, Int32.toInt_ofNat, Int32.size, Int.bmod] using h1
+    simp only [Int8.toInt8_toUInt8]
+    apply Int32.toInt_inj.mp
+    simp only [Int8.toInt_toInt32, Int32.toInt_toInt8]
+    exact Int.bmod_eq_of_le (by omega) (by omega)
   · simp only [decodeDelta32, rd16_le16, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    have bounds : (-32768 : Int) ≤ d.toInt ∧ d.toInt ≤ 32767 := by
+      simpa [Int32.le_iff_toInt_le, Int32.toInt_neg, Int32.toInt_ofNat, Int32.size, Int.bmod] using h2
+    simp only [Int16.toInt16_toUInt16]
+    apply Int32.toInt_inj.mp
+    simp only [Int16.toInt_toInt32, Int32.toInt_toInt16]
+    exact Int.bmod_eq_of_le (by omega) (by omega)
   · simp only [decodeDelta32, rd32_le32, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    rfl
 
 theorem encodeDelta32_length (c d : Int32) :
     (encodeDelta32 c d).2.length = Code.width32 (encodeDelta32 c d).1 := by
@@ -480,11 +491,15 @@ def layout32 : Layout Int32 where
   commonWidth := 4
   readCommon_commonBytes c rest := by
     simp only [rd32_le32, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    rfl
   decodeDelta_encodeDelta := decodeDelta32_encodeDelta32
   encodeDelta_length := encodeDelta32_length
   commonBytes_length _ := rfl
-  add_sub_cancel p x := by bv_decide
+  add_sub_cancel p x := by
+    apply Int32.toBitVec_inj.mp
+    change p.toBitVec + (x.toBitVec - p.toBitVec) = x.toBitVec
+    rw [BitVec.add_comm]
+    exact BitVec.sub_add_cancel _ _
 
 def encode32 : List Int32 → List UInt8 := encode layout32 0
 def decode32 (n : Nat) : List UInt8 → Option (List Int32) := decode layout32 0 n
@@ -535,11 +550,21 @@ theorem decodeDelta64_encodeDelta64 (c d : Int64) (rest : List UInt8) :
   split_ifs with h0 h1 h2
   · subst h0; rfl
   · simp only [decodeDelta64, rd16_le16, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    have bounds : (-32768 : Int) ≤ d.toInt ∧ d.toInt ≤ 32767 := by
+      simpa [Int64.le_iff_toInt_le, Int64.toInt_neg, Int64.toInt_ofNat, Int64.size, Int.bmod] using h1
+    simp only [Int16.toInt16_toUInt16]
+    apply Int64.toInt_inj.mp
+    simp only [Int16.toInt_toInt64, Int64.toInt_toInt16]
+    exact Int.bmod_eq_of_le (by omega) (by omega)
   · simp only [decodeDelta64, rd32_le32, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    have bounds : (-2147483648 : Int) ≤ d.toInt ∧ d.toInt ≤ 2147483647 := by
+      simpa [Int64.le_iff_toInt_le, Int64.toInt_neg, Int64.toInt_ofNat, Int64.size, Int.bmod] using h2
+    simp only [Int32.toInt32_toUInt32]
+    apply Int64.toInt_inj.mp
+    simp only [Int32.toInt_toInt64, Int64.toInt_toInt32]
+    exact Int.bmod_eq_of_le (by omega) (by omega)
   · simp only [decodeDelta64, rd64_le64, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    rfl
 
 theorem encodeDelta64_length (c d : Int64) :
     (encodeDelta64 c d).2.length = Code.width64 (encodeDelta64 c d).1 := by
@@ -557,11 +582,15 @@ def layout64 : Layout Int64 where
   commonWidth := 8
   readCommon_commonBytes c rest := by
     simp only [rd64_le64, Option.some.injEq, Prod.mk.injEq, and_true]
-    bv_decide
+    rfl
   decodeDelta_encodeDelta := decodeDelta64_encodeDelta64
   encodeDelta_length := encodeDelta64_length
   commonBytes_length _ := rfl
-  add_sub_cancel p x := by bv_decide
+  add_sub_cancel p x := by
+    apply Int64.toBitVec_inj.mp
+    change p.toBitVec + (x.toBitVec - p.toBitVec) = x.toBitVec
+    rw [BitVec.add_comm]
+    exact BitVec.sub_add_cancel _ _
 
 def encode64 : List Int64 → List UInt8 := encode layout64 0
 def decode64 (n : Nat) : List UInt8 → Option (List Int64) := decode layout64 0 n

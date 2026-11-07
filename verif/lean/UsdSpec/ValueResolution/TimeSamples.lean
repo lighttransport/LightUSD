@@ -22,7 +22,7 @@ L6406-6410 / L6562-6566, and a `timeSamples` dictionary has one value per time).
 Rules transcribed:
 * before the first / after the last sample the end value is held
   ("For time sample queries prior to the start time or after the end time,
-  **Held** interpolation is always used", L6578-6580; L7578-7580, L7617-7618);
+  **Held** interpolation is always used", L6578-6580; L7573-7576, L7618-7619);
 * exact hit returns the sample;
 * held: lower bracket (L7573-7575);
 * linear: `v₀ + (t−t₀)/(t₁−t₀)·(v₁−v₀)` (`_linear_interpolate`, L6362-6364);
@@ -98,7 +98,7 @@ theorem evalAux_skip (i : Interp) (t : ℚ) (a p : Sample) (rest : Samples) :
     exact ih b (fun x hx => h x (by simp_all))
 
 /-- At an authored sample time the sample is returned (value or block).
-CLAIM: "if time_data[self.TIME] == time: return time_data[self.DATA].value" (L6383-6384). -/
+CLAIM: "if time_data[self.TIME] == time: return time_data[self.DATA].value" (L6385-6386). -/
 theorem eval_at_sample (i : Interp) {s : Samples} (hs : Sorted s) {t : ℚ} {v : Option ℚ}
     (hm : (t, v) ∈ s) : eval i s t = some v := by
   -- auxiliary statement on the walk
@@ -175,11 +175,11 @@ theorem eval_held_bracket (pre post : Samples) (p q : Sample)
     eval .held (pre ++ p :: q :: post) t = some p.2 := by
   rw [eval_bracket .held pre post p q hs hp hq]; simp [interpSeg]
 
-/-- Out of range, before: the first sample is held (L6578-6580, L7579). -/
+/-- Out of range, before: the first sample is held (L6578-6580, L7590-7591). -/
 theorem eval_before (i : Interp) (p : Sample) (rest : Samples) {t : ℚ} (h : t ≤ p.1) :
     eval i (p :: rest) t = some p.2 := by simp [eval, h]
 
-/-- Out of range, after: the last sample is held (L6578-6580, L7617). -/
+/-- Out of range, after: the last sample is held (L6578-6580, L7618-7619). -/
 theorem eval_after (i : Interp) (pre : Samples) (p : Sample) (hs : Sorted (pre ++ [p]))
     {t : ℚ} (h : p.1 ≤ t) : eval i (pre ++ [p]) t = some p.2 := by
   have hpre : ∀ x ∈ pre, x.1 < p.1 := fun x hx =>
@@ -197,7 +197,8 @@ theorem eval_after (i : Interp) (pre : Samples) (p : Sample) (hs : Sorted (pre +
       · simp at h'; subst h'; exact h)
     rw [this]; rfl
 
-/-- Out-of-range evaluation is clamping: it equals evaluation at the clamped time. -/
+/-- Before the first sample (`t ≤ p.1`) evaluation equals evaluation at the
+first sample time (clamping on the before side only). -/
 theorem eval_clamp (i : Interp) (pre : Samples) (p q : Sample) (post : Samples)
     (_hs : Sorted (p :: (pre ++ q :: post))) {t : ℚ} :
     (t ≤ p.1 → eval i (p :: (pre ++ q :: post)) t = eval i (p :: (pre ++ q :: post)) p.1) := by
@@ -257,7 +258,7 @@ theorem eval_linear_between (pre post : Samples) (t₀ t₁ v₀ v₁ : ℚ)
 
 /-- L7408-7417: `1: None, 2: 2.5`. -/
 def blockEx : Samples := [(1, none), (2, some (5/2))]
-/-- L7577-7591: `100:10, 200:20`, held. -/
+/-- L7578-7592: `100:10, 200:20`, held. -/
 def heldEx : Samples := [(100, some 10), (200, some 20)]
 example : eval .held heldEx 150 = some (some 10) := by
   norm_num [eval, evalAux, interpSeg, lerp, heldEx, blockEx]

@@ -29,3 +29,7 @@ root = "Check.CombineChain"
 [[lean_exe]]
 name = "usdspec-test"
 root = "Test.Main"
+
+[[lean_exe]]
+name = "usdspec-check-unicode"
+root = "Check.Unicode"

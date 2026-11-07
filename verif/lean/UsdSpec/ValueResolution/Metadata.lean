@@ -25,6 +25,7 @@ Resolvers and their algebra:
   fold of `apply` (`listField_eq`, via `ListOp.apply_chain`);
 * layer metadata: root layer only (L6257-6260);
 * specifier: special rule (L6118-6131), see `SPEC-ISSUE: LEAN-701`.
+Not modelled: `typeName` on schema-defined properties (L6149-6158).
 -/
 
 namespace UsdSpec.ValueResolution.Metadata

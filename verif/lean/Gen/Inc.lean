@@ -21,7 +21,12 @@ def cstr (s : String) : String := Id.run do
     else if c == '\\' then out := out ++ "\\\\"
     else if c == '\n' then out := out ++ "\\n"
     else if c == '\t' then out := out ++ "\\t"
-    else if c.toNat < 0x20 || c.toNat == 0x7f then out := out ++ s!"\\{c.toNat}"  -- never used in practice
+    else if c.toNat < 0x20 || c.toNat == 0x7f then
+      -- Exactly three octal digits: decimal interpolation changes the value
+      -- in C++, and a shorter escape can swallow a following source digit.
+      out := out ++ "\\" ++ String.ofList
+        [Char.ofNat (48 + c.toNat / 64),
+         Char.ofNat (48 + (c.toNat / 8) % 8), Char.ofNat (48 + c.toNat % 8)]
     else out := out.push c
   return out ++ "\""
 

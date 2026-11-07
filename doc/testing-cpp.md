@@ -1115,6 +1115,45 @@ features, SIMD, memory width, and threading identical. Compare repeated load
 and export timings as well as size; investigate repeatable regressions above
 5% rather than accepting a smaller binary on size alone.
 
+The Lean Unicode gate requires a verified official UCD cache. Before running
+Lean-labelled CTest checks, run `python3 scripts/fetch-lean-unicode-data.py` from
+the repository root. This fetches only missing files and verifies every SHA256
+against `verif/lean/data/unicode-15.1.0.json`; corrupted cached files fail.
+`next_lean_unicode_conformance` checks independent Unicode 15.1 generation,
+native XID parity and four negative trust controls, then runs Lean NFC/NFD on
+all 19,074 official test rows and 1,095,035 scalars omitted from Part1. It performs
+2,380,810 checks. The generators do not use host `unicodedata` or copy native
+ranges as their oracle. CI caches and verifies the same version-pinned files.
+This does not replace the open general NFC idempotence proof, and does not
+normalize authored USD identifiers.
+
+The spline proofs certify the rational Keep Ratio transform for arbitrary fuel
+and connect bisection to the unique real time root. The value-error bound is
+`K/2^(n+1)` for an explicit control-point constant `K`; fuel 64 gives `K/2^65`.
+The compiled axiom gate covers the new SplineBounds module and the native vector
+consumer continues to check the existing exact spline cases. The proof covers
+the rational model; floating-point rounding in native C++ is separate. See
+[the proof audit](validation/lean-spline-bounds-audit.md) for assumptions and code
+linkage. Run the focused legacy spline tests when changing shared spline code.
+
+`next_lean_primindex_vectors` consumes the Lean-generated
+`prim-index-vectors.json` through the production PCP JSON CLI. Its 256 cases
+cover four arc fields, stronger/weaker list edits, global payload loading and
+ancestral children. It checks ordered prim and marker-property stacks at 512
+paths, including child absence after a clear or deferral. Run the script with
+`--oracle-python` and `--oracle-pythonpath` to require pinned stock parity;
+the Lean CI job does so. The generator drift gate covers this eighteenth
+generated artifact. See [the model scope audit](validation/lean-prim-index-audit.md).
+
+`next_lean_layerstack_vectors` checks 94 Lean-generated sublayer graphs, including
+cycles, missing files, shared diamonds and a 25-layer chain. Layer order and
+complete prim/property stacks must match; cycle/missing diagnostics must be
+present. CI also checks pinned stock. The model's sublayer traversal terminates
+by a finite-set measure rather than a fuel cutoff. The C++ API regression checks
+the ABI-preserving diagnostic overload of Cache::Open, warning append semantics,
+typed unreadable-sublayer issues, permissive surviving content and strict failure.
+Initial sublayer messages reach the CLI, session and composition helper outputs.
+
 #### Lean-generated conformance vectors
 
 `verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
@@ -1124,7 +1163,195 @@ skips; `next_test_lean_vectors_combine_chain` replays the corpus list-op
 chains. When `lake` is on `PATH` or in `~/.elan/bin`, `next_lean_build`,
 `next_lean_test` and `next_lean_vectors_check` also run (the first build
 needs `lake exe cache get` for Mathlib). `next_lean_reflection_table`
-checks validator `lean_ref` links. Regenerate after changing the model:
+checks validator `lean_ref` links. `next_lean_axioms` audits all compiled theorem
+dependencies, including private helpers, allowing only `propext`,
+`Classical.choice`, and `Quot.sound`. `next_lean_axiom_audit_tests` verifies
+acceptance of imported kernel proofs and rejection of explicit axioms, `sorry`,
+and native proof tactics. Both are also required by the Lean CI workflow.
+This trust check does not establish completeness of the specification models.
+Path-order proofs include a general decimal-tokenizer left inverse and joint
+key-encoding injectivity, so comparator equality implies actual string equality
+for arbitrary inputs. Leading zeros and digit-run lengths are unbounded. The
+model's trichotomy and antisymmetry do not establish OpenUSD byte-order parity;
+that distinct production comparator retains its independent stock tests.
+PATHS proofs cover arbitrary decoded-row trees, all four jump forms, arbitrary
+prefix/suffix framing, and exact preservation of sparse path-index sequences.
+Encoded row count is sufficient decoder fuel; chains prove this bound tight for
+every length. This is a theorem about the decoded-row model, separate from native
+binary bounds checks and validation of total table size or duplicate indices.
+The supported USDA AST printer uses a quoted-string codec with a general inverse
+proof for arbitrary strings and trailing input. Forty Lean-generated vectors
+cover every ASCII control, quotes, backslashes, Unicode and NUL followed by a
+digit. Native consumers compare values after parsing and USDA/USDC transport;
+`test-usda-strings.py` independently checks emitted C++ literal values and pinned
+stock semantics and runs in Lean CI. USDC's NUL-terminated token table cannot
+represent embedded NUL: native writing rejects it explicitly, including through
+parallel field workers. The stock 26.11 oracle's two NUL truncations are classified
+and retained. The supported-AST round trip is now proved by `parseLayer_print`;
+hexadecimal and one/two-digit octal source escapes remain outside this model.
+Subset lexical proofs separately cover identifiers, numeric lexemes and
+delimiter-framed asset/path values with explicit boundary conditions. General
+list proofs establish the required fuel and are instantiated for printed
+path-reference lists. These are compositional proof obligations, not a claim
+of complete normative lexical or semantic validation.
+Offset/reference/sublayer proofs cover the four offset states, asset-only,
+path-only and combined references, arbitrary list lengths and following input.
+They establish local parser fuel and whitespace behavior. Their explicit
+lexical predicates do not assert finite values, nonzero scales or valid URIs
+and object paths; semantic validation remains separate from AST recovery.
+Sample-map proofs preserve arbitrary-length lists and authored pair order with
+explicit numeric-lexeme conditions. Attribute proofs use the actual `attrRest`
+and `primItems` functions, cover default and sampled statements, and establish
+sufficient fuel for unbounded attribute-only bodies. They do not assert finite,
+sorted or unique timestamps or value-resolution semantics.
+Recursive metadata, nested prims, top-level forests and Layer assembly now have
+general inverses with sufficient input-length fuel. Dictionary keys are arbitrary
+strings: the model quotes all keys, and `EntriesWellFormed_all` removes the former
+identifier-only restriction. The [constructor audit](validation/lean-usda-roundtrip-audit.md)
+records all supported AST cases and remaining normative-model limitations.
+A seventeenth generated table supplies 135 integer/string/nested dictionary-key
+cases. Native consumers check exact keys through USDA/USDC transport, including
+explicit crate rejection for embedded NUL. `test-usda-keys.py` checks a separate
+45-key manifest and all 135 cases against pinned stock OpenUSD; CI requires it.
+Namespace separators in dictionary keys must be quoted; the native writer
+regression includes `namespace:key` in every entry kind.
+The validator checks layer root `primOrder`, prim `primOrder`, and
+`propertyOrder` name syntax. These are recommendations (warnings): speculative
+names do not need to exist locally, and property names may be namespaced.
+Validation preserves the authored order vectors and does not impose an
+additional duplicate-name restriction. Programmatic tests cover malformed,
+empty, Unicode and namespaced tokens and group toggling. These syntax checks
+are separate from the Lean population-order algorithms.
+Layer-level `relocates` now receives the same identity/path/duplicate-source
+checks as legacy prim metadata, with findings at `<layer>`. Pseudo-root targets
+are rejected; root-prim targets and empty deletion targets remain allowed.
+Checker CLI contracts also verify these rule IDs, warning/strict exit codes and
+layer-level relocate locations. The help banner identifies Core 1.1.0; strict
+semantic fixtures use required statement separators.
+Authoring component rules now cover root sources/pseudo-root targets,
+ancestor/descendant targets, conflicting sources/targets and pre-relocation
+nested sources. The nine Lean references name individual predicates, including
+separate uniqueness components. OpenUSD cross-entry target/source and
+arrival-under-other-source policies use the `compatibility` category and are
+excluded by normative-only filtering. Root-source errors remain normative;
+root-prim targets remain accepted under the explicit LEAN-515 policy.
+Tests cover both layer and prim locations, path-component boundaries, multiple
+deletes, already-relocated namespaces and category/profile filtering. Full
+composed-stack/error-policy coverage remains open; these checks are local
+authoring constraints, not sublayer winner selection or a proof of native composer equivalence.
+The composition cache validates each relocate before selecting the strongest
+valid source opinion. Stronger deletes suppress weaker targets; invalid stronger
+opinions permit valid weaker replacements. Invalid path entries cannot poison a
+valid edit through the pairwise target-conflict scan. Layer metadata, including
+an authored empty list, supersedes legacy prim edits in that same layer.
+The PCP JSON contract checks complete ordered stock stacks for valid strength
+and root-relative cases. Invalid-path and legacy-prim text controls retain stock
+parse rejection explicitly; native permissive/extension behavior is checked
+separately. Programmatic tests cover invalid sources that bypass text parsing.
+Relative relocate prim paths share one anchoring helper across parsing,
+validation, composition and USDC writing. Layer paths anchor at `/`; legacy
+prim paths anchor at the owner, including leading `..`. Strict parsing rejects
+above-root paths; permissive parsing preserves them for diagnostics and
+composition ignores the entire entry. USDC writing rejects them in serial and
+parallel workers. Failed anchoring never substitutes the empty deletion target.
+Authoring validation normalizes temporary values without changing metadata.
+Tests include canonical root-relative crate roundtrips, nested parallel parser
+owners, late parallel writer shards, raw programmatic parent-relative metadata,
+and invalid-target composition controls. The stock contract explicitly retains
+OpenUSD 26.11's above-root-target conversion to deletion as malformed-input
+reference loss, not valid-input parity or a specification defect (Core 1.1.0
+L3370–3375 already prohibits anchoring above the root).
+
+The PCP JSON contract also checks an inherited class variant that selects a
+root variant. Empty options still contribute authored prim-stack sites: the
+class option must precede the dependent root option, just as an option with
+inline properties does. Pending inherited option records are emitted before
+the host variant, while stronger hosts remain pending during class traversal.
+Empty and inline-property options, payloads, sibling inherits and nested
+inherits compare complete ordered prim and property stacks with stock.
+The source arc-site trail supplies nesting depth, including same-stack class
+arcs; pending sibling records are flushed before the next sibling spec.
+
+Subroot reference/payload grafts preserve an inherited source's existing
+implied-class strength anchor, unless an enclosing implied block already owns
+that anchor. Implied inherits stay ahead of the referenced stack's local
+opinions; specializes retain their weaker position. A stock contract compares
+the complete property stack, and native value controls check both the implied
+inherit winner and the referenced local winner when only specializes override
+that value.
+
+Implied subroot inherits whose targets exist only in ancestor variants resolve
+that independent ancestor branch in each expressing stack. A root-layer `z`
+selection and referenced-layer `y` selection therefore both contribute their
+own variant sites, in strength order. Explicit empty and absent root selections
+retain the referenced opinion. A shared ancestor of the inheriting prim keeps
+the current prim-index context instead, avoiding incompatible variants such as
+both `full` and `tidscene`. Tests compare exact property provenance for all four
+independent selection controls with stock; the retained corpus covers the shared
+ancestor control.
+
+The PCP JSON contract checks implied specializes variant selection across a
+reference: direct selections on the specializing prim stay stronger than an
+ancestor-stack selection on the specialized class. Explicit empty selections
+suppress the variant; absent selections still inherit the class selection. The
+four controls compare complete ordered v2 stacks with pinned stock OpenUSD.
+Nested-variant controls also check complete selection-chain identity when a
+variant-set name recurs deeper in the same chain. Metadata-only outer options,
+inline properties, and child content must produce one ordered site per selected
+option, without dropping an enclosing site or duplicating a nested one.
+
+The PCP JSON contract includes authored attribute/relationship interleaving in
+ordinary prims and inline/content-backed variants, and reads LightUSD-written
+crate files through the pinned stock oracle. Native writer regressions cover raw
+property order through USDA (`sort_properties=false`), USDC and USDC-to-USDA,
+independently of authored `propertyOrder` metadata and sorted lookup slots.
+`next_test_name_order` checks the shared compatibility comparator and separates
+stage property ordering from raw PCP property children. The stock comparison
+also runs in Lean CI and can be reproduced with:
+
+```bash
+python3 tests/next/test-name-order.py \
+  --tool build_ninja/next_debug/test_name_order \
+  --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
+```
+
+Use the isolated `usd-core==26.11` wheel for those oracle variables. The script
+verifies distribution provenance, compares 80,089 byte/name pairs (including
+long numeric runs), and checks default and partial stage `propertyOrder` over
+mixed attributes/relationships. These finite checks do not establish general
+Lean comparator laws.
+The PCP contract also covers arc targets deleted beneath a relocated parent:
+internal references/inherits/specializes, external references/payloads and targets
+below the deleted subtree must not reintroduce its specs or children. A sibling
+at the relocated destination remains a valid target.
+The Lean vector executable also includes the eight generated crate list-op wire
+vectors. They exercise the shared framing decoder used by path, reference,
+payload, token, string and Int64 readers; reject every truncated vector prefix,
+reserved bits and over-limit counts; and compare exact production Int64 writer
+payload bytes and reader-retained vectors with the Lean expectations. Type-specific
+byte/index validation and allocation budgets remain in each production consumer.
+Non-canonical header semantics use the separate Lean `pxrRead` compatibility
+model: 256 generated mode vectors cover all 128 legal headers with empty and
+populated vectors. `tests/next/test-listop-modes.py` also compares 2,048 real crate
+fields against stock 26.11 across Int64, token, string, path, reference and payload
+list ops, plus relationship targets and attribute connections. Discarded explicit vectors remain validated: malformed indices warn and drop the
+field in compatibility mode and reject strict AOUSD loads; memory/count limits
+remain hard failures.
+Run it with:
+
+```bash
+python3 tests/next/test-listop-modes.py \
+  --tool build_ninja/next_debug/test_int64_listop \
+  --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
+```
+
+Lean CI requires this stock comparison.
+
+The arc-cycle contract covers cross-file returns to an ancestor of an earlier
+site, exact same-file parent cycles, and a noncyclic branch through the same
+external file. It asserts that the noncyclic opinions preceding the rejected
+arc survive and that no recursive child subtree appears.
+Regenerate after changing the model:
 
 ```bash
 cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
@@ -1177,6 +1404,14 @@ Use `--pcp-json-version 2` for ordered prim/property stack arrays of
 sites reached through distinct reference offsets. External layer identifiers
 retain their relative directory components in v2. `next_pcp_json_contract` tests
 both versions, variant provenance and duplicate-site preservation.
+
+Authored Layer root/child index vectors stay in their original order through
+finalization. Stage child/root queries and traversal apply ordered views, while
+PCP applies each spec's restatement after merging its names with weaker sources.
+The namespace-order regression checks raw vectors, `GetChildAt`, traversal,
+clone/move and edits. Stock-oracle contract cases exercise per-layer and per-spec
+ordering, more than 32 children, USDA/USDC inputs, relocation rename positions,
+shadow-name collisions, missing sources, and arrivals before local children.
 
 For an independent lossless comparison, install `usd-core==26.11` into an
 isolated directory and run:
@@ -2418,13 +2653,40 @@ across layer, prim and variant scopes, plus 15 invalid qualified layer spellings
 This locks in `add` versus `append` authoring and composable inferred variant-set
 names through both formats without inventing semantics for extension fields.
 
+Local unknown-metadata assignment folding is covered separately across layer,
+prim, variant and property scopes. Repeated qualifiers replace their earlier
+value; a bare assignment removes prior qualified opinions and suppresses later
+qualified edits. `tests/next/test-raw-metadata.py` retains all 36 fixtures against
+pinned stock OpenUSD 26.11: 32 accepted inputs produce 64 comparisons through
+USDA and native USDC round trips, and four qualified-empty-list inputs are
+explicitly classified as stock text rejections. Native conformance tests retain
+coverage of those compatible opaque inputs. This checks local authoring, without
+assigning schema-defined cross-layer merge semantics to unregistered fields.
+The native crate check also covers raw property metadata without extra quoting;
+it does not claim stock interoperability for private raw metadata storage.
+
+Relationship-default regressions distinguish absent defaults from authored empty
+paths (`rel r.default = <>`), retain relative spelling, and check stronger
+opinions against weaker defaults through composition and USDA fixpoints. These
+use a separate authored bit from relationship target-list opinions. They do not
+close the USDC requirement: pinned stock 26.11 itself rejects exporting SdfPath
+relationship defaults to crate, and native crate preservation remains outstanding.
+
 When the AOUSD checkout and pinned OpenUSD Python package are available,
 `next_aousd_sampled_value_pxrdiff` checks 304 DefaultTime/numeric queries across
 held/linear interpolation and clip transitions. Set
-`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. Six queries have the pinned
-AOUSD corpus's explicitly checked extrapolated timing values where OpenUSD
-clamps; these are reported separately. Every other mismatch fails. Held
+`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
+matches all 304 queries, with zero unexpected or classified timing differences.
+The harness retains explicit classifications for previously observed corpus
+timing differences; any unclassified mismatch fails. Held
 interpolation now propagates into nested clips and missing-value interpolation.
+Clip activation validation also covers unsorted unique times and duplicate
+times with equal or differing asset indices, including nonadjacent authored
+duplicates. Unique times are sorted before interval selection; duplicate times
+reject the clip set. This differs from clip `times` mappings, where two entries
+at the same stage time can encode a jump. Lean keeps literal authored-list
+intervals separate from compatibility preprocessing, with kernel proofs of
+sortedness, uniqueness, permutation preservation, and acceptance of unique input.
 
 Lucia's `workflow-depth.test.mjs` and `project-storage.test.mjs` cover typed mesh
 and primvar authoring, semantic undo, IndexedDB snapshot contracts, nested

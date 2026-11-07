@@ -28,7 +28,7 @@ The unstated helpers are filled in as the prose describes them:
   existing property — `issues/aousd/07-prim-definition-field-merge.md` (also the
   `propeerties` typo, L8801); kept as written.
 
-New findings, SPEC-ISSUE: LEAN-311:
+Confirmed literal-pseudocode findings, SPEC-ISSUE: LEAN-311:
 1. schema lists are duplicated: `build_prim_definition` appends the inclusions
    to `schemas` (L8769) and `compose_prim_definition` appends the included
    definition's `schemas`, which starts with the same name (L8791,
@@ -39,6 +39,12 @@ New findings, SPEC-ISSUE: LEAN-311:
 3. the recursion has no cycle guard: the comment says "build its prim
    definition (if not already built)" (L8772-8774) but nothing records what was
    built; two schemas that include each other diverge — `cycle_diverges`.
+   This theorem concerns the literal model without an implicit cache; it is not
+   a claim that OpenUSD diverges. Clean v26.11.1 schemaRegistry.cpp explicitly
+   tracks Building/Complete states and skips cyclic inclusions, while
+   primDefinition.cpp deduplicates applied schema family/instance/version.
+   Stock built-in definition controls have unique expanded schema lists; they
+   do not recreate the hypothetical FooBar schemas in a runtime plugin.
 -/
 
 namespace UsdSpec.Schema.PrimDefinition
@@ -194,7 +200,7 @@ def reg₀ : Registry := [Foo, Bar, FooBar₀, BarBaz, BazFoo]
 def reg₁ : Registry := [Foo, Bar, FooBar₁, BarBaz, BazFoo]
 def reg₂ : Registry := [Foo, Bar, FooBar₂, BarBaz, BazFoo]
 
-/-- `def Bar "myFoo" (apiSchemas = ["FooBar"]) { double myFoo:prop = 5.0 }` (L8822-8829). -/
+/-- `def Bar "myFoo" (apiSchemas = ["FooBar"]) { double myFoo:prop = 5.0 }` (L8830-8838). -/
 def myFoo : List Property := [⟨L "myFoo:prop", [("typeName", "double"), ("default", "5.0")]⟩]
 
 def dedup (l : List SchemaRef) : List SchemaRef := l.foldl (fun acc x => if x ∈ acc then acc else acc ++ [x]) []

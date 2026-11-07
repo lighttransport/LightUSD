@@ -5,7 +5,7 @@ import Mathlib.Data.List.Infix
 # Namespace mappings (AOUSD USD Core Specification v1.1.0, §10.5)
 
 SPEC: core_spec.md L5375-5419 (Namespace Mappings), with the per-arc mapping
-paragraphs: references L4413-4448, inherits L4655-4674, variants L4813-4817,
+paragraphs: references L4413-4448, inherits L4655-4674, variants L4817-4823,
 relocates L4919-4975.
 
 A path is modelled as the list of prim-name components of an absolute prim
@@ -27,13 +27,13 @@ Findings:
   check, injectivity holds when targets are prefix-free (`mapPath_inverse`),
   and fails without that hypothesis (`mapPath_inverse_fails`).
 * SPEC-ISSUE: LEAN-512 — the reference and inherit examples write the pair as
-  `(target, source)` (`[(/A, /B)]` for `/A` referencing `/B`, L4426, L4446,
-  L4672) although §10.5 defines pairs as `(source, target)` and says `/B` is
+  `(target, source)` (`[(/A, /B)]` for `/A` referencing `/B`, L4430, L4447,
+  L4673) although §10.5 defines pairs as `(source, target)` and says `/B` is
   the source (L5380-5382); the relocates example (L4950-4951) uses
   `(source, target)`.
 * SPEC-ISSUE: LEAN-513 — the relocates example result `[(/Ref,/A),(/Ref/B,/A/C)]`
-  (L4949-4951) is the composition only if the "additional mapping"
-  `[(/A/B,/A/C)]` implicitly contains the identity; as defined (L4924-4929) it
+  (L4962-4966) is the composition only if the "additional mapping"
+  `[(/A/B,/A/C)]` implicitly contains the identity; as defined (L4921-4927) it
   does not (`compose_relocates_example`, `compose_relocates_example_noIdentity`).
 -/
 
@@ -314,10 +314,10 @@ example : mapPath [(["A"], ["B"]), ([], [])] ["A"] = some ["B"] ∧
 `[(/A, /B)]` (SPEC-ISSUE: LEAN-512). -/
 example : mapPath [(["B"], ["A"])] ["B", "Child"] = some ["A", "Child"] := by decide
 
-/-- Variants do not remap namespace (L4813-4817): the identity mapping. -/
+/-- Variants do not remap namespace (L4817-4823): the identity mapping. -/
 example : mapPath [([], [])] ["A", "B"] = some ["A", "B"] := by decide
 
-/-- Relocates L4949-4951: reference `[(/Ref, /A)]` composed with the relocates
+/-- Relocates L4962-4966: reference `[(/Ref, /A)]` composed with the relocates
 mapping `[(/A/B, /A/C)]` plus the identity gives the spec's result. -/
 theorem compose_relocates_example :
     compose [([], []), (["A", "B"], ["A", "C"])] [(["Ref"], ["A"])] =

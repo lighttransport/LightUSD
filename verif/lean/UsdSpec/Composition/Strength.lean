@@ -5,7 +5,7 @@ import Mathlib.Data.List.Sort
 # Strength ordering — LIVERPS (AOUSD USD Core Specification v1.1.0, §10.4)
 
 SPEC: core_spec.md L5010-5077 (Strength Ordering, Specializes) and the six
-examples L5081-5374.
+examples 2-6 (L5127-5374; example 1, L5081-5126, is not modelled).
 
 The model is an abstract *prim index*: a tree of nodes, each a site
 `(layer, specPath)` introduced by a composition arc from its parent. Sibling
@@ -13,15 +13,26 @@ arcs are ordered by the spec's tie-breaks (L5035-5064):
 arc-kind rank (I, V, Re, R, P, S) → deeper namespace first → authored before
 implied → arc-list order. `strengthOrder` is the pre-order walk of the sorted
 tree, except that every subtree introduced by a *specializes* arc is deferred
-to a global FIFO queue that is drained after the main walk (and whose own
-specializes children are deferred again) — this is the "globally weaker"
-rule of L5068-5077, and it reproduces Example 6 exactly.
+until after the main walk. Each deferred specializes root is then processed
+as a complete ordered group before the next sibling group. Its own nested
+specializes are weak within that group, rather than being queued behind a
+weaker sibling of the group. This implements the sibling-arc order together
+with the "globally weaker" rule of L5068-5077; see the nested-sibling regression. Implied and direct
+counterparts of one target form a cohort. The basic tree model identifies them
+by site path; origin-aware builders can supply explicit identities through
+`strengthOrderBy`. Path-renamed origin cohorts remain part of the richer model
+review, rather than a claimed complete origin-graph comparator.
 
-The spec lists Relocates among the arc kinds (L5035-5042) although relocates
-are layer-stack metadata rather than list-op arcs (L4876-4891);
-SPEC-ISSUE: LEAN-501 records the question of how the sibling tie-breaks
-(namespace depth, authored/implied, list order) apply to them. The model keeps
-the rank slot so that any answer can be plugged in.
+Relocation metadata introduces relocation nodes, so it can participate in
+arc-kind strength ordering without being a list-op field (L4876-4891,
+L5035-5042). SPEC-ISSUE: LEAN-501 is a verified modeling note, not an established
+specification contradiction. Clean OpenUSD v26.11.1 creates a direct relocation
+node with parent equal to origin and sibling index zero: a destination has one
+source. Its comparator orders arc type before origin depth/strength. This
+abstract model does not enforce valid relocation graph invariants and is not a
+complete OpenUSD origin-graph comparator; arbitrary ArcInfo values are therefore
+broader than realizable relocation nodes. Those constraints belong in the richer
+prim-index model, which remains incomplete.
 -/
 
 namespace UsdSpec.Strength
@@ -131,18 +142,49 @@ def mainWalk : Nat → Node → List Site × List Node
     let rest := (cs.filter (fun c => !c.isSpecialize)).map (mainWalk fuel)
     (n.site :: (rest.map (·.1)).flatten, own ++ (rest.map (·.2)).flatten)
 
-/-- Drain the FIFO of deferred specializes roots, level by level. -/
-def levels (fuel : Nat) : List Node → List Site
-  | [] => []
-  | roots =>
-    match fuel with
-    | 0 => []
-    | f + 1 =>
-      let ws := roots.map (mainWalk f)
-      (ws.map (·.1)).flatten ++ levels f (ws.map (·.2)).flatten
+/-- Append a specializes counterpart to its existing cohort, preserving the
+first encounter order of cohorts and the strength order within a cohort. -/
+def insertSpecializesCohort (family : Node → String) (node : Node) :
+    List (List Node) → List (List Node)
+  | [] => [[node]]
+  | cohort :: rest =>
+    if cohort.head?.any (fun first => family first == family node) then
+      (cohort ++ [node]) :: rest
+    else cohort :: insertSpecializesCohort family node rest
+
+def specializesCohorts (family : Node → String) (roots : List Node) : List (List Node) :=
+  roots.foldl (fun groups node => insertSpecializesCohort family node groups) []
+
+/-- Drain complete specializes cohorts in sibling order. Implied/direct
+counterparts of one logical target are emitted together before their nested
+specializes. A weaker sibling cohort follows the complete stronger cohort.
+The caller supplies target identity; the basic abstract model uses site path. -/
+def levelsBy (family : Node → String) : Nat → List Node → List Site
+  | 0, _ => []
+  | f + 1, roots => (specializesCohorts family roots).flatMap fun cohort =>
+      let walks := cohort.map (mainWalk f)
+      (walks.flatMap (·.1)) ++ levelsBy family f (walks.flatMap (·.2))
+
+def levels (fuel : Nat) (roots : List Node) : List Site :=
+  levelsBy (fun node => node.site.path) fuel roots
+
+/-- Origin-aware builders may supply an explicit logical specializes identity. -/
+def strengthOrderBy (family : Node → String) (root : Node) : List Site :=
+  levelsBy family root.size [root]
 
 /-- The strength-ordered list of sites of a prim index. -/
 def strengthOrder (root : Node) : List Site := levels root.size [root]
+
+/-- Nested specializes remain within their stronger sibling's group. A global
+FIFO would incorrectly emit C before D in A specializes [B,C], B specializes D.
+Verified with pinned stock OpenUSD 26.11 and native PCP. -/
+theorem nestedSpecializes_sibling_order :
+    strengthOrder (.mk ⟨"root", "/A"⟩ none [
+      .mk ⟨"root", "/B"⟩ (some ⟨.specialize, 1, false, 0⟩) [
+        .mk ⟨"root", "/D"⟩ (some ⟨.specialize, 1, false, 0⟩) []],
+      .mk ⟨"root", "/C"⟩ (some ⟨.specialize, 1, false, 1⟩) []]) =
+    [⟨"root", "/A"⟩, ⟨"root", "/B"⟩, ⟨"root", "/D"⟩, ⟨"root", "/C"⟩] := by
+  decide +kernel
 
 /-! ## The sibling order is a total preorder (lexicographic on keys) -/
 

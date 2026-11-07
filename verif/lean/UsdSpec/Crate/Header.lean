@@ -35,9 +35,9 @@ theorem takeExact_append' (n : Nat) (xs r : List UInt8) (h : xs.length = n) :
     takeExact n (xs ++ r) = some (xs, r) := by
   subst h; exact takeExact_append xs r
 
-/-! ## Versions. SPEC: L11703-11748.
+/-! ## Versions. SPEC: L11709-11748.
 
-SPEC-ISSUE: LEAN-411 — the version table (L11738) says 0.4.0 "Compressed the Table
+SPEC-ISSUE: LEAN-411 — the version table (L11744) says 0.4.0 "Compressed the Table
 of Contents Sections", but the TOC is always raw 32-byte entries (L11768-11782);
 OpenUSD's history reads "0.4.0: Compressed structural sections" (crateFile.cpp L408). -/
 
@@ -60,16 +60,16 @@ end Version
 def minWrite : Version := ⟨0, 8, 0⟩
 /-- SPEC: L11718-11719 "... and the maximum must be `0.13.0`". -/
 def maxWrite : Version := ⟨0, 13, 0⟩
-/-- SPEC: L11711-11712 "must support the latest crate version in this specification for
-reading" — the latest row of the table L11727-11742 is `0.13.0`. -/
+/-- SPEC: L11714-11715 "must support the latest crate version in this specification for
+reading" — the latest row of the table L11733-11748 is `0.13.0`. -/
 def latest : Version := ⟨0, 13, 0⟩
 
-/-- A version a conforming writer may emit. SPEC: L11717-11719. -/
+/-- A version a conforming writer may emit. SPEC: L11722-11723. -/
 def writeOk (v : Version) : Bool := minWrite.le v && v.le maxWrite
 
 /-- Versions a conforming reader must accept: everything a conforming writer may
-produce. The spec only states "latest" (L11711-11712) plus "do not need to support
-versions prior to the minimum" (L11719-11721); since writers are allowed every version
+produce. The spec only states "latest" (L11714-11715) plus "do not need to support
+versions prior to the minimum" (L11723-11725); since writers are allowed every version
 in the window, reading only `latest` would not interoperate. -/
 def readRequired (v : Version) : Bool := writeOk v
 
@@ -83,7 +83,7 @@ theorem not_writeOk_0_14 : writeOk ⟨0, 14, 0⟩ = false := by decide
 /-- pxr 26.11 `usdcat` default output version. -/
 theorem writeOk_pxr_default : writeOk ⟨0, 8, 0⟩ = true := by decide
 
-/-! ## Header + bootstrap. SPEC: L11696-11704, L11753-11761. -/
+/-! ## Header + bootstrap. SPEC: L11693-11703, L11750-11760. -/
 
 structure Bootstrap where
   version  : Version
@@ -148,7 +148,7 @@ theorem decode_encode (b : Bootstrap) (r : List UInt8)
 theorem spec_vs_pxr_bootstrapLen :
     bootstrapLen specReservedLen = 32 ∧ bootstrapLen pxrReservedLen = 88 := by decide
 
-/-! ## Table of contents. SPEC: L11763-11788. -/
+/-! ## Table of contents. SPEC: L11764-11787. -/
 
 structure Section where
   /-- 16 bytes, NUL-terminated ASCII (L11780). -/
@@ -238,7 +238,7 @@ theorem encodeToc_length (ss : List Section) (h : ∀ s ∈ ss, s.name.length = 
       omega
   rw [this]; simp only [le64, List.length_cons, List.length_nil]
 
-/-! ## Well-formedness. SPEC: L11765-11766 "The Table of Contents must be at the end of
+/-! ## Well-formedness. SPEC: L11766-11767 "The Table of Contents must be at the end of
 the file." Sections are byte ranges `[start, start+size)`. -/
 
 def Section.lo (s : Section) : Nat := s.start.toNat
@@ -252,7 +252,8 @@ def pairwiseDisjoint : List Section → Bool
 
 /-- Well-formed TOC for a file of `fileSize` bytes with bootstrap length `boot`:
 names NUL-terminated within 16 bytes, every section after the bootstrap and before
-the TOC, sections pairwise non-overlapping, TOC ending exactly at end of file. -/
+the TOC, sections pairwise non-overlapping, TOC ending exactly at end of file. The spec requires only that the TOC is at end
+of file; the other conjuncts are OpenUSD-layout sanity checks. -/
 def wellFormedToc (boot fileSize : Nat) (tocOffset : UInt64) (ss : List Section) : Bool :=
   ss.all (fun s => s.name.length == 16 && s.name.getLast? == some 0) &&
   ss.all (fun s => boot ≤ s.lo && s.hi ≤ tocOffset.toNat) &&

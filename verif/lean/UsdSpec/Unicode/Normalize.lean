@@ -257,13 +257,15 @@ theorem reorderAcc_of_ordered :
     rw [ih (x :: acc) (by simpa using h)]
     simp
 
-/-- UN1 (ordering part): the canonical ordering algorithm is idempotent. -/
+/-- NFC/NFD correctness against the UCD is not proved here; only the ordering
+component is. UN1 (ordering part): the canonical ordering algorithm is idempotent. -/
 theorem canonicalOrder_idem (xs : List α) :
     canonicalOrder k (canonicalOrder k xs) = canonicalOrder k xs := by
   have := reorderAcc_of_ordered k (canonicalOrder k xs) [] (by simpa using canonicalOrder_ordered k xs)
   simpa [canonicalOrder] using this
 
 end Ordering
+
 
 /-! ## Examples (decided by the kernel) -/
 

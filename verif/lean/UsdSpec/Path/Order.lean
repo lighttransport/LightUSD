@@ -1,4 +1,5 @@
 import Mathlib.Data.List.Basic
+import Mathlib.Data.Nat.Digits.Defs
 import UsdSpec.Path.Element
 /-!
 # Element ordering (AOUSD USD Core Specification v1.1.0, §8.2)
@@ -19,11 +20,18 @@ The implementation tokenizes a name into characters and digit runs, maps each
 token to a *primary* key (what the bullets compare first) and a *secondary* key
 (the case / leading-zero tie-break), and compares lexicographically on the primary
 key sequence, then on the secondary key sequence. Both tie-breaks are therefore
-deferred to the end of the string, exactly as OpenUSD's `TfDictionaryLessThan`
-(pxr/base/tf/stringUtils.cpp, `_LessImpl`: "End of both -- use the first mismatch
-to discriminate") does, and as the spec's own worked example requires
-(`LEAN-201`). Because the result is a lexicographic order on key sequences,
-reflexivity, antisymmetry and transitivity are all proved below.
+deferred to the end of the token sequence. This is a modelling choice motivated
+by `LEAN-201`, not an exact model of OpenUSD's byte comparator. Stock OpenUSD
+26.11 orders `a0_a` before `a00`, whereas this token-key model orders them in the
+reverse direction: OpenUSD can decide where one byte-level digit run ends before
+scanning the complete numeric values. The native compatibility implementation
+is separate (`src/next/prim/name-order.hh`), with pinned stock differential tests
+in `tests/next/test-name-order.py`. The literal/compatibility model split
+remains open. Tokenizer injectivity is
+proved below through a left inverse that recovers leading zeros and decimal
+digits, and both key streams jointly determine the tokens. Comparator equality
+therefore holds exactly for equal strings. Because this model is lexicographic
+on key sequences, its reflexivity, antisymmetry and transitivity are proved below.
 
 SPEC-ISSUE: LEAN-201 — Leading-zero tie-break: prose vs worked example.
 The prose (L3525-3528) says that when two digit groups are numerically equal
@@ -39,7 +47,7 @@ pins the distinguishing case.
 
 SPEC-ISSUE: LEAN-204 — The worked example's sorted list (L3545-3557) contradicts
 the prose rule "ASCII numbers shall be ordered before ASCII letters" (L3522): it
-places `foobar` (L3552) before `foo00001bar` (L3553), although at the first
+places `foobar` (L3555) before `foo00001bar` (L3556), although at the first
 difference the digit `0` meets the letter `b`, and it places `Foobar`/`foobar`
 after `foo_bar` but before all `foo0…` names. Under the prose rules — and under
 OpenUSD's `TfDictionaryLessThan`, checked against OpenUSD 26.x — the sorted
@@ -86,6 +94,88 @@ def tokenizeAux : List Char → Option (Nat × Nat) → List Token
 /-- Split a name into characters and maximal digit runs. -/
 def tokenize (cs : List Char) : List Token := tokenizeAux cs none
 
+/-- Recover the spelling of a decimal run. Zero has no significant digits;
+its spelling is entirely its recorded leading-zero count. -/
+def spellNumber (v z : Nat) : List Char :=
+  List.replicate z '0' ++ (Nat.digits 10 v).reverse.map (fun d => Char.ofNat (48 + d))
+
+def spellToken : Token → List Char
+  | .chr c => [c]
+  | .num v z => spellNumber v z
+
+def detokenize (ts : List Token) : List Char := ts.flatMap spellToken
+
+theorem spellNumber_step (v z : Nat) (c : Char) (hc : c.isDigit = true) :
+    spellNumber (digitStep v z c).1 (digitStep v z c).2 = spellNumber v z ++ [c] := by
+  have bounds : 48 ≤ c.toNat ∧ c.toNat ≤ 57 := by
+    have raw : c.val ≥ '0'.val ∧ c.val ≤ '9'.val := by
+      simpa only [Char.isDigit, Bool.and_eq_true, decide_eq_true_eq] using hc
+    exact ⟨UInt32.le_iff_toNat_le.mp raw.1, UInt32.le_iff_toNat_le.mp raw.2⟩
+  have small : c.toNat - 48 < 10 := by omega
+  have char_eq : Char.ofNat (48 + (c.toNat - 48)) = c := by
+    rw [Nat.add_sub_of_le bounds.1, Char.ofNat_toNat]
+  by_cases zero : v = 0 ∧ c.toNat - 48 = 0
+  · have ce : c = '0' := by
+      apply Char.toNat_inj.mp
+      change c.toNat = 48
+      omega
+    rcases zero with ⟨rfl, hd⟩
+    simp [digitStep, spellNumber, ce]
+    simpa only [List.replicate_succ] using
+      (List.replicate_succ' (n := z) (a := '0'))
+  · have nonzero : c.toNat - 48 ≠ 0 ∨ v ≠ 0 := by tauto
+    have ds := Nat.digits_add 10 (by decide) (c.toNat - 48) v small nonzero
+    have step : digitStep v z c = (10 * v + (c.toNat - 48), z) := by
+      simp only [digitStep]
+      split
+      next h => simp_all
+      next => rfl
+    rw [step]
+    simp only [spellNumber, Nat.add_comm (10 * v), ds, List.reverse_cons,
+      List.map_append, List.map_cons, List.map_nil, char_eq, List.append_assoc]
+
+def spellPending : Option (Nat × Nat) → List Char
+  | none => []
+  | some (v, z) => spellNumber v z
+
+theorem detokenize_tokenizeAux (cs : List Char) (pending : Option (Nat × Nat)) :
+    detokenize (tokenizeAux cs pending) = spellPending pending ++ cs := by
+  induction cs generalizing pending with
+  | nil => cases pending with
+    | none => rfl
+    | some p => cases p; simp [tokenizeAux, detokenize, spellToken, spellPending]
+  | cons c cs ih =>
+    cases pending with
+    | none =>
+      cases hc : c.isDigit with
+      | false =>
+        simp [tokenizeAux, hc, detokenize, spellToken, spellPending]
+        simpa only [detokenize, spellPending, List.nil_append] using ih none
+      | true =>
+        simp only [tokenizeAux, hc, ↓reduceIte]
+        rw [ih]
+        simpa [spellPending, spellNumber] using
+          congrArg (fun fragment : List Char => fragment ++ cs) (spellNumber_step 0 0 c hc)
+    | some p =>
+      rcases p with ⟨v, z⟩
+      cases hc : c.isDigit with
+      | false =>
+        simp [tokenizeAux, hc, detokenize, spellToken, spellPending]
+        simpa only [detokenize, spellPending, List.nil_append] using ih none
+      | true =>
+        simp only [tokenizeAux, hc, ↓reduceIte]
+        rw [ih]
+        simpa [spellPending, List.append_assoc] using
+          congrArg (fun fragment : List Char => fragment ++ cs) (spellNumber_step v z c hc)
+
+theorem detokenize_tokenize (cs : List Char) : detokenize (tokenize cs) = cs := by
+  simpa [tokenize, spellPending] using detokenize_tokenizeAux cs none
+
+theorem tokenize_injective : Function.Injective tokenize := by
+  intro a b h
+  have := congrArg detokenize h
+  simpa only [detokenize_tokenize] using this
+
 def isAsciiLetter (c : Char) : Bool := ('A' ≤ c && c ≤ 'Z') || ('a' ≤ c && c ≤ 'z')
 
 /-- Primary key of a token, as two naturals compared lexicographically:
@@ -100,6 +190,61 @@ the leading-zero count (fewer first, L3525-3528). -/
 def secondary : Token → Nat
   | .chr c => c.toNat
   | .num _ z => z
+
+theorem primary_length (t : Token) : (primary t).length = 2 := by
+  cases t with
+  | chr c => simp only [primary]; split <;> rfl
+  | num v z => rfl
+
+theorem token_keys_injective {a b : Token}
+    (hp : primary a = primary b) (hs : secondary a = secondary b) : a = b := by
+  cases a with
+  | chr a =>
+    cases b with
+    | chr b => exact congrArg Token.chr (Char.toNat_inj.mp hs)
+    | num v z =>
+      cases h : (a == '_') <;> simp [primary, h] at hp
+  | num v z =>
+    cases b with
+    | chr b =>
+      cases h : (b == '_') <;> simp [primary, h] at hp
+    | num w q =>
+      simp only [primary, List.cons.injEq, and_true, true_and] at hp
+      simp only [secondary] at hs
+      cases hp
+      cases hs
+      rfl
+
+@[simp] theorem take_primary (t : Token) (rest : List Nat) :
+    (primary t ++ rest).take 2 = primary t := by
+  simpa only [primary_length] using
+    (List.take_left (l₁ := primary t) (l₂ := rest))
+
+@[simp] theorem drop_primary (t : Token) (rest : List Nat) :
+    (primary t ++ rest).drop 2 = rest := by
+  simpa only [primary_length] using
+    (List.drop_left (l₁ := primary t) (l₂ := rest))
+
+/-- The two key streams jointly encode every token list injectively, including
+arbitrary tokens not produced by the name tokenizer. No tokenizer assumption
+is hidden in this key-encoding result. -/
+theorem token_list_keys_injective {a b : List Token}
+    (hp : a.flatMap primary = b.flatMap primary)
+    (hs : a.map secondary = b.map secondary) : a = b := by
+  induction a generalizing b with
+  | nil => cases b <;> simp_all
+  | cons x xs ih =>
+    cases b with
+    | nil => simp at hs
+    | cons y ys =>
+      simp only [List.flatMap_cons] at hp
+      have head : primary x = primary y := by
+        simpa only [take_primary] using congrArg (List.take 2) hp
+      have tail : xs.flatMap primary = ys.flatMap primary := by
+        simpa only [drop_primary] using congrArg (List.drop 2) hp
+      have secondary_eq := List.cons.inj hs
+      exact congrArg₂ List.cons (token_keys_injective head secondary_eq.1)
+        (ih tail secondary_eq.2)
 
 def primaryKeys (cs : List Char) : List Nat := (tokenize cs).flatMap primary
 def secondaryKeys (cs : List Char) : List Nat := (tokenize cs).map secondary
@@ -218,7 +363,7 @@ theorem elemCompare_trans {a b c : String} (h₁ : elemCompare a b = .lt)
     (h₂ : elemCompare b c = .lt) : elemCompare a c = .lt :=
   elemCompareList_lt_trans h₁ h₂
 
-/-- Totality: exactly one of `lt`, `eq`, `gt` holds, and `eq` is symmetric. -/
+/-- `eq` is symmetric. -/
 theorem elemCompare_eq_symm (a b : String) : elemCompare a b = .eq ↔ elemCompare b a = .eq := by
   rw [elemCompare_swap_eq]; cases elemCompare a b <;> simp
 
@@ -229,14 +374,57 @@ theorem elemCompare_eq_trans {a b c : String} (h₁ : elemCompare a b = .eq)
   rw [Ordering.then_eq_eq, lexCompare_eq_iff, lexCompare_eq_iff] at *
   exact ⟨h₁.1.trans h₂.1, h₁.2.trans h₂.2⟩
 
-/-- `elemCompare a b = .eq` exactly when the key sequences agree. Injectivity of the
-keys back to the string (so that `.eq ↔ a = b`) is not proved here; it needs
-`detokenize ∘ tokenize = id`, which is left as a TODO. -/
+/-- `elemCompare a b = .eq` exactly when the key sequences agree. -/
 theorem elemCompare_eq_iff_keys (a b : String) :
     elemCompare a b = .eq ↔ primaryKeys a.toList = primaryKeys b.toList
       ∧ secondaryKeys a.toList = secondaryKeys b.toList := by
   unfold elemCompare elemCompareList
   rw [Ordering.then_eq_eq, lexCompare_eq_iff, lexCompare_eq_iff]
+
+/-- Comparator equality loses no information after tokenization. -/
+theorem elemCompareList_eq_iff_tokens (a b : List Char) :
+    elemCompareList a b = .eq ↔ tokenize a = tokenize b := by
+  unfold elemCompareList
+  rw [Ordering.then_eq_eq, lexCompare_eq_iff, lexCompare_eq_iff]
+  constructor
+  · intro h
+    exact token_list_keys_injective h.1 h.2
+  · intro h
+    simp only [primaryKeys, secondaryKeys, h, and_self]
+
+theorem elemCompare_eq_iff_tokens (a b : String) :
+    elemCompare a b = .eq ↔ tokenize a.toList = tokenize b.toList :=
+  elemCompareList_eq_iff_tokens _ _
+
+theorem elemCompareList_eq_iff_eq (a b : List Char) :
+    elemCompareList a b = .eq ↔ a = b := by
+  rw [elemCompareList_eq_iff_tokens]
+  exact tokenize_injective.eq_iff
+
+theorem elemCompare_eq_iff_eq (a b : String) :
+    elemCompare a b = .eq ↔ a = b := by
+  rw [elemCompare_eq_iff_tokens]
+  constructor
+  · intro h
+    exact String.toList_injective (tokenize_injective h)
+  · intro h
+    cases h
+    rfl
+
+/-- Trichotomy with actual string equality, rather than only key equivalence. -/
+theorem elemCompare_trichotomy (a b : String) :
+    elemCompare a b = .lt ∨ a = b ∨ elemCompare a b = .gt := by
+  cases h : elemCompare a b with
+  | lt => exact Or.inl rfl
+  | eq => exact Or.inr (Or.inl ((elemCompare_eq_iff_eq a b).mp h))
+  | gt => exact Or.inr (Or.inr rfl)
+
+theorem elemCompare_le_antisymm {a b : String}
+    (hab : (elemCompare a b).isLE = true)
+    (hba : (elemCompare b a).isLE = true) : a = b := by
+  apply (elemCompare_eq_iff_eq a b).mp
+  rw [elemCompare_swap_eq] at hba
+  cases h : elemCompare a b <;> simp_all
 
 theorem childCompare_refl (e : PathElement) : childCompare e e = .eq := by
   cases e <;> simp [childCompare, elemCompare_refl]
@@ -279,7 +467,7 @@ theorem example_sorted_mergeSort :
     List.length_cons, List.length_nil, Nat.reduceAdd, Nat.reduceDiv, List.take, List.drop, List.merge]
 
 /-- The spec's listed order is not sorted under its own prose rules: the adjacent
-pair `foobar`, `foo00001bar` (L3552-3553) is inverted (digit before letter, L3522). -/
+pair `foobar`, `foo00001bar` (L3555-3553) is inverted (digit before letter, L3522). -/
 theorem example_spec_list_not_sorted :
     isSorted specListedOrder = false ∧ elemCompare "foo00001bar" "foobar" = .lt := by
   decide +kernel
@@ -298,7 +486,7 @@ example : elemCompare "foo_bar" "Foobar" = .lt := by decide +kernel
 example : elemCompare "Foobar" "foobar" = .lt := by decide +kernel
 example : elemCompare "foo001bar001abc" "foo001bar002abc" = .lt := by decide +kernel
 example : elemCompare "foo001bar002abc" "foo0001bar0002xyz" = .lt := by decide +kernel
-/-- LEAN-201: `foo00001bar` before `foo001bar001abc` as listed (L3553-3554), which
+/-- LEAN-201: `foo00001bar` before `foo001bar001abc` as listed (L3556-3554), which
 only the deferred tie-break produces. -/
 example : elemCompare "foo00001bar" "foo001bar001abc" = .lt := by decide +kernel
 

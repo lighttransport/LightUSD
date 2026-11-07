@@ -46,7 +46,7 @@ def isIdentifier (s : String) : Bool := isIdentifierList s.toList
 def isVariantContinue (c : Char) : Bool := isXidContinue c || c == '|' || c == '-'
 
 /-- `VariantName <- (Dot (VariantContinue)*) / (VariantContinue)+`. SPEC: L3687-3690
-(and L1828-1830). A variant name may start with a digit (L3759-3764). -/
+(and L1828-1830). A variant name may start with a digit (L3743-3748). -/
 def isVariantNameList : List Char → Bool
   | [] => false
   | c :: cs => if c == '.' then cs.all isVariantContinue else (c :: cs).all isVariantContinue
@@ -64,7 +64,7 @@ def splitOnChar (sep : Char) : List Char → List (List Char)
 
 /-- `PropertyName <- Identifier (Colon Identifier)*`. SPEC: L3719-3721 (and L1832-1834).
 Every `:`-separated part is an identifier, so the separator is medial and never
-repeated (L3797-3800 rejected examples). -/
+repeated (L3804-3807 rejected examples). -/
 def isPropertyNameList (cs : List Char) : Bool :=
   (splitOnChar ':' cs).all isIdentifierList
 
@@ -157,7 +157,7 @@ def isPrimPath (p : Path) : Bool :=
   | some (.prim _) => true
   | _ => false
 
-/-- A property path ends in a property name. SPEC: L3339-3344, L3449-3450
+/-- A property path ends in a property name. SPEC: L3339-3344, L3424-3425
 ("a property is a terminal leaf in a path"). -/
 def isPropertyPath (p : Path) : Bool :=
   match p.lastElem with
@@ -210,7 +210,7 @@ instance : DecidableRel HasPrefix := fun _ _ => by unfold HasPrefix; infer_insta
 /-! ### Well-formedness (what the grammar of L3617-3737 can produce) -/
 
 /-- Shape of the element list after a leading prim: prims and variant selections in
-any order, optionally terminated by exactly one property (L3449-3450). -/
+any order, optionally terminated by exactly one property (L3424-3425). -/
 def primTailShape : List PathElement → Bool
   | [] => true
   | .prim _ :: rest => primTailShape rest
@@ -303,14 +303,14 @@ example : (absoluteRoot.appendChild "World" |>.appendChild "Foo" |>.appendChild 
     |>.appendChild "Foobar").isPrimPath = true := by decide
 
 /-- `/World/Foo/Baz/Foobar.foobarprop1` is a property path with parent
-`/World/Foo/Baz/Foobar`. SPEC: L3439-3441. -/
+`/World/Foo/Baz/Foobar`. SPEC: L3419-3420. -/
 example :
     let foobar := absoluteRoot.appendChild "World" |>.appendChild "Foo" |>.appendChild "Baz"
       |>.appendChild "Foobar"
     (foobar.appendProperty [] "foobarprop1").isPropertyPath = true
       ∧ (foobar.appendProperty [] "foobarprop1").parent = some foobar := by decide
 
-/-- `/World/Foo/Baz{VariantSet1=VarFoobar}Foobar.foobarprop1`. SPEC: L3478-3479. -/
+/-- `/World/Foo/Baz{VariantSet1=VarFoobar}Foobar.foobarprop1`. SPEC: L3452. -/
 example : (absoluteRoot.appendChild "World" |>.appendChild "Foo" |>.appendChild "Baz"
     |>.appendVariantSelection "VariantSet1" "VarFoobar" |>.appendChild "Foobar"
     |>.appendProperty [] "foobarprop1").isWellFormed = true := by decide +kernel

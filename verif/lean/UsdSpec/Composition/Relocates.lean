@@ -28,39 +28,41 @@ another relocate in the same layer stack", invalidating *both* entries, not
 
 ## Reflection: LightUSD `BuildStackRelocates`
 
-Declared src/next/pcp/cache-layer-stack.inc:34, defined
-src/next/pcp/cache-layers.cc:84-249. Candidates are deduplicated identical
-`(src,dst)` pairs from layer metadata and per-prim `relocates` (L85-100).
-Coverage of the bullets (L4902-4917):
+`src/next/pcp/cache-layers.cc` validates each individual candidate before
+selecting the first valid opinion for a source in strong-to-weak layer order.
+Malformed prim paths (including property/variant paths), pseudo/root-prim
+sources, identities and ancestor/descendant targets are excluded before the
+pairwise conflict scan. An invalid stronger entry cannot mask a valid weaker
+entry or invalidate an unrelated edit via a shared target.
 
-* L4902 pseudo-root / root prim: PARTIAL. Source empty or a root prim is
-  rejected (cache-layers.cc:119, 122 `sp.parent().str() == "/"`); a target that
-  is `/` is rejected only indirectly (every source is under `/`, L121); a
-  *root-prim target* (`/A/B → /C`) is deliberately accepted by OpenUSD
-  (`Pcp_IsValidRelocatesEntry` and `_IsValidRelocatesEntryForComposing`,
-  v26.11.1). Stock 26.11 relocates `/P/Child` to `/Moved` without errors.
-  SPEC-ISSUE: LEAN-515 — L4902 forbids root-prim paths without distinguishing
-  source and target, whereas OpenUSD forbids root-prim sources only. Preserve
-  this compatibility behavior; `OkRootOpenUsd` records the distinction.
-* L4903 prim paths: NOT checked here (paths are strings; a property path
-  would pass).
-* L4904 target at an existing ancestor: YES, `IsPathAtOrUnder(src, dst)` (L121).
-* L4906 target below source: YES, `IsPathAtOrUnder(dst, src)` (L121).
-* L4908 one-to-one: PARTIAL. Two sources with the same non-empty target are
-  both invalidated (L176); one source with two *different* targets is NOT
-  detected (only identical pairs are deduplicated, L93; `src_to_dst` keeps the
-  last, L238).
-* L4910 target equals source: YES for the same entry (`src == dst`, L119) and
-  in the cross-entry reading of LEAN-514 (`a.second == b.first ||
-  b.second == a.first`, L176-177, both invalidated).
-* L4911 ancestral relocates: YES, a source strictly below another source is
-  invalid (`strict_descendant(a.first, b.first)`, L184-187).
-* Beyond the spec: a target strictly below another source (L184-187); a source
-  that is purely local (no arc on a strict ancestor) is dropped, pxr's "Cannot
-  relocate a prim defined in the local layer stack" (L124-166). The validator
-  rules `core.layer.layerRelocates.{identity,source,target}`
-  (src/next/validation/usd-validation-report.cc:199-203) report authoring-level
-  problems separately.
+Layer metadata supersedes legacy prim relocates in the same layer, including
+an authored empty layer field. Root-relative names are anchored at `/`;
+legacy prim sources use the owning prim anchor. General relative-path
+normalization remains distinct from the literal absolute-name-list model.
+
+* L4902: source pseudo-root/root prims and pseudo-root targets are excluded.
+  Root-prim targets remain accepted for LEAN-515/OpenUSD compatibility;
+  `OkRootOpenUsd` describes that component separately from literal `OkRoot`.
+* L4903: candidates pass the native UTF-8/path validator and are absolute,
+  non-pseudo-root prim paths without property or variant components.
+* L4904/L4906: an individual ancestor/descendant target is excluded.
+* L4908: repeated sources compose by first valid opinion, including deletes;
+  this is OpenUSD layer-strength selection, not a literal rejection of all
+  authored source duplicates. Local authoring diagnostics remain separate.
+  Different sources with the same nonempty target are invalidated pairwise.
+* L4910: individual identities are excluded; the LEAN-514 cross-entry
+  target/source conflict invalidates both surviving edits.
+* L4911: pre-relocation nested sources are invalidated; source-origin and
+  ancestry mapping are separate runtime behavior, not established by this
+  name-list model alone.
+
+The stage builder also guards against relocating purely local sources without
+an arc on a strict ancestor. Validator authoring checks run on both layer and
+legacy prim metadata. Full validator component coverage and formal equivalence
+of native composition to this literal model remain open; source selection and
+root-target acceptance deliberately follow the separately documented stock
+compatibility policy.
+
 -/
 
 namespace UsdSpec.Relocates
@@ -108,7 +110,8 @@ def OkRootOpenUsd (r : Relocate) : Prop :=
 instance : DecidablePred OkRootOpenUsd := fun r => by
   unfold OkRootOpenUsd IsRootish; infer_instance
 
-/-- Stock 26.11 accepts this root-target relocation, unlike literal L4902. -/
+/-- SPEC-ISSUE: LEAN-515. Stock 26.11 accepts this root-target relocation,
+unlike literal L4902. -/
 theorem rootTarget_openUsd_only :
     let r : Relocate := ⟨["P", "Child"], some ["Moved"]⟩
     OkRootOpenUsd r ∧ ¬ OkRoot r := by
@@ -120,6 +123,31 @@ def OkAncestor (r : Relocate) : Prop := ∀ d ∈ r.dst, ¬ StrictPrefix d r.src
 def OkBelow (r : Relocate) : Prop := ∀ d ∈ r.dst, ¬ StrictPrefix r.src d
 def OkOneToOne (rs : List Relocate) (r : Relocate) : Prop :=
   ∀ r' ∈ rs, (r'.src = r.src → r'.dst = r.dst) ∧ (∀ d ∈ r.dst, r'.dst = some d → r'.src = r.src)
+/-- Separate components of literal L4908 for accurate validator reflection. -/
+def OkSourcesUnique (rs : List Relocate) (r : Relocate) : Prop :=
+  ∀ r' ∈ rs, r'.src = r.src → r'.dst = r.dst
+
+def OkTargetsUnique (rs : List Relocate) (r : Relocate) : Prop :=
+  ∀ r' ∈ rs, ∀ d ∈ r.dst, r'.dst = some d → r'.src = r.src
+
+theorem okOneToOne_components (rs : List Relocate) (r : Relocate) :
+    OkOneToOne rs r ↔ OkSourcesUnique rs r ∧ OkTargetsUnique rs r := by
+  constructor
+  · intro h
+    exact ⟨fun r' hr => (h r' hr).1, fun r' hr => (h r' hr).2⟩
+  · rintro ⟨hs, ht⟩ r' hr
+    exact ⟨hs r' hr, ht r' hr⟩
+
+/-- LEAN-514 compatibility: a nonidentity target cannot name another source.
+This deliberately does not replace the literal per-entry OkSame predicate. -/
+def OkOtherSourceOpenUsd (rs : List Relocate) (r : Relocate) : Prop :=
+  ∀ r' ∈ rs, r'.src ≠ r.src → r.dst ≠ some r'.src
+
+/-- OpenUSD also disallows arrival below a different source (layerStack.cpp);
+this compatibility condition is separate from literal per-entry OkBelow. -/
+def OkTargetNamespaceOpenUsd (rs : List Relocate) (r : Relocate) : Prop :=
+  ∀ r' ∈ rs, r'.src ≠ r.src → ∀ d ∈ r.dst, ¬ StrictPrefix r'.src d
+
 def OkSame (r : Relocate) : Prop := r.dst ≠ some r.src
 def OkAncestral (rs : List Relocate) (r : Relocate) : Prop :=
   ∀ r' ∈ rs, ¬ StrictPrefix r'.src r.src

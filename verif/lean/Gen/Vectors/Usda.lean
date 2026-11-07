@@ -1,4 +1,6 @@
 import UsdSpec.Usda.Rules
+import UsdSpec.Usda.Quoted
+import UsdSpec.Usda.Grammar
 import Gen.Inc
 
 /-!
@@ -220,6 +222,40 @@ def content : String := Id.run do
     s := s ++ inlineRow n t pxr
   return s
 
-def files : List (String × String) := [("usda-peg-vectors.inc", content)]
+def stringSamples : List String :=
+  (List.range 32).map (fun n => String.singleton (Char.ofNat n)) ++
+  ["\\", "\"", String.singleton (Char.ofNat 127), "é中文🙂", "a\nb\rc\td",
+   "nul" ++ String.singleton (Char.ofNat 0) ++ "7", "\\n\\134\"", ""]
+
+def stringContent : String := Id.run do
+  let mut out := Gen.header "Gen/Vectors/Usda.lean"
+  out := out ++ "// LEAN_USDA_STRING(id, text, expected_value); lengths include embedded NUL.\n"
+  for (value, index) in stringSamples.zipIdx do
+    let text := "#usda 1.0\ndef \"P\" (customData = { string s = " ++
+      UsdSpec.Usda.quoteString value ++ "\n}) {}\n"
+    out := out ++ Gen.row "LEAN_USDA_STRING"
+      [Gen.cstr s!"string-{index}", Gen.cstr text, Gen.cstr value]
+  return out
+
+def keySamples : List String := stringSamples ++
+  ["key with space", "a-b", "7leading", "def", "namespace:key"]
+
+def keyContent : String := Id.run do
+  let mut out := Gen.header "Gen/Vectors/Usda.lean"
+  out := out ++ "// LEAN_USDA_KEY(id, text, expected_key, kind); 0 int, 1 string, 2 nested.\n"
+  for (key, index) in keySamples.zipIdx do
+    for kind in [0, 1, 2] do
+      let value := if kind == 0 then UsdSpec.Usda.DVal.int 7
+        else if kind == 1 then .str "payload"
+        else .dict [(key, .str "payload")]
+      let layer : UsdSpec.Usda.Layer := ⟨none,
+        [.mk .def_ none "P" [.customData [(key, value)]] []]⟩
+      out := out ++ Gen.row "LEAN_USDA_KEY" [Gen.cstr s!"key-{index}-{kind}",
+        Gen.cstr layer.print, Gen.cstr key, toString kind]
+  return out
+
+def files : List (String × String) :=
+  [("usda-peg-vectors.inc", content), ("usda-string-vectors.inc", stringContent),
+   ("usda-key-vectors.inc", keyContent)]
 
 end Gen.UsdaVec

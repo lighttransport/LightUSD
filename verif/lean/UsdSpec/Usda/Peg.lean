@@ -4,7 +4,7 @@ import UsdSpec.Unicode.XidTable
 # A generic PEG engine (milestone M5)
 
 SPEC: core_spec.md L9583-9587 (USDA grammar conventions: "PEG notation", the
-same conventions as the path grammar L3617-3647).
+same conventions as the path grammar L3588-3616).
 
 The full USDA grammar is data (`UsdSpec.Usda.Rules`, generated from the spec by
 `scripts/extract-usda-peg.py`); this module is the interpreter. Semantics are

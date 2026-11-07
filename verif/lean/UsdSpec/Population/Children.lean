@@ -19,7 +19,7 @@ Findings:
   (UsdSpec.ListOp.reorder in UsdSpec/ListOp/Legacy.lean), which keeps the
   prefix before the first ordered name in front and moves each ordered name
   together with the following run of unordered names (`reorder_ne_pxr`).
-* SPEC-ISSUE: LEAN-601 — prose L5948-5950 vs the final filter L5976:
+* SPEC-ISSUE: LEAN-601 — prose L5948-5950 vs the final filter L5981:
   the filter also removes a relocate target that reuses a name relocated in
   the *same* layer stack (`rename_target_dropped`); allowed by the literal
   bullets (LEAN-514), rejected by pxr.
@@ -58,7 +58,7 @@ theorem nodup_unique (l : List α) : (unique l).Nodup := by
     simp only [unique, List.nodup_cons, List.mem_filter, decide_eq_true_eq]
     exact ⟨by simp, ih.filter _⟩
 
-/-- SPEC: core_spec.md L5952-5955 (`reorder`). -/
+/-- SPEC: core_spec.md L5951-5954 (`reorder`). -/
 def reorder (names order : List α) : List α :=
   order.filter (· ∈ names) ++ names.filter (· ∉ order)
 
@@ -129,14 +129,14 @@ def stackStep (sort : List String → List String)
   let rel := st.2 ++ ls.removed ++ ls.renamed.map Prod.fst
   (ls.specs.reverse.foldl specStep pc, rel)
 
-/-- SPEC: core_spec.md L5957-5976 (`list_ordered_prim_children`); `stacks`
+/-- SPEC: core_spec.md L5956-5981 (`list_ordered_prim_children`); `stacks`
 strongest first. -/
 def listOrderedPrimChildren (sort : List String → List String) (lss : List Stack) :
     List String :=
   let st := lss.reverse.foldl (stackStep sort) ([], [])
   st.1.filter (· ∉ st.2)
 
-/-- SPEC: core_spec.md L5993-6000 (`list_ordered_property_children`); specs
+/-- SPEC: core_spec.md L5995-6001 (`list_ordered_property_children`); specs
 strongest first. -/
 def strongestPropertyOrder (specs : List Spec) : Option (List String) :=
   specs.findSome? (·.propertyOrder)
@@ -218,7 +218,7 @@ theorem propertyChildren_perm (defProps : List String) (specs : List Spec)
       (unique (defProps ++ specs.flatMap (·.properties))) :=
   reorder_perm (nodup_unique _) hO
 
-/-- SPEC-ISSUE: LEAN-605 — unlike `primOrder` (L5974, `unique(spec.prim_order)`),
+/-- SPEC-ISSUE: LEAN-605 — unlike `primOrder` (L5980, `unique(spec.prim_order)`),
 the property path passes `propertyOrder` without `unique`, so a repeated
 entry duplicates a property. -/
 theorem propertyOrder_dup :

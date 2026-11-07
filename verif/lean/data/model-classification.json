@@ -1,0 +1,318 @@
+{
+ "LEAN-001": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-101": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-102": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-111": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-112": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-113": {
+  "compat": "UsdSpec.LayerOffset.compose",
+  "kind": "dual",
+  "literal": "UsdSpec.LayerOffset.composeLiteral"
+ },
+ "LEAN-201": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-202": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-203": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-204": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-205": {
+  "decl": "UsdSpec.ElemOrder.elemCompare",
+  "implements": "compat",
+  "kind": "compat-observation",
+  "note": "Lean model is the OpenUSD-compatible order; the literal text is stated only in the registry"
+ },
+ "LEAN-206": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-207": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-211": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-212": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-311": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-401": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-402": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-411": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-412": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-413": {
+  "compat": "UsdSpec.Crate.Paths.decode",
+  "kind": "dual",
+  "literal": "UsdSpec.Crate.Paths.specAlg"
+ },
+ "LEAN-414": {
+  "compat": "UsdSpec.Crate.ListOpEncoding.pxrRead",
+  "kind": "dual",
+  "literal": "UsdSpec.Crate.ListOpEncoding.decode"
+ },
+ "LEAN-415": {
+  "compat": "UsdSpec.Crate.Header.pxrReservedLen",
+  "kind": "dual",
+  "literal": "UsdSpec.Crate.Header.bootstrapLen"
+ },
+ "LEAN-416": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-421": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-422": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-501": {
+  "kind": "note",
+  "note": "verified observation without an established specification defect"
+ },
+ "LEAN-511": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-512": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-513": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-514": {
+  "compat": "UsdSpec.Relocates.OkOtherSourceOpenUsd",
+  "kind": "dual",
+  "literal": "UsdSpec.Relocates.OkOneToOne"
+ },
+ "LEAN-515": {
+  "compat": "UsdSpec.Relocates.OkRootOpenUsd",
+  "kind": "dual",
+  "literal": "UsdSpec.Relocates.OkRoot"
+ },
+ "LEAN-521": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-522": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-531": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-532": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-533": {
+  "compat": "UsdSpec.Instancing.isInstance",
+  "kind": "dual",
+  "literal": "UsdSpec.Instancing.isInstanceLiteral"
+ },
+ "LEAN-601": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-602": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-603": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-604": {
+  "decl": "UsdSpec.Population.dup_without_specs",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-605": {
+  "decl": "UsdSpec.Population.propertyOrder_dup",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-701": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-702": {
+  "compat": "UsdSpec.ValueResolution.Attribute.pxrResult",
+  "kind": "dual",
+  "literal": "UsdSpec.ValueResolution.Attribute.perSpec"
+ },
+ "LEAN-703": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-741": {
+  "compat": "UsdSpec.Spline.autoEasePxr",
+  "kind": "dual",
+  "literal": "UsdSpec.Spline.autoEaseSpec"
+ },
+ "LEAN-742": {
+  "decl": "UsdSpec.Spline.Knot",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-743": {
+  "decl": "UsdSpec.Spline.evalBasic_pre_held",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-744": {
+  "decl": "UsdSpec.Spline.postSlope",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-745": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-746": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-747": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-748": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-761": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-762": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-763": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-764": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-765": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-766": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-767": {
+  "compat": "UsdSpec.Clips.pxrActiveIndex",
+  "kind": "dual",
+  "literal": "UsdSpec.Clips.activeIndex"
+ },
+ "LEAN-768": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-769": {
+  "decl": "UsdSpec.Clips.clipTime_clamp_before",
+  "implements": "literal",
+  "kind": "compat-observation",
+  "note": "Lean model states the literal text; the OpenUSD result is recorded by the cited stock probe in the registry, not a second Lean model"
+ },
+ "LEAN-801": {
+  "kind": "note",
+  "note": "verified observation without an established specification defect"
+ },
+ "LEAN-802": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-804": {
+  "kind": "note",
+  "note": "verified observation without an established specification defect"
+ },
+ "LEAN-805": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-806": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-807": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-808": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-809": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-810": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-811": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ },
+ "LEAN-812": {
+  "kind": "spec-defect",
+  "note": "literal specification text is internally inconsistent or unimplementable; Lean states the defect, implementation follows the verified OpenUSD behavior"
+ }
+}

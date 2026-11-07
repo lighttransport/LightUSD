@@ -22,7 +22,11 @@ Everything is over `ℚ`. A Bezier segment is the parametric cubic
 * other Bezier segments go through Keep Ratio (with a rational under-
   approximation of `√(ab)`, so the shortening stops at or short of the limit,
   like OpenUSD's padding, issue 03) and a fuelled bisection on `time(u) = t`
-  that provably brackets the root (`bisect_bracket`, `bisect_width`).
+  that provably brackets the root (`bisect_bracket`, `bisect_width`). The
+  computed Keep Ratio scale is now certified for every fuel by
+  `keepRatioScale_safe` / `Seg.keepRatio_safe`. `SplineBounds.lean` proves
+  existence/uniqueness of the real root and the midpoint value error bound
+  `segmentValueBound / 2^(fuel+1)` for the actual corrected segment.
 
 Theorems: SP1 `Seg.val_zero`/`Seg.val_one`/`Seg.time_zero`/`Seg.time_one`;
 SP2 `held_is_const_bez`, `linear_is_timeLinear_bez`; SP3 `nonRegressive_iff`,
@@ -258,7 +262,8 @@ def NonRegressive (a b : ℚ) : Prop := a + b ≤ 1 ∨ (1 - a - b) ^ 2 ≤ a * 
 instance (a b : ℚ) : Decidable (NonRegressive a b) := by unfold NonRegressive; infer_instance
 
 /-- SP3 (characterization). For non-negative normalized widths, the time
-curve is monotone on `[0,1]` iff `NonRegressive a b`. Matches issue 03's
+curve has non-negative derivative at every rational `u ∈ [0,1]` iff
+`NonRegressive a b` (real-valued monotonicity is in `SplineBounds`). Matches issue 03's
 derivation and OpenUSD `Ts_RegressionPreventer` (regressionPreventer.cpp). -/
 theorem nonRegressive_iff {a b : ℚ} (ha : 0 ≤ a) (hb : 0 ≤ b) :
     (∀ u, 0 ≤ u → u ≤ 1 → 0 ≤ tq a b u) ↔ NonRegressive a b := by
@@ -423,6 +428,25 @@ def bisect (f : ℚ → ℚ) (t : ℚ) : ℕ → ℚ → ℚ → ℚ × ℚ
     let m := (lo + hi) / 2
     if f m ≤ t then bisect f t n m hi else bisect f t n lo m
 
+/-- Every bisection endpoint stays inside the original interval, for any
+function and fuel. This invariant is independent of root existence. -/
+theorem bisect_bounds (f : ℚ → ℚ) (t : ℚ) :
+    ∀ (n : ℕ) (lo hi : ℚ), lo ≤ hi →
+      lo ≤ (bisect f t n lo hi).1 ∧
+      (bisect f t n lo hi).1 ≤ (bisect f t n lo hi).2 ∧
+      (bisect f t n lo hi).2 ≤ hi := by
+  intro n
+  induction n with
+  | zero => intro lo hi h; exact ⟨le_refl _, h, le_refl _⟩
+  | succ n ih =>
+    intro lo hi h
+    simp only [bisect]
+    split_ifs
+    · obtain ⟨h1, h2, h3⟩ := ih ((lo + hi) / 2) hi (by linarith)
+      exact ⟨by linarith, h2, h3⟩
+    · obtain ⟨h1, h2, h3⟩ := ih lo ((lo + hi) / 2) (by linarith)
+      exact ⟨h1, h2, by linarith⟩
+
 /-- The bracket invariant `f lo ≤ t ≤ f hi` is preserved (no monotonicity
 needed); with a monotone `f` this brackets the root. -/
 theorem bisect_bracket (f : ℚ → ℚ) (t : ℚ) :
@@ -452,12 +476,88 @@ theorem bisect_width (f : ℚ → ℚ) (t : ℚ) :
 /-- Lower rational approximation of `√x` (bisection on `y² ≤ x`). -/
 def sqrtLo (x : ℚ) (fuel : ℕ) : ℚ := (bisect (fun y => y * y) x fuel 0 (max 1 x)).1
 
+/-- The computed square-root lower endpoint is nonnegative for any fuel. -/
+theorem sqrtLo_nonneg (x : ℚ) (n : ℕ) : 0 ≤ sqrtLo x n := by
+  exact (bisect_bounds (fun y => y * y) x n 0 (max 1 x)
+    (by exact le_trans (by norm_num) (le_max_left _ _))).1
+
+/-- The computed lower endpoint is a certified square-root under-approximation. -/
+theorem sqrtLo_sq_le {x : ℚ} (hx : 0 ≤ x) (n : ℕ) : (sqrtLo x n) ^ 2 ≤ x := by
+  have hi : x ≤ (max 1 x) * (max 1 x) := by
+    by_cases h : x ≤ 1
+    · rw [max_eq_left h]; nlinarith
+    · rw [max_eq_right (le_of_not_ge h)]; nlinarith
+  have h := (bisect_bracket (fun y => y * y) x n 0 (max 1 x)
+    (by simpa using hx) hi).1
+  simpa [sqrtLo, pow_two] using h
+
+/-- A rational square-root under-approximation yields a positive shortening
+scale and non-regressive widths; no exact rational square root is required. -/
+theorem keepRatio_underapprox {a b r : ℚ} (_ha : 0 ≤ a) (_hb : 0 ≤ b)
+    (_hr : 0 ≤ r) (hr2 : r ^ 2 ≤ a * b) (hreg : ¬ NonRegressive a b) :
+    0 < 1 / (a + b - r) ∧ 1 / (a + b - r) < 1 ∧
+      NonRegressive ((1 / (a + b - r)) * a) ((1 / (a + b - r)) * b) := by
+  have hs : 1 < a + b := by
+    unfold NonRegressive at hreg
+    push Not at hreg
+    exact hreg.1
+  have hs2 : a * b < (a + b - 1) ^ 2 := by
+    unfold NonRegressive at hreg
+    push Not at hreg
+    nlinarith [hreg.2]
+  have hd : 1 < a + b - r := by nlinarith [sq_nonneg (r - (a + b - 1))]
+  have hd0 : 0 < a + b - r := by linarith
+  have hdne : a + b - r ≠ 0 := ne_of_gt hd0
+  refine ⟨by positivity, (div_lt_one hd0).2 (by simpa using hd), Or.inr ?_⟩
+  have e1 : (1 - 1 / (a + b - r) * a - 1 / (a + b - r) * b) ^ 2 =
+      r ^ 2 / (a + b - r) ^ 2 := by field_simp; ring
+  have e2 : (1 / (a + b - r) * a) * (1 / (a + b - r) * b) =
+      (a * b) / (a + b - r) ^ 2 := by field_simp [hdne]
+  rw [e1, e2]
+  exact div_le_div_of_nonneg_right hr2 (sq_nonneg _)
+
+/-- The rational Keep Ratio scale used by segment evaluation, at any fuel. -/
+def keepRatioScale (a b : ℚ) (n : ℕ) : ℚ :=
+  if NonRegressive a b then 1 else 1 / (a + b - sqrtLo (a * b) n)
+
+/-- The actual computed scale prevents regression and never lengthens the
+nonnegative tangent widths, for every fuel (including zero). -/
+theorem keepRatioScale_safe {a b : ℚ} (ha : 0 ≤ a) (hb : 0 ≤ b) (n : ℕ) :
+    0 < keepRatioScale a b n ∧ keepRatioScale a b n ≤ 1 ∧
+      NonRegressive (keepRatioScale a b n * a) (keepRatioScale a b n * b) := by
+  unfold keepRatioScale
+  split_ifs with h
+  · simpa using h
+  · obtain ⟨hs0, hs1, hnr⟩ := keepRatio_underapprox ha hb
+      (sqrtLo_nonneg (a * b) n) (sqrtLo_sq_le (mul_nonneg ha hb) n) h
+    exact ⟨hs0, le_of_lt hs1, hnr⟩
+
+
 /-! ## Segment and spline evaluation -/
 
 /-- Backward-facing tangents are zero-length at evaluation. SPEC: L8054-8056. -/
 def clampW (w : ℚ) : ℚ := max w 0
 
 def fuel : ℕ := 64
+
+/-- Shorten both widths by the certified rational Keep Ratio factor. -/
+def Seg.keepRatio (g : Seg) (n : ℕ) : Seg :=
+  let d := g.t1 - g.t0
+  let s := keepRatioScale (g.w0 / d) (g.w1 / d) n
+  { g with w0 := s * g.w0, w1 := s * g.w1 }
+
+/-- Safety of the segment transformation actually used by evaluation. -/
+theorem Seg.keepRatio_safe (g : Seg) (hd : 0 < g.t1 - g.t0)
+    (hw0 : 0 ≤ g.w0) (hw1 : 0 ≤ g.w1) (n : ℕ) :
+    0 ≤ (g.keepRatio n).w0 ∧ (g.keepRatio n).w0 ≤ g.w0 ∧
+    0 ≤ (g.keepRatio n).w1 ∧ (g.keepRatio n).w1 ≤ g.w1 ∧
+    NonRegressive ((g.keepRatio n).w0 / (g.t1 - g.t0))
+      ((g.keepRatio n).w1 / (g.t1 - g.t0)) := by
+  obtain ⟨hs0, hs1, hnr⟩ := keepRatioScale_safe
+    (div_nonneg hw0 (le_of_lt hd)) (div_nonneg hw1 (le_of_lt hd)) n
+  simp only [Seg.keepRatio, mul_div_assoc]
+  exact ⟨mul_nonneg (le_of_lt hs0) hw0, by nlinarith,
+    mul_nonneg (le_of_lt hs0) hw1, by nlinarith, hnr⟩
 
 /-- Curve segment value at time `t` (`k0.time ≤ t ≤ k1.time`). Hermite widths
 are `d/3`. Time-linear segments are exact; otherwise Keep Ratio then bisection
@@ -469,10 +569,7 @@ def curveSegValue (ct : CurveType) (k0 k1 : Knot) (t : ℚ) : ℚ :=
   let g : Seg := ⟨k0.time, k0.value, k1.time, k1.preValue, w0, k0.postS, w1, k1.preS⟩
   if w0 = d / 3 ∧ w1 = d / 3 then g.val ((t - k0.time) / d)
   else
-    let a := w0 / d
-    let b := w1 / d
-    let s : ℚ := if NonRegressive a b then 1 else 1 / (a + b - sqrtLo (a * b) fuel)
-    let g' : Seg := { g with w0 := s * w0, w1 := s * w1 }
+    let g' := g.keepRatio fuel
     let p := bisect g'.time t fuel 0 1
     g'.val ((p.1 + p.2) / 2)
 
@@ -690,8 +787,9 @@ theorem loop_base (m : Extrap) (f l : Knot) (bR bL : ℚ → Option ℚ) (t : �
 
 /-! ### SP5 / SP6 extrapolation -/
 
-/-- SP5: linear post-extrapolation continues the last linear segment's line
-(non-dual terminal knot). SPEC: L7891-7903; v1.1 change "slope from the
+/-- SP5: the last linear segment (`segValue`) lies on the line
+`l.value + postSlope * (t - l.time)` (non-dual terminal knot); this is a
+statement about the segment, not about `extrapEval`/`evalBasic` for `t ≥ t_last`. SPEC: L7891-7903; v1.1 change "slope from the
 non-extrapolated side". -/
 theorem postSlope_linear_extends (sp : Spline) (p l : Knot) (hl : lastTwo sp.knots = some (p, l))
     (hi : p.interp = .linear) (hnd : l.preValue = l.value) (hd : l.time - p.time ≠ 0) (t : ℚ) :
