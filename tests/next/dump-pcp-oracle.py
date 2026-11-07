@@ -25,7 +25,7 @@ def oracle_provenance(expected):
             'usdVersion': list(Usd.GetVersion())}
 
 
-def dump(filename, provenance, fallbacks):
+def dump(filename, provenance, fallbacks, load_payloads=True):
     from pxr import Pcp, Sdf
     filename = Path(filename).resolve()
     try:
@@ -62,7 +62,8 @@ def dump(filename, provenance, fallbacks):
         path = todo.pop()
         if str(path) in composing:
             raise RuntimeError('PCP returned a duplicate namespace path: ' + str(path))
-        cache.RequestPayloads([path], [])
+        if load_payloads:
+            cache.RequestPayloads([path], [])
         index, local_errors = cache.ComputePrimIndex(path)
         errors.extend(local_errors)
         children, prohibited = index.ComputePrimChildNames()
@@ -93,6 +94,7 @@ def main():
     parser.add_argument('filename')
     parser.add_argument('--expected-version', default='26.11')
     parser.add_argument('--variant-fallback', action='append', default=[])
+    parser.add_argument('--defer-payloads', action='store_true')
     args = parser.parse_args()
     fallbacks = {}
     for setting in args.variant_fallback:
@@ -102,7 +104,7 @@ def main():
         fallbacks[name] = choices.split(',')
     try:
         provenance = oracle_provenance(args.expected_version)
-        result = dump(args.filename, provenance, fallbacks)
+        result = dump(args.filename, provenance, fallbacks, not args.defer_payloads)
     except Exception as error:
         print('oracle failed: ' + str(error), file=sys.stderr)
         return 2
