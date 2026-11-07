@@ -137,6 +137,17 @@ when applicable. `conformance` describes the implemented Core constraints;
 baseline decision. A schema error can therefore fail `valid` while Core
 `conformance` passes. Composed findings use the stage root as their source;
 authored-layer and container findings identify the inspected asset.
+`compatibility` issues describe OpenUSD-specific policies rather than literal
+Core predicates. They can fail `valid` in the default policy but are excluded
+by the normative-only Core profile. Relocate cross-entry target/source conflicts
+use this category (LEAN-514); source-root and per-entry ancestor/descendant
+violations remain normative. Root-prim targets are intentionally accepted under
+the documented LEAN-515 compatibility policy, reflected by `OkRootOpenUsd`.
+Relocate authoring rules inspect each local authored field, not the winning
+opinions after sublayer strength selection. Each `leanRef` identifies a component
+predicate; it does not claim equivalence of the entire native composer and the
+literal name-list checker.
+
 Baseline identities include source, variants, and time. Recreate older baselines
 to use these identities. Parse, I/O, and usage failures produce structured
 JSON/SARIF with exit 2; validation or incomplete coverage uses exit 1.

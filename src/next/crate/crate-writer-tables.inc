@@ -9,9 +9,17 @@
   // ============================================================
 
   uint32_t InternToken(std::string_view s) {
+    // TOKENS is a sequence of NUL-terminated byte strings. Retain a valid
+    // internal index while recording the error so every writer path aborts
+    // rather than reporting a successful, silently truncated crate.
+    const auto check_new_token = [&]() {
+      if (s.find('\0') != std::string_view::npos)
+        WSetError("Embedded NUL cannot be encoded in USDC TOKENS");
+    };
     if (frozen_tok_) {  // parallel worker: read-only lookup in the shared table
       auto it = frozen_tok_->find(s);
       if (it != frozen_tok_->end()) return it->second;
+      check_new_token();
       frozen_miss_ = true;  // pre-pass incomplete -> driver falls back to serial
       return 0;
     }
@@ -21,6 +29,7 @@
       // chunk order at commit. Local ids start at the phase-start token count.
       auto it = w->tok_map.find(s);
       if (it != w->tok_map.end()) return it->second;
+      check_new_token();
       w->tok_store.emplace_back(s);
       const std::string_view sv(w->tok_store.back());
       const uint32_t id = w_base_tok + (w->ntok++);
@@ -30,6 +39,7 @@
     }
     auto it = token_to_index_.find(s);
     if (it != token_to_index_.end()) return it->second;
+    check_new_token();
     uint32_t idx = static_cast<uint32_t>(tokens_.size());
     tokens_.emplace_back(s);
     token_to_index_.emplace(std::string_view(tokens_.back()), idx);

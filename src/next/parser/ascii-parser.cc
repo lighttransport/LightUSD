@@ -1015,11 +1015,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
             return false;
           }
           if (prim) {
-            auto abs = [&](const std::string& p) {
-              if (p.empty() || p[0] == '/') return p;
-              return prim->path().str() + "/" + p;
-            };
-            prim->meta().relocates().emplace_back(abs(src), abs(dst));
+            std::string absolute_source, absolute_target;
+            if (!ResolveRelocatePath(src, prim->path().str(), &absolute_source) ||
+                !ResolveRelocatePath(dst, prim->path().str(), &absolute_target)) return false;
+            prim->meta().relocates().emplace_back(std::move(absolute_source), std::move(absolute_target));
           }
           Match(TokenType::Comma);
         }
@@ -1455,8 +1454,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
             case ArcQual::Reorder: qual_prefix = "reorder "; break;
             default: break;
           }
-          prim->meta().unknownMeta().emplace_back(
-              qual_prefix + key, std::string(base + vstart, vend - vstart));
+          StoreRawMetadataOpinion(&prim->meta().unknownMeta(), qual_prefix + key,
+                                  std::string(base + vstart, vend - vstart));
         }
       }
       AddWarning("Unknown prim metadata (preserved): " + key);

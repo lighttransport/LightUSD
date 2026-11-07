@@ -309,6 +309,29 @@ void MergeWeakerExtensionFields(
   }
 }
 
+void StoreRawMetadataOpinion(
+    std::vector<std::pair<std::string, std::string>>* fields,
+    std::string name, std::string value) {
+  if (!fields) return;
+  const size_t separator = name.find(' ');
+  const bool explicit_value = separator == std::string::npos;
+  const std::string key = explicit_value ? name : name.substr(separator + 1);
+  if (explicit_value) {
+    fields->erase(std::remove_if(fields->begin(), fields->end(), [&](const auto& field) {
+      const size_t split = field.first.find(' ');
+      return field.first == key ||
+          (split != std::string::npos && field.first.substr(split + 1) == key);
+    }), fields->end());
+  } else {
+    if (std::any_of(fields->begin(), fields->end(),
+        [&](const auto& field) { return field.first == key; })) return;
+  }
+  const auto existing = std::find_if(fields->begin(), fields->end(),
+      [&](const auto& field) { return field.first == name; });
+  if (existing == fields->end()) fields->emplace_back(std::move(name), std::move(value));
+  else existing->second = std::move(value);
+}
+
 void MergeWeakerRawFields(
     std::vector<std::pair<std::string, std::string>>* stronger,
     const std::vector<std::pair<std::string, std::string>>& weaker) {
@@ -413,6 +436,7 @@ void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->doc = src.doc;
   dst->kind = src.kind;
   dst->properties = src.properties;
+  dst->authoredPropertyNames = src.authoredPropertyNames;
   dst->relationships = src.relationships;
   dst->relationshipFlags = src.relationshipFlags;
   dst->references = src.references;
@@ -458,6 +482,23 @@ void CopyVariantSetsIterative(const std::vector<PrimVariantSetData>& src,
   }
 }
 
+
+std::vector<std::string> PrimVariantData::property_names() const {
+  std::vector<std::string> names = authoredPropertyNames;
+  auto add = [&](const std::string& name) {
+    if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+  };
+  for (const auto& property : properties) add(property.name);
+  std::vector<std::string> rels;
+  for (const auto& rel : relationships) rels.push_back(rel.first);
+  std::sort(rels.begin(), rels.end());
+  for (const auto& rel : rels) add(rel);
+  if (content) {
+    if (const PrimSpec* self = content->prim_at_path("/__self__"))
+      for (const auto& name : self->authored_property_names()) add(name);
+  }
+  return names;
+}
 
 PrimVariantData::PrimVariantData() = default;
 PrimVariantData::PrimVariantData(const PrimVariantData& other) {

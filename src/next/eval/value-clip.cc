@@ -380,6 +380,13 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         const std::pair<double, int>& b) {
                        return a.first < b.first;
                      });
+    for (size_t i = 1; i < set.active.size(); ++i) {
+      if (set.active[i - 1].first == set.active[i].first) {
+        if (error) *error = "Duplicate value-clip active time in set `" +
+                            set.name + "`";
+        return false;
+      }
+    }
     // Jump discontinuity: two consecutive authored entries with the SAME
     // stage time mean "clip time approaches the first entry's value up to
     // (not including) the stage time, then jumps to the second's". Use a

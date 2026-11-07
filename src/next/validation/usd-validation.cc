@@ -15,9 +15,8 @@
 //  - Invalid list-edit qualifiers: next ArcListOp qualifiers are typed enums;
 //    an invalid qualifier is rejected at parse time and cannot be
 //    represented.
-//  - layerRelocates live per-prim in next (PrimMetadata::relocates); they are
-//    validated at the prim location under the legacy core.layer.layerRelocates
-//    rule ids.
+//  - relocates may be authored on the layer or legacy PrimMetadata; the
+//    corresponding locations share core.layer.layerRelocates rule ids.
 
 #include "usd-validation-internal.hh"
 #include "validation-context.hh"
@@ -909,6 +908,9 @@ void ValidateCollectionProperty(const PrimSpec &ps,
 void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
   const LayerMeta &metas = layer.meta();
 
+  ValidateNameOrder(metas.rootPrimOrder, false, "core.layer.primOrder",
+                    kLayerLocation, result);
+
   if (!metas.defaultPrim.empty()) {
     const std::string &default_prim = metas.defaultPrim;
     if (!IsValidIdentifier(default_prim)) {
@@ -931,8 +933,7 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
     }
   }
 
-  // NOTE: layerRelocates are stored per-prim in next-core; see
-  // ValidateRelocates() in the prim walk.
+  ValidateRelocates(metas.relocates, kLayerLocation, "/", result);
 
   // upAxis: the next parser stores the raw token; guard against non-X/Y/Z.
   if (metas.upAxis_set && metas.upAxis != "X" && metas.upAxis != "Y" &&

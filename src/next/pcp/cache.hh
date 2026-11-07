@@ -103,6 +103,14 @@ class Cache {
       const std::string &root_identifier = "",
       const CompositionOptions &options = {});
 
+  /// As above, also append initial sublayer warnings and nonfatal load errors
+  /// to `warn`. Fatal errors remain in the expected error value. The original
+  /// four-argument overload is retained for source and binary compatibility.
+  static expected<Cache, std::string> Open(
+      AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
+      const std::string &root_identifier, const CompositionOptions &options,
+      std::string *warn);
+
   // --- typed composition diagnostics (Phase 7 E4) -------------------------
 
   /// Typed composition diagnostic codes. Stable across message wording so

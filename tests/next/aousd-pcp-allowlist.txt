@@ -6,32 +6,12 @@
 # matching reports XPASS and must be pruned.
 #
 # Reason tags:
-#   CHILD-ORDER: pxr composes child names weakest-first with relocate
-#     arrivals ahead of a node's local names; next emits strongest/local first.
-#     Name SETS match. Engine child-order rule, deliberately not changed here.
 #   ENGINE-*: a real src/next/pcp composition difference (site attribution,
-#     arc ordering, selection, error policy). Not touched by the dump work.
-RelocatePrimsWithSameName_root CHILD-ORDER: relocated arrivals before Ref*_Child
-TrickyMultipleRelocations4_root CHILD-ORDER: /RearLegRig [Knee_bone, Legs]
-TrickyMultipleRelocationsAndClasses_root CHILD-ORDER: /HumanRig [Face, rig]
-TrickySpecializesAndRelocates_root CHILD-ORDER: /Model [Brass_2, Metal]
-bug92827_root CHILD-ORDER: /Rig [B, Class, Other]
+#     arc ordering, selection, error policy).
 BasicLocalAndGlobalClassCombination_root ENGINE-IMPLIED-CLASS: model.usd site of the nested class is /_class_Model/_class_Nested in pxr, /Model/_class_Nested in next
 SpecializesAndAncestralArcs2_root ENGINE-IMPLIED-CLASS: pxr maps the ancestral specializes site to /_shared_HumanHair/Hair_Chiang/Class, next keeps /Inner
 SpecializesAndAncestralArcs4_root ENGINE-IMPLIED-CLASS: pxr composes the implied-inherit-of-specializes sites (/PISI, /PSI); next stops at /PIS, /PS
 TrickySpookyInherits_root ENGINE-IMPLIED-CLASS: spooky inherit site /_class_Model/Anim/LAnim and model-before-rig layer order
 TrickySpookyInheritsInSymmetricBrowRig_root ENGINE-IMPLIED-CLASS: spooky inherit site /FaceRig/BrowRig/SymBrow/Anim/Brow; next attributes the root.usd opinion to the composed path
-bug69932_root ENGINE-IMPLIED-CLASS: next adds a Pigeon_rig.usd intermediate-stack class site pxr elides
 TrickyInheritsAndRelocates4_root ENGINE-ARC-ORDER: CurveTrackRig.usd (inherit through relocate) must precede ConstraintRig.usd
-BasicVariantWithConnections_root ENGINE-ARC-ORDER: local class inside a variant (camera.usd) must precede the reference inside the same variant (camera_perspective.usd)
-SubrootInheritsAndVariants_root ENGINE-ARC-ORDER: subroot inherit into a variant (/Group{v=y}Model) is not reached; property stack loses group.usd
-TrickyNestedVariants_root ENGINE-ARC-ORDER: reference inside a nested variant resolves to /RAx/B in next, /RB in pxr
-BasicRelocateToAnimInterface_root ENGINE-RELOCATE: next keeps root.usd's pre-relocation site (/Model/Rig/PathRig/Path) and its `track` opinion; pxr attributes the relocated prim to /Model/Anim/Path
-ElidedAncestralRelocates_root ENGINE-RELOCATE: elided ancestral relocate keeps the /CharBase source spelling in next
-TrickyVariantOverrideOfRelocatedPrim_root ENGINE-RELOCATE: variant override of a relocated prim (root.usd /Model{..}RelocatedSphere opinions) is not composed by next
-RelocateToNone_root ENGINE-RELOCATE: pxr refuses a reference to a relocation-deleted child (root-only stack); next composes model.usd
-ErrorArcCycle_root ENGINE-CYCLE: ancestral reference cycle; pxr stops at /AnotherParent/AnotherChild, next also composes /AnotherParent/AnotherChild/AnotherChild
-BasicSpecializesAndVariants_root ENGINE-VARIANT-SELECTION: /Model/Looks/Brass selects {v=from_metal} through specializes instead of {v=from_brass}
 TrickySpookyVariantSelectionInClass_root ENGINE-VARIANT-SELECTION: /Char/Anim/RightLeg composes {LegRigStyle=1Leg} with the spooky class selection, pxr {LegRigStyle=2Leg}
-TrickyVariantWeakerSelection2_root ENGINE-VARIANT-SELECTION: class-authored root-node variant selection; next applies it on the standalone class index and orders /bob{geotype=cube} before the class variant
-TrickyVariantWeakerSelection4_root ENGINE-VARIANT-SELECTION: same as TrickyVariantWeakerSelection2_root

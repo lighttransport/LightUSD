@@ -3,6 +3,7 @@
 //
 // LightUSD Next - USDC Crate Reader decode/allocation helpers
 
+#include "listop-wire.hh"
 #include "crate-reader-internal.hh"
 
 #include <algorithm>
@@ -87,6 +88,18 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
   return true;
 }
 
+CrateTypeId CrateReader::Impl::FieldType(uint32_t fieldset_index, std::string_view name) const {
+  for (size_t index = fieldset_index; index < fieldset_indices_.size(); ++index) {
+    const uint32_t field_index = fieldset_indices_[index];
+    if (field_index == 0xffffffffu) break;
+    if (field_index >= fields_.size()) continue;
+    const auto& field = fields_[field_index];
+    if (field.token_index.value < tokens_.size() && tokens_.view(field.token_index.value) == name)
+      return field.value_rep.type_id();
+  }
+  return CrateTypeId::Invalid;
+}
+
 bool CrateReader::Impl::ResolveFieldsetRaw(
     uint32_t fieldset_index,
     std::vector<std::pair<std::string_view, ValueRep>>& out) {
@@ -130,16 +143,14 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   if (rep.payload() == 0) return true;  // empty
   if (!SeekToPayload(reader(), rep)) return false;
 
-  auto read_run = [&]() -> bool {
-    uint64_t n = 0;
-    if (!reader()->read_u64(n)) return false;
+  auto read_run = [&](bool keep, uint64_t n) -> bool {
     if (n > options_.max_array_elements) return false;
     // Each element is 4 input bytes but produces a whole reconstructed path
     // STRING (up to max_path_depth components). Require the file to actually
     // hold the indices, and charge the produced strings against the allocation
     // budget -- otherwise a ~1 MB crate drives `out` into the multi-GB range.
     if (n > 0 && !reader()->has_elements(static_cast<size_t>(n), 4)) return false;
-    if (!CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
+    if (keep && !CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
       return false;
     }
     // Preflight the whole run before creating any strings. A copied cursor
@@ -149,14 +160,15 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!scan.read_u32(idx) || idx >= paths_.size()) return false;
-      if (!safe::add(string_bytes,
+      if (keep && !safe::add(string_bytes,
                      static_cast<uint64_t>(paths_.view(idx).size()),
                      &string_bytes)) return false;
     }
-    if (!CheckByteAllocation(string_bytes, "Path list-op targets")) return false;
+    if (keep && !CheckByteAllocation(string_bytes, "Path list-op targets")) return false;
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader()->read_u32(idx)) return false;
+      if (!keep) continue;
       // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
       // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
       // (and survive repeated round-trips). Prim targets pass through as-is.
@@ -179,7 +191,8 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   };
 
   if (tid == CrateTypeId::PathVector) {
-    return read_run();
+    uint64_t count = 0;
+    return reader()->read_u64(count) && read_run(true, count);
   }
 
   // PathListOp: [u8 header][present sublists...]. ListOpHeader bits (pxrUSD):
@@ -190,29 +203,16 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   // "\x01P"/"\x01A"/"\x01D"/"\x01O" marker entries so the caller can
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
-  if (!reader()->read_u8(bits)) return false;
-  if ((bits & uint8_t{0x80}) != 0) return false;
-  // 0x01 is pxr's SEMANTIC explicit flag (set with no sublist for
-  // explicit-empty); 0x02 flags the explicit-items sublist.
-  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
-                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
-                kHasAppended = 0x40;
-  const bool mark =
-      with_markers && !(bits & kIsExplicit) && !(bits & kHasExplicit);
-  auto marked_run = [&](const char* marker) -> bool {
-    if (mark) out.push_back(marker);
-    return read_run();
-  };
-  if ((bits & kHasExplicit) && !read_run()) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "G")) return false;
-  if ((bits & kHasPrepended) && !marked_run("\x01" "P")) return false;
-  if ((bits & kHasAppended) && !marked_run("\x01" "A")) return false;
-  if ((bits & kHasDeleted) && !(mark ? marked_run("\x01" "D") : read_run())) return false;
-  if ((bits & kHasOrdered) && !(mark ? marked_run("\x01" "O") : read_run())) return false;
-  // Explicit-clear (`inherits = None` / `rel r = None`): surface as the E
-  // marker so arc/relationship consumers record an authored empty edit.
-  if (with_markers && (bits & kIsExplicit) && out.empty()) {
-    out.push_back("\x01" "E");
+  if (!DecodeCrateListOpWire(*reader(), options_.max_array_elements, bits,
+      [&](size_t run, uint64_t count) {
+        const bool mark = with_markers && !(CrateListOpSemanticHeader(bits) & 1u);
+        if (mark && run != 0) out.push_back(kCrateListOpRunMarkers[run]);
+        return read_run(CrateListOpRetainsRun(bits, run), count);
+      })) return false;
+  // Preserve an authored empty op's mode. No marker would be interpreted as
+  // a bare explicit list, incorrectly turning header 0x00 into an explicit clear.
+  if (with_markers && out.empty()) {
+    out.push_back(kCrateListOpRunMarkers[(CrateListOpSemanticHeader(bits) & 1u) ? 0 : 1]);
   }
   return true;
 }
@@ -237,7 +237,8 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     if (!reader()->read_u32(asset_idx) || !reader()->read_u32(path_idx)) {
       return false;
     }
-    if (asset_idx >= string_indices_.size() || path_idx >= paths_.size()) {
+    if (asset_idx >= string_indices_.size() || path_idx >= paths_.size() ||
+        string_indices_[asset_idx] >= tokens_.size()) {
       return false;
     }
     double offset = 0.0, scale = 1.0;
@@ -290,9 +291,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     return true;
   };
 
-  auto read_run = [&](bool keep) -> bool {
-    uint64_t n = 0;
-    if (!reader()->read_u64(n)) return false;
+  auto read_run = [&](bool keep, uint64_t n) -> bool {
     if (n > options_.max_array_elements) return false;
     // Each item produces a whole arc STRING from a few input bytes; charge the
     // per-item container cost against the allocation budget (read_item itself
@@ -310,31 +309,15 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
-  if (!reader()->read_u8(bits)) return false;
-  if ((bits & uint8_t{0x80}) != 0) return false;
-  // pxr ListOpHeader: 0x01 is the SEMANTIC explicit flag; 0x02 says an
-  // explicit-items sublist is present. Explicit-empty (`references = []` /
-  // `= None`) authors 0x01 alone — keying "non-explicit" off 0x02 read that
-  // as a no-opinion listop and lost the explicit-clear.
-  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
-                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
-                kHasAppended = 0x40;
-  const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
-  auto marked_run = [&](const char* marker, bool keep) -> bool {
-    if (mark && keep) out.push_back(marker);
-    return read_run(keep);
-  };
-  if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "G", true)) return false;
-  if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
-  if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
-  if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
-  if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
-  // Explicit-clear: IsExplicit with no items — either header 0x01 alone
-  // (pxr) or 0x03 with a zero-item run (next's own writer). Emit the E
-  // marker so BuildStage records an authored explicit-empty edit.
-  if ((bits & kIsExplicit) && out.empty()) {
-    out.push_back("\x01" "E");
+  if (!DecodeCrateListOpWire(*reader(), options_.max_array_elements, bits,
+      [&](size_t run, uint64_t count) {
+        const bool mark = !(CrateListOpSemanticHeader(bits) & 1u);
+        const bool keep = CrateListOpRetainsRun(bits, run);
+        if (mark && keep && run != 0) out.push_back(kCrateListOpRunMarkers[run]);
+        return read_run(keep, count);
+      })) return false;
+  if (out.empty()) {
+    out.push_back(kCrateListOpRunMarkers[(CrateListOpSemanticHeader(bits) & 1u) ? 0 : 1]);
   }
   return true;
 }
@@ -380,21 +363,27 @@ bool CrateReader::Impl::DecodeInt64ListOpField(
   Int64ListOp op;
   op.bits = 0;
   if (rep.payload()) {
-    if (!SeekToPayload(reader(), rep) || !reader()->read_u8(op.bits) ||
-        (op.bits & 0x80u)) return fail();
-    for (size_t r = 0; r < 6; ++r) {
-      if (!(op.bits & kInt64ListOpBits[r])) continue;
-      uint64_t n = 0;
-      if (!reader()->read_u64(n) || n > options_.max_array_elements ||
-          n > (std::numeric_limits<size_t>::max)() ||
-          !reader()->has_elements(static_cast<size_t>(n), 8) ||
-          !CheckElementAllocation(n, 96, "Int64 list-op")) return fail();
-      std::vector<int64_t> values(static_cast<size_t>(n));
-      for (int64_t& value : values)
-        if (!reader()->read_i64(value)) return fail();
-      op.items[r] = Value::MakeInt64Array(values);
-    }
+    if (!SeekToPayload(reader(), rep) ||
+        !DecodeCrateListOpWire(*reader(), options_.max_array_elements, op.bits,
+          [&](size_t run, uint64_t n) {
+            if (n > (std::numeric_limits<size_t>::max)() ||
+                !reader()->has_elements(static_cast<size_t>(n), 8) ||
+                !CheckElementAllocation(n, 96, "Int64 list-op")) return false;
+            if (!CrateListOpRetainsRun(op.bits, run)) {
+              for (uint64_t i = 0; i < n; ++i) {
+                int64_t discarded = 0;
+                if (!reader()->read_i64(discarded)) return false;
+              }
+              return true;
+            }
+            std::vector<int64_t> values(static_cast<size_t>(n));
+            for (int64_t& value : values)
+              if (!reader()->read_i64(value)) return false;
+            op.items[run] = Value::MakeInt64Array(values);
+            return true;
+          })) return fail();
   }
+  op.bits = CrateListOpSemanticHeader(op.bits);
   *out = MakeInt64ListOpField(std::move(name), std::move(op));
   return true;
 }
@@ -411,9 +400,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
 
   const bool is_token = (tid == CrateTypeId::TokenListOp);
   // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
-  auto read_run = [&](bool keep) -> bool {
-    uint64_t n = 0;
-    if (!reader()->read_u64(n)) return false;
+  auto read_run = [&](bool keep, uint64_t n) -> bool {
     if (n > options_.max_array_elements) return false;
     // 4 input bytes per element, one whole token/string appended: require the
     // indices to actually be in the file and charge the output.
@@ -446,24 +433,15 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
   // recover the authored qualifier (e.g. `prepend apiSchemas` or
   // `delete apiSchemas` — deleted/ordered items used to be dropped).
   uint8_t bits = 0;
-  if (!reader()->read_u8(bits)) return false;
-  if ((bits & uint8_t{0x80}) != 0) return false;
-  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
-                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
-                kHasAppended = 0x40;
-  const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
-  auto marked_run = [&](const char* marker, bool keep) -> bool {
-    if (mark && keep) out.push_back(marker);
-    return read_run(keep);
-  };
-  if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "G", true)) return false;
-  if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
-  if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
-  if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
-  if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
-  if ((bits & kIsExplicit) && out.empty()) {
-    out.push_back("\x01" "E");  // explicit-clear (0x01 alone or empty run)
+  if (!DecodeCrateListOpWire(*reader(), options_.max_array_elements, bits,
+      [&](size_t run, uint64_t count) {
+        const bool mark = !(CrateListOpSemanticHeader(bits) & 1u);
+        const bool keep = CrateListOpRetainsRun(bits, run);
+        if (mark && keep && run != 0) out.push_back(kCrateListOpRunMarkers[run]);
+        return read_run(keep, count);
+      })) return false;
+  if (out.empty()) {
+    out.push_back(kCrateListOpRunMarkers[(CrateListOpSemanticHeader(bits) & 1u) ? 0 : 1]);
   }
   return true;
 }

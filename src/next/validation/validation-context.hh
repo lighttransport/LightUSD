@@ -51,7 +51,7 @@ struct ValidationShaderView {
 
 enum class ValidationScope { Layer, Stage, Prim };
 struct ValidationRuleMetadata {
-  std::string category;  // normative, schema, recommendation, profile, coverage
+  std::string category;  // normative, schema, recommendation, profile, coverage, compatibility
   std::string specification;
   std::vector<std::string> reference_errors;
   // Fully-qualified Lean 4 declaration (verif/lean/UsdSpec) that formalizes

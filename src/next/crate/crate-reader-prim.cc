@@ -539,14 +539,9 @@ void CrateReader::Impl::EmitPrimBody(
       }
       if (field.first == "properties" ||
           field.first == "propertyChildren") {
-        // pxr writes the `properties` field (natural spec order) for EVERY
-        // prim; it is not an authored `reorder properties`. Synthesizing a
-        // propertyOrder from it made every USDC->USDA round trip gain a
-        // spurious `reorder properties` statement that pxr's own round trip
-        // never emits (pxr drops the order and sorts). So consume the field
-        // without pinning an order. Authored USDA `reorder properties` still
-        // round-trips through the USDA path (parser -> writer); like pxr, it
-        // is not preserved through a crate round trip.
+        // Natural spec child order, separate from authored propertyOrder.
+        if (auto names = field.second.as_token_array())
+          ps->set_authored_property_names(std::vector<std::string>(names->begin(), names->end()));
         continue;
       }
       if (field.first == "variantChildren" ||
@@ -571,7 +566,8 @@ void CrateReader::Impl::EmitPrimBody(
         if (integer != integer_fields.end())
           ps->meta().unknownFields().push_back(std::move(*integer));
         else ps->meta().unknownFields().push_back(
-            MakeTypedExtensionField(std::string(field.first), std::move(field.second)));
+            MakeTypedExtensionField(std::string(field.first), std::move(field.second),
+                FieldType(entry.fieldset_index, field.first) == CrateTypeId::UnregisteredValue));
       }
     }
 

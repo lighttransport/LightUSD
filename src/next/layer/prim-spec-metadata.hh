@@ -24,6 +24,14 @@ void MergeWeakerExtensionFields(
     std::vector<DecodedExtensionField>* stronger,
     const std::vector<DecodedExtensionField>& weaker);
 
+/// Fold one same-spec unregistered metadata assignment. `name` includes any
+/// authored qualifier (e.g. "prepend tags"). Bare values replace all edits;
+/// each qualifier replaces its prior value and cannot modify a bare value.
+/// No schema-defined cross-layer list-op semantics are inferred here.
+void StoreRawMetadataOpinion(
+    std::vector<std::pair<std::string, std::string>>* fields,
+    std::string name, std::string value);
+
 void MergeWeakerRawFields(
     std::vector<std::pair<std::string, std::string>>* stronger,
     const std::vector<std::pair<std::string, std::string>>& weaker);
@@ -296,7 +304,7 @@ struct PropMeta {
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
     kUnknownMeta    = 1u << 18, kComment = 1u << 19,
-    kPermission     = 1u << 20,
+    kPermission     = 1u << 20, kRelDefault = 1u << 21,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -328,7 +336,7 @@ struct PropMeta {
   std::vector<DecodedExtensionField> unknownFields;
   // Legacy relationship default target (`rel r.default = </t>`; pxr keeps it
   // as the relationship's `default` field and re-emits that statement). Not a
-  // `( ... )` metadata entry, so it is excluded from empty()/authored.
+  // `( ... )` metadata entry. kRelDefault distinguishes authored <> from absence.
   std::string relDefault;
 
   bool empty() const;

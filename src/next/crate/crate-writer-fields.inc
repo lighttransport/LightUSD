@@ -4,6 +4,27 @@
 // LightUSD Next - CrateWriter::Impl fieldset/spec construction.
 // Included inside CrateWriter::Impl private section.
 
+  bool EncodeRelocatesBlock(
+      const std::vector<std::pair<std::string, std::string>>& entries,
+      const std::string& anchor, uint64_t* block) {
+    std::vector<uint8_t> blob(8 + entries.size() * 8);
+    const uint64_t count = entries.size();
+    std::memcpy(blob.data(), &count, 8);
+    for (size_t i = 0; i < entries.size(); ++i) {
+      std::string source, target;
+      if (!AnchorRelocatePath(entries[i].first, anchor, &source) ||
+          !AnchorRelocatePath(entries[i].second, anchor, &target)) {
+        WSetError("Cannot anchor relocate path at `" + anchor + "`");
+        return false;
+      }
+      const uint32_t src = InternPath(source), dst = InternPath(target);
+      std::memcpy(blob.data() + 8 + i * 8, &src, 4);
+      std::memcpy(blob.data() + 8 + i * 8 + 4, &dst, 4);
+    }
+    *block = InternBlock({TypeId::Invalid, std::move(blob)}, kBlobRelocates);
+    return true;
+  }
+
   // One prim spec + its property specs. Operates on `this` Impl's tables, so a
   // worker Impl can build a disjoint prim range in parallel. `variant_names` is
   // a read-only prescan shared across workers.
@@ -174,24 +195,15 @@
       // relocates (SdfRelocates, crate >= 0.11):
       //   [u64 count][(u32 srcPathIdx, u32 dstPathIdx)*]
       if (prim.meta().relocatesAuthored() || !prim.meta().relocates().empty()) {
-        const auto& rel = prim.meta().relocates();
-        std::vector<uint8_t> blob(8 + rel.size() * 8);
-        uint64_t cnt = rel.size();
-        std::memcpy(blob.data(), &cnt, 8);
-        for (size_t i = 0; i < rel.size(); ++i) {
-          uint32_t src = InternPath(rel[i].first);
-          uint32_t dst = InternPath(rel[i].second);
-          std::memcpy(blob.data() + 8 + i * 8, &src, 4);
-          std::memcpy(blob.data() + 8 + i * 8 + 4, &dst, 4);
+        uint64_t idx = 0;
+        if (EncodeRelocatesBlock(prim.meta().relocates(), prim.path().str(), &idx)) {
+          CrateField f;
+          f.token_index.value = InternToken("relocates");
+          f.value_rep = ValueRep::Make(CrateTypeId::Relocates, idx, false, false);
+          fieldset.push_back(WFieldCount());
+          WPushField(f);
+          WRequireMinor(11);
         }
-        uint64_t idx = InternBlock({TypeId::Invalid, std::move(blob)}, kBlobRelocates);
-        CrateField f;
-        f.token_index.value = InternToken("relocates");
-        f.value_rep =
-            ValueRep::Make(CrateTypeId::Relocates, idx, false, false);
-        fieldset.push_back(WFieldCount());
-        WPushField(f);
-        WRequireMinor(11);
       }
 
       // Population-order opinions are distinct from the persistent natural
@@ -267,8 +279,8 @@
           ? std::string_view(prim.path().str()) : stream_path_views_[i];
       EmittedProps emitted = EmitPrimProperties(prim, stable_path);
       std::vector<std::string_view>& prop_names = emitted.names;
-      if (!prim.meta().propertyOrder().empty()) {
-        // Views of the emitted names (not of propertyOrder) keep the list
+      if (!prim.authored_property_names().empty()) {
+        // Views of the emitted names (not of temporary raw names) keep the list
         // pointing at PropNameTable storage.
         EmittedProps ordered;
         ordered.names.reserve(prop_names.size());
@@ -279,7 +291,7 @@
             ordered.push(prop_names[idx], emitted.tokens[idx]);
           }
         };
-        for (const std::string& wanted : prim.meta().propertyOrder()) {
+        for (const std::string& wanted : prim.authored_property_names()) {
           auto it = std::find(prop_names.begin(), prop_names.end(),
                               std::string_view(wanted));
           if (it != prop_names.end()) {
@@ -563,7 +575,7 @@
 
       // "properties" field: TokenVector listing this prim's child property and
       // relationship names (pxrUSD enumerates properties from it). The next
-      // reader rebuilds properties from the separate specs, so it ignores this.
+      // reader preserves this independently of propertyOrder metadata.
       if (!emitted.names.empty()) {
         // Same interning point (and order) as the per-name loop this
         // replaced: only names BuildTables did not record are looked up.
@@ -882,24 +894,15 @@
       // layerRelocates (SdfRelocates, crate >= 0.11), same wire layout as
       // the prim-level field: [u64 count][(u32 src, u32 dst)*].
       if (layer.meta().relocates_set || !layer.meta().relocates.empty()) {
-        const auto& rel = layer.meta().relocates;
-        std::vector<uint8_t> blob(8 + rel.size() * 8);
-        uint64_t cnt = rel.size();
-        std::memcpy(blob.data(), &cnt, 8);
-        for (size_t i = 0; i < rel.size(); ++i) {
-          uint32_t src = InternPath(rel[i].first);
-          uint32_t dst = InternPath(rel[i].second);
-          std::memcpy(blob.data() + 8 + i * 8, &src, 4);
-          std::memcpy(blob.data() + 8 + i * 8 + 4, &dst, 4);
+        uint64_t bidx = 0;
+        if (EncodeRelocatesBlock(layer.meta().relocates, "/", &bidx)) {
+          CrateField f;
+          f.token_index.value = InternToken("layerRelocates");
+          f.value_rep = ValueRep::Make(CrateTypeId::Relocates, bidx, false, false);
+          fieldset.push_back(WFieldCount());
+          WPushField(f);
+          WRequireMinor(11);
         }
-        uint64_t bidx = InternBlock({TypeId::Invalid, std::move(blob)}, kBlobRelocates);
-        CrateField f;
-        f.token_index.value = InternToken("layerRelocates");
-        f.value_rep =
-            ValueRep::Make(CrateTypeId::Relocates, bidx, false, false);
-        fieldset.push_back(WFieldCount());
-        WPushField(f);
-        WRequireMinor(11);
       }
 
       if (layer.meta().rootPrimOrder_set ||

@@ -223,6 +223,12 @@ public:
   /// Get property index (for iteration)
   const PropIndex& properties() const;
 
+  /// Raw authored property children (attributes and relationships interleaved).
+  /// Separate from metadata propertyOrder and stage presentation ordering.
+  std::vector<std::string> authored_property_names() const;
+  void set_authored_property_names(const std::vector<std::string>& names);
+
+
   /// Reserve property storage
   void reserve_properties(size_t count);
 
@@ -528,6 +534,9 @@ private:
   struct ColdData;
   // Move a type name recorded before `slot` existed onto the slot.
   void adopt_pending_type_name(PropSlot& slot);
+  void preserve_property_names();
+  void record_property_name(PropNameId name_id);
+  void forget_property_name(PropNameId name_id);
   ColdData& ensure_cold_data();
   ColdData& cold();
   const ColdData& cold() const;

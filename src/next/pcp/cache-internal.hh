@@ -323,6 +323,9 @@ struct Src {
   // in the list because child derivation descends through it (chained
   // relocations address content via this raw site).
   bool suppress_site_specs = false;
+  // Relocated content has already expanded this site's arcs. Child derivation
+  // creates a fresh source, whose own arcs still need expansion.
+  bool arcs_expanded = false;
   // Known emptiness of Specs(stack_idx, site); see SpecState.
   SpecState spec_state;
   // Memoized Specs(stack_idx, site) result for this exact (stack_idx, site), so

@@ -1300,7 +1300,7 @@ std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
   s += "{\n";
 
   // Keys that aren't valid identifiers (spaces, punctuation, leading digit,
-  // keyword-free requirement does not apply) must be quoted or the output is
+  // namespace separators included; keywords are allowed) must be quoted or the output is
   // unparseable.
   auto key_text = [](const std::string& k) -> std::string {
     auto ident = [](const std::string& v) {
@@ -1310,7 +1310,7 @@ std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
       };
       if (!head(v[0])) return false;
       for (char c : v) {
-        if (!head(c) && !(c >= '0' && c <= '9') && c != ':') return false;
+        if (!head(c) && !(c >= '0' && c <= '9')) return false;
       }
       return true;
     };

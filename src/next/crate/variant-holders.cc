@@ -123,6 +123,7 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
       holder.set_relationship_flags(rel.first, fit->second);
     }
   }
+  holder.set_authored_property_names(vd.property_names());
   holder.meta().active = vd.active;
   holder.meta().hidden = vd.hidden;
   if (!vd.active || vd.active_authored) holder.meta().active_authored = true;

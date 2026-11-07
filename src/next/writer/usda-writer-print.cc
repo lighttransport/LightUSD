@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "usda-writer-print.hh"
+#include "../prim/name-order.hh"
 #include "../layer/int64-listop.hh"
 
 namespace lightusd {
@@ -59,7 +60,7 @@ static void EmitExtensionField(const DecodedExtensionField& field, bool composed
     return;
   }
   emit(field.name + " = " +
-       (field.unregistered && !field.unregistered_source.empty() && field.value.is_dictionary()
+       (field.unregistered && !field.unregistered_source.empty()
             ? field.unregistered_source : PrintValue(field.value, PrintOptions{})));
 }
 
@@ -303,6 +304,9 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
                    int depth, const USDAWriteOptions& opts) {
   const PropMeta* m = spec.property_meta(name_id);
   if (!m || m->empty()) return false;
+  // Relationship defaults have statement syntax, outside the metadata block.
+  if (!(m->authored & ~PropMeta::kRelDefault) && m->unknownMeta.empty() &&
+      m->unknownFields.empty()) return false;
   const int md = depth + 1;
   os << " (\n";
   auto kv = [&](const std::string& s) {
@@ -701,7 +705,7 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   // Legacy `rel r.default = </t>` follows the declaration (pxr's form).
   auto WriteRelDefault = [&]() {
     const PropMeta* pm = spec.property_meta(name_id);
-    if (!pm || pm->relDefault.empty()) return;
+    if (!pm || (!(pm->authored & PropMeta::kRelDefault) && pm->relDefault.empty())) return;
     WriteIndent(os, depth, opts.indent);
     os << "rel " << name << ".default = <" << pm->relDefault << ">\n";
   };
@@ -795,6 +799,7 @@ void WriteVariantSets(StreamWriter& os,
     size_t variant_index{0};
     VariantPhase phase{VariantPhase::BeginSet};
     const PrimSpec* holder{nullptr};
+    std::vector<std::string> emitted_property_names{};
   };
 
   // Nested variant sets are recursively owned data, but writing them does not
@@ -969,34 +974,65 @@ void WriteVariantSets(StreamWriter& os,
       PrintOptions vpopts;
       vpopts.float_precision = opts.float_precision;
       vpopts.double_precision = opts.double_precision;
-      for (const VariantProperty& vp : var.properties) {
-        if (vp.value.is_empty()) continue;  // unknown-typed placeholder
-        WriteIndent(os, depth + 2, opts.indent);
-        if (opts.emit_custom && (vp.flags & PropSlot::kFlagCustom)) {
-          os << "custom ";
-        }
-        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
-        const char* tn = GetTypeName(vp.value.type_id());
-        os << (tn ? tn : "token");
-        if (vp.value.is_array()) os << "[]";
-        os << " " << vp.name << " = ";
-        PrintValue(os, vp.value, vpopts);
-        os << "\n";
+      frame.emitted_property_names.clear();
+      std::vector<std::string> names = var.property_names();
+      if (holder) {
+        for (const auto& name : holder->authored_property_names())
+          if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
       }
-      for (const auto& rel : var.relationships) {
-        WriteIndent(os, depth + 2, opts.indent);
-        os << "rel " << rel.first;
-        if (rel.second.size() == 1) {
-          os << " = <" << rel.second[0].str() << ">";
-        } else if (!rel.second.empty()) {
-          os << " = [";
-          for (size_t t = 0; t < rel.second.size(); ++t) {
-            if (t) os << ", ";
-            os << "<" << rel.second[t].str() << ">";
+      if (opts.sort_properties) std::sort(names.begin(), names.end(), DictionaryLess);
+      const PrimSpec* self = var.content
+          ? var.content->prim_at_path("/__self__") : nullptr;
+      for (const auto& name : names) {
+        const auto property = std::find_if(var.properties.begin(), var.properties.end(),
+            [&](const VariantProperty& value) { return value.name == name; });
+        if (property != var.properties.end() && !property->value.is_empty()) {
+          const VariantProperty& vp = *property;
+          WriteIndent(os, depth + 2, opts.indent);
+          if (opts.emit_custom && (vp.flags & PropSlot::kFlagCustom)) {
+            os << "custom ";
           }
-          os << "]";
+          if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
+          const char* tn = GetTypeName(vp.value.type_id());
+          os << (tn ? tn : "token");
+          if (vp.value.is_array()) os << "[]";
+          os << " " << vp.name << " = ";
+          PrintValue(os, vp.value, vpopts);
+          os << "\n";
+          if (self) {
+            const PropSlot* extra = self->property(name);
+            if (extra && extra->is_time_sampled())
+              WriteProperty(os, *extra, *self, depth + 2, opts, segsink);
+          }
+        } else if (var.relationships.count(name)) {
+          const auto& targets = var.relationships.at(name);
+          WriteIndent(os, depth + 2, opts.indent);
+          const auto flags = var.relationshipFlags.find(name);
+          if (opts.emit_custom && flags != var.relationshipFlags.end() &&
+              (flags->second & PropSlot::kFlagCustom)) os << "custom ";
+          os << "rel " << name;
+          if (targets.size() == 1) os << " = <" << targets[0].str() << ">";
+          else if (!targets.empty()) {
+            os << " = [";
+            for (size_t i = 0; i < targets.size(); ++i) {
+              if (i) os << ", ";
+              os << "<" << targets[i].str() << ">";
+            }
+            os << "]";
+          }
+          os << "\n";
+        } else {
+          const PrimSpec* source = self && self->property(name) ? self : holder;
+          if (!source) continue;
+          const PropSlot* slot = source->property(name);
+          if (slot && !slot->is_relationship())
+            WriteProperty(os, *slot, *source, depth + 2, opts, segsink);
+          else if (const auto* targets = source->relationship(name))
+            WriteRelationship(os, name, *targets, *source,
+                              GetPropNameTable().find(name), depth + 2, opts);
+          else continue;
         }
-        os << "\n";
+        frame.emitted_property_names.push_back(name);
       }
 
       // Nested inline sets run before content/holder contributions. Save the
@@ -1033,6 +1069,8 @@ void WriteVariantSets(StreamWriter& os,
           PropNameTable& stable = GetPropNameTable();
           for (const PropSlot& sslot : self->properties().slots()) {
             if (sslot.is_relationship()) continue;
+            if (std::find(frame.emitted_property_names.begin(), frame.emitted_property_names.end(),
+                std::string(stable.get(sslot.name_id))) != frame.emitted_property_names.end()) continue;
             if (!sslot.is_time_sampled() &&
                 has_inline(std::string(stable.get(sslot.name_id)))) {
               continue;
@@ -1057,10 +1095,14 @@ void WriteVariantSets(StreamWriter& os,
         PropNameTable& htable = GetPropNameTable();
         for (const PropSlot& hslot : holder->properties().slots()) {
           if (hslot.is_relationship()) continue;
+          if (std::find(frame.emitted_property_names.begin(), frame.emitted_property_names.end(),
+              std::string(htable.get(hslot.name_id))) != frame.emitted_property_names.end()) continue;
           if (has_inline_prop(std::string(htable.get(hslot.name_id)))) continue;
           WriteProperty(os, hslot, *holder, depth + 2, opts, segsink);
         }
         for (const std::string& rel_name : holder->relationship_names()) {
+          if (std::find(frame.emitted_property_names.begin(), frame.emitted_property_names.end(),
+              rel_name) != frame.emitted_property_names.end()) continue;
           if (var.relationships.find(rel_name) != var.relationships.end()) {
             continue;
           }
@@ -1445,36 +1487,23 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
   write_order("properties", meta.propertyOrder());
   write_order("nameChildren", meta.primOrder());
 
-  // Get property slots
-  std::vector<const PropSlot*> prop_slots;
-  for (const auto& slot : spec.properties().slots()) {
-    if (!slot.is_relationship()) {
-      prop_slots.push_back(&slot);
-    }
-  }
-
-  // Optionally sort by name
-  if (opts.sort_properties) {
-    PropNameTable& name_table = GetPropNameTable();
-    std::sort(prop_slots.begin(), prop_slots.end(),
-              [&name_table](const PropSlot* a, const PropSlot* b) {
-                return name_table.get(a->name_id) < name_table.get(b->name_id);
-              });
-  }
-
-  // Write properties
-  for (const PropSlot* slot : prop_slots) {
-    WriteProperty(os, *slot, spec, content_depth, opts, segsink);
-  }
-
-  // Write relationships. These live in the relationship map (add_relationship
-  // does not create a PropSlot), so iterate the map's names, not prop slots.
+  // The source's raw children may interleave attributes and relationships.
+  // Explicit sorting is a presentation option; otherwise keep that order.
+  std::vector<std::string> names = spec.authored_property_names();
+  if (opts.sort_properties) std::sort(names.begin(), names.end(), DictionaryLess);
   PropNameTable& name_table = GetPropNameTable();
-  for (const std::string& rel_name : spec.relationship_names()) {
-    const std::vector<Path>* targets = spec.relationship(rel_name);
-    if (!targets) continue;
-    PropNameId rid = name_table.find(rel_name);
-    WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
+  for (const std::string& name : names) {
+    const PropSlot* slot = spec.property(name);
+    if (slot && !slot->is_relationship()) {
+      WriteProperty(os, *slot, spec, content_depth, opts, segsink);
+    } else if (const std::vector<Path>* targets = spec.relationship(name)) {
+      WriteRelationship(os, name, *targets, spec, name_table.find(name),
+                        content_depth, opts);
+    } else if (spec.relationship_edits().count(name)) {
+      // Delete-only edits still author a relationship spec.
+      WriteRelationship(os, name, {}, spec, name_table.find(name),
+                        content_depth, opts);
+    }
   }
 
   // Write variant set bodies (recursive: options may carry nested sets).

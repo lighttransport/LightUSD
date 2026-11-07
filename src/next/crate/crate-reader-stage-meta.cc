@@ -19,11 +19,12 @@ Value ParseDictText(const std::string& text) {
 }
 
 DecodedExtensionField MakeTypedExtensionField(std::string name,
-                                                   Value value) {
+                                                   Value value, bool unregistered) {
   DecodedExtensionField extension;
   extension.name = std::move(name);
   extension.value = std::move(value);
-  extension.unregistered = true;
+  extension.unregistered = unregistered;
+  if (!unregistered) return extension;
   if (auto source = extension.value.as_string()) {
     extension.unregistered_source = *source;
     Value dictionary = ParseDictText(*source);
@@ -280,7 +281,8 @@ void CrateReader::Impl::DecodeStageMetadata(
         if (integer != integer_fields.end())
           layer.meta().unknownFields.push_back(std::move(*integer));
         else layer.meta().unknownFields.push_back(
-            MakeTypedExtensionField(std::string(field.first), field.second));
+            MakeTypedExtensionField(std::string(field.first), field.second,
+                FieldType(spec.fieldset_index.value, field.first) == CrateTypeId::UnregisteredValue));
       }
     }
     break; // Only process first PseudoRoot

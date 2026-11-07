@@ -13,7 +13,7 @@ void PrintUsage(std::ostream& os) {
   os << "Usage: lusdchecker [options] FILE\n"
         "\n"
         "Validate USDA, USDC, USDZ, or MaterialX (.mtlx) against AOUSD Core\n"
-        "1.0.1 and LightUSD's structural schema rules. FILE may be '-' for\n"
+        "1.1.0 and LightUSD's structural schema rules. FILE may be '-' for\n"
         "stdin.\n"
         "\n"
         "Options:\n"

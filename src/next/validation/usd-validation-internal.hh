@@ -451,6 +451,13 @@ void ValidatePathArcString(const std::string &arc_str,
 void ValidateVariantSetsAndSelections(const PrimSpec &ps,
                                       const std::string &prim_location,
                                       USDValidationResult *result);
+// Population order names are recommendations; absent children are permitted.
+void ValidateNameOrder(const std::vector<std::string> &names, bool properties,
+                       const std::string &rule, const std::string &location,
+                       USDValidationResult *result);
+void ValidateRelocates(const std::vector<std::pair<std::string, std::string>> &entries,
+                       const std::string &location, const std::string &anchor,
+                       USDValidationResult *result);
 void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
                        USDValidationResult *result);
 void ValidateCompositionMetadata(const PrimSpec &ps,

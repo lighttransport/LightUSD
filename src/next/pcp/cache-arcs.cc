@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
+#include <tuple>
 namespace lightusd {
 namespace next {
 namespace pcp {
@@ -188,6 +189,10 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           applied_variants_[AppliedVariantKey(src)].push_back(
               AppliedVariant{set_name, vd->name, selection, authoring_layer});
 
+          // Option-authored arcs retain their variant node in the persisted
+          // chain. Descendant expansion needs that origin to place ancestral
+          // variant opinions before the descendant's direct references.
+          ArcChain option_chain = chain;
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
@@ -220,6 +225,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                 Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
             vsrc.set_offset(src.offset());
             vsrc.arc_kind = ArcType::Variant;
+            option_chain.emplace_back(cstack, vsrc.map_idx);
             const ExpansionFrame vframe{cstack, vsrc.map_idx, &vsrc.site, frame,
                                         frame ? frame->depth + 1 : 0};
             ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
@@ -245,11 +251,11 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           // relative `@./geo.usd@` resolves correctly.
           for (const std::string &s : vd->inherits) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
           for (const std::string &s : vd->references) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
           if (!vd->payloads.empty()) {
             const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
@@ -262,7 +268,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                 continue;
               }
               ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                         chain, warn, err, layer_id);
+                         option_chain, warn, err, layer_id);
             }
             // insert-only here: another arc group's loaded payloads must not
             // clear a deferral recorded for this option's payloads.
@@ -270,7 +276,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           }
           for (const std::string &s : vd->specializes) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
 
           // Nested variant sets authored on this option (inline / USDA
@@ -301,6 +307,18 @@ bool Cache::Impl::PathInRelocateSource(uint32_t stack, const std::string &path) 
     if (rel.empty()) return false;
     for (const auto &r : rel.src_to_dst) {
       if (IsPathAtOrUnder(path, r.first)) return true;
+    }
+    // src_to_dst is normalized into the pre-ancestral-relocation namespace.
+    // An arc may instead name a source beneath an ancestral arrival, e.g.
+    // /P/After/Gone deleted after /P/Before moved to /P/After. Departures retain
+    // that authored/composed spelling, including deletions with no arrival.
+    for (const auto& departure : rel.departed) {
+      const std::string& parent = departure.first;
+      if (path.size() <= parent.size() ||
+          path.compare(0, parent.size(), parent) != 0 || path[parent.size()] != '/') continue;
+      const size_t start = parent.size() + 1;
+      const size_t end = path.find('/', start);
+      if (departure.second.count(path.substr(start, end - start))) return true;
     }
     return false;
   }
@@ -338,7 +356,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
 
     // A relocation-source anchor: its own specs (and thus their arcs and
     // variant selections) are prohibited opinions — expand nothing.
-    if (src.suppress_site_specs) return;
+    if (src.suppress_site_specs || src.arcs_expanded) return;
 
     const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
     // Stamp the copy just pushed (local vector, no sharing): the structure
@@ -750,6 +768,44 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       i = k;
     }
     main.insert(main.end(), spec.begin(), spec.end());
+    // A class can be reached through more than one class-arc branch. Pcp
+    // composes an identical source node once at its strongest occurrence;
+    // emitting duplicate class nodes duplicates its property opinions. The
+    // specializes key is restricted to the class subtree (A -> [B, C],
+    // B -> D, C -> D); inherit nodes merge only for identical full mappings.
+    // Repeated reference/payload sites retain multiplicity.
+    const auto mapping_key = [&](const NamespaceMapping& mapping,
+                                 const std::string& site, bool class_subtree_only) {
+      std::string key = mapping.crosses_arc ? "1" : "0";
+      key += mapping.intra_stack ? "1" : "0";
+      const std::string destination = mapping.Apply(site);
+      key += std::to_string(destination.size()) + ":" + destination;
+      for (const auto& pair : mapping.pairs) {
+        const std::string& from = pair.first.str();
+        const std::string& to = pair.second.str();
+        if (class_subtree_only && !NamespaceMapping::AtOrUnder(from, site)) continue;
+        const std::string suffix = class_subtree_only
+                                       ? from.substr(site.size())
+                                       : from;
+        key += std::to_string(suffix.size()) + ":" + suffix;
+        key += std::to_string(to.size()) + ":" + to;
+      }
+      return key;
+    };
+    std::set<std::tuple<uint32_t, std::string, std::string, uint32_t, uint8_t>> class_sites;
+    main.erase(std::remove_if(main.begin(), main.end(), [&](const Src& source) {
+      if (!IsClassBasedArc(source.arc_kind)) return false;
+      const bool specializes = source.arc_kind == ArcType::Specialize;
+      // Specializes class identity is local to the target subtree; an inherit
+      // source is coalesced only when its complete namespace mapping matches.
+      // Inherit anchors are omitted because the same class opinion may be
+      // reached both directly and as an implied class.
+      const uint32_t anchor = specializes ? source.implied_anchor : 0u;
+      const auto key = std::make_tuple(source.stack_idx, source.site,
+          mapping_key(Mapping(source.map_idx), source.site, specializes), anchor,
+          static_cast<uint8_t>(source.arc_kind));
+      return !class_sites.insert(key).second;
+    }), main.end());
     return main;
   }
 

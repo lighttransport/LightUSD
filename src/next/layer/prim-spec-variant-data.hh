@@ -60,6 +60,8 @@ struct PrimVariantData {
   std::string doc;
   std::string kind;  // option-authored `kind` composes onto the host
   std::vector<VariantProperty> properties;
+  std::vector<std::string> authoredPropertyNames;
+  std::vector<std::string> property_names() const;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   std::unordered_map<std::string, uint16_t> relationshipFlags;
   // Composition arcs authored in the variant OPTION's metadata block, e.g.

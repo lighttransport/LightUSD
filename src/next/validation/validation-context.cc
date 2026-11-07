@@ -787,6 +787,15 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
 // BEGIN LEAN_REFLECTION_TABLE
 static const std::pair<const char*, const char*> kLeanReflectionTable[] = {
     {"core.dict.duplicateKey", "UsdSpec.Dict.WellFormed"},
+    {"core.layer.layerRelocates.ancestor", "UsdSpec.Relocates.OkAncestor"},
+    {"core.layer.layerRelocates.duplicateSource", "UsdSpec.Relocates.OkSourcesUnique"},
+    {"core.layer.layerRelocates.duplicateTarget", "UsdSpec.Relocates.OkTargetsUnique"},
+    {"core.layer.layerRelocates.identity", "UsdSpec.Relocates.OkSame"},
+    {"core.layer.layerRelocates.nestedSource", "UsdSpec.Relocates.OkAncestral"},
+    {"core.layer.layerRelocates.root", "UsdSpec.Relocates.OkRootOpenUsd"},
+    {"core.layer.layerRelocates.targetIsSource", "UsdSpec.Relocates.OkOtherSourceOpenUsd"},
+    {"core.layer.layerRelocates.targetUnderOtherSource", "UsdSpec.Relocates.OkTargetNamespaceOpenUsd"},
+    {"core.layer.layerRelocates.targetUnderSource", "UsdSpec.Relocates.OkBelow"},
     {"core.layer.subLayerOffset", "UsdSpec.LayerOffset.valid"},
     {"core.listop.deprecatedAdd", "UsdSpec.ListOp.applyLegacy"},
     {"core.listop.deprecatedReorder", "UsdSpec.ListOp.applyLegacy"},
@@ -828,6 +837,10 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
       "core.layer.customLayerData", "core.layer.expressionVariables",
       "core.layer.subLayers", "core.layer.subLayerOffset",
       "core.layer.timeCodesPerSecond", "core.layer.framesPerSecond",
+      "core.layer.layerRelocates.ancestor", "core.layer.layerRelocates.duplicateSource",
+      "core.layer.layerRelocates.duplicateTarget", "core.layer.layerRelocates.identity",
+      "core.layer.layerRelocates.nestedSource", "core.layer.layerRelocates.root",
+      "core.layer.layerRelocates.targetUnderSource",
       "core.layer.layerRelocates.source", "core.layer.layerRelocates.target",
       "core.composition.inherits", "core.composition.specializes",
       "core.composition.reference", "core.composition.payload",
@@ -836,6 +849,12 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
       "core.listop.duplicateItems", "core.dict.duplicateKey",
       "core.schema.familyVersion", "core.schema.selfFamilyInherit"};
     if (normative.count(rule)) { m.category = "normative"; m.specification = spec; }
+  }
+  // These policies intentionally differ from the literal per-entry reading.
+  if (rule == "core.layer.layerRelocates.targetIsSource" ||
+      rule == "core.layer.layerRelocates.targetUnderOtherSource") {
+    m.category = "compatibility";
+    m.specification = spec;
   }
   m.lean_ref = GetValidationRuleLeanRef(rule);
   // Rule -> specification reference errors, from the C11 core (binary search

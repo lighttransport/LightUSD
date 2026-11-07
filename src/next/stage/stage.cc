@@ -4,6 +4,7 @@
 // LightUSD Next - Stage Implementation
 
 #include "stage.hh"
+#include "../prim/name-order.hh"
 #include "../layer/layer.hh"
 #include "../composition/composition.hh"
 #include "../schema/schema-registry.hh"
@@ -292,11 +293,18 @@ bool UsdPrim::IsInModelHierarchy() const {
   return true;
 }
 
+namespace {
+bool HasAuthoredPropertyName(const PrimSpec* prim, const std::string& name) {
+  return prim->property(name) || prim->relationship(name) ||
+         prim->relationship_edits().count(name) || prim->relationship_opinion_stack(name);
+}
+}  // namespace
+
 bool UsdPrim::HasProperty(const std::string& name) const {
   if (!spec_) return false;
   const PrimSpec* source = ChildSourceSpec();
-  return spec_->property(name) != nullptr ||
-         (source != spec_ && source->property(name) != nullptr) ||
+  return HasAuthoredPropertyName(spec_, name) ||
+         (source != spec_ && HasAuthoredPropertyName(source, name)) ||
          GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
@@ -306,14 +314,16 @@ bool UsdPrim::HasProperty(PropNameId name_id) const {
   if (spec_->property(name_id) != nullptr) return true;
   if (source != spec_ && source->property(name_id) != nullptr) return true;
   const std::string name(GetPropNameTable().get(name_id));
-  return GetSchemaRegistry().FindProperty(*source, name) != nullptr;
+  return HasAuthoredPropertyName(spec_, name) ||
+         (source != spec_ && HasAuthoredPropertyName(source, name)) ||
+         GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
 bool UsdPrim::HasAuthoredProperty(const std::string& name) const {
   if (!spec_) return false;
   const PrimSpec* source = ChildSourceSpec();
-  return spec_->property(name) != nullptr ||
-          (source != spec_ && source->property(name) != nullptr);
+  return HasAuthoredPropertyName(spec_, name) ||
+         (source != spec_ && HasAuthoredPropertyName(source, name));
 }
 
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
@@ -409,23 +419,22 @@ std::vector<std::string> UsdPrim::GetPropertyNames() const {
       names.push_back(built_in);
     }
   }
-  const std::vector<std::string>& authored_order =
-      spec_->meta().propertyOrder();
-  if (!authored_order.empty()) {
+  for (const PrimSpec* authored : {spec_, source}) {
+    for (const auto& name : authored->relationship_names())
+      if (seen.insert(name).second) names.push_back(name);
+  }
+  std::sort(names.begin(), names.end(), DictionaryLess);
+  // Stage propertyOrder moves the named properties to the front. It differs
+  // from the grouped child-name restatement used for primOrder/PCP children.
+  const auto& property_order = spec_->meta().propertyOrder();
+  if (!property_order.empty()) {
     std::vector<std::string> ordered;
     ordered.reserve(names.size());
     std::unordered_set<std::string> emitted;
-    emitted.reserve(names.size());
-    for (const std::string& wanted : authored_order) {
-      if (seen.count(wanted) && emitted.insert(wanted).second) {
-        ordered.push_back(wanted);
-      }
-    }
-    for (const std::string& name : names) {
-      if (emitted.insert(name).second) {
-        ordered.push_back(name);
-      }
-    }
+    for (const auto& name : property_order)
+      if (seen.count(name) && emitted.insert(name).second) ordered.push_back(name);
+    for (const auto& name : names)
+      if (emitted.insert(name).second) ordered.push_back(name);
     names = std::move(ordered);
   }
   return names;

@@ -35,7 +35,16 @@ std::string Cache::Impl::SpellSitePath(uint32_t stack,
     cur_site = st.variant_owner_site;
     cur = st.variant_owner_stack;
   }
-  return cur_site + suffix;
+  const std::string internal = cur_site + suffix;
+  std::string spelled;
+  spelled.reserve(internal.size());
+  for (size_t i = 0; i < internal.size(); ++i) {
+    if (internal[i] == '/' &&
+        ((i + 1 < internal.size() && internal[i + 1] == '{') ||
+         (i > 0 && internal[i - 1] == '}'))) continue;
+    spelled.push_back(internal[i]);
+  }
+  return spelled;
 }
 
 std::vector<std::string> Cache::GetRootLayerStackIdentifiers() const {
@@ -50,16 +59,8 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
   NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
   std::vector<PrimStackEntry> out;
   const auto& sources = impl_->SourcesForPath(path, warn, err);
-  PropNameTable& table = GetPropNameTable();
   auto variant_property_names = [](const PrimVariantData& vd) {
-    std::vector<std::string> names;
-    for (const auto& p : vd.properties) names.push_back(p.name);
-    // Relationships are unordered in the variant record; keep them stable.
-    std::vector<std::string> rels;
-    for (const auto& kv : vd.relationships) rels.push_back(kv.first);
-    std::sort(rels.begin(), rels.end());
-    names.insert(names.end(), rels.begin(), rels.end());
-    return names;
+    return vd.property_names();
   };
   // Locate the spec authoring `vd` among `specs` and spell its site suffix.
   auto locate_option = [&](const std::vector<SpecRef>& specs,
@@ -91,6 +92,10 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
   // a stack that records its owner).
   auto variant_host_key = [&](const Src& s) -> std::string {
     if (s.variant) return impl_->AppliedVariantKey(s);
+    const size_t holder = s.site.rfind("/{");
+    if (holder != std::string::npos && !s.site.empty() && s.site.back() == '}')
+      return impl_->AppliedVariantKey(s.stack_idx, s.site.substr(0, holder),
+                                      impl_->Mapping(s.map_idx).Apply(s.site));
     const LayerStack& st = impl_->layer_stacks[s.stack_idx];
     if (st.variant_owner_stack == 0xFFFFFFFFu) return std::string();
     return impl_->AppliedVariantKey(st.variant_owner_stack, st.variant_owner_site,
@@ -114,13 +119,19 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
       // inline/content source. Records keyed by a shared host may contain
       // selections used by another instance; an actual source for this set
       // is the authoritative selection for this query.
-      const std::string set_prefix = "{" + applied.set_name + "=";
       bool represented = false;
       for (const Src& candidate : sources) {
+        if (!candidate.variant && candidate.stack_idx == stack_idx &&
+            impl_->SpellSitePath(candidate.stack_idx, candidate.site) == host + applied.selection &&
+            impl_->AppliedVariantKey(stack_idx, site,
+                impl_->Mapping(candidate.map_idx).Apply(candidate.site)) == key) {
+          represented = true;
+          break;
+        }
         if (candidate.variant && candidate.stack_idx == stack_idx && candidate.site == site) {
           std::string layer, suffix;
           if (locate_option(impl_->SpecsFor(candidate), candidate.variant, &layer, &suffix) &&
-              suffix.find(set_prefix) != std::string::npos) {
+              suffix == applied.selection) {
             represented = true;
             break;
           }
@@ -128,7 +139,7 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
           const LayerStack& variant_stack = impl_->layer_stacks[candidate.stack_idx];
           if (variant_stack.variant_owner_stack == stack_idx &&
               variant_stack.variant_owner_site == site &&
-              variant_stack.variant_selection.compare(0, set_prefix.size(), set_prefix) == 0) {
+              variant_stack.variant_selection == applied.selection) {
             represented = true;
             break;
           }
@@ -162,35 +173,60 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
     uint32_t stack_idx;
     std::string site;
     const std::vector<SpecRef>* specs;
+    size_t arc_depth;
   };
   std::vector<PendingHost> pending;  // in host order
-  auto flush_pending = [&](const std::string* only_key) {
-    std::vector<PendingHost> keep;
-    for (PendingHost& host : pending) {
-      if (only_key && host.key != *only_key) {
-        keep.push_back(std::move(host));
-        continue;
-      }
+  auto flush_pending = [&](size_t first) {
+    // Hosts arrive in depth-first source order. Emit their pending records in
+    // postorder: inherited variants precede their host's variants, but sibling
+    // inherits keep their authored strength order.
+    std::vector<size_t> ancestors;
+    const auto emit = [&](size_t index) {
+      const PendingHost& host = pending[index];
       emit_applied(host.key, host.stack_idx, host.site, *host.specs);
+    };
+    for (size_t i = first; i < pending.size(); ++i) {
+      while (!ancestors.empty() &&
+             pending[ancestors.back()].arc_depth >= pending[i].arc_depth) {
+        emit(ancestors.back());
+        ancestors.pop_back();
+      }
+      ancestors.push_back(i);
     }
-    pending.swap(keep);
+    while (!ancestors.empty()) {
+      emit(ancestors.back());
+      ancestors.pop_back();
+    }
+    pending.resize(first);
   };
   for (size_t si = 0; si < sources.size(); ++si) {
     const Src& source = sources[si];
     if (!pending.empty()) {
       if (source.arc_kind == ArcType::Variant) {
-        // A pending host's own variant source: flush just that host (its
-        // inherited classes' variants stay ahead of a stronger host's, as
-        // pxr defers the root variant past the class's). An ancestral
-        // variant (host not pending) is weaker than every direct one.
+        // Before a host's variant, emit pending variants of the inherited
+        // hosts visited since it. An empty class option may select this host's
+        // variant without creating a source of its own, so flushing only this
+        // host would incorrectly place that class option after its dependent
+        // variant. Keep stronger hosts pending when visiting a class variant.
         const std::string key = variant_host_key(source);
-        bool pending_host = false;
-        for (const PendingHost& host : pending) {
-          if (host.key == key) { pending_host = true; break; }
+        size_t host_index = pending.size();
+        for (size_t i = 0; i < pending.size(); ++i) {
+          if (pending[i].key == key) { host_index = i; break; }
         }
-        flush_pending(pending_host ? &key : nullptr);
-      } else if (source.arc_kind != ArcType::Inherit) {
-        flush_pending(nullptr);
+        flush_pending(host_index == pending.size() ? 0 : host_index);
+      } else if (source.arc_kind == ArcType::Inherit) {
+        // A sibling inherit starts after the preceding inherit's whole
+        // subtree, including empty variant records. Same-stack class arcs are
+        // recorded in arc_sites (arc_chain only counts crossed layer stacks).
+        const size_t depth = source.arc_sites() ? source.arc_sites()->size() : 0;
+        for (size_t i = 0; i < pending.size(); ++i) {
+          if (pending[i].arc_depth >= depth) {
+            flush_pending(i);
+            break;
+          }
+        }
+      } else {
+        flush_pending(0);
       }
     }
     if (source.variant) {
@@ -251,26 +287,19 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
           }
         }
       }
-      for (const auto& slot : spec.spec->properties().slots()) {
-        item.property_names.emplace_back(table.get(slot.name_id));
-      }
-      // Relationships live in an unordered table: their authored interleaving
-      // with attributes is not recoverable, so they follow (sorted).
-      if (spec.spec->has_relationship_data()) {
-        std::vector<std::string> rels = spec.spec->relationship_names();
-        item.property_names.insert(item.property_names.end(),
-                                   std::make_move_iterator(rels.begin()),
-                                   std::make_move_iterator(rels.end()));
-      }
+      const auto authored_names = spec.spec->authored_property_names();
+      item.property_names.insert(item.property_names.end(), authored_names.begin(),
+                                 authored_names.end());
       out.push_back(std::move(item));
     }
     // Variant nodes of this host site, including options that author
     // nothing: held back until the flush rule above places them.
     const std::string key = impl_->AppliedVariantKey(source);
     if (!impl_->applied_variants_.count(key)) continue;
-    pending.push_back(PendingHost{key, source.stack_idx, source.site, &specs});
+    pending.push_back(PendingHost{key, source.stack_idx, source.site, &specs,
+        source.arc_sites() ? source.arc_sites()->size() : 0});
   }
-  flush_pending(nullptr);
+  flush_pending(0);
   return out;
 }
 
@@ -950,6 +979,11 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
       }
       return true;
     };
+    auto rebuild_seen = [&]() {
+      seen_big.clear();
+      if (child_names.size() >= 32)
+        for (const std::string& name : child_names) seen_big.insert(name);
+    };
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
@@ -960,6 +994,41 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
       // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
       // while arc-delivered children (model.usd ModelChild) correctly follow.
       if (s.suppress_site_specs) continue;
+      // Relocates operate at this node, before its local names and ordering
+      // opinions. Same-parent renames retain the old name's position; arrivals
+      // from another parent append in lexical order before this site's names.
+      const StackRelocates& rel = layer_stacks[s.stack_idx].relocates;
+      const auto* departed = rel.DepartedAt(s.site);
+      const auto* arrivals = rel.ArrivalsAt(s.site);
+      std::map<std::string, std::string> replacements;
+      std::set<std::string> additions;
+      if (arrivals) {
+        for (const auto& arrival : *arrivals) {
+          const Path source(arrival.src_site);
+          if (source.parent().str() == s.site)
+            replacements[source.name()] = arrival.name;
+          else
+            additions.insert(arrival.name);
+        }
+      }
+      if (departed) {
+        std::set<std::string> present(child_names.begin(), child_names.end());
+        std::vector<std::string> retained;
+        retained.reserve(child_names.size());
+        for (const std::string& name : child_names) {
+          const auto replacement = replacements.find(name);
+          if (replacement != replacements.end()) {
+            present.erase(name);
+            if (present.insert(replacement->second).second)
+              retained.push_back(replacement->second);
+          } else if (!departed->count(name)) {
+            retained.push_back(name);
+          }
+        }
+        child_names.swap(retained);
+        rebuild_seen();
+      }
+      for (const std::string& name : additions) first_seen(name);
       const std::vector<SpecRef> &specs = SpecsFor(s);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;
@@ -972,28 +1041,21 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
           // onto the host as a Variant source (see ExpandArcs). Skip the markers
           // so they never leak into the composed child list.
           if (!cs->name().empty() && cs->name().front() == '{') continue;
-          if (edits.departed.count(cs->name())) continue;
           first_seen(cs->name());
         }
         // A restatement orders the accumulated weaker names too, not merely
         // this layer's own children. Preserve raw layer vectors until here.
         if (!spec->meta().primOrder().empty()) {
           ApplyStringListOrder(spec->meta().primOrder(), &child_names);
-          if (!seen_big.empty()) {
-            seen_big.clear();
-            for (const std::string& name : child_names) seen_big.insert(name);
-          }
+          rebuild_seen();
         }
       }
     }
-    for (const std::string &name : edits.arrived) {
-      // A name that one stack relocates IN and another relocates OUT is a
-      // chained-relocation pass-through (CHARACTER -> Character -> Model): the
-      // content flows to the final destination, so the intermediate name must
-      // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
-      if (edits.departed.count(name)) continue;
-      first_seen(name);
-    }
+    // A chained-relocation intermediate remains prohibited even if another
+    // node later names it. Filtering does not alter the surviving order.
+    child_names.erase(std::remove_if(child_names.begin(), child_names.end(),
+        [&](const std::string& name) { return edits.departed.count(name) != 0; }),
+        child_names.end());
     return child_names;
   }
 

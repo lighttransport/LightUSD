@@ -161,6 +161,8 @@ private:
 
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);
+  bool ResolveRelocatePath(const std::string& path, const std::string& anchor,
+                           std::string* output);
   bool ReportProgress(const char* phase, size_t current, size_t total);
 
   // Token helpers

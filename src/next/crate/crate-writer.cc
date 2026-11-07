@@ -9,6 +9,7 @@
 #include "../layer/int64-listop.hh"
 #include "../layer/array-edit.hh"
 #include "../layer/arc-reference.hh"
+#include "../prim/relocate-path.hh"
 #include "../parser/lexer.hh"
 #include "../parser/value-parser.hh"
 #include "crate-data-source.hh"

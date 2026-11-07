@@ -252,8 +252,8 @@ bool CrateReader::Impl::CollectPropertyRecords(
               ri.meta->authored |= PropMeta::kUnknownMeta;
             } else if (UnpackValue(f.second, value)) {
               ri.meta->unknownFields.push_back(
-                  MakeTypedExtensionField(std::string(f.first),
-                                          std::move(value)));
+                  MakeTypedExtensionField(std::string(f.first), std::move(value),
+                      f.second.type_id() == CrateTypeId::UnregisteredValue));
               ri.meta->authored |= PropMeta::kUnknownMeta;
             } else {
               AddWarning("Unknown relationship field '" +
@@ -377,8 +377,8 @@ bool CrateReader::Impl::CollectPropertyRecords(
             ai.meta->authored |= PropMeta::kUnknownMeta;
           } else if (UnpackValue(f.second, value)) {
             ai.meta->unknownFields.push_back(
-                MakeTypedExtensionField(std::string(f.first),
-                                        std::move(value)));
+                MakeTypedExtensionField(std::string(f.first), std::move(value),
+                    f.second.type_id() == CrateTypeId::UnregisteredValue));
             ai.meta->authored |= PropMeta::kUnknownMeta;
           } else {
             AddWarning("Unknown property field '" + std::string(f.first) +

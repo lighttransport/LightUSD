@@ -636,6 +636,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_layer PRIVATE lightusd_next)
 
+    add_executable(test_name_order
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_name_order.cc)
+    target_link_libraries(test_name_order PRIVATE lightusd_next)
+    add_test(NAME next_test_name_order COMMAND test_name_order)
+    set_tests_properties(next_test_name_order PROPERTIES LABELS "next;aousd;lean")
+
     add_executable(test_stage
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_stage.cc
     )
@@ -1780,6 +1786,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                 --lusdcat $<TARGET_FILE:lusdcat>)
     set_tests_properties(next_pcp_json_contract PROPERTIES LABELS "next;aousd;lean;pcp")
 
+    add_test(NAME next_lean_primindex_vectors
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-prim-index-vectors.py
+                --lusdcat $<TARGET_FILE:lusdcat>)
+    set_tests_properties(next_lean_primindex_vectors
+        PROPERTIES LABELS "next;aousd;lean;pcp;generated" TIMEOUT 180)
+
+    add_test(NAME next_lean_layerstack_vectors
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-layer-stack-vectors.py
+                --lusdcat $<TARGET_FILE:lusdcat>)
+    set_tests_properties(next_lean_layerstack_vectors
+        PROPERTIES LABELS "next;aousd;lean;pcp;generated" TIMEOUT 180)
+
     add_test(NAME next_test_lean_vectors
         COMMAND test_lean_vectors
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -1808,12 +1826,28 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     set_tests_properties(next_lean_reflection_checker_tests
         PROPERTIES LABELS "next;aousd;lean")
 
+    add_test(NAME next_lean_spec_citations
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-spec-citations.py
+                --max-unverified 0)
+    set_tests_properties(next_lean_spec_citations
+        PROPERTIES LABELS "next;aousd;lean")
+
+    add_test(NAME next_lean_model_split
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-model-split.py)
+    set_tests_properties(next_lean_model_split
+        PROPERTIES LABELS "next;aousd;lean")
+
     # Optional: the Lean side itself (proofs + vector drift). Registered only
     # when `lake` is found; set LIGHTUSD_NEXT_LEAN=OFF to skip.
     option(LIGHTUSD_NEXT_LEAN "Register verif/lean build/check tests when lake is available" ON)
     find_program(LIGHTUSD_LAKE_EXECUTABLE NAMES lake HINTS $ENV{HOME}/.elan/bin)
     if(LIGHTUSD_NEXT_LEAN AND LIGHTUSD_LAKE_EXECUTABLE)
         set(_lean_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../verif/lean")
+        add_test(NAME next_lean_unicode_conformance
+            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-lean-unicode-data.py
+                --conformance --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
+        set_tests_properties(next_lean_unicode_conformance
+            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 600)
         add_test(NAME next_lean_build
             COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} build
             WORKING_DIRECTORY ${_lean_dir})
@@ -1828,6 +1862,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
             PROPERTIES LABELS "next;aousd;lean;generated" TIMEOUT 3600)
         set_tests_properties(next_lean_test next_lean_vectors_check
             PROPERTIES DEPENDS next_lean_build)
+        add_test(NAME next_lean_axioms
+            COMMAND ${LIGHTUSD_LAKE_EXECUTABLE} env lean Audit/Axioms.lean
+            WORKING_DIRECTORY ${_lean_dir})
+        add_test(NAME next_lean_axiom_audit_tests
+            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test-lean-axioms.py
+                --lake "${LIGHTUSD_LAKE_EXECUTABLE}")
+        set_tests_properties(next_lean_axioms next_lean_axiom_audit_tests
+            PROPERTIES LABELS "next;aousd;lean" DEPENDS next_lean_build TIMEOUT 3600)
         add_test(NAME next_lean_reflection_environment
             COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-lean-reflection.py
                 --check --repo "${CMAKE_CURRENT_SOURCE_DIR}/../.."

@@ -20,6 +20,13 @@ Cache &Cache::operator=(Cache &&) noexcept = default;
 expected<Cache, std::string> Cache::Open(
     AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
     const std::string &root_identifier, const CompositionOptions &options) {
+  return Open(resolver, std::move(root_layer), root_identifier, options, nullptr);
+}
+
+expected<Cache, std::string> Cache::Open(
+    AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
+    const std::string &root_identifier, const CompositionOptions &options,
+    std::string *open_warnings) {
   if (!root_layer) {
     return make_unexpected(std::string("pcp::Cache::Open: null root layer"));
   }
@@ -41,12 +48,16 @@ expected<Cache, std::string> Cache::Open(
   std::string warn, err;
   uint32_t root_stack =
       cache.impl_->InternLayerStack(root_layer, root_identifier, &warn, &err);
+  if (open_warnings) *open_warnings += warn;
   if (root_stack == Impl::kInvalidStack) {
     return make_unexpected(err.empty()
                                        ? std::string("pcp::Cache::Open: failed "
                                                      "to build root layer stack")
                                        : err);
   }
+  // A permissive open may keep the valid part of a layer stack after a load
+  // error. Surface that diagnostic without turning it into a fatal failure.
+  if (open_warnings) *open_warnings += err;
   return cache;
 }
 
@@ -477,7 +488,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   CompositionOptions build_options = options;
   build_options.release_build_sources = true;
   auto opened = Cache::Open(resolver, std::move(root_layer), root_identifier,
-                            build_options);
+                            build_options, warn);
   if (!opened) {
     if (err) *err += opened.error() + "\n";
     return false;
@@ -1467,6 +1478,16 @@ auto Cache::Impl::ComposeRootNames() const -> std::vector<std::string> {
   // assignment is order-independent (see test_prototype_order_independent).
   std::set<std::string> seen_root;
   std::vector<std::string> root_names;
+  // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
+  // author a spec for the new name, so take the names from the root layer
+  // stack's namespace edits as well.
+  if (const std::vector<StackRelocates::Arrival> *arrivals =
+          layer_stacks[0].relocates.ArrivalsAt("/")) {
+    for (const StackRelocates::Arrival &a : *arrivals) {
+      seen_root.insert(a.name);
+    }
+  }
+  root_names.assign(seen_root.begin(), seen_root.end());
   for (auto lit = layer_stacks[0].layers.rbegin();
        lit != layer_stacks[0].layers.rend(); ++lit) {
     const auto &lp = *lit;
@@ -1476,15 +1497,6 @@ auto Cache::Impl::ComposeRootNames() const -> std::vector<std::string> {
       if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
     }
     ApplyStringListOrder(lp->meta().rootPrimOrder, &root_names);
-  }
-  // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
-  // author a spec for the new name, so take the names from the root layer
-  // stack's namespace edits as well.
-  if (const std::vector<StackRelocates::Arrival> *arrivals =
-          layer_stacks[0].relocates.ArrivalsAt("/")) {
-    for (const StackRelocates::Arrival &a : *arrivals) {
-      if (seen_root.insert(a.name).second) root_names.push_back(a.name);
-    }
   }
   return root_names;
 }

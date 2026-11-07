@@ -18,6 +18,8 @@ namespace lightusd {
 namespace next {
 
 struct PrimSpec::ColdData {
+  std::vector<PropNameId> authored_property_names;
+  bool property_names_preserved = false;
 
     std::unordered_map<std::string, ArcListOp> rel_edits;
     std::unordered_map<std::string, std::vector<RelationshipOpinion>>
@@ -261,6 +263,51 @@ const Value* PrimSpec::property_value(const std::string& name) const {
   return values_->get(slot->value_offset);
 }
 
+void PrimSpec::preserve_property_names() {
+  ColdData& data = cold();
+  if (data.property_names_preserved) return;
+  data.property_names_preserved = true;
+  auto& names = data.authored_property_names;
+  names.reserve(props_.size());
+  for (const auto& slot : props_.slots()) names.push_back(slot.name_id);
+}
+
+void PrimSpec::record_property_name(PropNameId name_id) {
+  if (!cold_data_ || !cold_data_->property_names_preserved) return;
+  auto& names = cold_data_->authored_property_names;
+  if (std::find(names.begin(), names.end(), name_id) == names.end())
+    names.push_back(name_id);
+}
+
+void PrimSpec::forget_property_name(PropNameId name_id) {
+  if (!cold_data_) return;
+  auto& names = cold_data_->authored_property_names;
+  names.erase(std::remove(names.begin(), names.end(), name_id), names.end());
+}
+
+std::vector<std::string> PrimSpec::authored_property_names() const {
+  std::vector<std::string> names;
+  const auto& table = GetPropNameTable();
+  if (cold_data_ && cold_data_->property_names_preserved) {
+    for (auto id : cold_data_->authored_property_names) names.emplace_back(table.get(id));
+  } else {
+    for (const auto& slot : props_.slots()) names.emplace_back(table.get(slot.name_id));
+  }
+  return names;
+}
+
+void PrimSpec::set_authored_property_names(const std::vector<std::string>& names) {
+  ColdData& data = cold();
+  data.property_names_preserved = true;
+  auto& order = data.authored_property_names;
+  order.clear();
+  for (const auto& name : names) {
+    if (!IsValidNamespacedIdentifier(name)) continue;
+    const auto id = GetPropNameTable().intern(name);
+    if (std::find(order.begin(), order.end(), id) == order.end()) order.push_back(id);
+  }
+}
+
 void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags) {
   // Authoring boundary: a property name must be a valid (possibly namespaced)
   // identifier. The parser only ever produces such names, so guarding here keeps
@@ -297,6 +344,7 @@ void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   }
 
   adopt_pending_type_name(slot);
+  record_property_name(name_id);
   props_.add(slot);
 }
 
@@ -307,6 +355,7 @@ void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t fl
   slot.value_type = static_cast<uint16_t>(type_id);
   slot.flags = flags;
   adopt_pending_type_name(slot);
+  record_property_name(name_id);
   props_.add(slot);
 }
 
@@ -414,6 +463,7 @@ bool PrimSpec::remove_property(PropNameId name_id) {
   }
   if (prop_metas_) prop_metas_->erase(name_id.id);
   if (time_samples_ && time_samples_->remove(name_id)) removed = true;
+  if (removed) forget_property_name(name_id);
   return removed;
 }
 
@@ -471,6 +521,13 @@ void PrimSpec::reserve_properties(size_t count) {
 }
 
 void PrimSpec::finalize_properties() {
+  // Keep the hot lookup slots sorted without rewriting raw spec child order.
+  // Canonical attribute-only prims without cold data need no extra allocation.
+  const auto& table = GetPropNameTable();
+  if (!props_.is_sorted() && !std::is_sorted(props_.slots().begin(),
+      props_.slots().end(), [&](const PropSlot& a, const PropSlot& b) {
+        return table.get(a.name_id) < table.get(b.name_id);
+      })) preserve_property_names();
   props_.sort();
   share_property_metas();
 }
@@ -637,10 +694,14 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   // Authoring boundary (see add_property): keep relationship names valid
   // identifiers so API scenes stay round-trippable.
   if (!IsValidNamespacedIdentifier(name)) return;
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   cold().relationships[name].push_back(target);
 }
 
 ArcListOp& PrimSpec::ensure_relationship_edit(const std::string& name) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   return ensure_cold_data().rel_edits[name];
 }
 
@@ -653,6 +714,8 @@ PrimSpec::relationship_opinion_stack(const std::string& name) const {
 
 void PrimSpec::set_relationship_opinion_stack(
     const std::string& name, std::vector<RelationshipOpinion> opinions) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   ensure_cold_data().rel_opinion_stacks[name] = std::move(opinions);
 }
 
@@ -670,6 +733,8 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
                                           const std::vector<Path>& targets,
                                           RelationshipListOp op) {
   if (targets.empty()) return;
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   std::vector<Path>& dst = cold().relationships[name];
 
   switch (op) {
@@ -714,14 +779,17 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
 
 void PrimSpec::set_relationship_targets(const std::string& name,
                                         std::vector<Path> targets) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   cold().relationships[name] = std::move(targets);
 }
 
 bool PrimSpec::remove_relationship(const std::string& name) {
   bool removed = cold().relationships.erase(name) > 0;
   if (cold_data_) {
-    cold_data_->rel_opinion_stacks.erase(name);
-    cold_data_->rel_edits.erase(name);
+    removed = cold_data_->rel_opinion_stacks.erase(name) > 0 || removed;
+    removed = cold_data_->rel_edits.erase(name) > 0 || removed;
+    cold_data_->rel_flags.erase(name);
   }
   PropNameId id = GetPropNameTable().find(name);
   if (id.is_valid()) {
@@ -731,6 +799,7 @@ bool PrimSpec::remove_relationship(const std::string& name) {
       removed = true;
     }
   }
+  if (removed) forget_property_name(id);
   return removed;
 }
 
@@ -1145,6 +1214,7 @@ size_t PrimSpec::memory_usage() const {
   }
   if (cold_data_) {
     add(sizeof(ColdData));
+    add(safe::saturating_mul(cold_data_->authored_property_names.capacity(), sizeof(PropNameId)));
     for (const auto& entry : cold_data_->rel_edits) {
       add(entry.first.capacity() + sizeof(ArcListOp) + sizeof(void*) * 2);
       add_arc_edit(entry.second);
@@ -1280,6 +1350,7 @@ size_t PrimSpec::memory_usage() const {
         for (const PrimVariantData& variant : set->variants) {
           for (const std::string* text : {&variant.name, &variant.doc,
                &variant.kind}) add(text->capacity());
+          add_strings(variant.authoredPropertyNames);
           add(safe::saturating_mul(variant.properties.capacity(),
                                    sizeof(VariantProperty)));
           for (const VariantProperty& property : variant.properties) {

@@ -15,6 +15,8 @@ def main():
     parser.add_argument('--custom-checker', type=Path)
     a = parser.parse_args()
     checker = str(a.checker.resolve())
+    help_text = subprocess.run([checker, '--help'], capture_output=True, text=True, check=True).stdout
+    assert "against AOUSD Core\n1.1.0" in help_text
     count = 0
     with tempfile.TemporaryDirectory(prefix='checker-validation-') as directory:
         root = Path(directory)
@@ -43,6 +45,46 @@ def main():
             '--shader-definitions', str(repo/'tools/lusdchecker/definitions/shaders.json'))
         run(clean, '--profile', 'aousd-core-1.1.0')
         run(clean, '--profile', 'aousd-core-1.0.1')  # compatible alias
+        order = write('order.usda', HEADER + '''reorder rootPrims = ["Missing", "bad/name"]
+def Xform "World" {
+ reorder nameChildren = ["Missing", "ns:Child"]
+ reorder properties = ["primvars:color", "bad.name"]
+}
+''')
+        ordered = run(order, '--core-only', rule='core.layer.primOrder')
+        for rule in ['core.prim.primOrder', 'core.prim.propertyOrder']:
+            assert any(i['ruleId'] == rule for i in ordered['issues']), ordered
+        run(order, '--core-only', '--strict', code=1, rule='core.prim.propertyOrder')
+        relocates = write('relocates.usda', HEADER.replace(' upAxis = "Y"',
+            ' relocates = { </P/A>: </P/A>, </P/B>: </> }\n upAxis = "Y"') +
+            'def Xform "World" {}\n')
+        relocated = run(relocates, '--core-only', code=1, rule='core.layer.layerRelocates.identity')
+        assert any(i['ruleId'] == 'core.layer.layerRelocates.target' for i in relocated['issues']), relocated
+        assert all(i['location'] == '<layer>' for i in relocated['issues']
+                   if i['ruleId'].startswith('core.layer.layerRelocates.')), relocated
+        relocate_rules = {
+            'root': '</World>: </Moved>',
+            'ancestor': '</World/A/B>: </World/A>',
+            'targetUnderSource': '</World/A>: </World/A/B>',
+            'duplicateSource': '</World/A>: </World/X>, </World/A>: </World/Y>',
+            'duplicateTarget': '</World/A>: </World/X>, </World/B>: </World/X>',
+            'nestedSource': '</World/A>: </World/X>, </World/A/B>: </World/Y>',
+            'targetIsSource': '</World/A>: </World/B>, </World/B>: </World/C>',
+            'targetUnderOtherSource': '</World/A>: </World/X>, </World/B>: </World/A/C>',
+        }
+        for component, entries in relocate_rules.items():
+            source = write('relocate-' + component + '.usda', HEADER.replace(' upAxis = "Y"',
+                ' relocates = {' + entries + '}\n upAxis = "Y"') + 'def Xform "World" {}\n')
+            rule = 'core.layer.layerRelocates.' + component
+            report = run(source, '--core-only', code=1, rule=rule)
+            issue = next(i for i in report['issues'] if i['ruleId'] == rule)
+            assert issue['location'] == '<layer>' and issue['leanRef'].startswith('UsdSpec.Relocates.'), issue
+            if component in ['targetIsSource', 'targetUnderOtherSource']:
+                assert issue['category'] == 'compatibility', issue
+                run(source, '--profile', 'aousd-core-1.1.0')
+            else:
+                assert issue['category'] == 'normative', issue
+                run(source, '--profile', 'aousd-core-1.1.0', code=1, rule=rule)
         future = write('future.usda', clean.read_text().replace('#usda 1.0', '#usda 1.2'))
         run(future, '--profile', 'aousd-core-1.1.0', code=1, rule='checker.coverage.version')
         run(clean, '--profile', 'strict', '--core-only', code=2, rule='checker.usage')
@@ -161,15 +203,25 @@ def main():
  variants = { string outer = "good" }
 ) {
  variantSet "outer" = {
-  "good" { def Xform "Child" {} }
+  "good" {
+   def Xform "Child" {}
+  }
   "nested" {
    def Xform "Child" (
     prepend variantSets = "inner"
     variants = { string inner = "good" }
    ) {
     variantSet "inner" = {
-     "good" { def Sphere "S" { double radius = 1 } }
-     "bad" { def Sphere "S" { float radius = 1 } }
+     "good" {
+      def Sphere "S" {
+       double radius = 1
+      }
+     }
+     "bad" {
+      def Sphere "S" {
+       float radius = 1
+      }
+     }
     }
    }
   }
@@ -187,7 +239,7 @@ def main():
         bad_api = write('typed-as-api.usda', HEADER + 'def Xform "World" (prepend apiSchemas = ["Sphere"]) {}')
         run(bad_api, '--profile', 'strict', code=1, rule='core.apiSchema.kind')
         run(bad_api, '--profile', 'aousd-core-1.1.0')
-        wrong_kind = write('wrong-kind.usda', HEADER + 'def Sphere "World" { rel radius = </World> }')
+        wrong_kind = write('wrong-kind.usda', HEADER + 'def Sphere "World" {\n rel radius = </World>\n}\n')
         run(wrong_kind, '--profile', 'strict', code=1, rule='core.schema.propertyKind')
         # A baseline at time 1 does not accept the same error at time 2.
         first = run(animation, '--profile', 'strict', code=1)
@@ -197,7 +249,7 @@ def main():
         animation.write_text(shifted.read_text())
         second = run(animation, '--profile', 'strict', '--baseline', str(sample_baseline), code=1)
         assert any(i.get('time') == 2 and i['baselineState'] == 'new' for i in second['issues'])
-        uri = write('resolver.usda', HEADER + 'def Xform "World" { asset remote = @vendor://asset@ }')
+        uri = write('resolver.usda', HEADER + 'def Xform "World" {\n asset remote = @vendor://asset@\n}\n')
         run(uri, '--profile', 'strict', code=1, rule='checker.coverage.resolver')
         if a.custom_checker:
             old_checker = checker

@@ -893,6 +893,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       }
       // Kept as authored (pxr re-emits relative paths verbatim).
       prim->ensure_property_meta(rel_name).relDefault = target;
+      prim->ensure_property_meta(rel_name).authored |= PropMeta::kRelDefault;
     }
     return true;
   }

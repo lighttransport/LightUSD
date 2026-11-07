@@ -305,7 +305,7 @@ struct StageSession::Impl {
                                         ? root_identifier
                                         : composition_identifier;
     auto restored = pcp::Cache::Open(*resolver, std::move(root_layer),
-                                     identifier, composition);
+                                     identifier, composition, &warning);
     if (!restored) {
       error = restored.error();
       RecordMessages(DiagnosticDomain::Compose);
@@ -583,7 +583,7 @@ StageOperationResult StageSession::OpenFile(
   composition.usda_parse_options = normalized.load.usda_options.parse_options;
   std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
   auto opened = pcp::Cache::Open(*next->resolver, std::move(root_layer),
-                                 composition_identifier, composition);
+                                 composition_identifier, composition, &next->warning);
   if (!opened) {
     next->error = opened.error();
     next->RecordMessages(DiagnosticDomain::Compose);

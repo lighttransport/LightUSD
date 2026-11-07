@@ -6,9 +6,24 @@
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 #include "../strfmt.hh"
+#include "../prim/relocate-path.hh"
 
 namespace lightusd {
 namespace next {
+
+bool AsciiParser::Impl::ResolveRelocatePath(const std::string& path,
+                                             const std::string& anchor,
+                                             std::string* output) {
+  if (AnchorRelocatePath(path, anchor, output)) return true;
+  const std::string message = "Relocates path `" + path + "` cannot be anchored at `" + anchor + "`";
+  if (options_.strict_aousd_conformance) {
+    AddError(message);
+    return false;
+  }
+  AddWarning(message + " (preserved for validation; composition ignores the entry)");
+  *output = path;
+  return true;
+}
 
 bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) {
   if (!out) return false;
@@ -323,8 +338,8 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
           vend--;
         }
         if (vend > vstart) {
-          m.unknownMeta.emplace_back(qualifier + key,
-                                     std::string(base + vstart, vend - vstart));
+          StoreRawMetadataOpinion(&m.unknownMeta, qualifier + key,
+                                  std::string(base + vstart, vend - vstart));
           m.authored |= PropMeta::kUnknownMeta;
         }
       }

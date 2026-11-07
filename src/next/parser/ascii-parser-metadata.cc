@@ -152,7 +152,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
               AddError("Relocates paths cannot contain variant selections");
               return false;
             }
-            layer_->meta().relocates.emplace_back(src, dst);
+            std::string absolute_source, absolute_target;
+            if (!ResolveRelocatePath(src, "/", &absolute_source) ||
+                !ResolveRelocatePath(dst, "/", &absolute_target)) return false;
+            layer_->meta().relocates.emplace_back(std::move(absolute_source), std::move(absolute_target));
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBrace);
@@ -311,36 +314,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             vend--;
           }
           if (vend > vstart) {
-            // pxr folds every opinion on one key into a single list-op
-            // field: an explicit value replaces all edits, and a repeated
-            // qualifier replaces the earlier one of that kind.
-            auto& um = layer_->meta().unknownMeta;
             const std::string name =
                 qualifier ? std::string(qualifier) + " " + key : key;
-            auto same_key = [&](const std::string& n) {
-              if (n == key) return true;
-              const size_t sp = n.find(' ');
-              return sp != std::string::npos && n.compare(sp + 1, std::string::npos, key) == 0;
-            };
-            bool has_explicit = false;
-            for (const auto& e : um) has_explicit |= (e.first == key);
-            if (!qualifier) {
-              um.erase(std::remove_if(um.begin(), um.end(),
-                                      [&](const std::pair<std::string, std::string>& e) {
-                                        return same_key(e.first);
-                                      }),
-                       um.end());
-            }
-            if (!qualifier || !has_explicit) {
-              auto it = std::find_if(
-                  um.begin(), um.end(),
-                  [&](const std::pair<std::string, std::string>& e) {
-                    return e.first == name;
-                  });
-              std::string raw(base + vstart, vend - vstart);
-              if (it != um.end()) it->second = std::move(raw);
-              else um.emplace_back(name, std::move(raw));
-            }
+            StoreRawMetadataOpinion(&layer_->meta().unknownMeta, name,
+                                    std::string(base + vstart, vend - vstart));
           }
         }
         AddWarning("Unknown stage metadata (preserved): " + key);

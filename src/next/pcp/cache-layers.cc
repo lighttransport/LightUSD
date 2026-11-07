@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
 #include "../layer/asset-anchor.hh"
+#include "../prim/relocate-path.hh"
 namespace lightusd {
 namespace next {
 namespace pcp {
@@ -83,19 +84,35 @@ uint32_t Cache::Impl::InternLayerStack(
 
 void Cache::Impl::BuildStackRelocates(LayerStack *st) {
     std::vector<std::pair<std::string, std::string>> candidates;
-    std::set<std::pair<std::string, std::string>> seen_edit;
-    const auto add_candidate = [&](const std::pair<std::string, std::string> &r) {
-      // A layer can be reached along two sublayer paths (so it appears in
-      // `layers` twice), and the same edit may be authored in a layer and one of
-      // its sublayers. Deduping IDENTICAL (src, dst) pairs keeps the pairwise
-      // conflict scan below from invalidating an edit against its own copy
-      // (a.second == b.second would else fire on the duplicate).
-      if (seen_edit.insert(r).second) candidates.push_back(r);
+    std::set<std::string> seen_source;
+    const auto add_candidate = [&](const std::pair<std::string, std::string> &r,
+                                   const std::string &anchor) {
+      std::string src, dst;
+      if (!AnchorRelocatePath(r.first, anchor, &src) ||
+          !AnchorRelocatePath(r.second, anchor, &dst)) return;
+      const Path sp(src), dp(dst);
+      const auto prim_path = [](const Path &path) {
+        return path.is_absolute() && !path.is_root() && path.is_valid() &&
+               !path.has_property() && path.str().find('{') == std::string::npos;
+      };
+      // Pcp validates individual opinions before selecting by source. A bad
+      // stronger opinion must neither mask a weaker valid one nor poison an
+      // unrelated valid edit in the later pairwise conflict scan.
+      if (!prim_path(sp) || (!dst.empty() && !prim_path(dp)) ||
+          sp.parent().str() == "/" || src == dst ||
+          (!dst.empty() &&
+           (IsPathAtOrUnder(src, dst) || IsPathAtOrUnder(dst, src)))) return;
+      // LayerStack::layers is strong-to-weak. The first valid opinion for a
+      // source wins, including deletion; weaker targets are not extra edits.
+      if (seen_source.insert(src).second) candidates.emplace_back(src, dst);
     };
     for (const auto &lp : st->layers) {
-      for (const auto &r : lp->meta().relocates) add_candidate(r);
+      for (const auto &r : lp->meta().relocates) add_candidate(r, "/");
+      // Authored layer relocates supersede this layer's legacy prim relocates,
+      // including an explicit empty list (OpenUSD _CollectRelocatesForLayer).
+      if (lp->meta().relocates_set || !lp->meta().relocates.empty()) continue;
       for (const PrimSpec &ps : lp->prims()) {
-        for (const auto &r : ps.meta().relocates()) add_candidate(r);
+        for (const auto &r : ps.meta().relocates()) add_candidate(r, ps.path().str());
       }
     }
     if (candidates.empty()) return;
@@ -214,15 +231,16 @@ void Cache::Impl::BuildStackRelocates(LayerStack *st) {
     // Two consumers need DIFFERENT keyings, so key each table for its consumer:
     //
     //  * `src_to_dst` (WithStackRelocates relationship/connection target remap,
-    //    PathInRelocateSource) uses the RAW source. WithStackRelocates adds one
+    //    and the raw PathInRelocateSource check) uses the RAW source. WithStackRelocates adds one
     //    rename per relocate to a single mapping applied in ONE pass; keying by
     //    the raw source pre-chains ancestral relocates (raw target -> FINAL
     //    dst), so a relationship authored in the pre-relocation namespace remaps
     //    correctly through a chain (BasicRelocateToAnimInterface: PathRig/Path/
     //    Anim -> Anim/Path/AnimScope in one hop).
     //
-    //  * `departed` / `arrivals` (ComposeChildNames, SourcesForRelocateSource)
-    //    use the COMPOSED (as-authored) path. The source's ancestors exist in
+    //  * `departed` / `arrivals` (ComposeChildNames, SourcesForRelocateSource,
+    //    and the composed PathInRelocateSource check) use the COMPOSED
+    //    (as-authored) path. The source's ancestors exist in
     //    the composed namespace as arrivals of the ancestral relocate, carrying
     //    both the relocated content AND any `over` opinions at the post-
     //    relocation path (TrickyMultipleRelocations2 `over Model_2 { Rig }`); the
@@ -358,8 +376,10 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
           return false;
         }
         if (visiting) visiting->erase(sub_id);
-      } else if (options.error_when_asset_not_found) {
-        return false;
+      } else {
+        AddIssue(ErrorCode::InvalidAssetPath, sub_id,
+                 "Failed to load sublayer: " + sub_id, warn);
+        if (options.error_when_asset_not_found) return false;
       }
     }
     return true;

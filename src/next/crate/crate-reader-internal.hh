@@ -218,7 +218,7 @@ using RelRecords = std::vector<std::pair<uint32_t, RelInfo>>;
 namespace crate_stage_detail {
 constexpr uint32_t kSkipEntry = UINT32_MAX;
 Value ParseDictText(const std::string& text);
-DecodedExtensionField MakeTypedExtensionField(std::string name, Value value);
+DecodedExtensionField MakeTypedExtensionField(std::string name, Value value, bool unregistered);
 }
 
 struct PrimBuildState {
@@ -443,6 +443,7 @@ class CrateReader::Impl {
   bool ResolveFieldset(uint32_t fieldset_index,
                        std::vector<std::pair<std::string_view, Value>>& out,
                        std::vector<DecodedExtensionField>* extensions = nullptr);
+  CrateTypeId FieldType(uint32_t fieldset_index, std::string_view name) const;
   bool ResolveFieldsetRaw(
       uint32_t fieldset_index,
       std::vector<std::pair<std::string_view, ValueRep>>& out);

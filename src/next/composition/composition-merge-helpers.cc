@@ -53,6 +53,7 @@ void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
        weaker.bindMaterialAs);
   fill(PropMeta::kKind, &stronger->kind, weaker.kind);
   fill(PropMeta::kPermission, &stronger->permission, weaker.permission);
+  fill(PropMeta::kRelDefault, &stronger->relDefault, weaker.relDefault);
   fill(PropMeta::kWeight, &stronger->weight, weaker.weight);
   fill(PropMeta::kUnauthoredIdx, &stronger->unauthoredValuesIndex,
        weaker.unauthoredValuesIndex);

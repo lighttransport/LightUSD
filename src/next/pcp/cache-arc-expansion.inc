@@ -187,7 +187,7 @@
   // relocation source). EXCLUDE the arrival's OWN source (composing the arrival
   // OF that same relocate legitimately pulls this content). Salted (not dropped)
   // so it stays traversable.
-  bool FlowsThroughRelocateSource(const Src &c,
+  bool FlowsThroughRelocateSource(const Src &c, uint32_t relocating_stack,
                                   const StackRelocates::Arrival &arrival) const;
 
   std::vector<Src> SourcesForRelocatedContent(

@@ -9,6 +9,7 @@
 #include "../composition/composition.hh"
 #include "../layer/listop-field-table.hh"
 #include "../prim/identifier.hh"
+#include "../prim/relocate-path.hh"
 #include "../schema/schema-registry.hh"
 #include "validation-context.hh"
 
@@ -254,27 +255,63 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
   }
 }
 
-// next-core stores relocates per-prim (PrimMetadata::relocates); validated
-// under the legacy core.layer.layerRelocates rule ids at the prim location.
-void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
+// Core v1.1.0 L2494-2510, L2861-2897: names may be speculative, but
+// should be valid prim/property names. No local child-membership requirement.
+void ValidateNameOrder(const std::vector<std::string> &names, bool properties,
+                       const std::string &rule, const std::string &location,
                        USDValidationResult *result) {
-  std::set<std::string> relocated_sources;
-  for (const auto &entry : ps.meta().relocates()) {
-    const std::string &source = entry.first;
-    const std::string &target = entry.second;
-
-    std::string source_err;
-    if (!IsValidAbsolutePrimTargetPathString(source, &source_err)) {
-      AddError(result, "core.layer.layerRelocates.source", prim_location,
-               "layerRelocates source `" + source +
-                   "` must be a valid absolute prim path");
+  for (size_t i = 0; i < names.size(); ++i) {
+    const bool valid = properties ? IsValidNamespacedIdentifier(names[i])
+                                  : IsValidIdentifier(names[i]);
+    if (!valid) {
+      AddWarning(result, rule, location,
+                 "order entry " + std::to_string(i) + " `" + names[i] +
+                     "` should be a valid " + (properties ? "property" : "prim") +
+                     " name");
     }
-    std::string target_err;
-    if (!target.empty() &&
-        !IsValidAbsolutePrimPathString(target, &target_err)) {
+  }
+}
+
+// Both layer relocates and legacy per-prim relocates retain authored entries.
+void ValidateRelocates(const std::vector<std::pair<std::string, std::string>> &entries,
+                       const std::string &prim_location, const std::string &anchor,
+                       USDValidationResult *result) {
+  const auto anchored = [&](const std::string& path) {
+    std::string result = path;
+    AnchorRelocatePath(path, anchor, &result);
+    return result;
+  };
+  // These are local authoring constraints, not selection across sublayers.
+  std::set<std::string> relocated_sources, valid_sources;
+  std::map<std::string, std::string> first_targets, first_sources;
+  std::set<std::string> reported_sources, reported_targets;
+  const auto below = [](const std::string& path, const std::string& parent) {
+    return path.size() > parent.size() && path.compare(0, parent.size(), parent) == 0 &&
+           path[parent.size()] == '/';
+  };
+  for (const auto &entry : entries) {
+    const std::string source = anchored(entry.first);
+    const std::string target = anchored(entry.second);
+    std::string source_err, target_err;
+    const bool source_valid = IsValidAbsolutePrimTargetPathString(source, &source_err);
+    const bool target_valid = target.empty() ||
+        IsValidAbsolutePrimTargetPathString(target, &target_err);
+    if (!source_valid) {
+      AddError(result, "core.layer.layerRelocates.source", prim_location,
+               "layerRelocates source `" + source + "` must be a valid absolute prim path");
+    } else {
+      valid_sources.insert(source);
+    }
+    if (!target_valid) {
       AddError(result, "core.layer.layerRelocates.target", prim_location,
                "layerRelocates target `" + target +
                    "` must be empty or a valid absolute prim path");
+    }
+    if (source == "/" || target == "/" ||
+        (source_valid && source.find('/', 1) == std::string::npos)) {
+      AddError(result, "core.layer.layerRelocates.root", prim_location,
+               "relocate sources must be below a root prim and targets must not be the pseudo-root; "
+               "root-prim targets are allowed by OpenUSD compatibility (LEAN-515)");
     }
     if (!source.empty() && !target.empty() && source == target) {
       AddError(result, "core.layer.layerRelocates.identity", prim_location,
@@ -284,7 +321,67 @@ void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
       AddError(result, "core.layer.layerRelocates.source", prim_location,
                "layerRelocates contains duplicate source `" + source + "`");
     }
+    if (!source_valid || !target_valid) continue;
+    const auto source_opinion = first_targets.emplace(source, target);
+    if (!source_opinion.second && source_opinion.first->second != target &&
+        reported_sources.insert(source).second) {
+      AddError(result, "core.layer.layerRelocates.duplicateSource", prim_location,
+               "relocate source `" + source + "` has different targets in this authored field");
+    }
+    if (target.empty()) continue;
+    if (below(source, target)) {
+      AddError(result, "core.layer.layerRelocates.ancestor", prim_location,
+               "relocate target `" + target + "` is an ancestor of source `" + source + "`");
+    }
+    if (below(target, source)) {
+      AddError(result, "core.layer.layerRelocates.targetUnderSource", prim_location,
+               "relocate target `" + target + "` is below its source `" + source + "`");
+    }
+    const auto target_opinion = first_sources.emplace(target, source);
+    if (!target_opinion.second && target_opinion.first->second != source &&
+        reported_targets.insert(target).second) {
+      AddError(result, "core.layer.layerRelocates.duplicateTarget", prim_location,
+               "relocate target `" + target + "` has different sources in this authored field");
+    }
   }
+  std::set<std::string> reported_nested;
+  for (const auto& entry : entries) {
+    const std::string source = anchored(entry.first);
+    const std::string target = anchored(entry.second);
+    if (!valid_sources.count(source)) continue;
+    // Parent lookup respects component boundaries: /P/A is not above /P/AB.
+    std::string parent = source;
+    while (parent.rfind('/') != 0 && parent.rfind('/') != std::string::npos) {
+      parent.resize(parent.rfind('/'));
+      if (valid_sources.count(parent)) {
+        if (reported_nested.insert(source).second)
+          AddError(result, "core.layer.layerRelocates.nestedSource", prim_location,
+                   "relocate source `" + source + "` uses the unrelocated namespace below `" + parent + "`");
+        break;
+      }
+    }
+    std::string target_err;
+    if (target.empty() || !IsValidAbsolutePrimTargetPathString(target, &target_err)) continue;
+    if (target != source && valid_sources.count(target)) {
+      AddError(result, "core.layer.layerRelocates.targetIsSource", prim_location,
+               "relocate target `" + target + "` is another source (OpenUSD compatibility, LEAN-514)");
+    }
+    parent = target;
+    while (parent.rfind('/') != 0 && parent.rfind('/') != std::string::npos) {
+      parent.resize(parent.rfind('/'));
+      if (parent != source && valid_sources.count(parent)) {
+        AddError(result, "core.layer.layerRelocates.targetUnderOtherSource", prim_location,
+                 "relocate target `" + target + "` is below another source `" + parent +
+                     "` (OpenUSD compatibility)");
+        break;
+      }
+    }
+  }
+}
+
+void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
+                       USDValidationResult *result) {
+  ValidateRelocates(ps.meta().relocates(), prim_location, ps.path().str(), result);
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +676,9 @@ void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
                           USDValidationResult *result, const ValidationRegistry& registry) {
   const PrimMetadata &m = ps.meta();
+
+  ValidateNameOrder(m.primOrder(), false, "core.prim.primOrder", prim_location, result);
+  ValidateNameOrder(m.propertyOrder(), true, "core.prim.propertyOrder", prim_location, result);
 
   ValidateSchemaNameGrammar(ps.type_name(), "prim typeName", prim_location,
                             result);
