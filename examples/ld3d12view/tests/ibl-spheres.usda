@@ -1,0 +1,87 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Five metal spheres, roughness 0 .. 1, lit only by a dome light: exercises the
+# GGX-prefiltered specular environment (mip = roughness).
+def Xform "World"
+{
+    def DomeLight "Env"
+    {
+        asset inputs:texture:file = @../../../models/textures/env_studio_default.hdr@
+        float inputs:intensity = 1
+    }
+
+    def Sphere "S0" { double radius = 0.45  double3 xformOp:translate = (-2.4, 0, 0)  uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R0> }
+    def Sphere "S1" { double radius = 0.45  double3 xformOp:translate = (-1.2, 0, 0)  uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R1> }
+    def Sphere "S2" { double radius = 0.45  double3 xformOp:translate = (0, 0, 0)     uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R2> }
+    def Sphere "S3" { double radius = 0.45  double3 xformOp:translate = (1.2, 0, 0)   uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R3> }
+    def Sphere "S4" { double radius = 0.45  double3 xformOp:translate = (2.4, 0, 0)   uniform token[] xformOpOrder = ["xformOp:translate"]  rel material:binding = </World/Looks/R4> }
+
+    def Scope "Looks"
+    {
+        def Material "R0"
+        {
+            token outputs:surface.connect = </World/Looks/R0/PBR.outputs:surface>
+            def Shader "PBR"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.8, 0.6)
+                float inputs:base_metalness = 1
+                float inputs:specular_roughness = 0
+                token outputs:surface
+            }
+        }
+        def Material "R1"
+        {
+            token outputs:surface.connect = </World/Looks/R1/PBR.outputs:surface>
+            def Shader "PBR"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.8, 0.6)
+                float inputs:base_metalness = 1
+                float inputs:specular_roughness = 0.25
+                token outputs:surface
+            }
+        }
+        def Material "R2"
+        {
+            token outputs:surface.connect = </World/Looks/R2/PBR.outputs:surface>
+            def Shader "PBR"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.8, 0.6)
+                float inputs:base_metalness = 1
+                float inputs:specular_roughness = 0.5
+                token outputs:surface
+            }
+        }
+        def Material "R3"
+        {
+            token outputs:surface.connect = </World/Looks/R3/PBR.outputs:surface>
+            def Shader "PBR"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.8, 0.6)
+                float inputs:base_metalness = 1
+                float inputs:specular_roughness = 0.75
+                token outputs:surface
+            }
+        }
+        def Material "R4"
+        {
+            token outputs:surface.connect = </World/Looks/R4/PBR.outputs:surface>
+            def Shader "PBR"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.8, 0.6)
+                float inputs:base_metalness = 1
+                float inputs:specular_roughness = 1
+                token outputs:surface
+            }
+        }
+    }
+}

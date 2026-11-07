@@ -50,6 +50,8 @@ documents live in [archive/](archive/).
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
 - [lmetalview](../examples/lmetalview/README.md) — native macOS Swift + Metal
   Quick Look-style viewer (`next` product only).
+- [ld3d12view](../examples/ld3d12view/README.md) — native Windows Direct3D 12
+  viewer on the lmetalview core and lightui (`next` product only).
 - [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).
 - [lusdrender.md](lusdrender.md) — `lusdrender` GPU backend testing.

@@ -35,6 +35,10 @@ typedef enum {
     LUI_EVENT_MOUSE_DOWN,            /* button pressed                    */
     LUI_EVENT_MOUSE_UP,              /* button released                   */
     LUI_EVENT_SCROLL,                /* mouse wheel / trackpad scroll     */
+
+    /* Files dropped from the OS file manager (see lui_window_set_file_drop).
+     * One event per file; fetch the path with lui_window_take_dropped_file(). */
+    LUI_EVENT_FILE_DROP,
 } lui_event_type_t;
 
 /* -------------------------------------------------------------------------

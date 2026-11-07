@@ -10,8 +10,10 @@
 
 get_filename_component(LMV_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  message(STATUS "lmetalview: skipped (macOS only)")
+# The C++ core (lmetalview_core) is portable and also builds on Windows for
+# examples/ld3d12view; the Swift + Metal application is macOS only.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT WIN32)
+  message(STATUS "lmetalview: skipped (macOS / Windows only)")
   return()
 endif()
 
@@ -37,7 +39,7 @@ list(APPEND LMV_CORE_SOURCES
     ${LMV_REPO_ROOT}/src/external/miniz.c)
 set_source_files_properties(${LMV_REPO_ROOT}/src/external/miniz.c
     PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1"
-               COMPILE_FLAGS "-w")
+               COMPILE_FLAGS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 
 # EXR decode: the vendored pure-C11 tinyexr v3 backend + the LightUSD adapter.
 # The `next` product does not build the legacy image-loader stack, so the example
@@ -48,10 +50,10 @@ set(LMV_EXR_SOURCES ${LMV_REPO_ROOT}/src/imageio/exr-codec.c ${LMV_TINYEXR_SOURC
 set_source_files_properties(${LMV_TINYEXR_SOURCES}
     PROPERTIES INCLUDE_DIRECTORIES "${LMV_EXR_DIR}/include;${LMV_EXR_DIR}/src"
                COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD"
-               COMPILE_FLAGS "-w")
+               COMPILE_FLAGS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 set_source_files_properties(${LMV_REPO_ROOT}/src/imageio/exr-codec.c
     PROPERTIES INCLUDE_DIRECTORIES "${LMV_REPO_ROOT}/src"
-               COMPILE_FLAGS "-w")
+               COMPILE_FLAGS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 list(APPEND LMV_CORE_SOURCES ${LMV_EXR_SOURCES})
 
 # KTX2 preview decode: the vendored texpipe/texcomp C stack + zstd for
@@ -70,11 +72,14 @@ target_include_directories(lmetalview_textools PUBLIC
     ${LMV_TEXTOOLS_DIR}/texcomp/include
     ${LMV_TEXTOOLS_DIR}/texpipe/include)
 target_compile_features(lmetalview_textools PRIVATE c_std_11)
-target_compile_definitions(lmetalview_textools PRIVATE
-    TIR_ENABLE_THREADS TIR_THREADS_PTHREAD
-    ZSTD_DISABLE_ASM=1)
-find_package(Threads REQUIRED)
-target_link_libraries(lmetalview_textools PUBLIC Threads::Threads)
+target_compile_definitions(lmetalview_textools PRIVATE ZSTD_DISABLE_ASM=1)
+if(NOT WIN32)
+  # MSVC has no C11 <threads.h> / pthreads; textools runs single-threaded there.
+  target_compile_definitions(lmetalview_textools PRIVATE
+      TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
+  find_package(Threads REQUIRED)
+  target_link_libraries(lmetalview_textools PUBLIC Threads::Threads)
+endif()
 if(NOT MSVC)
   target_compile_options(lmetalview_textools PRIVATE -w)
 endif()
@@ -121,11 +126,17 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
       $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)
 endif()
 
+if(MSVC)
+  target_compile_definitions(lmetalview_core PRIVATE
+      _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_compile_options(lmetalview_core PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+endif()
 if(NOT LIGHTUSD_CXX_RTTI)
   target_compile_options(lmetalview_core PRIVATE
-      $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+      $<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>>)
 endif()
-if(NOT LIGHTUSD_CXX_EXCEPTIONS)
+if(NOT LIGHTUSD_CXX_EXCEPTIONS AND NOT MSVC)
   target_compile_options(lmetalview_core PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
 endif()
@@ -135,11 +146,13 @@ endif()
 # ---------------------------------------------------------------------------
 
 include(CheckLanguage)
-check_language(Swift)
-if(NOT CMAKE_Swift_COMPILER)
-  message(STATUS "lmetalview: skipped (no Swift compiler found)")
-  return()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  check_language(Swift)
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_Swift_COMPILER)
+  message(STATUS "lmetalview: Swift app skipped (no Swift compiler found)")
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_Swift_COMPILER)
 enable_language(Swift)
 
 set(LMV_SWIFT_SOURCES
@@ -183,6 +196,7 @@ set_target_properties(lmetalview PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${LMV_VERSION}"
     Swift_LANGUAGE_VERSION "5"
     XCODE_ATTRIBUTE_SWIFT_VERSION "5.0")
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -218,6 +232,7 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
   set_tests_properties(lmetalview_core_test PROPERTIES
       LABELS "lmetalview" WORKING_DIRECTORY ${LMV_REPO_ROOT})
 
+  if(TARGET lmetalview)
   # Headless renders also compile the MSL at runtime, so these cover the
   # UDIM/Ptex/KTX2/EXR shader paths that the core test cannot reach.
   function(lmv_add_headless_test name fixture)
@@ -368,4 +383,5 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       TIMEOUT 180
       WORKING_DIRECTORY ${LMV_REPO_ROOT})
+  endif()
 endif()

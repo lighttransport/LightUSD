@@ -18,7 +18,9 @@ build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview model
 
 The bundle is `lmetalview.app`; Finder's *Open With* lists it for USD files.
 `LIGHTUSD_NEXT_BUILD_LMETALVIEW` defaults to `LIGHTUSD_NEXT_BUILD_EXAMPLES` and
-is only available on macOS, in the `next` product.
+is only available in the `next` product. The Swift + Metal app is macOS only;
+on Windows the option builds just the portable core (`lmetalview_core`) that
+[`ld3d12view`](../ld3d12view/README.md) renders with Direct3D 12.
 
 Headless mode (used by CTest) renders one frame without a window:
 
@@ -179,6 +181,11 @@ Format fixtures live in `tests/`: `udim-texture.usda` + four PNG tiles,
 a small ZIP-compressed EXR, and `animated-xform.usda` for the timeline.
 
 ## Relationship to lusdview / lusdrender
+
+The C++ core (`core/`) is also the scene source for the Windows viewer
+[`ld3d12view`](../ld3d12view/README.md). When changing `lmv.h`, note that a
+scene keeps the load options and `lmv_scene_set_time()` calls the progress
+callback again, so `progress_user` must stay valid until `lmv_scene_free()`.
 
 This example intentionally does **not** reuse lusdview's `next_scene_loader`
 (~10k lines coupled to the GPU ray tracer's `DrawScene`) or its metal-cpp/GLFW

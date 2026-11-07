@@ -433,6 +433,7 @@ CMakeUserPresets.json
 !models/concave_ngon.usda
 !examples/lusdview/tests/deform-skin-animation.usda
 !examples/lmetalview/tests/*.usda
+!examples/ld3d12view/tests/*.usda
 # Small authored MaterialX closure/volume fixtures used by the Vulkan RT smoke.
 !examples/lusdview/tests/authored-nested-closures.usda
 !examples/lusdview/tests/authored-volume-material.usda

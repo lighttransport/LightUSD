@@ -19,6 +19,23 @@ lightusd-owned files:
 
 ## lightusd-local patches (must survive a re-sync)
 
+**Native window handle + external rendering (also in upstream lightui).**
+
+`lui_window_native_handle()` / `lui_window_set_external_render()` in
+`window.h`/`lightui.c`, plus `external_render`/`native_window`/`native_kind` in
+`struct lui_window_s` and their Win32 wiring. Used by `examples/ld3d12view` to
+create a D3D12 swapchain on the lightui `HWND` while keeping lightui's software
+surface for the HUD. When the vendored copy is re-synced to an upstream that
+has these, drop this note.
+
+**File drag-and-drop (Win32; also in upstream lightui).**
+
+`lui_window_set_file_drop()` / `lui_window_take_dropped_file()`, the
+`LUI_EVENT_FILE_DROP` event, optional `window_set_file_drop` /
+`window_take_dropped_file` platform ops, and the `WM_DROPFILES` handler in
+`platform_win32.c`. Used by `examples/ld3d12view` to open files dropped on the
+window. Other backends leave the ops NULL (drop is a no-op there).
+
 **`src/platform/x11/platform_x11.c` — `x11_sync_configured_size()` must not block.**
 
 Upstream loops on `XNextEvent` until it observes a `ConfigureNotify`. That

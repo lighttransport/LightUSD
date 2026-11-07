@@ -554,6 +554,48 @@ only) registers its own tests. Configure with
 ctest -R '^lmetalview' --output-on-failure
 ```
 
+The `ld3d12view` example (native Windows Direct3D 12 viewer, `next` product
+only, Windows only) shares `lmetalview_core`, so `lmetalview_core_test` also runs
+on Windows. Configure with `-DLIGHTUSD_NATIVE_PRODUCT=next
+-DLIGHTUSD_NEXT_BUILD_EXAMPLES=ON -DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON
+-DLIGHTUSD_NEXT_BUILD_TESTS=ON`. Every `ld3d12view-*` test uses the WARP software
+adapter and a hidden window, so none needs a GPU; the input and loading tests
+post real window messages (`WM_DROPFILES`, `WM_KEYDOWN`, mouse clicks, `WM_SIZE`)
+through the window procedure. Tests marked "log" also check the program's stderr
+with a regular expression.
+
+| Name | What it tests |
+|------|---------------|
+| `ld3d12view-smoke-warp` | Device/swapchain/grid pipeline, HLSL compile, screenshot readback |
+| `ld3d12view-{mesh,instanced,shadow,env,points,gaussians,curves}-warp` | Mesh/subset materials, instancing, directional shadow map, dome IBL, point splats, curve ribbons |
+| `ld3d12view-{textured,exr,bc1,udim,ptex}-warp` | 8-bit, float EXR, BC1 (KTX2), UDIM texture-array and Ptex-atlas texture paths (UDIM/Ptex log: `uploaded, 0 unsupported`) |
+| `ld3d12view-{alpha-modes,transparency}-warp` | Blend-mode sorting and alpha-tested cutouts (including in the shadow map) |
+| `ld3d12view-openpbr-*-warp` | OpenPBR extras: coat, glass/transmission, subsurface, brick, metallic, emissive, multi-object |
+| `ld3d12view-background-{env,off}-warp` | Dome/gradient background and `--no-background` (env: log `dome environment`) |
+| `ld3d12view-animated-{xform,light,camera,visibility,material,pointinstancer,skinned,skeletal}-warp` | In-place playback paths and the re-conversion fallback (material), including GPU skinning and blend shapes |
+| `ld3d12view-playback-warp` | The wall-clock playback pump running past the end of a clip |
+| `ld3d12view-space-{pause,play,static}-warp` | Space toggles playback through a synthetic key press (log: `paused at` / `playing at` / `no animation`) |
+| `ld3d12view-hud-{play-click,timeline-click,resize,hidden}-warp` | HUD button and timeline clicks, window resize (swapchain + HUD texture), `--no-hud` |
+| `ld3d12view-load-{async,progress,cancel,supersede,missing}-warp` | Worker-thread loading: phases, Esc cancel, a drop superseding a running load, a missing command-line file (expected to fail) |
+| `ld3d12view-drop-{open,replace,bad}-warp` | Drag and drop through `WM_DROPFILES`: open into an empty viewer, replace a scene, a bad file keeps the old scene |
+| `ld3d12view-ibl-warp` | Metal spheres, roughness 0 to 1, under the HDR dome: the GGX-prefiltered specular environment |
+| `ld3d12view-bc7{,-off}-warp` | Load-time BC7 compression of large 8-bit textures (log: `compressed to BC7`) and `--no-compress-textures` |
+| `ld3d12view-shadow-cascades-warp` | 3-cascade shadows on a 240 m ground plane with boxes at increasing distance, seen from an authored camera |
+| `ld3d12view-pick-{hit,miss,material}-warp` | Click picking through a synthetic left click: prim path, a miss, material lookup (log: `picked /World/...`) |
+| `ld3d12view-{outliner,variant-click,variant-cli,outline-select}-warp` | Outliner rows, variant switching by click and by `--variant` (reload with the next variant), selecting a prim row |
+| `ld3d12view-camera-{cycle,index}-warp` | `C` stepping through authored cameras and back to the free view; `--camera N` |
+| `ld3d12view-bookmark-{save,load}-warp` | Camera bookmarks: store/disturb/recall round trip, then reload from the persisted file (the pair shares a bookmark file under the build directory) |
+| `ld3d12view-capture-setup`, `ld3d12view-shot-warp`, `ld3d12view-turntable-{warp,files}` | `P` screenshot, and a headless 8-frame turntable whose files are checked by `tests/check_turntable.cmake` (frame count, non-empty, first and middle frame differ) |
+| `ld3d12view-hw-*` (only with `-DLD3D12VIEW_HW_TESTS=ON`) | The same viewer on the real GPU; fails if the adapter is WARP |
+
+Every `ld3d12view-*` test runs with `LD3D12VIEW_DEBUG=1` (the D3D12 debug layer,
+when Graphics Tools is installed) and also fails on any `D3D12 ERROR` line.
+
+```bat
+:: ld3d12view only
+ctest --test-dir build -R "^ld3d12view" --output-on-failure
+```
+
 ```bash
 # Run every test whose name belongs to the lusdview matrix. The name filter
 # includes tests that do not carry the lusdview label.

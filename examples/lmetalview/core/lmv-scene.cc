@@ -91,7 +91,7 @@ std::string Sv(lightusd_sv s) {
 }
 
 std::string DirName(const std::string& path) {
-  const size_t slash = path.find_last_of('/');
+  const size_t slash = path.find_last_of("/\\");
   if (slash == std::string::npos) return std::string();
   if (slash == 0) return "/";
   return path.substr(0, slash);
@@ -292,6 +292,10 @@ struct LightData {
   float param0 = 0.0f;
   float param1 = 0.0f;
   int32_t dome_texture_id = -1;
+  // tydra stores an *image* id in the dome light params (despite the C API
+  // comment that says texture index); keep it so the environment image is
+  // decoded and viewers can find it.
+  int32_t dome_image_id = -1;
 };
 
 struct CameraData {
@@ -1994,7 +1998,11 @@ void BuildMaterialData(lightusd_render_scene* scene, int32_t material_id,
       out->tex[LMV_TEX_BASE_COLOR] = TextureSlot(tex);
       has_textures = has_textures || tex >= 0;
     }
-    if (MaterialParam(scene, material_id, "specular_color", &tex, value)) {
+    // UsdPreviewSurface's specularColor defaults to black and is only meaningful
+    // in the specular workflow; copying that default would zero F0 (black
+    // metals). Treat black as unauthored and keep the neutral default.
+    if (MaterialParam(scene, material_id, "specular_color", &tex, value) &&
+        (value[0] > 0.0f || value[1] > 0.0f || value[2] > 0.0f)) {
       Copy3(value, pbr.specularColor);
     }
     if (MaterialParam(scene, material_id, "metallic", &tex, value)) {
@@ -2789,7 +2797,7 @@ std::string ReplaceUdimToken(const std::string& pattern, uint32_t udim) {
 }
 
 std::string BaseName(const std::string& path) {
-  const size_t slash = path.find_last_of('/');
+  const size_t slash = path.find_last_of("/\\");
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
@@ -3833,12 +3841,10 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
                                               &dome_texture) == LIGHTUSD_OK) {
       light.dome_texture_id = dome_texture;
       if (dome_texture >= 0 &&
-          static_cast<size_t>(dome_texture) < out->textures.size() &&
-          out->textures[static_cast<size_t>(dome_texture)].image_id >= 0) {
-        const int32_t image_id =
-            out->textures[static_cast<size_t>(dome_texture)].image_id;
-        used_images.insert(image_id);
-        env_images.insert(image_id);
+          static_cast<size_t>(dome_texture) < out->images.size()) {
+        light.dome_image_id = dome_texture;
+        used_images.insert(dome_texture);
+        env_images.insert(dome_texture);
       }
     }
   }
@@ -4256,6 +4262,15 @@ struct lmv_scene {
   float meters_per_unit = 1.0f;
   uint32_t animation_count = 0;
   bool force_reconversion = false;
+
+  // Variant sets of the composed stage, collected on first request.
+  struct VariantSetInfo {
+    std::string prim_path, set_name, selection;
+    std::vector<std::string> variants;
+    std::vector<const char*> variant_ptrs;  // into `variants`
+  };
+  mutable std::vector<VariantSetInfo> variant_sets;
+  mutable bool variant_sets_built = false;
 };
 
 namespace {
@@ -4395,12 +4410,32 @@ lmv_status lmv_load(const char* path, const lmv_load_options* options,
   if (opts.max_memory_bytes > 0) {
     load.max_resident_bytes = opts.max_memory_bytes;
   }
+  // Variant overrides: the single legacy pair plus any extras. Borrowed for the
+  // duration of the load call.
+  std::vector<const char*> override_sets, override_names;
   if (opts.variant_set && opts.variant_name) {
-    const char* sets[1] = {opts.variant_set};
-    const char* names[1] = {opts.variant_name};
-    load.variant_sets = sets;   // borrowed for the duration of the call
-    load.variant_names = names;
-    load.variant_override_count = 1;
+    override_sets.push_back(opts.variant_set);
+    override_names.push_back(opts.variant_name);
+  }
+  for (uint32_t i = 0; i < opts.extra_variant_count; ++i) {
+    if (opts.extra_variant_sets && opts.extra_variant_names &&
+        opts.extra_variant_sets[i] && opts.extra_variant_names[i]) {
+      override_sets.push_back(opts.extra_variant_sets[i]);
+      override_names.push_back(opts.extra_variant_names[i]);
+    }
+  }
+  if (!override_sets.empty()) {
+    load.variant_sets = override_sets.data();
+    load.variant_names = override_names.data();
+    load.variant_override_count = override_sets.size();
+  }
+  // The retained options must not point at the caller's temporary arrays.
+  for (lmv_load_options* o : {&opts, &scene->opts}) {
+    o->extra_variant_sets = nullptr;
+    o->extra_variant_names = nullptr;
+    o->extra_variant_count = 0;
+    o->variant_set = nullptr;
+    o->variant_name = nullptr;
   }
   load.progress_callback =
       [](void* userdata, const char* phase, size_t current,
@@ -4645,6 +4680,72 @@ const char* lmv_scene_warning(const lmv_scene* scene, uint32_t index) {
   return scene->data.warnings[index].c_str();
 }
 
+static void CollectVariantSets(const lmv_scene* scene) {
+  if (scene->variant_sets_built) return;
+  scene->variant_sets_built = true;
+  if (scene->path.empty()) return;
+  // Composition resolves variant selections and drops the set definitions, so
+  // read them from the root layer on its own (uncomposed). Sets that only exist
+  // in referenced/payloaded layers are therefore not listed.
+  lightusd_load_options lo;
+  lightusd_load_options_init(&lo);
+  lo.composed = 0;
+  lo.load_payloads = 0;
+  lightusd_stage* layer = nullptr;
+  if (lightusd_stage_load(scene->path.c_str(), &lo, &layer) != LIGHTUSD_OK || !layer)
+    return;
+  // Start from the root prims (in reverse, so the traversal follows stage
+  // order); the pseudo-root handle is not usable here.
+  std::vector<lightusd_prim> stack;
+  for (size_t r = lightusd_stage_root_prim_count(layer); r > 0; --r)
+    stack.push_back(lightusd_stage_root_prim(layer, r - 1));
+  while (!stack.empty()) {
+    const lightusd_prim prim = stack.back();
+    stack.pop_back();
+    if (!lightusd_prim_is_valid(prim)) continue;
+    const size_t set_count = lightusd_prim_variant_set_count(prim);
+    for (size_t s = 0; s < set_count; ++s) {
+      lmv_scene::VariantSetInfo info;
+      info.set_name = Sv(lightusd_prim_variant_set_name(prim, s));
+      if (info.set_name.empty()) continue;
+      info.prim_path = Sv(lightusd_prim_path(prim));
+      info.selection = Sv(lightusd_variant_selection(prim, info.set_name.c_str()));
+      const size_t n = lightusd_variant_count(prim, info.set_name.c_str());
+      for (size_t v = 0; v < n; ++v)
+        info.variants.push_back(
+            Sv(lightusd_variant_name(prim, info.set_name.c_str(), v)));
+      for (const std::string& name : info.variants)
+        info.variant_ptrs.push_back(name.c_str());
+      scene->variant_sets.push_back(std::move(info));
+    }
+    // Children in reverse so the traversal (and the list) follows stage order.
+    for (size_t c = lightusd_prim_child_count(prim); c > 0; --c)
+      stack.push_back(lightusd_prim_child(prim, c - 1));
+  }
+  lightusd_stage_destroy(layer);  // all strings were copied out above
+}
+
+uint32_t lmv_scene_variant_set_count(const lmv_scene* scene) {
+  if (!scene) return 0;
+  CollectVariantSets(scene);
+  return static_cast<uint32_t>(scene->variant_sets.size());
+}
+
+lmv_status lmv_scene_variant_set(const lmv_scene* scene, uint32_t index,
+                                 lmv_variant_set_view* out) {
+  if (!scene || !out) return LMV_ERR_INVALID_ARG;
+  CollectVariantSets(scene);
+  if (index >= scene->variant_sets.size()) return LMV_ERR_INVALID_ARG;
+  const lmv_scene::VariantSetInfo& v = scene->variant_sets[index];
+  std::memset(out, 0, sizeof(*out));
+  out->prim_path = v.prim_path.c_str();
+  out->set_name = v.set_name.c_str();
+  out->selection = v.selection.c_str();
+  out->variant_count = static_cast<uint32_t>(v.variants.size());
+  out->variants = v.variant_ptrs.data();
+  return LMV_OK;
+}
+
 lmv_status lmv_scene_mesh(const lmv_scene* scene, uint32_t index,
                           lmv_mesh_view* out) {
   if (!scene || !out || index >= scene->data.meshes.size()) {
@@ -4858,6 +4959,7 @@ lmv_status lmv_scene_light(const lmv_scene* scene, uint32_t index,
   out->param0 = light.param0;
   out->param1 = light.param1;
   out->dome_texture_id = light.dome_texture_id;
+  out->dome_image_id = light.dome_image_id;
   return LMV_OK;
 }
 

@@ -116,7 +116,10 @@ examples/                  Standalone example apps (separate builds):
                            js-script, progressive_composition,
                            lmetalview (native macOS Swift + Metal viewer,
                            next product only; build with
-                           `-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`), etc.
+                           `-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`),
+                           ld3d12view (native Windows Direct3D 12 viewer on the
+                           lmetalview core + lightui; next product only; build
+                           with `-DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON`), etc.
 examples/common/light3d/   Shared example math + camera (`camera-nav.*` is
                            used by both lusdview and lmetalview)
 models/                    Test USD files for development
@@ -180,7 +183,8 @@ cd python && python3 -m pytest tests/ -q
 - `LIGHTUSD_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
 - `LIGHTUSD_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
 - `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `lusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
-- `LIGHTUSD_NEXT_BUILD_LMETALVIEW=ON` - Build the native macOS Swift + Metal viewer example `lmetalview` (next product only; requires a Swift toolchain).
+- `LIGHTUSD_NEXT_BUILD_LMETALVIEW=ON` - Build the native macOS Swift + Metal viewer example `lmetalview` (next product only; requires a Swift toolchain). On Windows this option builds only its portable core (`lmetalview_core`).
+- `LIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON` - Build the native Windows Direct3D 12 viewer example `ld3d12view` (next product only; Windows only; needs only the Windows SDK; uses the vendored `examples/common/lightui` for the window and HUD). Also builds `lmetalview_core`.
   - `LUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
 
 ### GUI viewer (`lusdview`) + Vulkan debugging

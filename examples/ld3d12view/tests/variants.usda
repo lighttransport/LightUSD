@@ -1,0 +1,100 @@
+#usda 1.0
+(
+    defaultPrim = "Model"
+    upAxis = "Y"
+)
+
+# Two variant sets: "look" swaps the ball's colour, "shape" swaps the geometry.
+# The ground is shared and outside both sets.
+def Xform "Model" (
+    variants = {
+        string look = "red"
+        string shape = "ball"
+    }
+    prepend variantSets = ["look", "shape"]
+)
+{
+    variantSet "look" = {
+        "red" {
+            def Material "Paint"
+            {
+                token outputs:surface.connect = </Model/Paint/PBR.outputs:surface>
+                def Shader "PBR"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:diffuseColor = (0.85, 0.15, 0.12)
+                    float inputs:roughness = 0.4
+                    token outputs:surface
+                }
+            }
+        }
+        "green" {
+            def Material "Paint"
+            {
+                token outputs:surface.connect = </Model/Paint/PBR.outputs:surface>
+                def Shader "PBR"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:diffuseColor = (0.15, 0.7, 0.2)
+                    float inputs:roughness = 0.4
+                    token outputs:surface
+                }
+            }
+        }
+        "blue" {
+            def Material "Paint"
+            {
+                token outputs:surface.connect = </Model/Paint/PBR.outputs:surface>
+                def Shader "PBR"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:diffuseColor = (0.15, 0.3, 0.9)
+                    float inputs:roughness = 0.4
+                    token outputs:surface
+                }
+            }
+        }
+    }
+
+    variantSet "shape" = {
+        "ball" {
+            def Sphere "Body" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                double radius = 1
+                double3 xformOp:translate = (0, 1, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+                rel material:binding = </Model/Paint>
+            }
+        }
+        "tall" {
+            def Cube "Body" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                double size = 1
+                double3 xformOp:scale = (0.8, 2.4, 0.8)
+                double3 xformOp:translate = (0, 1.2, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                rel material:binding = </Model/Paint>
+            }
+        }
+    }
+
+    def Mesh "Ground"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-4, 0, -4), (-4, 0, 4), (4, 0, 4), (4, 0, -4)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (interpolation = "vertex")
+        color3f[] primvars:displayColor = [(0.7, 0.7, 0.7)]
+    }
+}
+
+def DistantLight "Sun"
+{
+    float inputs:intensity = 3
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}

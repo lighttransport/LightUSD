@@ -58,7 +58,12 @@ typedef struct lmv_progress {
   const char* message; /* borrowed; valid for the duration of the callback */
 } lmv_progress;
 
-/* Return 0 to cancel the load / conversion. Must be cheap and thread-safe. */
+/* Return 0 to cancel the load / conversion. Must be cheap and thread-safe.
+ *
+ * The scene keeps a copy of the load options, so lmv_scene_set_time() calls this
+ * callback again (and passes the same `progress_user`) for as long as the scene
+ * lives. `progress_user` must therefore stay valid until lmv_scene_free(), or the
+ * callback must ignore it once the original load is over. */
 typedef int (*lmv_progress_fn)(void* user, const lmv_progress* progress);
 
 /* ------------------------------------------------------------------------- */
@@ -88,6 +93,14 @@ typedef struct lmv_load_options {
 
   lmv_progress_fn progress;
   void* progress_user;
+
+  /* Further variant overrides, applied together with variant_set/variant_name:
+   * extra_variant_count entries of (set name -> variant name). A set name
+   * applies to every prim that defines such a set. Borrowed for the call. */
+  const char* const* extra_variant_sets;
+  const char* const* extra_variant_names;
+  uint32_t extra_variant_count;
+  uint32_t _pad2;
 } lmv_load_options;
 
 /* Fills every field with the defaults. */
@@ -143,6 +156,26 @@ uint32_t lmv_scene_camera_count(const lmv_scene* scene);
 /* Conversion / load diagnostics ("3 meshes skipped: ..."). */
 uint32_t lmv_scene_warning_count(const lmv_scene* scene);
 const char* lmv_scene_warning(const lmv_scene* scene, uint32_t index);
+
+/* ------------------------------------------------------------------------- */
+/* Variant sets                                                              */
+/* ------------------------------------------------------------------------- */
+
+/* One variant set found on a prim of the composed stage. Reload the scene with
+ * lmv_load_options.variant_set/variant_name (or extra_variant_*) to switch. */
+typedef struct lmv_variant_set_view {
+  const char* prim_path;
+  const char* set_name;
+  const char* selection;   /* current selection, "" when none */
+  uint32_t variant_count;
+  const char* const* variants;
+} lmv_variant_set_view;
+
+/* Collected from the stage on first use (a traversal of every prim) and cached
+ * with the scene. Not thread safe against itself; call from one thread. */
+uint32_t lmv_scene_variant_set_count(const lmv_scene* scene);
+lmv_status lmv_scene_variant_set(const lmv_scene* scene, uint32_t index,
+                                 lmv_variant_set_view* out);
 
 /* ------------------------------------------------------------------------- */
 /* Geometry                                                                  */
@@ -461,6 +494,9 @@ typedef struct lmv_light_view {
   float param1;
   /* Dome lights: texture id of the environment map, -1 = none. */
   int32_t dome_texture_id;
+  /* Dome lights: image id (lmv_scene_image) of the environment map, -1 = none.
+   * Prefer this over dome_texture_id, which tydra reports as an image id. */
+  int32_t dome_image_id;
 } lmv_light_view;
 
 lmv_status lmv_scene_light(const lmv_scene* scene, uint32_t index,
