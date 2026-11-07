@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <climits>
+#include <cstdint>
 #include <string>
 
 #include "asset-resolution.hh"
@@ -637,9 +639,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       char *end = nullptr;
       errno = 0;
       const unsigned long long count = v ? std::strtoull(v, &end, 10) : 0;
+      // strtoull spans all size_t values on 64-bit hosts. Only narrower
+      // targets need a separate range check before using the count as a size.
+#if SIZE_MAX < ULLONG_MAX
+      const bool count_too_large = count > std::numeric_limits<size_t>::max();
+#else
+      const bool count_too_large = false;
+#endif
       if (!v || !std::isdigit(static_cast<unsigned char>(*v)) ||
-          errno == ERANGE || !end || *end || !count ||
-          count > std::numeric_limits<size_t>::max()) {
+          errno == ERANGE || !end || *end || !count || count_too_large) {
         std::cerr << "Invalid -maxArrayElements (expected a positive element count).\n";
         return false;
       }

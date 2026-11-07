@@ -99,9 +99,9 @@ expect_clean_failure "-frames on the non-next path" \
 grep -qi "frames" "$TMP/log" \
   || fail "-frames rejection did not mention -frames: $(tail -1 "$TMP/log")"
 
-# Sane inputs must still work.
+# Sane inputs must still work, including the largest 32-bit array-count cap.
 run_timeout 60 "$LUSDRENDER" "$TMP/tri.usda" "$TMP/ok.png" -w 16 -height 16 \
-    -samples 1 -fitScale 1.5 -autoframe > "$TMP/log" 2>&1 \
+    -samples 1 -fitScale 1.5 -autoframe -maxArrayElements 4294967295 > "$TMP/log" 2>&1 \
   || fail "a valid render regressed: $(cat "$TMP/log")"
 [ -f "$TMP/ok.png" ] || fail "valid render wrote no image"
 
