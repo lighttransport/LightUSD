@@ -193,7 +193,7 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
         return 0;
       }
       /* The i32 prefix is the COMPRESSED size of the chunk, as OpenUSD
-       * TfFastCompression writes and as our reader expects (verif/lean
+       * TfFastCompression writes and as our reader expects (usdspec-conformance verif/lean
        * LEAN-421). Reserve it, compress, then back-patch. */
       const size_t size_pos = out_pos;
       out_pos += sizeof(int32_t);

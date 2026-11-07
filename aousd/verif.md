@@ -12,7 +12,7 @@ publishes no 1.1 corpus yet.
 
 ## Formal verification (2026-11-06)
 
-A Lean 4 formalization of v1.1.0 lives in [verif/lean](../verif/lean/README.md);
+A Lean 4 formalization of v1.1.0 lives in `verif/lean` in [usdspec-conformance](https://github.com/lighttransport/usdspec-conformance);
 findings, LightUSD fixes and reflection gates are summarized in
 [doc/validation/lean-verification-2026-11-06.md](../doc/validation/lean-verification-2026-11-06.md).
 

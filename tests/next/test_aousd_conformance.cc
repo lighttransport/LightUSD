@@ -95,7 +95,7 @@ void TestUnicodeAndPaths() {
   // terminal element (L3449-3450): the PEG's `PathElements <- PrimElements
   // (PropElements)*` would admit relative chains like `.relationship.attribute`,
   // but the spec tables never list one and OpenUSD SdfPath rejects them
-  // (verif/lean LEAN-203, UsdSpec.PathGrammar.peg_property_asymmetry).
+  // (usdspec-conformance LEAN-203, UsdSpec.PathGrammar.peg_property_asymmetry).
   const char* valid_paths[] = {
       "/", ".", "..", "../..", "../../Sibling", "../.points",
       "Descendant", ".property",
@@ -3611,7 +3611,7 @@ void TestPathGrammarProductions() {
       {"a/b.p", true},
       {"a/b.p.q", false},
       // At most ONE property element in every form: the PEG's relative
-      // `(PropElements)*` contradicts L3449-3450 (verif/lean LEAN-203).
+      // `(PropElements)*` contradicts L3449-3450 (usdspec-conformance LEAN-203).
       {"/a/b.p.q", false},
       {"/.points", false},
       // Namespaced property elements inside longer paths.

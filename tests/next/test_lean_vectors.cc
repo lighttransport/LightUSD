@@ -5,7 +5,7 @@
 //
 // The expected values in tests/next/generated/lean/*.inc are computed by the
 // Lean 4 formalization of the AOUSD USD Core Specification v1.1.0 under
-// verif/lean (lake exe usdspec-gen). Each section below replays one vector
+// the usdspec-conformance repo (lake exe usdspec-gen in verif/lean). Each section below replays one vector
 // table against the corresponding src/next implementation. The tables are
 // COMMITTED; this binary is self-contained and never skips.
 //

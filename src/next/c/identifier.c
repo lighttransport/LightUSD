@@ -226,7 +226,7 @@ int lu_is_valid_path_string(const char *data, size_t size) {
   if (pos >= size) return 0;
   /* A property is always the terminal element (AOUSD L3449-3450, OpenUSD
    * SdfPath): the PEG's `PathElements <- PrimElements (PropElements)*` would
-   * admit `a.b.c` for relative paths (verif/lean LEAN-203), so allow at most
+   * admit `a.b.c` for relative paths (usdspec-conformance LEAN-203), so allow at most
    * one property in every form. */
   if (!parse_path_elements(data, size, &pos, prim_required, 1)) {
     return 0;

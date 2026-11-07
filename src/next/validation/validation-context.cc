@@ -781,9 +781,10 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
   return result;
 }
 
-// Rule id -> Lean declaration (verif/lean/UsdSpec/**). Kept sorted by rule
-// id; scripts/check-lean-reflection.py parses this table and verifies every
-// declaration exists in the Lean sources (ctest next_lean_reflection_table).
+// Rule id -> Lean declaration (usdspec-conformance verif/lean/UsdSpec/**). Kept
+// sorted by rule id; that repository's scripts/check-lean-reflection.py
+// (--lightusd <this checkout>) parses this table and verifies every declaration
+// exists in the Lean sources. Keep the BEGIN/END markers intact.
 // BEGIN LEAN_REFLECTION_TABLE
 static const std::pair<const char*, const char*> kLeanReflectionTable[] = {
     {"core.dict.duplicateKey", "UsdSpec.Dict.WellFormed"},

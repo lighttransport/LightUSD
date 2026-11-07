@@ -108,7 +108,7 @@ documents live in [archive/](archive/).
 ## Renderer validation reports
 
 - [Lean 4 formal verification of the AOUSD Core Spec v1.1.0](validation/lean-verification-2026-11-06.md)
-  (`verif/lean`, reflection vectors, spec issue drafts `issues/aousd/08`-`21`).
+  (now in the `usdspec-conformance` repo: `verif/lean`, reflection vectors, spec issue drafts `issues/aousd/08`-`21`).
 - [Current dataset gap closure ledger](validation/gap-closure-status.md) and
   [resumed implementation report](validation/session-resumed-2026-11-03.md).
 - [Complete matching-work load time and RSS](validation/load-performance-resumed-2026-11-03.md).

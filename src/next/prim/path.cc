@@ -24,7 +24,7 @@ Path Path::Parse(const std::string& path_str) {
   if (path_str.empty() || !IsValidPathString(path_str)) return Path();
   // The grammar allows inline padding inside a variant selection
   // (`{ set = variant }`); the canonical form has none (OpenUSD SdfPath, and
-  // verif/lean `PathGrammar.printPath`). Padding is only legal inside braces
+  // usdspec-conformance `PathGrammar.printPath`). Padding is only legal inside braces
   // of a path that already validated, so dropping it there is exact.
   if (path_str.find('{') != std::string::npos &&
       path_str.find_first_of(" \t") != std::string::npos) {
