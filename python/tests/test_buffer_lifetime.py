@@ -8,7 +8,7 @@ from lightusd import tydra
 
 
 def test_typed_buffer_survives_mutation_and_close():
-    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { float3[] a = [(1,2,3),(4,5,6)] }')
+    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { float3[] a = [(1,2,3),(4,5,6)]\n}')
     prim = stage.prim_at("/P")
     array = prim["a"]
     view = memoryview(array)
@@ -27,7 +27,7 @@ def test_typed_buffer_survives_mutation_and_close():
 
 def test_numpy_buffer_survives_owner_release():
     np = pytest.importorskip("numpy")
-    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { int[] a = [1,2,3] }')
+    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { int[] a = [1,2,3]\n}')
     source = stage.prim_at("/P")["a"]
     a = np.asarray(source)
     b = np.asarray(source)
@@ -53,7 +53,7 @@ def test_strided_and_big_endian_ingestion():
 
 
 def test_render_buffer_retains_catalog():
-    stage = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2] }')
+    stage = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n}')
     scene = tydra.to_render_scene(stage)
     view = memoryview(scene.meshes[0].points)
     stage.close()

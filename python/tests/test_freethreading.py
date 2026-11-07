@@ -67,14 +67,14 @@ def test_concurrent_clip_resolve_reuses_and_revalidates(tmp_path):
     """
     clip = tmp_path / "clip.usda"
     clip.write_text(
-        '#usda 1.0\ndef Xform "Root" { float value.timeSamples = {0: 2, 2: 6} }\n')
+        '#usda 1.0\ndef Xform "Root" { float value.timeSamples = {0: 2, 2: 6}\n}\n')
     root = tmp_path / "root.usda"
     root.write_text('''#usda 1.0
  def Xform "Root" (clips = { dictionary default = {
   asset[] assetPaths = [@clip.usda@]
   double2[] active = [(0,0)]
   string primPath = "/Root"
- } }) { float value }
+ } }) {\n float value\n}
 ''')
 
     with lightusd.load(root) as stage:
@@ -93,5 +93,5 @@ def test_concurrent_clip_resolve_reuses_and_revalidates(tmp_path):
         # Both samples change and the file grows, so a stale cached stage is
         # detectable by content, size and mtime alike.
         clip.write_text(
-            '#usda 1.0\ndef Xform "Root" { float value.timeSamples = {0: 25, 2: 60} }\n')
+            '#usda 1.0\ndef Xform "Root" { float value.timeSamples = {0: 25, 2: 60}\n}\n')
         wave((25.0, 60.0))

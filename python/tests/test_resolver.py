@@ -184,7 +184,7 @@ def test_resolver_scheme_composition(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     dep = (
         b'#usda 1.0\n(defaultPrim = "Base")\n'
-        b'def Xform "Base" { def Xform "Child" {} }\n'
+        b'def Xform "Base" {\n def Xform "Child" {}\n }\n'
     )
     root = tmp_path / "root.usda"
     root.write_text(
@@ -220,7 +220,7 @@ def test_resolver_load_integration(tmp_path):
     assets.mkdir(parents=True)
     (assets / "dep.usda").write_text(
         '#usda 1.0\n(defaultPrim = "Base")\n'
-        'def Xform "Base" { def Xform "Child" {} }\n',
+        'def Xform "Base" {\n def Xform "Child" {}\n }\n',
         encoding="utf-8",
     )
     root = tmp_path / "root.usda"

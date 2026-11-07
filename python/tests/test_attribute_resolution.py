@@ -108,7 +108,10 @@ def test_adjacent_clips_interpolate_without_missing_value_option(tmp_path, monke
   double2[] active = [(0,0), (2,1)]
   double2[] times = [(0,10), (2,20)]
   string primPath = "/Root"
- } }) { float x\n normal3f[] normals }
+ } }) {
+  float x
+  normal3f[] normals
+ }
 ''')
     monkeypatch.chdir(tmp_path)
     with lightusd.load(root.name) as stage:
@@ -138,7 +141,9 @@ def test_file_clip_evaluation_retains_explicit_array_limit(tmp_path):
   asset[] assetPaths = [@clip.usdc@]
   double2[] active = [(0,0)]
   string primPath = "/Root"
- } }) { int[] values }
+ } }) {
+  int[] values
+ }
 ''')
     with lightusd.load(root,max_array_elements=16) as stage:
         with pytest.raises(lightusd.UsdError,match='max_array_elements'):
@@ -156,10 +161,12 @@ def test_package_root_and_clip_keep_archive_anchor(tmp_path):
   asset[] assetPaths = [@../clips/a.usda@, @../clips/b.usda@]
   double2[] active = [(0,0), (2,1)]
   string primPath = "/Root"
- } }) { float value }
+ } }) {
+  float value
+ }
 ''')
-        archive.writestr('clips/a.usda','#usda 1.0\ndef Xform "Root" { float value.timeSamples = {0: 2} }\n')
-        archive.writestr('clips/b.usda','#usda 1.0\ndef Xform "Root" { float value.timeSamples = {2: 6} }\n')
+        archive.writestr('clips/a.usda','#usda 1.0\ndef Xform "Root" {\n float value.timeSamples = {0: 2}\n}\n')
+        archive.writestr('clips/b.usda','#usda 1.0\ndef Xform "Root" {\n float value.timeSamples = {2: 6}\n}\n')
     for source in (str(path),str(path)+'[nested/root.usda]'):
         with lightusd.load(source) as stage:
             assert stage.prim_at('/Root').attribute('value').resolve(time=1) == 4
@@ -167,7 +174,9 @@ def test_package_root_and_clip_keep_archive_anchor(tmp_path):
 
 def test_connection_to_clip_keeps_lazy_file_loader(tmp_path):
     (tmp_path/'clip.usda').write_text('''#usda 1.0
- def Xform "Root" { float x.timeSamples = {0: 2, 2: 6} }
+ def Xform "Root" {
+  float x.timeSamples = {0: 2, 2: 6}
+ }
 ''')
     root=tmp_path/'root.usda'
     root.write_text('''#usda 1.0
@@ -175,12 +184,16 @@ def test_connection_to_clip_keeps_lazy_file_loader(tmp_path):
   asset[] assetPaths = [@clip.usda@]
   double2[] active = [(0,0)]
   string primPath = "/Root"
- } }) { float x }
- def Xform "Consumer" { float x.connect = </Root.x> }
+ } }) {
+  float x
+ }
+ def Xform "Consumer" {
+  float x.connect = </Root.x>
+ }
 ''')
     with lightusd.load(root) as stage:
         value=stage.prim_at('/Consumer').attribute('x')
         assert value.resolve(time=1,follow_connections=True) == 4
         assert value.resolve(time=1,follow_connections=False) is None
-        (tmp_path/'clip.usda').write_text('#usda 1.0\ndef Xform \"Root\" { float x.timeSamples = {0: 4, 2: 8} }')
+        (tmp_path/'clip.usda').write_text('#usda 1.0\ndef Xform \"Root\" {\n float x.timeSamples = {0: 4, 2: 8}\n}')
         assert value.resolve(time=1,follow_connections=True) == 6

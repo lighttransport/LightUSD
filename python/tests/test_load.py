@@ -157,7 +157,7 @@ def test_input_policy_is_explicit(tmp_path, value, error):
 @pytest.mark.parametrize('policy', ['untrusted', 'trusted'])
 @pytest.mark.parametrize('threads', [0, 1, 4])
 def test_explicit_execution_policy_roundtrip(tmp_path, policy, threads):
-    data=b'#usda 1.0\ndef Xform "World" { int[] values = [1,2,3] }'
+    data=b'#usda 1.0\ndef Xform "World" { int[] values = [1,2,3]\n}'
     source=tmp_path/'source.usda';source.write_bytes(data)
     options=dict(input_policy=policy,max_threads=threads)
     for stage in (lightusd.load(source,**options),lightusd.load_bytes(data,**options)):

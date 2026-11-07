@@ -51,9 +51,15 @@ def test_meters_to_centimeters_and_grams():
 
 def test_up_axis_rotates_roots_and_gravity():
     stage = lightusd.loads('''#usda 1.0
-( upAxis = "Y" metersPerUnit = 1 )
-def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, -1, 0) }
-def Xform "Robot" { double3 xformOp:translate = (0, 1, 0)  uniform token[] xformOpOrder = ["xformOp:translate"] }
+( upAxis = "Y"
+ metersPerUnit = 1 )
+def PhysicsScene "Scene" {
+ vector3f physics:gravityDirection = (0, -1, 0)
+}
+def Xform "Robot" {
+ double3 xformOp:translate = (0, 1, 0)
+ uniform token[] xformOpOrder = ["xformOp:translate"]
+}
 ''')
     report = units.convert_units(stage, up_axis='Z')
     assert report.rotated_roots == 2 and stage.up_axis == 'Z'
@@ -64,8 +70,12 @@ def Xform "Robot" { double3 xformOp:translate = (0, 1, 0)  uniform token[] xform
 
 def test_up_axis_round_trip_removes_the_rotation():
     stage = lightusd.loads('''#usda 1.0
-( upAxis = "Z" metersPerUnit = 1 )
-def Xform "Robot" { double3 xformOp:translate = (1, 2, 3)  uniform token[] xformOpOrder = ["xformOp:translate"] }
+( upAxis = "Z"
+ metersPerUnit = 1 )
+def Xform "Robot" {
+ double3 xformOp:translate = (1, 2, 3)
+ uniform token[] xformOpOrder = ["xformOp:translate"]
+}
 ''')
     units.convert_units(stage, up_axis='Y')
     assert list(stage.prim_at('/Robot')['xformOpOrder'])[0] == 'xformOp:rotateX:upAxis'
@@ -77,11 +87,18 @@ def Xform "Robot" { double3 xformOp:translate = (1, 2, 3)  uniform token[] xform
 
 def test_time_samples_scale_once_and_keep_declared_types():
     stage = lightusd.loads('''#usda 1.0
-( upAxis = "Z" metersPerUnit = 1 )
+( upAxis = "Z"
+ metersPerUnit = 1 )
 def Xform "R" {
-  def Sphere "s" { double radius.timeSamples = { 0: 1, 10: 2 } }
-  def Mesh "m" { half3[] points = [(1, 2, 3)] }
-  def PhysicsJoint "j" { float newton:armature = 1 }
+  def Sphere "s" {
+    double radius.timeSamples = { 0: 1, 10: 2 }
+  }
+  def Mesh "m" {
+    half3[] points = [(1, 2, 3)]
+  }
+  def PhysicsJoint "j" {
+    float newton:armature = 1
+  }
 }
 ''')
     report = units.convert_units(stage, meters_per_unit=0.001)
@@ -98,7 +115,8 @@ def Xform "R" {
 
 def test_sdf_break_distance_and_vdb_field_scale():
     stage = lightusd.loads('''#usda 1.0
-( metersPerUnit = 1 kilogramsPerUnit = 1 )
+( metersPerUnit = 1
+  kilogramsPerUnit = 1 )
 def Mesh "M" (prepend apiSchemas = ["NewtonSDFCollisionAPI"]) {
     uniform float newton:sdfNarrowBandInner = -0.1
     uniform float newton:sdfNarrowBandOuter = 0.2

@@ -74,7 +74,7 @@ def test_round_trip_geometry_materials_and_skin(tmp_path):
 
 def test_world_space_and_triangulate(tmp_path):
     stage = lightusd.loads('''#usda 1.0
-def Xform "R" (prepend apiSchemas = []) {
+def Xform "R" {
     double3 xformOp:translate = (10, 0, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
     def Mesh "M" {

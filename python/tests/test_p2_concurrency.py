@@ -29,7 +29,8 @@ def test_concurrent_tydra():
 def test_concurrent_variant_loads(tmp_path):
     base = tmp_path / "v.usda"
     base.write_text('''#usda 1.0
-def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"]) {
+def Xform "R" (variants = { string lod = "high" }
+    prepend variantSets = ["lod"]) {
   variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
 }
 ''')

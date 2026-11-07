@@ -58,7 +58,7 @@ def test_tydra_mesh_buffers_and_zero_copy():
     assert m.subsets == []
     assert m.material_id >= 0
     # scene keeps alive after stage closed
-    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }')
+    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n }\n}')
     sc = tydra.to_render_scene(st2)
     st2.close()
     assert np.asarray(sc.meshes[0].points).shape[1] == 3

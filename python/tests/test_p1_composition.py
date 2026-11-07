@@ -21,7 +21,7 @@ def _write(path: pathlib.Path, txt: str):
 def test_payload_deferred_vs_eager(tmp_path):
     """payload(load_payloads=False) keeps prim but may hide geometry; True loads it."""
     payload = tmp_path / "payload.usda"
-    _write(payload, '#usda 1.0\n(\n defaultPrim = "Geo"\n)\ndef Mesh "Geo" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] }\n')
+    _write(payload, '#usda 1.0\n(\n defaultPrim = "Geo"\n)\ndef Mesh "Geo" {\n point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n}\n')
     root = tmp_path / "root.usda"
     _write(root, f'#usda 1.0\ndef Xform "Holder" (\n payload = @./payload.usda@</Geo>\n) {{}}\n')
     # eager (default)
@@ -39,9 +39,9 @@ def test_payload_deferred_vs_eager(tmp_path):
 
 def test_sublayer_stack_override(tmp_path):
     base = tmp_path / "base.usda"
-    _write(base, '#usda 1.0\ndef Xform "Obj" { float v = 1 }\n')
+    _write(base, '#usda 1.0\ndef Xform "Obj" {\n float v = 1\n}\n')
     middle = tmp_path / "middle.usda"
-    _write(middle, '#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\nover "Obj" { float v = 2 }\n')
+    _write(middle, '#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\nover "Obj" {\n float v = 2\n}\n')
     top = tmp_path / "top.usda"
     _write(top, '#usda 1.0\n(\n subLayers = [@./middle.usda@]\n)\n')
     st = lightusd.load(str(top))
@@ -54,7 +54,7 @@ def test_sublayer_stack_override(tmp_path):
 
 def test_reference_chaining(tmp_path):
     c = tmp_path / "c.usda"
-    _write(c, '#usda 1.0\ndef Xform "C" { float v = 3 }\n')
+    _write(c, '#usda 1.0\ndef Xform "C" {\n float v = 3\n}\n')
     b = tmp_path / "b.usda"
     _write(b, f'#usda 1.0\ndef Xform "B" (\n references = @./c.usda@</C>\n) {{}}\n')
     a = tmp_path / "a.usda"
@@ -70,12 +70,13 @@ def test_reference_chaining(tmp_path):
 def test_variant_with_payload_selection(tmp_path):
     # payload file per variant
     pay_high = tmp_path / "high.usda"
-    _write(pay_high, '#usda 1.0\ndef Mesh "Geo" { float tag = 1 int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] point3f[] points = [(0,0,0)] }\n')
+    _write(pay_high, '#usda 1.0\ndef Mesh "Geo" {\n float tag = 1\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n point3f[] points = [(0,0,0)]\n}\n')
     pay_low = tmp_path / "low.usda"
-    _write(pay_low, '#usda 1.0\ndef Mesh "Geo" { float tag = 0 }\n')
+    _write(pay_low, '#usda 1.0\ndef Mesh "Geo" {\n float tag = 0\n}\n')
     root = tmp_path / "root.usda"
     _write(root, f'''#usda 1.0
-def Xform "R" (variants = {{ string lod = "high" }} prepend variantSets = ["lod"]) {{
+def Xform "R" (variants = {{ string lod = "high" }}
+  prepend variantSets = ["lod"]) {{
   variantSet "lod" = {{
     "high" (payload = @./high.usda@) {{}}
     "low" (payload = @./low.usda@) {{}}
@@ -96,10 +97,11 @@ def Xform "R" (variants = {{ string lod = "high" }} prepend variantSets = ["lod"
 def test_composition_mix_sublayer_reference_variant(tmp_path):
     # Complex mix: subLayer provides variant, reference provides mesh
     ref = tmp_path / "ref.usda"
-    _write(ref, '#usda 1.0\ndef Mesh "Box" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] }\n')
+    _write(ref, '#usda 1.0\ndef Mesh "Box" {\n point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n}\n')
     variant = tmp_path / "var.usda"
     _write(variant, f'''#usda 1.0
-def Xform "Holder" (variants = {{ string sel = "on" }} prepend variantSets = ["sel"]) {{
+def Xform "Holder" (variants = {{ string sel = "on" }}
+  prepend variantSets = ["sel"]) {{
   variantSet "sel" = {{
     "on" (references = @./ref.usda@</Box>) {{}}
     "off" {{}}
@@ -121,7 +123,7 @@ def Xform "Holder" (variants = {{ string sel = "on" }} prepend variantSets = ["s
 def test_flatten_file_efficiency(tmp_path):
     # flatten_file should preserve prim count and lazy arrays metric
     src = tmp_path / "src.usda"
-    _write(src, '#usda 1.0\ndef Xform "A" { float v = 1 def Mesh "M" { point3f[] points = [(0,0,0),(1,0,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }\n')
+    _write(src, '#usda 1.0\ndef Xform "A" {\n float v = 1\n def Mesh "M" {\n  point3f[] points = [(0,0,0),(1,0,0)]\n  int[] faceVertexCounts = [3]\n  int[] faceVertexIndices = [0,1,2]\n }\n}\n')
     dst = tmp_path / "dst.usdc"
     t0 = time.perf_counter()
     lightusd.flatten_file(str(src), str(dst))
@@ -168,7 +170,8 @@ def test_max_memory_enforcement(tmp_path):
 def test_composition_variant_override_priority(tmp_path):
     root = tmp_path / "root.usda"
     _write(root, '''#usda 1.0
-def Xform "R" (variants = { string lod = "low" } prepend variantSets = ["lod"]) {
+def Xform "R" (variants = { string lod = "low" }
+    prepend variantSets = ["lod"]) {
   variantSet "lod" = { "low" { float a = 0 } "high" { float a = 1 } }
 }
 ''')

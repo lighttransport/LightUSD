@@ -227,7 +227,7 @@ def test_relationship_and_variants_full():
 def test_load_options_and_is_usd(tmp_path):
     # sublayer composition
     base = tmp_path / "base.usda"
-    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1 }\n')
+    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1\n}\n')
     root = tmp_path / "root.usda"
     root.write_text('#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\n')
     st = lightusd.load(str(root))
@@ -235,8 +235,9 @@ def test_load_options_and_is_usd(tmp_path):
     # variants override
     vroot = tmp_path / "v.usda"
     vroot.write_text('''#usda 1.0
-def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"]) {
-  variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
+def Xform "R" (variants = { string lod = "high" }
+    prepend variantSets = ["lod"]) {
+  variantSet "lod" = { "high" { float a = 1\n }\n "low" { float a = 2\n } }
 }
 ''')
     assert lightusd.load(str(vroot), variants={"lod": "low"}).prim_at("/R")["a"] == pytest.approx(2.0)
@@ -267,11 +268,11 @@ def test_native_instance_proxy_paths_and_parents(tmp_path):
     source.write_text('''#usda 1.0
     def Xform "Source" {
         def Xform "Group" {
-            def Mesh "Mesh" { point3f[] points = [(1,2,3)] }
+            def Mesh "Mesh" { point3f[] points = [(1,2,3)]\n }
         }
     }
-    def Xform "A" ( prepend references = </Source> instanceable = true ) {}
-    def Xform "B" ( prepend references = </Source> instanceable = true ) {}
+    def Xform "A" ( prepend references = </Source>\n instanceable = true ) {}
+    def Xform "B" ( prepend references = </Source>\n instanceable = true ) {}
     ''')
     stage = lightusd.load(str(source), preserve_native_instances=True)
     for name in ("A", "B"):
@@ -306,11 +307,11 @@ def test_flattened_instance_members_keep_their_subtree(tmp_path):
     flat = tmp_path / "flat_instances.usda"
     flat.write_text('#usda 1.0\n'
                     'def Xform "Source" {\n'
-                    '    def Mesh "Mesh" { point3f[] points = [(1,2,3)] }\n'
+                    '    def Mesh "Mesh" { point3f[] points = [(1,2,3)]\n    }\n'
                     '}\n'
-                    'def Xform "A" ( prepend references = </Source> '
+                    'def Xform "A" ( prepend references = </Source>\n '
                     'instanceable = true ) {}\n'
-                    'def Xform "B" ( prepend references = </Source> '
+                    'def Xform "B" ( prepend references = </Source>\n '
                     'instanceable = true ) {}\n')
     for native in (False, True):
         stage = lightusd.load(str(flat), preserve_native_instances=native)
@@ -322,17 +323,25 @@ def test_flattened_instance_members_keep_their_subtree(tmp_path):
     nested = tmp_path / "nested_instances.usda"
     nested.write_text('#usda 1.0\n'
                       'def Xform "Prop" {\n'
-                      '    def Mesh "geom" { point3f[] points = [(0,0,0)] }\n'
+                      '    def Mesh "geom" {\n'
+                      '        point3f[] points = [(0,0,0)]\n'
+                      '    }\n'
                       '}\n'
                       'def Xform "Set" {\n'
-                      '    def Xform "PropA" ( prepend references = </Prop> '
-                      'instanceable = true ) {}\n'
-                      '    def Xform "PropB" ( prepend references = </Prop> '
-                      'instanceable = true ) {}\n'
+                      '    def Xform "PropA" (\n'
+                      '        prepend references = </Prop>\n'
+                      '        instanceable = true\n'
+                      '    ) {}\n'
+                      '    def Xform "PropB" (\n'
+                      '        prepend references = </Prop>\n'
+                      '        instanceable = true\n'
+                      '    ) {}\n'
                       '    def Xform "PropC" ( prepend references = </Prop> ) {}\n'
                       '}\n'
-                      'def Xform "Top" ( prepend references = </Set> '
-                      'instanceable = true ) {}\n')
+                      'def Xform "Top" (\n'
+                      '    prepend references = </Set>\n'
+                      '    instanceable = true\n'
+                      ') {}\n')
     expected = ["/Prop/geom", "/Set/PropA/geom", "/Set/PropB/geom",
                 "/Set/PropC/geom", "/Top/PropA/geom", "/Top/PropB/geom",
                 "/Top/PropC/geom"]
@@ -358,11 +367,11 @@ def test_leaf_prim_truthiness_is_validity_not_child_count():
 
 def test_explicit_default_traversal_prunes_nonparticipating_subtrees():
     stage = lightusd.loads('''#usda 1.0
-    class Xform "Class" { def Mesh "AbstractMesh" {} }
+    class Xform "Class" {\n def Mesh "AbstractMesh" {}\n }
     def Xform "Root" {
         def Mesh "Visible" {}
-        def Xform "Inactive" (active = false) { def Mesh "Hidden" {} }
-        over "Undefined" { def Mesh "Child" {} }
+        def Xform "Inactive" (active = false) {\n def Mesh "Hidden" {}\n }
+        over "Undefined" {\n def Mesh "Child" {}\n }
     }
     ''')
     assert [p.path for p in stage.traverse()] == ["/Root", "/Root/Visible"]

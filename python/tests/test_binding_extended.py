@@ -243,7 +243,7 @@ def test_relationship_and_variant_ops():
 def test_stage_composition_and_files(tmp_path):
     # sublayer composition on disk
     base = tmp_path / "base.usda"
-    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1 }\n')
+    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1\n}\n')
     root = tmp_path / "root.usda"
     root.write_text(f'#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\ndef Xform "Root" {{}} \n')
     st = lightusd.load(str(root))
@@ -254,7 +254,8 @@ def test_stage_composition_and_files(tmp_path):
     # variants override
     vroot = tmp_path / "v.usda"
     vroot.write_text('''#usda 1.0
-def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"]) {
+def Xform "R" (variants = { string lod = "high" }
+    prepend variantSets = ["lod"]) {
   variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
 }
 ''')
@@ -330,7 +331,7 @@ def test_tydra_full_scene_and_zero_copy():
     assert isinstance(scene.cameras, tuple)
     assert scene.mesh_by_path("/World/M") is not None
     # scene outlives stage (use a valid mesh)
-    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }')
+    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n }\n}')
     sc = tydra.to_render_scene(st2)
     st2.close()
     assert len(sc.meshes) == 1
@@ -375,6 +376,6 @@ def test_flatten_and_type_helpers():
     assert lightusd.type_from_name("float") != 0
     assert lightusd.type_name(lightusd.type_from_name("float")) == "float"
     # asarray helper
-    st2 = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0)] }')
+    st2 = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0)]\n}')
     arr = st2.prim_at("/M")["points"]
     assert np.allclose(lightusd.asarray(arr), np.array([[0,0,0]], dtype=np.float32))
