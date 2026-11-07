@@ -354,11 +354,42 @@ struct DiffStats {
   size_t files = 0, opened = 0, reads = 0, ok_reads = 0, mismatches = 0;
   size_t extra_open = 0, extra_reads = 0;  // accepted by tptex only
   size_t divergences = 0;                  // informational (see DiffBuffer)
+  size_t budget_skips = 0;                 // corrupted headers above the harness budget
 };
+
+// The frozen legacy reader has no allocation budget at open. Do not feed
+// mutations declaring huge face/constant/metadata tables to either reader:
+// those stress available address space rather than decoder equivalence, and
+// ASan cannot service them on i386. Valid corpus files are never filtered.
+bool WithinCorruptionOpenBudget(const uint8_t* data, size_t size) {
+  if (size < 64) return true;  // let the readers reject truncated headers
+  const auto u32 = [](const uint8_t* p) {
+    return uint32_t(p[0]) | uint32_t(p[1]) << 8 |
+           uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+  };
+  const uint64_t limit = 16u << 20;
+  const uint64_t faces = u32(data + 24);
+  const uint32_t type = u32(data + 12);
+  if (type > 3) return true;  // rejected before any face-table allocation
+  const uint64_t channels = uint32_t(data[20]) | uint32_t(data[21]) << 8;
+  const uint64_t pixel = channels * (type == 0 ? 1u : (type == 3 ? 4u : 2u));
+  // Conservatively include the reference, adapter and C-core face records,
+  // both raw 20-byte tables, and the core's two index arrays.
+  const size_t face_bytes = sizeof(ptx_legacy::FaceInfo) +
+                            sizeof(lightusd::ptx::FaceInfo) +
+                            sizeof(tptex_face_info) + 40u + 2u * sizeof(uint32_t);
+  if (faces * face_bytes > limit || faces * pixel > limit ||
+      u32(data + 60) > limit) return false;
+  // Extended header's large-metadata header decode size, when present.
+  if (u32(data + 28) >= 16u && size >= 80u && u32(data + 76) > limit)
+    return false;
+  return true;
+}
 
 // Compare one buffer under both readers. Returns false on the first mismatch.
 // mode 0: informational (corrupted inputs: tptex follows upstream Ptex and may
-// legitimately diverge from the permissive legacy reader; only crashes matter,
+// legitimately diverge from the permissive legacy reader; within the harness
+// budget, only crashes matter,
 // which the sanitizer builds and fuzzers catch). mode 1: level 0 must match.
 // mode 2: every level must match (conformant, hand-built or real files).
 enum { kInformational = 0, kLevel0 = 1, kAllLevels = 2 };
@@ -366,6 +397,10 @@ bool DiffBuffer(const uint8_t* data, size_t size, const char* label,
                 DiffStats* st, const size_t* budgets, size_t nbudgets,
                 uint32_t face_stride = 1, int mode = kAllLevels) {
   ++st->files;
+  if (mode == kInformational && !WithinCorruptionOpenBudget(data, size)) {
+    ++st->budget_skips;
+    return true;
+  }
   ptx_legacy::Reader legacy;
   std::string lerr;
   const bool lok = ptx_legacy::Reader::OpenMemory(data, size, &legacy, &lerr);
@@ -546,7 +581,7 @@ void ptx_reader_legacy_differential_test(void) {
       std::printf("  %s: %zu face/level decodes identical\n", path.c_str(), st.ok_reads - before);
     }
   }
-  std::printf("  ptx differential: %zu buffers, %zu opened (+%zu tptex-only), %zu reads (%zu decoded, +%zu tptex-only), %zu informational divergences, %zu mismatches\n",
-              st.files, st.opened, st.extra_open, st.reads, st.ok_reads, st.extra_reads, st.divergences, st.mismatches);
+  std::printf("  ptx differential: %zu buffers, %zu opened (+%zu tptex-only), %zu reads (%zu decoded, +%zu tptex-only), %zu informational divergences, %zu budget skips, %zu mismatches\n",
+              st.files, st.opened, st.extra_open, st.reads, st.ok_reads, st.extra_reads, st.divergences, st.budget_skips, st.mismatches);
   TEST_CHECK(st.mismatches == 0);
 }

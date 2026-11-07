@@ -85,7 +85,11 @@ the legacy and next/tydra archives. `LIGHTUSD_PTEX_ENABLE_FILEIO` adds `tptex_fi
   containers, corruptions of each, and the lmetalview fixture. Hand-built and real files
   must match at every level, the randomized corpus at level 0; corrupted inputs are
   informational because tptex follows upstream Ptex where the legacy reader was more
-  permissive. Env: `LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx` adds real files,
+  permissive. Corrupted headers declaring face, constant or metadata tables above
+  the harness's 16 MiB open-table budget are counted separately as budget skips;
+  the frozen reference cannot safely open them under i386 ASan. Valid corpus
+  files are not filtered, and sanitizer allocation/error settings remain unchanged.
+  Env: `LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx` adds real files,
   `LIGHTUSD_PTX_DUMP_CORPUS=dir` dumps the corpus (fuzzer seeds).
 - `fuzz_tptex` (`-DLIGHTUSD_NEXT_BUILD_FUZZERS=ON`, Clang; `tests/fuzzer/tptex_fuzzmain.c`):
   libFuzzer with ASan/UBSan over open (lazy and eager), face decode at stored and reduced
