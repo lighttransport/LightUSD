@@ -1,12 +1,12 @@
 """Display-value comparison: no alignment, resizing, gamma or exposure fitting."""
 import math
 from pathlib import Path
-from PIL import Image, ImageChops
 
 METRIC_NAMES = {'normalized_mae', 'normalized_rmse', 'ssim', 'changed_pixel_fraction', 'alpha_mae', 'psnr_db'}
 
 
 def validate(path, size=None):
+    from PIL import Image
     with Image.open(path) as image:
         image.load()
         if size is not None and list(image.size) != list(size):
@@ -36,6 +36,7 @@ def window_ssim(a, b, window=8):
 
 
 def compare(a, b, output, pixel_tolerance=8):
+    from PIL import Image, ImageChops
     output = Path(output)
     with Image.open(a) as source:
         aa = source.convert('RGBA')

@@ -110,7 +110,7 @@ def Xform "World" (variants = { string display = "low" }; prepend variantSets = 
         textured = work / "textured.usda"
         (work / "pixel.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aOGkAAAAASUVORK5CYII="))
         textured.write_text('''#usda 1.0
-(metersPerUnit = 1 upAxis = "Y")
+(metersPerUnit = 1; upAxis = "Y")
 def Mesh "Mesh" {
  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
  int[] faceVertexCounts = [3]
@@ -175,7 +175,7 @@ def Material "Mat" {
         assert not limited["complete"] and limited["diagnostics"]
         variants = work / "variants.usda"
         variants.write_text('''#usda 1.0
-def Xform "Asset" (variants = { string lod = "low" } prepend variantSets = "lod") {
+def Xform "Asset" (variants = { string lod = "low" }; prepend variantSets = "lod") {
  variantSet "lod" = {
   "low" { custom asset texture = @pixel.png@ }
   "high" { custom asset texture = @missing.png@ }
@@ -188,7 +188,7 @@ def Xform "Asset" (variants = { string lod = "low" } prepend variantSets = "lod"
         weak = work / "weak.usda"
         weak.write_text('''#usda 1.0
 (expressionVariables = { string TEX = "missing.png" })
-def Xform "Asset" (variants = { string lod = "high" } prepend variantSets = "lod") {
+def Xform "Asset" (variants = { string lod = "high" }; prepend variantSets = "lod") {
  variantSet "lod" = {
   "low" { custom asset texture = @`${TEX}`@ }
   "high" { custom asset texture = @missing.png@ }

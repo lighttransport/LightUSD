@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Read native resolved scalar fields; do not rewrite the material to emission.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/gpu-test-common.sh"
 BIN="${1:?lusdrender required}"
 BACKEND="${2:-cpu}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -65,7 +66,7 @@ for RESOLVER in legacy tydra-next; do
   "$BIN" "$TMP/$SPACE.usda" "$TMP/$RESOLVER-$SPACE-$CHANNEL.png" "${ARGS[@]}" \
     -diagnosticMaterial "$CHANNEL" -camera /C -w 16 -height 16 -threads 1 \
     -materialResolver "$RESOLVER" > "$TMP/$RESOLVER-$SPACE-$CHANNEL.log" 2>&1 \
-    || { cat "$TMP/$RESOLVER-$SPACE-$CHANNEL.log"; exit 1; }
+    || lusdrender_test_render_failed "$BACKEND" "$TMP/$RESOLVER-$SPACE-$CHANNEL.log" "$?"
  done
  done
 done

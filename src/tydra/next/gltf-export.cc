@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gltf-export.hh"
 #include "core/minijson.hh"
+#include "next/reader/usdz-reader.hh"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -85,10 +86,33 @@ class Exporter {
     std::vector<uint8_t> data;
     std::string error;
     if (opt.resolver) {
-      const std::string resolved = opt.asset_anchor.empty()
-          ? image.resolved_path
-          : opt.resolver->Resolve(image.resolved_path, opt.asset_anchor).resolved_path;
-      if (!opt.resolver->ReadAsset(resolved, &data, &error)) { Loss(path, "unreadable texture: " + image.resolved_path); return -1; }
+      const auto resolved = opt.resolver->Resolve(image.resolved_path, opt.asset_anchor);
+      bool loaded = false;
+      if (resolved.is_package) {
+        // ReadAsset returns the archive bytes, not the selected entry.
+        lightusd::next::USDZReader package;
+        lightusd::next::USDZReadOptions read;
+        read.max_archive_size = opt.max_output_bytes;
+        read.max_entry_size = opt.max_output_bytes;
+        std::vector<uint8_t> archive;
+        const bool opened = opt.resolver->HasUserCallbacks()
+            ? opt.resolver->ReadAsset(resolved, &archive, &error) &&
+                  package.Open(archive.data(), archive.size(), read)
+            : package.OpenFile(resolved.package_path, read);
+        if (opened) {
+          for (size_t i = 0; i < package.NumEntries(); ++i) {
+            if (package.EntryName(i) == resolved.asset_in_package) {
+              const auto* begin = package.EntryData(i);
+              data.assign(begin, begin + package.EntrySize(i));
+              loaded = true;
+              break;
+            }
+          }
+        }
+      } else {
+        loaded = opt.resolver->ReadAsset(resolved, &data, &error);
+      }
+      if (!loaded) { Loss(path, "unreadable texture: " + image.resolved_path); return -1; }
     } else {
       std::ifstream in(image.resolved_path, std::ios::binary | std::ios::ate);
       const auto size = in.tellg();

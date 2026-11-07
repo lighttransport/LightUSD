@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Analytic two-layer emissive compositing, including texture alpha scale/bias.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/gpu-test-common.sh"
 BIN="${1:?lusdrender required}"
 BACKEND="${2:-cpu}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -111,12 +112,12 @@ for RESOLVER in legacy tydra-next; do
  for MODE in blend-transparent blend-presence cutout-transparent cutout-presence; do
   "$BIN" "$TMP/$MODE.usda" "$TMP/$RESOLVER-$MODE.png" "${ARGS[@]}" \
    -diagnosticEmission -camera /C -w 16 -height 16 -threads 1 -materialResolver "$RESOLVER" \
-   > "$TMP/$RESOLVER-$MODE.log" 2>&1 || { cat "$TMP/$RESOLVER-$MODE.log";exit 1; }
+   > "$TMP/$RESOLVER-$MODE.log" 2>&1 || lusdrender_test_render_failed "$BACKEND" "$TMP/$RESOLVER-$MODE.log" "$?"
  done
  "$BIN" "$TMP/clipped.usda" "$TMP/$RESOLVER-clipped.png" "${ARGS[@]}" \
   -diagnosticEmission -camera /C -w 16 -height 16 -threads 1 -bg 0,0,0 \
   -materialResolver "$RESOLVER" > "$TMP/$RESOLVER-clipped.log" 2>&1 \
-  || { cat "$TMP/$RESOLVER-clipped.log"; exit 1; }
+  || lusdrender_test_render_failed "$BACKEND" "$TMP/$RESOLVER-clipped.log" "$?"
 done
 if "$BIN" "$TMP/overflow.usda" "$TMP/overflow.png" "${ARGS[@]}" \
   -diagnosticEmission -camera /C -w 4 -height 4 -threads 1 \

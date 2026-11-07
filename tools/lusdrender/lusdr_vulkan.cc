@@ -627,7 +627,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   lrt_result vkerr = LRT_RESULT_OK;
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
   if (!vk) {
-    std::cerr << "Failed to create LightRT Vulkan engine.\n";
+    std::cerr << "Failed to create LightRT Vulkan engine (err=" << int(vkerr) << ").\n";
     return false;
   }
 
@@ -920,7 +920,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   lrt_result vkerr = LRT_RESULT_OK;
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
   if (!vk) {
-    std::cerr << "Failed to create LightRT Vulkan engine.\n";
+    std::cerr << "Failed to create LightRT Vulkan engine (err=" << int(vkerr) << ").\n";
     return false;
   }
   uint32_t vk_caps = lrt_vk_engine_caps(vk);

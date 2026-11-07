@@ -1868,6 +1868,8 @@ prepare/abort/commit, and cancellation; it is registered when Tydra is enabled.
 `workflow_tools` additionally exercises JSON crate limits, bounded dependency
 reports and all-authored variants, variant/property provenance, checker baseline
 and SARIF output, directory/package diffs, textured GLB export and strict losses.
+The GLB checks retain textures from both loose layers and USDZ package entries;
+package reads obey the export archive and entry size limit.
 When `lusdrender` is built, it runs the two-camera synthetic capture and checks
 raw depth, world normals and source IDs numerically. Temporary assets are removed
 after the run. `next_gltf_export` tests API budget failures, invalid attribute
@@ -3748,6 +3750,13 @@ wrapper alone cannot establish that the native material field is correct.
 and alpha channels, scale/bias, shared materials and UV1, with independent raw
 and sRGB expectations. RGB scalar reads honor authored color space while alpha
 stays linear. The sRGB case fails before the scalar sampler/resolver fix.
+
+GPU diagnostic regressions report a CTest skip only for explicit Vulkan engine
+startup codes `NOT_BUILT` (4) or `UNSUPPORTED` (8). Other renderer failures,
+allocation failures, crashes and validation errors remain failures. The shared
+classifier is tested by `tool-lusdrender-gpu-test-status`, including negative
+controls for out-of-memory and device-loss messages. Headless controller tests
+also run without Pillow; image decoding/comparison imports it on demand.
 
 `tool-lusdrender-diagnostic-opacity-chunks-gpu` forces one triangle per Vulkan
 chunk and checks two-layer compositing against independent math. Continuation

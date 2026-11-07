@@ -2648,6 +2648,7 @@ if(LIGHTUSD_BUILD_TESTS)
         backface-material
         camera-modes
         cli-robustness
+        gpu-test-status
         cmyk-jpeg-texture
         degraded-material
         diagnostic-material

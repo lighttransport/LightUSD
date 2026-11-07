@@ -66,9 +66,19 @@ class HeadlessTests(unittest.TestCase):
         self.args.session_subdir=True
         first=HeadlessSession(self.args);second=HeadlessSession(self.args)
         self.assertNotEqual(first.out,second.out)
-        self.assertEqual(first.out.parent,self.args.out)
+        self.assertEqual(first.out.parent,self.args.out.resolve())
         self.assertTrue((first.out/'state.json').exists())
         self.assertTrue((second.out/'state.json').exists())
+
+    def test_reusable_mcp_output_root_through_symlink(self):
+        target=self.root/'real-output';target.mkdir()
+        alias=self.root/'output-alias'
+        try:alias.symlink_to(target,target_is_directory=True)
+        except OSError as error:self.skipTest('directory symlinks unavailable: '+str(error))
+        self.args.out=alias;self.args.session_subdir=True
+        session=HeadlessSession(self.args)
+        self.assertEqual(session.out.parent,target.resolve())
+        self.assertTrue((session.out/'state.json').is_file())
 
     def test_reject_unrepresentable_state(self):
         base=normalize({'scene':str(self.scene),'camera':self.camera()})
