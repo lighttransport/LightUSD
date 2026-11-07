@@ -560,6 +560,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sMALLOC=${LIGHTUSD_WASM_MALLOC}")
   endif()
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+  # LightUSDLoader/tests hand the module a zstd-decompressed wasmBinary;
+  # newer emscripten dropped wasmBinary from the default
+  # INCOMING_MODULE_JS_API, so pin the default list plus wasmBinary.
+  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS
     " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
 
@@ -819,6 +823,9 @@ endif()
 # Export heap views for zero-copy streaming and typed pointer descriptors used
 # by the web loader fast path.
 string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
+# Same wasmBinary pin as the next-product flags above (the Node
+# usd-graph snapshot test passes wasmBinary to the combined module).
+string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   string(APPEND LIGHTUSD_EMCC_LINK_FLAGS
     " --post-js \"${PROJECT_SOURCE_DIR}/combined-api.js\"")

@@ -2,7 +2,7 @@
 // Copyright 2024 - Present, Light Transport Entertainment, Inc.
 
 #include "usdz-convert.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <algorithm>
 #include <chrono>

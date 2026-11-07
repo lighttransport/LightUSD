@@ -8,7 +8,7 @@
 #include "mem-budget.hh"
 #include "next/eval/attribute-eval.hh"
 #include "next/schema/usd-shade.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <cmath>
 #include <cstring>

@@ -13,7 +13,7 @@
 #include <vector>
 #include "asset-uuid.hh"
 #include "binding-next-common.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/pcp/cache.hh"
 #include "next/schema/geom-mesh.hh"

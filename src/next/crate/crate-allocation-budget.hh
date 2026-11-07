@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace next {

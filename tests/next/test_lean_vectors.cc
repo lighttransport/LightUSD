@@ -40,7 +40,7 @@
 #include "next/writer/usda-writer.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/layer/layer.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "next/pcp/cache.hh"
 #include "next/pcp/namespace-mapping.hh"
 #include "next/resolver/asset-resolver.hh"

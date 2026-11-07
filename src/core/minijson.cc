@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 #include <algorithm>
 #include <charconv>

@@ -1,6 +1,6 @@
 #include "json-writer.hh"
 #include "layer.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "usd-to-json.hh"
 #include "str-util.hh"
 #include <string>

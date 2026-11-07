@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gltf-export.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <algorithm>
 #include <cmath>
 #include <cstring>

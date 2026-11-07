@@ -6,7 +6,7 @@
 
 #include "core/composition-types.hh"
 #include "lightusd.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "tydra/asset-import/import.hh"
 #include "tydra/urdf-to-usd.hh"
 #include "usdGeom.hh"

@@ -5,7 +5,7 @@
 // std headers they need live here so the 11 units that include logger.hh
 // only parse declarations.
 
-#include "logger.hh"
+#include "core/logger.hh"
 
 #include <iostream>
 #include <sstream>

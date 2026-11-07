@@ -10,7 +10,7 @@
 #include "next/resolver/asset-resolver.hh"
 #include "next/writer/usdc-writer.hh"
 #include "image-loader.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "next/c/storage.h"
 #include <cmath>
 namespace lightusd {

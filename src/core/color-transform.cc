@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 
 #include <algorithm>
 #include <cmath>

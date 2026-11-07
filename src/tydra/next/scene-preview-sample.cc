@@ -6,7 +6,7 @@
 #include <limits>
 #include <sstream>
 
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "light-filter.hh"
 #include "next/eval/xform-eval.hh"
 #include "next/layer/asset-anchor.hh"

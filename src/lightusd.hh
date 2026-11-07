@@ -44,7 +44,7 @@
 // directly.
 #include "stage.hh"
 #include "asset-resolution.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 
 namespace lightusd {

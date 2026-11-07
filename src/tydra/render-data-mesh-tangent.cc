@@ -44,7 +44,7 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push

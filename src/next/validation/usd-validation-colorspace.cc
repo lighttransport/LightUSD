@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "usd-validation-internal.hh"
-#include "../../color-transform.hh"
+#include "core/color-transform.hh"
 
 namespace lightusd {
 namespace next {

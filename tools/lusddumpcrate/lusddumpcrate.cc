@@ -14,7 +14,7 @@
 #include <string>
 #include <cstring>
 #include <sstream>
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 // LightUSD reader headers
 #include "lightusd.hh"

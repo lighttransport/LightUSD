@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Shared MaterialX/shader constant-eval + ShaderParam helper definitions.
 #include "render-converter-mtlx-eval.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../../next/layer/prim-spec.hh"
 #include "next/core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"

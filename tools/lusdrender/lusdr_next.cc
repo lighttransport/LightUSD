@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "image-loader.hh"
 #include "ptex_atlas.hh"   // lusdview::BuildPtexAtlas (Ptex face atlas)
 #include "ptx-loader.hh"

@@ -7,7 +7,7 @@
 
 #include <chrono>
 
-#include "../../logger.hh"
+#include "core/logger.hh"
 #include "../phase-faults.hh"
 
 namespace lightusd {

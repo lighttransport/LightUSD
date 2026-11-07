@@ -38,7 +38,7 @@
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 #include "tiny-format.hh"
 #include "str-util.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "primvar.hh"
 #include "spline-binary.hh"
 

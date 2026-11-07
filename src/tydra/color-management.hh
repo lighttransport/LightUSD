@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "core/attr-metas.hh"
 #include "core/path.hh"
 

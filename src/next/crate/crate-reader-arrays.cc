@@ -7,7 +7,7 @@
 
 #include "crate-data-source.hh"
 #include "lazy-array.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../types/array-builder.hh"
 
 #include <cstring>

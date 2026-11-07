@@ -6,7 +6,7 @@
 #include "render-data.hh"
 #include <cmath>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace tydra {

@@ -8,7 +8,7 @@
  */
 
 #include "rb-dynamics.h"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <string.h>
 #include <float.h>
 #include <math.h>

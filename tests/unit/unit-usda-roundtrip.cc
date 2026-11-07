@@ -15,7 +15,7 @@
 #include "json-to-usd.hh"
 #include "json-writer.hh"
 #include "usd-dump.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "usdGeom.hh"
 
 #include <iostream>

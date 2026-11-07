@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "lightusd-c.h"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>

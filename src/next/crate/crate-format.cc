@@ -5,7 +5,7 @@
 
 #include "crate-format.hh"
 #include "../c/lightusd-core-c.h"  // lu_crate_decode_*
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 // Include LZ4 from existing LightUSD
 #include "../../lz4/lz4.h"

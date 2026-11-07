@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-#include "../security-policy.hh"
+#include "core/security-policy.hh"
 #include "execution.hh"
 #include "operation-status.hh"
 #include "resource-limits.hh"

@@ -7,7 +7,7 @@
 
 #include "lazy-array.hh"
 #include "crate-allocation-budget.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../safe-file-size.hh"
 #include "stream-reader.hh"
 #include "../types/value.hh"

@@ -4,7 +4,7 @@
 // Tydra Next - Mesh triangulation and normals
 
 #include "render-converter-internal.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <cstring>
 #include "external/mapbox/earcut/earcut.hpp"
 

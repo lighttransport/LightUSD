@@ -58,7 +58,7 @@ lightusd_sources=[
   '../../src/pxr-compat.cc',
   '../../src/uuid-gen.cc',
   '../../src/usdMtlx.cc',
-  '../../src/mtlx-dom.cc',
+  '../../src/core/mtlx-dom.cc',
   '../../src/mtlx-simple-parser.cc',
   '../../src/mtlx-xml-parser.cc',
   '../../src/mtlx-xml-tokenizer.cc',

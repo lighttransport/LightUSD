@@ -12,7 +12,7 @@
 #include "cache-utils.hh"
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 #include "../strfmt.hh"                    // IntToStr / UIntToStr
-#include "../../logger.hh"                 // lightusd::logging LIGHTUSD_LOG_*
+#include "core/logger.hh"                 // lightusd::logging LIGHTUSD_LOG_*
 
 #include <algorithm>
 #include <cmath>

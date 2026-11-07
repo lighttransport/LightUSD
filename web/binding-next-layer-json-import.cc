@@ -13,7 +13,7 @@
 #include <limits>
 #include <utility>
 namespace tn = lightusd::next;
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "next/parser/lexer.hh"
 #include "next/parser/value-parser.hh"
 #include "next/parser/ascii-parser.hh"

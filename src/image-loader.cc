@@ -11,7 +11,7 @@
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #if defined(LIGHTUSD_WITH_NANOIMAGE)
 extern "C" {

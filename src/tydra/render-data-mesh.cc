@@ -42,12 +42,12 @@
 #include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 #include "bone-util.hh"
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tsd/tsd-lightusd.hh"
 
 #ifdef __clang__

@@ -13,7 +13,7 @@
 #include <string>
 
 #include "c-api/lightusd-import-c.h"
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 static lightusd::minijson::Value Report(lightusd_stage* stage) {
   lightusd_string* text = nullptr;

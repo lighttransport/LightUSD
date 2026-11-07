@@ -4,7 +4,7 @@
 #include "../schema/schema-registry.hh"
 #include "../types/spline.hh"
 #include "../prim/identifier.hh"
-#include "../../minijson.hh"
+#include "core/minijson.hh"
 #include "../c/lightusd-core-c.h"
 #include <algorithm>
 #include <cmath>

@@ -3,7 +3,7 @@
 #include <limits>
 #include <map>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "udim-mesh.hh"
 
 namespace lightusd::udim {

@@ -21,7 +21,7 @@
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
 #include "../strfmt.hh"
-#include "../../security-policy.hh"
+#include "core/security-policy.hh"
 
 #include <deque>
 #include <functional>

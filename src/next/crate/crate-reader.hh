@@ -14,7 +14,7 @@
 #include <vector>
 #include <memory>
 
-#include "../../security-policy.hh"
+#include "core/security-policy.hh"
 
 namespace lightusd {
 namespace next {

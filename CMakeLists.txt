@@ -668,7 +668,7 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/unicode-xid-c.c
     ${PROJECT_SOURCE_DIR}/src/next/c/spline.c
-    ${PROJECT_SOURCE_DIR}/src/logger.cc
+    ${PROJECT_SOURCE_DIR}/src/core/logger.cc
     ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint-dispatch.cc
@@ -679,7 +679,7 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
     ${PROJECT_SOURCE_DIR}/src/value-types-lerp.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
-    ${PROJECT_SOURCE_DIR}/src/color-transform.cc
+    ${PROJECT_SOURCE_DIR}/src/core/color-transform.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
@@ -715,7 +715,7 @@ set(LIGHTUSD_SOURCES
     # usdMtlX has less dependency(pugixml), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/core/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx-write.cc
@@ -1030,7 +1030,7 @@ endif()
 
 if(LIGHTUSD_WITH_JSON)
   list(APPEND LIGHTUSD_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/minijson.cc
+    ${PROJECT_SOURCE_DIR}/src/core/minijson.cc
     ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
     ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     ${PROJECT_SOURCE_DIR}/src/json-writer.cc

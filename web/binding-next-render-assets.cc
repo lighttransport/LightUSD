@@ -6,7 +6,7 @@
 #include <cstring>
 #include <limits>
 #include "binding-next-assets.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace web_next {

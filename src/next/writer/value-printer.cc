@@ -8,7 +8,7 @@
 #include "../crate/crate-data-source.hh"
 #include "../crate/crate-format.hh"  // HalfToFloat
 #include "../crate/lazy-array.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../types/value-view.hh"
 #include "../types/type-id.hh"
