@@ -22,9 +22,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BIN="${LUSDVIEW:-$REPO_ROOT/build_ninja/lusdview}"
 ELEMENT="${LIGHTUSD_PTEX_ELEMENT:-/mnt/nvme02/data/island/usd/elements/isGardeniaA/instance.usda}"
-PTEX_SRC="${LIGHTUSD_PTEX_SOURCE:-/tmp/gap-ptex-upstream}"
-PTEX_LIB="${LIGHTUSD_PTEX_LIBRARY:-$REPO_ROOT/build_ninja/ptex_upstream_debug/src/ptex}"
+PTEX_SRC="${LIGHTUSD_PTEX_SOURCE:-}"
+PTEX_LIB="${LIGHTUSD_PTEX_LIBRARY:-}"
 CXX="${CXX:-g++}"
+
+# WDAS/OpenPtex is an opt-in verification dependency, never the renderer backend.
+if [ -z "$PTEX_SRC" ] || [ -z "$PTEX_LIB" ]; then
+  echo "SKIP: optional WDAS/OpenPtex oracle requires LIGHTUSD_PTEX_SOURCE and LIGHTUSD_PTEX_LIBRARY"
+  exit "$SKIP"
+fi
 
 [ -x "$BIN" ] || { echo "SKIP: lusdview not found: $BIN"; exit "$SKIP"; }
 [ -f "$ELEMENT" ] || { echo "SKIP: Island element not found: $ELEMENT"; exit "$SKIP"; }

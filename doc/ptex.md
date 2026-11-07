@@ -61,6 +61,15 @@ the viewers.
 
 ## Build
 
+The default renderer backend is the vendored tinyexr `tptex` implementation.
+WDAS/OpenPtex sources and libraries are **optional verification dependencies**;
+normal builds and Ptex rendering do not discover, download or link them.
+The Vulkan oracle runs only when `LIGHTUSD_PTEX_INCLUDE` explicitly points to
+OpenPtex >=2.4 sources (`src/ptex`). The CPU element oracle requires explicit
+`LIGHTUSD_PTEX_SOURCE` (OpenPtex root) and `LIGHTUSD_PTEX_LIBRARY` (directory
+containing `libPtex.so`). Without these settings, the oracle tests skip (77);
+the vendored reader/sampler tests still run.
+
 `cmake/lightusd-ptex.cmake` lists the tptex sources the renderers need (reader, half,
 utils, status, allocator, memory input, inflate against the in-tree miniz, sampler) and
 `cmake/lightusd-render-support.cmake` builds them into `lightusd_ptex_objects`, embedded in

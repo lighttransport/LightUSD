@@ -19,7 +19,7 @@ varies. Skips (77) without the Island corpus, an OpenPtex build, or Vulkan.
 usage: check_vkr_ptex.py <lusdrender> [--output DIR]
 Environment (defaults in brackets):
   LIGHTUSD_ISLAND         Island root       [/mnt/nvme02/data/island]
-  LIGHTUSD_PTEX_INCLUDE   OpenPtex src/ptex (headers + .cpp; >=2.4) [<repo>/../../ptex-aarch64/src/ptex]
+  LIGHTUSD_PTEX_INCLUDE   Optional OpenPtex src/ptex (headers + .cpp; >=2.4); unset skips
 """
 import argparse
 import os
@@ -61,7 +61,10 @@ def main():
         skip('numpy not available')
 
     island = Path(os.environ.get('LIGHTUSD_ISLAND', '/mnt/nvme02/data/island'))
-    include = Path(os.environ.get('LIGHTUSD_PTEX_INCLUDE', REPO.parent.parent / 'ptex-aarch64/src/ptex'))
+    reference_source = os.environ.get('LIGHTUSD_PTEX_INCLUDE')
+    if not reference_source:
+        skip('optional WDAS/OpenPtex oracle not enabled; set LIGHTUSD_PTEX_INCLUDE')
+    include = Path(reference_source)
     element, ptx = island / ELEMENT_REL, island / PTX_REL
     for what, p in (('Island element', element), ('Island .ptx', ptx),
                     ('OpenPtex header', include / 'Ptexture.h'),
