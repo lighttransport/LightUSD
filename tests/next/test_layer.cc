@@ -725,9 +725,36 @@ void test_lazy_path_index_materialization_epoch() {
   assert(lu_storage_materialization_epoch() == after_epoch);
 }
 
+void test_authored_property_order_survives_lookup_sort_and_clone() {
+  PrimSpec prim("P");
+  prim.add_property("z", Value(int32_t(1)));
+  prim.add_relationship("r", Path("/Target"));
+  prim.add_property("a", Value(int32_t(2)));
+  prim.set_relationship_targets("s", {});
+  const std::vector<std::string> original{"z", "r", "a", "s"};
+  prim.finalize_properties();
+  assert(prim.authored_property_names() == original);
+  assert(prim.property("a"));
+  PrimSpec copy = prim.Clone();
+  assert(copy.authored_property_names() == original);
+  assert(copy.remove_property("z"));
+  assert(copy.remove_relationship("r"));
+  copy.add_property("z", Value(int32_t(3)));
+  copy.set_relationship_targets("r", {});
+  copy.finalize_properties();
+  assert((copy.authored_property_names() == std::vector<std::string>{"a", "s", "z", "r"}));
+  assert(prim.authored_property_names() == original);
+  PrimSpec attributes("Attributes");
+  attributes.add_property("z", Value(int32_t(1)));
+  attributes.add_property("a", Value(int32_t(2)));
+  attributes.finalize_properties();
+  assert((attributes.authored_property_names() == std::vector<std::string>{"z", "a"}));
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
+  test_authored_property_order_survives_lookup_sort_and_clone();
   test_prop_name_table();
 #if defined(LIGHTUSD_ENABLE_THREAD)
   test_frozen_string_view_lookup_is_safe();

@@ -19,6 +19,7 @@
 #include "next/types/value.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/strfmt.hh"
+#include "next/prim/relocate-path.hh"
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
@@ -717,6 +718,97 @@ void test_parallel_writer_parity() {
   assert(serial == parallel);
 
   std::cout << "  parallel-writer byte parity passed!\n\n";
+}
+
+void test_relocate_path_anchoring() {
+  struct Case { const char* anchor; const char* path; const char* expected; };
+  const std::vector<Case> valid = {
+    {"/", "P/A", "/P/A"}, {"/P", "A", "/P/A"},
+    {"/P/Sub", "../A", "/P/A"}, {"/P/Sub", "../../A", "/A"},
+    {"/P/Sub", "..", "/P"}, {"/P/Sub", "../..", "/"},
+    {"/P/Sub", ".", "/P/Sub"}, {"/", "", ""},
+    {"/P", "é/中文", "/P/é/中文"}, {"/P", "/A/B", "/A/B"},
+  };
+  for (const auto& item : valid) {
+    std::string output = "unchanged";
+    assert(AnchorRelocatePath(item.path, item.anchor, &output));
+    assert(output == item.expected);
+  }
+  for (const auto& item : std::vector<Case>{
+      {"/", "..", ""}, {"/", "../A", ""}, {"/P", "../../A", ""},
+      {"/P/Sub", "../../../A", ""}, {"/P", "./A", ""},
+      {"/P", "A/../B", ""}, {"/P", "../", ""}, {"/P", "A/", ""}}) {
+    std::string output = "not-a-delete";
+    assert(!AnchorRelocatePath(item.path, item.anchor, &output));
+    assert(output == "not-a-delete");
+  }
+  const std::string source = "#usda 1.0\n(relocates = { <P/A>: <P/B>, <P/C>: <> })\n"
+      "def Xform \"P\" {}\n";
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  auto parsed = LoadUSDAFromString(source, strict);
+  assert(parsed.success);
+  const auto expected = std::vector<std::pair<std::string, std::string>>{
+      {"/P/A", "/P/B"}, {"/P/C", ""}};
+  assert(parsed.stage.GetRootLayer()->meta().relocates == expected);
+  const auto text = WriteUSDAToString(parsed.stage);
+  auto rewritten = LoadUSDAFromString(text, strict);
+  assert(rewritten.success && rewritten.stage.GetRootLayer()->meta().relocates == expected);
+  std::vector<uint8_t> bytes;
+  assert(WriteUSDCToMemory(bytes, parsed.stage).success);
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success && binary.stage.GetRootLayer()->meta().relocates == expected);
+  const std::string invalid = "#usda 1.0\n(relocates = { </P/A>: <../Gone> })\n"
+      "def Xform \"P\" {}\n";
+  auto rejected = LoadUSDAFromString(invalid, strict);
+  assert(!rejected.success && rejected.error_summary.find("cannot be anchored") != std::string::npos);
+  auto permissive = LoadUSDAFromString(invalid);
+  assert(permissive.success && !permissive.warnings.empty());
+  assert(permissive.stage.GetRootLayer()->meta().relocates[0].second == "../Gone");
+  bytes.clear();
+  const auto invalid_binary = WriteUSDCToMemory(bytes, permissive.stage);
+  assert(!invalid_binary.success && invalid_binary.error.find("anchor") != std::string::npos);
+  parsed.stage.GetRootLayer()->meta().relocates = {{"P/A", "P/B"}, {"P/C", ""}};
+  bytes.clear();
+  assert(WriteUSDCToMemory(bytes, parsed.stage).success);
+  auto raw_binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(raw_binary.success && raw_binary.stage.GetRootLayer()->meta().relocates == expected);
+  std::string legacy = "#usda 1.0\ndef Xform \"P\" {\n def Xform \"Sub\" (\n"
+      " relocates = { <../A>: <../B> }\n) {\n int[] pad = [";
+  for (int i = 0; i < 12000; ++i) legacy += "1,";
+  legacy += "1]\n }\n}\n";
+  for (int i = 0; i < 8192; ++i) legacy += "def \"Padding" + std::to_string(i) + "\" {}\n";
+  for (int threads : {1, 4}) {
+    LoadOptions options;
+    options.parse_options.num_threads = threads;
+    auto result = LoadUSDAFromString(legacy, options);
+    assert(result.success);
+    const auto* sub = result.stage.GetRootLayer()->prim_at_path("/P/Sub");
+    assert(sub && sub->meta().relocates().size() == 1);
+    assert(sub->meta().relocates()[0] == expected[0]);
+    if (threads == 4) {
+      auto* late = result.stage.GetRootLayer()->prim_at_path_mutable("/Padding8191");
+      assert(late);
+      late->meta().relocates() = {{"A", "B"}};
+      USDCWriteOptions write;
+      write.crate_options.num_threads = 4;
+      bytes.clear();
+      assert(WriteUSDCToMemory(bytes, result.stage, write).success);
+      auto worker_binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      assert(worker_binary.success);
+      const auto* saved = worker_binary.stage.GetRootLayer()->prim_at_path("/Padding8191");
+      assert(saved && saved->meta().relocates().size() == 1);
+      assert(saved->meta().relocates()[0].first == "/Padding8191/A" &&
+             saved->meta().relocates()[0].second == "/Padding8191/B");
+      late->meta().relocates() = {{"A", "../../Gone"}};
+      for (int workers : {1, 4}) {
+        write.crate_options.num_threads = workers;
+        bytes.clear();
+        const auto failed = WriteUSDCToMemory(bytes, result.stage, write);
+        assert(!failed.success && failed.error.find("anchor") != std::string::npos);
+      }
+    }
+  }
 }
 
 // The parallel writer builds the document in independent prim ranges (cut from a
@@ -1476,10 +1568,68 @@ void test_authored_empty_property_metadata_matrix() {
   assert(contains(WriteUSDAToString(reread.stage), "pipelineHint = \"retained\""));
 }
 
+void test_authored_property_order_roundtrips() {
+  const char source[] = R"USD(#usda 1.0
+def "P" (variantSets = "v"
+ variants = {string v = "x"}) {
+ int z = 1
+ rel r = </Target>
+ int a = 2
+ rel s
+ reorder properties = ["s", "a"]
+ variantSet "v" = {
+  "x" {
+   int vz = 3
+   int vz.timeSamples = {0: 3, 1: 5}
+   rel vr = </Target>
+   int va = 4
+   rel vs
+  }
+ }
+}
+)USD";
+  LoadResult loaded = LoadUSDAFromString(source, sizeof(source) - 1);
+  assert(loaded.success);
+  const Layer* layer = loaded.stage.GetRootLayer();
+  assert(layer);
+  const std::vector<std::string> root_names{"z", "r", "a", "s"};
+  const std::vector<std::string> variant_names{"vz", "vr", "va", "vs"};
+  const PrimSpec* prim = layer->prim_at_path("/P");
+  assert(prim && prim->authored_property_names() == root_names);
+  assert(prim->meta().variantSets()[0].variants[0].property_names() == variant_names);
+  PrimSpec clone = prim->Clone();
+  assert(clone.meta().variantSets()[0].variants[0].property_names() == variant_names);
+  USDAWriteOptions options;
+  options.sort_properties = false;
+  const std::string text = WriteLayerToString(*layer, options);
+  assert(text.find("vz.timeSamples") != std::string::npos);
+  LoadResult ascii = LoadUSDAFromString(text.data(), text.size());
+  assert(ascii.success);
+  const PrimSpec* roundtrip = ascii.stage.GetRootLayer()->prim_at_path("/P");
+  assert(roundtrip && roundtrip->authored_property_names() == root_names);
+  assert(roundtrip->meta().variantSets()[0].variants[0].property_names() == variant_names);
+  std::vector<uint8_t> bytes;
+  assert(WriteLayerToUSDCMemory(bytes, *layer).success);
+  USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success);
+  const Layer* binary_layer = binary.stage.GetRootLayer();
+  const PrimSpec* binary_prim = binary_layer->prim_at_path("/P");
+  assert(binary_prim && binary_prim->authored_property_names() == root_names);
+  const PrimSpec* holder = binary_layer->prim_at_path("/P/{v=x}");
+  assert(holder && holder->authored_property_names() == variant_names);
+  const std::string from_binary = WriteLayerToString(*binary_layer, options);
+  LoadResult binary_ascii = LoadUSDAFromString(from_binary.data(), from_binary.size());
+  assert(binary_ascii.success);
+  const PrimSpec* binary_ascii_prim = binary_ascii.stage.GetRootLayer()->prim_at_path("/P");
+  assert(binary_ascii_prim && binary_ascii_prim->authored_property_names() == root_names);
+  assert(binary_ascii_prim->meta().variantSets()[0].variants[0].property_names() == variant_names);
+}
+
 int main() {
   std::cout << "=== LightUSD Next Writer Tests ===\n\n";
 
   try {
+    test_authored_property_order_roundtrips();
     test_authored_empty_property_metadata_matrix();
     test_value_printer();
     test_hot_array_formatting_parity();
@@ -1495,6 +1645,7 @@ int main() {
     test_roundtrip();
     test_parallel_writer_parity();
     test_parallel_writer_multiroot_parity();
+    test_relocate_path_anchoring();
     test_usda_backend_parity();
     test_usda_layer_backend_parity();
     test_usda_stream_failure();

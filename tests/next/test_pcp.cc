@@ -3544,8 +3544,11 @@ static void test_sublayer_cycle_and_depth() {
 
   AssetResolver resolver;
   resolver.SetWorkingDirectory("/tmp");
-  std::string warn, err;
-  auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
+  std::string warn = "existing warning\n", err;
+  auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root, {}, &warn);
+  assert(warn.find("existing warning\n") == 0);
+  assert(warn.find("Sublayer cycle") != std::string::npos &&
+         "Open must propagate initial cycle diagnostics when requested");
   // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
   // the rest of the scene still composes (previously the whole load failed).
   assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
@@ -3581,6 +3584,31 @@ static void test_sublayer_cycle_and_depth() {
   auto opened = pcp::Cache::Open(resolver, root_layer,
                                  "/tmp/next_pcp_depth_root.usda", opts);
   assert(!opened && "sublayer depth overflow should fail Cache::Open");
+
+  auto missing_layer = std::make_shared<Layer>();
+  missing_layer->meta().subLayers.push_back("next_pcp_unwritten_sublayer_93c4.usda");
+  LayerBuilder missing_builder(*missing_layer);
+  missing_builder.begin_prim("Survivor", "Xform");
+  missing_builder.end_prim();
+  missing_builder.finalize();
+  std::string missing_warn;
+  auto missing_opened = pcp::Cache::Open(resolver, missing_layer,
+      "/tmp/next_pcp_missing_root.usda", {}, &missing_warn);
+  assert(missing_opened && "permissive missing sublayer keeps the valid root");
+  assert(missing_warn.find("Failed to load sublayer") != std::string::npos);
+  bool missing_reported = false;
+  for (const auto& issue : missing_opened->GetCompositionIssues()) {
+    if (issue.code == pcp::Cache::ErrorCode::InvalidAssetPath) missing_reported = true;
+  }
+  assert(missing_reported && "unreadable sublayer must have a typed diagnostic");
+  Stage surviving_stage;
+  assert(missing_opened->BuildStage(&surviving_stage, nullptr, nullptr));
+  assert(surviving_stage.GetPrimAtPath("/Survivor").IsValid());
+  pcp::CompositionOptions strict_missing;
+  strict_missing.error_when_asset_not_found = true;
+  auto failed_open = pcp::Cache::Open(resolver, missing_layer,
+      "/tmp/next_pcp_missing_root.usda", strict_missing, &missing_warn);
+  assert(!failed_open && !failed_open.error().empty());
 
   std::remove(cycle_root.c_str());
   std::remove(depth_sub.c_str());
@@ -4534,6 +4562,84 @@ static void test_relocates_in_referenced_layer_stack() {
   std::cout << "  OK" << std::endl;
 }
 
+// Programmatic inputs bypass the authored-path parser checks.
+static void test_invalid_relocates_do_not_poison_valid_edits() {
+  const std::vector<std::string> invalid_sources = {
+      "/P/Missing.attr", "/P/Missing{v=x}", "/", "/P", ""};
+  for (const auto& invalid : invalid_sources) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    ab.begin_prim("Model", "Xform");
+    ab.begin_prim("A", "Xform");
+    ab.add_property("value", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    root->meta().relocates = {{invalid, "/P/New"}, {"/P/A", "/P/New"}};
+    LayerBuilder rb(*root);
+    rb.begin_prim("P", "Xform");
+    rb.current()->meta().references.push_back("@mem_asset@</Model>");
+    rb.end_prim();
+    rb.finalize();
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_asset", asset);
+    Stage stage;
+    std::string warnings, errors;
+    assert(cache.BuildStage(&stage, &warnings, &errors));
+    const auto moved = stage.GetPrimAtPath("/P/New");
+    assert(moved.IsValid());
+    const auto* value = moved.GetPropertyValue("value");
+    assert(value && value->as_int() && *value->as_int() == 7);
+    assert(!stage.GetPrimAtPath("/P/A").IsValid());
+  }
+}
+
+// Raw programmatic metadata must use the same anchoring as parsed metadata.
+static void test_relative_relocates_and_invalid_targets() {
+  for (int mode = 0; mode < 3; ++mode) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    ab.begin_prim("Model", "Xform");
+    ab.begin_prim("A", "Xform");
+    ab.add_property("value", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    LayerBuilder rb(*root);
+    rb.begin_prim("P", "Xform");
+    rb.current()->meta().references.push_back("@mem_asset@</Model>");
+    if (mode == 1) {
+      rb.begin_prim("Sub", "Xform");
+      rb.current()->meta().relocates() = {{"../A", "../New"}};
+      rb.end_prim();
+    }
+    rb.end_prim();
+    rb.finalize();
+    if (mode == 0) root->meta().relocates = {{"P/A", "P/New"}};
+    if (mode == 2) root->meta().relocates = {{"P/A", "../Gone"}};
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_asset", asset);
+    Stage stage;
+    std::string warnings, errors;
+    assert(cache.BuildStage(&stage, &warnings, &errors));
+    const auto prim = stage.GetPrimAtPath(mode == 2 ? "/P/A" : "/P/New");
+    assert(prim.IsValid());
+    const auto* value = prim.GetPropertyValue("value");
+    assert(value && value->as_int() && *value->as_int() == 7);
+    assert(!stage.GetPrimAtPath(mode == 2 ? "/P/New" : "/P/A").IsValid());
+  }
+}
+
 // A relocate may move a prim to a NEW ROOT PRIM; opinions authored at the new
 // root name compose on top of the relocated content (supplemental
 // TrickyInheritsAndRelocatesToNewRootPrim).
@@ -5026,6 +5132,56 @@ static void test_p2_inactive_subtree_pruned() {
   std::remove(ref.c_str());
   std::remove(root.c_str());
   std::cout << "  OK" << std::endl;
+}
+
+static void test_subroot_implied_class_strength() {
+  for (bool root_inherit_value : {false, true}) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    for (const auto& name : {"Inherit", "Specializes"}) {
+      ab.begin_prim(name, "", PrimSpecifier::Class);
+      ab.begin_prim("Model", "");
+      ab.add_property("marker", Value(int32_t(name[0] == 'I' ? 33 : 44)));
+      ab.end_prim();
+      ab.end_prim();
+    }
+    ab.begin_prim("Set", "");
+    ab.current()->meta().inherits.push_back("</Inherit>");
+    ab.current()->meta().specializes.push_back("</Specializes>");
+    ab.begin_prim("Model", "");
+    ab.add_property("marker", Value(int32_t(22)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    LayerBuilder rb(*root);
+    for (const auto& name : {"Inherit", "Specializes"}) {
+      rb.begin_prim(name, "", PrimSpecifier::Over);
+      rb.begin_prim("Model", "", PrimSpecifier::Over);
+      if (name[0] != 'I' || root_inherit_value)
+        rb.add_property("marker", Value(int32_t(name[0] == 'I' ? 11 : 55)));
+      rb.end_prim();
+      rb.end_prim();
+    }
+    rb.begin_prim("Ref", "");
+    rb.current()->meta().references.push_back("@mem_subroot@</Set/Model>");
+    rb.end_prim();
+    rb.finalize();
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_subroot", asset);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    const auto prim = stage.GetPrimAtPath("/Ref");
+    assert(prim.IsValid());
+    const Value* value = prim.GetPropertyValue("marker");
+    assert(value && value->as_int());
+    assert(*value->as_int() == (root_inherit_value ? 11 : 22));
+  }
 }
 
 // P2 audit: an inherit to a SUB-ROOT class reached through a reference is
@@ -5539,6 +5695,8 @@ int main() {
   test_layer_relocates();
   test_relocates_in_referenced_layer_stack();
   test_relocate_to_new_root_prim();
+  test_invalid_relocates_do_not_poison_valid_edits();
+  test_relative_relocates_and_invalid_targets();
   test_relative_class_arc_target();
   test_specifier_resolution();
   test_expression_sublayer_and_variant_selection();
@@ -5548,6 +5706,7 @@ int main() {
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
   test_p2_implied_subroot_class();
+  test_subroot_implied_class_strength();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();

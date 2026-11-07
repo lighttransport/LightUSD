@@ -887,7 +887,7 @@ int main(int argc, char **argv) {
       lopts.parse_num_threads = opts.usda_parse_options.num_threads;
       std::shared_ptr<Layer> root = pcp::LoadLayerFromFile(filename, &warn, &err, lopts);
       if (root) {
-        auto opened = pcp::Cache::Open(resolver, std::move(root), filename, opts);
+        auto opened = pcp::Cache::Open(resolver, std::move(root), filename, opts, &warn);
         if (!opened) {
           err += opened.error() + "\n";
         } else {

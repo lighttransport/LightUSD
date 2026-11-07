@@ -34,6 +34,12 @@
 #include "next/prim/path.hh"
 #include "next/schema/schema-registry.hh"
 #include "next/crate/crate-format.hh"
+#include "next/crate/listop-wire.hh"
+#include "next/crate/crate-reader.hh"
+#include "next/writer/usdc-writer.hh"
+#include "next/writer/usda-writer.hh"
+#include "next/reader/usdc-reader.hh"
+#include "next/layer/layer.hh"
 #include "minijson.hh"
 #include "next/pcp/cache.hh"
 #include "next/pcp/namespace-mapping.hh"
@@ -171,6 +177,128 @@ void CheckListOpChain(int id, const char *ops, const char *expected) {
   }
   Expect("listop/chain", id, "ApplyInt64ListOps(stack)", JoinInts(ToVector(ApplyInt64ListOps(stack))),
          expected);
+}
+
+std::string JoinWords(const std::vector<uint64_t>& values) {
+  std::string result;
+  for (uint64_t value : values) {
+    if (!result.empty()) result += ",";
+    result += std::to_string(value);
+  }
+  return result;
+}
+
+void CheckCrateListOp(int id, const char* header, const char* wire, bool explicit_mode,
+                     const char* expl, const char* added, const char* pre,
+                     const char* app, const char* deleted, const char* ordered, bool compatibility = false) {
+  std::vector<uint8_t> bytes;
+  for (size_t i = 0; i < std::strlen(wire); i += 2) {
+    char octet[3] = {wire[i], wire[i + 1], 0};
+    bytes.push_back(static_cast<uint8_t>(std::strtoul(octet, nullptr, 16)));
+  }
+  std::array<std::vector<uint64_t>, 6> runs;
+  uint8_t bits = 0;
+  auto decode = [&](size_t length) {
+    StreamReader reader(bytes.data(), length);
+    return DecodeCrateListOpWire(reader, 1024, bits, [&](size_t run, uint64_t count) {
+      if (!reader.has_elements(static_cast<size_t>(count), 8)) return false;
+      runs[run].clear();
+      for (uint64_t i = 0; i < count; ++i) {
+        uint64_t value = 0;
+        if (!reader.read_u64(value)) return false;
+        runs[run].push_back(value);
+      }
+      return true;
+    }) && reader.position() == length;
+  };
+  for (size_t prefix = 0; prefix < bytes.size(); ++prefix)
+    Expect("crate/listop", id, "reject truncation", decode(prefix) ? "accepted" : "rejected", "rejected");
+  for (auto& run : runs) run.clear();
+  Expect("crate/listop", id, "shared wire decoder", decode(bytes.size()) ? "ok" : "failed", "ok");
+  Expect("crate/listop", id, "header", std::to_string(bits),
+         std::to_string(std::strtoul(header, nullptr, 0)));
+  Expect("crate/listop", id, "explicit flag",
+         ((compatibility ? CrateListOpSemanticHeader(bits) : bits) & 1u) ? "1" : "0",
+         explicit_mode ? "1" : "0");
+  const char* expected[] = {expl, added, pre, app, deleted, ordered};
+  Int64ListOp op;
+  op.bits = bits;
+  for (size_t run = 0; run < 6; ++run) {
+    Expect("crate/listop", id, "wire vector",
+           JoinWords(compatibility && !CrateListOpRetainsRun(bits, run)
+                         ? std::vector<uint64_t>{} : runs[run]), expected[run]);
+    std::vector<int64_t> signed_values;
+    for (uint64_t word : runs[run]) {
+      int64_t value = 0;
+      std::memcpy(&value, &word, sizeof(value));
+      signed_values.push_back(value);
+    }
+    op.items[run] = Value::MakeInt64Array(signed_values);
+  }
+  // Exercise the actual writer and CrateReader::DecodeInt64ListOpField, not
+  // only a test adapter: inspect the field's payload against Lean wire bytes.
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("P", "Scope");
+  builder.current()->meta().unknownFields().push_back(MakeInt64ListOpField("leanListOp", op));
+  builder.end_prim();
+  builder.finalize();
+  std::vector<uint8_t> crate;
+  const auto written = WriteLayerToUSDCMemory(crate, layer);
+  Expect("crate/listop", id, "production writer", written.success ? "ok" : "failed", "ok");
+  CrateReader reader;
+  auto read = reader.Read(crate.data(), crate.size());
+  Expect("crate/listop", id, "production reader", read.success ? "ok" : "failed", "ok");
+  if (!read.success) return;
+  const auto tokens = reader.tokens();
+  bool found = false;
+  for (const auto& field : reader.fields()) {
+    if (field.token_index.value >= tokens.size() || tokens[field.token_index.value] != "leanListOp") continue;
+    const uint64_t offset = field.value_rep.payload();
+    const bool exact = offset <= crate.size() && bytes.size() <= crate.size() - offset &&
+        std::equal(bytes.begin(), bytes.end(), crate.begin() + static_cast<size_t>(offset));
+    Expect("crate/listop", id, "production wire bytes", exact ? "exact" : "different", "exact");
+    found = true;
+  }
+  Expect("crate/listop", id, "production wire field", found ? "found" : "missing", "found");
+  const PrimSpec* prim = read.stage.GetRootLayer()->prim_at_path("/P");
+  bool retained = false;
+  if (prim) for (const auto& field : prim->meta().unknownFields()) {
+    if (field.name != "leanListOp" || !field.int64_list_op || field.int64_list_op->ops.size() != 1) continue;
+    retained = true;
+    const Int64ListOp& decoded = field.int64_list_op->ops.front();
+    Expect("crate/listop", id, "production header", std::to_string(decoded.bits),
+           std::to_string(compatibility ? CrateListOpSemanticHeader(bits) : bits));
+    for (size_t run = 0; run < 6; ++run) {
+      std::vector<uint64_t> words;
+      if (auto values = decoded.items[run].as_int64_array())
+        for (int64_t value : *values) words.push_back(static_cast<uint64_t>(value));
+      Expect("crate/listop", id, "production vector", JoinWords(words), expected[run]);
+    }
+  }
+  Expect("crate/listop", id, "production structured field", retained ? "found" : "missing", "found");
+}
+
+void RunCrateListOpVectors() {
+#define LEAN_CRATE_LISTOP(id, header, wire, explicit_mode, expl, added, pre, app, deleted, ordered) \
+  CheckCrateListOp(id, header, wire, explicit_mode, expl, added, pre, app, deleted, ordered);
+#define LEAN_CRATE_LISTOP_MODE(id, header, wire, explicit_mode, expl, added, pre, app, deleted, ordered) \
+  CheckCrateListOp(id, header, wire, explicit_mode, expl, added, pre, app, deleted, ordered, true);
+#include "generated/lean/crate-listop-vectors.inc"
+#undef LEAN_CRATE_LISTOP_MODE
+#undef LEAN_CRATE_LISTOP
+  const std::vector<uint8_t> reserved{0x80};
+  StreamReader reader(reserved);
+  uint8_t header = 0;
+  Expect("crate/listop", -1, "reserved bit", DecodeCrateListOpWire(reader, 1024, header,
+      [](size_t, uint64_t) { return true; }) ? "accepted" : "rejected", "rejected");
+  const std::vector<uint8_t> excessive{2, 1, 4, 0, 0, 0, 0, 0, 0};  // count 1025
+  StreamReader bounded(excessive);
+  bool called = false;
+  const bool accepted = DecodeCrateListOpWire(bounded, 1024, header,
+      [&](size_t, uint64_t) { called = true; return true; });
+  Expect("crate/listop", -2, "element limit", accepted ? "accepted" : "rejected", "rejected");
+  Expect("crate/listop", -2, "limit before allocation callback", called ? "called" : "not called", "not called");
 }
 
 void RunListOpVectors() {
@@ -699,10 +827,120 @@ void CheckUsda(const char *id, const char *source, const char *text, bool /*peg_
   }
 }
 
+void CheckUsdaString(const char* id, const std::string& text,
+                     const std::string& expected) {
+  auto matches = [&](const Stage& stage) {
+    const auto* prim = stage.GetRootLayer()->prim_at_path("/P");
+    if (!prim) return false;
+    const auto dict = prim->meta().customData().as_dictionary();
+    if (!dict) return false;
+    const auto value = dict->find("s");
+    return value && value->as_string() && *value->as_string() == expected;
+  };
+  auto check = [&](bool success, const char* transport) {
+    ++g_checks;
+    if (!success) {
+      ++g_failures;
+      std::fprintf(stderr, "FAIL quoted string %s (%s)\n", id, transport);
+    }
+  };
+  LoadOptions options;
+  options.parse_options.strict_aousd_conformance = true;
+  auto parsed = LoadUSDAFromString(text, options);
+  check(parsed.success && matches(parsed.stage), "Lean source");
+  if (!parsed.success) return;
+  auto rewritten = LoadUSDAFromString(WriteUSDAToString(parsed.stage), options);
+  check(rewritten.success && matches(rewritten.stage), "native USDA");
+  std::vector<uint8_t> bytes;
+  const auto written = WriteUSDCToMemory(bytes, parsed.stage);
+  if (expected.find('\0') != std::string::npos) {
+    check(!written.success && written.error.find("NUL") != std::string::npos,
+          "USDC unrepresentable NUL rejection");
+    return;
+  }
+  if (!written.success) {
+    check(false, "native USDC write");
+    return;
+  }
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  check(written.success && binary.success && matches(binary.stage), "native USDC");
+}
+
+void CheckUsdaKey(const char* id, const std::string& text,
+                  const std::string& expected, int kind) {
+  auto matches = [&](const Stage& stage) {
+    const auto* prim = stage.GetRootLayer()->prim_at_path("/P");
+    if (!prim) return false;
+    const auto dict = prim->meta().customData().as_dictionary();
+    if (!dict || dict->entries().size() != 1) return false;
+    const auto value = dict->find(expected);
+    if (!value) return false;
+    if (kind == 0) return value->as_int() && *value->as_int() == 7;
+    if (kind == 1) return value->as_string() && *value->as_string() == "payload";
+    const auto nested = value->as_dictionary();
+    if (!nested || nested->entries().size() != 1) return false;
+    const auto leaf = nested->find(expected);
+    return leaf && leaf->as_string() && *leaf->as_string() == "payload";
+  };
+  auto check = [&](bool success, const char* transport) {
+    ++g_checks;
+    if (!success) {
+      ++g_failures;
+      std::fprintf(stderr, "FAIL dictionary key %s (%s)\n", id, transport);
+    }
+  };
+  LoadOptions options;
+  options.parse_options.strict_aousd_conformance = true;
+  auto parsed = LoadUSDAFromString(text, options);
+  check(parsed.success && matches(parsed.stage), "Lean source");
+  if (!parsed.success) return;
+  auto rewritten = LoadUSDAFromString(WriteUSDAToString(parsed.stage), options);
+  check(rewritten.success && matches(rewritten.stage), "native USDA");
+  std::vector<uint8_t> bytes;
+  const auto written = WriteUSDCToMemory(bytes, parsed.stage);
+  if (expected.find('\0') != std::string::npos) {
+    check(!written.success && written.error.find("NUL") != std::string::npos,
+          "USDC unrepresentable NUL rejection");
+    return;
+  }
+  if (!written.success) {
+    check(false, "native USDC write");
+    return;
+  }
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  check(binary.success && matches(binary.stage), "native USDC");
+}
+
 void RunUsdaVectors() {
 #define LEAN_USDA(id, source, text, lit, rep, expect, note) CheckUsda(id, source, text, lit, rep, expect, note);
 #include "generated/lean/usda-peg-vectors.inc"
 #undef LEAN_USDA
+#define LEAN_USDA_STRING(id, text, value) \
+  CheckUsdaString(id, std::string(text, sizeof(text) - 1), std::string(value, sizeof(value) - 1));
+#include "generated/lean/usda-string-vectors.inc"
+#undef LEAN_USDA_STRING
+#define LEAN_USDA_KEY(id, text, key, kind) \
+  CheckUsdaKey(id, std::string(text, sizeof(text) - 1), std::string(key, sizeof(key) - 1), kind);
+#include "generated/lean/usda-key-vectors.inc"
+#undef LEAN_USDA_KEY
+  // Put the unrepresentable value after enough prims to exercise worker error
+  // propagation after earlier chunks have committed, as well as serial writes.
+  std::string many = "#usda 1.0\n";
+  for (size_t i = 0; i < 8192; ++i)
+    many += "def \"C" + std::to_string(i) + "\" {}\n";
+  many += "def \"P\" (customData = { string s = \"bad\\000tail\"\n}) {}\n";
+  auto invalid = LoadUSDAFromString(many);
+  for (int threads : {1, 4}) {
+    USDCWriteOptions options;
+    options.crate_options.num_threads = threads;
+    std::vector<uint8_t> bytes;
+    const auto result = WriteUSDCToMemory(bytes, invalid.stage, options);
+    ++g_checks;
+    if (!invalid.success || result.success || result.error.find("NUL") == std::string::npos) {
+      ++g_failures;
+      std::fprintf(stderr, "FAIL crate NUL writer rejection (threads=%d)\n", threads);
+    }
+  }
 }
 
 }  // namespace
@@ -711,6 +949,7 @@ int main(int argc, char **argv) {
   g_repo_root = LIGHTUSD_REPO_ROOT;
   if (argc == 3 && std::strcmp(argv[1], "--combine-chain") == 0) return RunCombineChainCorpus(argv[2]);
   RunListOpVectors();
+  RunCrateListOpVectors();
   RunIntCodeVectors();
   RunOffsetVectors();
   RunPathSchemaVectors();

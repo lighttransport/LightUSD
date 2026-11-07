@@ -2452,6 +2452,125 @@ void TestGeneratedElectiveAuthoredRoundtrips() {
   assert(tested >= 30);
 }
 
+void TestClipActiveOrderingAndDuplicates() {
+  struct Case { const char* active; bool duplicate; };
+  for (const auto& sample : {Case{"[(10, 1), (0, 0)]", false},
+                            Case{"[(0, 0), (10, 1)]", false},
+                            Case{"[(0, 0), (0, 1)]", true},
+                            Case{"[(0, 0), (0, 0)]", true},
+                            Case{"[(10, 1), (0, 0), (10, 1)]", true}}) {
+    auto loaded = Parse(std::string("def \"P\" (clips = { dictionary default = {\n") +
+        "asset[] assetPaths = [@a.usda@, @b.usda@]\n" +
+        "string primPath = \"/P\"\n" + "double2[] active = " + sample.active +
+        "\n} }) {}\n");
+    assert(loaded.success);
+    std::vector<ValueClipSet> sets;
+    std::string error;
+    const bool valid = ParseValueClipSets(loaded.stage.GetPrimAtPath("/P"), &sets, &error);
+    assert(valid == !sample.duplicate);
+    if (sample.duplicate) {
+      assert(error.find("Duplicate value-clip active time") != std::string::npos);
+      assert(sets.empty());
+    } else {
+      assert(sets.size() == 1);
+      for (double time : {-1.0, 0.0, 9.0, 10.0, 11.0})
+        assert(value_clip_detail::ActiveIndex(sets[0], time) == (time < 10 ? 0 : 1));
+    }
+  }
+}
+
+void TestRelationshipDefaultOpinions() {
+  for (const char* strong : {"", "rel r.default = <>", "rel r.default = <relative>"}) {
+    auto source = Parse(std::string("def Scope \"P\" { rel r\n") + strong + "\n}\n");
+    auto weak = Parse("def Scope \"P\" { rel r.default = </Weak>\n}\n");
+    assert(source.success && weak.success);
+    auto* prim = source.stage.GetRootLayer()->prim_at_path_mutable("/P");
+    const auto* before = prim->property_meta("r");
+    const bool authored = *strong != '\0';
+    assert(bool(before && (before->authored & PropMeta::kRelDefault)) == authored);
+    Compositor::CopyLocalOpinions(*prim, *weak.stage.GetRootLayer()->prim_at_path("/P"));
+    const auto* meta = prim->property_meta("r");
+    assert(meta && (meta->authored & PropMeta::kRelDefault));
+    assert(meta->relDefault == (authored ? (std::strstr(strong, "relative") ? "relative" : "") : "/Weak"));
+    const auto canonical = WriteUSDAToString(source.stage);
+    auto back = LoadUSDAFromString(canonical);
+    assert(back.success && WriteUSDAToString(back.stage) == canonical);
+    assert(canonical.find("rel r.default = <" + meta->relDefault + ">") != std::string::npos);
+  }
+}
+
+void TestUnregisteredMetadataOpinionFolding() {
+  using Fields = std::vector<std::pair<std::string, std::string>>;
+  struct Case { const char* opinions; Fields expected; };
+  const Case cases[] = {
+      {"prepend pipelineTags = [\"a\"]\nprepend pipelineTags = [\"b\"]",
+       {{"prepend pipelineTags", "[\"b\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\nappend pipelineTags = [\"c\"]\nprepend pipelineTags = [\"b\"]",
+       {{"prepend pipelineTags", "[\"b\"]"}, {"append pipelineTags", "[\"c\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\npipelineTags = [\"x\"]",
+       {{"pipelineTags", "[\"x\"]"}}},
+      {"pipelineTags = [\"x\"]\nprepend pipelineTags = [\"b\"]",
+       {{"pipelineTags", "[\"x\"]"}}},
+      {"pipelineTags = [\"x\"]\nappend pipelineTags = [\"c\"]\npipelineTags = [\"y\"]\ndelete pipelineTags = [\"z\"]",
+       {{"pipelineTags", "[\"y\"]"}}},
+      {"pipelineTags = [\"a\"]\npipelineTags = [\"b\"]",
+       {{"pipelineTags", "[\"b\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\nprepend pipelineTags = []",
+       {{"prepend pipelineTags", "[]"}}},
+      {"pipelineOther = \"keep\"\nprepend pipelineTags = [\"a\"]\npipelineTags = None",
+       {{"pipelineOther", "\"keep\""}, {"pipelineTags", "None"}}}};
+  for (const char* scope : {"Layer", "Prim", "Variant", "Property"}) {
+    for (const auto& sample : cases) {
+      const std::string opinions = sample.opinions;
+      std::string body;
+      if (std::string(scope) == "Layer") body = "(" + opinions + ")\ndef Scope \"P\" {}\n";
+      else if (std::string(scope) == "Prim") body = "def Scope \"P\" (" + opinions + ") {}\n";
+      else if (std::string(scope) == "Variant")
+        body = "def Scope \"P\" { variantSet \"v\" = { \"a\" (" + opinions + ") {} } }\n";
+      else body = "def Scope \"P\" { int x = 1 (" + opinions + ") }\n";
+      LoadResult loaded = Parse(body);
+      assert(loaded.success);
+      const auto* layer = loaded.stage.GetRootLayer();
+      const auto* prim = layer->prim_at_path("/P");
+      const Fields* fields = nullptr;
+      if (std::string(scope) == "Layer") fields = &layer->meta().unknownMeta;
+      else if (std::string(scope) == "Prim") fields = &prim->meta().unknownMeta();
+      else if (std::string(scope) == "Variant") fields = &prim->meta().variantSets()[0].variants[0].unknownMeta;
+      else fields = &prim->property_meta("x")->unknownMeta;
+      assert(*fields == sample.expected);
+      const std::string canonical = WriteUSDAToString(loaded.stage);
+      auto text = LoadUSDAFromString(canonical);
+      assert(text.success && WriteUSDAToString(text.stage) == canonical);
+      std::vector<uint8_t> bytes;
+      assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+      auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+        std::cerr << "folding crate " << scope << ": " << opinions << "\nBEFORE\n" << canonical
+                  << "\nAFTER\n" << WriteUSDAToString(binary.stage);
+      assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+    }
+  }
+  // A real crate String containing array-like text must stay a string, while
+  // UnregisteredValue stores the authored source spelling verbatim.
+  auto typed = Parse("def Scope \"P\" { int x = 1 }\n");
+  auto* prim = typed.stage.GetRootLayer()->prim_at_path_mutable("/P");
+  DecodedExtensionField field;
+  field.name = "pipelineTyped";
+  field.value = Value(std::string("[\"b\"]"));
+  field.unregistered = false;
+  prim->ensure_property_meta("x").unknownFields.push_back(field);
+  std::vector<uint8_t> bytes;
+  assert(WriteUSDCToMemory(bytes, typed.stage).success);
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success);
+  const auto* meta = binary.stage.GetRootLayer()->prim_at_path("/P")->property_meta("x");
+  const auto found = std::find_if(meta->unknownFields.begin(), meta->unknownFields.end(),
+      [](const DecodedExtensionField& item) { return item.name == "pipelineTyped"; });
+  assert(found != meta->unknownFields.end() && !found->unregistered);
+  assert(found->value.as_string() && *found->value.as_string() == "[\"b\"]");
+  assert(WriteUSDAToString(binary.stage).find("pipelineTyped = \"[\\\"b\\\"]\"") != std::string::npos);
+}
+
 void TestUnregisteredListOpAuthoredRoundtrips() {
   // Unregistered extension fields have no schema-defined merge semantics.
   // Preserve their authored qualifier/value spelling in layer round trips;
@@ -3937,6 +4056,9 @@ int main() {
   TestVariantExtensionFields();
   TestRemainingElectiveFieldCoverage();
   TestGeneratedElectiveAuthoredRoundtrips();
+  TestClipActiveOrderingAndDuplicates();
+  TestRelationshipDefaultOpinions();
+  TestUnregisteredMetadataOpinionFolding();
   TestUnregisteredListOpAuthoredRoundtrips();
   TestUsdcatCompareParity();
   TestPxrTextFormRules();

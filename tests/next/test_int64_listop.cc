@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "next/layer/int64-listop.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/crate/listop-wire.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/pcp/batched-compose.hh"
 #include "next/reader/usda-reader.hh"
@@ -102,7 +103,149 @@ static void CheckOperationModel() {
   }
 }
 
+static int WriteHeaderCases(const char* directory) {
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error) return 1;
+  std::printf("[");
+  bool first = true;
+  for (unsigned empty = 0; empty < 2; ++empty) {
+    for (unsigned header = 0; header < 128; ++header) {
+      auto source = LoadUSDAFromString("#usda 1.0\ndef PointInstancer \"P\" {}\n");
+      CHECK(source.success);
+      Int64ListOp op;
+      op.bits = static_cast<uint8_t>(header);
+      for (size_t run = 0; run < 6; ++run) {
+        std::vector<int64_t> items;
+        if (!empty && (header & kInt64ListOpBits[run])) items.push_back(int64_t(run + 10));
+        op.items[run] = Value::MakeInt64Array(items);
+      }
+      source.stage.GetRootLayer()->prim_at_path_mutable("/P")->meta().unknownFields().push_back(
+          MakeInt64ListOpField("inactiveIds", op));
+      const auto bytes = Encode(source.stage);
+      const size_t offset = Payload(bytes);
+      CHECK(offset < bytes.size() && bytes[offset] == header);
+      if (header == 0x22 && !empty) {
+        auto invalid = bytes;
+        for (size_t i = 0; i < 8; ++i) invalid[offset + 1 + i] = 0xff;
+        CHECK(!CrateReader().Read(invalid.data(), invalid.size()).success);
+      }
+      const std::string name = std::to_string(empty) + "-" + std::to_string(header) + ".usdc";
+      Save(std::string(directory) + "/" + name, bytes);
+      Stage decoded = Decode(bytes);
+      const auto* field = Field(decoded);
+      CHECK(field && field->int64_list_op && field->int64_list_op->ops.size() == 1);
+      if (!field || !field->int64_list_op || field->int64_list_op->ops.size() != 1) continue;
+      const auto& actual = field->int64_list_op->ops[0];
+      if (!first) std::printf(",");
+      first = false;
+      std::printf("{\"file\":\"%s\",\"header\":%u,\"explicit\":%s,\"runs\":[",
+                  name.c_str(), header, actual.is_explicit() ? "true" : "false");
+      auto print_items = [](const std::vector<int64_t>& items) {
+        std::printf("[");
+        for (size_t i = 0; i < items.size(); ++i)
+          std::printf("%s%lld", i ? "," : "", static_cast<long long>(items[i]));
+        std::printf("]");
+      };
+      for (size_t run = 0; run < 6; ++run) {
+        if (run) std::printf(",");
+        print_items(Ids(actual.items[run]));
+      }
+      std::printf("],\"effective\":");
+      print_items(Ids(field->value));
+      std::printf("}");
+    }
+  }
+  struct Family { const char* name; const char* authored; const char* field; CrateTypeId type; size_t width; const char* spec = "/P"; };
+  const Family families[] = {
+      {"token", "apiSchemas", "apiSchemas", CrateTypeId::TokenListOp, 4},
+      {"string", "variantSets", "variantSetNames", CrateTypeId::StringListOp, 4},
+      {"path", "inherits", "inheritPaths", CrateTypeId::PathListOp, 4},
+      {"reference", "references", "references", CrateTypeId::ReferenceListOp, 32},
+      {"payload", "payload", "payload", CrateTypeId::PayloadListOp, 24},
+      {"relationship", "rel r", "targetPaths", CrateTypeId::PathListOp, 4, "/P.r"},
+      {"connection", "float a.connect", "connectionPaths", CrateTypeId::PathListOp, 4, "/P.a"}};
+  const char* qualifiers[] = {"add", "prepend", "append", "delete", "reorder"};
+  for (const auto& family : families) {
+    const bool property = std::string(family.spec) != "/P";
+    std::string text = "#usda 1.0\ndef Scope \"P\" ";
+    text += property ? "{\n" : "(\n";
+    for (size_t run = 0; run < 5; ++run) {
+      text += std::string(qualifiers[run]) + " " + family.authored + " = [";
+      for (size_t item = 0; item < 2; ++item) {
+        if (item) text += ", ";
+        const std::string name = "Item_" + std::to_string(run) + "_" + std::to_string(item);
+        if (family.width > 4) text += "@dep.usda@</" + name + ">";
+        else if (family.type == CrateTypeId::PathListOp)
+          text += "</" + name + (std::string(family.name) == "connection" ? ".a>" : ">");
+        else text += "\"" + name + "\"";
+      }
+      text += "]\n";
+    }
+    text += property ? "}\n" : ") {}\n";
+    auto source = LoadUSDAFromString(text.data(), text.size());
+    CHECK(source.success);
+    if (!source.success) continue;
+    const auto baseline = Encode(source.stage);
+    CrateReader layout;
+    CHECK(layout.Read(baseline.data(), baseline.size()).success);
+    size_t offset = 0;
+    for (const auto& field : layout.fields())
+      if (field.value_rep.type_id() == family.type) offset = size_t(field.value_rep.payload());
+    CHECK(offset && offset < baseline.size() && baseline[offset] == 0x7c);
+    if (!offset || offset >= baseline.size() || baseline[offset] != 0x7c) continue;
+    StreamReader wire(baseline);
+    CHECK(wire.seek(offset + 1));
+    std::array<std::vector<uint8_t>, 6> items;
+    for (size_t run = 1; run < 6; ++run) {
+      uint64_t count = 0;
+      CHECK(wire.read_u64(count) && count == 2);
+      const size_t at = wire.position();
+      CHECK(wire.has_elements(2, family.width));
+      items[run].assign(baseline.begin() + at, baseline.begin() + at + family.width);
+      if (run == 1) items[0].assign(baseline.begin() + at + family.width,
+                                  baseline.begin() + at + 2 * family.width);
+      CHECK(wire.seek(at + 2 * family.width));
+    }
+    const size_t capacity = wire.position() - offset;
+    for (unsigned empty = 0; empty < 2; ++empty) for (unsigned header = 0; header < 128; ++header) {
+      std::vector<uint8_t> payload{static_cast<uint8_t>(header)};
+      for (size_t run = 0; run < 6; ++run) if (header & kInt64ListOpBits[run]) {
+        Put64(&payload, empty ? 0 : 1);
+        if (!empty) payload.insert(payload.end(), items[run].begin(), items[run].end());
+      }
+      CHECK(payload.size() <= capacity);
+      if (payload.size() > capacity) continue;
+      auto original = baseline;
+      std::copy(payload.begin(), payload.end(), original.begin() + offset);
+      if (header == 0x22 && !empty) {
+        // Discarding the explicit vector must not bypass its count or index validation.
+        auto invalid = original;
+        for (size_t i = 0; i < 4; ++i) invalid[offset + 9 + i] = 0xff;
+        const auto compatible = CrateReader().Read(invalid.data(), invalid.size());
+        CHECK(compatible.success && !compatible.warnings.empty());
+        CrateReadOptions strict;
+        strict.strict_aousd_conformance = true;
+        CHECK(!CrateReader(strict).Read(invalid.data(), invalid.size()).success);
+        invalid = original;
+        for (size_t i = 0; i < 8; ++i) invalid[offset + 1 + i] = 0xff;
+        CHECK(!CrateReader().Read(invalid.data(), invalid.size()).success);
+      }
+      const std::string name = std::string(family.name) + "-" + std::to_string(empty) + "-" +
+                               std::to_string(header) + ".usdc";
+      Save(std::string(directory) + "/" + name, original);
+      const std::string rewritten = "rewritten-" + name;
+      Save(std::string(directory) + "/" + rewritten, Encode(Decode(original)));
+      std::printf(",{\"kind\":\"roundtrip\",\"file\":\"%s\",\"rewritten\":\"%s\",\"field\":\"%s\",\"spec\":\"%s\"}",
+                  name.c_str(), rewritten.c_str(), family.field, family.spec);
+    }
+  }
+  std::printf("]\n");
+  return failures ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--header-cases") return WriteHeaderCases(argv[2]);
   CheckOperationModel();
   std::error_code error;
   const auto temporary = std::filesystem::temp_directory_path(error);
