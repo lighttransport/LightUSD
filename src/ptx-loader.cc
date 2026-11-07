@@ -138,8 +138,8 @@ bool Reader::ReadFace(uint32_t face, uint32_t level, size_t max_bytes,
   const uint32_t w = 1u << ul, h = 1u << vl;
   const size_t pixel = tptex_pixel_size(reader_);
   const uint64_t bytes64 = static_cast<uint64_t>(w) * h * pixel;
-  if (bytes64 > static_cast<uint64_t>(max_bytes) ||
-      bytes64 > static_cast<uint64_t>(SIZE_MAX))
+  // max_bytes is size_t, so this also checks representability on 32-bit hosts.
+  if (bytes64 > static_cast<uint64_t>(max_bytes))
     return Fail(err, "Ptex face exceeds the decode budget");
   const size_t bytes = static_cast<size_t>(bytes64);
   out->width = w;

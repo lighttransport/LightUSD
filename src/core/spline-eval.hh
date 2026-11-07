@@ -18,6 +18,17 @@
 
 #include "next/c/lightusd-core-c.h"  // lu_cubic_bezier / lu_hermite_*
 
+// Knot boundaries require exact equality, including discontinuities and loop
+// seams. Copy elision of the local spline/knot values is optional and does not
+// affect evaluation semantics. Keep these diagnostics local to this header.
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfloat-equal"
+#if __has_warning("-Wnrvo")
+#pragma clang diagnostic ignored "-Wnrvo"
+#endif
+#endif
+
 namespace lightusd {
 
 // AOUSD Core Spec 7.4.2.4.1
@@ -528,3 +539,7 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
 }
 
 }  // namespace lightusd
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
