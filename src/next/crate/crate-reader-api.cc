@@ -146,13 +146,24 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   if (!options_.use_mmap) {
     bool unavailable = false;
     std::string snapshot_err;
-    auto snapshot = CrateDataSource::ReadFileSnapshot(
-        filename, static_cast<uint64_t>(options_.max_memory), &unavailable,
-        &snapshot_err);
+    auto snapshot =
+        options_.paged_snapshot
+            ? CrateDataSource::PagedFileSnapshot(
+                  filename, static_cast<uint64_t>(options_.max_memory),
+                  options_.paged_snapshot_directory, &unavailable,
+                  &snapshot_err)
+            : CrateDataSource::ReadFileSnapshot(
+                  filename, static_cast<uint64_t>(options_.max_memory),
+                  &unavailable, &snapshot_err);
     if (snapshot) {
       source_ = std::move(snapshot);
       source_->set_max_array_elements(options_.max_array_elements);
-      return ParseFromSource();
+      CrateReadResult result = ParseFromSource();
+      // The structural read is complete. Keep only the snapshot descriptor so
+      // lazy values page their array blocks back in on demand instead of
+      // pinning the whole layer in anonymous memory.
+      source_->ReleaseParseBuffer();
+      return result;
     }
     if (!unavailable) {
       CrateReadResult result;

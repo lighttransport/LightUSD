@@ -15,7 +15,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <new>
 #include <limits>
 #include <type_traits>
@@ -30,11 +33,250 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 #endif
 
 namespace lightusd {
 namespace next {
+
+// ============================================================
+// Paged secure snapshot
+// ============================================================
+
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+namespace {
+
+// The parse copy is either new[] or a private anonymous mapping (>= 4 MiB),
+// where the mapping is 2 MiB-aligned and THP-advised so a hundreds-of-MiB
+// copy does not pay one minor fault per 4 KiB page.
+std::unique_ptr<uint8_t[], CrateSnapshotDeleter> AllocateSnapshotBuffer(size_t n) {
+  constexpr size_t kHugeBytes = size_t(2) << 20;
+  constexpr size_t kHugeMin = size_t(4) << 20;
+  if (n >= kHugeMin &&
+      n <= (std::numeric_limits<size_t>::max)() - 2 * kHugeBytes) {
+    const size_t span = ((n + kHugeBytes - 1) & ~(kHugeBytes - 1)) + kHugeBytes;
+    void* raw = ::mmap(nullptr, span, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw != MAP_FAILED) {
+      const uintptr_t aligned =
+          (reinterpret_cast<uintptr_t>(raw) + kHugeBytes - 1) & ~(kHugeBytes - 1);
+#if defined(MADV_HUGEPAGE)
+      (void)::madvise(reinterpret_cast<void*>(aligned), span - kHugeBytes,
+                      MADV_HUGEPAGE);
+#endif
+      return std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
+          reinterpret_cast<uint8_t*>(aligned),
+          CrateSnapshotDeleter{span, raw});
+    }
+  }
+  return std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
+      new (std::nothrow) uint8_t[n], CrateSnapshotDeleter{0, nullptr});
+}
+
+bool ReadWholeFile(int fd, size_t n, uint8_t* dst, std::string* err) {
+  size_t done = 0;
+  while (done < n) {
+    const size_t want = std::min<size_t>(n - done, size_t(1) << 30);
+    const ssize_t got =
+        ::pread(fd, dst + done, want, static_cast<off_t>(done));
+    if (got < 0) {
+      if (errno == EINTR) continue;
+      if (err) *err = "Failed to read file contents";
+      return false;
+    }
+    if (got == 0) {
+      if (err) *err = "File shrank while being read";
+      return false;
+    }
+    done += static_cast<size_t>(got);
+  }
+  // A consistent snapshot must also not have grown past its fstat size.
+  uint8_t extra = 0;
+  ssize_t more = 0;
+  do {
+    more = ::pread(fd, &extra, 1, static_cast<off_t>(n));
+  } while (more < 0 && errno == EINTR);
+  if (more != 0) {
+    if (err) *err = "File changed while being read";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+
+/// Process-wide append-only snapshot arena. One descriptor serves every paged
+/// layer: a scene can reference thousands of layers, and one fd per layer would
+/// hit the descriptor limit (the mmap path avoids that for the same reason).
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+class CrateSnapshotArena {
+ public:
+  ~CrateSnapshotArena() {
+    if (fd_ >= 0) ::close(fd_);
+    if (!path_.empty()) (void)::unlink(path_.c_str());
+  }
+  CrateSnapshotArena(const CrateSnapshotArena&) = delete;
+  CrateSnapshotArena& operator=(const CrateSnapshotArena&) = delete;
+
+  /// Find or create the arena for `directory` (empty = `$TMPDIR`, then
+  /// `/tmp`). Returns nullptr when the directory cannot host a snapshot.
+  static std::shared_ptr<CrateSnapshotArena> Acquire(
+      const std::string& directory, std::string* err) {
+    std::string dir = directory;
+    if (dir.empty()) {
+      const char* env = std::getenv("TMPDIR");
+      dir = (env && *env) ? env : "/tmp";
+    }
+    while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+    std::lock_guard<std::mutex> lock(RegistryMutex());
+    auto& registry = Registry();
+    auto it = registry.find(dir);
+    if (it != registry.end()) {
+      if (auto existing = it->second.lock()) return existing;
+      registry.erase(it);
+    }
+    auto arena = Create(dir, err);
+    if (!arena) return nullptr;
+    registry.emplace(std::move(dir), arena);
+    return arena;
+  }
+
+  /// Append one layer's captured bytes; `*offset` receives its arena position.
+  /// Committed ranges are immutable, so concurrent readers need no lock.
+  bool Append(const uint8_t* bytes, size_t n, uint64_t* offset,
+              std::string* err) {
+    if (!offset) return false;
+    std::lock_guard<std::mutex> lock(mu_);
+    if (n > (std::numeric_limits<uint64_t>::max)() - size_ ||
+        size_ > static_cast<uint64_t>((std::numeric_limits<off_t>::max)()) - n) {
+      if (err) *err = "snapshot arena byte range overflow";
+      return false;
+    }
+    // One arena can cover a whole scene closure; do not start an append that
+    // cannot fit and then fail midway.
+    struct statvfs vfs;
+    if (::statvfs(dir_.c_str(), &vfs) == 0) {
+      const uint64_t avail = static_cast<uint64_t>(vfs.f_bavail) *
+                             static_cast<uint64_t>(vfs.f_frsize);
+      if (avail < static_cast<uint64_t>(n) + (uint64_t(16) << 20)) {
+        if (err) *err = "snapshot arena has insufficient free space";
+        return false;
+      }
+    }
+    size_t done = 0;
+    while (done < n) {
+      const size_t want = std::min<size_t>(n - done, size_t(1) << 30);
+      const ssize_t put = ::pwrite(fd_, bytes + done, want,
+                                   static_cast<off_t>(size_ + done));
+      if (put < 0) {
+        if (errno == EINTR) continue;
+        if (err) *err = "Failed to write snapshot arena";
+        return false;
+      }
+      if (put == 0) {
+        if (err) *err = "Failed to write snapshot arena";
+        return false;
+      }
+      done += static_cast<size_t>(put);
+    }
+    *offset = size_;
+    size_ += n;
+    return true;
+  }
+
+  bool Read(uint64_t offset, size_t length, uint8_t* dst) const {
+    if (fd_ < 0) return false;
+    size_t done = 0;
+    while (done < length) {
+      const size_t want = std::min<size_t>(length - done, size_t(1) << 30);
+      ssize_t got = 0;
+      do {
+        got = ::pread(fd_, dst + done, want,
+                      static_cast<off_t>(offset + done));
+      } while (got < 0 && errno == EINTR);
+      if (got <= 0) return false;
+      done += static_cast<size_t>(got);
+    }
+    return true;
+  }
+
+ private:
+  CrateSnapshotArena(int fd, std::string dir, std::string path)
+      : fd_(fd), dir_(std::move(dir)), path_(std::move(path)) {}
+
+  static std::shared_ptr<CrateSnapshotArena> Create(const std::string& dir,
+                                                    std::string* err) {
+    std::string pattern = dir + "/lightusd-crate-XXXXXX";
+    std::vector<char> name(pattern.begin(), pattern.end());
+    name.push_back('\0');
+    const int fd = ::mkstemp(name.data());
+    if (fd < 0) {
+      if (err) *err = "cannot create snapshot arena in " + dir;
+      return nullptr;
+    }
+    (void)::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    std::string path;
+    // Unlink immediately: the descriptor is the only handle.
+    if (::unlink(name.data()) != 0) path = name.data();
+    return std::shared_ptr<CrateSnapshotArena>(
+        new CrateSnapshotArena(fd, dir, std::move(path)));
+  }
+
+  static std::mutex& RegistryMutex() {
+    static std::mutex mutex;
+    return mutex;
+  }
+  static std::map<std::string, std::weak_ptr<CrateSnapshotArena>>& Registry() {
+    static std::map<std::string, std::weak_ptr<CrateSnapshotArena>> registry;
+    return registry;
+  }
+
+  int fd_;
+  std::string dir_;
+  std::string path_;  // non-empty only when unlink() at creation failed
+  std::mutex mu_;
+  uint64_t size_ = 0;
+};
+#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+
+/// One layer's slice of the snapshot arena. `pread` is positional and
+/// thread-safe, so materializations from parallel readers need no lock.
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+class CrateSnapshotPager {
+ public:
+  CrateSnapshotPager(std::shared_ptr<CrateSnapshotArena> arena, uint64_t offset,
+                     uint64_t size)
+      : arena_(std::move(arena)), offset_(offset), size_(size) {}
+  CrateSnapshotPager(const CrateSnapshotPager&) = delete;
+  CrateSnapshotPager& operator=(const CrateSnapshotPager&) = delete;
+
+  uint64_t size() const { return size_; }
+
+  bool Read(uint64_t offset, size_t length, uint8_t* dst) const {
+    if (!arena_ || offset > size_ ||
+        static_cast<uint64_t>(length) > size_ - offset) {
+      return false;
+    }
+    return arena_->Read(offset_ + offset, length, dst);
+  }
+
+ private:
+  std::shared_ptr<CrateSnapshotArena> arena_;
+  uint64_t offset_;
+  uint64_t size_;
+};
+#else
+/// Paged snapshots are POSIX-only; the owned path is used everywhere else.
+class CrateSnapshotPager {
+ public:
+  uint64_t size() const { return 0; }
+  bool Read(uint64_t, size_t, uint8_t*) const { return false; }
+};
+#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+
+
 
 // ============================================================
 // CrateDataSource
@@ -120,54 +362,13 @@ std::shared_ptr<CrateDataSource> CrateDataSource::ReadFileSnapshot(
   }
   const size_t n = static_cast<size_t>(n64);
   // Every byte is written by the read below before any use, so the buffer is
-  // never zero-filled. Large snapshots use a 2 MiB-aligned private anonymous
-  // mapping advised for transparent huge pages: copying hundreds of MiB into
-  // fresh 4 KiB pages costs one page fault per 4 KiB (~190K faults on the
-  // ALab secure load), which dominated the owned-copy cost. MADV_HUGEPAGE is
-  // only advice; without THP the mapping still works with normal pages.
-  std::unique_ptr<uint8_t[], CrateSnapshotDeleter> buf;
-  constexpr size_t kHugeBytes = size_t(2) << 20;
-  constexpr size_t kHugeMin = size_t(4) << 20;
-  if (n >= kHugeMin && n <= (std::numeric_limits<size_t>::max)() - 2 * kHugeBytes) {
-    const size_t span = ((n + kHugeBytes - 1) & ~(kHugeBytes - 1)) + kHugeBytes;
-    void* raw = ::mmap(nullptr, span, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (raw != MAP_FAILED) {
-      const uintptr_t aligned =
-          (reinterpret_cast<uintptr_t>(raw) + kHugeBytes - 1) & ~(kHugeBytes - 1);
-#if defined(MADV_HUGEPAGE)
-      (void)::madvise(reinterpret_cast<void*>(aligned), span - kHugeBytes,
-                      MADV_HUGEPAGE);
-#endif
-      buf = std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
-          reinterpret_cast<uint8_t*>(aligned),
-          CrateSnapshotDeleter{span, raw});
-    }
-  }
-  if (!buf) {
-    buf = std::unique_ptr<uint8_t[], CrateSnapshotDeleter>(
-        new (std::nothrow) uint8_t[n], CrateSnapshotDeleter{0, nullptr});
-  }
+  // never zero-filled.
+  auto buf = AllocateSnapshotBuffer(n);
   if (!buf) return fail("Failed to allocate file snapshot");
-  size_t done = 0;
-  while (done < n) {
-    const size_t want = std::min<size_t>(n - done, size_t(1) << 30);
-    const ssize_t got =
-        ::pread(fd, buf.get() + done, want, static_cast<off_t>(done));
-    if (got < 0) {
-      if (errno == EINTR) continue;
-      return fail("Failed to read file contents");
-    }
-    if (got == 0) return fail("File shrank while being read: " + filename);
-    done += static_cast<size_t>(got);
+  std::string read_err;
+  if (!ReadWholeFile(fd, n, buf.get(), &read_err)) {
+    return fail(read_err + ": " + filename);
   }
-  // A consistent snapshot must also not have grown past its fstat size.
-  uint8_t extra = 0;
-  ssize_t more = 0;
-  do {
-    more = ::pread(fd, &extra, 1, static_cast<off_t>(n));
-  } while (more < 0 && errno == EINTR);
-  if (more != 0) return fail("File changed while being read: " + filename);
   std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
   ds->snapshot_ = std::move(buf);
   ds->snapshot_size_ = n;
@@ -179,6 +380,100 @@ std::shared_ptr<CrateDataSource> CrateDataSource::ReadFileSnapshot(
   if (unavailable) *unavailable = true;
   return nullptr;
 #endif
+}
+
+std::shared_ptr<CrateDataSource> CrateDataSource::PagedFileSnapshot(
+    const std::string& filename, uint64_t max_bytes,
+    const std::string& temp_directory, bool* unavailable, std::string* err) {
+  if (unavailable) *unavailable = false;
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+  auto fail = [&](const std::string& message) {
+    if (err) *err = message;
+    return std::shared_ptr<CrateDataSource>();
+  };
+  auto owned_fallback =
+      [](std::unique_ptr<uint8_t[], CrateSnapshotDeleter> buf, size_t n) {
+        auto ds = std::shared_ptr<CrateDataSource>(new CrateDataSource());
+        ds->snapshot_ = std::move(buf);
+        ds->snapshot_size_ = n;
+        return ds;
+      };
+
+  int fd = -1;
+  do {
+    fd = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+  } while (fd < 0 && errno == EINTR);
+  if (fd < 0) return fail("Failed to open file: " + filename);
+  struct CloseFd {
+    int fd;
+    ~CloseFd() { ::close(fd); }
+  } close_fd{fd};
+  struct stat st;
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+    return fail("Invalid or oversized file size");
+  }
+  const uint64_t cap = max_bytes ? max_bytes : kMaxReadableFileBytes;
+  const uint64_t n64 = static_cast<uint64_t>(st.st_size);
+  if (max_bytes && n64 > max_bytes) {
+    return fail("File exceeds max_memory budget");
+  }
+  if (n64 > cap ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<off_t>::max)())) {
+    return fail("Invalid or oversized file size");
+  }
+  const size_t n = static_cast<size_t>(n64);
+  // Capture the source exactly once. The captured bytes double as the parse
+  // buffer; after parsing they are released and only the snapshot descriptor
+  // remains for ranged materialization.
+  auto buf = AllocateSnapshotBuffer(n);
+  if (!buf) return fail("Failed to allocate file snapshot");
+  std::string read_err;
+  if (!ReadWholeFile(fd, n, buf.get(), &read_err)) {
+    return fail(read_err + ": " + filename);
+  }
+
+  auto arena = CrateSnapshotArena::Acquire(temp_directory, err);
+  if (!arena) {
+    // The platform is paging-capable but the destination is not usable: keep
+    // the bytes we already captured rather than rereading the source.
+    return owned_fallback(std::move(buf), n);
+  }
+  uint64_t arena_offset = 0;
+  if (!arena->Append(buf.get(), n, &arena_offset, err)) {
+    return owned_fallback(std::move(buf), n);
+  }
+
+  auto ds = std::shared_ptr<CrateDataSource>(new CrateDataSource());
+  ds->pager_ = std::make_shared<CrateSnapshotPager>(std::move(arena),
+                                                    arena_offset, n64);
+  ds->paged_size_ = n;
+  ds->paged_parse_ = std::move(buf);
+  return ds;
+#else
+  (void)filename;
+  (void)max_bytes;
+  (void)temp_directory;
+  (void)err;
+  if (unavailable) *unavailable = true;
+  return nullptr;
+#endif
+}
+
+void CrateDataSource::ReleaseParseBuffer() {
+  if (pager_) paged_parse_.reset();
+}
+
+bool CrateDataSource::ReadRange(uint64_t offset, size_t length,
+                                std::vector<uint8_t>* out) const {
+  if (!out || !pager_) return false;
+  if (offset > pager_->size() ||
+      static_cast<uint64_t>(length) > pager_->size() - offset) {
+    return false;
+  }
+  out->resize(length);
+  if (length == 0) return true;
+  return pager_->Read(offset, length, out->data());
 }
 
 void CrateSnapshotDeleter::operator()(uint8_t* p) const noexcept {
@@ -244,9 +539,26 @@ bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) cons
   const size_t ref_limit = ref.max_elements > size_limit
                                ? (std::numeric_limits<size_t>::max)()
                                : static_cast<size_t>(ref.max_elements);
-  return DecodeCrateArray(base(), size(), ref.rep, version_, tokens_,
-                          std::min(ref_limit, max_array_elements_), out,
-                          allocation_budget_.get());
+  const size_t max_elements = std::min(ref_limit, max_array_elements_);
+  if (const uint8_t* resident = base()) {
+    return DecodeCrateArray(resident, size(), ref.rep, version_, tokens_,
+                            max_elements, out, allocation_budget_.get());
+  }
+  if (!pager_) return false;
+  // Empty arrays carry no block. Decode them from a zero-length window.
+  if (ref.rep.payload() == 0 || ref.block_len == 0) {
+    static const uint8_t kEmpty = 0;
+    return DecodeCrateArrayAt(&kEmpty, 0, ref.rep, 0, version_, tokens_,
+                              max_elements, out, allocation_budget_.get());
+  }
+  if (ref.block_len > static_cast<uint64_t>(size_limit)) return false;
+  std::vector<uint8_t> block;
+  if (!ReadRange(ref.block_offset, static_cast<size_t>(ref.block_len), &block)) {
+    return false;
+  }
+  return DecodeCrateArrayAt(block.data(), block.size(), ref.rep,
+                            ref.block_offset, version_, tokens_, max_elements,
+                            out, allocation_budget_.get());
 }
 
 // ============================================================
@@ -463,7 +775,12 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
     return true;
   }
 
-  StreamReader r(source->base(), source->size());
+  // Probing reads the block header straight from the resident parse buffer.
+  // Paged sources release that buffer after parsing and never probe again.
+  const uint8_t* source_base = source->base();
+  if (!source_base) return false;
+
+  StreamReader r(source_base, source->size());
   // payload_as_offset() sign-extends from bit 47; reject a negative offset
   // rather than let the size_t cast truncate it (see SeekToPayload).
   if (!SeekToPayload(&r, rep)) return false;
@@ -568,10 +885,16 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                           &budget);
 }
 
-bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
-                      CrateVersion version,
-                      const std::vector<std::string>& tokens, size_t max_elements,
-                      Value* out, CrateAllocationBudget* budget) {
+namespace {
+
+// Shared body. `base_offset` is the absolute file offset of `base`; it is 0
+// for a whole-file buffer and non-zero for a paged window that starts exactly
+// at the array block header.
+bool DecodeCrateArrayImpl(const uint8_t* base, size_t size, ValueRep rep,
+                          uint64_t base_offset, CrateVersion version,
+                          const std::vector<std::string>& tokens,
+                          size_t max_elements, Value* out,
+                          CrateAllocationBudget* budget) {
   CrateAllocationBudget fallback(size, 0);
   if (!budget) budget = &fallback;
   auto charge = [&](uint64_t bytes) -> bool {
@@ -591,7 +914,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 
   uint64_t count = 0;
   if (rep.payload() != 0) {
-    if (!SeekToPayload(&r, rep)) return false;
+    const int64_t off = rep.payload_as_offset();
+    if (off < 0) return false;
+    const uint64_t u = static_cast<uint64_t>(off);
+    if (u < base_offset) return false;
+    const uint64_t rel = u - base_offset;
+    if (rel > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+      return false;
+    }
+    if (!r.seek(static_cast<size_t>(rel))) return false;
     if (!ReadCrateArrayCount(r, version, &count)) return false;
   }
   if (count > max_elements) return false;
@@ -1015,6 +1346,25 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       // No concrete Value storage for this array type yet.
       return false;
   }
+}
+
+}  // namespace
+
+bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
+                      const std::vector<std::string>& tokens, size_t max_elements,
+                      Value* out, CrateAllocationBudget* budget) {
+  return DecodeCrateArrayImpl(base, size, rep, 0, version, tokens,
+                              max_elements, out, budget);
+}
+
+bool DecodeCrateArrayAt(const uint8_t* base, size_t size, ValueRep rep,
+                        uint64_t base_offset, CrateVersion version,
+                        const std::vector<std::string>& tokens,
+                        size_t max_elements, Value* out,
+                        CrateAllocationBudget* budget) {
+  return DecodeCrateArrayImpl(base, size, rep, base_offset, version, tokens,
+                              max_elements, out, budget);
 }
 
 }  // namespace next

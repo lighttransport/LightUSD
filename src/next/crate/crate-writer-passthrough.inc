@@ -58,6 +58,9 @@
   bool TryPassThrough(const Value& val, ValueRep* out_rep) {
     const LazyArrayRef* lr = val.lazy_ref();
     if (!lr || !lr->source) return false;
+    // Pass-through aliases the source bytes. A paged source has no resident
+    // buffer after parsing, so let the generic path materialize and re-encode.
+    if (!lr->source->can_borrow()) return false;
     // Need a known, in-bounds block (empty arrays / unknown layouts decline).
     if (lr->block_len == 0) return false;
     // Only self-contained numeric POD blocks (never token/string/asset/dict).

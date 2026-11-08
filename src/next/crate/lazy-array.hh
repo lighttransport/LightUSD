@@ -44,6 +44,9 @@ public:
   virtual CrateVersion version() const = 0;
   virtual bool is_mmapped() const = 0;
   virtual bool can_borrow() const { return false; }
+  /// True when the source retains a private snapshot and serves array bytes by
+  /// ranged reads rather than a resident contiguous buffer.
+  virtual bool is_paged() const { return false; }
   virtual void DiscardRange(uint64_t offset, uint64_t length) const {
     (void)offset;
     (void)length;

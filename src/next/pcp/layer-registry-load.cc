@@ -347,6 +347,9 @@ std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
     opts.crate_options.enable_timing = options.enable_timing;
     opts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     opts.crate_options.use_mmap = options.usdc_use_mmap;
+    // `storage_path` is already the loader's private, write-once snapshot.
+    // Re-snapshotting it would copy the closure twice; keep the owned replay.
+    opts.crate_options.paged_snapshot = false;
     layer = ConvertLoadedUSDC(LoadUSDCFromFile(storage_path, opts),
                              identifier, warn, err);
   } else if (zip) {

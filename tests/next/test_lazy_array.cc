@@ -974,7 +974,8 @@ int main() {
     std::cout << "  file load is mmap-backed and materializes correctly"
               << std::endl;
 
-    // Opting out falls back to an owned heap buffer (not mmapped), same data.
+    // Opting out uses the private paged snapshot: the parse copy is released
+    // and lazy arrays page their blocks back from the snapshot descriptor.
     USDCLoadOptions opt;
     opt.crate_options.use_mmap = false;
     USDCLoadResult lo = LoadUSDCFromFile(path, opt);
@@ -983,11 +984,65 @@ int main() {
     const Value* opv =
         lo.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
     assert(opv && opv->is_lazy());
-    assert(!opv->lazy_ref()->source->is_mmapped() &&
-           "use_mmap=false must use the owned buffer");
+    auto osrc = opv->lazy_ref()->source;
+    assert(!osrc->is_mmapped() && "use_mmap=false must not alias the file");
+    assert(osrc->is_paged() && "untrusted path should keep a paged snapshot");
+    assert(!osrc->can_borrow() && "the anonymous parse copy must be released");
+    assert(osrc->base() == nullptr && "no retained anonymous parse buffer");
     auto opa = opv->as_float_array();
     assert(opa && *opa == *mpa);
-    std::cout << "  use_mmap=false falls back to owned buffer, same data"
+    // A second materialization after the first temporary is gone still works.
+    auto opa2 = opv->as_float_array();
+    assert(opa2 && *opa2 == *mpa);
+
+    // Writing a paged stage must re-encode instead of aliasing a source block,
+    // and the output reloads identically.
+    std::vector<uint8_t> paged_out;
+    USDCWriteResult paged_wr = WriteUSDCToMemory(paged_out, lo.stage);
+    assert(paged_wr.success);
+    USDCLoadResult paged_re = LoadUSDCFromMemory(
+        paged_out.data(), paged_out.size());
+    assert(paged_re.success);
+    const Value* paged_re_pv =
+        paged_re.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(paged_re_pv && paged_re_pv->is_lazy());
+    auto paged_re_a = paged_re_pv->as_float_array();
+    assert(paged_re_a && *paged_re_a == *mpa);
+    std::cout << "  use_mmap=false pages from a private snapshot and rewrites"
+              << std::endl;
+
+    // The unstaged owned fallback remains available and produces the same data.
+    USDCLoadOptions owned_opt;
+    owned_opt.crate_options.use_mmap = false;
+    owned_opt.crate_options.paged_snapshot = false;
+    USDCLoadResult lowned = LoadUSDCFromFile(path, owned_opt);
+    assert(lowned.success);
+    assert(!lowned.source_was_mmap);
+    const Value* owned_pv =
+        lowned.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(owned_pv && owned_pv->is_lazy());
+    assert(!owned_pv->lazy_ref()->source->is_paged());
+    assert(owned_pv->lazy_ref()->source->can_borrow());
+    auto owned_a = owned_pv->as_float_array();
+    assert(owned_a && *owned_a == *mpa);
+    std::cout << "  use_mmap=false paged_snapshot=false keeps the owned buffer"
+              << std::endl;
+
+    // An unusable snapshot directory degrades to the owned buffer; it never
+    // falls back to a second read of the source or to mmap.
+    USDCLoadOptions nodir_opt;
+    nodir_opt.crate_options.use_mmap = false;
+    nodir_opt.crate_options.paged_snapshot_directory =
+        "/nonexistent-lightusd-snapshot-dir";
+    USDCLoadResult lnodir = LoadUSDCFromFile(path, nodir_opt);
+    assert(lnodir.success);
+    const Value* nodir_pv =
+        lnodir.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(nodir_pv && nodir_pv->is_lazy());
+    assert(!nodir_pv->lazy_ref()->source->is_paged());
+    auto nodir_a = nodir_pv->as_float_array();
+    assert(nodir_a && *nodir_a == *mpa);
+    std::cout << "  unusable snapshot directory degrades to the owned buffer"
               << std::endl;
 
     pipeline::FlattenStats mmap_stats;

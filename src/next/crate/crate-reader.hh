@@ -76,7 +76,25 @@ struct CrateReadOptions : CrateLimits {
   /// up front and is immune. A truncation noticed during the load is reported
   /// as a warning (see CrateDataSource::MappedFileShrank), but that is
   /// after-the-fact detection, not protection.
+  ///
+  /// Setting this false selects the secure owned path: by default it captures
+  /// into a private paged snapshot (see `paged_snapshot`); setting
+  /// `paged_snapshot = false` keeps the whole layer in anonymous memory.
   bool use_mmap = true;
+
+  /// With `use_mmap = false`, capture the file into an unlinked private
+  /// snapshot and release the parse copy after the structural read. Lazy array
+  /// values then materialize by ranged reads from the snapshot instead of
+  /// pinning the whole layer in anonymous memory. The source is still read
+  /// exactly once and never aliased; only the storage form of the retained
+  /// copy changes (anonymous pages -> an unlinked temp file). Falls back to
+  /// the owned anonymous snapshot when a snapshot file cannot be created or
+  /// does not fit. Ignored when `use_mmap` is true or for memory loads.
+  bool paged_snapshot = true;
+
+  /// Directory for the paged snapshot file. Empty means `$TMPDIR`, then
+  /// `/tmp`. The file is created 0600 and unlinked before it is written.
+  std::string paged_snapshot_directory;
 };
 
 /// Error from crate reading
