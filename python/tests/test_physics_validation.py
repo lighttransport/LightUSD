@@ -126,13 +126,22 @@ def test_invalid_stage():
         physics.validate(stage)
 
 
-@pytest.mark.parametrize("attributes", [
+@pytest.mark.parametrize("attribute", [
     'quatf physics:principalAxes = (1, 0, 0, 0)',
     'float3 physics:diagonalInertia = (1, 2, 3)',
+])
+def test_single_authored_inertia_component_is_rejected(attribute):
+    stage = lightusd.loads('#usda 1.0\ndef Xform "Body" (prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI"]) {\n' + attribute + '\n}')
+    report = physics.validate(stage, include_core=False)
+    assert not report.valid
+    assert any(issue.rule_id == "physics.inertia" for issue in report.issues)
+
+
+@pytest.mark.parametrize("attributes", [
     'float3 physics:diagonalInertia = (0, 0, 0)\nquatf physics:principalAxes = (1, 0, 0, 0)',
     'float3 physics:diagonalInertia = (1, 2, 3)\nquatf physics:principalAxes = (0, 0, 0, 0)',
 ])
-def test_independent_inertia_fallbacks_are_valid(attributes):
+def test_paired_inertia_fallback_sentinels_are_valid(attributes):
     stage = lightusd.loads('#usda 1.0\ndef Xform "Body" (prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI"]) {\n' + attributes + '\n}')
     report = physics.validate(stage, include_core=False)
     assert report.valid, report.issues

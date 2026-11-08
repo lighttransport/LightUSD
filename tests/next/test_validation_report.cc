@@ -75,17 +75,27 @@ def PhysicsRevoluteJoint "Joint" { rel physics:body1 = </Missing>; }
   options.groups = 1u << 31;
   Check(lightusd_stage_validate(stage.get(), &options, &invalid) == LIGHTUSD_ERR_INVALID_ARG && !invalid, "unknown group rejected");
   options.groups = LIGHTUSD_VALIDATE_PHYSICS;
-  const char* fallbacks[] = {
+  // UsdPhysicsValidators requires the principal moments and axes together.
+  const char* single_authored[] = {
       "quatf physics:principalAxes = (1, 0, 0, 0)",
-      "float3 physics:diagonalInertia = (1, 2, 3)",
+      "float3 physics:diagonalInertia = (1, 2, 3)"};
+  for (const char* attributes : single_authored) {
+    const std::string text = std::string("#usda 1.0\ndef Xform \"Body\" (prepend apiSchemas = [\"PhysicsMassAPI\", \"PhysicsRigidBodyAPI\"]) {\n") + attributes + "\n}";
+    Check(stage.load_from_memory(reinterpret_cast<const uint8_t*>(text.data()), text.size()) == LIGHTUSD_OK, "single inertia fixture");
+    Check(api::validate(stage, &report, &options) == LIGHTUSD_OK, "single inertia report");
+    Check(lightusd_validation_report_summary(report.get(), &summary) == LIGHTUSD_OK && !summary.valid,
+          "single-authored inertia component is rejected");
+  }
+  // The schema fallback sentinels are still valid when the pair is authored.
+  const char* paired_fallbacks[] = {
       "float3 physics:diagonalInertia = (0, 0, 0)\nquatf physics:principalAxes = (1, 0, 0, 0)",
       "float3 physics:diagonalInertia = (1, 2, 3)\nquatf physics:principalAxes = (0, 0, 0, 0)"};
-  for (const char* attributes : fallbacks) {
+  for (const char* attributes : paired_fallbacks) {
     const std::string text = std::string("#usda 1.0\ndef Xform \"Body\" (prepend apiSchemas = [\"PhysicsMassAPI\", \"PhysicsRigidBodyAPI\"]) {\n") + attributes + "\n}";
-    Check(stage.load_from_memory(reinterpret_cast<const uint8_t*>(text.data()), text.size()) == LIGHTUSD_OK, "inertia fallback fixture");
-    Check(api::validate(stage, &report, &options) == LIGHTUSD_OK, "inertia fallback report");
+    Check(stage.load_from_memory(reinterpret_cast<const uint8_t*>(text.data()), text.size()) == LIGHTUSD_OK, "paired inertia fixture");
+    Check(api::validate(stage, &report, &options) == LIGHTUSD_OK, "paired inertia report");
     Check(lightusd_validation_report_summary(report.get(), &summary) == LIGHTUSD_OK && summary.valid,
-          "independent inertia and axes fallbacks are valid");
+          "paired inertia fallback sentinels are valid");
   }
 }
 int main() {
