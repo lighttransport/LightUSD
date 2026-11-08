@@ -51,9 +51,9 @@ for mode in ('indexed','sequential'):
 PY
 for MODE in indexed sequential; do
   "$BIN" "$TMP/$MODE.usda" "$TMP/$MODE-cpu.png" -rtPreview -diagnosticEmission -camera /C -w 64 -height 64
-  env LUSDR_GPU_TRIANGLE_CHUNK=1 "$BIN" "$TMP/$MODE.usda" "$TMP/$MODE-gpu.png" -vkr -diagnosticEmission -camera /C -w 64 -height 64 \
+  "$BIN" -gpuTriangleChunk 1 "$TMP/$MODE.usda" "$TMP/$MODE-gpu.png" -vkr -diagnosticEmission -camera /C -w 64 -height 64 \
     > "$TMP/$MODE-gpu.log" 2>&1 || lusdrender_test_render_failed vkr "$TMP/$MODE-gpu.log" "$?"
-  env LUSDR_GPU_TRIANGLE_CHUNK=8 "$BIN" "$TMP/$MODE.usda" "$TMP/$MODE-full.png" -vkr -diagnosticEmission -camera /C -w 64 -height 64 \
+  "$BIN" -gpuTriangleChunk 8 "$TMP/$MODE.usda" "$TMP/$MODE-full.png" -vkr -diagnosticEmission -camera /C -w 64 -height 64 \
     > "$TMP/$MODE-full.log" 2>&1 || lusdrender_test_render_failed vkr "$TMP/$MODE-full.log" "$?"
 done
 python3 - "$TMP" "$HELPERS" <<'PY'

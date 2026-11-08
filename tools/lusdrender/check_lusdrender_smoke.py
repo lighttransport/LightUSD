@@ -467,8 +467,7 @@ def Xform "World"
     mesh_chunk_out = outdir / "lusdrender-triangle-chunks.png"
     mesh_chunk_stats = subprocess.run(
         [exe, str(mesh_chunk_scene), str(mesh_chunk_out), "-w", "32",
-         "-height", "32", "-rtPreview", "-stats"],
-        env={**os.environ, "LUSDR_TRIANGLE_CHUNK": "1"},
+         "-height", "32", "-rtPreview", "-stats", "-triangleChunk", "1"],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -533,8 +532,7 @@ def Xform "World"
     curve_out = outdir / "lusdrender-curves.png"
     curve_stats = subprocess.run(
         [exe, str(curve_scene), str(curve_out), "-w", "64", "-height", "64",
-         "-rtPreview", "-stats", "-autoframe"],
-        env={**os.environ, "LUSDR_CURVE_CHUNK": "1"},
+         "-rtPreview", "-stats", "-autoframe", "-curveChunk", "1"],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -567,8 +565,7 @@ def Xform "World"
     gaussian_out = outdir / "lusdrender-gaussian-splat.png"
     gaussian_stats = subprocess.run(
         [exe, str(gaussian_scene), str(gaussian_out), "-w", "32", "-height", "32",
-         "-rtPreview", "-stats", "-autoframe"],
-        env={**os.environ, "LUSDR_GAUSSIAN_CHUNK": "1"},
+         "-rtPreview", "-stats", "-autoframe", "-gaussianChunk", "1"],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -592,9 +589,7 @@ def Xform "World"
     hip_gaussian_out = outdir / "lusdrender-hip-gaussian-splat.png"
     hip_gaussian = subprocess.run(
         [exe, str(gaussian_scene), str(hip_gaussian_out), "-hip", "-w", "16",
-         "-height", "16", "-stats"],
-        env={**os.environ, "LUSDR_GAUSSIAN_CHUNK": "1",
-             "LUSDR_GPU_TRIANGLE_CHUNK": "1"},
+         "-height", "16", "-stats", "-gaussianChunk", "1", "-gpuTriangleChunk", "1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1045,8 +1040,7 @@ def check_vulkan(exe, srcdir, outdir):
     vk_rgba = {}
     for flag, name in (("-vk", "compute trace"), ("-vkr", "ray query")):
         out = outdir / f"lusdrender{flag}.png"
-        run = subprocess.run([exe, str(scene), str(out), *size, flag],
-                             env={**os.environ, "LUSDR_GPU_TRIANGLE_CHUNK": "400"},
+        run = subprocess.run([exe, str(scene), str(out), *size, flag, "-gpuTriangleChunk", "400"],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         log = run.stdout + run.stderr
         if run.returncode != 0 or not out.exists():

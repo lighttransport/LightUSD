@@ -82,6 +82,7 @@ def main():
                           "--preview-cache-dir", str(args.cache),
                           "--preview-budget-mib", "2048", "--preview-host-mib", str(args.preview_host_mib),
                           "--preview-accumulation-frames", str(args.frames)]
+                if args.software: common += ["--preview-software"]
                 if args.no_source_refine: common += ["--preview-no-source-refine"]
                 if args.native_volume: common += ["--preview-volume-grids"]
                 if kind == "volume": common += ["--preview-volume-mode", args.volume_mode, "--preview-volume-bounces", str(args.volume_bounces), "--preview-volume-samples", str(args.volume_samples), "--preview-light-samples", str(args.light_samples)]

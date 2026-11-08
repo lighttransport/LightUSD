@@ -22,7 +22,7 @@
 #      beautiful penumbra and still be off by a constant factor, and nothing else
 #      in the suite would notice.
 #
-# LUSDR_LIGHT_NEE=0 restores the punctual path; the test A/Bs against it.
+# -noLightNee restores the punctual path; the test A/Bs against it.
 #
 # The lights author `normalize = true` with 4x the original intensity: under the
 # normalize-aware convention (R10) that is radiance I/(pi r^2) -- exactly the
@@ -103,10 +103,11 @@ def Xform "World" {
 }
 USDA
 
-render() {  # $1 = scene, $2 = out, $3 = LUSDR_LIGHT_NEE, $4.. = extra flags
+render() {  # $1 = scene, $2 = out, $3 = NEE enabled, $4.. = extra flags
   local scene="$1" out="$2" nee="$3"
   shift 3
-  LUSDR_LIGHT_NEE="$nee" "$LUSDRENDER" "$scene" "$out" -rtPreview \
+  if [ "$nee" = 0 ]; then set -- -noLightNee "$@"; fi
+  "$LUSDRENDER" "$scene" "$out" -rtPreview \
     -viewDir 0,0,1 -bg 0,0,0 -ambient 0 \
     -materialShading lightrt-bsdf -materialResolver tydra-next "$@" \
     > "$out.log" 2>&1

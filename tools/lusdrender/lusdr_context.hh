@@ -576,7 +576,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
     const lightusd::next::ValueClipStageLoader &clip_loader,
-    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    const CameraFrame &camera, const Options &opt,
+    std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
 bool BuildNextFlatCurveBounds(
@@ -669,10 +670,6 @@ void CollectLightsNext(const lightusd::next::Stage &stage,
                        LightCache *cache);
 
 lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
-
-// Largest triangle count the Vulkan descriptor MaterialX path takes (default 1M,
-// LUSDR_GPU_MATERIAL_PATH_TRIANGLES). Also bounds speculative Ptex atlas builds.
-size_t GpuMaterialPathLimit();
 
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);

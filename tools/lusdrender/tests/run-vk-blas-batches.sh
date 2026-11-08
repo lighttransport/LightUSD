@@ -40,7 +40,7 @@ for CHANNEL in depth geometricNormal shadingNormal; do
   if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/resident-$CHANNEL.log";then echo 'SKIP: hardware ray query unavailable';exit 77;fi
   cat "$TMP/resident-$CHANNEL.log";exit 1
  fi
- LUSDR_GPU_TRIANGLE_CHUNK=1 "$BIN" "$TMP/scene.usda" "$TMP/flat-chunks-$CHANNEL.pfm" -vkr --aov "$CHANNEL" -camera /C -w 32 -height 32 -stats > "$TMP/flat-chunks-$CHANNEL.log" 2>&1 || { cat "$TMP/flat-chunks-$CHANNEL.log";exit 1; }
+ "$BIN" -gpuTriangleChunk 1 "$TMP/scene.usda" "$TMP/flat-chunks-$CHANNEL.pfm" -vkr --aov "$CHANNEL" -camera /C -w 32 -height 32 -stats > "$TMP/flat-chunks-$CHANNEL.log" 2>&1 || { cat "$TMP/flat-chunks-$CHANNEL.log";exit 1; }
  grep -q '2 GPU chunks' "$TMP/flat-chunks-$CHANNEL.log"
  python3 - "$TMP/resident-$CHANNEL.pfm" "$TMP/flat-chunks-$CHANNEL.pfm" <<'COMPARE'
 import math,struct,sys
@@ -52,7 +52,7 @@ a,b=map(read,sys.argv[1:])
 assert all(math.isfinite(x)and math.isfinite(y)and abs(x-y)<=1e-6 for x,y in zip(a,b)),max(abs(x-y)for x,y in zip(a,b))
 COMPARE
  for REPEAT in 0 1 2; do
-  LUSDR_INST_BATCH_TRIS=1 LRT_VK_TLAS_SLICE=1 "$BIN" "$TMP/scene.usda" "$TMP/batch-$CHANNEL-$REPEAT.pfm" -vkInstancedStream --aov "$CHANNEL" -camera /C -w 32 -height 32 -stats > "$TMP/batch-$CHANNEL-$REPEAT.log" 2>&1 || { cat "$TMP/batch-$CHANNEL-$REPEAT.log";exit 1; }
+  LRT_VK_TLAS_SLICE=1 "$BIN" -instBatchTris 1 "$TMP/scene.usda" "$TMP/batch-$CHANNEL-$REPEAT.pfm" -vkInstancedStream --aov "$CHANNEL" -camera /C -w 32 -height 32 -stats > "$TMP/batch-$CHANNEL-$REPEAT.log" 2>&1 || { cat "$TMP/batch-$CHANNEL-$REPEAT.log";exit 1; }
   grep -q '2 BLAS batches' "$TMP/batch-$CHANNEL-$REPEAT.log"
   cmp "$TMP/resident-$CHANNEL.pfm" "$TMP/batch-$CHANNEL-$REPEAT.pfm"
  done

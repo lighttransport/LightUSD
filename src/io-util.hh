@@ -107,8 +107,12 @@ std::wstring UTF8ToWchar(const std::string &str);
 std::string WcharToUTF8(const std::wstring &wstr);
 #endif
 
+// Glob expansion only; process environment is never consulted.
 std::string ExpandFilePath(const std::string &filepath,
                            void *userdata = nullptr);
+// Explicit variables for $VAR/${VAR}, leading ~ (HOME), and Windows %VAR%.
+std::string ExpandFilePathWithVariables(
+    const std::string &filepath, const std::map<std::string, std::string> &variables);
 
 ///
 /// Match a filename against a simple glob pattern. Supported metacharacters:
@@ -244,13 +248,13 @@ std::string NormalizePath(const std::string &path);
 bool IsUDIMPath(const std::string &filepath);
 
 // --- Directory / temp-path utilities (no <filesystem> at call sites) ----------
-// GetTempDir uses the Win32 GetTempPath API on Windows and $TMPDIR/$TMP/$TEMP
-// (falling back to "/tmp") on POSIX. The remaining helpers wrap the vendored
+// GetTempDir accepts an explicit directory; its platform default is the Win32
+// GetTempPath API or "/tmp" on POSIX. The remaining helpers wrap the vendored
 // ghc::filesystem internally so callers stay free of std::filesystem.
 
 // System temporary directory, without a trailing separator (e.g. "/tmp" or
 // "C:\\Users\\me\\AppData\\Local\\Temp"). Returns "." if none is usable.
-std::string GetTempDir();
+std::string GetTempDir(const std::string &directory = {});
 
 // Current working directory ("." on failure).
 std::string GetCurrentDir();

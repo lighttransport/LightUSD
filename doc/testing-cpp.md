@@ -13,6 +13,38 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## Explicit runtime configuration
+
+Library-owned code and `lusdrender` do not read process environment variables.
+Configuration is supplied per call or per renderer instance; vendored dependency
+and driver configuration is separate.
+
+- USDC layer parse/reconstruction diagnostics: `USDLoadOptions::profile_crate`.
+- Crate write diagnostics: `USDWriteOptions::profile_crate`,
+  `CrateWriter::Options::profile_crate`, or the final `profile_crate` argument
+  to `usdc::SaveAsUSDCToMemory`.
+- Parallel composition diagnostics:
+  `ReferencesCompositionOptions::profile_layer_cache` and
+  `PayloadCompositionOptions::profile_layer_cache`.
+- Preview compute: `ScenePreviewOptions::compute_options` carries
+  `PreviewComputeOptions::{software_only,debug_validate,trace_pipeline}`.
+  The same options can be passed directly to `CreatePreviewCompute` and
+  `PreviewVolumeRenderer::load`.
+- Preview cache: set `ScenePreviewOptions::cache_directory`. The default is
+  `.cache/lightusd/scene-preview` relative to the working directory.
+- Path variables: `io::ExpandFilePathWithVariables(path, variables)` accepts
+  a caller-owned string map (including `HOME` for `~`). `ExpandFilePath`
+  expands globs but leaves variable and tilde text literal.
+- Temporary directory: `io::GetTempDir(directory)` accepts an explicit path;
+  its default is `/tmp` on POSIX or the Windows system temporary directory.
+
+The old crate/flatten profiling and preview software environment controls no
+longer alter library calls. Renderer limits and probes are explicit CLI flags
+listed by `lusdrender --help` and in its README. The CLI robustness test checks
+invalid limits and verifies inherited renderer environment variables cannot
+change a render. The I/O unit test interleaves two independent variable maps;
+the preview compute test checks per-instance software selection.
+
 ## C-style core refactor checks
 
 The active migration and measurement procedure is in
@@ -3734,7 +3766,7 @@ omissions as a full dataset pass.
 sharing a one-pixel texture with different RGB scale/bias, in raw and sRGB source
 spaces, through both material resolvers. The expected pixels come from the
 analytic transfer function, not an SDK screenshot. The GPU variant runs the same
-contract through Vulkan; force `LUSDR_GPU_TRIANGLE_CHUNK=1` to test preservation of
+contract through Vulkan; force `-gpuTriangleChunk 1` to test preservation of
 material IDs and UVs across chunks.
 
 Material-channel validation uses `-diagnosticEmission`: unlit emission with
@@ -3855,8 +3887,8 @@ workflow, which had been zeroing the entire specular lobe (see the
 OpenPtex: the descriptor atlas path and forced mesh chunks with lazy CPU
 sampling. Chunked sampling selects per-face mips from ray differentials;
 only currently visible Ptex triangles retain positions for this calculation.
-`LUSDR_PTEX_PROBE` records face, mip, intrinsic UV and linear RGB for the
-independent verifier. `LUSDR_NO_PTEX=1` disables Ptex loading. Descriptor atlas
+`-ptexProbe` records face, mip, intrinsic UV and linear RGB for the
+independent verifier. `-noPtex` disables Ptex loading. Descriptor atlas
 face edges honor `-texMaxSize` up to 512 texels. The test requires the
 optional Island corpus, OpenPtex >=2.4 sources and a working Vulkan ray-query device.
 Instanced/streamed paths and non-base Ptex slots remain unsupported.

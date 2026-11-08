@@ -3,7 +3,7 @@
 // (face, u, v) against OpenPtex.
 //
 // Input (text), written by tools/lusdrender/check_vkr_ptex.py from two raw-float
-// dumps of the renderer (LUSDR_VK_DUMP_F32 with LUSDVIEW_RT_DEBUG_AOV=ptex and
+// dumps of the renderer (-vkDumpF32 with -rtDebugAov ptex and
 // =base):
 //   # texture <path to .ptx>
 //   # srgb <0|1>

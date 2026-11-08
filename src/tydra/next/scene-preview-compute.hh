@@ -11,7 +11,7 @@ namespace next {
 ScenePreviewResult OpenScenePreviewVolume(const std::string&,
                                           const ScenePreviewOptions&);
 bool ValidatePreviewDispatch(const std::vector<uint32_t>&, size_t,
-                             std::string*);
+                             std::string*, bool debug_validate = false);
 class PreviewCompute {
  public:
   virtual ~PreviewCompute() = default;
@@ -21,7 +21,8 @@ class PreviewCompute {
                         std::string* error, bool camera_only = false) = 0;
 };
 std::unique_ptr<PreviewCompute> CreatePreviewCompute(
-    PreviewComputeBackend backend, uint64_t budget, std::string* error);
+    PreviewComputeBackend backend, uint64_t budget, std::string* error,
+    const PreviewComputeOptions& options = {});
 // Camera rays: origin + x*right + y*up for orthographic; forward + x*right +
 // y*up for perspective. right/up include the half-width/height at unit depth.
 struct PreviewVolumeCamera {
@@ -37,7 +38,7 @@ class PreviewVolumeRenderer {
   PreviewVolumeRenderer();
   ~PreviewVolumeRenderer();
   bool load(const ScenePreviewResult&, PreviewComputeBackend, uint64_t budget,
-            std::string* error);
+            std::string* error, const PreviewComputeOptions& options = {});
   bool render(const PreviewVolumeCamera&, int width, int height,
               std::vector<uint8_t>* rgba, std::string* error,
               bool advance = true);

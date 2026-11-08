@@ -11,6 +11,19 @@
 using namespace lightusd;
 
 void ioutil_test(void) {
+  // Variables and home directories belong to the caller, not process state.
+  const std::map<std::string, std::string> first{{"HOME", "one"}, {"ASSET", "mesh"}};
+  const std::map<std::string, std::string> second{{"HOME", "two"}, {"ASSET", "other"}};
+  TEST_CHECK(io::ExpandFilePath("~/literal/$HOME") == "~/literal/$HOME");
+  TEST_CHECK(io::ExpandFilePathWithVariables("~/${ASSET}.usda", first) == "one/mesh.usda");
+  TEST_CHECK(io::ExpandFilePathWithVariables("~/$ASSET.usda", second) == "two/other.usda");
+  TEST_CHECK(io::ExpandFilePathWithVariables("~/$ASSET.usda", first) == "one/mesh.usda");
+  TEST_CHECK(io::ExpandFilePathWithVariables("${UNSET}literal", first) == "literal");
+  TEST_CHECK(io::GetTempDir("caller-temp") == "caller-temp");
+#ifdef _WIN32
+  TEST_CHECK(io::ExpandFilePathWithVariables("%ASSET%.usda", first) == "mesh.usda");
+#endif
+
   {
     TEST_CHECK(io::JoinPath("./", "./dora") == "./dora");
   }

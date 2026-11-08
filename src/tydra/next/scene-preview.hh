@@ -22,6 +22,13 @@ namespace next {
 enum class ScenePreviewKind { Gaussian, Points, Volume };
 enum class PreviewComputeBackend { Auto, Cpu, Vulkan, Cuda };
 
+// Per-instance compute selection and diagnostics; never reads process state.
+struct PreviewComputeOptions {
+  bool software_only = false;
+  bool debug_validate = false;
+  bool trace_pipeline = false;
+};
+
 struct ScenePreviewOptions {
   ScenePreviewKind kind = ScenePreviewKind::Gaussian;
   PreviewComputeBackend compute_backend = PreviewComputeBackend::Auto;
@@ -46,6 +53,7 @@ struct ScenePreviewOptions {
   ::lightusd::next::pcp::CompositionOptions composition;
   // False cancels. Called at bounded composition/sampling/output boundaries.
   std::function<bool(const std::string&, uint64_t)> progress;
+  PreviewComputeOptions compute_options;
 };
 
 struct ScenePreviewResult {
@@ -77,6 +85,7 @@ bool ParseScenePreviewKind(const std::string& text, ScenePreviewKind* kind);
 // (CPU-only conversion) selects the portable 2 GiB preview ceiling.
 uint64_t ScenePreviewGpuBudget(uint64_t capacity, uint64_t available = 0);
 bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available);
+// Relative deterministic default; callers may set cache_directory explicitly.
 std::string DefaultScenePreviewCacheDirectory();
 
 // The returned USD is a portable cache root with relative USDC/VDB sidecars.

@@ -310,8 +310,9 @@ python3 tools/lusdpreview/check-renderers.py scene.usda --software \
 
 The wrapper pins Vulkan to lavapipe, selects llvmpipe for OpenGL, limits software
 worker threads to four by default, and disables NVIDIA offload. The explicit
-`LIGHTUSD_PREVIEW_SOFTWARE=1` mode selects only CPU Vulkan devices and skips the
-NVIDIA memory probe. `--software` applies the wrapper to each application,
+`--preview-software` option selects only CPU Vulkan devices and skips the
+NVIDIA memory probe. Pass `--preview-software` to preview applications run through the wrapper.
+`--software` applies the wrapper and explicit preview option to each application,
 skips CUDA/NVML and labels its results as software checks. These runs do not
 qualify hardware performance or hardware VRAM usage. Set
 `LIGHTUSD_SOFTWARE_VULKAN_ICD` if Mesa's ICD lives outside the standard paths.

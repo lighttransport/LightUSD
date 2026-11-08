@@ -18,7 +18,7 @@ ScenePreviewResult OpenScenePreviewVolume(const std::string& source,
   if (!renderer.load(
           result, PreviewComputeBackend::Cpu,
           std::min(options.gpu_budget_bytes, options.host_budget_bytes / 3),
-          &result.error))
+          &result.error, options.compute_options))
     return result;
   renderer.bounds(result.bounds_min, result.bounds_max, &result.voxel_size);
   ::lightusd::next::Stage stage;

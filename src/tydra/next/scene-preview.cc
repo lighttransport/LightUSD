@@ -191,13 +191,7 @@ uint64_t ScenePreviewGpuBudget(uint64_t capacity, uint64_t available) {
   return budget;
 }
 std::string DefaultScenePreviewCacheDirectory() {
-  const char* xdg = std::getenv("XDG_CACHE_HOME");
-  if (xdg && *xdg)
-    return (fs::path(xdg) / "lightusd" / "scene-preview").string();
-  const char* home = std::getenv("HOME");
-  return ((home && *home ? fs::path(home) / ".cache" : fs::path(".cache")) /
-          "lightusd" / "scene-preview")
-      .string();
+  return (fs::path(".cache") / "lightusd" / "scene-preview").string();
 }
 ScenePreviewResult ConvertScenePreview(
     const std::string& source, ::lightusd::next::AssetResolver& resolver,

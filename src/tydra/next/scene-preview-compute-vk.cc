@@ -118,6 +118,7 @@ class VulkanCompute final : public PreviewCompute {
   VkCommandPool commands_{};
   VkDescriptorPool descriptors_{};
   uint64_t budget_;
+  PreviewComputeOptions options_;
   struct Buffer {
     VkBuffer buffer{};
     VkDeviceMemory memory{};
@@ -162,7 +163,8 @@ class VulkanCompute final : public PreviewCompute {
   }
 
  public:
-  explicit VulkanCompute(uint64_t budget) : budget_(budget) {}
+  VulkanCompute(uint64_t budget, const PreviewComputeOptions& options)
+      : budget_(budget), options_(options) {}
   ~VulkanCompute() override {
     if (device_) {
       api_.vkDeviceWaitIdle(device_);
@@ -201,8 +203,7 @@ class VulkanCompute final : public PreviewCompute {
     api_.vkEnumeratePhysicalDevices(instance_, &count, nullptr);
     std::vector<VkPhysicalDevice> devices(count);
     api_.vkEnumeratePhysicalDevices(instance_, &count, devices.data());
-    const char* software = std::getenv("LIGHTUSD_PREVIEW_SOFTWARE");
-    const bool software_only = software && std::strcmp(software, "1") == 0;
+    const bool software_only = options_.software_only;
     for (auto pd : devices) {
       VkPhysicalDeviceProperties props{};
       api_.vkGetPhysicalDeviceProperties(pd, &props);
@@ -296,7 +297,7 @@ class VulkanCompute final : public PreviewCompute {
                          : input[35] <= 1 ? 3
                                           : 4;
     if (!pipelines_[key]) {
-      const bool trace = std::getenv("LIGHTUSD_PREVIEW_SOFTWARE") != nullptr;
+      const bool trace = options_.trace_pipeline;
       const auto started = std::chrono::steady_clock::now();
       if (trace)
         std::fprintf(stderr,
@@ -343,7 +344,7 @@ class VulkanCompute final : public PreviewCompute {
   bool dispatch(const std::vector<uint32_t>& input, size_t count,
                 std::vector<float>* result, std::string* error,
                 bool camera_only) override {
-    if (!ValidatePreviewDispatch(input, count, error)) return false;
+    if (!ValidatePreviewDispatch(input, count, error, options_.debug_validate)) return false;
     if (!selectPipeline(input, error)) return false;
     const uint64_t bytes = input.size() * 4, outputBytes = count * 4;
     const uint64_t reserve = std::min(budget_ / 2, uint64_t(512) << 20);
@@ -499,9 +500,9 @@ class VulkanCompute final : public PreviewCompute {
   }
 };
 }  // namespace
-std::unique_ptr<PreviewCompute> CreateVulkanPreviewCompute(uint64_t budget,
-                                                           std::string* error) {
-  auto engine = std::make_unique<VulkanCompute>(budget);
+std::unique_ptr<PreviewCompute> CreateVulkanPreviewCompute(
+    uint64_t budget, std::string* error, const PreviewComputeOptions& options) {
+  auto engine = std::make_unique<VulkanCompute>(budget, options);
   if (!engine->init(error)) return {};
   return engine;
 }

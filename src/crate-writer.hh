@@ -354,6 +354,9 @@ public:
 
     // Error context depth (how many stack frames to include in error messages)
     int error_context_depth = 5;
+
+    // Emit finalize/conversion phase timings to stderr.
+    bool profile_crate = false;
   };
 
   void SetOptions(const Options& opts) { options_ = opts; }

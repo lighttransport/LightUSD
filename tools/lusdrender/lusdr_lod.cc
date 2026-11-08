@@ -31,6 +31,7 @@
 #include "next/pcp/prim-index.hh"  // pcp::CompositionOptions
 #include "tydra/next/resource-budget.hh"
 #include "lusdr_context.hh"
+#include "io-util.hh"
 
 #ifdef HAVE_VULKAN
 extern "C" {
@@ -110,19 +111,6 @@ std::string AbsolutePath(const std::string &p) {
   if (realpath(p.c_str(), buf)) return std::string(buf);
 #endif
   return p;
-}
-
-std::string TempDir() {
-#ifdef _WIN32
-  const char *t = std::getenv("TEMP");
-  if (!t || !*t) t = std::getenv("TMP");
-  if (t && *t) return std::string(t);
-  return ".";
-#else
-  const char *t = std::getenv("TMPDIR");
-  if (t && *t) return std::string(t);
-  return "/tmp";
-#endif
 }
 
 }  // namespace
@@ -353,7 +341,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const int pid = getpid();
 #endif
   const std::string wrapper =
-      TempDir() + "/lusdr_lod_" + std::to_string(pid) + ".usda";
+      lightusd::io::GetTempDir(opt->temp_directory) + "/lusdr_lod_" + std::to_string(pid) + ".usda";
   std::ofstream ofs(wrapper);
   if (!ofs) {
     std::cerr << "[lodStream] cannot write wrapper " << wrapper << "\n";

@@ -4737,7 +4737,8 @@ bool App::renderScenePreviewVolume(std::vector<uint8_t>* rgba, int* width,
                              ? preview::PreviewComputeBackend::Vulkan
                              : preview::PreviewComputeBackend::Cpu;
     if (!engine->load(previewRequest_.result, backend,
-                      previewRequest_.options.gpu_budget_bytes, error))
+                      previewRequest_.options.gpu_budget_bytes, error,
+                      previewRequest_.options.compute_options))
       return false;
     previewVolumeRoot_ = previewRequest_.result.usd_path;
     previewVolumeRenderer_ = std::move(engine);

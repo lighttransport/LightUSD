@@ -24,7 +24,20 @@ int main(int argc, char** argv) {
   std::string error;
   auto reference =
       td::CreatePreviewCompute(td::PreviewComputeBackend::Cpu, budget, &error);
-  auto engine = td::CreatePreviewCompute(backend, budget, &error);
+  td::PreviewComputeOptions compute_options;
+  compute_options.software_only = argc > 2 && std::strcmp(argv[2], "--software") == 0;
+  const int folder_arg = compute_options.software_only ? 3 : 2;
+  compute_options.debug_validate = true;
+  auto engine = td::CreatePreviewCompute(backend, budget, &error, compute_options);
+  if (backend == td::PreviewComputeBackend::Cpu) {
+    auto software = compute_options;
+    software.software_only = true;
+    if (td::CreatePreviewCompute(td::PreviewComputeBackend::Cuda, budget, &error, software))
+      return 1;
+    error.clear();
+    if (!td::CreatePreviewCompute(td::PreviewComputeBackend::Cpu, budget, &error, software))
+      return 1;
+  }
   auto require = [&](bool ok, const std::string& what) {
     if (!ok) std::cerr << "FAIL: " << what << " " << error << "\n";
     return ok;
@@ -98,8 +111,8 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < actual.size(); ++i)
     max_error = std::max(max_error, std::abs(expected[i] - actual[i]));
   if (!require(max_error < 1e-5f, "volume conversion parity")) return 1;
-  const auto folder = argc > 2
-                          ? fs::path(argv[2])
+  const auto folder = argc > folder_arg
+                          ? fs::path(argv[folder_arg])
                           : fs::temp_directory_path() /
                                 ("preview-compute-" + name + "-" +
                                  std::to_string(std::chrono::steady_clock::now()
@@ -113,7 +126,7 @@ int main(int argc, char** argv) {
       std::error_code ec;
       if (!keep) fs::remove_all(folder, ec);
     }
-  } cleanup{folder, argc > 2};
+  } cleanup{folder, argc > folder_arg};
   const auto source = folder / "source.usda";
   {
     std::ofstream file(source);
@@ -137,6 +150,7 @@ int main(int argc, char** argv) {
 )usd";
   }
   td::ScenePreviewOptions options;
+  options.compute_options = compute_options;
   options.kind = td::ScenePreviewKind::Volume;
   options.compute_backend = backend;
   options.volume_surface_carrier = false;
@@ -152,7 +166,7 @@ int main(int argc, char** argv) {
     if (file.path().filename().string().rfind("surface_", 0) == 0) return 1;
   td::PreviewVolumeRenderer cpu, gpu;
   if (!cpu.load(result, td::PreviewComputeBackend::Cpu, budget, &error) ||
-      !gpu.load(result, backend, budget, &error)) {
+      !gpu.load(result, backend, budget, &error, compute_options)) {
     std::cerr << error << "\n";
     return 1;
   }
@@ -1023,7 +1037,7 @@ int main(int argc, char** argv) {
   camera.up = {0, 0, 0};
   camera.background = {1, 1, 1};
   camera.settings.scattering = 0;
-  if (!fog_renderer.load(fog_result, backend, budget, &error) ||
+  if (!fog_renderer.load(fog_result, backend, budget, &error, compute_options) ||
       !fog_renderer.render(camera, 1, 1, &b, &error) ||
       !require(b[0] >= 100 && b[0] <= 106,
                "density-only UsdVol automatic medium rendering"))
@@ -1085,7 +1099,7 @@ int main(int argc, char** argv) {
   camera.settings.scatter_samples = 16;
   if (!lit_cpu.load(fog_result, td::PreviewComputeBackend::Cpu, budget,
                     &error) ||
-      !lit_gpu.load(fog_result, backend, budget, &error) ||
+      !lit_gpu.load(fog_result, backend, budget, &error, compute_options) ||
       !lit_cpu.render(camera, 32, 32, &a, &error) ||
       !lit_gpu.render(camera, 32, 32, &b, &error)) {
     std::cerr << error << "\n";
@@ -1106,7 +1120,7 @@ int main(int argc, char** argv) {
   camera.settings.light_samples = 1;
   camera.settings.accumulation_frames = 256;
   td::PreviewVolumeRenderer progressive;
-  if (!progressive.load(fog_result, backend, budget, &error)) return 1;
+  if (!progressive.load(fog_result, backend, budget, &error, compute_options)) return 1;
   std::vector<uint8_t> first, coarse, converged;
   for (uint32_t frame = 0; frame < 256; ++frame) {
     if (!progressive.render(camera, 8, 8, &b, &error)) return 1;
@@ -1145,7 +1159,7 @@ int main(int argc, char** argv) {
       !require(progressive.accumulatedFrames() == 1,
                "resize resets accumulation"))
     return 1;
-  if (!progressive.load(fog_result, backend, budget, &error) ||
+  if (!progressive.load(fog_result, backend, budget, &error, compute_options) ||
       !require(progressive.accumulatedFrames() == 0,
                "scene reload resets accumulation"))
     return 1;

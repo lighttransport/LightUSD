@@ -132,6 +132,8 @@ struct ReferencesCompositionOptions {
   // Owned by the caller and typically kept alive across the whole fixed-point
   // composition loop. nullptr = parse per arc (legacy behavior).
   std::map<std::string, Layer> *layer_cache{nullptr};
+  // Emit parallel layer-cache warmup timings to stderr.
+  bool profile_layer_cache{false};
 };
 
 struct PayloadCompositionOptions {
@@ -172,6 +174,8 @@ struct PayloadCompositionOptions {
   /// When nullptr (default), all payloads are loaded eagerly.
   ///
   std::function<bool(const Path &prim_path, const Payload &payload)> load_policy;
+  // Emit parallel layer-cache warmup timings to stderr.
+  bool profile_layer_cache{false};
 };
 
 

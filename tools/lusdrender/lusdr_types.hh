@@ -613,6 +613,31 @@ enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNorma
 enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
+  // Per-render controls. Zero selects the documented automatic limit.
+  size_t gpu_triangle_chunk{262144};
+  bool gpu_triangle_chunk_explicit{false};
+  // Bound the whole-scene MaterialX path before using chunked shading.
+  size_t gpu_material_path_triangles{1000000};
+  size_t triangle_chunk{262144};
+  size_t curve_chunk{0};
+  size_t gaussian_max{0};
+  size_t gaussian_chunk{262144};
+  unsigned hermite_segments{8};
+  uint32_t inst_chunk_tris{8u * 1024u * 1024u};
+  size_t inst_budget{0};
+  uint32_t inst_batch_tris{16000000};
+  bool force_vkr_fallback{false};
+  bool force_wide{false};
+  bool gpu_no_dome{false};
+  bool no_ptex{false};
+  bool coherent_colors{false};
+  bool light_double_count{false};
+  bool light_nee{true};
+  uint32_t rt_debug_aov{0};
+  std::string vk_dump_f32;
+  std::string ptex_probe;
+  std::string temp_directory;
+
   CaptureAov aov{CaptureAov::Color};
   // Display transform for the beauty path: false = filmic curve (default),
   // true = plain sRGB encode, matching usdrecord's colorCorrectionMode=sRGB.

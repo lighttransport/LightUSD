@@ -56,13 +56,15 @@ float Bits(uint32_t x) {
 }  // namespace kernel
 class CpuCompute final : public PreviewCompute {
   uint64_t budget_;
+  bool debug_validate_;
 
  public:
-  explicit CpuCompute(uint64_t budget) : budget_(budget) {}
+  CpuCompute(uint64_t budget, bool debug_validate)
+      : budget_(budget), debug_validate_(debug_validate) {}
   const char* name() const override { return "cpu"; }
   bool dispatch(const std::vector<uint32_t>& data, size_t count,
                 std::vector<float>* out, std::string* error, bool) override {
-    if (!ValidatePreviewDispatch(data, count, error)) return false;
+    if (!ValidatePreviewDispatch(data, count, error, debug_validate_)) return false;
     if (data.size() * 4 + count * 4 > budget_) {
       *error = "CPU preview compute exceeds budget";
       return false;
@@ -106,16 +108,16 @@ void Put(std::vector<uint32_t>& data, size_t index, float value) {
 }  // namespace
 #if defined(LIGHTUSD_PREVIEW_VULKAN)
 std::unique_ptr<PreviewCompute> CreateVulkanPreviewCompute(uint64_t,
-                                                           std::string*);
+    std::string*, const PreviewComputeOptions&);
 #endif
 #if defined(LIGHTUSD_PREVIEW_CUDA)
 std::unique_ptr<PreviewCompute> CreateCudaPreviewCompute(uint64_t,
-                                                         std::string*);
+    std::string*, const PreviewComputeOptions&);
 #endif
 bool ValidatePreviewDispatch(const std::vector<uint32_t>& data, size_t count,
-                             std::string* error) {
+                             std::string* error, bool debug_validate) {
   auto fail = [&](const char* why = nullptr) {
-    if (std::getenv("LIGHTUSD_PREVIEW_DEBUG_VALIDATE"))
+    if (debug_validate)
       std::fprintf(stderr,
                    "[validate] reason=%s mode=%u size=%zu count=%zu "
                    "h1=%u h2=%u h3=%u limit=%zu\n",
@@ -158,7 +160,7 @@ bool ValidatePreviewDispatch(const std::vector<uint32_t>& data, size_t count,
       if (samples > data[1]) return fail();
       for (size_t k = 0; k < 48; ++k)
         if (!std::isfinite(scalar(m + k))) {
-          if (std::getenv("LIGHTUSD_PREVIEW_DEBUG_VALIDATE"))
+          if (debug_validate)
             std::fprintf(stderr,
                          "[validate] geometry record %zu lane %zu value=%f\n",
                          t, k, double(scalar(m + k)));
@@ -288,11 +290,11 @@ bool ValidatePreviewDispatch(const std::vector<uint32_t>& data, size_t count,
 }
 
 std::unique_ptr<PreviewCompute> CreatePreviewCompute(
-    PreviewComputeBackend backend, uint64_t budget, std::string* error) {
+    PreviewComputeBackend backend, uint64_t budget, std::string* error,
+    const PreviewComputeOptions& options) {
   std::string ignored;
   if (!error) error = &ignored;
-  const char* software = std::getenv("LIGHTUSD_PREVIEW_SOFTWARE");
-  const bool software_only = software && std::strcmp(software, "1") == 0;
+  const bool software_only = options.software_only;
   if (software_only && backend == PreviewComputeBackend::Cuda) {
     *error = "hardware compute is disabled in software development mode";
     return {};
@@ -300,7 +302,7 @@ std::unique_ptr<PreviewCompute> CreatePreviewCompute(
 #if defined(LIGHTUSD_PREVIEW_CUDA)
   if (!software_only && (backend == PreviewComputeBackend::Auto ||
                          backend == PreviewComputeBackend::Cuda)) {
-    auto engine = CreateCudaPreviewCompute(budget, error);
+    auto engine = CreateCudaPreviewCompute(budget, error, options);
     if (engine) return engine;
     if (backend == PreviewComputeBackend::Cuda) return {};
   }
@@ -308,7 +310,7 @@ std::unique_ptr<PreviewCompute> CreatePreviewCompute(
 #if defined(LIGHTUSD_PREVIEW_VULKAN)
   if (backend == PreviewComputeBackend::Auto ||
       backend == PreviewComputeBackend::Vulkan) {
-    auto engine = CreateVulkanPreviewCompute(budget, error);
+    auto engine = CreateVulkanPreviewCompute(budget, error, options);
     if (engine) return engine;
     if (backend == PreviewComputeBackend::Vulkan) return {};
   }
@@ -319,7 +321,7 @@ std::unique_ptr<PreviewCompute> CreatePreviewCompute(
     return {};
   }
   error->clear();
-  return std::make_unique<CpuCompute>(budget);
+  return std::make_unique<CpuCompute>(budget, options.debug_validate);
 }
 struct PreviewVolumeRenderer::Impl {
   std::vector<uint32_t> data;
@@ -344,11 +346,12 @@ const char* PreviewVolumeRenderer::backend() const {
 }
 bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
                                  PreviewComputeBackend backend, uint64_t budget,
-                                 std::string* error) {
+                                 std::string* error,
+                                 const PreviewComputeOptions& compute_options) {
   namespace usd = ::lightusd::next;
   impl_.reset(new Impl);
   impl_->budget = budget;
-  impl_->compute = CreatePreviewCompute(backend, budget, error);
+  impl_->compute = CreatePreviewCompute(backend, budget, error, compute_options);
   if (!impl_->compute) return false;
   usd::Stage stage;
   usd::AssetResolver resolver;

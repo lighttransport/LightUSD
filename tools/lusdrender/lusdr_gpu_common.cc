@@ -72,22 +72,6 @@ bool WriteGpuDataAov(const Options& opt, int w, int h, int spp, const Sample& sa
 
 }  // namespace
 
-// The descriptor MaterialX path is the beauty contract, but it builds one
-// acceleration structure and the packed vertex/material buffers for the whole
-// scene. Mid-size scenes above the mesh-chunk limit used to fall back to the
-// legacy chunked shading path (no MaterialX graphs/lights), which made the
-// beauty result depend on scene size. Keep chunking as the memory fallback
-// above this bound and for non-colour AOVs.
-size_t GpuMaterialPathLimit() {
-  size_t limit = size_t(1000000);
-  if (const char *s = std::getenv("LUSDR_GPU_MATERIAL_PATH_TRIANGLES")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) limit = static_cast<size_t>(n);
-  }
-  return limit;
-}
-
 bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
                       int threads, bool build_cpu_scene, GpuTriScene *out,
@@ -661,22 +645,19 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 namespace {
 
 // Optional per-sample Ptex probe for verification oracles: with
-// LUSDR_PTEX_PROBE=<file>, every Ptex base-colour sample is appended in the
+// -ptexProbe <file>, every Ptex base-colour sample is appended in the
 // format tests/verification/repros/ptex-element-probe-verify.cc reads
 // ("x y tex face mip srgb u v r g b", plus "# texture <id> <path>" headers).
 struct PtexProbe {
   std::mutex mutex;
   std::FILE *file{nullptr};
   std::set<size_t> announced;
-  PtexProbe() {
-    if (const char *path = std::getenv("LUSDR_PTEX_PROBE")) file = std::fopen(path, "w");
+  explicit PtexProbe(const std::string &path) {
+    if (!path.empty()) file = std::fopen(path.c_str(), "w");
   }
   ~PtexProbe() { if (file) std::fclose(file); }
 };
-PtexProbe &Probe() {
-  static PtexProbe probe;
-  return probe;
-}
+
 
 // Base-colour sample of a lazy Ptex texture at a hit of the chunked path. The
 // face and face-local (u,v) come from the triangle's compact reference; the mip
@@ -687,7 +668,8 @@ bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
                        const GpuTriScene &s,
                        const GpuTrianglePositions &triangle_positions,
                        const std::vector<lrt_ray> &rays, int w, int h, int spp,
-                       int x, int y, int sp, const lrt_hit &hit, Vec3 *out) {
+                       int x, int y, int sp, const lrt_hit &hit, Vec3 *out,
+                       PtexProbe &probe) {
   if (!texture.is_ptex || !texture.ptex || !texture.ptex->valid()) return false;
   if (hit.prim_id >= s.flat_ptex.size()) return false;
   const uint32_t ref = s.flat_ptex[hit.prim_id];
@@ -744,7 +726,6 @@ bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
   }
   float rgb[3];
   if (!texture.ptex->Sample(face, mip, u, v, texture.srgb, rgb)) return false;
-  PtexProbe &probe = Probe();
   if (probe.file) {
     std::lock_guard<std::mutex> lock(probe.mutex);
     if (probe.announced.insert(texture_id).second)
@@ -766,6 +747,11 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<Texture> *textures,
                         const GpuTraceContinuation& trace_continuation,
                         const GpuTrianglePositions& triangle_positions) {
+  PtexProbe probe(opt.ptex_probe);
+  if (!opt.ptex_probe.empty() && !probe.file) {
+    std::cerr << "Cannot open Ptex probe output: " << opt.ptex_probe << "\n";
+    return false;
+  }
   if(opt.aov!=CaptureAov::Color) {
     return WriteGpuDataAov(opt,w,h,spp,[&](size_t i,Vec3* value) {
       const auto& hit=hits[i];
@@ -982,7 +968,7 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                 Vec3 texel{1,1,1};
                 bool sampled=false;
                 if(texture.is_ptex) {
-                  sampled=SampleGpuPtexBase(texture,size_t(mat->tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel);
+                  sampled=SampleGpuPtexBase(texture,size_t(mat->tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel,probe);
                 } else if(have_uv) {
                   texel=texture.apply_value_transform(texture.sample(u,v));
                   sampled=true;

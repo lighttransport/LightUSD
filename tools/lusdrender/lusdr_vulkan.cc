@@ -38,17 +38,6 @@ size_t GpuTriangleCount(
   return n;
 }
 
-size_t GpuChunkLimit() {
-  size_t limit = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) limit = static_cast<size_t>(n);
-  }
-  return limit;
-}
-
-
 bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                       const Options &opt, const GpuTriScene &geometry,
                       const lusdview::DrawScene &scene,
@@ -252,22 +241,7 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                      ? opt.path_trace_samples : static_cast<uint32_t>(std::max(1, opt.samples));
   desc.max_depth = opt.path_trace ? opt.path_trace_max_depth : 1u;
   desc.rr_depth = opt.path_trace_rr_depth; desc.seed = opt.path_trace_seed;
-  // Diagnostic AOV: LUSDVIEW_RT_DEBUG_AOV=material|uv writes that value
-  // instead of shaded colour (see lrt_vk_material_path_desc::debug_aov).
-  if (const char* aov = std::getenv("LUSDVIEW_RT_DEBUG_AOV"))
-    desc.debug_aov = std::strcmp(aov, "uv") == 0 ? 2u
-                     : std::strcmp(aov, "material") == 0 ? 1u
-                     : std::strcmp(aov, "opacity") == 0 ? 3u
-                     : std::strcmp(aov, "behind_material") == 0 ? 4u
-                     : std::strcmp(aov, "behind_depth") == 0 ? 5u
-                     : std::strcmp(aov, "emission") == 0 ? 7u
-                     : std::strcmp(aov, "lit_diffuse") == 0 ? 8u
-                     : std::strcmp(aov, "lit_spec") == 0 ? 9u
-                     : std::strcmp(aov, "route4") == 0 ? 10u
-                     : std::strcmp(aov, "route44") == 0 ? 11u
-                     : std::strcmp(aov, "route4_tex") == 0 ? 12u
-                     : std::strcmp(aov, "ptex") == 0 ? 13u
-                     : std::strcmp(aov, "base") == 0 ? 14u : 0u;
+  desc.debug_aov = opt.rt_debug_aov;
   std::vector<float> rgba(static_cast<size_t>(width) * static_cast<size_t>(h) * 4u);
   lrt_result err = LRT_RESULT_OK;
   if (lrt_vk_rtx_scene_render_materialx_path(vk, rtx, &desc, rgba.data(), &err) != 0) {
@@ -275,11 +249,11 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
               << lrt_vk_engine_last_error(vk) << "\n";
     return false;
   }
-  // LUSDR_VK_DUMP_F32=<file>: raw float RGBA (int32 w, int32 h, then w*h*4 floats)
+  // -vkDumpF32 <file>: raw float RGBA (int32 w, int32 h, then w*h*4 floats)
   // before 8-bit conversion, so debug AOVs can carry exact values (ids, linear
   // colour) for verification oracles.
-  if (const char *dump = std::getenv("LUSDR_VK_DUMP_F32")) {
-    if (std::FILE *f = std::fopen(dump, "wb")) {
+  if (!opt.vk_dump_f32.empty()) {
+    if (std::FILE *f = std::fopen(opt.vk_dump_f32.c_str(), "wb")) {
       const int32_t dims[2] = {int32_t(width), int32_t(h)};
       std::fwrite(dims, sizeof(dims[0]), 2, f);
       std::fwrite(rgba.data(), sizeof(float), rgba.size(), f);
@@ -367,7 +341,7 @@ bool RunVulkanLightRTChunked(
   size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
   double flatten_s = 0.0, trace_s = 0.0, as_s = 0.0;
   bool used_hw_rt = false, fell_back = false;
-  const bool force_vkr_fallback = std::getenv("LUSDR_FORCE_VKR_FALLBACK") != nullptr;
+  const bool force_vkr_fallback = opt.force_vkr_fallback;
   while (mesh < geos.size()) {
     std::vector<Vec3> chunk_colors;
     std::vector<RTPreviewStats::MeshGeometry> chunk_geos;
@@ -603,16 +577,16 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       const LightCache &lights,
                       const CameraFrame &camera, int height) {
   const size_t total_triangles = GpuTriangleCount(geos);
-  const size_t chunk_limit = GpuChunkLimit();
+  const size_t chunk_limit = opt.gpu_triangle_chunk;
   const bool want_material_path =
       opt.aov == CaptureAov::Color && !opt.diagnostic_emission &&
       opt.gpu_shade != Options::GpuShadeMode::Cpu && opt.vulkan_rt;
-  // An explicit LUSDR_GPU_TRIANGLE_CHUNK is an operator/test request to
+  // An explicit -gpuTriangleChunk is an operator/test request to
   // exercise the chunked path and must win over the material-path preference.
-  const bool chunk_forced = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK") != nullptr;
+  const bool chunk_forced = opt.gpu_triangle_chunk_explicit;
   if (total_triangles > chunk_limit && !opt.path_trace &&
       !(want_material_path && !chunk_forced &&
-        total_triangles <= GpuMaterialPathLimit())) {
+        total_triangles <= opt.gpu_material_path_triangles)) {
     return RunVulkanLightRTChunked(opt, base_colors, geos, materials, textures, camera, height,
                                    chunk_limit);
   }
@@ -702,7 +676,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   bool used_hw_rt = false;
   bool ray_query_fallback = false;
   lrt_vk_rtx_scene* continuation_rtx = nullptr;
-  const bool force_vkr_fallback = std::getenv("LUSDR_FORCE_VKR_FALLBACK") != nullptr;
+  const bool force_vkr_fallback = opt.force_vkr_fallback;
   if (use_hw_rt) {
     // Build the ray-query acceleration structure directly from the indexed mesh
     // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
@@ -967,7 +941,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
               cinsts.size() > 16000000u;  // multi-TLAS also needs the wide decode
   // Debug: force the wide encoding on any scene to validate the wide path against
   // the narrow one (they must be pixel-identical).
-  if (std::getenv("LUSDR_FORCE_WIDE")) wide = true;
+  if (opt.force_wide) wide = true;
 
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
@@ -988,18 +962,8 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   double as_build_s = 0.0, trace_s = 0.0;
   auto t0 = std::chrono::steady_clock::now();
   size_t blas_batches = 1;
-  uint64_t batch_triangles = 16000000u;
-  if (const char* value = std::getenv("LUSDR_INST_BATCH_TRIS")) {
-    char* end = nullptr;
-    const unsigned long long parsed = std::strtoull(value, &end, 10);
-    if (value[0] == '-' || end == value || *end || !parsed ||
-        parsed > UINT32_MAX) {
-      std::cerr << "Invalid LUSDR_INST_BATCH_TRIS (expected 1..UINT32_MAX).\n";
-      lrt_vk_engine_destroy(vk);
-      return false;
-    }
-    batch_triangles = parsed;
-  }
+  const uint64_t batch_triangles = opt.inst_batch_tris;
+
   if (opt.vulkan_instanced_stream) {
     // Keep both BLAS residency and instance slices bounded. Prototype payloads
     // stay shared on the host; local instance IDs are mapped back after
@@ -1099,7 +1063,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
       // OUT_OF_MEMORY here means the GPU ran out building the BLAS/TLAS set
       // (e.g. full Moana island: ~110k prototype BLAS exhaust VRAM). The flat
       // fallback would flatten to even MORE geometry and fail harder, so report
-      // and stop rather than fall back. Lower LUSDR_INST_BUDGET to render a
+      // and stop rather than fall back. Lower -instBudget to render a
       // bounded subset.
       std::cerr << "-vkInstanced wide/multi build failed (rc=" << builderr
                 << ")"

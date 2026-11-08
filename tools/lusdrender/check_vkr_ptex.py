@@ -6,9 +6,9 @@ Renders one Island quad mesh (the isGardeniaA trunk, bound to a PxrPtexture
 `.ptx`) with `lusdrender -vkr`, then checks every visible pixel's base colour
 against OpenPtex:
 
-  1. render with LUSDVIEW_RT_DEBUG_AOV=ptex  -> exact (u, v, face) per pixel
-  2. render with LUSDVIEW_RT_DEBUG_AOV=base  -> linear base colour per pixel
-     (both captured as raw floats via LUSDR_VK_DUMP_F32)
+  1. render with -rtDebugAov ptex  -> exact (u, v, face) per pixel
+  2. render with -rtDebugAov base  -> linear base colour per pixel
+     (both captured as raw floats via -vkDumpF32)
   3. tests/verification/repros/ptex-vkr-probe-verify.cc re-samples the same
      (face, u, v) from the OpenPtex-decoded page and compares.
 
@@ -85,13 +85,11 @@ def main():
 
     def render(aov, name):
         dump = out / f'{name}.f32'
-        env = dict(os.environ, LUSDR_VK_DUMP_F32=str(dump))
-        if aov:
-            env['LUSDVIEW_RT_DEBUG_AOV'] = aov
         cmd = [args.lusdrender, str(element), str(out / f'{name}.png'),
                '-w', '320', '-height', '240', '-autoframe', '-bg', '0,0,0',
-               '-stats', '-vkr', '-mask', MASK]
-        run = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+               '-stats', '-vkr', '-mask', MASK, '-vkDumpF32', str(dump)]
+        if aov: cmd += ['-rtDebugAov', aov]
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         log = run.stdout + run.stderr
         (out / f'{name}.log').write_text(log)
         if any(t in log for t in ('Failed to create LightRT Vulkan engine', 'No Vulkan', 'no Vulkan')):
@@ -147,16 +145,16 @@ def main():
         print('FAIL: base colour differs from OpenPtex'); return 1
     print(f'descriptor path: {n} visible Ptex pixels match OpenPtex')
 
-    # Chunked path: force chunking (LUSDR_GPU_TRIANGLE_CHUNK) so hits are shaded
+    # Chunked path: force chunking (-gpuTriangleChunk) so hits are shaded
     # on the CPU through the lazy Ptex source (per-face mips from the ray-
     # differential footprint, cross-face taps), then verify the dumped
     # (face, mip, u, v, rgb) samples with the full OpenPtex model.
     chunk_probe = out / 'chunk-probe.txt'
     chunk_probe.unlink(missing_ok=True)
-    env = dict(os.environ, LUSDR_GPU_TRIANGLE_CHUNK='3000', LUSDR_PTEX_PROBE=str(chunk_probe))
     cmd = [args.lusdrender, str(element), str(out / 'chunk.png'), '-w', '320', '-height', '240',
-           '-autoframe', '-bg', '0,0,0', '-stats', '-vkr', '-mask', MASK]
-    run = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+           '-autoframe', '-bg', '0,0,0', '-stats', '-vkr', '-mask', MASK,
+           '-gpuTriangleChunk', '3000', '-ptexProbe', str(chunk_probe)]
+    run = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     clog = run.stdout + run.stderr
     (out / 'chunk.log').write_text(clog)
     if run.returncode != 0 or 'GPU chunks' not in clog:

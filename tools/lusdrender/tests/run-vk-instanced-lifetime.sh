@@ -11,7 +11,7 @@ from pathlib import Path
 s=Path(sys.argv[1]).read_text().replace('protoIndices = [0]','protoIndices = [0,0]').replace('positions = [(0,0,0)]','positions = [(-1,0,0),(1,0,0)]').replace('scales = [(2,1,1)]','scales = [(.5,1,1),(.5,1,1)]')
 Path(sys.argv[2]).write_text(s)
 PY
-if ! env -u LUSDR_FORCE_WIDE LRT_VK_BLAS_COMPACT=1 "$BIN" "$TMP/scene.usda" "$TMP/narrow.png" -vkInstanced -camera /C -w 64 -height 64 > "$TMP/narrow.log" 2>&1; then
+if ! env LRT_VK_BLAS_COMPACT=1 "$BIN" "$TMP/scene.usda" "$TMP/narrow.png" -vkInstanced -camera /C -w 64 -height 64 > "$TMP/narrow.log" 2>&1; then
   if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/narrow.log"; then
     echo 'SKIP: hardware ray query unavailable';exit 77
   fi
@@ -19,8 +19,8 @@ if ! env -u LUSDR_FORCE_WIDE LRT_VK_BLAS_COMPACT=1 "$BIN" "$TMP/scene.usda" "$TM
 fi
 for STREAM in 0 1; do
 for COMPACT in 0 1; do
-  LUSDR_FORCE_WIDE=1 LRT_VK_TLAS_SLICE=1 LRT_VK_BLAS_COMPACT="$COMPACT" LRT_VK_STREAM_TLAS="$STREAM" \
-    "$BIN" "$TMP/scene.usda" "$TMP/wide-$STREAM-$COMPACT.png" -vkInstanced -camera /C -w 64 -height 64 > "$TMP/wide-$STREAM-$COMPACT.log" 2>&1 || { cat "$TMP/wide-$STREAM-$COMPACT.log";exit 1; }
+  LRT_VK_TLAS_SLICE=1 LRT_VK_BLAS_COMPACT="$COMPACT" LRT_VK_STREAM_TLAS="$STREAM" \
+    "$BIN" -forceWide "$TMP/scene.usda" "$TMP/wide-$STREAM-$COMPACT.png" -vkInstanced -camera /C -w 64 -height 64 > "$TMP/wide-$STREAM-$COMPACT.log" 2>&1 || { cat "$TMP/wide-$STREAM-$COMPACT.log";exit 1; }
   grep -q '2-way multi-TLAS' "$TMP/wide-$STREAM-$COMPACT.log"
   cmp "$TMP/narrow.png" "$TMP/wide-$STREAM-$COMPACT.png"
 done

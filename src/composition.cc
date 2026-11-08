@@ -2522,7 +2522,8 @@ void WarmLayerCacheParallel(
     const AssetResolutionResolver &base_resolver, const Layer &in_layer,
     const lightusd::HashMap<std::string, FileFormatHandler> &fileformats,
     bool allow_parent_relative_paths, size_t max_asset_bytes,
-    std::map<std::string, Layer> *layer_cache, std::string *warn) {
+    std::map<std::string, Layer> *layer_cache, std::string *warn,
+    bool warm_verbose) {
   if (!layer_cache) {
     return;
   }
@@ -2542,10 +2543,6 @@ void WarmLayerCacheParallel(
     return;  // not worth spinning up workers
   }
   (*layer_cache)[kWarmedMarkerKey] = Layer();
-  const bool warm_verbose = []() {
-    const char *e = ::getenv("LIGHTUSD_FLATTEN_TIMING");
-    return e && e[0] == '1';
-  }();
   auto warm_t0 = std::chrono::steady_clock::now();
 
   // (authored asset path + context) tuples already warmed this call — bounds
@@ -2758,7 +2755,8 @@ bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
                            options.allow_parent_relative_paths,
-                           options.max_asset_bytes, options.layer_cache, warn);
+                           options.max_asset_bytes, options.layer_cache, warn,
+                           options.profile_layer_cache);
   }
 #endif
 
@@ -2855,7 +2853,8 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, *layer, options.fileformats,
                            options.allow_parent_relative_paths,
-                           options.max_asset_bytes, options.layer_cache, warn);
+                           options.max_asset_bytes, options.layer_cache, warn,
+                           options.profile_layer_cache);
   }
 #endif
 
@@ -3017,7 +3016,8 @@ bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_lay
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
                            options.allow_parent_relative_paths,
-                           options.max_asset_bytes, options.layer_cache, warn);
+                           options.max_asset_bytes, options.layer_cache, warn,
+                           options.profile_layer_cache);
   }
 #endif
 
@@ -3064,7 +3064,8 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, *layer, options.fileformats,
                            options.allow_parent_relative_paths,
-                           options.max_asset_bytes, options.layer_cache, warn);
+                           options.max_asset_bytes, options.layer_cache, warn,
+                           options.profile_layer_cache);
   }
 #endif
 

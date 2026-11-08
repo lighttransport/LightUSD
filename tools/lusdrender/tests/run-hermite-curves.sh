@@ -16,7 +16,7 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-LUSDR_HERMITE_SEGMENTS=8 "$LUSDRENDER" "$ASSET" "$TMP/curves-cpu.png" \
+"$LUSDRENDER" -hermiteSegments 8 "$ASSET" "$TMP/curves-cpu.png" \
   -rtPreview -w 32 -height 32 -autoframe -stats >"$TMP/curves-cpu.log" 2>&1
 if [ "$?" -ne 0 ] || ! grep -q "rt native curve chunks: round 3 (22 segments)" \
     "$TMP/curves-cpu.log"; then
@@ -24,7 +24,7 @@ if [ "$?" -ne 0 ] || ! grep -q "rt native curve chunks: round 3 (22 segments)" \
   echo "FAIL: Hermite tangents were not tessellated in the CPU next path"
   exit 1
 fi
-LUSDR_HERMITE_SEGMENTS=8 "$LUSDRENDER" "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \
+"$LUSDRENDER" -hermiteSegments 8 "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \
   -autoframe -stats >"$TMP/curves.log" 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then

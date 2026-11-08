@@ -512,11 +512,11 @@ bool CrateWriter::Finalize(std::string* err) {
     return false;
   }
 
-  // Finalize phase profiling (LIGHTUSD_CRATE_PROFILE=1): stderr report of the
+  // Caller-controlled finalize phase profiling: stderr report of the
   // sort / path-rebuild / field-pack split, with PackValue further split into
   // inline/dedup/write/other. Timer overhead inflates the profiled run; use
   // the shares, not the absolute wall.
-  profile_finalize_ = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
+  profile_finalize_ = options_.profile_crate;
   const auto prof_now = []() { return std::chrono::steady_clock::now(); };
   const auto prof_ns = [](std::chrono::steady_clock::time_point a,
                           std::chrono::steady_clock::time_point b) -> uint64_t {

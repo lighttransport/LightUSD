@@ -917,7 +917,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   const TriStore &ts = b.tris[size_t(th.prim_id)];
   TriInfo lt;
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
-  // Phase 5: when colors were reordered into leaf-slot order (LIGHTUSD_COHCOLOR), the
+  // Phase 5: when colors were reordered into leaf-slot order (-coherentColors), the
   // hit indexes by the leaf slot (cache-coherent) instead of prim_id; otherwise
   // the prim_id-ordered array is used. Same 12 bytes either way.
   const uint8_t *cc = nullptr;
@@ -1363,15 +1363,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
-  // Escape hatch for A/B-ing the double-count fix (and for bisecting a render
-  // change): LUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior, where an
-  // indirect bounce re-gathered the dome and the analytic mesh lights on top of
-  // the direct lighting that already delivered them.
-  static const bool kDoubleCount = [] {
-    const char *e = std::getenv("LUSDR_LIGHT_DOUBLE_COUNT");
-    return e && std::atoi(e) == 1;
-  }();
-  const bool gathered_directly = indirect && !kDoubleCount;
+  const bool gathered_directly = indirect && !opt.light_double_count;
   if (!tri_hit && !direct_hit.hit) {
     if (primary_hit_t) *primary_hit_t = camera.zfar;
     if (opt.aov != CaptureAov::Color) return Vec3{0, 0, 0};
@@ -1548,14 +1540,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   // against, so MIS is not even defined there, and its look must not change.
   const bool bsdf_mode =
       (opt.material_shading == Options::MaterialShading::LightRtBsdf);
-  // Escape hatch for A/B-ing the estimator (and for bisecting a render change):
-  // LUSDR_LIGHT_NEE=0 puts every light back on the punctual path.
-  static const bool kNeeEnabled = [] {
-    const char *e = std::getenv("LUSDR_LIGHT_NEE");
-    return !(e && std::atoi(e) == 0);
-  }();
   auto is_area_sampled = [&](const PreviewLight &light) -> bool {
-    if (!kNeeEnabled || !bsdf_mode) return false;
+    if (!opt.light_nee || !bsdf_mode) return false;
     switch (light.kind) {
       case PreviewLight::Kind::Sphere:
         return light.radius > 1.0e-5f &&

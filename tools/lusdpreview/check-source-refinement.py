@@ -25,8 +25,7 @@ def main():
     env = dict(os.environ)
     if args.software:
         env.update(VK_DRIVER_FILES=os.environ.get('VK_DRIVER_FILES', ''),
-                   LIBGL_ALWAYS_SOFTWARE='1', GALLIUM_DRIVER='llvmpipe',
-                   LIGHTUSD_PREVIEW_SOFTWARE='1')
+                   LIBGL_ALWAYS_SOFTWARE='1', GALLIUM_DRIVER='llvmpipe')
         env.pop('__NV_PRIME_RENDER_OFFLOAD', None)
         env.pop('LUSDVIEW_VK_DEVICE', None)
         env.pop('LUSDVIEW_VK_GPU_ASSISTED', None)
@@ -52,6 +51,7 @@ def main():
                        '--frames', str(args.threaded_frames) if args.threaded else '1',
                        '--size', '320x240',
                        '--screenshot', str(image), '--render-report', str(report)]
+                if args.software: cmd += ['--preview-software']
                 cmd += ['--threaded'] if args.threaded else ['--headless']
                 vk_device = 'llvmpipe' if args.software else 'nvidia'
                 cmd += {'cpu': ['--cpu-rt'], 'vk': ['--backend', 'vk', '--vk-device', vk_device],

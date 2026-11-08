@@ -153,7 +153,7 @@ Successful `-vkr` ray-query renders log `ray_query, indexed Vulkan AS, CPU BVH
 skipped`, which the GPU regression script checks. If the driver reports ray-query
 support but AS build/trace fails, `-vkr` logs `compute trace, ray_query fallback`
 and renders through the Vulkan compute path instead of returning a blank/failure.
-Set `LUSDR_FORCE_VKR_FALLBACK=1` to exercise that fallback path in local tests.
+Set `-forceVkrFallback` to exercise that fallback path in local tests.
 
 ## Fixed (was: "GPU backends mis-render") — 2026-06-28
 
@@ -298,7 +298,7 @@ normal by that instance's normal matrix (cofactor of the 3×4, so non-uniform sc
 is exact).
 
 A prototype larger than the per-BLAS chunk limit (8M triangles; overridable via
-`LUSDR_INST_CHUNK_TRIS` for testing) is **chunk-split** into sub-prototypes of ≤
+`-instChunkTris` for testing) is **chunk-split** into sub-prototypes of ≤
 chunk triangles (vertices remapped per chunk, shading slices carried along), and a
 placement of it is emitted once per sub-proto. Each sub-proto is just a smaller
 prototype, so the `pid` encoding and hit decode are unchanged; this works around

@@ -41,9 +41,11 @@ class CudaCompute final : public PreviewCompute {
   CUdeviceptr input_ = 0;
   size_t inputSize_ = 0;
   uint64_t budget_;
+  bool debug_validate_;
 
  public:
-  explicit CudaCompute(uint64_t budget) : budget_(budget) {}
+  CudaCompute(uint64_t budget, bool debug_validate)
+      : budget_(budget), debug_validate_(debug_validate) {}
   ~CudaCompute() override {
     if (context_) {
       p_cuCtxSetCurrent(context_);
@@ -140,7 +142,7 @@ typedef unsigned int uint;
   bool dispatch(const std::vector<uint32_t>& data, size_t count,
                 std::vector<float>* output, std::string* error,
                 bool camera_only) override {
-    if (!ValidatePreviewDispatch(data, count, error)) return false;
+    if (!ValidatePreviewDispatch(data, count, error, debug_validate_)) return false;
     p_cuCtxSetCurrent(context_);
     const uint64_t inputBytes = data.size() * 4, outputBytes = count * 4,
                    reserve = std::min(budget_ / 2, uint64_t(512) << 20);
@@ -189,9 +191,9 @@ typedef unsigned int uint;
 #undef DRIVER_SYMBOLS
 #undef RTC_SYMBOLS
 }  // namespace
-std::unique_ptr<PreviewCompute> CreateCudaPreviewCompute(uint64_t budget,
-                                                         std::string* error) {
-  auto engine = std::make_unique<CudaCompute>(budget);
+std::unique_ptr<PreviewCompute> CreateCudaPreviewCompute(
+    uint64_t budget, std::string* error, const PreviewComputeOptions& options) {
+  auto engine = std::make_unique<CudaCompute>(budget, options.debug_validate);
   if (!engine->init(error)) return {};
   return engine;
 }

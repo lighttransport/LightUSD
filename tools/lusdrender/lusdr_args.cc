@@ -189,6 +189,28 @@ void PrintUsage(const char *prog) {
       << "                         the nearest districts to the camera and promotes\n"
       << "                         them to districtLod=full under a memory budget\n"
       << "                         (the rest stay proxy). Implies -rtPreview/next.\n"
+      << "  -gpuTriangleChunk N    GPU triangle chunk limit (default 262144).\n"
+      << "  -gpuMaterialPathTriangles N  Material path limit (default 1000000).\n"
+      << "  -triangleChunk N       CPU triangle chunk limit (default 262144).\n"
+      << "  -curveChunk N          Curve segments per chunk (automatic by default).\n"
+      << "  -gaussianChunk N       Splats per chunk (default 262144).\n"
+      << "  -gaussianMax N         Explicit diagnostic splat cap (default unlimited).\n"
+      << "  -hermiteSegments N     Hermite tessellation, 1..1024 (default 8).\n"
+      << "  -instChunkTris N       Prototype BLAS limit (default 8388608).\n"
+      << "  -instBatchTris N       Instanced build batch (default 16000000).\n"
+      << "  -instBudget N          Instance placement limit (automatic by default).\n"
+      << "  -forceVkrFallback      Force Vulkan compute fallback.\n"
+      << "  -forceWide             Force wide instancing.\n"
+      << "  -noPtex / -gpuNoDome    Disable Ptex loading / GPU dome.\n"
+      << "  -coherentColors        Store BLAS colors in leaf order.\n"
+      << "  -lightDoubleCount      Enable diagnostic legacy indirect-light counting.\n"
+      << "  -noLightNee            Disable area-light next-event estimation.\n"
+      << "  -ptexProbe FILE        Write per-sample Ptex diagnostics.\n"
+      << "  -rtDebugAov NAME       Vulkan material-path diagnostic (see README).\n"
+      << "  -vkDumpF32 FILE        Write raw Vulkan float RGBA.\n"
+      << "  -tempDirectory DIR     Directory for generated LOD wrappers.\n"
+      << "  --preview-software     Select software-only preview compute.\n"
+      << "  --preview-debug-validate / --preview-trace-pipeline  Preview diagnostics.\n"
       << "  -maxVram <GiB>         GPU VRAM budget for -lodStream (0 = 0.5*device).\n"
       << "  -lodDistrictMem <GiB>  Est. host RSS charged per promoted district\n"
       << "                         (cost-model calibration; default 10).\n"
@@ -294,6 +316,65 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       return argv[++i];
     };
+    // These limits and diagnostics are explicit inputs, never environment reads.
+    size_t* limit = nullptr;
+    if (a == "-gpuTriangleChunk") limit = &opt->gpu_triangle_chunk;
+    if (a == "-gpuMaterialPathTriangles") limit = &opt->gpu_material_path_triangles;
+    if (a == "-triangleChunk") limit = &opt->triangle_chunk;
+    if (a == "-curveChunk") limit = &opt->curve_chunk;
+    if (a == "-gaussianMax") limit = &opt->gaussian_max;
+    if (a == "-gaussianChunk") limit = &opt->gaussian_chunk;
+    if (a == "-instBudget") limit = &opt->inst_budget;
+    if (limit || a == "-hermiteSegments" || a == "-instChunkTris" || a == "-instBatchTris") {
+      const char* value = need_value(a.c_str());
+      char* end = nullptr;
+      errno = 0;
+      const unsigned long long n = value ? std::strtoull(value, &end, 10) : 0;
+      const unsigned long long maximum = limit
+          ? static_cast<unsigned long long>(std::numeric_limits<size_t>::max())
+          : a == "-hermiteSegments" ? 1024ull : UINT32_MAX;
+      if (!value || !std::isdigit(static_cast<unsigned char>(*value)) ||
+          errno == ERANGE || !end || *end || !n || n > maximum) {
+        std::cerr << "Invalid " << a << " (expected a positive count within range).\n";
+        return false;
+      }
+      if (limit) *limit = static_cast<size_t>(n);
+      if (a == "-gpuTriangleChunk") opt->gpu_triangle_chunk_explicit = true;
+      if (a == "-hermiteSegments") opt->hermite_segments = static_cast<unsigned>(n);
+      if (a == "-instChunkTris") opt->inst_chunk_tris = static_cast<uint32_t>(n);
+      if (a == "-instBatchTris") opt->inst_batch_tris = static_cast<uint32_t>(n);
+      continue;
+    }
+    if (a == "-ptexProbe" || a == "-vkDumpF32" || a == "-tempDirectory") {
+      const char* value = need_value(a.c_str());
+      if (!value || !*value) return false;
+      if (a == "-ptexProbe") opt->ptex_probe = value;
+      if (a == "-vkDumpF32") opt->vk_dump_f32 = value;
+      if (a == "-tempDirectory") opt->temp_directory = value;
+      continue;
+    }
+    if (a == "-forceVkrFallback") { opt->force_vkr_fallback = true; continue; }
+    if (a == "-forceWide") { opt->force_wide = true; continue; }
+    if (a == "-gpuNoDome") { opt->gpu_no_dome = true; continue; }
+    if (a == "-noPtex") { opt->no_ptex = true; continue; }
+    if (a == "-coherentColors") { opt->coherent_colors = true; continue; }
+    if (a == "-lightDoubleCount") { opt->light_double_count = true; continue; }
+    if (a == "-noLightNee") { opt->light_nee = false; continue; }
+    if (a == "-rtDebugAov") {
+      const char* value = need_value(a.c_str());
+      if (!value) return false;
+      const char* names[] = {"off", "material", "uv", "opacity", "behind_material",
+          "behind_depth", "", "emission", "lit_diffuse", "lit_spec", "route4",
+          "route44", "route4_tex", "ptex", "base"};
+      bool found = false;
+      for (uint32_t k = 0; k < sizeof(names) / sizeof(names[0]); ++k) {
+        if (*names[k] && std::strcmp(value, names[k]) == 0) {
+          opt->rt_debug_aov = k; found = true; break;
+        }
+      }
+      if (!found) { std::cerr << "Invalid -rtDebugAov\n"; return false; }
+      continue;
+    }
     // NOTE: this ~90-branch else-if chain on CLI flag string `a` was
     // converted to standalone ifs -- same MSVC C1061 ("blocks nested too
     // deeply") risk class already fixed for the same reason elsewhere in

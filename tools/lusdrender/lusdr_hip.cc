@@ -24,15 +24,6 @@ double HipSecsSince(std::chrono::steady_clock::time_point t0) {
       .count();
 }
 
-size_t HipGpuChunkLimit() {
-  size_t limit = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) limit = static_cast<size_t>(n);
-  }
-  return limit;
-}
 
 size_t GpuTriangleCount(
     const std::vector<RTPreviewStats::MeshGeometry> &geos) {
@@ -101,7 +92,7 @@ bool RunHipLightRTChunked(
                           opt.quality)) {
       std::cerr << "HIP mesh chunk build failed [" << global_first << ", "
                 << (global_first + chunk_tris)
-                << "]; reduce LUSDR_GPU_TRIANGLE_CHUNK or inspect source data.\n";
+                << "]; reduce -gpuTriangleChunk or inspect source data.\n";
       lrt_hip_engine_destroy(hip);
       return false;
     }
@@ -157,9 +148,9 @@ bool RunHipLightRTChunked(
 bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                    std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height) {
-  if (GpuTriangleCount(geos) > HipGpuChunkLimit()) {
+  if (GpuTriangleCount(geos) > opt.gpu_triangle_chunk) {
     return RunHipLightRTChunked(opt, base_colors, geos, camera, height,
-                                HipGpuChunkLimit());
+                                opt.gpu_triangle_chunk);
   }
   GpuTriScene s;
   const auto flatten_t0 = std::chrono::steady_clock::now();

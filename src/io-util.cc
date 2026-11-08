@@ -460,17 +460,19 @@ bool SimpleGlobMatch(const std::string &pattern, const std::string &name) {
 
 namespace {
 
-// POSIX-style leading '~' (-> $HOME) plus $VAR / ${VAR} environment-variable
+// POSIX-style leading '~' (-> HOME) plus $VAR / ${VAR} caller-variable
 // substitution. Pure string transform — no filesystem, no shell, no brace or
 // glob expansion — so it is safe on any input (this replaces the useful,
 // deterministic part of the old wordexp() call). Undefined variables expand to
 // empty (matching shell default).
-[[maybe_unused]] std::string ExpandEnvAndTilde(const std::string &in) {
+[[maybe_unused]] std::string ExpandEnvAndTilde(
+    const std::string &in, const std::map<std::string, std::string> &variables) {
   std::string out;
   out.reserve(in.size());
   size_t i = 0;
   if (!in.empty() && in[0] == '~' && (in.size() == 1 || in[1] == '/')) {
-    if (const char *home = std::getenv("HOME")) out += home;
+    const auto home = variables.find("HOME");
+    if (home != variables.end()) out += home->second;
     i = 1;  // skip the '~'; the following '/...' (if any) is copied below
   }
   for (; i < in.size(); ++i) {
@@ -491,7 +493,8 @@ namespace {
         }
       }
       if (!name.empty()) {
-        if (const char *val = std::getenv(name.c_str())) out += val;
+        const auto val = variables.find(name);
+        if (val != variables.end()) out += val->second;
         i = j - 1;  // -1: the for-loop's ++i re-advances
         continue;
       }
@@ -610,7 +613,9 @@ std::vector<std::string> SimpleGlob(const std::string &pattern,
 #endif
 }
 
-std::string ExpandFilePath(const std::string &_filepath, void *) {
+namespace {
+std::string ExpandPath(const std::string &_filepath,
+                       const std::map<std::string, std::string> *variables) {
   std::string filepath = _filepath;
   if (filepath.size() > 2048) {
     // file path too large.
@@ -619,25 +624,18 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   }
   if (filepath.empty()) return std::string();
 
-  // Step 1: environment-variable / tilde expansion (safe string transform;
-  // replaces the deterministic part of the old wordexp() call).
+  std::string expanded = variables ? ExpandEnvAndTilde(filepath, *variables) : filepath;
 #ifdef _WIN32
-  // Windows uses %VAR% expansion.
-  std::string expanded;
-  {
-    std::wstring wfilepath = UTF8ToWchar(filepath);
-    DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
-    if (wlen == 0) {
-      expanded = filepath;
-    } else {
-      std::wstring ws(static_cast<size_t>(wlen), 0);
-      ExpandEnvironmentStringsW(wfilepath.c_str(), &ws[0], wlen);
-      if (!ws.empty() && ws.back() == L'\0') ws.pop_back();
-      expanded = WcharToUTF8(ws);
+  if (variables) {
+    for (const auto &entry : *variables) {
+      const std::string key = "%" + entry.first + "%";
+      size_t pos = 0;
+      while ((pos = expanded.find(key, pos)) != std::string::npos) {
+        expanded.replace(pos, key.size(), entry.second);
+        pos += entry.second.size();
+      }
     }
   }
-#else
-  std::string expanded = ExpandEnvAndTilde(filepath);
 #endif
 
   // Step 2: simple glob. Only '*' and '?' are wildcards (no brace expansion,
@@ -656,6 +654,16 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
 #endif
   return std::string(expanded);
 }
+}  // namespace
+
+std::string ExpandFilePath(const std::string &filepath, void *) {
+  return ExpandPath(filepath, nullptr);
+}
+std::string ExpandFilePathWithVariables(
+    const std::string &filepath, const std::map<std::string, std::string> &variables) {
+  return ExpandPath(filepath, &variables);
+}
+
 
 #ifdef _WIN32
 std::wstring UTF8ToWchar(const std::string &str) {
@@ -1335,11 +1343,12 @@ std::vector<std::string> AssetPathSuffixCandidates(
 //
 // Directory / temp-path utilities.
 //
-// GetTempDir is implemented with native OS APIs (Win32 GetTempPath / POSIX env)
+// GetTempDir accepts a caller path, otherwise Win32 GetTempPath / POSIX /tmp
 // per request; the remaining helpers wrap the vendored ghc::filesystem so that
 // callers never need <filesystem>.
 //
-std::string GetTempDir() {
+std::string GetTempDir(const std::string &directory) {
+  if (!directory.empty()) return directory;
 #if defined(_WIN32)
   // GetTempPathW writes a path terminated with a backslash.
   wchar_t buf[MAX_PATH + 1];
@@ -1353,17 +1362,6 @@ std::string GetTempDir() {
   }
   return s.empty() ? std::string(".") : s;
 #else
-  const char *names[] = {"TMPDIR", "TMP", "TEMP", "TEMPDIR"};
-  for (const char *name : names) {
-    const char *v = std::getenv(name);
-    if (v && v[0]) {
-      std::string s(v);
-      while (s.size() > 1 && s.back() == '/') {
-        s.pop_back();
-      }
-      return s;
-    }
-  }
   return "/tmp";
 #endif
 }

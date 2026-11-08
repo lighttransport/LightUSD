@@ -68,8 +68,6 @@
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
 
-
-
 extern "C" {
 #include "lightrt_c_tri.h"
 }
@@ -131,15 +129,7 @@ lightusd::Image MakeBlankImage(const Options &opt, int height) {
 // GPU triangle backends share the CPU LightRT curve tessellator. This must not
 // be Vulkan-only: HIP/ROCm and D3D11 use the same bounded triangle fallback for
 // round curves when no analytic curve primitive is exposed by their API.
-size_t GpuTriangleChunkLimit() {
-  size_t limit = 262144;
-  if (const char *env = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long parsed = std::strtoull(env, &end, 10);
-    if (end != env && parsed > 0) limit = static_cast<size_t>(parsed);
-  }
-  return limit;
-}
+
 
 void AppendGpuPointSphere(const Vec3 &center, float radius,
                           RTPreviewStats::MeshGeometry *geo) {
@@ -246,7 +236,8 @@ void CollectGpuPointsRec(
     const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
     const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
-    std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth) {
+    std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth,
+    const Options &opt) {
   constexpr size_t kMaxGpuPointTraversalDepth = 256;
   if (depth >= kMaxGpuPointTraversalDepth) {
     std::cerr << "WARN: GPU point fallback traversal exceeded "
@@ -297,19 +288,14 @@ void CollectGpuPointsRec(
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
       for (const lightusd::next::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
-                            depth + 1);
+                            depth + 1, opt);
       return;
     }
-    size_t limit = count;
-    if (const char *limit_text = std::getenv("LUSDR_GAUSSIAN_MAX")) {
-      char *end = nullptr;
-      const unsigned long long parsed = std::strtoull(limit_text, &end, 10);
-      if (end != limit_text && parsed > 0)
-        limit = std::min(count, static_cast<size_t>(parsed));
-    }
+    size_t limit = opt.gaussian_max ? std::min(count, opt.gaussian_max) : count;
+
     const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
-    const size_t batch_limit = GpuTriangleChunkLimit();
+    const size_t batch_limit = opt.gpu_triangle_chunk;
     const size_t gaussian_geo_first = geos->size();
     size_t gaussian_triangles = 0;
     size_t pending_triangles = 0;
@@ -410,7 +396,7 @@ void CollectGpuPointsRec(
     const bool have_points = ReadFloatArrayViewLazy(prim, "points", time, &points);
     ReadFloatArrayViewLazy(prim, "widths", time, &widths);
     ReadFloatArrayViewLazy(prim, "normals", time, &normals);
-    const size_t batchLimit = GpuTriangleChunkLimit();
+    const size_t batchLimit = opt.gpu_triangle_chunk;
     RTPreviewStats::MeshGeometry batch;
     size_t emitted = 0;
     auto flush = [&]() {
@@ -423,7 +409,7 @@ void CollectGpuPointsRec(
     if (!have_points) {
       for (const lightusd::next::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
-                            depth + 1);
+                            depth + 1, opt);
       return;
     }
     for (size_t i = 0; i + 2 < points.size(); i += 3) {
@@ -460,7 +446,7 @@ void CollectGpuPointsRec(
   }
   for (const lightusd::next::UsdPrim &child : prim.GetChildren())
     CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
-                        depth + 1);
+                        depth + 1, opt);
 }
 
 // LightRT's GPU triangle APIs currently accept triangle BVHs, while its
@@ -469,10 +455,10 @@ void CollectGpuPointsRec(
 // triangle streams at the upload boundary.
 bool AppendGpuRoundCurves(
     DirectScene &direct, std::vector<Vec3> *base_colors,
-    std::vector<RTPreviewStats::MeshGeometry> *geos) {
+    std::vector<RTPreviewStats::MeshGeometry> *geos, const Options &opt) {
   if (!base_colors || !geos) return false;
   constexpr uint32_t kCurveSides = 6;
-  const size_t curveChunk = GpuTriangleChunkLimit();
+  const size_t curveChunk = opt.gpu_triangle_chunk;
   auto append = [&](lrt_tri_scene *curve) -> bool {
     if (!curve) return true;
     const size_t total = lrt_tri_curve_tessellate_bound(curve, kCurveSides);
@@ -1120,13 +1106,10 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // is chunk-split; an empty vector marks a prim that failed extraction).
   std::unordered_map<std::string, std::vector<uint32_t>> proto_id;
   std::vector<Bounds> proto_aabb;
-  // Max triangles per prototype BLAS (8M; overridable via LUSDR_INST_CHUNK_TRIS
+  // Max triangles per prototype BLAS (8M; overridable via -instChunkTris
   // for testing the split path on small meshes). A larger prototype is chunked.
-  uint32_t chunk = 8u * 1024u * 1024u;
-  if (const char *e = std::getenv("LUSDR_INST_CHUNK_TRIS")) {
-    long v = std::atol(e);
-    if (v > 0) chunk = uint32_t(v);
-  }
+  const uint32_t chunk = opt.inst_chunk_tris;
+
   // Displacement textures for prototype extraction (loaded relative to the input;
   // shared/cached across prototypes). Same setup as the flat GPU path.
   std::vector<lusdr::Texture> disp_textures;
@@ -1202,13 +1185,11 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // Placement budget: bound host memory on scenes with tens of millions of
   // instances. Default 16M -- one TLAS slice, so the default takes the single-TLAS
   // fast path and stays well within GPU memory (Moana island's full ~42.8M
-  // instances / ~110k prototype BLAS exceed VRAM; raise LUSDR_INST_BUDGET to fan
-  // out across multiple TLASes, memory permitting). Env-overridable.
-  size_t budget = opt.vulkan_instanced_stream ? 64000000u : 16000000u;
-  if (const char *e = std::getenv("LUSDR_INST_BUDGET")) {
-    long v = std::atol(e);
-    if (v > 0) budget = size_t(v);
-  }
+  // instances / ~110k prototype BLAS exceed VRAM; raise -instBudget to fan
+  // out across multiple TLASes, memory permitting). Explicitly configurable.
+  const size_t budget = opt.inst_budget ? opt.inst_budget
+      : opt.vulkan_instanced_stream ? 64000000u : 16000000u;
+
   size_t emitted = 0;
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted > budget) break;
@@ -1219,7 +1200,7 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   if (invalid_prototype) return -1;
   if (emitted > budget) {
     std::cerr << "[vkInstanced] instance budget " << budget
-              << " exceeded; refusing an incomplete capture. Raise LUSDR_INST_BUDGET.\n";
+              << " exceeded; refusing an incomplete capture. Raise -instBudget.\n";
     return -1;
   }
   if (scene.protos.empty() || scene.insts.empty()) return false;
@@ -1346,7 +1327,7 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // TLAS maxInstanceCount (2^24) still renders in full -- the whole ~42.8M-instance
   // Moana island fits. Cap only at a generous multi-slice ceiling (to bound VRAM /
   // the K sequential dispatches) and keep the CAMERA-NEAREST placements past it.
-  // In practice the LUSDR_INST_BUDGET host-memory budget below binds first.
+  // In practice the -instBudget host-memory budget below binds first.
   const uint64_t max_inst = 8ull * 16000000ull;  // 8 TLAS slices (~128M instances)
   if (scene.insts.size() > max_inst) {
     std::cerr << "[vkInstanced] multi-slice instance ceiling exceeded; refusing an incomplete capture\n";
@@ -1467,7 +1448,7 @@ int main(int argc, char **argv) {
         preview::PreviewVolumeRenderer renderer;
         if (!renderer.load(scenePreview.result, backend,
                            scenePreview.options.gpu_budget_bytes,
-                           &scenePreviewError)) {
+                           &scenePreviewError, scenePreview.options.compute_options)) {
           std::cerr << scenePreviewError << "\n";
           return EXIT_FAILURE;
         }
@@ -2189,7 +2170,7 @@ int main(int argc, char **argv) {
       }
       if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
                            /*include_flat=*/false) ||
-          !AppendGpuRoundCurves(gpu_curve_ctx.direct, &base_colors, &geos)) {
+          !AppendGpuRoundCurves(gpu_curve_ctx.direct, &base_colors, &geos, opt)) {
         return EXIT_FAILURE;
       }
       for (const CurveJobNext &job : gpu_curve_jobs)
@@ -2225,7 +2206,7 @@ int main(int argc, char **argv) {
     if (gpu_backend && !native_gaussian) {
       for (const auto &root : stage.GetRootPrims()) {
         CollectGpuPointsRec(stage, root, matrix4d::identity(), opt.timecode,
-                            &base_colors, &geos, 0);
+                            &base_colors, &geos, 0, opt);
       }
     }
 #endif
@@ -2297,7 +2278,7 @@ int main(int argc, char **argv) {
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
     if ((opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) && has_flat_curves) {
       if (!BuildNextFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
-                                    clip_stage_loader, camera, &geos,
+                                    clip_stage_loader, camera, opt, &geos,
                                     &base_colors)) {
         std::cerr << "Failed to build GPU flat/ribbon curve carriers.\n";
         return EXIT_FAILURE;
@@ -2458,7 +2439,7 @@ int main(int argc, char **argv) {
       if (opt.no_light_shadows) {
         for (PreviewLight &l : gpu_lights.finite) l.shadow_enable = false;
       }
-      if (!std::getenv("LUSDR_GPU_NO_DOME")) {
+      if (!opt.gpu_no_dome) {
         CollectDomeLightForGpu(stage, opt.timecode, &gpu_lights, &gpu_textures);
       }
     }

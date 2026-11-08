@@ -18,7 +18,7 @@ if [ -z "$icd" ] || [ ! -f "$icd" ]; then
 fi
 export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
-export LIGHTUSD_PREVIEW_SOFTWARE=1
+# Pass --preview-software explicitly to preview applications.
 export LP_NUM_THREADS="${LP_NUM_THREADS:-4}"
 export __GLX_VENDOR_LIBRARY_NAME=mesa
 unset __NV_PRIME_RENDER_OFFLOAD __NV_PRIME_RENDER_OFFLOAD_PROVIDER __VK_LAYER_NV_optimus

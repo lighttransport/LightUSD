@@ -18,7 +18,7 @@ bool Build::geometry_backend() {
   if (opts.compute_backend == PreviewComputeBackend::Cpu) return false;
   if (!compute) {
     compute = CreatePreviewCompute(opts.compute_backend, opts.gpu_budget_bytes,
-                                   &result.error);
+                                   &result.error, opts.compute_options);
     if (!compute) {
       if (result.error.empty())
         result.error = "geometry compute initialization failed";

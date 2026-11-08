@@ -1377,9 +1377,8 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   config.kMaxAllowedMemoryInMB = size_t(EffectiveMemoryLimitMb(options));
   usdc::USDCReader reader(&sr, config);
 
-  // LIGHTUSD_CRATE_PROFILE=1: split the layer load into crate parse vs
-  // PrimSpec reconstruction (stderr; complements the lusdcat phase marks).
-  const bool profile_load = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
+  // Caller-controlled crate parse/reconstruction timings.
+  const bool profile_load = options.profile_crate;
   const auto load_t0 = std::chrono::steady_clock::now();
 
   if (!reader.ReadUSDC()) {

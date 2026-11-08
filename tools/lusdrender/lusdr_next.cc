@@ -1118,7 +1118,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     return ext == ".ptx";
   };
   if (ends_with_ptx(asset_path) && tc.options && tc.options->vulkan &&
-      !std::getenv("LUSDR_NO_PTEX")) {
+      !tc.options->no_ptex) {
     auto sampler = std::make_shared<lusdview::CpuPtexSampler>(
         size_t(64) * 1024 * 1024);
     std::shared_ptr<std::vector<uint8_t>> held;
@@ -3656,17 +3656,6 @@ bool IsCurvePrimNext(const lightusd::next::UsdPrim &prim) {
   return t == "BasisCurves" || t == "HermiteCurves" || t == "NurbsCurves";
 }
 
-unsigned HermiteTessellationSegmentsNext() {
-  unsigned segments = 8;
-  if (const char *s = std::getenv("LUSDR_HERMITE_SEGMENTS")) {
-    char *end = nullptr;
-    const unsigned long n = std::strtoul(s, &end, 10);
-    if (end != s && *end == '\0' && n > 0 && n <= 1024)
-      segments = static_cast<unsigned>(n);
-  }
-  return segments;
-}
-
 struct CurvePointViewNext {
   lightusd::tydra::next::ValueArrayRead<float> view;
   // Value clips are materialized here because their temporary Value/ArrayScratch
@@ -3754,12 +3743,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     s.npoints = radii.size();
     return s;
   };
-  size_t chunk_segments = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_CURVE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) chunk_segments = static_cast<size_t>(n);
-  }
+  size_t chunk_segments = ctx.opt.curve_chunk ? ctx.opt.curve_chunk : size_t(262144);
+
   auto build_curve_chunks = [&](const std::vector<float> &pts,
                                 const std::vector<float> &radii,
                                 const std::vector<uint32_t> &strand_first,
@@ -3817,7 +3802,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
         std::cerr << "Failed to build LightRT " << label << " curve chunk ["
                   << chunk.first << ", " << (chunk.first + chunk.count)
                   << "] (err=" << int(lrt_err)
-                  << "). Try LUSDR_CURVE_CHUNK.\n";
+                  << "). Try -curveChunk.\n";
         return false;
       }
       chunks->push_back(std::move(chunk));
@@ -3880,7 +3865,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       AppendHermiteCurveStrands(
           point_source.view.begin(), tangents.begin(),
           point_source.view.size() / 3, counts, widths,
-          HermiteTessellationSegmentsNext(), job.world, &curve_points,
+          ctx.opt.hermite_segments, job.world, &curve_points,
           &curve_radii, &curve_first, &curve_count, &curve_info, &ctx.bounds);
     } else {
       if (hermite && have_tangents && !tangents.empty())
@@ -3918,16 +3903,12 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
     const lightusd::next::ValueClipStageLoader &clip_loader,
-    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    const CameraFrame &camera, const Options &opt,
+    std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors) {
   if (!geos || !base_colors) return false;
-  size_t kChunkTriangles = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && *end == '\0' && n > 0)
-      kChunkTriangles = static_cast<size_t>(n);
-  }
+  const size_t kChunkTriangles = opt.gpu_triangle_chunk;
+
   std::vector<float> positions;
   std::vector<uint32_t> indices;
   positions.reserve(kChunkTriangles * 9);
@@ -3982,7 +3963,7 @@ bool BuildNextFlatCurveMeshes(
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, counts, widths,
-            HermiteTessellationSegmentsNext(), job.world, &curve_points,
+            opt.hermite_segments, job.world, &curve_points,
             &curve_radii, &strand_first, &strand_count, nullptr, nullptr);
       } else {
         AppendLinearCurveStrands(
@@ -4069,18 +4050,10 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
   std::vector<float> normals;
   std::vector<float> major_axes;
   std::vector<TriInfo> chunk_info;
-  size_t budget = 0;
-  if (const char *s = std::getenv("LUSDR_GAUSSIAN_MAX")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) budget = static_cast<size_t>(n);
-  }
-  size_t chunk_size = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GAUSSIAN_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) chunk_size = static_cast<size_t>(n);
-  }
+  size_t budget = ctx.opt.gaussian_max;
+
+  const size_t chunk_size = ctx.opt.gaussian_chunk;
+
   lrt_tri_build_options opts;
   std::memset(&opts, 0, sizeof(opts));
   opts.quality = ctx.opt.quality;
@@ -4110,7 +4083,7 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
         std::cerr << "Failed to build LightRT Gaussian ellipse chunk ["
                   << chunk.first << ", " << (chunk.first + count)
                   << "] (err=" << int(e)
-                  << "). Try -maxMem, -mask, or LUSDR_GAUSSIAN_CHUNK.\n";
+                  << "). Try -maxMem, -mask, or -gaussianChunk.\n";
         return false;
       }
     }
@@ -4281,7 +4254,7 @@ bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk) {
     std::cerr << "Failed to build LightRT deferred Gaussian ellipse chunk ["
               << chunk->first << ", " << (chunk->first + chunk->count)
               << "] (err=" << int(e)
-              << "). Try -maxMem, -mask, or LUSDR_GAUSSIAN_CHUNK.\n";
+              << "). Try -maxMem, -mask, or -gaussianChunk.\n";
     return false;
   }
   std::vector<float>().swap(chunk->centers);
@@ -4806,7 +4779,7 @@ bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
                     const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
-                    Blas *out, Bounds *local,
+                    Blas *out, Bounds *local, const Options &opt,
                     // Sub-BLAS split: a large curve prototype is split into
                     // several disjoint sub-BLAS so their (serial) LBVH collapses
                     // run CONCURRENTLY. The first sub-BLAS fills `out`/`local`;
@@ -4848,7 +4821,7 @@ bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, c, w,
-            HermiteTessellationSegmentsNext(), job.world, &pts, &radii,
+            opt.hermite_segments, job.world, &pts, &radii,
             &first, &count, /*info=*/nullptr, &proto_bounds);
       } else {
         AppendLinearCurveStrands(point_source.view.begin(),
@@ -4990,7 +4963,7 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
                     const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
-                    Blas *out, Bounds *local,
+                    Blas *out, Bounds *local, const Options &opt,
                     std::vector<Blas> *extra_blas = nullptr,
                     std::vector<Bounds> *extra_bounds = nullptr) {
   std::vector<CurveJobNext> curves;
@@ -5006,12 +4979,8 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
   if (extra_blas) {
     // Keep the larger historical prototype default, but let the same knob used
     // by direct curves tighten prototype BLAS residency for constrained hosts.
-    split_segments = size_t(1) << 20;
-    if (const char *s = std::getenv("LUSDR_CURVE_CHUNK")) {
-      char *end = nullptr;
-      const unsigned long long n = std::strtoull(s, &end, 10);
-      if (end != s && n > 0) split_segments = static_cast<size_t>(n);
-    }
+    split_segments = opt.curve_chunk ? opt.curve_chunk : size_t(1) << 20;
+
   }
   std::vector<float> batch_points, batch_radii;
   std::vector<uint32_t> batch_first, batch_count;
@@ -5084,7 +5053,7 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, counts, widths,
-            HermiteTessellationSegmentsNext(), job.world, &prim_points,
+            opt.hermite_segments, job.world, &prim_points,
             &prim_radii, &prim_first, &prim_count, /*info=*/nullptr,
             &prototype_bounds);
       } else {
@@ -5552,12 +5521,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
       return false;
     }
-    size_t chunk_limit = size_t(262144);
-    if (const char *s = std::getenv("LUSDR_TRIANGLE_CHUNK")) {
-      char *end = nullptr;
-      const unsigned long long n = std::strtoull(s, &end, 10);
-      if (end != s && n > 0) chunk_limit = static_cast<size_t>(n);
-    }
+    const size_t chunk_limit = ctx.opt.triangle_chunk;
+
     const auto bvh_t0 = std::chrono::steady_clock::now();
     for (size_t first = 0; first < ctx.tris.size(); first += chunk_limit) {
       const size_t count = std::min(chunk_limit, ctx.tris.size() - first);
@@ -5570,7 +5535,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       if (!chunk.scene) {
         std::cerr << "Failed to build LightRT triangle chunk [" << first << ", "
                   << (first + count) << "] (err=" << int(lrt_err)
-                  << "). Try LUSDR_TRIANGLE_CHUNK.\n";
+                  << "). Try -triangleChunk.\n";
         return false;
       }
       ctx.triangle_chunks.push_back(std::move(chunk));
@@ -5790,7 +5755,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
                         curve_inst.protos[i].purpose, time, build_opts,
                         ctx.clip_stage_loader,
-                        &ctx.blas[b], &local_bounds[b], &extra, &extra_b)) {
+                        &ctx.blas[b], &local_bounds[b], ctx.opt, &extra, &extra_b)) {
       return false;
     }
     curve_proto_blas[i].push_back(uint32_t(b));
@@ -5949,7 +5914,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
 
-  // Phase 5 (opt-in via LIGHTUSD_COHCOLOR): reorder each BLAS's per-corner colors
+  // Phase 5 (opt-in via -coherentColors): reorder each BLAS's per-corner colors
   // from prim_id order into BVH leaf-slot order, so hits within a leaf read
   // adjacent color records instead of scattered ones (the prim_id->slot map is
   // already touched by lrt_tri_get_verts at every hit). Per-BLAS scatter +
@@ -5957,7 +5922,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // Off by default: it adds a build-time scatter pass that isn't worth it for the
   // tiny primary-only preview render, but helps render-heavy (hi-res) use.
   // Byte-identical: same 12 bytes, relocated and read back through the same slot.
-  if (std::getenv("LIGHTUSD_COHCOLOR")) {
+  if (ctx.opt.coherent_colors) {
     const size_t nb = ctx.blas.size();
     std::atomic<size_t> ccur{0};
     auto cworker = [&]() {

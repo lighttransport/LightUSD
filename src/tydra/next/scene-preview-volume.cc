@@ -46,7 +46,8 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
   if (!build.compute) {
     build.compute =
         CreatePreviewCompute(build.opts.compute_backend,
-                             build.opts.gpu_budget_bytes, &build.result.error);
+                             build.opts.gpu_budget_bytes, &build.result.error,
+                             build.opts.compute_options);
     if (!build.compute) return false;
     std::fprintf(stderr, "[scene-preview] volume conversion compute=%s\n",
                  build.compute->name());

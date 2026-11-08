@@ -20,8 +20,6 @@ bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available) {
   if (!capacity || !available) return false;
   *capacity = 0;
   *available = 0;
-  const char* software = std::getenv("LIGHTUSD_PREVIEW_SOFTWARE");
-  if (software && std::strcmp(software, "1") == 0) return false;
 #if defined(__unix__)
   void* lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
   if (!lib) return false;
@@ -69,6 +67,14 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
     if (a == "--preview-volume-carrier") {
       request->enabled = true;
       request->direct_volume = false;
+      continue;
+    }
+    if (a == "--preview-software" || a == "--preview-debug-validate" ||
+        a == "--preview-trace-pipeline") {
+      if (a == "--preview-software") request->options.compute_options.software_only = true;
+      if (a == "--preview-debug-validate") request->options.compute_options.debug_validate = true;
+      if (a == "--preview-trace-pipeline") request->options.compute_options.trace_pipeline = true;
+      request->enabled = true;
       continue;
     }
     if (a == "--preview-compute") {
@@ -287,8 +293,9 @@ bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
     return false;
   }
   uint64_t total = 0, available = 0;
-  QueryScenePreviewGpuMemory(&total, &available);
-  if (!total) total = gpu_capacity;
+  if (!request.options.compute_options.software_only)
+    QueryScenePreviewGpuMemory(&total, &available);
+  if (!total && !request.options.compute_options.software_only) total = gpu_capacity;
   if (!request.budget_explicit)
     request.options.gpu_budget_bytes = ScenePreviewGpuBudget(total, available);
   request.options.composition.num_threads = 0;

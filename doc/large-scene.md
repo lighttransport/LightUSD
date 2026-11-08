@@ -327,7 +327,7 @@ now reads positions, scales, orientations, opacity, and DC spherical-harmonic
 radiance, mapping each covariance ellipsoid to a batched oriented ellipse
 upload. A full triangleized upload reaches **15,314,240 triangles** and exceeds
 the current LightRT Vulkan engine/upload budget. An explicit
-`LUSDR_GAUSSIAN_MAX=N` budget is available for diagnosis; even a 10,000-splat
+`-gaussianMax N` budget is available for diagnosis; even a 10,000-splat
 ALab load still failed Vulkan engine creation in this run. The default does not
 silently truncate the asset.
 
@@ -1888,8 +1888,8 @@ full ALab payload and on `tests/usda/lusdview-gaussian-splat.usda`.
 The native LightRT CPU ellipse primitive is now connected to lusdrender's next
 RT-preview collector. Gaussian-only stages build an analytic ellipse BVH and
 render without triangle conversion; quaternion roll is retained in the leaf
-representation. `LUSDR_GAUSSIAN_MAX` bounds diagnostic loads. Large fields are
-split into 262,144-splat LightRT chunks (`LUSDR_GAUSSIAN_CHUNK` overrides the
+representation. `-gaussianMax` bounds diagnostic loads. Large fields are
+split into 262,144-splat LightRT chunks (`-gaussianChunk` overrides the
 size); CPU tracing visits every chunk, while Vulkan traces chunks sequentially
 and retains the nearest hit per ray. CUDA's serialized
 point path consumes the same ellipse/roll fields, and the Vulkan compute BVH now
@@ -1979,7 +1979,7 @@ the IBL baker's working buffers.
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.
-`LUSDR_CURVE_CHUNK=N` controls the segment limit (default 262,144); the CPU
+`-curveChunk N` controls the segment limit (default 262,144); the CPU
 integrator checks every chunk and Vulkan tessellates each round-curve chunk at
 the upload boundary. Lusdrender builds those chunks one curve prim at a time,
 so a scene with many large curve prims does not accumulate a second
@@ -1987,7 +1987,7 @@ scene-wide transformed point/radius stream before chunking. Authored points are
 consumed directly from lazy float views; only value-clip curves require a
 bounded per-prim materialized fallback. Direct curve chunks default to 262,144
 segments; instanced prototype BLASes retain a 1,048,576-segment default when
-the variable is unset, and both paths honor `LUSDR_CURVE_CHUNK=N`. In `-stats`
+the option is omitted, and both paths honor `-curveChunk N`. In `-stats`
 mode, inconsistent
 `curveVertexCounts`/`points` data is reported as `rt skipped curves` with an
 invalid-data count rather than being silently partially rendered. Curve hit
@@ -2004,11 +2004,11 @@ the GPU upload batch instead of copied a second time; indexed meshes and
 partial chunks retain sparse remapping and validation.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
-triangles are split at `LUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
+triangles are split at `-triangleChunk N` (default 262,144), with global
 material, UV, color, and normal indices preserved across chunks. Shadow and
 primary rays visit all chunks; `-stats` reports aggregate chunk memory.
 The Vulkan flat upload path independently bounds device residency with
-`LUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
+`-gpuTriangleChunk N` (default 262,144). It uploads/traces one BLAS/AS
 at a time and reduces nearest hits before shading, so a large non-instanced
 scene does not require one monolithic 8-GiB GPU allocation.
 Vulkan Gaussian splats are represented by bounded analytic BVH chunks. If the
@@ -2090,7 +2090,7 @@ geometry plus chunk staging plus shading arrays to source geometry plus the
 accumulated shading arrays, without changing nearest-hit reduction.
 
 The same shared bounded chunk builder is used by the HIP/ROCm backend. When
-`LUSDR_GPU_TRIANGLE_CHUNK=N` is exceeded, HIP traces one chunk at a time and
+`-gpuTriangleChunk N` is exceeded, HIP traces one chunk at a time and
 reduces nearest hits before CPU shading, releasing consumed source geometry in
 the same way. If ROCm is unavailable, the backend reports the runtime error
 and exits cleanly rather than silently producing an incomplete image.
@@ -2098,7 +2098,7 @@ The Direct3D 11 backend now follows the same bounded upload and nearest-hit
 reduction policy, so its single-dispatch implementation no longer requires a
 monolithic scene/BVH allocation.
 Ordinary `UsdGeomPoints` are accumulated into bounded disc/sphere mesh chunks
-for the triangle backends; `LUSDR_GPU_TRIANGLE_CHUNK` therefore bounds
+for the triangle backends; `-gpuTriangleChunk` therefore bounds
 point-cloud geometry objects and descriptor count instead of creating one GPU
 mesh per point. Authored-normal points use the LightRT analytic ellipse carrier
 when that primitive is available, avoiding triangle expansion and reducing
@@ -2123,7 +2123,7 @@ payload and use the neutral fallback color instead. Small and zero-copy SH
 arrays retain their authored color.
 It also applies opacity to the fallback color buckets and rejects non-finite or
 near-zero opacity samples, matching native ellipse filtering. Each color bucket
-is flushed at `LUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from
+is flushed at `-gpuTriangleChunk`, preventing HIP/ROCm and D3D11 from
 retaining a single multi-million-triangle proxy for a large field. Gaussian
 fallback chunks omit redundant per-vertex normals and dummy UVs; the GPU
 flattener recomputes geometric normals from the retained positions.
