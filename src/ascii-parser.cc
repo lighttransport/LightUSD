@@ -2716,7 +2716,7 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
 
   auto loc = CurrLoc();
 
-  bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+  bool ok = _sr->read_exact(n, n, reinterpret_cast<uint8_t *>(buf.data()));
   if (ok) {
     (*nc) = buf;
   }
@@ -2731,7 +2731,7 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
 bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   std::vector<char> buf(n);
 
-  bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+  bool ok = _sr->read_exact(n, n, reinterpret_cast<uint8_t *>(buf.data()));
   if (ok) {
     (*nc) = buf;
   }
@@ -2740,7 +2740,7 @@ bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
 }
 
 bool AsciiParser::CharN(size_t n, char *dst) {
-  return _sr->read(n, n, reinterpret_cast<uint8_t*>(dst));
+  return _sr->read_exact(n, n, reinterpret_cast<uint8_t*>(dst));
 }
 
 bool AsciiParser::Rewind(size_t offset) {
@@ -2969,7 +2969,7 @@ bool AsciiParser::ParseMagicHeader() {
 
   {
     char magic[6];
-    if (!_sr->read(6, 6, reinterpret_cast<uint8_t *>(magic))) {
+    if (!_sr->read_exact(6, 6, reinterpret_cast<uint8_t *>(magic))) {
       // eol
       return false;
     }
@@ -2993,7 +2993,7 @@ bool AsciiParser::ParseMagicHeader() {
   // current we only accept "1.0"
   {
     char ver[3];
-    if (!_sr->read(3, 3, reinterpret_cast<uint8_t *>(ver))) {
+    if (!_sr->read_exact(3, 3, reinterpret_cast<uint8_t *>(ver))) {
       return false;
     }
 
