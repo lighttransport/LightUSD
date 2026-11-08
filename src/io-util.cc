@@ -1344,7 +1344,19 @@ std::string GetTempDir(const std::string &directory,
     if (!result.empty()) return result;
   }
 #ifdef _WIN32
-  return ".";
+  // GetTempPathW writes a path terminated with a backslash. The system
+  // temporary directory is the documented default; "." would make callers
+  // author relative paths (and is not a temp directory).
+  wchar_t buf[MAX_PATH + 1];
+  DWORD n = GetTempPathW(MAX_PATH + 1, buf);
+  if (n == 0 || n > MAX_PATH) {
+    return ".";
+  }
+  std::string s = WcharToUTF8(std::wstring(buf, size_t(n)));
+  while (!s.empty() && (s.back() == '\\' || s.back() == '/')) {
+    s.pop_back();
+  }
+  return s.empty() ? std::string(".") : s;
 #else
   return "/tmp";
 #endif
