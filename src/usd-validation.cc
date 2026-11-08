@@ -1929,6 +1929,19 @@ void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                         result);
   ValidateQuaternionProperty(ps, "physics:principalAxes",
                              "physics.quaternion", prim_location, result);
+  // UsdPhysicsValidators requires the principal moments and the principal
+  // axes to be authored together: a diagonal tensor without a basis (or a
+  // basis without moments) is ambiguous.
+  const Property *diag = GetProperty(ps, "physics:diagonalInertia");
+  const Property *axes = GetProperty(ps, "physics:principalAxes");
+  if ((diag == nullptr) != (axes == nullptr)) {
+    AddError(result, "physics.inertia",
+             MakePropertyLocation(
+                 prim_location,
+                 diag ? "physics:diagonalInertia" : "physics:principalAxes"),
+             "principalAxes and diagonalInertia must both be authored or "
+             "neither authored");
+  }
   ValidateFiniteVec3Property(ps, "physics:velocity", "physics.motion",
                              prim_location, result, false);
   ValidateFiniteVec3Property(ps, "physics:angularVelocity", "physics.motion",
