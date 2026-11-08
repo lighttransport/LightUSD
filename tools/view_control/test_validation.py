@@ -131,6 +131,23 @@ class ValidationTests(unittest.TestCase):
         untouched={}
         apply_capture_options(untouched, {})
         self.assertEqual(untouched,{})
+        # `exposure=0` is a meaningful 1x contract, not "unset"; it must not be
+        # dropped by the `if exposure is not None` copy.
+        zero_exposure={}
+        apply_capture_options(zero_exposure, {'exposure':0.0})
+        self.assertEqual(zero_exposure['exposure'],0.0)
+
+    def test_menagerie_storm_job_keeps_storm_light_units(self):
+        # The 9/9 Menagerie contract depends on 1x exposure and pure Storm
+        # light units. The old empirical distant_scale=0.5 compensated for the
+        # renderer's default exp2(1)=2 and must not return.
+        job = load_config(Path(__file__).with_name('jobs') /
+                          'menagerie-multiview-storm.json')
+        self.assertEqual(job.get('exposure'), 0.0)
+        self.assertEqual(job.get('distant_scale', 1.0), 1.0)
+        self.assertTrue(job.get('distant_solid_angle'))
+        self.assertTrue(job.get('reference_camera_light_add'))
+        self.assertTrue(job.get('no_light_shadows'))
 
     def test_config_rejects_unknown_and_unbounded_options(self):
         with tempfile.TemporaryDirectory() as tmp:

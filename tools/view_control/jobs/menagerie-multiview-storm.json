@@ -400,5 +400,6 @@
   "candidate_samples": 16,
   "reference_camera_light_add": true,
   "no_light_shadows": true,
-  "distant_scale": 0.5
+  "exposure": 0.0,
+  "display_transform": "filmic"
 }

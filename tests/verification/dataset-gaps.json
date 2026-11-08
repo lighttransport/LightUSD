@@ -68,10 +68,11 @@
     },
     {
       "id": "menagerie/multiview",
-      "job": "menagerie-multiview",
+      "job": "menagerie-multiview-storm",
       "required": [
         "geometry",
-        "material_channels"
+        "material_channels",
+        "beauty"
       ],
       "status": "pass"
     },
