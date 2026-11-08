@@ -42,11 +42,11 @@
 #include <type_traits>
 #include <vector>
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO)
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-#if !defined(_WIN32) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
     !defined(__EMSCRIPTEN__) && !defined(__wasi__) && \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 #define LIGHTUSD_NEXT_SPILL_HAVE_MMAP 1
@@ -75,7 +75,7 @@ class SpillColumnBase {
 
   // Enables 8 MiB chunking + front eviction. Off keeps one plain vector.
   void set_spill_enabled(bool on) {
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(LIGHTUSD_NO_NATIVE_IO)
     // The unlinked POSIX spill-file backend is unavailable on Windows.
     // Keep one plain vector even when the caller requests a spill budget.
     (void)on;
@@ -290,7 +290,7 @@ class SpillVec final : public SpillColumnBase {
   void Release() noexcept {
     chunks_.clear();
     if (spill_fd_ >= 0) {
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO)
       ::close(spill_fd_);
 #endif
       spill_fd_ = -1;
@@ -308,7 +308,7 @@ class SpillVec final : public SpillColumnBase {
   // (everything stays in memory; no data is lost), raises io_failed() and
   // sets *error.
   uint64_t SpillSealed(uint64_t want_free, std::string* error) override {
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(LIGHTUSD_NO_NATIVE_IO)
     (void)want_free;
     (void)error;
     return 0;
@@ -358,7 +358,7 @@ class SpillVec final : public SpillColumnBase {
     }
     std::unique_ptr<T[]> buf(new T[size_ ? size_ : 1]);
     T* d = buf.get();
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO)
     if (spilled_elems_) {
       const size_t bytes = spilled_elems_ * sizeof(T);
       if (!ReadAll(d, bytes, error)) return false;
@@ -416,7 +416,7 @@ class SpillVec final : public SpillColumnBase {
     chunks_.back().reserve(kChunkElems);
   }
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO)
   bool OpenSpillFile(std::string* error) const {
     const std::string& dir = spill_dir_.empty() ? std::string("/tmp") : spill_dir_;
     const std::string tmpl = dir + "/lusd-spill-XXXXXX";
@@ -431,7 +431,14 @@ class SpillVec final : public SpillColumnBase {
       io_failed_.store(true, std::memory_order_relaxed);
       return false;
     }
-    ::unlink(path.data());  // fd stays valid; the path is gone on any exit
+    if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || ::unlink(path.data()) != 0) {
+      const int saved = errno;
+      ::close(fd);
+      (void)::unlink(path.data());
+      if (error) *error = "cannot secure writer spill file: " + std::string(std::strerror(saved));
+      io_failed_.store(true, std::memory_order_relaxed);
+      return false;
+    }  // fd stays valid; the path is gone on any exit
     spill_fd_ = fd;
     return true;
   }

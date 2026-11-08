@@ -551,7 +551,7 @@ static void ApplyLargeSceneProfile(Options *opt) {
   }
   if (p == Options::LargeSceneProfile::Off) return;
 
-  const uint64_t host_available = MemBudget::AvailableSystemMemory();
+  const uint64_t host_available = MemBudget::AvailableSystemMemory(opt->host_services.get());
   const uint64_t host_capacity =
       host_available
           ? std::min<uint64_t>(host_available,
@@ -1520,13 +1520,15 @@ int main(int argc, char **argv) {
     }
   }
   SetIblBackendEnvmap(opt.ibl_envmap);
+  // The application explicitly opts into host memory observations.
+  opt.host_services = lightusd::CreateNativeHostServices();
   ApplyLargeSceneProfile(&opt);
 
   // Configure the process memory budget: -maxMem <GiB>, else auto
   // min(32 GiB, 0.5 * system MemAvailable). Keeps lusdrender from being
   // OOM-killed on huge (instance-expanded) scenes; it aborts with a clear
   // message instead.
-  MemBudget::Get().Init(opt.max_mem_gib);
+  MemBudget::Get().Init(opt.max_mem_gib, opt.host_services);
   // Apply the same bounded texture defaults even without a named large-scene
   // profile. Explicit texture flags remain authoritative, including an
   // explicit zero when a caller intentionally requests source resolution.
@@ -1549,7 +1551,7 @@ int main(int argc, char **argv) {
   }
   if (opt.stats) {
     std::cerr << "memory cap: " << MemBudget::GiB(MemBudget::Get().Cap());
-    size_t avail = MemBudget::AvailableSystemMemory();
+    size_t avail = MemBudget::AvailableSystemMemory(opt.host_services.get());
     if (avail) std::cerr << " (system avail: " << MemBudget::GiB(avail) << ")";
     std::cerr << "\n";
   }

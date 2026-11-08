@@ -1,3 +1,4 @@
+#include "core/native-io.hh"
 // SPDX-License-Identifier: Apache-2.0
 // C++ wrapper over the vendored C11 Ptex library (external/textools/ptex, tptex).
 // All container parsing and decoding lives there; this file only adapts
@@ -80,6 +81,7 @@ bool Reader::Attach(const uint8_t* data, size_t size, std::string* err) {
 }
 
 bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
   if (!out) return Fail(err, "Ptex output reader is null");
   out->ResetSource();
 

@@ -41,8 +41,10 @@ int main(int argc, char** argv) {
   }
   lightusd::api::String glb;
   lightusd::api::StringList losses;
+  lightusd::api::AssetResolver resolver;
+  if (lightusd::api::CreateAssetResolver(&resolver) != LIGHTUSD_OK) return 1;
   const lightusd_status export_status = lightusd::api::ExportGLB(
-      scene, input.c_str(), strict, uint64_t(1) << 30, &glb, &losses);
+      scene, resolver, input.c_str(), strict, uint64_t(1) << 30, &glb, &losses);
   const std::string error = export_status == LIGHTUSD_OK
                                 ? std::string() : lightusd_last_error();
   std::vector<std::string> all_losses;

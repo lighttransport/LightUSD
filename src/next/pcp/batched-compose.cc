@@ -379,7 +379,7 @@ bool BatchedComposer::Impl::Discover(std::string *warn, std::string *err) {
   // policies/resolvers can return different contents on the next build, so
   // retain the conservative ramp for them as well as for incomplete trees.
   discovered_prims = 0;
-  if (complete && !opaque_instance && !resolver->HasUserCallbacks() &&
+  if (complete && !opaque_instance && !resolver->RequiresResolverReads() &&
       !options.payload_policy && !options.payload_policy_with_prim &&
       !options.payload_load_callback && !spine.empty() &&
       frontier.size() <= SIZE_MAX - (spine.size() - 1)) {

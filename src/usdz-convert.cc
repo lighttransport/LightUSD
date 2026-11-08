@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment, Inc.
 
+#include "core/native-io.hh"
 #include "usdz-convert.hh"
 #include "core/safe-arithmetic.hh"
 
@@ -68,6 +69,8 @@ namespace {
 constexpr size_t kMaxAssetCollectCount = 1000000;
 
 size_t FileSizeOrZero(const std::string &filename) {
+  if (!::lightusd::NativeIOEnabled()) return 0;
+
   std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
   if (!ifs) {
     return 0;
@@ -1843,6 +1846,8 @@ size_t RemapTextureAssetPaths(Stage &stage,
 
 bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
              std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   if (options.inputs.empty()) {
     if (err) (*err) = "No input USD file specified.";
     return false;
@@ -2684,6 +2689,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
                         image::PngEncoder png_encoder, std::string *warn,
                         std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   if (spec.out_channels < 1 || spec.out_channels > 4) {
     if (err) (*err) = "RepackTextureFiles: out_channels must be 1-4.";
     return false;

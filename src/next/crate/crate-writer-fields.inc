@@ -2176,7 +2176,7 @@
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
     if (deferred_filler_) refine_chunks = false;
 #endif
-    CratePhaseTimer chunk_timer(options_.enable_timing, "next_crate_write");
+    CratePhaseTimer chunk_timer(options_.enable_timing, "next_crate_write", options_.host_services);
     const std::vector<size_t> chunk_bounds =
         MakeFieldsChunkBounds(layer, refine_chunks);
     chunk_timer.lap("chunk_plan");

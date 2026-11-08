@@ -31,7 +31,8 @@ class Layer;
 /// Intern an anchor directory or package-layer identifier and return its id. The empty string maps to 0
 /// ("no anchor" -- the consumer falls back to its default base directory).
 /// Thread-safe: composition loads and stamps layers from several threads.
-uint32_t InternAssetAnchor(const std::string& dir);
+uint32_t InternAssetAnchor(const std::string& dir,
+                           const std::string& working_directory = {});
 
 /// The directory or package-layer identifier for `id`, or "" when unknown.
 const std::string& AssetAnchorPath(uint32_t id);

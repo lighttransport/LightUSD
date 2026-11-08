@@ -238,7 +238,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   //    per-district charge (proxy geometry does not predict full cost, so we do
   //    not model per-district variation -- conservative and predictable).
   const bool gpu = opt->vulkan || opt->vulkan_rt || opt->use_d3d || opt->hip;
-  const double host_avail = double(MemBudget::AvailableSystemMemory());
+  const double host_avail = double(MemBudget::AvailableSystemMemory(opt->host_services.get()));
   const uint64_t host_capacity = host_avail > 0.0
                                      ? std::min<uint64_t>(
                                            static_cast<uint64_t>(host_avail),
@@ -257,7 +257,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
                                       : double(automatic.vram_limit));
   const double cost_host = opt->lod_district_mem_gib * kGiB;
   const double cost_vram = opt->lod_district_vram_gib * kGiB;
-  const double base_host = double(MemBudget::ProcessRSS());  // proxy structure
+  const double base_host = double(MemBudget::ProcessRSS(opt->host_services.get()));  // proxy structure
 
   // Give the hard memory-abort cap headroom ABOVE the selection budget: the flat
   // per-district charge can undershoot the heaviest district pair, and with the
@@ -266,7 +266,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   // explicit hard cap and is respected; otherwise raise the cap to 90% of avail
   // (still an OOM safety net, well under physical RAM).
   if (opt->max_mem_gib <= 0.0 && host_avail > 0.0) {
-    MemBudget::Get().Init(0.9 * host_avail / kGiB);
+    MemBudget::Get().Init(0.9 * host_avail / kGiB, opt->host_services);
   }
 
   // 6) Greedy promotion, nearest first, under both budgets. Always promote the

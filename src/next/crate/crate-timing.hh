@@ -6,6 +6,7 @@
 #pragma once
 
 #include <chrono>
+#include <utility>
 
 #include "core/logger.hh"
 #include "../phase-faults.hh"
@@ -18,18 +19,19 @@ namespace next {
 // branch per phase.
 class CratePhaseTimer {
  public:
-  CratePhaseTimer(bool enabled, const char* tag)
-      : enabled_(enabled),
+  CratePhaseTimer(bool enabled, const char* tag,
+                  std::shared_ptr<const HostServices> services = {})
+      : services_(std::move(services)), enabled_(enabled),
         tag_(tag),
         last_(std::chrono::steady_clock::now()),
-        last_faults_(enabled ? ReadFaultCounters() : FaultCounters{}) {}
+        last_faults_(enabled ? ReadFaultCounters(services_) : FaultCounters{}) {}
 
   void lap(const char* phase) {
     if (!enabled_) return;
     const auto now = std::chrono::steady_clock::now();
     const double ms =
         std::chrono::duration<double, std::milli>(now - last_).count();
-    const FaultCounters faults = ReadFaultCounters();
+    const FaultCounters faults = ReadFaultCounters(services_);
     const unsigned long minf = faults.minor - last_faults_.minor;
     const unsigned long majf = faults.major - last_faults_.major;
     last_ = now;
@@ -39,6 +41,7 @@ class CratePhaseTimer {
   }
 
  private:
+  std::shared_ptr<const HostServices> services_;
   bool enabled_;
   const char* tag_;
   std::chrono::steady_clock::time_point last_;

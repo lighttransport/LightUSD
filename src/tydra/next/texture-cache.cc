@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
+#include "core/native-io.hh"
 #include "texture-cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/safe-file-size.hh"
@@ -103,6 +104,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
       return true;
     }
   }
+  if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
   if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
@@ -159,6 +161,7 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
       return true;
     }
   }
+  if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
   if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {

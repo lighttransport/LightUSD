@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include <chrono>
 
 #include "next/crate/crate-writer.hh"
@@ -10,6 +11,8 @@ namespace tydra {
 namespace next {
 ScenePreviewResult OpenScenePreviewVolume(const std::string& source,
                                           const ScenePreviewOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { ScenePreviewResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   namespace detail = preview_detail;
   namespace fs = std::filesystem;
   ScenePreviewResult result;

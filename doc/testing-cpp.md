@@ -3981,3 +3981,61 @@ independently reproduces the AMD/Mesa 4 GiB boundary. Its candidate SDK patch is
 validated through an isolated preload, including 300 MiB byte-exact transfers,
 overlapping write order and zero-capacity fallback. It is not installed or a
 complete SDK regression pass; missing VDB/shader capabilities remain open.
+
+### Explicit host capabilities and builds without native I/O
+
+`LIGHTUSD_NATIVE_IO` defaults to `ON`. Configure with
+`-DLIGHTUSD_NATIVE_IO=OFF` to disable built-in filesystem readers, writers,
+metadata queries, mapping, temporary spill/snapshot storage, preview caches,
+and native host services. File entry points report an unsupported/disabled
+error before opening their paths. Memory parsing, memory serialization,
+application-owned output streams, registered memory assets, and custom asset
+readers remain available. This is a library backend policy, not an OS sandbox:
+application callbacks and standard runtime allocation/synchronization retain
+their own platform behavior.
+
+`LIGHTUSD_NATIVE_RESOLVER_IO=OFF` disables only the resolver's filesystem
+backend. `LIGHTUSD_NATIVE_HOST_SERVICES=OFF` disables only the optional native
+host-provider factory. Neither narrower option replaces `LIGHTUSD_NATIVE_IO`.
+The exported CMake library targets propagate the no-I/O compile definitions.
+
+Default memory-oriented operations do not discover the current directory,
+query process/system memory, invoke allocator/page hints, or discover GPU
+libraries. Applications can pass `HostServices` from `core/host-services.hh`
+with only the callbacks they authorize. Callbacks must support concurrent
+calls and must not throw. `CreateNativeHostServices()` explicitly supplies
+native callbacks; creating it performs no probing. Its library loader requires
+absolute filenames unless `NativeHostServicesOptions::allow_library_search`
+is explicitly enabled by the application.
+
+Resolvers use lexical `.` when no working directory is supplied. Set
+`ResolverConfig::working_directory` explicitly, or supply its `host_services`
+for native directory lookup. Set `allow_filesystem=false` (C API:
+`lightusd_asset_resolver_set_filesystem_access`) for callback/memory-only asset
+access. This policy applies to root layers, typed C loads, and dependencies.
+GLB export without a resolver does not read texture paths; use
+`lightusd_render_export_glb_with_resolver` or the C++ resolver overload to
+provide asset access explicitly.
+
+Preview GPU compute requires `PreviewComputeOptions::host_services` and
+explicit `vulkan_library` or `cuda_driver_library`/`cuda_compiler_library`
+filenames. Without them Auto uses CPU. CLI equivalents are
+`--preview-native-host`, `--preview-vulkan-library FILE`,
+`--preview-cuda-driver-library FILE`, and
+`--preview-cuda-compiler-library FILE`. The preview qualification scripts
+accept these library arguments too. Unknown GPU capacity uses a 2 GiB preview
+budget; applications can supply a measured capacity explicitly. Memory-budget
+observations, page-fault counters, and allocator/page hints likewise require an
+explicit provider.
+
+Focused no-I/O verification (the ordinary disk-fixture tests require native
+I/O and should run in the default build):
+
+```sh
+cmake -S src/next -B build_ninja/no-native-io -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_NATIVE_IO=OFF
+cmake --build build_ninja/no-native-io --target test_host_services test_host_services_c
+scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
+  -R 'next_test_host_services' --output-on-failure
+```

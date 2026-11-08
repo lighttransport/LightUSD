@@ -3,8 +3,10 @@
 //
 // LightUSD C API implementation (core: stage/prim/attr/authoring).
 
+#include "core/native-io.hh"
 #include "next/schema/schema-registry.hh"
 #include "c-internal.hh"
+#include "next/format-detect.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -828,7 +830,33 @@ lightusd_status lightusd_stage_load(const char* filename,
 
   std::string warn, err;
   bool ok = false;
-  if (format == LIGHTUSD_FORMAT_USDA) {
+  n::ResolvedAsset root_asset;
+  const bool typed_resolver = lo.resolver &&
+      (format == LIGHTUSD_FORMAT_USDA || format == LIGHTUSD_FORMAT_USDC);
+  if (typed_resolver) {
+    root_asset = lo.resolver->Resolve(filename, "", false);
+    if (!root_asset.exists || root_asset.resolved_path.empty()) {
+      err = "asset resolver could not resolve root";
+    } else if (lo.resolver->NativeFilesystemEnabled() && !lo.resolver->HasAssetReader() &&
+        !lo.resolver->HasMemoryAsset(root_asset.resolved_path) &&
+        n::AssetResolver::GetIdentifierScheme(root_asset.resolved_path).empty()) {
+      ok = format == LIGHTUSD_FORMAT_USDA
+          ? n::LoadUSDA(root_asset.resolved_path, &stage->stage, lo.usda_options, &warn, &err)
+          : n::LoadUSDC(root_asset.resolved_path, &stage->stage, lo.usdc_options, &warn, &err);
+      if (ok && !lo.resolver->FileIdentityUnchanged(root_asset)) {
+        ok = false; err = "root file changed during load";
+      }
+    } else {
+      std::vector<uint8_t> bytes;
+      if (lo.resolver->ReadAsset(root_asset, &bytes, &err)) {
+        if (bytes.size() > lo.limits.max_input_bytes) err = "root asset exceeds max input bytes";
+        else if (n::DetectFormat(bytes.data(), bytes.size()) !=
+            (format == LIGHTUSD_FORMAT_USDA ? n::FileFormat::USDA : n::FileFormat::USDC))
+          err = "root asset does not match the requested format";
+        else ok = n::LoadUSDFromMemory(bytes.data(), bytes.size(), &stage->stage, lo, &warn, &err);
+      }
+    }
+  } else if (format == LIGHTUSD_FORMAT_USDA) {
     ok = n::LoadUSDA(filename, &stage->stage, lo.usda_options, &warn, &err);
   } else if (format == LIGHTUSD_FORMAT_USDC) {
     ok = n::LoadUSDC(filename, &stage->stage, lo.usdc_options, &warn, &err);
@@ -850,7 +878,8 @@ lightusd_status lightusd_stage_load(const char* filename,
       resolver.SetWorkingDirectory(slash == std::string::npos ? "." :
                                    slash == 0 ? fn.substr(0, 1) : fn.substr(0, slash));
     }
-    ok = n::ComposeLoadedStage(&stage->stage, resolver, filename, lo,
+    ok = n::ComposeLoadedStage(&stage->stage, resolver, typed_resolver
+        ? root_asset.resolved_path : std::string(filename), lo,
                                &warn, &err, &co);
   }
   if (ok) {
@@ -983,6 +1012,8 @@ extern "C" {
 
 lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* filename,
                             const lightusd_save_options* opts) {
+  if (!::lightusd::NativeIOEnabled()) return Fail(LIGHTUSD_ERR_UNSUPPORTED, ::lightusd::NativeIOUnavailableMessage());
+
   if (!stage || !filename) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/filename is null");
   }
@@ -1054,6 +1085,8 @@ lightusd_status lightusd_stage_save_usdz_with_assets(
     const lightusd_stage* stage, const char* filename,
     const char* const* asset_names, const uint8_t* const* asset_data,
     const size_t* asset_sizes, size_t asset_count) {
+  if (!::lightusd::NativeIOEnabled()) return Fail(LIGHTUSD_ERR_UNSUPPORTED, ::lightusd::NativeIOUnavailableMessage());
+
   if (!stage || !filename || (asset_count && (!asset_names || !asset_data || !asset_sizes))) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset arguments");
   }
@@ -1170,6 +1203,8 @@ lightusd_status lightusd_stage_flatten(const lightusd_stage* stage, lightusd_sta
 lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
                                       const char* out_filename,
                                       const lightusd_load_options* opts) {
+  if (!::lightusd::NativeIOEnabled()) return Fail(LIGHTUSD_ERR_UNSUPPORTED, ::lightusd::NativeIOUnavailableMessage());
+
   if (!in_filename || !out_filename) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "filenames are null");
   }

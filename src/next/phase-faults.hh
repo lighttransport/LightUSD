@@ -8,35 +8,17 @@
 // answer. These counters are only read when an enable_timing option is on.
 
 #pragma once
+#include "core/host-services.hh"
 
 namespace lightusd {
 namespace next {
 
-struct FaultCounters {
-  unsigned long minor = 0;
-  unsigned long major = 0;
-};
+using FaultCounters = HostFaultCounters;
 
-#if !defined(__EMSCRIPTEN__) && (defined(__unix__) || defined(__APPLE__))
-}  // namespace next
-}  // namespace lightusd
-
-#include <sys/resource.h>
-
-namespace lightusd {
-namespace next {
-#endif
-
-inline FaultCounters ReadFaultCounters() {
-  FaultCounters out;
-#if !defined(__EMSCRIPTEN__) && (defined(__unix__) || defined(__APPLE__))
-  struct rusage usage {};
-  if (::getrusage(RUSAGE_SELF, &usage) == 0) {
-    out.minor = static_cast<unsigned long>(usage.ru_minflt);
-    out.major = static_cast<unsigned long>(usage.ru_majflt);
-  }
-#endif
-  return out;
+inline FaultCounters ReadFaultCounters(
+    const std::shared_ptr<const HostServices>& services = {}) {
+  return services && services->fault_counters
+      ? services->fault_counters() : FaultCounters{};
 }
 
 }  // namespace next

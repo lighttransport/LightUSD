@@ -43,7 +43,7 @@ class Collector {
       read.max_entries = opt.max_records;
       std::vector<uint8_t> bytes;
       std::string error;
-      const bool opened = resolver.HasUserCallbacks()
+      const bool opened = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(asset.package_path, &bytes, &error) && package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(asset.package_path, read);
       if (!opened) { Issue("cannot inspect package entries: " + asset.package_path); return false; }
@@ -213,7 +213,7 @@ class Collector {
       USDZReadOptions read;
       read.max_archive_size = limits.max_memory;
       std::vector<uint8_t> bytes;
-      const bool opened = resolver.HasUserCallbacks()
+      const bool opened = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(id, &bytes, &err) && package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(id, read);
       if (!opened || package.FindRootLayer() < 0) { Issue("cannot inspect package root: " + id); return; }
@@ -310,7 +310,7 @@ class Collector {
       USDZReadOptions read;
       read.max_archive_size = opt.load.max_memory;
       std::vector<uint8_t> bytes;
-      const bool opened_package = resolver.HasUserCallbacks()
+      const bool opened_package = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(id, &bytes, &err) &&
                 package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(id, read);

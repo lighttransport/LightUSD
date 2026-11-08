@@ -3,6 +3,7 @@
 //
 // LightUSD Next - PCP LayerRegistry implementation
 
+#include "core/native-io.hh"
 #include "layer-registry.hh"
 #if defined(LIGHTUSD_WITH_USDOBJ)
 #include "../reader/obj-reader.hh"
@@ -320,6 +321,7 @@ std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
     const std::string& identifier, const std::string& storage_path,
     std::string* warn, std::string* err, const LayerLoadOptions& options,
     bool content_dispatch) {
+  if (!::lightusd::NativeIOAvailable(err)) return {};
   char magic[8] = {};
   std::ifstream input(storage_path, std::ios::binary);
   input.read(magic, sizeof(magic));
@@ -368,6 +370,7 @@ namespace {
 std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     const std::string &resolved_path, std::string *warn, std::string *err,
     const LayerLoadOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return {};
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;

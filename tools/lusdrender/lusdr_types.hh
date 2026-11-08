@@ -5,6 +5,7 @@
 #pragma once
 
 #include "cpu/ptex-sample.hh"  // lusdview::CpuPtexSampler (lazy Ptex source)
+#include "core/host-services.hh"
 #include <array>
 #include <memory>
 #include <string>
@@ -613,6 +614,7 @@ enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNorma
 enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
+  std::shared_ptr<const lightusd::HostServices> host_services;
   // Per-render controls. Zero selects the documented automatic limit.
   size_t gpu_triangle_chunk{262144};
   bool gpu_triangle_chunk_explicit{false};

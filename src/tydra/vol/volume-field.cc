@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include "volume-field.hh"
 
 #include <algorithm>
@@ -217,6 +218,8 @@ FieldCache::~FieldCache() = default;
 
 static bool ReadFileAssetLimited(const std::string &path, std::vector<uint8_t> *bytes,
                                  std::string *err, size_t remaining, bool limited) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   // Asset paths come from the stage: read only regular files (opening a FIFO
   // blocks; devices such as /dev/zero never end) up to kMaxVolumeFileBytes,
   // checked before opening.

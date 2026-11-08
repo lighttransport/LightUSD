@@ -12,8 +12,9 @@
 #include "next/reader/usdz-reader.hh"
 #include "tydra/next/gltf-export.hh"
 
-extern "C" lightusd_status lightusd_render_export_glb(
+static lightusd_status ExportGLBWithResolver(
     const lightusd_render_scene* scene, const char* source_path,
+    lightusd_asset_resolver* supplied_resolver,
     uint8_t strict, uint64_t max_output_bytes, lightusd_string** glb,
     lightusd_strlist** losses) {
   using lightusd_internal::Fail;
@@ -34,18 +35,28 @@ extern "C" lightusd_status lightusd_render_export_glb(
     max_bytes = static_cast<size_t>(max_output_bytes);
   }
 
-  lightusd::next::AssetResolver resolver;
+  lightusd::next::ResolverConfig config;
+  config.allow_filesystem = false;
+  lightusd::next::AssetResolver portable_resolver(config);
+  const auto* resolver = supplied_resolver
+      ? lightusd_internal::AssetResolverForLoad(supplied_resolver) : &portable_resolver;
   lightusd::tydra::next::GltfExportOptions options;
   options.max_output_bytes = max_bytes;
   options.fail_on_loss = strict != 0;
   if (source_path[0]) {
-    options.resolver = &resolver;
-    options.asset_anchor = resolver.Resolve(source_path).resolved_path;
+    options.resolver = resolver;
+    options.asset_anchor = resolver->Resolve(source_path).resolved_path;
     if (std::filesystem::path(options.asset_anchor).extension() == ".usdz") {
       lightusd::next::USDZReader package;
       lightusd::next::USDZReadOptions read;
       read.max_archive_size = max_bytes;
-      if (package.OpenFile(options.asset_anchor, read)) {
+      std::vector<uint8_t> bytes;
+      std::string error;
+      const bool opened = resolver->RequiresResolverReads()
+          ? resolver->ReadAsset(options.asset_anchor, &bytes, &error) &&
+                package.Open(bytes.data(), bytes.size(), read)
+          : package.OpenFile(options.asset_anchor, read);
+      if (opened) {
         const int root = package.FindRootLayer();
         if (root >= 0) {
           options.asset_anchor += "[" + package.EntryName(size_t(root)) + "]";
@@ -76,4 +87,20 @@ extern "C" lightusd_status lightusd_render_export_glb(
                   result.glb.size());
   *glb = bytes;
   return LIGHTUSD_OK;
+}
+
+extern "C" lightusd_status lightusd_render_export_glb(
+    const lightusd_render_scene* scene, const char* source_path,
+    uint8_t strict, uint64_t max_output_bytes, lightusd_string** glb,
+    lightusd_strlist** losses) {
+  return ExportGLBWithResolver(scene, source_path, nullptr, strict,
+                               max_output_bytes, glb, losses);
+}
+extern "C" lightusd_status lightusd_render_export_glb_with_resolver(
+    const lightusd_render_scene* scene, const char* source_path,
+    lightusd_asset_resolver* resolver, uint8_t strict, uint64_t max_output_bytes,
+    lightusd_string** glb, lightusd_strlist** losses) {
+  if (!resolver) return lightusd_internal::Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
+  return ExportGLBWithResolver(scene, source_path, resolver, strict,
+                               max_output_bytes, glb, losses);
 }

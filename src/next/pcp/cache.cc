@@ -541,10 +541,16 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
   if (options.strict_aousd_conformance) {
     lopts.usda_parse_options.strict_aousd_conformance = true;
   }
-  std::shared_ptr<Layer> root = LoadLayerFromFile(
-      filename, warn, err, lopts);
+  ResolverScopedCache scope(&resolver);
+  const auto resolved = resolver.Resolve(filename, "", !options.strict_aousd_conformance);
+  if (!resolved.exists || resolved.resolved_path.empty()) {
+    if (err) *err += "asset resolver could not resolve root: " + filename + "\n";
+    return false;
+  }
+  LayerRegistry registry;
+  std::shared_ptr<Layer> root = registry.GetOrLoad(resolver, filename, "", warn, err, lopts);
   if (!root) return false;
-  return ComposeStageFromLayer(std::move(root), resolver, out_stage, filename,
+  return ComposeStageFromLayer(std::move(root), resolver, out_stage, resolved.resolved_path,
                                options, warn, err);
 }
 
@@ -1509,7 +1515,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // gigabytes in the middle of the composition peak; return those pages on
     // a helper thread (joined when this build returns). (A purge right after
     // the warm merge contended with the structure walk for no lower peak.)
-    MemoryTrimmer trimmer;
+    MemoryTrimmer trimmer(options.host_services);
     struct TrimmerScope {
       MemoryTrimmer *&slot;
       ~TrimmerScope() { slot = nullptr; }
@@ -1544,7 +1550,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     const auto warm_t0 = std::chrono::steady_clock::now();
     // Residency attribution: the composed layer reaches ~75 GiB on the
     // all-district crate, so each phase reports its share of the page faults.
-    const FaultCounters fault_t0 = ReadFaultCounters();
+    const FaultCounters fault_t0 = ReadFaultCounters(options.host_services);
 #if defined(LIGHTUSD_ENABLE_THREAD)
     // Resolve independent namespace subtrees concurrently before the serial
     // structure walk. ParallelWarmSources was previously implemented but never
@@ -1579,7 +1585,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       warm_drop_inert_ = false;
     }
 #endif
-    const FaultCounters fault_warm1 = ReadFaultCounters();
+    const FaultCounters fault_warm1 = ReadFaultCounters(options.host_services);
     const auto structure_t0 = std::chrono::steady_clock::now();
     if (options.release_build_sources && sources_cache.size() >= 65536) {
       // A source's root-space site commonly equals the cache key. Reuse that
@@ -1847,7 +1853,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
         LIGHTUSD_LOG_I("[next_build] unread_layers_released=" + UIntToStr(unread) +
                        " prims=" + UIntToStr(unread_prims));
     }
-    const FaultCounters fault_structure1 = ReadFaultCounters();
+    const FaultCounters fault_structure1 = ReadFaultCounters(options.host_services);
     const auto structure_t1 = std::chrono::steady_clock::now();
     if (preview_callback) {
       // The callback receives an independent immutable-in-practice Stage. The
@@ -1913,7 +1919,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       std::deque<std::vector<Src>>().swap(fill_sources);
       std::vector<std::deque<std::vector<SpecRef>>>().swap(fill_specs);
     }
-    const FaultCounters fault_fill1 = ReadFaultCounters();
+    const FaultCounters fault_fill1 = ReadFaultCounters(options.host_services);
     const auto fill_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       prof_compose_ns_ +=
@@ -1958,7 +1964,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       case InstanceFlattenMode::Native:
         break;
     }
-    const FaultCounters fault_flatten1 = ReadFaultCounters();
+    const FaultCounters fault_flatten1 = ReadFaultCounters(options.host_services);
     const auto flatten_t1 = std::chrono::steady_clock::now();
 
     // The composed layer is read by index (writers, Stage traversal); defer
@@ -1971,7 +1977,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     out->set_instance_holder_links(options.instance_flatten_mode ==
                                    InstanceFlattenMode::Holder);
     out->finalize();
-    const FaultCounters fault_finalize1 = ReadFaultCounters();
+    const FaultCounters fault_finalize1 = ReadFaultCounters(options.host_services);
     const auto finalize_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       auto elapsed_ms = [](std::chrono::steady_clock::duration duration) {

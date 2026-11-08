@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
 
 #include <array>
 #include <chrono>
@@ -23,7 +18,7 @@ namespace {
 class VulkanCompute final : public PreviewCompute {
   // Private loader dispatch avoids interposing the viewer's Volk globals.
   struct Api {
-    void* library = nullptr;
+    std::shared_ptr<HostLibrary> library;
 #define PREVIEW_VK_FUNCTIONS(X)               \
   X(vkAllocateCommandBuffers)                 \
   X(vkAllocateDescriptorSets)                 \
@@ -74,27 +69,16 @@ class VulkanCompute final : public PreviewCompute {
 #define DECLARE(name) PFN_##name name = nullptr;
     PREVIEW_VK_FUNCTIONS(DECLARE)
 #undef DECLARE
-    ~Api() {
-#if defined(_WIN32)
-      if (library) FreeLibrary(static_cast<HMODULE>(library));
-#else
-      if (library) dlclose(library);
-#endif
-    }
     void* symbol(const char* name) {
-#if defined(_WIN32)
-      return reinterpret_cast<void*>(
-          GetProcAddress(static_cast<HMODULE>(library), name));
-#else
-      return dlsym(library, name);
-#endif
+      return library ? library->Symbol(name) : nullptr;
     }
-    bool load() {
-#if defined(_WIN32)
-      library = LoadLibraryA("vulkan-1.dll");
-#else
-      library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
-#endif
+    bool load(const PreviewComputeOptions& options, std::string* error) {
+      if (!options.host_services || !options.host_services->open_library ||
+          options.vulkan_library.empty()) {
+        *error = "Vulkan preview requires explicit host services and a library filename";
+        return false;
+      }
+      library = options.host_services->open_library(options.vulkan_library, error);
       if (!library) return false;
 #define LOAD(name)                                    \
   name = reinterpret_cast<PFN_##name>(symbol(#name)); \
@@ -184,8 +168,7 @@ class VulkanCompute final : public PreviewCompute {
   }
   const char* name() const override { return "vulkan"; }
   bool init(std::string* error) {
-    if (!api_.load()) {
-      *error = "Vulkan compute loader unavailable";
+    if (!api_.load(options_, error)) {
       return false;
     }
     VkApplicationInfo app{};

@@ -4,6 +4,7 @@
 // LightUSD Next - High-level API Implementation
 
 #include "load-usd.hh"
+#include "core/native-io.hh"
 #include "load-usd-internal.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
@@ -113,6 +114,56 @@ bool LoadUSD(const std::string& filename, Stage* stage,
     if (err) *err = "invalid resource limits: zero is not unlimited";
     return false;
   }
+
+  if (options.resolver) {
+    auto& resolver = *options.resolver;
+    const auto resolved = resolver.Resolve(filename, "", false);
+    if (!resolved.exists || resolved.resolved_path.empty()) {
+      if (err) *err = "asset resolver could not resolve root: " + filename;
+      return false;
+    }
+    if (resolver.NativeFilesystemEnabled() && !resolver.HasAssetReader() &&
+        !resolver.HasMemoryAsset(resolved.resolved_path) &&
+        (!resolved.is_package || !resolver.HasMemoryAsset(resolved.package_path)) &&
+        AssetResolver::GetIdentifierScheme(resolved.resolved_path).empty()) {
+      LoadUSDOptions native_options = options;
+      native_options.resolver = nullptr;
+      if (!LoadUSD(resolved.resolved_path, stage, native_options, warn, err)) return false;
+      if (!resolver.FileIdentityUnchanged(resolved)) {
+        if (err) *err = "root file changed during load";
+        return false;
+      }
+      return true;
+    }
+    std::vector<uint8_t> bytes;
+    if (!resolver.ReadAsset(resolved, &bytes, err)) return false;
+    if (bytes.size() > options.limits.max_input_bytes) {
+      if (err) *err = "root asset exceeds max input bytes";
+      return false;
+    }
+    if (resolved.is_package || DetectFormat(bytes.data(), bytes.size()) == FileFormat::USDZ) {
+      USDZReader package;
+      if (!package.Open(bytes.data(), bytes.size(), EffectiveUSDZOptions(options))) {
+        if (err) *err = package.Error();
+        return false;
+      }
+      const int root = resolved.is_package ? -1 : package.FindRootLayer();
+      for (size_t i = 0; i < package.NumEntries(); ++i) {
+        if (resolved.is_package ? package.EntryName(i) != resolved.asset_in_package
+                                : (root < 0 || i != static_cast<size_t>(root))) continue;
+        if (!LoadUSDFromMemory(package.EntryData(i), package.EntrySize(i), stage,
+                               options, warn, err)) return false;
+        StampPackageAssetAnchor(stage->GetRootLayer(), resolved.is_package
+            ? resolved.resolved_path : resolved.resolved_path + "[" + package.EntryName(i) + "]");
+        return true;
+      }
+      if (err) *err = "root package entry not found";
+      return false;
+    }
+    return LoadUSDFromMemory(bytes.data(), bytes.size(), stage, options, warn, err);
+  }
+
+  if (!::lightusd::NativeIOAvailable(err)) return false;
 
   if (AssetResolver::IsPackagePath(filename)) {
     AssetResolver resolver;
@@ -406,7 +457,16 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     resolver = &default_resolver;
   }
   std::string anchor = filename;
-  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+  if (load_options.resolver) {
+    const auto resolved = resolver->Resolve(filename, "", false);
+    if (resolved.exists) anchor = resolved.resolved_path;
+  }
+  const Layer* source_root = stage->GetRootLayer();
+  const std::string package_anchor = source_root
+      ? AssetAnchorPath(source_root->source_asset_anchor_id()) : std::string();
+  if (AssetResolver::IsPackagePath(package_anchor)) {
+    anchor = package_anchor;
+  } else if (!load_options.resolver && DetectFormatFromExtension(filename) == FileFormat::USDZ) {
     USDZReader package;
     if (package.OpenFile(filename, EffectiveUSDZOptions(load_options))) {
       const int root_index = package.FindRootLayer();

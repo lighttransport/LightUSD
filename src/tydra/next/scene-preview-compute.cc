@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include "scene-preview-compute.hh"
 
 #include <algorithm>
@@ -348,6 +349,8 @@ bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
                                  PreviewComputeBackend backend, uint64_t budget,
                                  std::string* error,
                                  const PreviewComputeOptions& compute_options) {
+  if (!::lightusd::NativeIOAvailable(error)) return false;
+
   namespace usd = ::lightusd::next;
   impl_.reset(new Impl);
   impl_->budget = budget;

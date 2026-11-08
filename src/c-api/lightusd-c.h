@@ -438,6 +438,12 @@ typedef struct lightusd_asset_resolver lightusd_asset_resolver;
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_create(
     lightusd_asset_resolver** out);
 LIGHTUSD_API void lightusd_asset_resolver_destroy(lightusd_asset_resolver* resolver);
+/* Enable/disable native filesystem fallback, existence probes and timestamps.
+ * Memory assets and application readers remain available. Change configuration
+ * only between loads, after resolver users have joined. A build without the
+ * native resolver backend rejects requests to enable it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_filesystem_access(
+    lightusd_asset_resolver* resolver, uint8_t enabled);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_memory(
     lightusd_asset_resolver* resolver, const char* identifier,
     const uint8_t* data, size_t size);

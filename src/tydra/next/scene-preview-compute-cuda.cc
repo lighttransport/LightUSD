@@ -6,7 +6,6 @@
 #include "scene-preview-kernel-source.hh"
 // CUDA 13 headers omit the old context constructor; the driver retains its ABI.
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext*, unsigned int, CUdevice);
-#include <dlfcn.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -15,7 +14,8 @@ namespace tydra {
 namespace next {
 namespace {
 class CudaCompute final : public PreviewCompute {
-  void *driver_ = nullptr, *compiler_ = nullptr;
+  std::shared_ptr<HostLibrary> driver_, compiler_;
+  PreviewComputeOptions options_;
 #define DRIVER_SYMBOLS(X)                                                \
   X(cuInit)                                                              \
   X(cuDeviceGet)                                                         \
@@ -44,8 +44,8 @@ class CudaCompute final : public PreviewCompute {
   bool debug_validate_;
 
  public:
-  CudaCompute(uint64_t budget, bool debug_validate)
-      : budget_(budget), debug_validate_(debug_validate) {}
+  CudaCompute(uint64_t budget, const PreviewComputeOptions& options)
+      : options_(options), budget_(budget), debug_validate_(options.debug_validate) {}
   ~CudaCompute() override {
     if (context_) {
       p_cuCtxSetCurrent(context_);
@@ -53,29 +53,28 @@ class CudaCompute final : public PreviewCompute {
       if (module_) p_cuModuleUnload(module_);
       p_cuCtxDestroy_v2(context_);
     }
-    if (compiler_) dlclose(compiler_);
-    if (driver_) dlclose(driver_);
   }
   const char* name() const override { return "cuda"; }
   bool init(std::string* error) {
-    driver_ = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
-    for (const char* name :
-         {"libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"}) {
-      compiler_ = dlopen(name, RTLD_NOW | RTLD_LOCAL);
-      if (compiler_) break;
+    if (!options_.host_services || !options_.host_services->open_library ||
+        options_.cuda_driver_library.empty() || options_.cuda_compiler_library.empty()) {
+      *error = "CUDA preview requires explicit host services and driver/compiler filenames";
+      return false;
     }
+    driver_ = options_.host_services->open_library(options_.cuda_driver_library, error);
+    compiler_ = options_.host_services->open_library(options_.cuda_compiler_library, error);
     if (!driver_ || !compiler_) {
       *error = "CUDA driver/NVRTC unavailable";
       return false;
     }
 #define LOAD_DRIVER(name)                                                 \
-  p_##name = reinterpret_cast<decltype(p_##name)>(dlsym(driver_, #name)); \
+  p_##name = reinterpret_cast<decltype(p_##name)>(driver_->Symbol(#name)); \
   if (!p_##name) {                                                        \
     *error = "CUDA entry point unavailable: " #name;                      \
     return false;                                                         \
   }
 #define LOAD_RTC(name)                                                      \
-  p_##name = reinterpret_cast<decltype(p_##name)>(dlsym(compiler_, #name)); \
+  p_##name = reinterpret_cast<decltype(p_##name)>(compiler_->Symbol(#name)); \
   if (!p_##name) {                                                          \
     *error = "NVRTC entry point unavailable: " #name;                       \
     return false;                                                           \
@@ -193,7 +192,7 @@ typedef unsigned int uint;
 }  // namespace
 std::unique_ptr<PreviewCompute> CreateCudaPreviewCompute(
     uint64_t budget, std::string* error, const PreviewComputeOptions& options) {
-  auto engine = std::make_unique<CudaCompute>(budget, options.debug_validate);
+  auto engine = std::make_unique<CudaCompute>(budget, options);
   if (!engine->init(error)) return {};
   return engine;
 }

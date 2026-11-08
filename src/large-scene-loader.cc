@@ -5,6 +5,7 @@
 //
 // Two backends selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE.
 
+#include "core/native-io.hh"
 #include "large-scene-loader.hh"
 
 #include <algorithm>
@@ -34,6 +35,8 @@ namespace {
 // Cheap file size without reading the content (used by the Budget policy).
 // Returns 0 on failure (treated as "free").
 uint64_t FileSizeBytes(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return 0;
+
   if (path.empty()) return 0;
   std::ifstream ifs(path, std::ios::binary | std::ios::ate);
   if (!ifs) return 0;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,9 +12,6 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "scene-preview-internal.hh"
-#if defined(__linux__)
-#include <unistd.h>
-#endif
 
 namespace lightusd {
 namespace tydra {
@@ -196,6 +194,8 @@ std::string DefaultScenePreviewCacheDirectory() {
 ScenePreviewResult ConvertScenePreview(
     const std::string& source, ::lightusd::next::AssetResolver& resolver,
     const ScenePreviewOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { ScenePreviewResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   const auto start = std::chrono::steady_clock::now();
   ScenePreviewResult result;
   result.refinement_region = options.region_enabled;
@@ -718,6 +718,8 @@ ScenePreviewResult RefineScenePreview(const std::string& source,
                                       const ScenePreviewLodCamera& camera,
                                       int width, int height,
                                       double pixel_error) {
+  if (!::lightusd::NativeIOEnabled()) { ScenePreviewResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   if (!base.success || width < 1 || height < 1 || !std::isfinite(pixel_error) ||
       pixel_error <= 0 || camera.focal_pixels <= 0)
     return base;
@@ -806,6 +808,8 @@ ScenePreviewResult RefineScenePreview(const std::string& source,
 
 bool ExportScenePreview(const ScenePreviewResult& result,
                         const std::string& directory, std::string* error) {
+  if (!::lightusd::NativeIOAvailable(error)) return false;
+
   std::error_code ec;
   if (!result.success || fs::exists(directory, ec)) {
     if (error)
@@ -880,32 +884,22 @@ bool Build::check(const std::string& phase, uint64_t n) {
     result.error = "preview conversion cancelled";
     return false;
   }
-#if defined(__linux__)
-  uint64_t pages = 0, resident = 0;
-  std::ifstream stat("/proc/self/statm");
-  stat >> pages >> resident;
-  const long page_size = sysconf(_SC_PAGESIZE);
-  if (stat && page_size > 0 &&
-      resident > opts.host_budget_bytes / static_cast<uint64_t>(page_size)) {
-    result.error =
-        "preview host RSS budget exceeded; reduce batch size or resolution";
-    return false;
-  }
-  std::ifstream mem("/proc/meminfo");
-  std::string key, line;
-  uint64_t kib = 0;
-  while (mem >> key) {
-    if (key == "MemAvailable:") {
-      mem >> kib;
-      break;
+  const auto& host = opts.host_services;
+  if (host && host->resident_memory_bytes) {
+    const uint64_t resident = host->resident_memory_bytes();
+    if (resident && resident > opts.host_budget_bytes) {
+      result.error = "preview host RSS budget exceeded; reduce batch size or resolution";
+      return false;
     }
-    std::getline(mem, line);
   }
-  if (kib && kib < (uint64_t(4) << 20)) {
-    result.error = "preview stopped to preserve 4 GiB of host memory";
-    return false;
+  if (host && host->available_memory_bytes && opts.min_available_host_bytes) {
+    const uint64_t available = host->available_memory_bytes();
+    if (available && available < opts.min_available_host_bytes) {
+      result.error = "preview stopped to preserve the caller's host memory reserve";
+      return false;
+    }
   }
-#endif
+
   return true;
 }
 }  // namespace preview_detail

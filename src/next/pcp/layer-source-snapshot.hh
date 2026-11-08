@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
 #define LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX 1
 #include <fcntl.h>
 #include <sys/stat.h>

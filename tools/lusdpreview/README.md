@@ -31,13 +31,23 @@ lusdrender scene.usda out.png --scene-preview --preview-kind volume -vkr
 ```
 
 `--preview-budget-mib` is the total renderer budget, including a runtime reserve,
-upload copies, geometry and acceleration/sort scratch. By default the CLI uses
-one quarter of installed NVIDIA VRAM, capped by available memory minus 512 MiB;
-without a device query it uses 2048 MiB. An 8 GiB GPU therefore defaults to
-2048 MiB. Geometry sampling and volume rasterization select CUDA, then hardware
-Vulkan, then CPU when available. `--preview-compute auto|cpu|vulkan|cuda` selects conversion compute;
-an explicitly requested unavailable GPU backend fails rather than silently using
-CPU. Configure `-DLIGHTUSD_PREVIEW_GPU_COMPUTE=OFF` for a CPU-only preview build.
+upload copies, geometry and acceleration/sort scratch. The CLI defaults to
+2048 MiB without querying device memory. Applications can provide GPU capacity
+explicitly through the public API to derive a quarter-capacity budget.
+`--preview-compute auto|cpu|vulkan|cuda` selects conversion compute. Auto tries
+only backends with an explicit host provider and library filenames, then CPU.
+An explicitly requested unavailable GPU backend fails. Configure
+`-DLIGHTUSD_PREVIEW_GPU_COMPUTE=OFF` for a CPU-only preview build.
+
+Native GPU preview compute requires `--preview-native-host` and absolute loader
+filenames: `--preview-vulkan-library FILE` for Vulkan, or
+`--preview-cuda-driver-library FILE --preview-cuda-compiler-library FILE` for
+CUDA. The library does not search for drivers automatically. The qualification
+scripts below accept the same library filename arguments and supply the native
+provider when any is present. Supply these paths for GPU conversion and native
+volume qualification. See [explicit host capabilities](../../doc/testing-cpp.md#explicit-host-capabilities-and-builds-without-native-io)
+for the callback API and `LIGHTUSD_NATIVE_IO=OFF` builds.
+
 Bounded kernels interpolate geometry/attributes for splats, points and volumes;
 CPU baking evaluates the sampled material/texture inputs. Source composition,
 geometry discovery and cache writing remain on the CPU. CPU rendering uses the same
@@ -310,8 +320,7 @@ python3 tools/lusdpreview/check-renderers.py scene.usda --software \
 
 The wrapper pins Vulkan to lavapipe, selects llvmpipe for OpenGL, limits software
 worker threads to four by default, and disables NVIDIA offload. The explicit
-`--preview-software` option selects only CPU Vulkan devices and skips the
-NVIDIA memory probe. Pass `--preview-software` to preview applications run through the wrapper.
+`--preview-software` option selects only CPU Vulkan devices. Pass `--preview-software` to preview applications run through the wrapper.
 `--software` applies the wrapper and explicit preview option to each application,
 skips CUDA/NVML and labels its results as software checks. These runs do not
 qualify hardware performance or hardware VRAM usage. Set

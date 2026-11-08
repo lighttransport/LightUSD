@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
+#include "core/native-io.hh"
 #include "value-clip.hh"
 #include "../layer/prim-spec.hh"
 #include "../layer/asset-anchor.hh"
@@ -37,6 +38,8 @@ struct FileStamp {
 };
 
 FileStamp StampFile(const std::string& path) {
+  if (!::lightusd::NativeIOEnabled()) return {};
+
   FileStamp stamp;
 #if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
   // One stat() per check: this runs on every revalidating cache hit.

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "next/pcp/prim-index.hh"
+#include "core/host-services.hh"
 
 namespace lightusd {
 namespace next {
@@ -27,6 +28,12 @@ struct PreviewComputeOptions {
   bool software_only = false;
   bool debug_validate = false;
   bool trace_pipeline = false;
+  std::shared_ptr<const HostServices> host_services;
+  // Exact library filenames are supplied by the caller. No loader search
+  // occurs unless the supplied host provider explicitly permits it.
+  std::string vulkan_library;
+  std::string cuda_driver_library;
+  std::string cuda_compiler_library;
 };
 
 struct ScenePreviewOptions {
@@ -54,6 +61,10 @@ struct ScenePreviewOptions {
   // False cancels. Called at bounded composition/sampling/output boundaries.
   std::function<bool(const std::string&, uint64_t)> progress;
   PreviewComputeOptions compute_options;
+  // Optional process-level memory observations. Zero/unavailable observations
+  // do not replace the explicit payload and allocation budgets.
+  std::shared_ptr<const HostServices> host_services;
+  uint64_t min_available_host_bytes = 0;
 };
 
 struct ScenePreviewResult {
@@ -84,7 +95,10 @@ bool ParseScenePreviewKind(const std::string& text, ScenePreviewKind* kind);
 // Quarter of installed VRAM, reduced under memory pressure. Zero capacity
 // (CPU-only conversion) selects the portable 2 GiB preview ceiling.
 uint64_t ScenePreviewGpuBudget(uint64_t capacity, uint64_t available = 0);
-bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available);
+bool QueryScenePreviewGpuMemory(
+    uint64_t* capacity, uint64_t* available,
+    const std::shared_ptr<const HostServices>& host_services = {},
+    const std::string& library_path = {});
 // Relative deterministic default; callers may set cache_directory explicitly.
 std::string DefaultScenePreviewCacheDirectory();
 

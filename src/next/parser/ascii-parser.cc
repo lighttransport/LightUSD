@@ -3,6 +3,7 @@
 //
 // LightUSD Next - USDA ASCII Parser implementation
 
+#include "core/native-io.hh"
 #include "../layer/int64-listop.hh"
 #include "ascii-parser-internal.hh"
 #include "../crate/crate-timing.hh"
@@ -561,6 +562,8 @@ bool AsciiParser::Impl::ParseOwned(std::string&& data) {
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) { AddError(::lightusd::NativeIOUnavailableMessage()); return false; }
+
   if (!filename || !*filename) {
     AddError("Invalid USDA filename");
     return false;

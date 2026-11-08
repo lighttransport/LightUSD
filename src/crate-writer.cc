@@ -2,6 +2,7 @@
 // Copyright 2025, Light Transport Entertainment Inc.
 //
 // Experimental USDC (Crate) File Writer Implementation
+#include "core/native-io.hh"
 #include "crate-writer.hh"
 
 #include <algorithm>
@@ -101,6 +102,8 @@ class FileOutputStream : public IOutputStream {
 public:
   explicit FileOutputStream(const std::string& filepath) : filepath_(filepath) {}
   bool Open(std::string* err) override {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
     file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
     if (!file_.is_open()) {
       if (err) *err = "Failed to open file: " + filepath_;

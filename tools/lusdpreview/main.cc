@@ -12,7 +12,13 @@
 
 int main(int argc, char** argv) {
   using namespace lightusd::tydra::next;
-  ScenePreviewOptions options;
+  ScenePreviewRequest request;
+  std::string argument_error;
+  if (!ExtractScenePreviewArguments(&argc, argv, &request, &argument_error)) {
+    std::fprintf(stderr, "%s\n", argument_error.c_str());
+    return 1;
+  }
+  ScenePreviewOptions options = request.options;
   options.composition.num_threads = 0;
   options.composition.max_layer_memory = size_t(24576) << 20;
   options.composition.usdc_limits.max_fields = 300000000;
@@ -38,12 +44,14 @@ int main(int argc, char** argv) {
           "lusdpreview input.usd [export-directory]\n  --kind "
           "gaussian|points|volume (default gaussian)\n  --preview-cache-dir "
           "DIR\n  --preview-budget-mib N (total renderer cap; default 1/4 "
-          "VRAM)\n  "
+          "VRAM when supplied by the caller; otherwise 2048 MiB)\n  "
           "--host-budget-mib N (default 16384)\n  --preview-resolution N (auto "
           "by default)\n  --texture-max-edge N (default 512)\n  --batch-prims "
           "N --batch-roots N\n  --time-code T --variant SET=VALUE --refresh "
           "--progress --lod\n  --preview-compute auto|cpu|vulkan|cuda\n  "
-          "--volume-no-surface");
+          "--volume-no-surface\n  --preview-native-host\n  "
+          "--preview-vulkan-library FILE\n  --preview-cuda-driver-library FILE\n  "
+          "--preview-cuda-compiler-library FILE");
       return 0;
     }
     if (a == "--volume-no-surface") {
@@ -145,7 +153,7 @@ int main(int argc, char** argv) {
   lightusd::next::AssetResolver resolver;
   if (!budget_explicit) {
     uint64_t capacity = 0, available = 0;
-    QueryScenePreviewGpuMemory(&capacity, &available);
+    // Capacity is supplied by the application; conversion does no GPU probing.
     options.gpu_budget_bytes = ScenePreviewGpuBudget(capacity, available);
   }
   const auto result = ConvertScenePreview(source, resolver, options);

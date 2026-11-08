@@ -2,6 +2,7 @@
 // Copyright 2019 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertinament Inc.
 
+#include "core/native-io.hh"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -2497,6 +2498,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> usdz_data;
 
   if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, options, warn, err)) {
@@ -2527,6 +2530,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> usdz_data;
 
   if (!SaveAsUSDZToMemory(layer, assets, &usdz_data, options, warn, err)) {
@@ -2556,6 +2561,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   return SaveAsUSDZToFile(filename, stage, assets, USDZWriteOptions{}, warn, err);
 }
 

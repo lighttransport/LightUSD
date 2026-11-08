@@ -2,6 +2,7 @@
 // Bounded LM-63 parser and photometric coordinate evaluation. The format is
 // described by ANSI/IES LM-63; this implementation does not embed third-party
 // parser code. See doc/preview-lighting-goal.md for reference documentation.
+#include "core/native-io.hh"
 #include "scene-preview-photometry.hh"
 
 #include <algorithm>
@@ -248,6 +249,8 @@ float Table(const PreviewIesProfile& p, float vertical, float horizontal) {
   return a * (1 - fh) + b * fh;
 }
 bool Read(const std::string& path, std::string* text, std::string* error) {
+  if (!::lightusd::NativeIOAvailable(error)) return false;
+
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if (!file) return Error(error, "cannot open IES/TILT asset");
   const auto size = file.tellg();
@@ -401,6 +404,8 @@ bool LoadPreviewIes(const std::string& path, PreviewIesProfile* profile,
 }
 bool WritePreviewIes(const std::string& path, const PreviewIesProfile& p,
                      std::string* error) {
+  if (!::lightusd::NativeIOAvailable(error)) return false;
+
   if (p.vertical.empty() || p.horizontal.empty() ||
       p.candela.size() != p.vertical.size() * p.horizontal.size())
     return Error(error, "cannot write incomplete IES profile");

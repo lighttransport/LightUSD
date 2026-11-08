@@ -3,6 +3,7 @@
 //
 // LightUSD Next - Low-memory flatten pipeline implementation
 
+#include "core/native-io.hh"
 #include "flatten.hh"
 #include "../next-util.hh"
 
@@ -217,6 +218,8 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
 }
 
 uint64_t FileSizeBytes(const std::string& filename) {
+  if (!::lightusd::NativeIOEnabled()) return 0;
+
   std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f) return 0;
   size_t n = 0;

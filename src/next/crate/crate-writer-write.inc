@@ -16,7 +16,7 @@
                          const CrateWritePatch* patch = nullptr) {
     result_ = CrateWriteResult();
     required_version_minor_ = 0;
-    CratePhaseTimer timer(options_.enable_timing, "next_crate_write");
+    CratePhaseTimer timer(options_.enable_timing, "next_crate_write", options_.host_services);
     auto lap = [&](const char* phase) { timer.lap(phase); };
 
     if (!CheckWriteOptions()) return result_;
@@ -261,7 +261,7 @@
       result_.success = false;
       return result_;
     }
-    CratePhaseTimer timer(options_.enable_timing, "next_crate_write");
+    CratePhaseTimer timer(options_.enable_timing, "next_crate_write", options_.host_services);
     return FinishWrite(sink, patch, timer);
   }
 
@@ -275,6 +275,10 @@
 
   // Version and file-size options a write can start with.
   bool CheckWriteOptions() {
+    if (!::lightusd::NativeIOEnabled() && options_.spill_columns_bytes) {
+      result_.error = "writer spilling requires native filesystem I/O";
+      return false;
+    }
     const CrateVersion requested_version{options_.version_major,
                                          options_.version_minor,
                                          options_.version_patch};
@@ -436,7 +440,7 @@
     // return those pages while the path tree and sections build (the
     // allocator would otherwise hold them to the end, and a process exit
     // pays for every resident page).
-    MemoryTrimmer trimmer;
+    MemoryTrimmer trimmer(options_.host_services);
     if (consume_prims_ && specs_.size() >= (size_t(1) << 22)) trimmer.Request();
 #if defined(LIGHTUSD_ENABLE_THREAD)
     // Joins on every return path (declared after the payloads it fills).

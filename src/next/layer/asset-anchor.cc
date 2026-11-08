@@ -13,11 +13,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#if defined(_WIN32)
-#include <direct.h>
-#elif !defined(__EMSCRIPTEN__)
-#include <unistd.h>
-#endif
 
 namespace lightusd {
 namespace next {
@@ -31,27 +26,11 @@ bool IsAbsoluteDir(const std::string& p) {
   return p.size() >= 2 && p[1] == ':';
 }
 
-// An anchor must be unambiguous: consumers re-anchor a path they consider
-// relative against their OWN base (lusdview's texture decoder uses the scene
-// file's directory), so handing them a CWD-relative anchor would double-prefix
-// it. Absolutize once, here, and every consumer gets a path it can just open.
-std::string AbsolutizeDir(const std::string& dir) {
-  if (dir.empty() || IsAbsoluteDir(dir) ||
+// Resolve only against an explicitly supplied base. Interning never queries CWD.
+std::string AbsolutizeDir(const std::string& dir, const std::string& base) {
+  if (dir.empty() || base.empty() || IsAbsoluteDir(dir) ||
       !AssetResolver::GetIdentifierScheme(dir).empty()) return dir;
-#if defined(__EMSCRIPTEN__)
-  return dir;  // no filesystem; getcwd aborts under -sFILESYSTEM=0
-#else
-  char buf[4096];
-#if defined(_WIN32)
-  if (!_getcwd(buf, sizeof(buf))) return dir;
-#else
-  if (!getcwd(buf, sizeof(buf))) return dir;
-#endif
-  std::string cwd(buf);
-  if (cwd.empty() || cwd == ".") return dir;
-  if (cwd.back() == '/' || cwd.back() == '\\') cwd.pop_back();
-  return cwd + "/" + dir;
-#endif
+  return AssetResolver::NormalizePath(AssetResolver::JoinPath(base, dir));
 }
 
 struct AnchorTable {
@@ -70,10 +49,11 @@ AnchorTable& Table() {
 
 }  // namespace
 
-uint32_t InternAssetAnchor(const std::string& dir) {
+uint32_t InternAssetAnchor(const std::string& dir,
+                           const std::string& working_directory) {
   if (dir.empty()) return 0;
 
-  const std::string abs = AbsolutizeDir(dir);
+  const std::string abs = AbsolutizeDir(dir, working_directory);
 
   AnchorTable& t = Table();
   std::lock_guard<std::mutex> lk(t.mu);

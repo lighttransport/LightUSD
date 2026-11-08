@@ -95,7 +95,7 @@ class Exporter {
         read.max_archive_size = opt.max_output_bytes;
         read.max_entry_size = opt.max_output_bytes;
         std::vector<uint8_t> archive;
-        const bool opened = opt.resolver->HasUserCallbacks()
+        const bool opened = opt.resolver->RequiresResolverReads()
             ? opt.resolver->ReadAsset(resolved, &archive, &error) &&
                   package.Open(archive.data(), archive.size(), read)
             : package.OpenFile(resolved.package_path, read);
@@ -114,11 +114,8 @@ class Exporter {
       }
       if (!loaded) { Loss(path, "unreadable texture: " + image.resolved_path); return -1; }
     } else {
-      std::ifstream in(image.resolved_path, std::ios::binary | std::ios::ate);
-      const auto size = in.tellg();
-      if (!in || size < 0 || uint64_t(size) > opt.max_output_bytes) { Loss(path, "unreadable/oversized texture"); return -1; }
-      data.resize(size_t(size)); in.seekg(0);
-      if (size && !in.read(reinterpret_cast<char*>(data.data()), size)) { Loss(path, "texture read failed"); return -1; }
+      Loss(path, "texture bytes require an explicit asset resolver");
+      return -1;
     }
     const char* mime = nullptr;
     if (data.size() >= 8 && std::memcmp(data.data(), "\x89PNG\r\n\x1a\n", 8) == 0) mime = "image/png";

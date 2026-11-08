@@ -18,7 +18,20 @@ def main():
     ap.add_argument('--software', action='store_true', help='Mesa lavapipe/llvmpipe only; skips CUDA and NVIDIA device selection')
     ap.add_argument('--threaded-frames', type=int, default=600,
                     help='Frames to render before a threaded capture; source refinement installs asynchronously')
+    ap.add_argument('--preview-vulkan-library', type=Path, help='Absolute Vulkan loader filename for preview compute')
+    ap.add_argument('--preview-cuda-driver-library', type=Path, help='Absolute CUDA driver filename for preview compute')
+    ap.add_argument('--preview-cuda-compiler-library', type=Path, help='Absolute NVRTC filename for preview compute')
     args = ap.parse_args()
+    host_args = []
+    for name in ('vulkan', 'cuda-driver', 'cuda-compiler'):
+        path = getattr(args, 'preview_' + name.replace('-', '_') + '_library')
+        if path:
+            if not path.is_absolute():
+                ap.error('preview library filenames must be absolute')
+            host_args += ['--preview-' + name + '-library', str(path)]
+    if host_args:
+        host_args.insert(0, '--preview-native-host')
+
     args.output.mkdir(parents=True, exist_ok=True)
     source = args.output / 'source.usda'
     source.write_text('#usda 1.0\ndef Cube "Cube" { double size=4 }\n')
@@ -51,6 +64,7 @@ def main():
                        '--frames', str(args.threaded_frames) if args.threaded else '1',
                        '--size', '320x240',
                        '--screenshot', str(image), '--render-report', str(report)]
+                cmd += host_args
                 if args.software: cmd += ['--preview-software']
                 cmd += ['--threaded'] if args.threaded else ['--headless']
                 vk_device = 'llvmpipe' if args.software else 'nvidia'

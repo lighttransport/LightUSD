@@ -145,6 +145,11 @@ inline lightusd_status UnregisterMemoryAsset(const AssetResolver& resolver,
   return lightusd_asset_resolver_unregister_memory(resolver.get(), identifier);
 }
 
+inline lightusd_status SetAssetResolverFilesystemAccess(
+    const AssetResolver& resolver, bool enabled) {
+  return lightusd_asset_resolver_set_filesystem_access(resolver.get(), enabled ? 1 : 0);
+}
+
 inline lightusd_status SetAssetResolverMemoryLimit(const AssetResolver& resolver,
                                                    size_t limit_bytes) {
   return lightusd_asset_resolver_set_memory_limit(resolver.get(), limit_bytes);

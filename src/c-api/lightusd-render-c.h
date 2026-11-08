@@ -285,11 +285,19 @@ LIGHTUSD_API lightusd_status lightusd_render_scene_warnings(const lightusd_rende
  * paths already stored in the scene. `max_output_bytes` must be nonzero.
  * On success, `glb` owns binary bytes (including NULs) accessible through
  * lightusd_string_view. `losses` includes converter warnings and is returned
- * even for a strict-mode refusal. */
+ * even for a strict-mode refusal. This entry point performs no texture file
+ * I/O; use the resolver-aware entry point below to supply texture bytes. */
 LIGHTUSD_API lightusd_status lightusd_render_export_glb(
     const lightusd_render_scene* scene, const char* source_path,
     uint8_t strict, uint64_t max_output_bytes, lightusd_string** glb,
     lightusd_strlist** losses);
+
+/* Explicit texture source for self-contained GLB export. All reads and package
+ * inspection obey this resolver, including its filesystem-access policy. */
+LIGHTUSD_API lightusd_status lightusd_render_export_glb_with_resolver(
+    const lightusd_render_scene* scene, const char* source_path,
+    lightusd_asset_resolver* resolver, uint8_t strict, uint64_t max_output_bytes,
+    lightusd_string** glb, lightusd_strlist** losses);
 
 /* ============================================================
  * Persistent conversion session

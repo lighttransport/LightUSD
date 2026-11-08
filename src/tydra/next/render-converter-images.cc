@@ -55,8 +55,8 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
     if (exists) {
       const std::string candidate = ::lightusd::next::AssetResolver::NormalizePath(
           ::lightusd::next::AssetResolver::JoinPath(dir, file));
-      std::error_code ec;
-      *exists = std::filesystem::exists(candidate, ec);
+      // No implicit filesystem probes during an in-memory conversion.
+      *exists = false;
       return candidate;
     }
     return ::lightusd::next::AssetResolver::NormalizePath(

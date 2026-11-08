@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -223,6 +224,8 @@ bool ReadManifest(const fs::path& path, ScenePreviewLods* out) {
 
 ScenePreviewLods BuildScenePreviewLods(const ScenePreviewResult& result,
                                        const ScenePreviewOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { ScenePreviewLods r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   ScenePreviewLods out;
   if (!result.success || result.voxel_size <= 0) {
     out.error = "LOD construction requires a valid preview";

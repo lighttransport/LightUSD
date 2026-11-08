@@ -908,10 +908,20 @@ static int test_dependency_boundary(void) {
   lightusd_asset_resolver_destroy(resolver);
 
   CHECK_OK(lightusd_asset_resolver_create(&resolver));
+  CHECK_OK(lightusd_asset_resolver_set_filesystem_access(resolver, 0));
+  CHECK(lightusd_asset_resolver_set_filesystem_access(NULL, 0) == LIGHTUSD_ERR_INVALID_ARG);
+  CHECK(lightusd_asset_resolver_set_filesystem_access(resolver, 2) == LIGHTUSD_ERR_INVALID_ARG);
+  asset = NULL;
+  CHECK(lightusd_asset_resolver_read(resolver, __FILE__, &asset) == LIGHTUSD_ERR_IO);
+  CHECK(asset == NULL);
   const uint8_t small[] = {1, 2, 3};
   const uint8_t replacement[] = {4, 5, 6, 7, 8};
   CHECK_OK(lightusd_asset_resolver_register_memory(resolver, "budget:a",
                                                     small, sizeof(small)));
+  CHECK_OK(lightusd_asset_resolver_read(resolver, "budget:a", &asset));
+  text = lightusd_string_view(asset);
+  CHECK(text.len == sizeof(small) && memcmp(text.data, small, sizeof(small)) == 0);
+  lightusd_string_destroy(asset);
   size_t asset_count = 0, bytes_used = 0, limit_bytes = 0;
   CHECK_OK(lightusd_asset_resolver_get_memory_stats(
       resolver, &asset_count, &bytes_used, &limit_bytes));

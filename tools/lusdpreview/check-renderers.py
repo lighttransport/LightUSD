@@ -47,7 +47,20 @@ def main():
     ap.add_argument("--max-rss-mib", type=int, default=8192)
     ap.add_argument("--reserve-mib", type=int, default=4096)
     ap.add_argument("--preview-host-mib", type=int, default=6144)
+    ap.add_argument('--preview-vulkan-library', type=Path, help='Absolute Vulkan loader filename for preview compute')
+    ap.add_argument('--preview-cuda-driver-library', type=Path, help='Absolute CUDA driver filename for preview compute')
+    ap.add_argument('--preview-cuda-compiler-library', type=Path, help='Absolute NVRTC filename for preview compute')
     args = ap.parse_args()
+    host_args = []
+    for name in ('vulkan', 'cuda-driver', 'cuda-compiler'):
+        path = getattr(args, 'preview_' + name.replace('-', '_') + '_library')
+        if path:
+            if not path.is_absolute():
+                ap.error('preview library filenames must be absolute')
+            host_args += ['--preview-' + name + '-library', str(path)]
+    if host_args:
+        host_args.insert(0, '--preview-native-host')
+
     if min(args.max_rss_mib, args.reserve_mib, args.preview_host_mib, args.timeout) <= 0:
         ap.error("memory limits and timeout must be positive")
     if args.native_volume: args.kinds = ["volume"]
@@ -82,6 +95,7 @@ def main():
                           "--preview-cache-dir", str(args.cache),
                           "--preview-budget-mib", "2048", "--preview-host-mib", str(args.preview_host_mib),
                           "--preview-accumulation-frames", str(args.frames)]
+                common += host_args
                 if args.software: common += ["--preview-software"]
                 if args.no_source_refine: common += ["--preview-no-source-refine"]
                 if args.native_volume: common += ["--preview-volume-grids"]

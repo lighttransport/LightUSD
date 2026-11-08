@@ -15,19 +15,24 @@
 #include <limits>
 #include <new>
 #include <utility>
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && !defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
 #include <filesystem>
 #endif
 
 #ifdef _WIN32
-#include <direct.h>
+#if !defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
 #include <sys/stat.h>
+#endif
 #define PATH_SEPARATOR '\\'
 #define ALT_PATH_SEPARATOR '/'
 #else
+#if !defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
 #include <fcntl.h>
 #include <unistd.h>
+#endif
+#if !defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
 #include <sys/stat.h>
+#endif
 #define PATH_SEPARATOR '/'
 #define ALT_PATH_SEPARATOR '\\'
 #endif
@@ -78,7 +83,7 @@ std::unique_ptr<AssetResolver> g_default_resolver;
 
 bool FileExistsImpl(const std::string& path, uint64_t* device = nullptr,
                      uint64_t* inode = nullptr) {
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
   // wasm builds may have no filesystem at all (-sFILESYSTEM=0), where even a
   // stat syscall aborts. Resolution there goes through the custom resolver
   // (asset-cache backed); plain file paths never exist.
@@ -105,7 +110,7 @@ bool FileExistsImpl(const std::string& path, uint64_t* device = nullptr,
 
 bool StatRegularFile(const std::string& path, uint64_t* device,
                      uint64_t* inode) {
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO) || defined(_WIN32)
   (void)path;
   (void)device;
   (void)inode;
@@ -119,7 +124,7 @@ bool StatRegularFile(const std::string& path, uint64_t* device,
 #endif
 }
 
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && !defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
 // Read a file into `out` without an intermediate buffer: the bytes land in
 // the caller's container, so a large asset is not copied twice. When
 // `verify_identity` is set the opened descriptor must still match the
@@ -218,7 +223,7 @@ bool ReadRegularFileInto(const std::string& path, bool verify_identity,
 // a later read can detect a check/use replacement without a second stat.
 // Only POSIX-like platforms report a stable device/inode pair.
 void AssignIdentity(ResolvedAsset* asset, uint64_t device, uint64_t inode) {
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO) || defined(_WIN32)
   (void)asset;
   (void)device;
   (void)inode;
@@ -243,7 +248,7 @@ bool HasParentComponent(const std::string& path) {
 
 std::string FindRecursively(const std::string& root,
                             const std::string& asset_path) {
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
   (void)root;
   (void)asset_path;
   return {};
@@ -315,23 +320,6 @@ std::string NormalizePackageEntryPath(std::string path) {
   return out;
 }
 
-std::string GetCurrentWorkingDirectory() {
-#if defined(__EMSCRIPTEN__)
-  // No filesystem (and the getcwd syscall ABORTS under -sFILESYSTEM=0).
-  return ".";
-#elif defined(_WIN32)
-  char buffer[4096];
-  if (_getcwd(buffer, sizeof(buffer))) {
-    return std::string(buffer);
-  }
-#else
-  char buffer[4096];
-  if (getcwd(buffer, sizeof(buffer))) {
-    return std::string(buffer);
-  }
-#endif
-  return ".";
-}
 
 char ContextSearchPathSeparator() {
 #ifdef _WIN32
@@ -509,10 +497,15 @@ uint64_t AssetResolver::NextIdentity() {
 
 void AssetResolver::NormalizeConfigContext() {
   config_.context = NormalizeContext(std::move(config_.context));
+  if (config_.working_directory.empty()) {
+    config_.working_directory = config_.host_services && config_.host_services->current_directory
+        ? config_.host_services->current_directory() : std::string();
+    if (config_.working_directory.empty()) config_.working_directory = ".";
+  }
 }
 
 AssetResolver::AssetResolver() {
-  config_.working_directory = GetCurrentWorkingDirectory();
+  config_.working_directory = ".";
 }
 
 std::string AssetResolver::NormalizeSchemeName(const std::string& scheme) {
@@ -530,9 +523,6 @@ std::string AssetResolver::NormalizePackageExtension(
 }
 
 AssetResolver::AssetResolver(const ResolverConfig& config) : config_(config) {
-  if (config_.working_directory.empty()) {
-    config_.working_directory = GetCurrentWorkingDirectory();
-  }
   NormalizeConfigContext();
 }
 
@@ -698,6 +688,13 @@ void AssetResolver::SetCustomResolver(ResolverCallback callback) {
 
 void AssetResolver::SetAssetReader(AssetReadCallback reader) {
   asset_reader_ = std::move(reader);
+}
+
+bool AssetResolver::HasMemoryAsset(const std::string& identifier) const {
+  if (memory_asset_count_.load(std::memory_order_relaxed) == 0) return false;
+  const std::string canonical = CanonicalPath(identifier);
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  return memory_assets_.count(canonical) != 0;
 }
 
 bool AssetResolver::HasUserCallbacks() const {
@@ -919,13 +916,18 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
     return asset_reader_(resolved_path, out, err);
   }
 
+  std::string package_file, package_entry;
+  if (IsPackagePath(resolved_path) &&
+      ParsePackagePath(resolved_path, &package_file, &package_entry))
+    return ReadAsset(package_file, out, err);
+
   if (!scheme.empty()) {
     if (err) *err += "ReadAsset: no reader registered for scheme `" + scheme +
                      "`: " + resolved_path + "\n";
     return false;
   }
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
   // No filesystem under -sFILESYSTEM=0; bytes must come from a custom reader.
   if (err) {
     *err += "ReadAsset: no asset reader installed (wasm build has no "
@@ -934,6 +936,10 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
   return false;
 #else
   // Open once, then validate the descriptor and read those exact bytes.
+  if (!NativeFilesystemEnabled()) {
+    if (err) *err += "native filesystem access is disabled\n";
+    return false;
+  }
   return ReadRegularFileInto(resolved_path, false, 0, 0, out, err);
 #endif
 }
@@ -980,19 +986,28 @@ bool AssetResolver::ReadAssetToString(const std::string& resolved_path,
     return true;
   }
 
+  std::string package_file, package_entry;
+  if (IsPackagePath(resolved_path) &&
+      ParsePackagePath(resolved_path, &package_file, &package_entry))
+    return ReadAssetToString(package_file, out, err);
+
   if (!scheme.empty()) {
     if (err) *err += "ReadAsset: no reader registered for scheme `" + scheme +
                      "`: " + resolved_path + "\n";
     return false;
   }
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
   if (err) {
     *err += "ReadAsset: no asset reader installed (wasm build has no "
             "filesystem): " + resolved_path + "\n";
   }
   return false;
 #else
+  if (!NativeFilesystemEnabled()) {
+    if (err) *err += "native filesystem access is disabled\n";
+    return false;
+  }
   return ReadRegularFileInto(resolved_path, false, 0, 0, out, err);
 #endif
 }
@@ -1004,14 +1019,15 @@ bool AssetResolver::ReadAsset(const ResolvedAsset& resolved,
       resolved.canonical_path != resolved.resolved_path) {
     return ReadAsset(resolved.canonical_path, out, err);
   }
-  if (!resolved.has_file_identity) {
-    return ReadAsset(resolved.resolved_path, out, err);
+  if (!NativeFilesystemEnabled() || !resolved.has_file_identity) {
+    return ReadAsset(resolved.is_package && !resolved.package_path.empty()
+        ? resolved.package_path : resolved.resolved_path, out, err);
   }
   if (resolved.is_package) {
     const std::string& package_path = resolved.package_path.empty()
                                           ? resolved.resolved_path
                                           : resolved.package_path;
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO) || defined(_WIN32)
     if (!FileIdentityUnchanged(resolved)) {
       if (err) {
         *err += "ReadAsset: package changed since resolution: " + package_path +
@@ -1028,7 +1044,7 @@ bool AssetResolver::ReadAsset(const ResolvedAsset& resolved,
   if (!GetIdentifierScheme(resolved.resolved_path).empty() || asset_reader_) {
     return ReadAsset(resolved.resolved_path, out, err);
   }
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO) || defined(_WIN32)
   return ReadAsset(resolved.resolved_path, out, err);
 #else
   return ReadRegularFileInto(resolved.resolved_path, true, resolved.file_device,
@@ -1107,7 +1123,7 @@ ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
   }
   // The identity captured during resolution is reused; only results that did
   // not come from a filesystem probe need a separate stat here.
-  if (result.exists && !result.has_file_identity) {
+  if (NativeFilesystemEnabled() && result.exists && !result.has_file_identity) {
     const std::string* identity_path = nullptr;
     bool is_memory_asset = false;
     if (result.is_package) {
@@ -1399,7 +1415,7 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     }
   }
 
-  if (config_.search_recursively) {
+  if (NativeFilesystemEnabled() && config_.search_recursively) {
     for (const auto& search_path : search_paths) {
       const std::string candidate = FindRecursively(search_path, asset_path);
       if (!candidate.empty()) {
@@ -1433,12 +1449,13 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
 
 bool AssetResolver::FileExists(const std::string& path, uint64_t* device,
                                uint64_t* inode) const {
-  return FileExistsImpl(path, device, inode);
+  return NativeFilesystemEnabled() && FileExistsImpl(path, device, inode);
 }
 
 bool AssetResolver::FileIdentityUnchanged(
     const ResolvedAsset& resolved) const {
   if (!resolved.has_file_identity) return true;
+  if (!NativeFilesystemEnabled()) return false;
   const std::string& path =
       resolved.is_package ? resolved.package_path : resolved.resolved_path;
   uint64_t device = 0, inode = 0;
@@ -1945,7 +1962,8 @@ AssetInfo AssetResolver::GetAssetInfo(const std::string& asset_path,
 AssetTimestamp AssetResolver::GetModificationTimestamp(
     const std::string& asset_path, const ResolvedAsset& resolved_path) const {
   AssetTimestamp ts;
-#if defined(__EMSCRIPTEN__)
+  if (!NativeFilesystemEnabled()) return ts;
+#if defined(__EMSCRIPTEN__) || defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO)
   (void)asset_path;
   (void)resolved_path;
   return ts;

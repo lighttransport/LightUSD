@@ -4,6 +4,7 @@
 //
 #pragma once
 
+#include "core/host-services.hh"
 #include <cstddef>
 #include <fstream>
 #include <string>
@@ -248,16 +249,18 @@ std::string NormalizePath(const std::string &path);
 bool IsUDIMPath(const std::string &filepath);
 
 // --- Directory / temp-path utilities (no <filesystem> at call sites) ----------
-// GetTempDir accepts an explicit directory; its platform default is the Win32
-// GetTempPath API or "/tmp" on POSIX. The remaining helpers wrap the vendored
+// GetTempDir accepts an explicit directory or host callback. Its fallback is
+// "." on Windows or "/tmp" elsewhere. The remaining helpers wrap the vendored
 // ghc::filesystem internally so callers stay free of std::filesystem.
 
 // System temporary directory, without a trailing separator (e.g. "/tmp" or
 // "C:\\Users\\me\\AppData\\Local\\Temp"). Returns "." if none is usable.
-std::string GetTempDir(const std::string &directory = {});
+std::string GetTempDir(const std::string &directory = {},
+    const std::shared_ptr<const HostServices> &services = {});
 
-// Current working directory ("." on failure).
-std::string GetCurrentDir();
+// Explicit host working-directory callback ("." without a provider).
+std::string GetCurrentDir(
+    const std::shared_ptr<const HostServices> &services = {});
 
 // True if `path` exists and is a directory.
 bool IsDirectory(const std::string &path);

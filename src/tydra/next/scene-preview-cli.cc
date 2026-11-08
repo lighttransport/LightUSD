@@ -9,19 +9,20 @@
 #include "next/resolver/asset-resolver.hh"
 #include "scene-preview-compute.hh"
 #include "scene-preview.hh"
-#if defined(__unix__)
-#include <dlfcn.h>
-#endif
 
 namespace lightusd {
 namespace tydra {
 namespace next {
-bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available) {
+bool QueryScenePreviewGpuMemory(
+    uint64_t* capacity, uint64_t* available,
+    const std::shared_ptr<const HostServices>& host_services,
+    const std::string& library_path) {
   if (!capacity || !available) return false;
   *capacity = 0;
   *available = 0;
-#if defined(__unix__)
-  void* lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+  if (!host_services || !host_services->open_library || library_path.empty()) return false;
+  std::string error;
+  auto lib = host_services->open_library(library_path, &error);
   if (!lib) return false;
   using Init = int (*)();
   using Shutdown = int (*)();
@@ -30,12 +31,12 @@ bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available) {
     unsigned long long total, free, used;
   };
   using Info = int (*)(void*, Memory*);
-  const auto init = reinterpret_cast<Init>(dlsym(lib, "nvmlInit_v2"));
-  const auto shutdown = reinterpret_cast<Shutdown>(dlsym(lib, "nvmlShutdown"));
+  const auto init = reinterpret_cast<Init>(lib->Symbol("nvmlInit_v2"));
+  const auto shutdown = reinterpret_cast<Shutdown>(lib->Symbol("nvmlShutdown"));
   const auto handle =
-      reinterpret_cast<Handle>(dlsym(lib, "nvmlDeviceGetHandleByIndex_v2"));
+      reinterpret_cast<Handle>(lib->Symbol("nvmlDeviceGetHandleByIndex_v2"));
   const auto info =
-      reinterpret_cast<Info>(dlsym(lib, "nvmlDeviceGetMemoryInfo"));
+      reinterpret_cast<Info>(lib->Symbol("nvmlDeviceGetMemoryInfo"));
   bool ok = false;
   if (init && shutdown && handle && info && init() == 0) {
     void* device = nullptr;
@@ -47,11 +48,7 @@ bool QueryScenePreviewGpuMemory(uint64_t* capacity, uint64_t* available) {
     }
     shutdown();
   }
-  dlclose(lib);
   return ok;
-#else
-  return false;
-#endif
 }
 bool ExtractScenePreviewArguments(int* argc, char** argv,
                                   ScenePreviewRequest* request,
@@ -74,6 +71,27 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
       if (a == "--preview-software") request->options.compute_options.software_only = true;
       if (a == "--preview-debug-validate") request->options.compute_options.debug_validate = true;
       if (a == "--preview-trace-pipeline") request->options.compute_options.trace_pipeline = true;
+      request->enabled = true;
+      continue;
+    }
+    if (a == "--preview-native-host") {
+      auto services = CreateNativeHostServices({}, error);
+      if (!services) return false;
+      request->options.host_services = services;
+      request->options.compute_options.host_services = services;
+      request->enabled = true;
+      continue;
+    }
+    if (a == "--preview-vulkan-library" || a == "--preview-cuda-driver-library" ||
+        a == "--preview-cuda-compiler-library") {
+      if (i + 1 >= *argc || !argv[i + 1][0]) {
+        if (error) *error = "missing preview library filename";
+        return false;
+      }
+      const std::string path = argv[++i];
+      if (a == "--preview-vulkan-library") request->options.compute_options.vulkan_library = path;
+      if (a == "--preview-cuda-driver-library") request->options.compute_options.cuda_driver_library = path;
+      if (a == "--preview-cuda-compiler-library") request->options.compute_options.cuda_compiler_library = path;
       request->enabled = true;
       continue;
     }
@@ -293,8 +311,7 @@ bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
     return false;
   }
   uint64_t total = 0, available = 0;
-  if (!request.options.compute_options.software_only)
-    QueryScenePreviewGpuMemory(&total, &available);
+  // GPU capacity is an explicit caller observation; do not load NVML here.
   if (!total && !request.options.compute_options.software_only) total = gpu_capacity;
   if (!request.budget_explicit)
     request.options.gpu_budget_bytes = ScenePreviewGpuBudget(total, available);

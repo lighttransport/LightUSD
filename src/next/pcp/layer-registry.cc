@@ -130,7 +130,9 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return nullptr;
   }
   const bool native_file = AssetResolver::GetIdentifierScheme(resolved).empty() &&
-                           !resolver.HasAssetReader();
+                           !resolver.HasAssetReader() &&
+                           resolver.NativeFilesystemEnabled() &&
+                           !resolver.HasMemoryAsset(resolved);
   LayerLoadOptions effective = options;
   // Keep dependent resources on the same resolver/context as their OBJ layer.
   if (!native_file) {
@@ -219,8 +221,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
         snapshot.reset();
       return loaded;
     }
-    if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
-        resolver.HasAssetReader()) {
+    if (!native_file) {
       std::vector<uint8_t> bytes;
       if (!resolver.ReadAsset(resolved_asset, &bytes, load_err)) return nullptr;
       return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),

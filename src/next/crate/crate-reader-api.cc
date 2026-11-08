@@ -3,6 +3,7 @@
 //
 // LightUSD Next - USDC CrateReader public API wrappers
 
+#include "core/native-io.hh"
 #include "crate-reader-internal.hh"
 #include "../safe-file-size.hh"
 
@@ -133,6 +134,8 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) { CrateReadResult result; result.errors.push_back({0, ::lightusd::NativeIOUnavailableMessage()}); return result; }
+
   if (!filename || !*filename) {
     CrateReadResult result;
     result.errors.push_back({0, "Invalid filename"});
@@ -268,6 +271,8 @@ bool IsUSDCData(const uint8_t* data, size_t size) {
 }
 
 bool IsUSDCFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   std::ifstream file(filename, std::ios::binary);
   if (!file.is_open()) return false;
 

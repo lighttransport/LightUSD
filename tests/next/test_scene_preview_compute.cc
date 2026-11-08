@@ -28,6 +28,18 @@ int main(int argc, char** argv) {
   compute_options.software_only = argc > 2 && std::strcmp(argv[2], "--software") == 0;
   const int folder_arg = compute_options.software_only ? 3 : 2;
   compute_options.debug_validate = true;
+  if (backend != td::PreviewComputeBackend::Cpu) {
+    lightusd::NativeHostServicesOptions native;
+    native.allow_library_search = true;  // trusted test executable, not asset input
+    compute_options.host_services = lightusd::CreateNativeHostServices(native, &error);
+#ifdef _WIN32
+    compute_options.vulkan_library = "vulkan-1.dll";
+#else
+    compute_options.vulkan_library = "libvulkan.so.1";
+#endif
+    compute_options.cuda_driver_library = "libcuda.so.1";
+    compute_options.cuda_compiler_library = "libnvrtc.so";
+  }
   auto engine = td::CreatePreviewCompute(backend, budget, &error, compute_options);
   if (backend == td::PreviewComputeBackend::Cpu) {
     auto software = compute_options;

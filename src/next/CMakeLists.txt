@@ -56,6 +56,13 @@ function(lightusd_next_harden tgt)
   endif()
 endfunction()
 
+option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
+if(NOT LIGHTUSD_NATIVE_IO)
+  add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NEXT_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+option(LIGHTUSD_NATIVE_HOST_SERVICES "Build the explicit native host service provider" ON)
+option(LIGHTUSD_NATIVE_RESOLVER_IO "Build the native filesystem asset resolver backend" ON)
+
 # Define source files
 include("${CMAKE_CURRENT_LIST_DIR}/pipeline-sources.cmake")
 set(LIGHTUSD_NEXT_SOURCES
@@ -67,6 +74,7 @@ set(LIGHTUSD_NEXT_SOURCES
     stage/change-set-diff.cc
     stage/stage-session.cc
     # Shared bounded JSON parser used by the next-generation URDF bridge.
+    ../core/host-services.cc
     ../core/minijson.cc
     ../core/color-transform.cc
     # C11 core: SdfPathExpression parsing / serialization / matching.
@@ -298,6 +306,19 @@ target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 lightusd_next_harden(lightusd_core_c)
 option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" ON)
 add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
+if(NOT LIGHTUSD_NATIVE_IO)
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+if(NOT LIGHTUSD_NATIVE_RESOLVER_IO)
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NO_NATIVE_RESOLVER_IO=1)
+endif()
+if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+  target_link_libraries(lightusd_next PUBLIC ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(lightusd_next PUBLIC psapi)
+  endif()
+endif()
 option(LIGHTUSD_WITH_USDOBJ "Import OBJ layers using the C11 loader" ON)
 if(LIGHTUSD_WITH_USDOBJ)
     set(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY ON)
@@ -513,7 +534,9 @@ set_property(CACHE LIGHTUSD_NEXT_ALLOCATOR PROPERTY STRINGS
     auto jemalloc tcmalloc mimalloc system)
 set(LIGHTUSD_NEXT_ALLOCATOR_LIB "")
 set(_next_alloc_skip "")
-if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
+if(NOT LIGHTUSD_NATIVE_IO)
+    set(_next_alloc_skip "native I/O disabled")
+elseif(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
    CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     set(_next_alloc_skip "WebAssembly target")
 elseif(NOT UNIX OR APPLE)
@@ -1295,6 +1318,7 @@ set_target_properties(lightusd_validation_c PROPERTIES EXPORT_NAME validation_c)
 set_target_properties(lightusd_validation PROPERTIES EXPORT_NAME validation)
 install(TARGETS lightusd_core_c lightusd_next lightusd_c lightusd_validation lightusd_validation_c EXPORT LightUSDTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ../core/host-services.hh ../core/native-io.hh DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/core)
 install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/next/c)
 install(FILES ../c-api/lightusd-validation-c.h ../c-api/lightusd-validation-cpp.hh
@@ -1558,6 +1582,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_compile_options(test_lightusd_c PRIVATE
             -Wall -Wextra -Werror -pedantic)
     endif()
+    add_executable(test_host_services_c ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/c-api/test_host_services_c.c)
+    set_target_properties(test_host_services_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO LINKER_LANGUAGE CXX)
+    target_link_libraries(test_host_services_c PRIVATE lightusd_c)
+    add_test(NAME next_test_host_services_c COMMAND test_host_services_c)
     add_test(NAME next_test_c_api COMMAND test_lightusd_c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/instancing-001.usda

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Default classes and effective attributes.
+#include "core/native-io.hh"
 #include "mjcf-internal.hh"
 
 namespace lightusd {
@@ -186,7 +187,7 @@ fs::path ResolveMeshPath(const fs::path& base_dir, const fs::path& mesh_dir,
   const std::array<fs::path, 3> candidates{
       {mesh_dir / file, base_dir / "assets" / file, base_dir / file}};
   for (const auto& c : candidates) {
-    if (fs::exists(c, ec)) return c;
+    if (::lightusd::NativeIOEnabled() && fs::exists(c, ec)) return c;
   }
   return mesh_dir / file;  // primary candidate; errors later with a clear msg
 }

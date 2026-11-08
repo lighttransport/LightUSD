@@ -23,7 +23,7 @@
 // Posix mmap is used to back a CrateDataSource directly off the file (Phase
 // 8.3). WASM (emscripten/wasi) and non-posix platforms keep the owned-buffer
 // path; MmapFile() then returns nullptr and the reader falls back.
-#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                         \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 #define LIGHTUSD_NEXT_HAVE_MMAP 1

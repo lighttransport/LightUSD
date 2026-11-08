@@ -1,3 +1,4 @@
+#include "core/native-io.hh"
 #include "escape-string.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
@@ -584,6 +585,8 @@ USDAWriteResult WriteUSDAToFile(const std::string& filename, const Stage& stage,
 
 USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
                                  const USDAWriteOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { USDAWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   USDAWriteResult result;
 
   if (!filename) {
@@ -655,6 +658,8 @@ USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
 
 USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer,
                                   const USDAWriteOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { USDAWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   USDAWriteResult result;
 
   std::FILE* fp = std::fopen(filename.c_str(), "wb");

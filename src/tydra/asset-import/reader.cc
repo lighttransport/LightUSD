@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <limits>
-#if (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
 #define LIGHTUSD_IMPORT_MMAP 1
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -208,6 +209,7 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
     if (err) *err = "Asset resolver provides combined resolution/read only";
     return false;
   }
+  if (!::lightusd::NativeIOAvailable(err)) return false;
   std::string path = name;
   if (path.rfind("package://", 0) == 0) {
     size_t end = path.find('/', 10);

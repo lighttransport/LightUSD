@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Builtin textures, materials, skins and keyframes.
+#include "core/native-io.hh"
 #include "mjcf-internal.hh"
 
 namespace lightusd {
@@ -200,8 +201,12 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
         // absolute source in `texture_abs` (ignored by the converter) so usdz
         // export can embed the bytes into the package.
         std::error_code ec;
-        const fs::path abs_tex = fs::absolute(it->second, ec);
-        const fs::path rel = fs::relative(abs_tex, base_dir, ec);
+        const fs::path abs_tex = ::lightusd::NativeIOEnabled() &&
+            !active_reader->options.read && !active_reader->options.open
+            ? fs::absolute(it->second, ec) : fs::path(it->second).lexically_normal();
+        const fs::path rel = ::lightusd::NativeIOEnabled() &&
+            !active_reader->options.read && !active_reader->options.open
+            ? fs::relative(abs_tex, base_dir, ec) : abs_tex.lexically_relative(base_dir);
         const std::string rel_s = rel.generic_string();
         mat["texture"] = (ec || rel_s.empty() || rel_s.rfind("..", 0) == 0)
                              ? abs_tex.filename().string()

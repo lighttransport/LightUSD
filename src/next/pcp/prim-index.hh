@@ -23,6 +23,7 @@
 #include "../strfmt.hh"
 #include "core/security-policy.hh"
 
+#include "core/host-services.hh"
 #include <deque>
 #include <functional>
 #include <map>
@@ -319,6 +320,8 @@ struct CompositionOptions {
   /// the inner map is variantSet -> selection. An exact path-scoped override
   /// wins over the global variant_overrides entry for the same set.
   VariantSelectionMap variant_overrides_by_path;
+  // Optional allocator trimming, explicitly supplied by the application.
+  std::shared_ptr<const HostServices> host_services;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

@@ -20,6 +20,12 @@ void ioutil_test(void) {
   TEST_CHECK(io::ExpandFilePathWithVariables("~/$ASSET.usda", first) == "one/mesh.usda");
   TEST_CHECK(io::ExpandFilePathWithVariables("${UNSET}literal", first) == "literal");
   TEST_CHECK(io::GetTempDir("caller-temp") == "caller-temp");
+  TEST_CHECK(io::GetCurrentDir() == ".");
+  auto host = std::make_shared<HostServices>();
+  host->current_directory = [] { return std::string("caller-base"); };
+  host->temporary_directory = [] { return std::string("caller-temp"); };
+  TEST_CHECK(io::GetCurrentDir(host) == "caller-base");
+  TEST_CHECK(io::GetTempDir({}, host) == "caller-temp");
 #ifdef _WIN32
   TEST_CHECK(io::ExpandFilePathWithVariables("%ASSET%.usda", first) == "mesh.usda");
 #endif

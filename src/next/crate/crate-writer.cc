@@ -5,6 +5,7 @@
 // Writes spec-compliant USDC with: tokens, strings, paths, fields,
 // fieldsets, specs, VALUE data section, time samples, metadata.
 
+#include "core/native-io.hh"
 #include "crate-writer.hh"
 #include "../layer/int64-listop.hh"
 #include "../layer/array-edit.hh"
@@ -204,6 +205,8 @@ CrateWriteResult CrateWriter::WritePreparedFile(
 }
 
 bool CrateWriter::BeginBatchedFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   if (!filename) return false;
   batched_file_.reset(new BatchedFile());
   BatchedFile& f = *batched_file_;
@@ -264,6 +267,8 @@ CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const 
 }
 
 CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer& layer) {
+  if (!::lightusd::NativeIOEnabled()) { CrateWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
   // Stream straight to the file (byte-identical to WriteLayerToMemory): the
   // VALUE section is copied block by block from its sources instead of first

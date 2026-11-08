@@ -9,6 +9,7 @@
 #include "crate-format.hh"
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
+#include "core/host-services.hh"
 #include <functional>
 #include <string>
 #include <vector>
@@ -124,6 +125,8 @@ struct CrateWriteOptions {
   /// Total encoded-operation scratch bytes allowed while planning and encoding
   /// overlap. Requires an explicit spill_directory and a mapped native backend.
   uint64_t max_prepared_bytes = uint64_t(8) << 30;
+  // Optional allocator trimming; no OS hooks run by default.
+  std::shared_ptr<const HostServices> host_services;
 };
 
 /// Result of crate write operation
