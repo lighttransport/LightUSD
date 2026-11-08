@@ -464,6 +464,7 @@ struct DrawTexSampleCPU {
   // uint16 x/y/width/height), so it survives sRGB texture uploads unchanged.
   uint32_t ptexRectTexelOffset{0};
   uint32_t ptexFaceCount{0};
+  uint32_t ptexMipLevels{1};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -823,6 +824,9 @@ struct DrawPtexFaceRectCPU {
   uint32_t height{0};
   uint16_t mipLevel{0};
   uint16_t reserved{0};
+  // Absolute Ptex level of the chain's base placement. The descriptor table
+  // stores this so the shader can map a chosen level to a chain index.
+  uint16_t baseMip{0};
 };
 
 struct DrawUdimTileCPU {
@@ -886,6 +890,7 @@ struct DrawTextureCPU {
   uint32_t ptexTileEdge{0};
   uint32_t ptexGutter{0};
   uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexMipLevels{1};
   uint32_t ptexPhysicalCacheOffsetY{0};
   uint32_t ptexPhysicalCacheSlotEdge{0};
   uint32_t ptexPhysicalCacheSlots{0};

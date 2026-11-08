@@ -136,10 +136,13 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
     }
     d[1] = image->width; d[2] = image->height;
     if (t.isPtex) {
-      // Reserved ints carry (rect-table texel offset + 1, face count); the
-      // shader reads each face rectangle from the atlas's alpha-byte table.
+      // Reserved ints carry (rect-table texel offset + 1) and
+      // faceCount | (mipLevels << 24). Each face owns `mipLevels` consecutive
+      // 10-texel table entries (x,y,w,h,baseMip), so the shader can select a
+      // per-face minification level from the ray footprint.
       d[6] = static_cast<int32_t>(t.ptexRectTexelOffset) + 1;
-      d[7] = static_cast<int32_t>(t.ptexFaces);
+      d[7] = static_cast<int32_t>((t.ptexFaces & 0xffffffu) |
+                                  ((t.ptexMipLevels & 0xffu) << 24));
     }
     const size_t pixels = static_cast<size_t>(std::max(image->width, 0)) *
                           static_cast<size_t>(std::max(image->height, 0));
@@ -882,8 +885,10 @@ bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
   return ok;
 }
 
-bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
-                               const CameraFrame &camera, int height) {
+bool RunVulkanLightRTInstanced(
+    const Options &opt, GpuInstancedScene &scene,
+    const std::vector<lusdr::Texture> &textures, const CameraFrame &camera,
+    int height) {
   if (scene.protos.empty() || scene.insts.empty()) return false;
 
   lrt_vk_engine_options vopts;
@@ -1129,7 +1134,8 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   }
 
   t0 = std::chrono::steady_clock::now();
-  bool ok = ShadeAndWriteImageInstanced(opt, scene, rays, decoded, w, h, spp);
+  bool ok = ShadeAndWriteImageInstanced(opt, scene, textures, rays, decoded, w,
+                                        h, spp);
   if (opt.stats) {
     std::cerr << "[gpu-stats] as-build " << as_build_s << " s, trace+decode "
               << trace_s << " s, shade+write " << SecsSince(t0) << " s\n";

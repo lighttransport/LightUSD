@@ -1141,6 +1141,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       t.ptex_faces = sampler->info().faces;
       if (tc.options->texture_max_size > 0)
         t.ptex_max_face_edge = std::min(512u, uint32_t(tc.options->texture_max_size));
+      t.ptex_mip_levels = tc.options->ptex_mip_levels;
       t.ptex = std::move(sampler);
       t.ptex_bytes = std::move(held);
       t.ptex_path = asset_path;

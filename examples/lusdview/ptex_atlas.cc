@@ -6,6 +6,9 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <unordered_map>
+
+#include "external/textools/ptex/include/tptex_sample.h"
 
 namespace lusdview {
 
@@ -186,6 +189,7 @@ struct Placement {
   uint32_t height{0};
   uint32_t x{0};
   uint32_t y{0};
+  uint32_t chainLevel{0};
 };
 
 bool Pack(std::vector<Placement>* placements, uint32_t gutter,
@@ -307,6 +311,109 @@ void CopyRgba8FaceWithClampGutter(const lightusd::ptx::FaceImage& face,
   }
 }
 
+// Bilinear RGBA8 sample of a converted face page. ConvertFace keeps Ptex's
+// v=0-at-bottom row order, so the atlas copy flips it but this sampler does not.
+void SampleRgba8Page(const light3d::Image& page, float u, float v,
+                     uint8_t out[4]) {
+  const int w = page.width, h = page.height;
+  if (w <= 0 || h <= 0 || page.data.size() < size_t(w) * size_t(h) * 4u) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    return;
+  }
+  const float fx = std::clamp(u, 0.0f, 1.0f) * float(w) - 0.5f;
+  const float fy = std::clamp(v, 0.0f, 1.0f) * float(h) - 0.5f;
+  const int x0 = std::clamp(int(std::floor(fx)), 0, w - 1);
+  const int y0 = std::clamp(int(std::floor(fy)), 0, h - 1);
+  const int x1 = std::min(x0 + 1, w - 1);
+  const int y1 = std::min(y0 + 1, h - 1);
+  const float tx = std::clamp(fx - std::floor(fx), 0.0f, 1.0f);
+  const float ty = std::clamp(fy - std::floor(fy), 0.0f, 1.0f);
+  for (int c = 0; c < 4; ++c) {
+    auto texel = [&](int x, int y) {
+      return page.data[(size_t(y) * size_t(w) + size_t(x)) * 4u + size_t(c)];
+    };
+    const float a = texel(x0, y0) * (1 - tx) + texel(x1, y0) * tx;
+    const float b = texel(x0, y1) * (1 - tx) + texel(x1, y1) * tx;
+    out[c] = static_cast<uint8_t>(std::lround(a * (1 - ty) + b * ty));
+  }
+}
+
+// Fill the first gutter texel around each face from its Ptex neighbour. The
+// descriptor shader permits its bilinear taps to read one texel outside the
+// face rectangle, so this replaces the previous clamp-only gutter with a
+// cross-face sample. Faces without adjacency keep the clamp gutter.
+void FillCrossFaceGutters(const lightusd::ptx::Reader& reader,
+                          const std::vector<Placement>& placements,
+                          const PtexAtlasOptions& options,
+                          light3d::Image* atlas) {
+  if (!atlas || options.gutter == 0) return;
+  const lightusd::ptx::Info& info = reader.info();
+  if (info.faceInfo.empty()) return;
+  std::vector<tptex_face_info> faces(info.faceInfo.size());
+  for (size_t i = 0; i < info.faceInfo.size(); ++i) {
+    const lightusd::ptx::FaceInfo& fi = info.faceInfo[i];
+    faces[i].res.ulog2 = static_cast<int8_t>(fi.ures);
+    faces[i].res.vlog2 = static_cast<int8_t>(fi.vres);
+    faces[i].adjedges = fi.adjEdges;
+    faces[i].flags = fi.flags;
+    for (int e = 0; e < 4; ++e)
+      faces[i].adjfaces[e] = static_cast<int32_t>(fi.adjFaces[e]);
+  }
+  const size_t cacheBytes =
+      std::max<size_t>(options.maxDecodedCacheBytes, 64ull * 1024ull * 1024ull);
+  PtexFacePageCache pages(cacheBytes);
+  std::unordered_map<uint64_t, light3d::Image> converted;
+  converted.reserve(64);
+  auto fill = [&](uint32_t x, uint32_t y, uint32_t face, float u, float v,
+                  uint32_t mip) {
+    if (x >= uint32_t(atlas->width) || y >= uint32_t(atlas->height)) return;
+    uint32_t mapped = face;
+    float mu = u, mv = v;
+    if (!tptex_resolve_tap(faces.data(), uint32_t(faces.size()), &mapped, &mu,
+                           &mv))
+      return;
+    if (mapped == face) return;
+    const uint64_t key = (uint64_t(mapped) << 32u) | uint64_t(mip);
+    auto found = converted.find(key);
+    if (found == converted.end()) {
+      std::string err;
+      const lightusd::ptx::FaceImage* page =
+          pages.Fetch(reader, mapped, mip, options.maxDecodedFaceBytes, &err);
+      if (!page) return;
+      if (converted.size() > 128) converted.clear();
+      found = converted.emplace(key, ConvertFace(*page)).first;
+    }
+    uint8_t rgba[4];
+    SampleRgba8Page(found->second, mu, mv, rgba);
+    std::memcpy(atlas->data.data() +
+                    (size_t(y) * size_t(atlas->width) + size_t(x)) * 4u,
+                rgba, 4u);
+  };
+  for (const Placement& p : placements) {
+    if (p.virtualDownsample || p.width == 0 || p.height == 0) continue;
+    const float w = float(p.width), h = float(p.height);
+    // Top and bottom rows (atlas y grows downward; Ptex v grows upward).
+    for (uint32_t x = 0; x < p.width; ++x) {
+      const float u = (float(x) + 0.5f) / w;
+      fill(p.x + x, p.y - 1u, p.face, u, 1.0f + 0.5f / h, p.mip);
+      fill(p.x + x, p.y + p.height, p.face, u, -0.5f / h, p.mip);
+    }
+    // Left and right columns.
+    for (uint32_t y = 0; y < p.height; ++y) {
+      const float v = 1.0f - (float(y) + 0.5f) / h;
+      fill(p.x - 1u, p.y + y, p.face, -0.5f / w, v, p.mip);
+      fill(p.x + p.width, p.y + y, p.face, 1.0f + 0.5f / w, v, p.mip);
+    }
+    // Four corners (two-hop diagonal adjacency).
+    fill(p.x - 1u, p.y - 1u, p.face, -0.5f / w, 1.0f + 0.5f / h, p.mip);
+    fill(p.x + p.width, p.y - 1u, p.face, 1.0f + 0.5f / w,
+         1.0f + 0.5f / h, p.mip);
+    fill(p.x - 1u, p.y + p.height, p.face, -0.5f / w, -0.5f / h, p.mip);
+    fill(p.x + p.width, p.y + p.height, p.face, 1.0f + 0.5f / w,
+         -0.5f / h, p.mip);
+  }
+}
+
 }  // namespace
 
 const lightusd::ptx::FaceImage* PtexFacePageCache::Fetch(
@@ -396,13 +503,14 @@ bool BuildPtexPage(const lightusd::ptx::Reader& reader, uint32_t face,
 }
 
 void EncodePtexFaceRectTexels(const DrawPtexFaceRectCPU& rect,
-                              uint8_t texels[8u * 4u]) {
+                              uint8_t texels[10u * 4u]) {
   if (!texels) return;
-  std::fill(texels, texels + 8u * 4u, uint8_t{0});
-  const uint16_t values[4] = {
+  std::fill(texels, texels + 10u * 4u, uint8_t{0});
+  const uint16_t values[5] = {
       static_cast<uint16_t>(rect.x), static_cast<uint16_t>(rect.y),
-      static_cast<uint16_t>(rect.width), static_cast<uint16_t>(rect.height)};
-  for (uint32_t byte = 0; byte < 8; ++byte) {
+      static_cast<uint16_t>(rect.width), static_cast<uint16_t>(rect.height),
+      static_cast<uint16_t>(rect.baseMip)};
+  for (uint32_t byte = 0; byte < 10; ++byte) {
     texels[byte * 4u + 3u] = static_cast<uint8_t>(
         (values[byte / 2u] >> ((byte & 1u) * 8u)) & 0xffu);
   }
@@ -424,9 +532,11 @@ bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
     return false;
   }
   PtexAtlasBuildStats localStats;
-  std::vector<Placement> placements(info.faces);
+  const uint32_t mip_levels = std::max(1u, options.mipLevels);
+  std::vector<Placement> placements;
+  placements.reserve(size_t(info.faces) * size_t(mip_levels));
   for (uint32_t face = 0; face < info.faces; ++face) {
-    Placement& p = placements[face];
+    Placement p;
     p.face = face;
     uint32_t w = info.faceInfo[face].width();
     uint32_t h = info.faceInfo[face].height();
@@ -446,6 +556,21 @@ bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
       p.width = 1;
       p.height = 1;
       p.virtualDownsample = true;
+    }
+    p.chainLevel = 0;
+    placements.push_back(p);
+    if (mip_levels <= 1 || p.virtualDownsample) continue;
+    for (uint32_t level = 1; level < mip_levels; ++level) {
+      Placement q = p;
+      q.chainLevel = level;
+      q.mip = p.mip + level;
+      if (q.mip >= info.levels) break;
+      q.width = std::max(1u, p.width >> level);
+      q.height = std::max(1u, p.height >> level);
+      // Chain levels are intentional, not budget-driven fallbacks; keep the
+      // physical-page-cache test from treating them as downsampled faces.
+      q.baseMip = q.mip;
+      placements.push_back(q);
     }
   }
 
@@ -476,7 +601,8 @@ bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
       if (physicalCacheSlotEdge > 0) {
         atlasWidth = std::max(atlasWidth, physicalCacheSlotEdge);
       }
-      const uint64_t rectTexels = uint64_t(info.faces) * 8u;
+      const uint64_t rectTexels =
+          uint64_t(info.faces) * uint64_t(mip_levels) * 10u;
       uint64_t rectRows =
           (rectTexels + uint64_t(atlasWidth) - 1u) / atlasWidth;
       const uint64_t slotBytes = uint64_t(physicalCacheSlotEdge) *
@@ -554,25 +680,29 @@ bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
 
   localStats.downsampledFaces = static_cast<uint32_t>(std::count_if(
       placements.begin(), placements.end(), [](const Placement& p) {
-        return p.mip > 0 || p.width < p.baseWidth ||
-               p.height < p.baseHeight;
+        return p.chainLevel == 0 &&
+               (p.mip > 0 || p.width < p.baseWidth ||
+                p.height < p.baseHeight);
       }));
 
   image->width = static_cast<int>(atlasWidth);
   image->height = static_cast<int>(imageHeight);
   image->channels = 4;
   image->data.assign(size_t(atlasWidth) * imageHeight * 4, 0);
-  faceRects->assign(info.faces, DrawPtexFaceRectCPU{});
+  faceRects->assign(size_t(info.faces) * size_t(mip_levels),
+                    DrawPtexFaceRectCPU{});
   PtexFacePageCache pageCache(options.maxDecodedCacheBytes);
   for (const Placement& p : placements) {
     if (options.initialFaceLimit > 0 &&
         p.face >= options.initialFaceLimit) {
-      DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
+      DrawPtexFaceRectCPU& rect =
+          (*faceRects)[size_t(p.face) * mip_levels + p.chainLevel];
       rect.x = p.x;
       rect.y = p.y;
       rect.width = 1;
       rect.height = 1;
-      rect.mipLevel = 0;
+      rect.mipLevel = static_cast<uint16_t>(p.mip);
+      rect.baseMip = static_cast<uint16_t>(p.mip - p.chainLevel);
       rect.reserved = 1u;
       continue;
     }
@@ -598,27 +728,38 @@ bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
           ResizeFace(ConvertFace(*decoded), p.width, p.height);
       CopyWithClampGutter(rgba, p, options.gutter, image);
     }
-    DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
+    DrawPtexFaceRectCPU& rect =
+        (*faceRects)[size_t(p.face) * mip_levels + p.chainLevel];
     rect.x = p.x;
     rect.y = p.y;
     rect.width = p.width;
     rect.height = p.height;
     rect.mipLevel = static_cast<uint16_t>(p.mip);
+    rect.baseMip = static_cast<uint16_t>(p.mip - p.chainLevel);
     rect.reserved = p.virtualDownsample ? 1u : 0u;
   }
+  // Replace the clamp-only first gutter with adjacent-face samples. This is
+  // what lets the descriptor shader blend across a Ptex face edge.
+  FillCrossFaceGutters(reader, placements, options, image);
+
   // Store the rectangle table in alpha-only texels after the color atlas.
   // GL/Vulkan sRGB formats transform RGB reads but never alpha, so this compact
   // table can be decoded by every backend from the same sampled image.
   for (uint32_t face = 0; face < info.faces; ++face) {
-    const DrawPtexFaceRectCPU& rect = (*faceRects)[face];
-    uint8_t texels[8u * 4u];
-    EncodePtexFaceRectTexels(rect, texels);
-    for (uint32_t byte = 0; byte < 8; ++byte) {
-      const uint32_t linear = rectTexelOffset + face * 8u + byte;
-      image->data[size_t(linear) * 4u + 3u] = texels[byte * 4u + 3u];
+    for (uint32_t level = 0; level < mip_levels; ++level) {
+      const DrawPtexFaceRectCPU& rect =
+          (*faceRects)[size_t(face) * mip_levels + level];
+      uint8_t texels[10u * 4u];
+      EncodePtexFaceRectTexels(rect, texels);
+      for (uint32_t byte = 0; byte < 10; ++byte) {
+        const uint32_t linear = rectTexelOffset +
+                                (face * mip_levels + level) * 10u + byte;
+        image->data[size_t(linear) * 4u + 3u] = texels[byte * 4u + 3u];
+      }
     }
   }
   localStats.rectTexelOffset = rectTexelOffset;
+  localStats.mipLevels = mip_levels;
   localStats.physicalCacheOffsetY = physicalCacheOffsetY;
   localStats.physicalCacheSlotEdge = physicalCacheSlotEdge;
   localStats.physicalCacheSlots = physicalCacheSlots;

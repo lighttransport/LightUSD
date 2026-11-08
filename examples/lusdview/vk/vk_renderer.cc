@@ -8457,7 +8457,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
         t.ptexRectTexelOffset <
                         static_cast<uint32_t>(t.image.width * t.image.height)) {
       size_t linear = t.ptexRectTexelOffset;
-      size_t remaining = t.ptexFaceRects.size() * 8u;
+      size_t remaining = t.ptexFaceRects.size() * 10u;
       while (remaining > 0) {
         const int x = static_cast<int>(linear % size_t(t.image.width));
         const int y = static_cast<int>(linear / size_t(t.image.width));

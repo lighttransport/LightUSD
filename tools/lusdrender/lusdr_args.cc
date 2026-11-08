@@ -206,6 +206,7 @@ void PrintUsage(const char *prog) {
       << "  -lightDoubleCount      Enable diagnostic legacy indirect-light counting.\n"
       << "  -noLightNee            Disable area-light next-event estimation.\n"
       << "  -ptexProbe FILE        Write per-sample Ptex diagnostics.\n"
+      << "  -ptexMipLevels N       Per-face Ptex atlas mip levels, 1..8 (default 3).\n"
       << "  -rtDebugAov NAME       Vulkan material-path diagnostic (see README).\n"
       << "  -vkDumpF32 FILE        Write raw Vulkan float RGBA.\n"
       << "  -tempDirectory DIR     Directory for generated LOD wrappers.\n"
@@ -360,6 +361,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     if (a == "-forceWide") { opt->force_wide = true; continue; }
     if (a == "-gpuNoDome") { opt->gpu_no_dome = true; continue; }
     if (a == "-noPtex") { opt->no_ptex = true; continue; }
+    if (a == "-ptexMipLevels" || a == "--ptex-mip-levels") {
+      const char *v = need_value(a.c_str());
+      int parsed = 0;
+      if (!v || !ParseIntStrict(v, &parsed) || parsed < 1 || parsed > 8) {
+        std::cerr << "-ptexMipLevels requires an integer in [1, 8].\n";
+        return false;
+      }
+      opt->ptex_mip_levels = static_cast<uint32_t>(parsed);
+      continue;
+    }
     if (a == "-coherentColors") { opt->coherent_colors = true; continue; }
     if (a == "-lightDoubleCount") { opt->light_double_count = true; continue; }
     if (a == "-noLightNee") { opt->light_nee = false; continue; }
@@ -368,7 +379,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       if (!value) return false;
       const char* names[] = {"off", "material", "uv", "opacity", "behind_material",
           "behind_depth", "", "emission", "lit_diffuse", "lit_spec", "route4",
-          "route44", "route4_tex", "ptex", "base"};
+          "route44", "route4_tex", "ptex", "base", "ptexmip",
+          "ptexuvperpixel", "ptexrect"};
       bool found = false;
       for (uint32_t k = 0; k < sizeof(names) / sizeof(names[0]); ++k) {
         if (*names[k] && std::strcmp(value, names[k]) == 0) {

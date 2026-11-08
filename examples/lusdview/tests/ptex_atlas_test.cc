@@ -218,10 +218,10 @@ void RunType(uint32_t type, uint16_t channels = 1) {
   if (rects.size() != 2) return;
   CHECK(rects[0].width == 4 && rects[0].height == 2);
   CHECK(rects[1].width == 2 && rects[1].height == 4);
-  CHECK(stats.rectTexelOffset + rects.size() * 8u <=
+  CHECK(stats.rectTexelOffset + rects.size() * 10u <=
         static_cast<size_t>(atlas.width) * atlas.height);
   for (uint32_t face = 0; face < rects.size(); ++face) {
-    const size_t base = stats.rectTexelOffset + face * 8u;
+    const size_t base = stats.rectTexelOffset + face * 10u;
     auto value = [&](size_t component) {
       const uint32_t lo = atlas.data[(base + component * 2u) * 4u + 3u];
       const uint32_t hi = atlas.data[(base + component * 2u + 1u) * 4u + 3u];
@@ -229,6 +229,7 @@ void RunType(uint32_t type, uint16_t channels = 1) {
     };
     CHECK(value(0) == rects[face].x && value(1) == rects[face].y);
     CHECK(value(2) == rects[face].width && value(3) == rects[face].height);
+    CHECK(value(4) == rects[face].baseMip);
     const auto pixel = [&](uint32_t x, uint32_t y, uint32_t channel) {
       return atlas.data[(size_t(y) * atlas.width + x) * 4u + channel];
     };
@@ -466,11 +467,13 @@ void RunPhysicalCacheReservation() {
   encoded.y = 0x5678u;
   encoded.width = 0x9abcu;
   encoded.height = 0xdef0u;
-  uint8_t texels[8u * 4u];
+  encoded.baseMip = 0x1234u;
+  uint8_t texels[10u * 4u];
   lusdview::EncodePtexFaceRectTexels(encoded, texels);
-  const uint8_t expected[8] = {0x34u, 0x12u, 0x78u, 0x56u,
-                               0xbcu, 0x9au, 0xf0u, 0xdeu};
-  for (size_t i = 0; i < 8; ++i) {
+  const uint8_t expected[10] = {0x34u, 0x12u, 0x78u, 0x56u,
+                                0xbcu, 0x9au, 0xf0u, 0xdeu,
+                                0x34u, 0x12u};
+  for (size_t i = 0; i < 10; ++i) {
     CHECK(texels[i * 4u + 0u] == 0u);
     CHECK(texels[i * 4u + 1u] == 0u);
     CHECK(texels[i * 4u + 2u] == 0u);

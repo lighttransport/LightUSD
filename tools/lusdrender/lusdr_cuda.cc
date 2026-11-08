@@ -264,6 +264,10 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
           max_edge = std::max(max_edge, std::max(fi.width(), fi.height()));
         atlas_options.maxFaceEdge = std::max(1u, std::min(max_edge, src.ptex_max_face_edge));
         atlas_options.maxAtlasBytes = 256ull * 1024ull * 1024ull;
+        // Keep a short per-face minification chain in the same atlas so the
+        // descriptor shader can pick a level from the ray footprint.
+        atlas_options.mipLevels =
+            std::max(1u, std::min(8u, src.ptex_mip_levels));
         lusdview::PtexAtlasBuildStats atlas_stats;
         std::string atlas_err;
         if (lusdview::BuildPtexAtlas(reader, atlas_options, src.srgb,
@@ -271,6 +275,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
                                      &atlas_stats, &atlas_err)) {
           dst.isPtex = true;
           dst.ptexFaces = src.ptex_faces;
+          dst.ptexMipLevels = atlas_stats.mipLevels;
           dst.ptexRectTexelOffset = atlas_stats.rectTexelOffset;
           dst.ptexAtlasBytes = dst.image.data.size();
           dst.ptexDownsampledFaces = atlas_stats.downsampledFaces;

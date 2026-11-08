@@ -103,6 +103,7 @@ struct HostTextureDesc {
   int ptexTileEdge{0};
   int ptexRectTexelOffset{0};
   int ptexFaceCount{0};
+  int ptexMipLevels{1};  // per-face chain entries packed in the atlas
   int mipCount{1};       // levels including this descriptor's base level
   int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
   int imageSlot{-1};     // source VkImage slot for direct compressed Ptex sampling

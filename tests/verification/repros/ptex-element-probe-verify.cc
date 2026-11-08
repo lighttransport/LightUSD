@@ -292,10 +292,13 @@ int main(int argc, char** argv) {
   const size_t min_textures = std::getenv("PTEX_VERIFY_MIN_TEXTURES")
                                   ? size_t(std::atoi(std::getenv("PTEX_VERIFY_MIN_TEXTURES")))
                                   : 2u;
-  if (tex_count.size() < min_textures || face_count.size() < 16) {
+  const size_t min_faces = std::getenv("PTEX_VERIFY_MIN_FACES")
+                               ? size_t(std::atoi(std::getenv("PTEX_VERIFY_MIN_FACES")))
+                               : 16u;
+  if (tex_count.size() < min_textures || face_count.size() < min_faces) {
     std::fprintf(stderr,
                  "FAIL: element coverage too small (need >=%zu textures and "
-                 ">=16 distinct faces)\n", min_textures);
+                 ">=%zu distinct faces)\n", min_textures, min_faces);
     return 1;
   }
   if (crossed_taps == 0) {

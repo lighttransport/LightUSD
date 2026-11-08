@@ -70,24 +70,52 @@ float wrapCoord(float x, int mode) {
 }
 // Ptex face and face-local (u,v) of the current hit, set by setPtexHit().
 uint gPtexFace=0xffffffffu; vec2 gPtexUV=vec2(0.0);
+// Primary-hit surface frame/UVs and the UV footprint used to choose a
+// per-face mip. The table packs a short absolute-level chain per face.
+vec3 gPtexP0=vec3(0.0),gPtexP1=vec3(0.0),gPtexP2=vec3(0.0);
+vec2 gPtexUv0=vec2(0.0),gPtexUv1=vec2(0.0),gPtexUv2=vec2(0.0);
+float gPtexUvPerPixel=0.0;
+uint gPtexSelectedMip=0u;
+bool gPtexMipSet=false;
+vec3 gPtexDebugRect=vec3(0.0);
+uint gPtexLastMip=0u;
+bool gPtexLastWasPtex=false;
+uint gPtexBaseMip=0u;
 uint ptexByte(int off,uint texel){return texels[uint(off)+texel]>>24u;}
 // Ptex atlas lookup. The descriptor's reserved ints carry (rect-table texel
-// offset + 1, face count); the per-face rectangle (x,y,w,h as little-endian
-// uint16) lives in the alpha bytes of the 8 texels at that offset + face*8.
+// offset + 1, faceCount | (mipLevels << 24)); each face owns `mipLevels`
+// consecutive 10-texel entries (x,y,w,h,baseMip as little-endian uint16).
 // Atlas rows are top-first, so the face-local v is flipped: y = (1-v).
-vec4 samplePtexAtlas(int off,int w,int h,int tableTexel,int faceCount,int srgb){
+vec4 samplePtexAtlas(int off,int w,int h,int tableTexel,int packedFaces,int srgb){
   uint face=gPtexFace;
-  if(face>=uint(faceCount))face=0u;
-  uint tb=uint(tableTexel)+face*8u;
-  float rx=float(ptexByte(off,tb)|(ptexByte(off,tb+1u)<<8u)),ry=float(ptexByte(off,tb+2u)|(ptexByte(off,tb+3u)<<8u));
+  uint faceCount=uint(packedFaces)&0xffffffu;
+  uint mipLevels=max(1u,uint(packedFaces)>>24u);
+  if(face>=faceCount)face=0u;
+  uint baseTb=uint(tableTexel)+(face*mipLevels)*10u;
+  float rx=float(ptexByte(off,baseTb)|(ptexByte(off,baseTb+1u)<<8u)),ry=float(ptexByte(off,baseTb+2u)|(ptexByte(off,baseTb+3u)<<8u));
+  float baseW=float(ptexByte(off,baseTb+4u)|(ptexByte(off,baseTb+5u)<<8u)),baseH=float(ptexByte(off,baseTb+6u)|(ptexByte(off,baseTb+7u)<<8u));
+  float baseMip=float(ptexByte(off,baseTb+8u)|(ptexByte(off,baseTb+9u)<<8u));
+  gPtexDebugRect=vec3(baseW,baseH,baseMip);
+  float edge=max(baseW,baseH)*exp2(baseMip);
+  float mipF=floor(log2(max(1.0,gPtexUvPerPixel*edge)));
+  int level=clamp(int(mipF)-int(baseMip),0,int(mipLevels)-1);
+  gPtexLastMip=uint(int(baseMip)+level);
+  gPtexLastWasPtex=true;
+  if(!gPtexMipSet){gPtexSelectedMip=gPtexLastMip;gPtexMipSet=true;}
+  uint tb=baseTb+uint(level)*10u;
   float rw=float(ptexByte(off,tb+4u)|(ptexByte(off,tb+5u)<<8u)),rh=float(ptexByte(off,tb+6u)|(ptexByte(off,tb+7u)<<8u));
+  rx=float(ptexByte(off,tb)|(ptexByte(off,tb+1u)<<8u));ry=float(ptexByte(off,tb+2u)|(ptexByte(off,tb+3u)<<8u));
   if(rw<1.0||rh<1.0)return vec4(1.0);
   // Ptex-correct bilinear: texel centers at (i+0.5)/w, taps clamped to the face
   // (identical to OpenPtex within a face; no cross-face blending). The rect's
   // clamp gutter makes a coordinate beyond the first/last center replicate.
-  vec2 fp=clamp(vec2(clamp(gPtexUV.x,0.0,1.0)*rw-0.5,(1.0-clamp(gPtexUV.y,0.0,1.0))*rh-0.5),vec2(0.0),vec2(rw-1.0,rh-1.0));
+  // One texel beyond the face is allowed: the atlas builder fills that gutter
+  // from the Ptex neighbour, so edge taps blend across the face boundary.
+  vec2 fp=vec2(clamp(gPtexUV.x,0.0,1.0)*rw-0.5,(1.0-clamp(gPtexUV.y,0.0,1.0))*rh-0.5);
+  fp=clamp(fp,vec2(-1.0),vec2(rw,rh));
   vec2 px=vec2(rx,ry)+fp;
-  ivec2 p0=ivec2(floor(px)),p1=min(p0+1,ivec2(w-1,h-1));vec2 f=fract(px);
+  ivec2 p0=clamp(ivec2(floor(px)),ivec2(0),ivec2(w-1,h-1));
+  ivec2 p1=clamp(p0+1,ivec2(0),ivec2(w-1,h-1));vec2 f=fract(px);
   vec4 c[4];ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
   for(int i=0;i<4;++i){uint q=texels[uint(off+p[i].y*w+p[i].x)];c[i]=vec4(q&255u,(q>>8)&255u,(q>>16)&255u,(q>>24)&255u)/255.0;}
   vec4 r=mix(mix(c[0],c[1],f.x),mix(c[2],c[3],f.x),f.y);
@@ -96,6 +124,7 @@ vec4 samplePtexAtlas(int off,int w,int h,int tableTexel,int faceCount,int srgb){
   return r;
 }
 vec4 sampleTexture(int id, vec2 uv) {
+  gPtexLastWasPtex=false;
   uint d=uint(id)*TEX_DESC_STRIDE;
   if (id < 0 || d+5u >= textureDescs.length()) return vec4(1.0);
   int off=textureDescs[d], w=textureDescs[d+1u], h=textureDescs[d+2u];
@@ -147,6 +176,8 @@ void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
   int count=int(clamp(graphs[gb],0.0,64.0));
   if(count<=0) return;
   vec4 value[64];
+  float nodeMip[64];
+  for(int i=0;i<count;++i) nodeMip[i]=-1.0;
   for(int i=0;i<count;++i){
     uint p=gb+GRAPH_HEADER+uint(i)*GRAPH_NODE;
     int op=int(round(graphs[p])); int ai=int(round(graphs[p+1u]));
@@ -158,7 +189,7 @@ void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
     if(uvInput==0)graphUv=a.xy;else if(uvInput==1)graphUv=b.xy;else if(uvInput==2)graphUv=c.xy;
     vec2 tuv=graphUv*vec2(graphs[p+17u],graphs[p+18u])+vec2(graphs[p+19u],graphs[p+20u]);
     if(op==0) value[i]=a;
-    else if(op==1||op==2) value[i]=sampleTexture(int(round(graphs[p+16u])),tuv);
+    else if(op==1||op==2){value[i]=sampleTexture(int(round(graphs[p+16u])),tuv);if(gPtexLastWasPtex)nodeMip[i]=float(gPtexLastMip);}
     else if(op==3) value[i]=vec4(normalize(a.xyz*2.0-1.0)*0.5+0.5,a.w);
     else if(op==4) value[i]=a+b; else if(op==5) value[i]=a-b;
     else if(op==6) value[i]=a*b; else if(op==7) value[i]=a/max(abs(b),vec4(1e-6));
@@ -248,8 +279,11 @@ void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
     else if(op==109){int start=clamp(int(floor(graphs[p+17u]+.5)),0,count-1),outputSelector=clamp(int(floor(graphs[p+18u]+.5)),0,3);value[i]=mtlxFlake(value[start],value[min(start+1,count-1)],value[min(start+2,count-1)],value[min(start+3,count-1)],value[min(start+4,count-1)],value[min(start+5,count-1)],value[min(start+6,count-1)],outputSelector);}
     else if(op>=110&&op<=113){int start=clamp(int(floor(graphs[p+17u]+.5)),0,count-1),dim=clamp(int(floor(graphs[p+18u]+.5)),3,4),column=clamp(int(floor(graphs[p+19u]+.5)),0,dim-1),components=clamp(int(floor(graphs[p+20u]+.5)),1,4);vec4 q=vec4(0);if(dim==3){mat3 m=mat3(value[start].xyz,value[min(start+1,count-1)].xyz,value[min(start+2,count-1)].xyz);if(op==110)q=components==2?vec4((m*vec3(a.xy,1)).xy,0,0):vec4(m*a.xyz,0);else if(op==111)q=vec4(transpose(m)[column],0);else if(op==112)q=vec4(inverse(m)[column],0);else q=vec4(determinant(m));}else{mat4 m=mat4(value[start],value[min(start+1,count-1)],value[min(start+2,count-1)],value[min(start+3,count-1)]);if(op==110)q=components==3?vec4((m*vec4(a.xyz,1)).xyz,0):m*a;else if(op==111)q=transpose(m)[column];else if(op==112)q=inverse(m)[column];else q=vec4(determinant(m));}value[i]=q;}
     else value[i]=a;
+    if(nodeMip[i]<0.0){float m=-1.0;if(ai>=0&&ai<count)m=max(m,nodeMip[ai]);if(bi>=0&&bi<count)m=max(m,nodeMip[bi]);if(ci>=0&&ci<count)m=max(m,nodeMip[ci]);if(m>=0.0)nodeMip[i]=m;}
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}
+  int wanted0=int(round(graphs[gb+1u]));
+  if(wanted0>=0&&wanted0<count&&nodeMip[wanted0]>=0.0)gPtexBaseMip=uint(round(nodeMip[wanted0]));
 }
 
 struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec3 tangentb; vec2 uv; vec2 uvb; uint mat; };
@@ -330,7 +364,12 @@ bool domeRotated(uint lb){vec3 rx=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);r
 vec3 domeToLocal(uint lb,vec3 w){if(!domeRotated(lb))return w;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return vec3(dot(w,rx),dot(w,ry),dot(w,rz));}
 vec3 domeToWorld(uint lb,vec3 v){if(!domeRotated(lb))return v;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return v.x*rx+v.y*ry+v.z*rz;}
 vec2 ptexCornerUv(uint o){return o==0u?vec2(0.0,1.0):(o==1u?vec2(1.0,1.0):(o==2u?vec2(1.0,0.0):vec2(0.0,0.0)));}
-void setPtexHit(Hit h){gPtexFace=0xffffffffu;if(h.prim>=uint(ptexTri.length()))return;uint r=ptexTri[h.prim];if(r==0xffffffffu)return;gPtexFace=r>>2u;uint i1=(r&1u)+1u,i2=i1+1u;if((r&2u)!=0u){uint t=i1;i1=i2;i2=t;}float w=1.0-h.bary.x-h.bary.y;gPtexUV=ptexCornerUv(0u)*w+ptexCornerUv(i1)*h.bary.x+ptexCornerUv(i2)*h.bary.y;}
+void setPtexHit(Hit h){gPtexFace=0xffffffffu;gPtexMipSet=false;if(h.prim>=uint(ptexTri.length()))return;uint r=ptexTri[h.prim];if(r==0xffffffffu)return;gPtexFace=r>>2u;uint i1=(r&1u)+1u,i2=i1+1u;if((r&2u)!=0u){uint t=i1;i1=i2;i2=t;}gPtexUv0=ptexCornerUv(0u);gPtexUv1=ptexCornerUv(i1);gPtexUv2=ptexCornerUv(i2);float w=1.0-h.bary.x-h.bary.y;gPtexUV=gPtexUv0*w+gPtexUv1*h.bary.x+gPtexUv2*h.bary.y;uint t0=h.prim*3u,i0=indices[t0],j0=indices[t0+1u],k0=indices[t0+2u];gPtexP0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);gPtexP1=vec3(vertices[j0*10u],vertices[j0*10u+1u],vertices[j0*10u+2u]);gPtexP2=vec3(vertices[k0*10u],vertices[k0*10u+1u],vertices[k0*10u+2u]);}
+// Face-local UV of a point on the current Ptex triangle (barycentric).
+vec2 ptexUvAt(vec3 p){vec3 e0=gPtexP1-gPtexP0,e1=gPtexP2-gPtexP0,e2=p-gPtexP0;float d00=dot(e0,e0),d01=dot(e0,e1),d11=dot(e1,e1),d20=dot(e2,e0),d21=dot(e2,e1);float den=d00*d11-d01*d01;if(abs(den)<1e-12)return gPtexUV;float b=(d11*d20-d01*d21)/den,c=(d00*d21-d01*d20)/den;return gPtexUv0*(1.0-b-c)+gPtexUv1*b+gPtexUv2*c;}
+// Neighbor primary-ray direction for the differential footprint estimate.
+vec3 ptexCameraDir(vec2 p){vec2 ndc=(p+vec2(0.5))/vec2(pc.frame.xy)*2.0-1.0;ndc.y=-ndc.y;vec4 n=pc.invViewProj*vec4(ndc,0,1);n/=n.w;vec4 f=pc.invViewProj*vec4(ndc,1,1);f/=f.w;return normalize(f.xyz-n.xyz);}
+void updatePtexFootprint(vec3 o,vec3 d,vec2 pixel){gPtexUvPerPixel=0.0;if(gPtexFace==0xffffffffu)return;vec3 n=normalize(cross(gPtexP1-gPtexP0,gPtexP2-gPtexP0));float dn=dot(n,d);if(abs(dn)<1e-8)return;vec3 dx=ptexCameraDir(pixel+vec2(1.0,0.0)),dy=ptexCameraDir(pixel+vec2(0.0,1.0));float tx=dot(n,gPtexP0-o)/dot(n,dx),ty=dot(n,gPtexP0-o)/dot(n,dy);if(isnan(tx)||isinf(tx)||isnan(ty)||isinf(ty))return;vec2 ux=ptexUvAt(o+dx*tx),uy=ptexUvAt(o+dy*ty);float per=max(length(ux-gPtexUV),length(uy-gPtexUV));if(!isnan(per)&&!isinf(per)&&per>0.0)gPtexUvPerPixel=per;}
 vec3 environmentRadiance(vec3 dir,bool primary){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;if(primary&&lights[lb+13u]>0.5)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec3 ld=domeToLocal(lb,dir);vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,acos(clamp(ld.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
 float rawLightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
 // A dome is picked as often as all other lights together (power-weighting by
@@ -437,7 +476,7 @@ void main(){
     float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);
+      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);if(depth==0u)updatePtexFootprint(o,d,vec2(px));
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
@@ -561,6 +600,15 @@ void main(){
         if(pc.context.w<13.5)radiance=gPtexFace==0xffffffffu?vec3(0.0,0.0,-1.0):vec3(gPtexUV,float(gPtexFace)+1.0);
         else radiance=base;  // 14: base colour after the graph route
         beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>14.5&&pc.context.w<15.5){
+        radiance=vec3(float(gPtexBaseMip)); beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>15.5&&pc.context.w<16.5){
+        radiance=vec3(gPtexUvPerPixel); beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>16.5&&pc.context.w<17.5){
+        radiance=gPtexDebugRect/1024.0; beta=vec3(0.0); break;
       }
       if(depth==0u&&pc.context.w>9.5&&pc.context.w<12.5){
         if(pc.context.w<10.5) radiance=dbgRoute4;

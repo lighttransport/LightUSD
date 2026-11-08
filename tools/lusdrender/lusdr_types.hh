@@ -114,6 +114,7 @@ struct Texture {
   bool is_ptex{false};
   uint32_t ptex_faces{0};
   uint32_t ptex_max_face_edge{512};
+  uint32_t ptex_mip_levels{3};
   std::shared_ptr<lusdview::CpuPtexSampler> ptex;
   std::shared_ptr<std::vector<uint8_t>> ptex_bytes;
   std::string ptex_path;
@@ -632,6 +633,9 @@ struct Options {
   bool force_wide{false};
   bool gpu_no_dome{false};
   bool no_ptex{false};
+  // Per-face minification levels packed into the descriptor Ptex atlas. 1
+  // reproduces the historical single-level atlas; 3 is the default.
+  uint32_t ptex_mip_levels{3};
   bool coherent_colors{false};
   bool light_double_count{false};
   bool light_nee{true};

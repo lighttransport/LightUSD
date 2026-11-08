@@ -505,10 +505,118 @@ bool ValidateGpuFrameSize(int w, int h, int spp, const char *backend,
   return true;
 }
 
-bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
-                                 const std::vector<lrt_ray> &rays,
-                                 const std::vector<InstSampleHit> &hits, int w,
-                                 int h, int spp) {
+namespace {
+
+// Base-colour sample of a lazy Ptex texture for the instanced path. The
+// instanced prototype has no per-pixel ray differential, so this uses mip 0;
+// the chunked/descriptor paths retain their footprint and cross-face logic.
+bool SampleInstPtexBase(const Texture &texture, uint32_t ref, float b1,
+                        float b2, uint32_t mip, Vec3 *out,
+                        uint32_t *face_out = nullptr,
+                        uint32_t *mip_out = nullptr, float *u_out = nullptr,
+                        float *v_out = nullptr, float *rgb_out = nullptr) {
+  if (!texture.is_ptex || !texture.ptex || !texture.ptex->valid()) return false;
+  if (ref == kPtexTriInvalid) return false;
+  const uint32_t face = PtexTriFace(ref);
+  if (face >= texture.ptex->info().faces) return false;
+  float u = 0.0f, v = 0.0f;
+  PtexTriUv(ref, b1, b2, &u, &v);
+  float rgb[3];
+  if (!texture.ptex->Sample(face, mip, u, v, texture.srgb, rgb)) return false;
+  if (face_out) *face_out = face;
+  if (mip_out) *mip_out = mip;
+  if (u_out) *u_out = u;
+  if (v_out) *v_out = v;
+  if (rgb_out) {
+    rgb_out[0] = rgb[0];
+    rgb_out[1] = rgb[1];
+    rgb_out[2] = rgb[2];
+  }
+  *out = texture.apply_value_transform(Vec3{rgb[0], rgb[1], rgb[2]});
+  return true;
+}
+
+// Per-face Ptex mip for the instanced path, from the primary-ray differential
+// footprint of the prototype triangle. Falls back to mip 0 when the neighbours
+// are unavailable or the footprint degenerates.
+uint32_t InstPtexMip(const GpuInstProto &pr, const GpuInstPlacement &pl,
+                     uint32_t local, uint32_t ref, const Texture &texture,
+                     const std::vector<lrt_ray> &rays, int w, int h, int spp,
+                     int x, int y, int sp) {
+  if (w <= 1 || h <= 1 || !texture.ptex || ref == kPtexTriInvalid) return 0;
+  const size_t pixel_base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+  const size_t nx =
+      (size_t(y) * size_t(w) +
+       (size_t(x) + 1 < size_t(w) ? size_t(x) + 1 : size_t(x) - 1)) *
+          size_t(spp) +
+      size_t(sp);
+  const size_t ny =
+      ((size_t(y) + 1 < size_t(h) ? size_t(y) + 1 : size_t(y) - 1) *
+           size_t(w) +
+       size_t(x)) *
+          size_t(spp) +
+      size_t(sp);
+  if (nx >= rays.size() || ny >= rays.size() ||
+      pixel_base + size_t(sp) >= rays.size())
+    return 0;
+  const lrt_ray &ray = rays[pixel_base + size_t(sp)];
+  RayDiff rd;
+  rd.ox = {rays[nx].org[0], rays[nx].org[1], rays[nx].org[2]};
+  rd.dx = {rays[nx].dir[0], rays[nx].dir[1], rays[nx].dir[2]};
+  rd.oy = {rays[ny].org[0], rays[ny].org[1], rays[ny].org[2]};
+  rd.dy = {rays[ny].dir[0], rays[ny].dir[1], rays[ny].dir[2]};
+  rd.valid = true;
+  const size_t t = size_t(local) * 3u;
+  if (t + 2u >= pr.idx.size()) return 0;
+  auto world = [&](uint32_t index) {
+    const float *p = pr.verts.data() + size_t(index) * 3u;
+    const float *m = pl.o2w;
+    return Vec3{m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+                m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+                m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11]};
+  };
+  const Vec3 p0 = world(pr.idx[t]), p1 = world(pr.idx[t + 1u]),
+             p2 = world(pr.idx[t + 2u]);
+  uint32_t i1 = (ref & 1u) + 1u, i2 = i1 + 1u;
+  if (ref & 2u) std::swap(i1, i2);
+  float u0, v0, u1, v1, u2, v2;
+  PtexCornerUv(0, &u0, &v0);
+  PtexCornerUv(i1, &u1, &v1);
+  PtexCornerUv(i2, &u2, &v2);
+  float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+  if (!ComputeUVFootprint({ray.org[0], ray.org[1], ray.org[2]},
+                          {ray.dir[0], ray.dir[1], ray.dir[2]}, rd, p0, p1, p2,
+                          Normalize(Cross(Sub(p1, p0), Sub(p2, p0))), u0, v0,
+                          u1, v1, u2, v2, &dudx, &dvdx, &dudy, &dvdy))
+    return 0;
+  const float per_pixel =
+      std::max(std::hypot(dudx, dvdx), std::hypot(dudy, dvdy));
+  if (!std::isfinite(per_pixel) || per_pixel <= 0.0f) return 0;
+  return texture.ptex->ChooseMip(PtexTriFace(ref), per_pixel);
+}
+
+// Bounded per-sample dump for the instanced-path oracle. The format matches
+// tests/verification/repros/ptex-element-probe-verify.cc.
+struct InstPtexProbe {
+  std::mutex mutex;
+  std::set<size_t> announced;
+  std::FILE *file{nullptr};
+  explicit InstPtexProbe(const std::string &path) {
+    if (!path.empty()) file = std::fopen(path.c_str(), "w");
+  }
+  ~InstPtexProbe() {
+    if (file) std::fclose(file);
+  }
+};
+
+}  // namespace
+
+bool ShadeAndWriteImageInstanced(
+    const Options &opt, const GpuInstancedScene &s,
+    const std::vector<lusdr::Texture> &textures,
+    const std::vector<lrt_ray> &rays, const std::vector<InstSampleHit> &hits,
+    int w, int h, int spp) {
+  InstPtexProbe probe(opt.ptex_probe);
   if(opt.aov!=CaptureAov::Color) {
     return WriteGpuDataAov(opt,w,h,spp,[&](size_t i,Vec3* value) {
       const auto& hit=hits[i];if(!hit.valid)return true;
@@ -576,6 +684,32 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
           if (local >= pr.ntris) continue;
 
           Vec3 bc = pr.base_color;
+          if (local < pr.ptex_tri.size() && pr.ptex_tex_id >= 0 &&
+              size_t(pr.ptex_tex_id) < textures.size()) {
+            const Texture &ptex = textures[size_t(pr.ptex_tex_id)];
+            Vec3 ptex_color;
+            const uint32_t ref = pr.ptex_tri[local];
+            const uint32_t wanted_mip =
+                InstPtexMip(pr, pl, local, ref, ptex, rays, w, h, spp, x, y, sp);
+            uint32_t face = 0, mip = 0;
+            float pu = 0.0f, pv = 0.0f, rgb[3] = {0.0f, 0.0f, 0.0f};
+            if (SampleInstPtexBase(ptex, ref, hit.u, hit.v, wanted_mip,
+                                   &ptex_color, &face, &mip, &pu, &pv, rgb)) {
+              bc = ptex_color;
+              if (probe.file) {
+                std::lock_guard<std::mutex> lock(probe.mutex);
+                const size_t tid = size_t(pr.ptex_tex_id);
+                if (probe.announced.insert(tid).second)
+                  std::fprintf(probe.file, "# texture %zu %s\n", tid,
+                               ptex.ptex_path.c_str());
+                std::fprintf(probe.file,
+                             "%d %d %zu %u %u %d %.7f %.7f %.7f %.7f %.7f\n",
+                             x, y, tid, face, mip, ptex.srgb ? 1 : 0,
+                             double(pu), double(pv), double(rgb[0]),
+                             double(rgb[1]), double(rgb[2]));
+              }
+            }
+          }
           // Smooth normal in prototype space, then transform to world.
           const uint32_t i0=pr.idx[size_t(local)*3],i1=pr.idx[size_t(local)*3+1],i2=pr.idx[size_t(local)*3+2];
           const auto point=[&](uint32_t i){return Vec3{pr.verts[size_t(i)*3],pr.verts[size_t(i)*3+1],pr.verts[size_t(i)*3+2]};};
@@ -664,22 +798,33 @@ struct PtexProbe {
 // is selected per face from the ray-differential UV footprint (the same
 // machinery the other lanes use), then sampled with the C11 core (per-face mips,
 // cross-face taps). Returns false when the triangle has no Ptex face.
-bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
-                       const GpuTriScene &s,
+struct GpuPtexHit {
+  uint32_t face{0};
+  uint32_t mip{0};
+  float u{0.0f}, v{0.0f};
+};
+
+// Resolve the compact per-triangle Ptex reference to a face, face-local UV and
+// per-face mip for a primary hit of the chunked/CPU path.
+bool ResolveGpuPtexHit(const Texture &texture, const GpuTriScene &s,
                        const GpuTrianglePositions &triangle_positions,
                        const std::vector<lrt_ray> &rays, int w, int h, int spp,
-                       int x, int y, int sp, const lrt_hit &hit, Vec3 *out,
-                       PtexProbe &probe) {
-  if (!texture.is_ptex || !texture.ptex || !texture.ptex->valid()) return false;
+                       int x, int y, int sp, const lrt_hit &hit,
+                       GpuPtexHit *out) {
+  if (!texture.is_ptex || !texture.ptex || !texture.ptex->valid() || !out)
+    return false;
   if (hit.prim_id >= s.flat_ptex.size()) return false;
   const uint32_t ref = s.flat_ptex[hit.prim_id];
   if (ref == kPtexTriInvalid) return false;
   const uint32_t face = PtexTriFace(ref);
   if (face >= texture.ptex->info().faces) return false;
-  float u, v;
+  float u = 0.0f, v = 0.0f;
   PtexTriUv(ref, hit.u, hit.v, &u, &v);
+  out->face = face;
+  out->mip = 0;
+  out->u = u;
+  out->v = v;
 
-  uint32_t mip = 0;
   Vec3 positions[3];
   bool have_positions = false;
   if (triangle_positions) {
@@ -687,17 +832,33 @@ bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
   } else if (size_t(hit.prim_id) * 3u + 2u < s.flat_idx.size()) {
     have_positions = true;
     for (size_t corner = 0; corner < 3; ++corner) {
-      const size_t vertex = size_t(s.flat_idx[size_t(hit.prim_id) * 3u + corner]) * 3u;
-      if (vertex + 2 >= s.flat_verts.size()) { have_positions = false; break; }
-      positions[corner] = {s.flat_verts[vertex], s.flat_verts[vertex + 1], s.flat_verts[vertex + 2]};
+      const size_t vertex =
+          size_t(s.flat_idx[size_t(hit.prim_id) * 3u + corner]) * 3u;
+      if (vertex + 2 >= s.flat_verts.size()) {
+        have_positions = false;
+        break;
+      }
+      positions[corner] = {s.flat_verts[vertex], s.flat_verts[vertex + 1],
+                           s.flat_verts[vertex + 2]};
     }
   }
   if (have_positions && w > 1 && h > 1) {
     const size_t sp_idx = size_t(sp);
-    const size_t pixel_base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
-    const size_t nx = (size_t(y) * size_t(w) + (size_t(x) + 1 < size_t(w) ? size_t(x) + 1 : size_t(x) - 1)) * size_t(spp) + sp_idx;
-    const size_t ny = ((size_t(y) + 1 < size_t(h) ? size_t(y) + 1 : size_t(y) - 1) * size_t(w) + size_t(x)) * size_t(spp) + sp_idx;
-    if (nx < rays.size() && ny < rays.size() && pixel_base + sp_idx < rays.size()) {
+    const size_t pixel_base =
+        (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+    const size_t nx =
+        (size_t(y) * size_t(w) +
+         (size_t(x) + 1 < size_t(w) ? size_t(x) + 1 : size_t(x) - 1)) *
+            size_t(spp) +
+        sp_idx;
+    const size_t ny =
+        ((size_t(y) + 1 < size_t(h) ? size_t(y) + 1 : size_t(y) - 1) *
+             size_t(w) +
+         size_t(x)) *
+            size_t(spp) +
+        sp_idx;
+    if (nx < rays.size() && ny < rays.size() &&
+        pixel_base + sp_idx < rays.size()) {
       const lrt_ray &ray = rays[pixel_base + sp_idx];
       RayDiff differential;
       differential.ox = {rays[nx].org[0], rays[nx].org[1], rays[nx].org[2]};
@@ -712,30 +873,62 @@ bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
       PtexCornerUv(i1, &u1, &v1);
       PtexCornerUv(i2, &u2, &v2);
       float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
-      if (ComputeUVFootprint({ray.org[0], ray.org[1], ray.org[2]},
-                             {ray.dir[0], ray.dir[1], ray.dir[2]}, differential,
-                             positions[0], positions[1], positions[2],
-                             Normalize(Cross(Sub(positions[1], positions[0]),
-                                             Sub(positions[2], positions[0]))),
-                             u0, v0, u1, v1, u2, v2, &dudx, &dvdx, &dudy, &dvdy)) {
-        const float per_pixel = std::max(std::hypot(dudx, dvdx), std::hypot(dudy, dvdy));
+      if (ComputeUVFootprint(
+              {ray.org[0], ray.org[1], ray.org[2]},
+              {ray.dir[0], ray.dir[1], ray.dir[2]}, differential,
+              positions[0], positions[1], positions[2],
+              Normalize(Cross(Sub(positions[1], positions[0]),
+                              Sub(positions[2], positions[0]))),
+              u0, v0, u1, v1, u2, v2, &dudx, &dvdx, &dudy, &dvdy)) {
+        const float per_pixel =
+            std::max(std::hypot(dudx, dvdx), std::hypot(dudy, dvdy));
         if (std::isfinite(per_pixel) && per_pixel > 0.0f)
-          mip = texture.ptex->ChooseMip(face, per_pixel);
+          out->mip = texture.ptex->ChooseMip(face, per_pixel);
       }
     }
   }
+  return true;
+}
+
+bool SampleGpuPtexBase(const Texture &texture, size_t texture_id,
+                       const GpuTriScene &s,
+                       const GpuTrianglePositions &triangle_positions,
+                       const std::vector<lrt_ray> &rays, int w, int h, int spp,
+                       int x, int y, int sp, const lrt_hit &hit, Vec3 *out,
+                       PtexProbe *probe) {
+  GpuPtexHit ph;
+  if (!ResolveGpuPtexHit(texture, s, triangle_positions, rays, w, h, spp, x, y,
+                         sp, hit, &ph))
+    return false;
   float rgb[3];
-  if (!texture.ptex->Sample(face, mip, u, v, texture.srgb, rgb)) return false;
-  if (probe.file) {
-    std::lock_guard<std::mutex> lock(probe.mutex);
-    if (probe.announced.insert(texture_id).second)
-      std::fprintf(probe.file, "# texture %zu %s\n", texture_id, texture.ptex_path.c_str());
-    std::fprintf(probe.file, "%d %d %zu %u %u %d %.7f %.7f %.7f %.7f %.7f\n", x, y,
-                 texture_id, face, mip, texture.srgb ? 1 : 0, double(u), double(v),
-                 double(rgb[0]), double(rgb[1]), double(rgb[2]));
+  if (!texture.ptex->Sample(ph.face, ph.mip, ph.u, ph.v, texture.srgb, rgb))
+    return false;
+  if (probe && probe->file) {
+    std::lock_guard<std::mutex> lock(probe->mutex);
+    if (probe->announced.insert(texture_id).second)
+      std::fprintf(probe->file, "# texture %zu %s\n", texture_id,
+                   texture.ptex_path.c_str());
+    std::fprintf(probe->file,
+                 "%d %d %zu %u %u %d %.7f %.7f %.7f %.7f %.7f\n", x, y,
+                 texture_id, ph.face, ph.mip, texture.srgb ? 1 : 0,
+                 double(ph.u), double(ph.v), double(rgb[0]), double(rgb[1]),
+                 double(rgb[2]));
   }
   *out = texture.apply_value_transform(Vec3{rgb[0], rgb[1], rgb[2]});
   return true;
+}
+
+bool SampleGpuPtexScalar(const Texture &texture,
+                         const GpuTriScene &s,
+                         const GpuTrianglePositions &triangle_positions,
+                         const std::vector<lrt_ray> &rays, int w, int h,
+                         int spp, int x, int y, int sp, const lrt_hit &hit,
+                         int channel, float *out) {
+  GpuPtexHit ph;
+  if (!ResolveGpuPtexHit(texture, s, triangle_positions, rays, w, h, spp, x, y,
+                         sp, hit, &ph))
+    return false;
+  return texture.ptex->SampleChannel(ph.face, ph.mip, ph.u, ph.v, channel, out);
 }
 
 }  // namespace
@@ -853,34 +1046,84 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                     &dudx, &dvdx, &dudy, &dvdy);
               }
             }
+            const size_t diagnostic_screen = pixel / size_t(spp);
+            const int diagnostic_x = int(diagnostic_screen % size_t(w));
+            const int diagnostic_y = int(diagnostic_screen / size_t(w));
+            const int diagnostic_sp = int(pixel % size_t(spp));
+            auto ptex_scalar = [&](const Texture &texture, int channel,
+                                   float *value) {
+              return SampleGpuPtexScalar(
+                  texture, s, triangle_positions, rays, w, h, spp,
+                  diagnostic_x, diagnostic_y, diagnostic_sp, hit, channel,
+                  value);
+            };
             if (material_diagnostic && textures && diagnostic_texture.id >= 0 &&
                 size_t(diagnostic_texture.id) < textures->size()) {
               const auto& texture = (*textures)[size_t(diagnostic_texture.id)];
-              const float value = (footprint
-                  ? texture.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                                 kMaxAniso, int(diagnostic_texture.ch))
-                  : texture.sample_channel(u, v, 0, int(diagnostic_texture.ch))) *
-                  diagnostic_texture.scale + diagnostic_texture.bias;
-              if (std::isfinite(value)) {
-                const float clamped = std::clamp(value, 0.0f, 1.0f);
-                emission = Vec3{clamped, clamped, clamped};
+              float value = 0.0f;
+              bool sampled = false;
+              if (texture.is_ptex) {
+                sampled = ptex_scalar(texture, int(diagnostic_texture.ch),
+                                      &value);
+              } else {
+                value = footprint
+                    ? texture.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                                   kMaxAniso,
+                                                   int(diagnostic_texture.ch))
+                    : texture.sample_channel(u, v, 0,
+                                             int(diagnostic_texture.ch));
+                sampled = true;
+              }
+              if (sampled) {
+                value = value * diagnostic_texture.scale +
+                        diagnostic_texture.bias;
+                if (std::isfinite(value)) {
+                  const float clamped = std::clamp(value, 0.0f, 1.0f);
+                  emission = Vec3{clamped, clamped, clamped};
+                }
               }
             }
             if (!material_diagnostic && textures && material.emission_tex_id >= 0 &&
                 size_t(material.emission_tex_id) < textures->size()) {
               const auto& texture = (*textures)[size_t(material.emission_tex_id)];
-              const Vec3 texel = texture.apply_value_transform(footprint
-                  ? texture.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
-                  : texture.sample(u, v));
-              emission = Vec3{emission.x * texel.x, emission.y * texel.y, emission.z * texel.z};
+              Vec3 texel{1, 1, 1};
+              bool sampled = false;
+              if (texture.is_ptex) {
+                sampled = SampleGpuPtexBase(
+                    texture, size_t(material.emission_tex_id), s,
+                    triangle_positions, rays, w, h, spp, diagnostic_x,
+                    diagnostic_y, diagnostic_sp, hit, &texel, nullptr);
+              } else {
+                texel = texture.apply_value_transform(footprint
+                    ? texture.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                           kMaxAniso)
+                    : texture.sample(u, v));
+                sampled = true;
+              }
+              if (sampled)
+                emission = Vec3{emission.x * texel.x, emission.y * texel.y,
+                                emission.z * texel.z};
             }
             if (textures && material.opacity_tex.id >= 0 &&
                 size_t(material.opacity_tex.id) < textures->size()) {
               const auto& texture = (*textures)[size_t(material.opacity_tex.id)];
-              opacity *= (footprint
-                  ? texture.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso, int(material.opacity_tex.ch))
-                  : texture.sample_channel(u, v, 0, int(material.opacity_tex.ch))) *
-                  material.opacity_tex.scale + material.opacity_tex.bias;
+              float value = 1.0f;
+              bool sampled = false;
+              if (texture.is_ptex) {
+                sampled = ptex_scalar(texture, int(material.opacity_tex.ch),
+                                      &value);
+              } else {
+                value = footprint
+                    ? texture.sample_channel_aniso(
+                          u, v, dudx, dvdx, dudy, dvdy, kMaxAniso,
+                          int(material.opacity_tex.ch))
+                    : texture.sample_channel(u, v, 0,
+                                             int(material.opacity_tex.ch));
+                sampled = true;
+              }
+              if (sampled)
+                opacity *= value * material.opacity_tex.scale +
+                           material.opacity_tex.bias;
             }
           }
           if (material.opacity_threshold > 0.0f)
@@ -949,6 +1192,7 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                           : Vec3{0.5f, 0.5f, 0.5f};
             const ResolvedMat *mat = nullptr;
             Vec3 emission{0,0,0};
+            float roughness = 0.55f, metallic = 0.0f;
             if (materials && hit.prim_id < s.material_ids.size() &&
                 s.material_ids[hit.prim_id] < materials->size()) {
               mat = &(*materials)[s.material_ids[hit.prim_id]];
@@ -963,22 +1207,48 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                 v=s.tri_uvs[uv+1]*w0+s.tri_uvs[uv+3]*hit.u+s.tri_uvs[uv+5]*hit.v;
                 mat->uv_xform.apply(&u,&v);
               }
+              auto sample_scalar = [&](const ScalarTex &lane, float fallback) {
+                if (!textures || lane.id < 0 ||
+                    size_t(lane.id) >= textures->size())
+                  return fallback;
+                const Texture &texture = (*textures)[size_t(lane.id)];
+                float value = fallback;
+                bool sampled = false;
+                if (texture.is_ptex) {
+                  sampled = SampleGpuPtexScalar(
+                      texture, s, triangle_positions, rays, w, h, spp, x, y, sp,
+                      hit, int(lane.ch), &value);
+                } else if (have_uv) {
+                  value = texture.sample_channel(u, v, 0, int(lane.ch));
+                  sampled = true;
+                }
+                return sampled ? value * lane.scale + lane.bias : fallback;
+              };
+              roughness = sample_scalar(mat->rough_tex, mat->roughness);
+              metallic = sample_scalar(mat->metal_tex, mat->metallic);
               if(textures && mat->tex_id>=0 && size_t(mat->tex_id)<textures->size()) {
                 const Texture& texture=(*textures)[size_t(mat->tex_id)];
                 Vec3 texel{1,1,1};
                 bool sampled=false;
                 if(texture.is_ptex) {
-                  sampled=SampleGpuPtexBase(texture,size_t(mat->tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel,probe);
+                  sampled=SampleGpuPtexBase(texture,size_t(mat->tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel,&probe);
                 } else if(have_uv) {
                   texel=texture.apply_value_transform(texture.sample(u,v));
                   sampled=true;
                 }
                 if(sampled) bc=Vec3{bc.x*texel.x,bc.y*texel.y,bc.z*texel.z};
               }
-              if(have_uv && textures && mat->emission_tex_id>=0 && size_t(mat->emission_tex_id)<textures->size()) {
+              if(textures && mat->emission_tex_id>=0 && size_t(mat->emission_tex_id)<textures->size()) {
                 const Texture& texture=(*textures)[size_t(mat->emission_tex_id)];
-                const Vec3 texel=texture.apply_value_transform(texture.sample(u,v));
-                emission=Vec3{emission.x*texel.x,emission.y*texel.y,emission.z*texel.z};
+                Vec3 texel{1,1,1};
+                bool sampled=false;
+                if(texture.is_ptex) {
+                  sampled=SampleGpuPtexBase(texture,size_t(mat->emission_tex_id),s,triangle_positions,rays,w,h,spp,x,y,sp,hit,&texel,nullptr);
+                } else if(have_uv) {
+                  texel=texture.apply_value_transform(texture.sample(u,v));
+                  sampled=true;
+                }
+                if(sampled) emission=Vec3{emission.x*texel.x,emission.y*texel.y,emission.z*texel.z};
               }
             }
 
@@ -1007,8 +1277,6 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
             // when the key grazes the surface; ambient lifts the shadow terminator.
             float key = std::max(0.0f, Dot(N, light));
             float head = std::max(0.0f, Dot(N, V));
-            const float roughness = mat ? mat->roughness : 0.55f;
-            const float metallic = mat ? mat->metallic : 0.0f;
             const float diffuse = (ambient + 0.8f * key + 0.25f * head) *
                                   (1.0f - metallic);
             const float specular = std::pow(head, 2.0f +

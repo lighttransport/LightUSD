@@ -90,7 +90,7 @@ vec2 swGeomPropBc = vec2(0.0);
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
   int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
-  int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip;
+  int ptexRectTexelOffset; int ptexFaceCount; int ptexMipLevels; int mipCount; int firstMip;
   int imageSlot; int udimLayer[100];
 };
 layout(set = 0, binding = 11, scalar) readonly buffer RtTexels { uint texelWords[]; };
@@ -369,7 +369,7 @@ vec2 swPtexUv(RtTexDesc td, vec2 uv, uint face) {
   if (td.isPtex == 0 || face >= uint(td.ptexFaceCount)) return uv;
   uint value[4];
   for (uint c = 0u; c < 4u; ++c) {
-    uint lo = uint(td.offset / 4 + td.ptexRectTexelOffset) + face * 8u + c * 2u;
+    uint lo = uint(td.offset / 4 + td.ptexRectTexelOffset) + face * 10u + c * 2u;
     value[c] = ((texelWords[lo] >> 24u) & 255u) |
               (((texelWords[lo + 1u] >> 24u) & 255u) << 8u);
   }

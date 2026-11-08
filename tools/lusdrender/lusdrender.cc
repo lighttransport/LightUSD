@@ -798,11 +798,63 @@ static bool ExtractCurveProto(const Options& opt,
 // the world transform (the instance transform is applied by the TLAS).
 // Displacement IS applied here (once per prototype, in object space — the
 // instance transform scales it, like any other prototype-local geometry).
-static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
-                            const Options& opt, TextureCache& tc,
-                            const lightusd::next::UsdPrim& prim,
-                            const lightusd::next::EvalOptions& evaluation,
-                            GpuInstProto* out) {
+static bool EndsWithPtxPath(const std::string &path) {
+  if (path.size() < 4) return false;
+  std::string ext = path.substr(path.size() - 4);
+  for (char &c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return ext == ".ptx";
+}
+
+// Cheap material-subtree scan: does any authored asset property name a .ptx?
+// This avoids resolving/loading ordinary image textures for the many
+// non-Ptex prototypes in an Island-scale instanced scene.
+static bool PrimSubtreeHasPtex(const lightusd::next::UsdPrim &prim) {
+  if (!prim.IsValid()) return false;
+  for (const std::string &name : prim.GetPropertyNames()) {
+    const lightusd::next::Value *value = prim.GetPropertyValue(name);
+    if (!value) continue;
+    std::optional<std::string> asset = value->as_asset_path();
+    if (!asset) asset = value->as_string();
+    if (asset && EndsWithPtxPath(*asset)) return true;
+  }
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+    if (PrimSubtreeHasPtex(child)) return true;
+  return false;
+}
+
+static bool ExtractProtoGeo(
+    const lightusd::next::Stage& stage, const Options& opt, TextureCache& tc,
+    std::unordered_map<std::string, ResolvedMat>& material_cache,
+    std::unordered_map<std::string, bool>& ptex_material_cache,
+    const lightusd::next::UsdPrim& prim,
+    const lightusd::next::EvalOptions& evaluation, GpuInstProto* out) {
+  // Resolve the prototype's base-colour material only when its subtree binds a
+  // .ptx. The instanced path previously carried only primvars:displayColor, so
+  // a Ptex-bound material rendered with its constant fallback.
+  const std::string material_path =
+      lightusd::next::GetInheritedBoundMaterialPath(stage,
+                                                    prim.GetPath().str());
+  bool has_ptex = false;
+  if (!material_path.empty()) {
+    auto cached = ptex_material_cache.find(material_path);
+    if (cached != ptex_material_cache.end()) {
+      has_ptex = cached->second;
+    } else {
+      has_ptex = PrimSubtreeHasPtex(stage.GetPrimAtPath(material_path));
+      ptex_material_cache.emplace(material_path, has_ptex);
+    }
+  }
+  if (has_ptex) {
+    MeshJobNext resolved;
+    resolved.prim = prim;
+    ResolveMeshMaterialCached(stage, prim, tc, material_cache, &resolved);
+    if (resolved.tex_id >= 0 && tc.textures &&
+        size_t(resolved.tex_id) < tc.textures->size() &&
+        (*tc.textures)[size_t(resolved.tex_id)].is_ptex) {
+      out->ptex_tex_id = resolved.tex_id;
+    }
+  }
+  const bool want_ptex = out->ptex_tex_id >= 0;
   uint32_t nv = 0;
   std::vector<Vec3> vn;
   bool perVertexN = false;
@@ -877,7 +929,8 @@ static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
         skin_normals.clear();
       }
     }
-    auto append_triangle = [&](size_t a, size_t b, size_t c, size_t face) {
+    auto append_triangle = [&](size_t a, size_t b, size_t c, size_t face,
+                               int32_t face_count, int32_t fan_index) {
       Vec3 ns[3]{};
       const size_t corners[] = {a, b, c};
       for (size_t k = 0; k < 3; ++k) {
@@ -904,6 +957,15 @@ static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
         out->vn1.push_back(ns[1]);
         out->vn2.push_back(ns[2]);
       }
+      if (want_ptex) {
+        // Same intrinsic mapping as the flat/chunked paths: a quad's two fan
+        // triangles carry (face, fan_triangle); non-quads are invalid.
+        out->ptex_tri.push_back(
+            face_count == 4
+                ? MakePtexTriRef(uint32_t(face),
+                                 int(fan_index) - 1, false)
+                : kPtexTriInvalid);
+      }
       return true;
     };
     const auto* idx = &index_values;
@@ -922,7 +984,7 @@ static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
         if (c >= 3 && !holes.count(static_cast<int32_t>(face))) {
           for (int k = 1; k + 1 < c; ++k)
             if (!append_triangle(off, off + size_t(k), off + size_t(k) + 1,
-                                 face))
+                                 face, c, k))
               return false;
         }
         off += size_t(c < 0 ? 0 : c);
@@ -932,7 +994,8 @@ static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
     } else {
       if (idx->size() % 3 != 0) return false;
       for (size_t off = 0; off < idx->size(); off += 3)
-        if (!append_triangle(off, off + 1, off + 2, off / 3)) return false;
+        if (!append_triangle(off, off + 1, off + 2, off / 3, 3, 1))
+          return false;
     }
   }
   if (const auto* orientation = prim.GetPropertyValue("orientation")) {
@@ -941,6 +1004,9 @@ static bool ExtractProtoGeo(const lightusd::next::Stage& stage,
       for (size_t t = 0; t + 2 < out->idx.size(); t += 3) {
         std::swap(out->idx[t + 1], out->idx[t + 2]);
         if (!out->vn1.empty()) std::swap(out->vn1[t / 3], out->vn2[t / 3]);
+        if (t / 3 < out->ptex_tri.size() &&
+            out->ptex_tri[t / 3] != kPtexTriInvalid)
+          out->ptex_tri[t / 3] ^= 2u;  // winding swapped
       }
   }
   // Drop any triangle that indexes a vertex out of range (the BLAS build sets
@@ -1059,6 +1125,7 @@ static void ChunkProto(const GpuInstProto& src, uint32_t chunk,
     const uint32_t t1 = std::min((c + 1u) * chunk, src.ntris);
     GpuInstProto sub;
     sub.base_color = src.base_color;
+    sub.ptex_tex_id = src.ptex_tex_id;
     sub.ntris = t1 - t0;
     sub.idx.reserve(size_t(t1 - t0) * 3);
     std::unordered_map<uint32_t, uint32_t> remap;
@@ -1079,6 +1146,7 @@ static void ChunkProto(const GpuInstProto& src, uint32_t chunk,
         sub.idx.push_back(nvid);
       }
       if (!src.normals.empty()) sub.normals.push_back(src.normals[t]);
+      if (!src.ptex_tri.empty()) sub.ptex_tri.push_back(src.ptex_tri[t]);
       if (!src.vn0.empty()) {
         sub.vn0.push_back(src.vn0[t]);sub.vn1.push_back(src.vn1[t]);sub.vn2.push_back(src.vn2[t]);
       }
@@ -1110,11 +1178,13 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // for testing the split path on small meshes). A larger prototype is chunked.
   const uint32_t chunk = opt.inst_chunk_tris;
 
-  // Displacement textures for prototype extraction (loaded relative to the input;
-  // shared/cached across prototypes). Same setup as the flat GPU path.
-  std::vector<lusdr::Texture> disp_textures;
+  // Material textures for prototype extraction (base colour/Ptex and
+  // displacement), loaded relative to the input and shared across prototypes.
+  std::vector<lusdr::Texture> material_textures;
+  std::unordered_map<std::string, ResolvedMat> material_cache;
+  std::unordered_map<std::string, bool> ptex_material_cache;
   TextureCache tc;
-  tc.textures = &disp_textures;
+  tc.textures = &material_textures;
   tc.base_dir = DirName(opt.input);
   tc.usdz = nullptr;
   tc.options = &opt;
@@ -1149,7 +1219,8 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
     const std::vector<uint32_t> *subs = nullptr;
     if (it == proto_id.end()) {
       GpuInstProto pr;
-      if (!ExtractProtoGeo(stage, opt, tc, prim, evaluation, &pr)) {
+      if (!ExtractProtoGeo(stage, opt, tc, material_cache, ptex_material_cache,
+                           prim, evaluation, &pr)) {
         const auto* points = prim.GetPropertyValue("points");
         if (points && points->is_array() && points->array_size() > 0) {
           std::cerr << "[vkInstanced] failed prototype: " << key << " points=" << points->array_size()
@@ -1353,9 +1424,24 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
     scene.protos.swap(kept);
   }
 
+  if (opt.stats) {
+    size_t ptex_protos = 0, ptex_tris = 0;
+    for (const GpuInstProto &pr : scene.protos) {
+      if (pr.ptex_tex_id < 0) continue;
+      ++ptex_protos;
+      for (uint32_t ref : pr.ptex_tri)
+        if (ref != kPtexTriInvalid) ++ptex_tris;
+    }
+    std::cerr << "[vkInstanced] ptex prototypes=" << ptex_protos
+              << " triangles_with_face=" << ptex_tris
+              << " textures=" << material_textures.size() << "\n";
+  }
   // Once GPU construction starts, failure must be reported to the caller.
   // Falling back can hide device loss and expand an already oversized scene.
-  return RunVulkanLightRTInstanced(opt, scene, camera, out_height) ? 1 : -1;
+  return RunVulkanLightRTInstanced(opt, scene, material_textures, camera,
+                                   out_height)
+             ? 1
+             : -1;
 }
 #endif  // HAVE_VULKAN
 
@@ -1609,6 +1695,9 @@ int main(int argc, char **argv) {
     return RunRTPreviewNext(opt);
   }
 
+  // PrimId is intentionally not in this gate: the next CPU path owns the
+  // prim-id sidecar map, while the vkr data path writes numeric AOVs. Depth and
+  // the two normal channels are the supported vkr diagnostics.
   const bool gpu_data_aov = opt.aov_explicit && opt.vulkan &&
       !opt.path_trace && !opt.legacy_load &&
       opt.subdivision_level == 0 && opt.samples == 1 &&
@@ -1906,14 +1995,26 @@ int main(int argc, char **argv) {
                   (face < job.subset_faces.size() && job.subset_faces[face])) &&
                  !holes.count(static_cast<int32_t>(face));
         };
-        // Ptex: when the bound base-color texture is a Ptex atlas, record per
-        // triangle (face id, three intrinsic corner uv, valid) so the descriptor
-        // shader can address the face rectangle. Faces are the authored USD
-        // faces; quads use the ordinal uvs lusdview uses (0,1)(1,1)(1,0)(0,0)
-        // and sample with y = 1 - v. Non-quad faces get a zeroed (invalid) entry.
-        const bool want_ptex = job.tex_id >= 0 &&
-            size_t(job.tex_id) < gpu_textures.size() &&
-            gpu_textures[size_t(job.tex_id)].is_ptex;
+        // Ptex: when ANY material lane binds a Ptex atlas, record per triangle
+        // (face id, three intrinsic corner uv, valid) so the descriptor shader
+        // can address the face rectangle. The shader's sampleTexture() routes
+        // every Ptex lane through the same hit face/UV, not only base colour.
+        // Faces are the authored USD faces; quads use the ordinal uvs lusdview
+        // uses (0,1)(1,1)(1,0)(0,0) and sample with y = 1 - v. Non-quad faces
+        // get a zeroed (invalid) entry.
+        const auto is_ptex = [&](int32_t id) {
+          return id >= 0 && size_t(id) < gpu_textures.size() &&
+                 gpu_textures[size_t(id)].is_ptex;
+        };
+        const bool want_ptex =
+            is_ptex(job.tex_id) || is_ptex(job.normal_tex_id) ||
+            is_ptex(job.coat_normal_tex_id) || is_ptex(job.rough_tex.id) ||
+            is_ptex(job.metal_tex.id) || is_ptex(job.emission_tex_id) ||
+            is_ptex(job.occ_tex.id) || is_ptex(job.opacity_tex.id) ||
+            is_ptex(job.clearcoat_tex.id) ||
+            is_ptex(job.clearcoat_rough_tex.id) ||
+            is_ptex(job.specular_tex_id) ||
+            is_ptex(job.displacement_tex.id);
         const auto push_ptex = [&](size_t face, int32_t count, int32_t k) {
           if (!want_ptex) return;
           geo.ptex_tri.push_back(count == 4 ? MakePtexTriRef(uint32_t(face), k - 1, false)

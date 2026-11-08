@@ -38,14 +38,14 @@ void RestorePtexRectMetadata(light3d::Image* image,
   const size_t texelCount = static_cast<size_t>(image->width) *
                             static_cast<size_t>(image->height);
   const size_t first = tex.ptexRectTexelOffset;
-  const size_t count = tex.ptexFaceRects.size() * 8u;
+  const size_t count = tex.ptexFaceRects.size() * 10u;
   if (first > texelCount || count > texelCount - first) return;
-  for (uint32_t face = 0;
-       face < static_cast<uint32_t>(tex.ptexFaceRects.size()); ++face) {
-    uint8_t encoded[8u * 4u];
-    EncodePtexFaceRectTexels(tex.ptexFaceRects[face], encoded);
-    for (size_t byte = 0; byte < 8u; ++byte) {
-      const size_t linear = first + static_cast<size_t>(face) * 8u + byte;
+  for (uint32_t entry = 0;
+       entry < static_cast<uint32_t>(tex.ptexFaceRects.size()); ++entry) {
+    uint8_t encoded[10u * 4u];
+    EncodePtexFaceRectTexels(tex.ptexFaceRects[entry], encoded);
+    for (size_t byte = 0; byte < 10u; ++byte) {
+      const size_t linear = first + static_cast<size_t>(entry) * 10u + byte;
       image->data[linear * 4u + 3u] = encoded[byte * 4u + 3u];
     }
   }
@@ -949,7 +949,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.ptexRows = tex.ptexAtlasRows;
       td.ptexTileEdge = static_cast<int>(tex.ptexTileEdge);
       td.ptexRectTexelOffset = static_cast<int>(tex.ptexRectTexelOffset);
-      td.ptexFaceCount = static_cast<int>(tex.ptexFaceRects.size());
+      td.ptexFaceCount = static_cast<int>(tex.ptexFaces);
+      td.ptexMipLevels = static_cast<int>(tex.ptexMipLevels);
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
       td.imageSlot = tex.isPtex ? sourceSlot : -1;

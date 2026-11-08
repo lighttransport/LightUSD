@@ -3998,15 +3998,16 @@ bool AppendPtexFaceTableUpdates(
       texture.image.width <= 0) {
     return false;
   }
-  uint8_t texels[8u * 4u];
+  uint8_t texels[10u * 4u];
   EncodePtexFaceRectTexels(rect, texels);
-  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * 8u;
+  const size_t stride = size_t(std::max(1u, texture.ptexMipLevels)) * 10u;
+  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * stride;
   size_t consumed = 0;
-  while (consumed < 8u) {
+  while (consumed < 10u) {
     const int x = static_cast<int>(linear % size_t(texture.image.width));
     const int y = static_cast<int>(linear / size_t(texture.image.width));
     const int count = static_cast<int>(
-        std::min<size_t>(8u - consumed, size_t(texture.image.width - x)));
+        std::min<size_t>(10u - consumed, size_t(texture.image.width - x)));
     Renderer::TextureRegionUpdate update;
     update.x = x;
     update.y = y;

@@ -88,6 +88,12 @@ struct GpuInstProto {
   std::vector<Vec3> normals;         // per-tri flat face normal (prototype space)
   std::vector<Vec3> vn0, vn1, vn2;   // per-tri vertex normals (prototype space)
   Vec3 base_color{0.5f, 0.5f, 0.5f};
+  // Ptex base-colour lane: per-triangle face reference (parallel to idx/3) and
+  // the resolved lazy texture id. Empty/-1 when the prototype's material does
+  // not bind a Ptex base colour. The instanced path uses mip 0; the chunked and
+  // descriptor paths retain their per-face mip/footprint logic.
+  std::vector<uint32_t> ptex_tri;
+  int32_t ptex_tex_id{-1};
 };
 struct GpuInstPlacement {
   float o2w[12];  // object->world 3x4 row-major (world = M*[p;1])
@@ -105,8 +111,10 @@ struct GpuInstancedScene {
 // the image. Sets scene.stride from the build. Returns false (leaving the scene
 // untouched) when ray query is unavailable or the build fails, so the caller can
 // fall back to the flat path. Defined only under HAVE_VULKAN.
-bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
-                               const CameraFrame &camera, int height);
+bool RunVulkanLightRTInstanced(
+    const Options &opt, GpuInstancedScene &scene,
+    const std::vector<lusdr::Texture> &textures, const CameraFrame &camera,
+    int height);
 
 // One traced primary-ray sample already decoded to two-level scene coordinates:
 // `inst` = placement index, `local` = prototype-local triangle, (u,v) = hit
@@ -124,10 +132,11 @@ struct InstSampleHit {
 // triangle and transform its object-space normal by the instance's normal matrix.
 // Same lighting model + spp averaging as ShadeAndWriteImage. `hits` is indexed
 // identically to `rays` ((y*w+x)*spp + s). Returns false on write failure.
-bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
-                                 const std::vector<lrt_ray> &rays,
-                                 const std::vector<InstSampleHit> &hits, int w,
-                                 int h, int spp);
+bool ShadeAndWriteImageInstanced(
+    const Options &opt, const GpuInstancedScene &s,
+    const std::vector<lusdr::Texture> &textures,
+    const std::vector<lrt_ray> &rays, const std::vector<InstSampleHit> &hits,
+    int w, int h, int spp);
 
 // Generate w*h*spp primary rays for `camera`, ray index = (y*w + x)*spp + s,
 // each sample offset by a Halton(2,3) sub-pixel jitter for anti-aliasing.
