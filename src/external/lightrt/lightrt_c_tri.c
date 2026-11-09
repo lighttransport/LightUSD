@@ -750,12 +750,23 @@ typedef struct tri_build_ctx {
  * pages a multi-MB structure overwhelms the dTLB, with 2MB pages it fits. */
 #define TRI_HUGE_PAGE_SIZE (2u * 1024u * 1024u)
 
+/* C11 aligned_alloc is only in Bionic from API 28; older Android targets use
+ * posix_memalign (available on every API level, released with free() too). */
+static void *tri_c11_aligned_alloc(size_t align, size_t size) {
+#if defined(__ANDROID__) && defined(__ANDROID_API__) && __ANDROID_API__ < 28
+    void *p = NULL;
+    return posix_memalign(&p, align, size) == 0 ? p : NULL;
+#else
+    return aligned_alloc(align, size);
+#endif
+}
+
 static void *tri_aligned_alloc(size_t align, size_t size) {
 #if defined(__linux__) && defined(MADV_HUGEPAGE) && !defined(LRT_TRI_NO_HUGEPAGE)
     if (size >= TRI_HUGE_PAGE_SIZE) {
         size_t a = TRI_HUGE_PAGE_SIZE;
         size_t sz = (size + a - 1u) & ~(a - 1u);
-        void *p = aligned_alloc(a, sz);
+        void *p = tri_c11_aligned_alloc(a, sz);
         if (p) {
             (void)madvise(p, sz, MADV_HUGEPAGE);
             return p;
@@ -769,7 +780,7 @@ static void *tri_aligned_alloc(size_t align, size_t size) {
      * _aligned_malloc/_aligned_free pair (declared in <malloc.h>). */
     return _aligned_malloc(size, align);
 #else
-    return aligned_alloc(align, size);
+    return tri_c11_aligned_alloc(align, size);
 #endif
 }
 
