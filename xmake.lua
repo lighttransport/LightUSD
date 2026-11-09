@@ -3,7 +3,7 @@
 
 set_xmakever("2.7.0")
 set_project("lightusd")
-set_version("1.0.0-rc4")
+set_version("1.0.0")
 
 set_languages("c11", "c++17")
 

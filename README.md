@@ -23,8 +23,9 @@ for untrusted assets. MCP interface provided.
 
 ## Releases
 
-* v1.0.0 RC (main)
-  * Will be 26.09 or 26.10
+* v1.0.0 (26.11)
+  * First stable release.
+  * Add Lean formalization of the USD (AOUSD Core) spec: https://usdspec-conformance.lighttransport.workers.dev/
 
 ## Packages
 

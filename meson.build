@@ -2,7 +2,7 @@
 # Source list synchronized with CMakeLists.txt
 
 project('lightusd', ['c', 'cpp'],
-  version: '1.0.0-rc4',
+  version: '1.0.0',
   default_options: [
     'cpp_std=c++17',
     'c_std=c11',

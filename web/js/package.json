@@ -1,7 +1,7 @@
 {
   "name": "lightusd",
   "private": false,
-  "version": "1.0.0-rc4",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev:webgpu-mtlx": "vite --config vite.webgpu-mtlx.config.mjs --open /webgpu-mtlx.html",

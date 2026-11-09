@@ -94,7 +94,7 @@ namespace next {
 constexpr int version_major = 1;
 constexpr int version_minor = 0;
 constexpr int version_micro = 0;
-constexpr const char* version_string = "1.0.0-rc4";
+constexpr const char* version_string = "1.0.0";
 
 
 }  // namespace next
