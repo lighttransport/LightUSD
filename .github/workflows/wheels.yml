@@ -67,6 +67,15 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build --sdist
 
+      # cibuildwheel builds from the checkout, so a source file missing from
+      # MANIFEST.in only breaks users installing from the sdist. Build (and
+      # import) a wheel from the sdist itself to catch that before publishing.
+      - name: Build wheel from sdist
+        run: |
+          python -m pip wheel --no-deps -w sdist-wheel dist/*.tar.gz
+          python -m pip install sdist-wheel/*.whl
+          cd "$RUNNER_TEMP" && python -c "import lightusd; print('lightusd', lightusd.__version__)"
+
       - uses: actions/upload-artifact@v6
         with:
           name: sdist

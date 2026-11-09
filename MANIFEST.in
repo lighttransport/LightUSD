@@ -60,11 +60,13 @@ prune src/osd
 prune src/tydra/mcp
 prune tools
 prune subprojects
+prune @draft
+exclude resume-*.md
 prune scripts
 exclude src/*.cc src/*.cpp
 # Transitive standalone-next inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
-recursive-include src *.h *.hh *.hpp *.inc *.txt
+recursive-include src *.h *.hh *.hpp *.inc *.inl *.txt
 include src/core/color-transform.cc src/core/logger.cc src/core/minijson.cc
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/core/mtlx-dom.cc
 include src/ptx-loader.cc
@@ -72,6 +74,15 @@ recursive-include src/external/textools/ptex/src *.c
 include src/core/path-expression.cc src/core/path-expression-eval.cc
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
+# Configure-time inputs: src/next and tydra-next CMake define these targets
+# even though the wheel only builds the four library targets, so every source
+# they list must exist in the sdist (a missing file fails `cmake -S`).
+include src/core/host-services.cc src/image-loader.cc src/image-writer.cc src/io-util.cc src/usdVol.cc
+include tests/next/lusdcat.cc
+recursive-include src/external/tinyvdb *.c *.h
+recursive-include src/external/mimalloc *.c *.h
+recursive-include tools/lusdpreview *.cc *.hh *.h
+recursive-include cmake *.cmake
 
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__
