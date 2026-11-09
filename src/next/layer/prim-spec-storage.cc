@@ -4,6 +4,7 @@
 // LightUSD Next - PrimSpec Implementation
 
 #include "prim-spec.hh"
+#include "layer.hh"
 #include "int64-listop.hh"
 #include "../prim/identifier.hh"
 #include "core/safe-arithmetic.hh"
