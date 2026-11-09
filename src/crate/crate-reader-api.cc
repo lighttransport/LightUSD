@@ -275,6 +275,14 @@ const std::vector<uint32_t>& CrateReader::fieldset_indices() const {
   return impl_->fieldset_indices();
 }
 
+const CrateTOC& CrateReader::toc() const {
+  return impl_->toc();
+}
+
+const std::vector<uint32_t>& CrateReader::string_indices() const {
+  return impl_->string_indices();
+}
+
 bool IsUSDCData(const uint8_t* data, size_t size) {
   if (!data || size < 8) return false;
   return std::memcmp(data, kCrateMagic, 8) == 0;

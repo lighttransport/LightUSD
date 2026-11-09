@@ -33,7 +33,7 @@ def main():
         return base
 
     def run(tool, *argv, code=0):
-        path = find_tool("tools/lusddumpcrate/lusddumpcrate" if tool == "lusddumpcrate" else tool)
+        path = find_tool(tool)
         result = subprocess.run([str(path), *map(str, argv)], text=True, capture_output=True)
         assert result.returncode == code, (tool, argv, result.returncode, result.stdout, result.stderr)
         return result.stdout

@@ -158,6 +158,12 @@ public:
   /// Get fieldset-indices table (flattened; 0xFFFFFFFF terminates each set)
   const std::vector<uint32_t>& fieldset_indices() const;
 
+  /// Table of contents (section names, file offsets and sizes)
+  const CrateTOC& toc() const;
+
+  /// STRINGS table: each entry is an index into the tokens table
+  const std::vector<uint32_t>& string_indices() const;
+
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;

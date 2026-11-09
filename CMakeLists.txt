@@ -145,6 +145,7 @@ option(LIGHTUSD_BUILD_TOOLS "Build command-line tools (lusdchecker, ...)" OFF)
 if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusdchecker)
   add_subdirectory(tools/lusddeps)
+  add_subdirectory(tools/lusddumpcrate)
 endif()
 option(LIGHTUSD_BUILD_QUICKLOOK
        "Build the minimal portable USD Quick Look viewer 'lusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."

@@ -252,6 +252,8 @@ class CrateReader::Impl {
   std::vector<std::string> paths() const { return paths_.to_vector(); }
   const std::vector<CrateField>& fields() const { return fields_; }
   const std::vector<CrateSpec>& specs() const { return specs_; }
+  const CrateTOC& toc() const { return toc_; }
+  const std::vector<uint32_t>& string_indices() const { return string_indices_; }
   const std::vector<uint32_t>& fieldset_indices() const {
     return fieldset_indices_;
   }

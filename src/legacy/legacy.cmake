@@ -2138,7 +2138,7 @@ endif()
 
 # Tools
 if(LIGHTUSD_BUILD_TOOLS)
-  add_subdirectory(tools/lusddumpcrate)
+  # tools/lusddumpcrate is a core tool, added by the root CMakeLists.txt.
   add_subdirectory(tools/lusdzconvert)
   # tools/lusdchecker is a core tool, added by the root CMakeLists.txt.
   # tools/lusddeps is a core tool, added by the root CMakeLists.txt.

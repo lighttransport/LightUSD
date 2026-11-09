@@ -15,21 +15,97 @@
 #include <cstring>
 #include <sstream>
 #include "core/minijson.hh"
-
-// LightUSD reader headers
-#include "lightusd.hh"
-#include "usdc-reader.hh"
-#include "stream-reader.hh"
-#include "crate-format.hh"
-#include "crate-reader.hh"
-#include "value-types.hh"
-#include "core/prim.hh"
-#include "core/prim-spec.hh"
+#include "crate/crate-format.hh"
+#include "crate/crate-reader.hh"
 
 using namespace lightusd;
 
-using namespace lightusd::legacy;  // NOLINT
-using namespace lightusd::legacy::crate;
+namespace {
+
+// Tables of a parsed crate, in the shape the dumper below walks. The core
+// CrateReader keeps tokens/paths as strings and indices as plain uint32.
+struct TokenView {
+  std::string s;
+  const std::string& str() const { return s; }
+};
+struct IndexView {
+  uint32_t value;
+};
+struct CratePathView {
+  std::string prim;
+  std::string prop;
+  const std::string& full_path_name() const { return prim; }
+  const std::string& prop_part() const { return prop; }
+};
+
+// The core reader pools paths in its internal form: prim paths as "/A/B",
+// property paths as ".A/B/prop" (leading '.', property name as the last
+// component). Turn the latter into "/A/B.prop" + "prop".
+// Variant selections are pooled as their own component ("/A/{v=x}/B"); SdfPath
+// text attaches them to the prim ("/A{v=x}/B"), as the legacy dump did.
+std::string SdfVariantText(std::string p) {
+  size_t pos = 0;
+  while ((pos = p.find("/{", pos)) != std::string::npos) p.erase(pos, 1);
+  return p;
+}
+
+CratePathView SplitCratePath(const std::string& raw) {
+  const std::string p = SdfVariantText(raw);
+  CratePathView v;
+  if (p.empty()) {  // unused slot (e.g. index 0 of a pathless table)
+    v.prim = "#INVALID#";
+    return v;
+  }
+  if (p.empty() || p[0] != '.') {
+    v.prim = p;
+    return v;
+  }
+  const size_t slash = p.rfind('/');
+  if (slash == std::string::npos) {
+    v.prim = "/";
+    v.prop = p.substr(1);
+  } else {
+    v.prim = p.substr(1, slash - 1);  // ".A/B/prop" -> "/A/B"
+    v.prop = p.substr(slash + 1);
+  }
+  if (v.prim.empty() || v.prim[0] != '/') v.prim.insert(0, "/");
+  // Match SdfPath text: the full name of a property path includes ".prop".
+  v.prim += "." + v.prop;
+  return v;
+}
+
+class CrateTables {
+ public:
+  explicit CrateTables(const CrateReader& r) : reader_(r) {
+    for (auto& t : r.tokens()) tokens_.push_back(TokenView{t});
+    for (auto& p : r.paths()) paths_.push_back(SplitCratePath(p));
+    for (uint32_t i : r.string_indices()) strings_.push_back(IndexView{i});
+    for (uint32_t i : r.fieldset_indices()) fieldsets_.push_back(IndexView{i});
+  }
+  const std::vector<TokenView>& GetTokens() const { return tokens_; }
+  const std::vector<CratePathView>& GetPaths() const { return paths_; }
+  const std::vector<IndexView>& GetStringIndices() const { return strings_; }
+  const std::vector<IndexView>& GetFieldsetIndices() const { return fieldsets_; }
+  const std::vector<CrateField>& GetFields() const { return reader_.fields(); }
+  const std::vector<CrateSpec>& GetSpecs() const { return reader_.specs(); }
+
+ private:
+  const CrateReader& reader_;
+  std::vector<TokenView> tokens_;
+  std::vector<CratePathView> paths_;
+  std::vector<IndexView> strings_;
+  std::vector<IndexView> fieldsets_;
+};
+
+// Name of a crate value type code, or nullptr for an invalid code.
+const char* CrateTypeName(int code) {
+  if (code <= 0 || code > 255) return nullptr;
+  const char* n = CrateTypeIdName(static_cast<CrateTypeId>(code));
+  if (!n || !*n || std::strcmp(n, "Invalid") == 0) return nullptr;
+  return n;
+}
+
+}  // namespace
 
 enum class OutputFormat {
   YAML,
@@ -89,7 +165,6 @@ static std::string GetSpecTypeName(SpecType type) {
     case SpecType::RelationshipTarget: return "RelationshipTarget";
     case SpecType::Variant: return "Variant";
     case SpecType::VariantSet: return "VariantSet";
-    case SpecType::Invalid: return "Invalid";
     default: return "Unknown_" + std::to_string(static_cast<int>(type));
   }
 }
@@ -116,56 +191,19 @@ public:
     ifs.read(reinterpret_cast<char*>(data.data()), file_size);
     ifs.close();
 
-    // Create stream reader
-    StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-
-    // Create crate reader config
-    CrateReaderConfig config;
-    config.numThreads = 1;
-
-    // Create crate reader
-    CrateReader reader(&sr, config);
-
-    // Read all sections
-    if (!reader.ReadBootStrap()) {
-      std::cerr << "Error: Failed to read bootstrap" << std::endl;
+    // Parse with the core crate reader (single-threaded; the dump only
+    // needs the low-level tables it keeps).
+    CrateReadOptions read_opts;
+    read_opts.num_threads = 1;
+    CrateReader crate(read_opts);
+    const CrateReadResult result = crate.Read(data.data(), data.size());
+    if (!result.success) {
+      std::cerr << "Error: Failed to read crate";
+      if (!result.errors.empty()) std::cerr << ": " << result.errors.front().message;
+      std::cerr << std::endl;
       return false;
     }
-
-    if (!reader.ReadTOC()) {
-      std::cerr << "Error: Failed to read TOC" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadTokens()) {
-      std::cerr << "Error: Failed to read tokens" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadStrings()) {
-      std::cerr << "Error: Failed to read strings" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadFields()) {
-      std::cerr << "Error: Failed to read fields" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadFieldSets()) {
-      std::cerr << "Error: Failed to read fieldsets" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadPaths()) {
-      std::cerr << "Error: Failed to read paths" << std::endl;
-      return false;
-    }
-
-    if (!reader.ReadSpecs()) {
-      std::cerr << "Error: Failed to read specs" << std::endl;
-      return false;
-    }
+    const CrateTables reader(crate);
 
     // Start output
     if (opts_.format == OutputFormat::YAML) {
@@ -178,7 +216,7 @@ public:
   }
 
 private:
-  void DumpYAML(const CrateReader& reader, const uint8_t* data, size_t size) {
+  void DumpYAML(const CrateTables& reader, const uint8_t* data, size_t size) {
     out() << "usdc_crate:" << std::endl;
     indent_++;
 
@@ -253,7 +291,7 @@ private:
     indent_--;
   }
 
-  void DumpTOCYAML(const CrateReader& reader, const uint8_t* data, size_t size) {
+  void DumpTOCYAML(const CrateTables& reader, const uint8_t* data, size_t size) {
     out() << "table_of_contents:" << std::endl;
     indent_++;
 
@@ -319,7 +357,7 @@ private:
     indent_--;
   }
 
-  void DumpTokensYAML(const CrateReader& reader) {
+  void DumpTokensYAML(const CrateTables& reader) {
     out() << "tokens:" << std::endl;
     indent_++;
 
@@ -354,7 +392,7 @@ private:
     indent_--;
   }
 
-  void DumpStringsYAML(const CrateReader& reader) {
+  void DumpStringsYAML(const CrateTables& reader) {
     out() << "strings:" << std::endl;
     indent_++;
 
@@ -388,7 +426,7 @@ private:
     indent_--;
   }
 
-  void DumpFieldsYAML(const CrateReader& reader) {
+  void DumpFieldsYAML(const CrateTables& reader) {
     out() << "fields:" << std::endl;
     indent_++;
 
@@ -438,29 +476,28 @@ private:
     indent_--;
   }
 
-  void DumpValueRepYAML(const ValueRep& rep, const CrateReader& reader) {
-    out() << "data: 0x" << std::hex << rep.GetData() << std::dec << std::endl;
-    out() << "type_code: " << rep.GetType() << std::endl;
-    out() << "is_inlined: " << rep.IsInlined() << std::endl;
-    out() << "is_compressed: " << rep.IsCompressed() << std::endl;
-    out() << "is_array: " << rep.IsArray() << std::endl;
+  void DumpValueRepYAML(const ValueRep& rep, const CrateTables& reader) {
+    out() << "data: 0x" << std::hex << rep.raw() << std::dec << std::endl;
+    out() << "type_code: " << static_cast<int>(rep.type_id()) << std::endl;
+    out() << "is_inlined: " << rep.is_inlined() << std::endl;
+    out() << "is_compressed: " << rep.is_compressed() << std::endl;
+    out() << "is_array: " << rep.is_array() << std::endl;
 
     // Show payload (offset for non-inlined values)
-    uint64_t payload = rep.GetPayload();
+    uint64_t payload = rep.payload();
     out() << "payload: " << payload;
-    if (!rep.IsInlined()) {
+    if (!rep.is_inlined()) {
       out() << " # byte offset to data";
     }
     out() << std::endl;
 
     // Try to get the actual type name
     std::string type_str = "unknown";
-    int type_code = rep.GetType();
+    int type_code = static_cast<int>(rep.type_id());
 
     // Map type code to name
-    auto type_result = GetCrateDataType(type_code);
-    if (type_result) {
-      type_str = type_result.value().name ? type_result.value().name : "unnamed";
+    if (const char* type_name = CrateTypeName(type_code)) {
+      type_str = type_name;
     } else {
       type_str = "INVALID_TYPE_" + std::to_string(type_code);
       if (type_code > 56) {
@@ -470,7 +507,7 @@ private:
     out() << "type_info: \"" << type_str << "\"" << std::endl;
   }
 
-  void DumpFieldSetsYAML(const CrateReader& reader) {
+  void DumpFieldSetsYAML(const CrateTables& reader) {
     out() << "fieldsets:" << std::endl;
     indent_++;
 
@@ -527,7 +564,7 @@ private:
     indent_--;
   }
 
-  void DumpPathsYAML(const CrateReader& reader) {
+  void DumpPathsYAML(const CrateTables& reader) {
     out() << "paths:" << std::endl;
     indent_++;
 
@@ -567,7 +604,7 @@ private:
     indent_--;
   }
 
-  void DumpSpecsYAML(const CrateReader& reader) {
+  void DumpSpecsYAML(const CrateTables& reader) {
     out() << "specs:" << std::endl;
     indent_++;
 
@@ -618,7 +655,7 @@ private:
     indent_--;
   }
 
-  void DumpJSON(const CrateReader& reader, const uint8_t* data, size_t size) {
+  void DumpJSON(const CrateTables& reader, const uint8_t* data, size_t size) {
     using Json = lightusd::minijson::Value;
     Json root = Json::object();
     root["schemaVersion"] = 1;
@@ -697,12 +734,12 @@ private:
       const std::string name = f.token_index.value < tokens.size() ? tokens[f.token_index.value].str() : "";
       if (!ContainsFilter(name, opts_.token_filter)) return nullptr;
       const auto& r = f.value_rep;
-      const auto type = GetCrateDataType(r.GetType());
+      const char* type = CrateTypeName(static_cast<int>(r.type_id()));
       return Json{{"index", uint64_t(i)}, {"token_index", f.token_index.value}, {"name", name},
-          {"value_rep", Json{{"data", hex(r.GetData())}, {"type_code", r.GetType()},
-              {"type_info", type && type.value().name ? type.value().name : "unknown"},
-              {"is_inlined", r.IsInlined()}, {"is_compressed", r.IsCompressed()},
-              {"is_array", r.IsArray()}, {"payload", r.GetPayload()}}}};
+          {"value_rep", Json{{"data", hex(r.raw())}, {"type_code", static_cast<int>(r.type_id())},
+              {"type_info", type ? type : "unknown"},
+              {"is_inlined", r.is_inlined()}, {"is_compressed", r.is_compressed()},
+              {"is_array", r.is_array()}, {"payload", r.payload()}}}};
     });
     if (opts_.show_fieldsets) {
       Json values = Json::array(), current = Json::array();
