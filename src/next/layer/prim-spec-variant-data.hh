@@ -26,6 +26,23 @@ struct DecodedExtensionField {
   std::shared_ptr<const Int64ListOpStack> int64_list_op = nullptr;
 };
 
+/// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
+/// addition to the effective PrimVariantSetData vector: delete/order operations
+/// may be inert locally yet remain authored data, and explicit-empty must not
+/// collapse to an unauthored field.
+struct StringListOps {
+  bool authored = false;
+  bool is_explicit = false;
+  std::vector<std::string> explicit_items;
+  std::vector<std::string> added;
+  std::vector<std::string> prepended;
+  std::vector<std::string> appended;
+  std::vector<std::string> deleted;
+  std::vector<std::string> ordered;
+
+  bool has_nonexplicit_items() const;
+};
+
 /// One attribute authored inside a variant option. Carries the property flags
 /// (custom / uniform / connection / array) so the variant graft preserves them
 /// — a bare name->Value pair would silently drop `custom`/`uniform`.
@@ -79,6 +96,10 @@ struct PrimVariantData {
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<PrimVariantSetData> variantSets;
+  // `variantSets` list-op authored in the option's metadata block
+  // (`"b" ( prepend variantSets = "sub" ) {...}`), kept exactly like the
+  // prim-level PrimMetadata::variantSetNameEdits.
+  StringListOps variantSetNameEdits;
   // Unknown (unmodeled) variant-option metadata: raw authored source text
   // (USDA, re-emitted verbatim) and decoded typed extension fields (USDC via
   // the materialized holder prim). Variant specs previously had NO generic
@@ -160,21 +181,5 @@ struct ArcListOps {
   ArcListOp specializes;
 };
 
-/// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
-/// addition to the effective PrimVariantSetData vector: delete/order operations
-/// may be inert locally yet remain authored data, and explicit-empty must not
-/// collapse to an unauthored field.
-struct StringListOps {
-  bool authored = false;
-  bool is_explicit = false;
-  std::vector<std::string> explicit_items;
-  std::vector<std::string> added;
-  std::vector<std::string> prepended;
-  std::vector<std::string> appended;
-  std::vector<std::string> deleted;
-  std::vector<std::string> ordered;
-
-  bool has_nonexplicit_items() const;
-};
 
 

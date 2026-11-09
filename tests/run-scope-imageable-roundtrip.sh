@@ -25,7 +25,7 @@ if [ -z "${LUSDCAT_LAYER_ARGS+x}" ]; then
   LUSDCAT_LAYER_ARGS=""
   _probe=$(mktemp --suffix=.usda); printf '#usda 1.0\n' > "$_probe"
   if "$LUSDCAT" "$_probe" 2>/dev/null | head -1 | grep -q '^loaded:'; then
-    LUSDCAT_LAYER_ARGS="--rewrite-layer"
+    LUSDCAT_LAYER_ARGS="--rewrite-layer --openusd-compat"
   fi
   rm -f "$_probe"
 fi
@@ -421,7 +421,6 @@ fi
 lost=""
 for expect in \
   'varying rel myrel = </W>' \
-  'append custom varying rel myrel2 = </W>' \
   'bindMaterialAs = "strongerThanDescendants"' \
   'rel proxyPrim = </W>' \
   'material:binding:collection:beauty = </W>' \
@@ -429,6 +428,14 @@ for expect in \
   grep -qF "$expect" "$TMP/relationships-rt.usda" || lost="$lost
     $expect"
 done
+# custom + list-op: legacy spells `append custom varying rel r = <..>`, next
+# and pxr spell a `custom varying rel r` declaration + `append varying rel r`.
+grep -qF 'append custom varying rel myrel2 = </W>' "$TMP/relationships-rt.usda" ||
+  { grep -qF 'custom varying rel myrel2' "$TMP/relationships-rt.usda" &&
+    grep -qF 'append varying rel myrel2 = </W>' "$TMP/relationships-rt.usda"; } ||
+  lost="$lost
+    append custom varying rel myrel2 = </W>"
+
 if [ -n "$lost" ]; then
   echo "FAIL[relationships-usdc]: dropped/altered on round-trip:$lost"
   echo "--- got ---"
@@ -1365,15 +1372,22 @@ fi
 
 "$LUSDCAT" $LUSDCAT_LAYER_ARGS "$TMP/empty.usdc" > "$TMP/empty-rt.usda" 2>/dev/null
 bad=""
+# Each entry is "legacy spelling|pxr spelling". Legacy keeps target-less
+# list-edit qualifiers and `custom` inline on `.timeSamples`; pxr (and next
+# lusdcat, which matches it byte-for-byte) drops the target-less qualifier to a
+# bare declaration and writes `custom float plain` as its own line.
 for expect in \
-  'float xformOp:rotateZ:spin.timeSamples = {' \
-  'custom float plain.timeSamples = {' \
-  'append rel myval' \
-  'delete rel myheight' \
-  'prepend rel myother'; do
-  grep -qF "$expect" "$TMP/empty-rt.usda" || bad="$bad
-    $expect"
+  'float xformOp:rotateZ:spin.timeSamples = {|float xformOp:rotateZ:spin.timeSamples = {' \
+  'custom float plain.timeSamples = {|custom float plain' \
+  'append rel myval|custom rel myval' \
+  'delete rel myheight|rel myheight' \
+  'prepend rel myother|rel myother'; do
+  { grep -qF "${expect%%|*}" "$TMP/empty-rt.usda" ||
+    grep -qxF "    ${expect#*|}" "$TMP/empty-rt.usda"; } || bad="$bad
+    ${expect%%|*}"
 done
+grep -qF 'plain.timeSamples = {' "$TMP/empty-rt.usda" || bad="$bad
+    plain.timeSamples"
 if [ -n "$bad" ]; then
   echo "FAIL[authored-but-empty-usdc]: dropped on round-trip:$bad"
   echo "--- got ---"

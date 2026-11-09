@@ -152,6 +152,9 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
   if (!vd.variantSets.empty()) {
     holder.meta().variantSets() = vd.variantSets;
   }
+  if (vd.variantSetNameEdits.authored) {
+    holder.meta().variantSetNameEdits() = vd.variantSetNameEdits;
+  }
 
   // Content subtree: the content layer's "/__self__" root carries opinions
   // for the holder itself; its descendants become the holder's sub-prims.

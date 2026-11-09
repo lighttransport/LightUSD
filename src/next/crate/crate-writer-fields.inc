@@ -432,16 +432,16 @@
       // ':' / newlines / quotes exact. Stored under a lightusd-private field
       // name so pxr treats it as (harmless) unregistered metadata rather than
       // misreading a phantom typed field.
-      if (!prim.meta().unknownMeta().empty()) {
-        std::string blob;
-        for (const auto& um : prim.meta().unknownMeta()) {
-          blob += std::to_string(um.first.size()) + ":" + um.first;
-          blob += std::to_string(um.second.size()) + ":" + um.second;
-        }
+      for (const auto& um : prim.meta().unknownMeta()) {
+        // Unknown metadata as an interoperable pxr UnregisteredValue field
+        // (same encoding as property metadata), not an opaque private blob.
+        if (std::any_of(prim.meta().unknownFields().begin(), prim.meta().unknownFields().end(),
+                        [&](const DecodedExtensionField& field) {
+                          return field.name == um.first;
+                        })) continue;
         CrateField f;
-        f.token_index.value = InternToken("__lightusd_unknownMeta");
-        uint32_t str_idx = InternString(blob);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
+        f.token_index.value = InternToken(um.first);
+        f.value_rep = EncodeUnregisteredValue(um.second);
         fieldset.push_back(WFieldCount());
         WPushField(f);
       }
@@ -863,16 +863,16 @@
       // Unknown (unmodeled) LAYER metadata preserved verbatim by the parser
       // (`autoPlay = false`, custom stage keys). Same length-prefixed encoding
       // as the prim-level field (see EmitPrimSpec).
-      if (!layer.meta().unknownMeta.empty()) {
-        std::string blob;
-        for (const auto& um : layer.meta().unknownMeta) {
-          blob += std::to_string(um.first.size()) + ":" + um.first;
-          blob += std::to_string(um.second.size()) + ":" + um.second;
-        }
+      for (const auto& um : layer.meta().unknownMeta) {
+        // Unknown metadata as an interoperable pxr UnregisteredValue field
+        // (same encoding as property metadata), not an opaque private blob.
+        if (std::any_of(layer.meta().unknownFields.begin(), layer.meta().unknownFields.end(),
+                        [&](const DecodedExtensionField& field) {
+                          return field.name == um.first;
+                        })) continue;
         CrateField f;
-        f.token_index.value = InternToken("__lightusd_unknownMeta");
-        uint32_t str_idx = InternString(blob);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
+        f.token_index.value = InternToken(um.first);
+        f.value_rep = EncodeUnregisteredValue(um.second);
         fieldset.push_back(WFieldCount());
         WPushField(f);
       }

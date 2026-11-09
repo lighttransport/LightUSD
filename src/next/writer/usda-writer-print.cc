@@ -605,11 +605,14 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
       }
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
-    } else if (pm && !pm->empty()) {
-      // USDA forbids metadata after a `.timeSamples` block: emit authored
-      // metadata on a bare declaration line first (usdcat form).
+    } else if ((pm && !pm->empty()) ||
+               (opts.emit_custom && slot.is_custom())) {
+      // USDA forbids metadata after a `.timeSamples` block, and the
+      // `.timeSamples` statement cannot carry `custom`: emit a bare
+      // declaration line first (usdcat form: `custom float x` +
+      // `float x.timeSamples = {...}`).
       emit_ts_decl();
-      WritePropMeta(os, spec, slot.name_id, depth, opts);
+      if (pm) WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
     }
     WriteTimeSamples(os, name, slot.name_id, spec, depth, opts, segsink);
@@ -728,12 +731,27 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   }
   if (re) {
     bool first = true;
+    const bool varying =
+        (relationship_flags & PropSlot::kFlagVariabilityAuthored) &&
+        (relationship_flags & PropSlot::kFlagVarying);
+    const bool has_items = !re->added.empty() || !re->prepended.empty() ||
+                           !re->appended.empty() || !re->deleted.empty() ||
+                           !re->ordered.empty();
+    // pxr spelling: `custom` is a property-spec declaration, never a list-op
+    // qualifier, so a custom rel with edits gets its own declaration line
+    // (`custom varying rel r` + `append varying rel r = <...>`). The old
+    // `custom append rel r` form is not valid USDA.
+    if (has_items && opts.emit_custom && is_custom) {
+      head();
+      os << "\n";
+    }
     auto qual_line = [&](const char* qual,
                          const std::vector<std::string>& items) {
       if (items.empty()) return;
       WriteIndent(os, depth, opts.indent);
-      if (opts.emit_custom && is_custom && first) os << "custom ";
-      os << qual << "rel " << name;
+      os << qual;
+      if (varying) os << "varying ";
+      os << "rel " << name;
       targets_text(items);
       if (first) WritePropMeta(os, spec, name_id, depth, opts);
       os << "\n";
@@ -916,7 +934,31 @@ void WriteVariantSets(StreamWriter& os,
           !var.unknownMeta.empty()
               ? var.unknownMeta
               : (hmeta ? hmeta->unknownMeta() : var.unknownMeta);
-      const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
+      // Authored `active = true` is a real opinion (round-trips like the
+      // hidden = false case); kind and the variantSets list-op likewise come
+      // inline (USDA-parsed) or from the holder prim (crate-read layers).
+      const bool o_active_true =
+          !o_inactive && (var.active_authored ||
+                          (hmeta && hmeta->active_authored));
+      const std::string& o_kind =
+          !var.kind.empty() ? var.kind : (hmeta ? hmeta->kind() : var.kind);
+      const StringListOps& o_vs_edits =
+          var.variantSetNameEdits.authored || !hmeta
+              ? var.variantSetNameEdits
+              : hmeta->variantSetNameEdits();
+      const bool o_has_vs_edits =
+          o_vs_edits.authored &&
+          (o_vs_edits.is_explicit ? !o_vs_edits.explicit_items.empty()
+                                  : o_vs_edits.has_nonexplicit_items());
+      // Decoded extension / unregistered fields (crate-read options; unknown
+      // option metadata is written to USDC as real unregistered fields).
+      const std::vector<DecodedExtensionField>& o_fields =
+          !var.unknownFields.empty() || !hmeta ? var.unknownFields
+                                               : hmeta->unknownFields();
+      const bool has_opt_meta = !o_fields.empty() ||
+                                o_active_true || !o_kind.empty() ||
+                                o_has_vs_edits ||
+                                !o_refs.empty() || !o_pls.empty() ||
                                 !o_inh.empty() || !o_spz.empty() ||
                                 o_inactive || o_hidden || o_hidden_false ||
                                 !o_sels.empty() ||
@@ -938,6 +980,9 @@ void WriteVariantSets(StreamWriter& os,
         if (o_inactive) {
           WriteIndent(os, depth + 2, opts.indent);
           os << "active = false\n";
+        } else if (o_active_true) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "active = true\n";
         }
         if (o_hidden) {
           WriteIndent(os, depth + 2, opts.indent);
@@ -961,10 +1006,46 @@ void WriteVariantSets(StreamWriter& os,
           WriteIndent(os, depth + 2, opts.indent);
           os << "}\n";
         }
+        if (!o_kind.empty()) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "kind = " << EscapeUSDAString(o_kind) << "\n";
+        }
+        if (o_has_vs_edits) {
+          auto vs_op = [&](const char* qualifier,
+                           const std::vector<std::string>& names) {
+            if (names.empty()) return;
+            WriteIndent(os, depth + 2, opts.indent);
+            os << qualifier << "variantSets = ";
+            WriteNameVectorUSDA(os, names);
+            os << "\n";
+          };
+          if (o_vs_edits.is_explicit) {
+            vs_op("", o_vs_edits.explicit_items);
+          } else {
+            vs_op("delete ", o_vs_edits.deleted);
+            vs_op("add ", o_vs_edits.added);
+            vs_op("prepend ", o_vs_edits.prepended);
+            vs_op("append ", o_vs_edits.appended);
+            vs_op("reorder ", o_vs_edits.ordered);
+          }
+        }
         // Unknown metadata re-emitted verbatim (raw authored value text).
         for (const auto& um : o_unknown) {
           WriteIndent(os, depth + 2, opts.indent);
           os << um.first << " = " << um.second << "\n";
+        }
+        for (const auto& field : o_fields) {
+          bool dup = false;
+          for (const auto& um : o_unknown)
+            if (um.first == field.name) { dup = true; break; }
+          if (dup) continue;
+          EmitExtensionField(
+              field, opts.composed_stage_output,
+              [&](const std::string& line) {
+                WriteIndent(os, depth + 2, opts.indent);
+                os << line << "\n";
+              },
+              depth + 2, &opts);
         }
         WriteIndent(os, depth + 1, opts.indent);
         os << ")";

@@ -445,6 +445,7 @@ void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->inherits = src.inherits;
   dst->specializes = src.specializes;
   dst->variantSelections = src.variantSelections;
+  dst->variantSetNameEdits = src.variantSetNameEdits;
   dst->unknownMeta = src.unknownMeta;
   dst->unknownFields = src.unknownFields;
   dst->content = src.content;

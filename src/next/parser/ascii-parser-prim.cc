@@ -485,8 +485,9 @@ bool AsciiParser::Impl::ParseAttribute(
     if (is_uniform) rflags |= PropSlot::kFlagUniform;
     if (variability_authored) rflags |= PropSlot::kFlagVariabilityAuthored;
     if (is_varying) rflags |= PropSlot::kFlagVarying;
-    return ParseRelationship(PrimSpec::RelationshipListOp::Append,
-                             /*explicit_list=*/true, rflags);
+    // Keep the list-op qualifier of `append custom rel r = ...` (the caller
+    // consumed `append`; this path used to re-author it as explicit).
+    return ParseRelationship(connection_op, explicit_connection, rflags);
   }
 
   std::string type_name = preconsumed_type;
