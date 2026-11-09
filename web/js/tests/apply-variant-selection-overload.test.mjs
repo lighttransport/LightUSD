@@ -2025,7 +2025,17 @@ await testAsync('render scalar, metadata, camera and texture queries preserve pa
   const counts = ['numMeshes', 'numInstances', 'numMaterials', 'numTextures', 'numImages',
     'numLights', 'numCameras', 'numUDIMTextures', 'numRootNodes', 'numAnimations', 'numSkeletons'];
   const cameraSource = `#usda 1.0
-(upAxis = "Z" metersPerUnit = 1 kilogramsPerUnit = 2 startTimeCode = 2 endTimeCode = 8 framesPerSecond = 30 timeCodesPerSecond = 60 autoPlay = false comment = "metadata comment")
+(
+  upAxis = "Z"
+  metersPerUnit = 1
+  kilogramsPerUnit = 2
+  startTimeCode = 2
+  endTimeCode = 8
+  framesPerSecond = 30
+  timeCodesPerSecond = 60
+  autoPlay = false
+  comment = "metadata comment"
+ )
 def Camera "Camera" {
  float focalLength = 50
  float horizontalAperture = 36
@@ -2128,9 +2138,12 @@ def Camera "Camera" {
 await testAsync('render metadata reads copyright strings from customLayerData', () => {
   const source = [
     '#usda 1.0',
-    '(metersPerUnit = 1 customLayerData = {',
+    '(',
+    ' metersPerUnit = 1',
+    ' customLayerData = {',
     ' string copyright = "metadata copyright"',
-    '})',
+    ' }',
+    ')',
     'def Xform "World" {}',
     ''
   ].join('\n');

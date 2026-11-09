@@ -33,7 +33,7 @@ const layerDocument = new module.LayerDocument();
 assert.deepEqual(Object.getOwnPropertyNames(module.LayerDocument.prototype)
   .filter(name => name !== 'constructor').sort(),
 JSON.parse(fs.readFileSync(new URL('./next-layer-document-api-inventory.json', import.meta.url), 'utf8')));
-const authoredLayer = encode('#usda 1.0\n\ndef Xform "Root" { custom string label = "hi" (displayName = "Label") }\n');
+const authoredLayer = encode('#usda 1.0\n\ndef Xform "Root" {\n custom string label = "hi" (displayName = "Label")\n}\n');
 const authoredLayerPtr = module['_lightusd_next_alloc'](authoredLayer.length);
 assert.ok(authoredLayerPtr);
 module.HEAPU8.set(authoredLayer, Number(authoredLayerPtr));
@@ -1364,11 +1364,17 @@ try {
     'int[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0, 1, 2]';
   const mixedLoad = nodeMetadataStream.begin(encode(`#usda 1.0
 def Xform "A" {
-  def Mesh "M0" { ${tri} }
-  def Cube "C0" { double size = 0.5 }
+  def Mesh "M0" {
+    ${tri}
+  }
+  def Cube "C0" {
+    double size = 0.5
+  }
 }
 def Xform "B" {
-  def Mesh "M1" { ${tri} }
+  def Mesh "M1" {
+    ${tri}
+  }
   def Cube "C1" {}
 }
 `));
@@ -1387,13 +1393,19 @@ def Xform "B" {
   // ancestor; guides never merge into renderable groups.
   const purposeSource = encode(`#usda 1.0
 def Xform "Visual" {
-  def Mesh "V0" { ${tri} }
-  def Mesh "V1" { ${tri} }
+  def Mesh "V0" {
+    ${tri}
+  }
+  def Mesh "V1" {
+    ${tri}
+  }
 }
 def Xform "Collision" (
 ) {
   uniform token purpose = "guide"
-  def Mesh "G0" { ${tri} }
+  def Mesh "G0" {
+    ${tri}
+  }
   def Mesh "Proxy" {
     uniform token purpose = "proxy"
     ${tri}
@@ -1546,7 +1558,9 @@ assert.equal(resumedProgressLoad.success, true, resumedProgressLoad.error || pro
 progressEvents.length = 0;
 progressStream.setProgressCallback(event => { progressEvents.push(event); });
 const usdaProgressLoad = progressStream.begin(encode(`#usda 1.0
-def Xform "Root" { def Xform "Child" {} }
+def Xform "Root" {
+  def Xform "Child" {}
+}
 `));
 assert.equal(usdaProgressLoad.success, true, usdaProgressLoad.error || progressStream.error());
 assert.equal(progressEvents[0].phase, 'bootstrap');
@@ -1942,19 +1956,12 @@ parentPathStore.delete();
 const firstLiveComposition = liveAssetStream.begin(liveAssetRoot);
 assert.equal(firstLiveComposition.success, true, firstLiveComposition.error);
 assert.equal(firstLiveComposition.meshCount, 1);
-liveAssetStore.registerMemoryAsset('dep.usda', encode('#usda 1.0\ndef Xform "Base" { int revision = 2 }'));
+liveAssetStore.registerMemoryAsset('dep.usda', encode('#usda 1.0\ndef Xform "Base" {\n int revision = 2\n}\n'));
 const refreshedComposition = liveAssetStream.begin(liveAssetRoot);
 assert.equal(refreshedComposition.success, true, refreshedComposition.error);
 assert.equal(refreshedComposition.meshCount, 0,
   'attached asset stores refresh their shared snapshot before the next load');
-liveAssetStore.registerMemoryAsset('dep.usda', encode(`#usda 1.0
-def Xform "Base" {
-  def Mesh "Geo" {
-    int[] faceVertexCounts = [3]
-    int[] faceVertexIndices = [0, 1, 2]
-    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
-  }
-}`));
+liveAssetStore.registerMemoryAsset('dep.usda', encode(`#usda 1.0\ndef Xform "Base" {\n  def Mesh "Geo" {\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0, 1, 2]\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n  }\n}\n`));
 const restoredComposition = liveAssetStream.begin(liveAssetRoot);
 assert.equal(restoredComposition.success, true, restoredComposition.error);
 assert.equal(restoredComposition.meshCount, 1);
@@ -2034,7 +2041,7 @@ sharedHandoffStream.delete();
 sharedHandoffStore.delete();
 assert.throws(() => composedStream.setEnableComposition(), /wrong argument count/);
 assert.throws(() => composedStream.setEnableComposition.call({}, true), /Invalid LightUSD receiver/);
-const generatedSphereUsd = encode('#usda 1.0\ndef Xform "World" { def Sphere "Ball" {} }');
+const generatedSphereUsd = encode('#usda 1.0\ndef Xform "World" {\n def Sphere "Ball" {}\n}');
 const sphereVertexCount = level => {
   const sphereStream = new module.RenderStream();
   assert.equal(sphereStream.getSphereSubdivisions(), 4);
@@ -3624,7 +3631,7 @@ for (let block = 0; block < 1800; ++block) {
 }
 largeLabel = labelParts.join('');
 assert.equal(exportLimitConverter.loadFromBinary(encode(
-  `#usda 1.0\ndef Xform "Root" { custom string payload = "${largeLabel}" }`),
+  `#usda 1.0\ndef Xform "Root" {\n custom string payload = "${largeLabel}"\n}\n`),
   'large.usda'), true, exportLimitConverter.error());
 exportLimitConverter.setUSDCExportLimitMB(1, 0);
 assert.equal(exportLimitConverter.exportAsUSDC(), null,

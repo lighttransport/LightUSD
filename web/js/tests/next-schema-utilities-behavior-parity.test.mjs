@@ -266,8 +266,14 @@ def SkelRoot "R" {
    int[] faceVertexCounts = [4]
    int[] faceVertexIndices = [0,1,2,3]
    point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
-   int[] primvars:skel:jointIndices = [${Array(4).fill('0,1,2,3,4,5').join(',')}] (interpolation = "vertex" elementSize = 6)
-   float[] primvars:skel:jointWeights = [${Array(4).fill('0.3,0.25,0.2,0.1,0.1,0.05').join(',')}] (interpolation = "vertex" elementSize = 6)
+   int[] primvars:skel:jointIndices = [${Array(4).fill('0,1,2,3,4,5').join(',')}] (
+     interpolation = "vertex"
+     elementSize = 6
+   )
+   float[] primvars:skel:jointWeights = [${Array(4).fill('0.3,0.25,0.2,0.1,0.1,0.05').join(',')}] (
+     interpolation = "vertex"
+     elementSize = 6
+   )
   }
  }
 }

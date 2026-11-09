@@ -74,7 +74,9 @@ const scene = `#usda 1.0
    int[] faceVertexCounts = [3]
    int[] faceVertexIndices = [0,1,2]
    uniform token subdivisionScheme = "none"
-   texCoord2f[] primvars:st = [(0.1,0.1), (0.8,0.1), (0.1,0.8)] (interpolation = "faceVarying")
+   texCoord2f[] primvars:st = [(0.1,0.1), (0.8,0.1), (0.1,0.8)] (
+    interpolation = "faceVarying"
+   )
    rel material:binding = </World/Mat>
   }
   def Material "Mat" {
@@ -127,8 +129,12 @@ async function convertedText(content, extra = {}, streaming = false) {
 }
 const crossing = scene.replace('(0.8,0.1)', '(1.8,0.1)');
 await assert.rejects(() => convertedText(crossing), /crosses tile/);
-const withLabels = crossing.replace('   rel material:binding', `   token[] primvars:label = ["surface"] (interpolation = "uniform")
-   string[] primvars:tag = ["stable", "stable", "stable"] (interpolation = "vertex")
+const withLabels = crossing.replace('   rel material:binding', `   token[] primvars:label = ["surface"] (
+    interpolation = "uniform"
+   )
+   string[] primvars:tag = ["stable", "stable", "stable"] (
+    interpolation = "vertex"
+   )
    rel material:binding`);
 const split = await convertedText(withLabels, {udimCrossTile: 'split'});
 assert.match(split.text, /primvars:label = \["surface", "surface", "surface"\]/);
@@ -140,8 +146,14 @@ const animated = crossing.replace('   int[] faceVertexCounts', `   point3f[] poi
     1: [(0,0,1), (1,0,1), (0,1,1)]
    }
    int[] faceVertexCounts`);
-const skinned = animated.replace('   rel material:binding', `   int[] primvars:skel:jointIndices = [0,1, 1,2, 0,2] (interpolation = "vertex" elementSize = 2)
-   float[] primvars:skel:jointWeights = [0.75,0.25, 0.5,0.5, 0.25,0.75] (interpolation = "vertex" elementSize = 2)
+const skinned = animated.replace('   rel material:binding', `   int[] primvars:skel:jointIndices = [0,1, 1,2, 0,2] (
+    interpolation = "vertex"
+    elementSize = 2
+   )
+   float[] primvars:skel:jointWeights = [0.75,0.25, 0.5,0.5, 0.25,0.75] (
+    interpolation = "vertex"
+    elementSize = 2
+   )
    rel skel:blendShapeTargets = </World/Shape>
    token[] skel:blendShapes = ["Smile"]
    rel material:binding`).replace('  def Material "Mat"', `  def BlendShape "Shape" {
@@ -199,7 +211,10 @@ assert.match((await convertedText(animatedFiles, {}, true)).text, /inputs:file.t
 console.log('UDIM animated files: common layouts, blank cells, tile caps, and streaming passed');
 const body = scene.slice(scene.indexOf('  def Mesh'), scene.lastIndexOf(' }'));
 const variantScene = `#usda 1.0
- def Xform "World" (prepend variantSets = "look" variants = {string look = "a"}) {
+ def Xform "World" (
+   prepend variantSets = "look"
+   variants = { string look = "a" }
+  ) {
   variantSet "look" = {
    "a" {${body}}
    "b" {${body.replace('textures/tile.<UDIM>.png', 'textures/frame.<UDIM>.png')}}
@@ -213,7 +228,10 @@ assert.equal((variants.text.match(/info:id = "UsdTransform2d"/g) || []).length, 
 const instancesScene = scene.replace('  def Mesh "Mesh" {', '  def Xform "Prototype" {\n  def Mesh "Mesh" {')
   .replace('   rel material:binding = </World/Mat>', '')
   .replace('  def Material "Mat"', `  }
-  def Xform "Instance" (instanceable = true prepend references = </World/Prototype>) {
+  def Xform "Instance" (
+   instanceable = true
+   prepend references = </World/Prototype>
+  ) {
    rel material:binding = </World/Mat>
   }
   def Material "Mat"`);

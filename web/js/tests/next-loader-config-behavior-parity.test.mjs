@@ -186,8 +186,8 @@ def SkelRoot "R" {
  }
  def Xform "G" (prepend apiSchemas = ["SkelBindingAPI"]) {
   rel skel:skeleton = </R/Skel>
-  ${quad('M', `int[] primvars:skel:jointIndices = [${Array(4).fill('0,1,2,3,4,5').join(',')}] (interpolation = "vertex" elementSize = 6)
- float[] primvars:skel:jointWeights = [${Array(4).fill('0.3,0.25,0.2,0.1,0.1,0.05').join(',')}] (interpolation = "vertex" elementSize = 6)`)}
+  ${quad('M', `int[] primvars:skel:jointIndices = [${Array(4).fill('0,1,2,3,4,5').join(',')}] (\n interpolation = "vertex"\n elementSize = 6\n)
+float[] primvars:skel:jointWeights = [${Array(4).fill('0.3,0.25,0.2,0.1,0.1,0.05').join(',')}] (\n interpolation = "vertex"\n elementSize = 6\n)`)}
  }
 }
 `;

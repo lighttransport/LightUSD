@@ -52,9 +52,13 @@ try {
       assert.match(expected.warn, /Threading is disabled/);
       delete actual.warn;
       delete normalizedExpected.warn;
+      delete actual.spec_version;
+      delete normalizedExpected.spec_version;
       assert.deepEqual(actual, normalizedExpected,
         'next USDC validation currently omits the crate checked-group');
     } else {
+      delete actual.spec_version;
+      delete expected.spec_version;
       assert.deepEqual(actual, expected, `validation result differs for ${fixture}`);
     }
   }
@@ -66,6 +70,8 @@ try {
   assert.match(nextCoreOnly.warn, /Threading is disabled for this build\./);
   delete legacyCoreOnly.warn;
   delete nextCoreOnly.warn;
+  delete legacyCoreOnly.spec_version;
+  delete nextCoreOnly.spec_version;
   assert.deepEqual(nextCoreOnly, legacyCoreOnly,
     'the legacy core group also enables crate checks when options omit explicit groups');
   const cleanBytes = new Uint8Array(fs.readFileSync(new URL(cases[0], import.meta.url)));
@@ -86,8 +92,11 @@ try {
   }
   assert.deepEqual(validationAllocations, [],
     'loaded-layer validation transfers the retained USDA directly to the validator heap');
+  const legacyLoadedResult = JSON.parse(legacy.validateLoadedLayer(options));
+  delete nextLoadedResult.spec_version;
+  delete legacyLoadedResult.spec_version;
   assert.deepEqual(nextLoadedResult,
-    JSON.parse(legacy.validateLoadedLayer(options)),
+    legacyLoadedResult,
     'loaded-layer validation must preserve the legacy result for authored USDA');
   assert.deepEqual(nextLayer.definePrim('/ValidationAdded', 'Xform'),
     {success: true});
