@@ -539,7 +539,7 @@ python/lightusd/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
-# Root-level scratch notes only -- doc/resume-lusdview.md is tracked.
+# Root-level scratch notes only.
 /resume-lusdview.md
 gpu-task.md
 python/lightusd.egg-info/
@@ -570,3 +570,6 @@ MUJOCO_LOG.TXT
 
 # Machine-local validation reports and captures.
 /doc/validation/
+
+# Serena MCP tool state (local)
+.serena/

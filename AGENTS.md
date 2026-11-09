@@ -127,8 +127,7 @@ models/                    Test USD files for development
                             testing-cpp.md,
                             how-to-implement-feature.md, ci.md —
                             release/publish
-                            procedure, etc.; archived docs in
-                            doc/archive/)
+                            procedure, etc.)
 aousd/                     AOUSD spec text + crate-impl docs (NOT the
                            PDFs themselves — those are gitignored)
 scripts/                   Build/bootstrap scripts for various

@@ -60,7 +60,6 @@ prune src/osd
 prune src/tydra/mcp
 prune tools
 prune subprojects
-prune @draft
 exclude resume-*.md
 prune scripts
 exclude src/*.cc src/*.cpp

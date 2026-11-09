@@ -7,7 +7,6 @@ set(LIGHTUSD_TARGET_STATIC "lightusd_static") # alias to ${LIGHTUSD_TARGET_STATI
 set(BUILD_TARGET_C "c-lightusd")
 #set(BUILD_TARGET_BLENDER_PY "lightusd_blender")
 set(LIGHTUSD_TEST_TARGET "test_lightusd")
-set(LIGHTUSD_BENCHMARK_TARGET "benchmark_lightusd")
 
 project(${LIGHTUSD_TARGET} C CXX)
 option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
@@ -228,8 +227,6 @@ endif()
 set(LIGHTUSD_USD_ASSETS_ROOT "${_lightusd_default_usd_assets_root}" CACHE PATH
     "Root directory for lusdview/lusdrender USD asset regressions")
 unset(_lightusd_default_usd_assets_root)
-option(LIGHTUSD_BUILD_BENCHMARKS
-       "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(LIGHTUSD_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${LIGHTUSD_DEFAULT_BUILD_EXAMPLES})
@@ -2276,23 +2273,6 @@ if(LIGHTUSD_BUILD_TOOLS)
   endif()
 endif()
 
-if(LIGHTUSD_BUILD_BENCHMARKS)
-
-  #
-  # Standalone benchmark exe.
-  #
-  set(LIGHTUSD_BENCH_SOURCES ${PROJECT_SOURCE_DIR}/benchmarks/benchmark-main.cc)
-
-  add_executable(${LIGHTUSD_BENCHMARK_TARGET} ${LIGHTUSD_BENCH_SOURCES})
-  add_sanitizers(${LIGHTUSD_BENCHMARK_TARGET})
-
-  target_include_directories(
-    ${LIGHTUSD_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
-                                         ${PROJECT_SOURCE_DIR}/bencharks)
-  target_link_libraries(${LIGHTUSD_BENCHMARK_TARGET}
-                        PRIVATE ${LIGHTUSD_TARGET_STATIC})
-
-endif(LIGHTUSD_BUILD_BENCHMARKS)
 
 # [VisualStudio]
 if(WIN32)

@@ -1,7 +1,7 @@
 # LightUSD Documentation
 
-Category index for the docs in this directory. Completed or superseded
-documents live in [archive/](archive/).
+Category index for the docs in this directory. Completed plans and superseded
+notes are removed rather than archived; find them in Git history.
 
 ## API and Architecture
 
@@ -29,6 +29,12 @@ documents live in [archive/](archive/).
 
 ## Schema Domains
 
+- [openusd-schema-compatibility.md](openusd-schema-compatibility.md) — OpenUSD
+  schema compatibility baseline.
+- [usdobj.md](usdobj.md) — Wavefront OBJ support (`usdObj`).
+- [import-report.md](import-report.md) — Native import reports and policies.
+- [physics-query.md](physics-query.md) — Typed physics snapshots.
+- [physics-validation.md](physics-validation.md) — Structured physics validation.
 - [usdLux.md](usdLux.md) — Lighting schemas and Tydra light conversion.
 - [usd-physics.md](usd-physics.md) — UsdPhysics, MuJoCo mjcPhysics, Newton.
 - [usd-physics-upAxis.md](usd-physics-upAxis.md) — `upAxis` handling in the
@@ -45,6 +51,11 @@ documents live in [archive/](archive/).
 
 ## Rendering, GPU, and Assets
 
+- [color-management.md](color-management.md) — Color-space resolution and the
+  rendering color regression.
+- [lusdview-texture.md](lusdview-texture.md) — Compressed texture formats for
+  OpenGL/Vulkan in lusdview.
+- [ptex.md](ptex.md) — Ptex support.
 - [workflow-tools.md](workflow-tools.md) — Dependency reports, property traces, checker baselines/SARIF, recursive diff, static GLB and CPU capture workflows.
 
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
@@ -109,33 +120,14 @@ documents live in [archive/](archive/).
 
 ## Renderer validation reports
 
-- [Lean 4 formal verification of the AOUSD Core Spec v1.1.0](validation/lean-verification-2026-11-06.md)
-  (now in the `usdspec-conformance` repo: `verif/lean`, reflection vectors, spec issue drafts `issues/aousd/08`-`21`).
-- [Current dataset gap closure ledger](validation/gap-closure-status.md) and
-  [resumed implementation report](validation/session-resumed-2026-11-03.md).
-- [Complete matching-work load time and RSS](validation/load-performance-resumed-2026-11-03.md).
-- [Extended USD-assets, empty-view controls and analytic sphere checks](validation/usd-assets-extended-2026-11-03.md).
-- [Final USD-assets sampled diagnostic refresh](validation/usd-assets-native-parameters-2026-11-03.md).
-- [OpenUSD staging allocation defect and bounded control](validation/openusd-staging-buffer-2026-11-03.md).
-- [Storm Island zero-frame: AMD GPU device reset from over-capacity instancers](validation/storm-instancer-gpu-reset-2026-11-05.md).
-- [Island resource-closed subset validation](validation/island-subset-population-2026-11-03.md).
-- [Normal AOV interpretation control](validation/normal-aov-contract-2026-11-03.md).
-- [Original-source native roughness/metallic checks](validation/roughness-native-parameters-2026-11-03.md).
-- [Explicit contact-response controls](validation/physics-contact-response-2026-11-03.md).
-- [Optimized PTex reference and generated-fixture controls](validation/island-ptex-release-control-2026-11-03.md).
-- [Caldera AMD geometry and performance](validation/caldera-amd-2026-11-02.md).
-- [USD-WG assets: sampled animation times and shading AOVs](validation/usd-assets-amd-2026-11-02.md).
-- [Headless validation job configuration](../tools/view_control/HEADLESS.md#json-validation-jobs-assets-animation-times-and-shading-aovs).
-- [ALab original-source shot and Remi refresh](validation/alab-original-2026-11-03.md); [earlier diagnostic controls](validation/alab-2026-11-02.md).
-- [Disney Island full scene and terrain subsets](validation/island-2026-11-02.md).
-- [MuJoCo Menagerie conversion, rendering and after-load physics](validation/menagerie-2026-11-02.md).
+Dataset validation reports and captures (Island, ALab, Caldera, USD-WG
+assets, Menagerie, Lean conformance runs) are kept machine-local under
+`doc/validation/`, which is gitignored; they reference external datasets and
+are not part of the repository.
 
-- [Island bounded mesh repeatability](validation/island-mesh-repeatability-2026-11-03.md).
-- [Island independent PTex decoding](validation/island-ptex-2026-11-03.md).
-- [Physics consumer defects and analytic dynamics](validation/physics-gap-investigation-2026-11-03.md).
+## Active work briefs
 
-- [Bounded original Island meshes and curves](validation/island-curves-2026-11-03.md)
-
-- [Original Caldera and rigged AMD geometry acceptance](validation/geometry-acceptance-2026-11-03.md)
-
-- [Dataset gap implementation and audit (2026-11-03)](validation/session-final-2026-11-03.md)
+- [obj-physics-goal.md](obj-physics-goal.md) — OBJ / URDF / MJCF import and
+  physics interoperability work brief.
+- [preview-lighting-goal.md](preview-lighting-goal.md) — Preview lighting
+  completion audit and the no-hardware-GPU testing constraint.
