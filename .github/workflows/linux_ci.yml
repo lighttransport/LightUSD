@@ -86,7 +86,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-i386-asan
         max-size: 2G
@@ -117,7 +117,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-clang-legacy
         max-size: 500M
@@ -194,7 +194,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-mcp-qjs
         max-size: 500M
@@ -224,7 +224,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-next-product
         max-size: 500M
@@ -253,7 +253,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-fuzz-cabi
         max-size: 500M
@@ -280,7 +280,7 @@ jobs:
           -artifact_prefix=/tmp/cabi-artifacts/ /tmp/cabi-corpus
     - name: upload reproducers on failure
       if: failure()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: cabi-fuzz-artifacts
         path: /tmp/cabi-artifacts
@@ -296,7 +296,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-next-asan-ubsan
         max-size: 500M
@@ -329,7 +329,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-hardening
         max-size: 500M
@@ -371,7 +371,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-lusdview-hermetic
         max-size: 500M
@@ -416,7 +416,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-legacy-with-next
         max-size: 500M
@@ -447,7 +447,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-aousd
         max-size: 500M
@@ -520,7 +520,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-arm64-gcc
         max-size: 500M
@@ -535,7 +535,7 @@ jobs:
       run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: lusdcat-linux-arm64-gcc
         path: build/lusdcat
@@ -563,7 +563,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-arm64-clang
         max-size: 500M
@@ -585,7 +585,7 @@ jobs:
       run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: lusdcat-linux-arm64-clang
         path: build/lusdcat

@@ -111,7 +111,7 @@ jobs:
           npm run validate
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: 'lightusd-npm-${{ github.event.inputs.release_version }}'
           path: ${{ github.workspace }}/web/npm/dist
