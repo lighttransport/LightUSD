@@ -59,6 +59,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "fzstd": "^0.1.1",
     "three": ">=0.178.0"
   }
 }

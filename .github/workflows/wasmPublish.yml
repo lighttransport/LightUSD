@@ -87,6 +87,51 @@ jobs:
           source ./emsdk/emsdk_env.sh
           cmake --build web/cmake-build-next64 --parallel
 
+      # The MCP modules (lightusd_mcp[_64]) are required by the npm stage step
+      # (web/npm/scripts/stage-package.mjs); keep this list in sync with
+      # web/npm/build-wasm.sh.
+      - name: Configure WASM32 MCP
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-mcp -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=mcp
+
+      - name: Build WASM32 MCP
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-mcp --parallel
+
+      - name: Configure WASM64 MCP
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-mcp64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=mcp -DLIGHTUSD_WASM64=1
+
+      - name: Build WASM64 MCP
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-mcp64 --parallel
+
+      # The next smoke test below imports the combined (legacy + next) glue,
+      # lightusd_combined[_64]. It is test-only and removed before staging.
+      - name: Configure WASM32 combined
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-combined -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=combined
+
+      - name: Build WASM32 combined
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-combined --parallel
+
+      - name: Configure WASM64 combined
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-combined64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=combined -DLIGHTUSD_WASM64=1
+
+      - name: Build WASM64 combined
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-combined64 --parallel
+
       # Exercise the WASM `next` (low-memory lazy-ValueRep) flatten pipeline on
       # both arches before packaging, so a next-path regression blocks publish.
       - name: Smoke test (next pipeline)
@@ -94,6 +139,11 @@ jobs:
         run: |
           node tests/usdzconvert-next.test.mjs
           LIGHTUSD_WASM64=1 node tests/usdzconvert-next.test.mjs
+
+      # stage-package.mjs copies every .js/.wasm in web/js/src/lightusd; keep
+      # the test-only combined glue out of the published package.
+      - name: Remove test-only combined glue
+        run: rm -f web/js/src/lightusd/lightusd_combined*.js web/js/src/lightusd/lightusd_combined*.wasm
 
       - name: Install npm dependencies
         working-directory: ${{ github.workspace }}/web/npm
