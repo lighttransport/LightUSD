@@ -50,6 +50,7 @@ Copyright (c) 2012 Brandon Pelfrey
 #include <math.h>
 #define __STDC_LIMIT_MACROS
 #include <stdint.h>
+#include <stdlib.h> // realloc, qsort (no longer pulled in transitively by libc++ 23)
 #include <stdio.h>
 #include <string.h>
 

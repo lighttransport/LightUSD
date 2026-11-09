@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EMSDK_DIR="${SCRIPT_DIR}/.emsdk"
-EMSDK_VERSION="${EMSDK_VERSION:-4.0.14}"
+EMSDK_VERSION="${EMSDK_VERSION:-7.0.0}"
 EMSDK_REPO_URL="${EMSDK_REPO_URL:-https://github.com/emscripten-core/emsdk.git}"
 EMSDK_REF="${EMSDK_REF:-${EMSDK_VERSION}}"
 OFFLINE="${LIGHTUSD_VERIFY_OFFLINE:-0}"

@@ -3,6 +3,8 @@
 #include "binding-next-render.hh"
 #include "tydra/next/render-extract.hh"
 #include "next/schema/usd-shade.hh"
+#include <algorithm>
+#include <cmath>
 namespace lightusd {
 namespace web_next {
 tr::MeshConfig::TangentComputationMethod RenderStream::tangentMethod_() const {

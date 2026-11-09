@@ -37,8 +37,8 @@ jobs:
       - name: Setup Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
-          ./emsdk/emsdk install 4.0.14
-          ./emsdk/emsdk activate 4.0.14
+          ./emsdk/emsdk install 7.0.0
+          ./emsdk/emsdk activate 7.0.0
 
       - name: Build Pages site
         working-directory: ${{ github.workspace }}/web/demo

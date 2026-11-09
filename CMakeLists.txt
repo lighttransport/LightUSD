@@ -1459,6 +1459,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Wno-thread-safety-negative")
   endif()
 
+  # clang 23 (e.g. Emscripten 7) adds experimental -Wlifetime-safety-*
+  # analyses under -Weverything (tens of thousands of [[clang::lifetimebound]]
+  # suggestions on the legacy sources). The subgroups are independent (the
+  # -Wlifetime-safety umbrella does not cover them all), so suppress each one
+  # the compiler knows about.
+  foreach(_lusd_lifetime_warn
+      lifetime-safety
+      lifetime-safety-intra-tu-suggestions
+      lifetime-safety-intra-tu-constructor-suggestions
+      lifetime-safety-cross-tu-suggestions
+      lifetime-safety-cross-tu-constructor-suggestions
+      lifetime-safety-cross-tu-misplaced-lifetimebound
+      lifetime-safety-lifetimebound-violation
+      lifetime-safety-experimental-field-origin-escape
+      lifetime-safety-experimental-invalidation
+      lifetime-safety-dangling-field)
+    string(MAKE_C_IDENTIFIER "LIGHTUSD_HAS_W${_lusd_lifetime_warn}" _lusd_have_var)
+    check_cxx_compiler_flag("-W${_lusd_lifetime_warn}" ${_lusd_have_var})
+    if (${_lusd_have_var})
+      set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Wno-${_lusd_lifetime_warn}")
+    endif()
+  endforeach()
+
   if(LIGHTUSD_COMPILE_TIME_TRACE)
     set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -ftime-trace ")
   endif()

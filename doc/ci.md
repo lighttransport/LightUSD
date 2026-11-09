@@ -152,7 +152,7 @@ Inputs:
 The job:
 
 1. Sets up Node 24 with `registry-url: https://registry.npmjs.org`.
-2. Installs Emscripten 4.0.14 and builds WASM32 + WASM64 (MinSizeRel).
+2. Installs Emscripten 7.0.0 and builds WASM32 + WASM64 (MinSizeRel).
 3. `npm run build:stage -- --release-version=<input>` (runs `web/npm/scripts/stage-package.mjs`).
 4. `npm run validate` (runs `web/npm/scripts/validate-package.mjs`).
 5. `npm publish --provenance --access public --tag <npm_tag>` from `web/npm/dist`.

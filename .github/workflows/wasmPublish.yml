@@ -38,8 +38,8 @@ jobs:
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
 
-          ./emsdk install 4.0.14
-          ./emsdk activate 4.0.14
+          ./emsdk install 7.0.0
+          ./emsdk activate 7.0.0
 
           # Revert to 3.1.51 if there is a problem.
           ## from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
