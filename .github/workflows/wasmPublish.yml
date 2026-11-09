@@ -47,103 +47,21 @@ jobs:
           ## with the C++ bindings I have in the repo?
           #./emsdk install 3.1.51
           #./emsdk activate 3.1.51
-      - name: Configure WASM32
+      # The npm package ships the next product only: lightusd_next[_64] plus
+      # its feature modules (geometry, raytrace, validator, exr) and the MCP
+      # server module. Keep this list in sync with web/npm/build-wasm.sh and
+      # web/npm/scripts/stage-package.mjs.
+      - name: Build WASM (next + mcp, wasm32 + wasm64)
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build -DLIGHTUSD_WASM_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
-
-      - name: Build WASM32
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build --parallel
-
-      - name: Configure WASM64
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build64 -DLIGHTUSD_WASM_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=1
-
-      - name: Build WASM64
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build64 --parallel
-
-      - name: Configure WASM32 next-only
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-next -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_NEXT_ONLY=1
-
-      - name: Build WASM32 next-only
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-next --parallel
-
-      - name: Configure WASM64 next-only
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-next64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_NEXT_ONLY=1 -DLIGHTUSD_WASM64=1
-
-      - name: Build WASM64 next-only
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-next64 --parallel
-
-      # The MCP modules (lightusd_mcp[_64]) are required by the npm stage step
-      # (web/npm/scripts/stage-package.mjs); keep this list in sync with
-      # web/npm/build-wasm.sh.
-      - name: Configure WASM32 MCP
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-mcp -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=mcp
-
-      - name: Build WASM32 MCP
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-mcp --parallel
-
-      - name: Configure WASM64 MCP
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-mcp64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=mcp -DLIGHTUSD_WASM64=1
-
-      - name: Build WASM64 MCP
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-mcp64 --parallel
-
-      # The next smoke test below imports the combined (legacy + next) glue,
-      # lightusd_combined[_64]. It is test-only and removed before staging.
-      - name: Configure WASM32 combined
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-combined -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=combined
-
-      - name: Build WASM32 combined
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-combined --parallel
-
-      - name: Configure WASM64 combined
-        run: |
-          source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-combined64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_PRODUCT=combined -DLIGHTUSD_WASM64=1
-
-      - name: Build WASM64 combined
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cmake --build web/cmake-build-combined64 --parallel
-
-      # Exercise the WASM `next` (low-memory lazy-ValueRep) flatten pipeline on
-      # both arches before packaging, so a next-path regression blocks publish.
-      - name: Smoke test (next pipeline)
-        working-directory: ${{ github.workspace }}/web/js
-        run: |
-          node tests/usdzconvert-next.test.mjs
-          LIGHTUSD_WASM64=1 node tests/usdzconvert-next.test.mjs
-
-      # stage-package.mjs copies every .js/.wasm in web/js/src/lightusd; keep
-      # the test-only combined glue out of the published package.
-      - name: Remove test-only combined glue
-        run: rm -f web/js/src/lightusd/lightusd_combined*.js web/js/src/lightusd/lightusd_combined*.wasm
+          build() {
+            emcmake cmake -S web -B "web/$1" -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel "${@:2}"
+            cmake --build "web/$1" --parallel
+          }
+          build cmake-build-next    -DLIGHTUSD_WASM_PRODUCT=next
+          build cmake-build-next64  -DLIGHTUSD_WASM_PRODUCT=next -DLIGHTUSD_WASM64=1
+          build cmake-build-mcp     -DLIGHTUSD_WASM_PRODUCT=mcp
+          build cmake-build-mcp64   -DLIGHTUSD_WASM_PRODUCT=mcp -DLIGHTUSD_WASM64=1
 
       - name: Install npm dependencies
         working-directory: ${{ github.workspace }}/web/npm
@@ -159,6 +77,12 @@ jobs:
         working-directory: ${{ github.workspace }}/web/npm
         run: |
           npm run validate
+
+      # Loads the tests/usda corpus through the staged package (next backend).
+      - name: Test npm package
+        working-directory: ${{ github.workspace }}/web/npm
+        run: |
+          npm run test:usda
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

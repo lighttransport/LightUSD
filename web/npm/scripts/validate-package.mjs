@@ -15,12 +15,6 @@ const REQUIRED_STAGED_FILES = [
   'LICENSE',
   'README.md',
   'package.json',
-  'lightusd.js',
-  'lightusd.wasm',
-  'lightusd.wasm.zst',
-  'lightusd_64.js',
-  'lightusd_64.wasm',
-  'lightusd_64.wasm.zst',
   'lightusd_next.js',
   'lightusd_next.wasm',
   'lightusd_next.wasm.zst',
@@ -131,10 +125,6 @@ assert.equal(typeof pkg.OpenPBRTSL, 'object');
 assert.equal(pkg.LightUSDLoader, DeepLoader);
 assert.equal(LightUSDWorkerLoaderDefault, LightUSDWorkerLoader);
 assert.equal(require.resolve('lightusd/LightUSDLoader.js').endsWith('LightUSDLoader.js'), true);
-assert.equal(require.resolve('lightusd/lightusd.wasm').endsWith('lightusd.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd.wasm.zst').endsWith('lightusd.wasm.zst'), true);
-assert.equal(require.resolve('lightusd/lightusd_64.wasm').endsWith('lightusd_64.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd_64.wasm.zst').endsWith('lightusd_64.wasm.zst'), true);
 assert.equal(require.resolve('lightusd/lightusd_next.wasm').endsWith('lightusd_next.wasm'), true);
 assert.equal(require.resolve('lightusd/lightusd_next.wasm.zst').endsWith('lightusd_next.wasm.zst'), true);
 assert.equal(require.resolve('lightusd/lightusd_next_64.wasm').endsWith('lightusd_next_64.wasm'), true);
@@ -156,15 +146,21 @@ for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_6
   }
 }
 
-// The default lightusd product is the explicit legacy-compatible module.
+// The legacy lightusd[_64] module is no longer published.
 for (const legacyModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
-  const factory = (await import(legacyModule)).default;
-  assert.equal(typeof factory, 'function', legacyModule + ' default export is a module factory');
-  const instance = await factory();
-  assert.equal(typeof instance.LightUSDLoaderNative, 'function',
-    legacyModule + ' exposes the legacy loader');
-  assert.equal(typeof instance.NextUSDZConverterNative, 'undefined',
-    legacyModule + ' must not silently include the next-only converter');
+  await assert.rejects(import(legacyModule), legacyModule + ' must not be published');
+}
+
+// The default loader runs on the next module and a requested legacy backend
+// falls back to it.
+for (const useMemory64 of [false, true]) {
+  for (const backend of ['next', 'legacy']) {
+    const loader = new pkg.LightUSDLoader();
+    await loader.init({ backend, useMemory64 });
+    const usda = new TextEncoder().encode('#usda 1.0\\ndef Xform "Root" {}\\n');
+    const scene = await loader.parseAsync(usda.buffer, 'root.usda', { backend });
+    assert.ok(scene, 'loader parses with backend=' + backend + ' wasm64=' + useMemory64);
+  }
 }
 `;
 

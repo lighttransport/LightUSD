@@ -152,17 +152,18 @@ Inputs:
 The job:
 
 1. Sets up Node 24 with `registry-url: https://registry.npmjs.org`.
-2. Installs Emscripten 7.0.0 and builds WASM32 + WASM64 (MinSizeRel).
-3. `npm run build:stage -- --release-version=<input>` (runs `web/npm/scripts/stage-package.mjs`).
+2. Installs Emscripten 7.0.0 and builds the `next` and `mcp` WASM products, each as WASM32 + WASM64 (MinSizeRel). The package ships the next product only (`lightusd_next[_64]` plus the geometry / raytrace / validator / exr feature modules and the MCP module); the legacy `lightusd[_64]` module is not built or published.
+3. `npm run build:stage -- --release-version=<input>` (runs `web/npm/scripts/stage-package.mjs`; legacy/combined glue in a developer checkout is excluded).
 4. `npm run validate` (runs `web/npm/scripts/validate-package.mjs`).
-5. `npm publish --provenance --access public --tag <npm_tag>` from `web/npm/dist`.
+5. `npm run test:usda` — loads the `tests/usda` corpus through the staged package on the next backend.
+6. `npm stage publish --provenance --access public --tag <npm_tag>` from `web/npm/dist`; approve the staged version on npmjs.com to make it live.
 
 Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `lightusd` package must trust this workflow. No npm token in repo secrets.
 
 The npm staging scripts live in `web/npm/`:
 
 - `build-package.sh` — top-level: ensures Node/emsdk, runs `build-wasm.sh`, then stages + validates.
-- `build-wasm.sh` — emcmake/ninja build of WASM32 + WASM64 in MinSizeRel.
+- `build-wasm.sh` — emcmake/ninja build of the `next` and `mcp` products, WASM32 + WASM64, in MinSizeRel.
 - `scripts/stage-package.mjs` — copies wasm/js into `web/npm/dist`, rewrites manifest version.
 - `scripts/validate-package.mjs` — `npm pack --dry-run` + structural check on `dist/`.
 

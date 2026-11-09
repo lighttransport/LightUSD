@@ -1774,49 +1774,39 @@ class LightUSDLoader extends Loader {
 
             let initLightUSDNative = null;
 
-            // Use dynamic import based on memory64 parameter.
-            // Build the 64-bit module path via URL so Vite's static import
-            // analysis does not fail when lightusd_64.js is absent.
-            if (use_next_only_wasm) {
+            // The legacy module (lightusd[_64].js) is not part of the npm
+            // package; it exists only in source-tree builds. When it is
+            // requested but absent, fall back to the next module (same
+            // memory64 choice) instead of failing.
+            // Module paths are built via URL so Vite's static import analysis
+            // does not fail when an optional module is absent.
+            let use_next_only_wasm_resolved = use_next_only_wasm;
+            if (!use_next_only_wasm_resolved) {
+                try {
+                    const legacyUrl = new URL(use_memory64 ? './lightusd_64.js' : './lightusd.js',
+                        import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ legacyUrl);
+                    initLightUSDNative = module.default;
+                    this.nextOnlyNative_ = false;
+                } catch (e) {
+                    console.warn('[LightUSDLoader] Legacy WASM module is not available; using the next module (backend: \'next\').');
+                    use_next_only_wasm_resolved = true;
+                    this.backend_ = 'next';
+                }
+            }
+            if (use_next_only_wasm_resolved) {
                 const nextUrl = new URL(use_memory64 ? './lightusd_next_64.js' : './lightusd_next.js',
                     import.meta.url).href;
                 const module = await import(/* @vite-ignore */ nextUrl);
                 initLightUSDNative = module.default;
                 this.nextOnlyNative_ = true;
-            } else if (use_memory64) {
-                try {
-                    const wasm64Url = new URL(/* @vite-ignore */ './lightusd_64.js', import.meta.url).href;
-                    const module = await import(/* @vite-ignore */ wasm64Url);
-                    initLightUSDNative = module.default;
-                    this.nextOnlyNative_ = false;
-                } catch (e) {
-                    console.warn('[LightUSDLoader] WASM64 module (lightusd_64.js) not found, falling back to 32-bit module.', e.message);
-                    use_memory64 = false;
-                    const wasm32Url = new URL('./lightusd.js', import.meta.url).href;
-                    const module = await import(/* @vite-ignore */ wasm32Url);
-                    initLightUSDNative = module.default;
-                    this.nextOnlyNative_ = false;
-                }
-            } else {
-                try {
-                    const wasm32Url = new URL('./lightusd.js', import.meta.url).href;
-                    const module = await import(/* @vite-ignore */ wasm32Url);
-                    initLightUSDNative = module.default;
-                    this.nextOnlyNative_ = false;
-                } catch (e) {
-                    const nextUrl = new URL('./lightusd_next.js', import.meta.url).href;
-                    const module = await import(/* @vite-ignore */ nextUrl);
-                    initLightUSDNative = module.default;
-                    this.nextOnlyNative_ = true;
-                    console.info('[LightUSDLoader] Legacy WASM module not found; using next-only WASM module.');
-                }
             }
 
             let wasmBinary = null;
 
             if (this.useZstdCompressedWasm_) {
                 // Load and decompress zstd compressed WASM
-                const compressedName = use_next_only_wasm
+                const compressedName = use_next_only_wasm_resolved
                     ? (use_memory64 ? 'lightusd_next_64.wasm.zst' : 'lightusd_next.wasm.zst')
                     : (use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_);
                 wasmBinary = await this.decompressZstdWasm(compressedName);
@@ -2237,10 +2227,14 @@ class LightUSDLoader extends Loader {
             _onError(new Error('LightUSDLoader: Native module is not initialized.'));
         }
 
-        const backend = options.backend || this.backend_ || 'next';
+        let backend = options.backend || this.backend_ || 'next';
         if (this.nextOnlyNative_ && backend !== 'next' && backend !== 'auto') {
-            _onError(new Error('LightUSDLoader: next-only WASM module supports backend=next only.'));
-            return;
+            // The published package ships the next module only.
+            if (!this.warnedLegacyBackend_) {
+                console.warn('[LightUSDLoader] backend=' + backend + ' is not available in this build; using backend=next.');
+                this.warnedLegacyBackend_ = true;
+            }
+            backend = 'next';
         }
         if (backend === 'next' || backend === 'auto') {
             NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
