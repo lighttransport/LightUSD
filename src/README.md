@@ -169,8 +169,8 @@ Stage/Layer ──► WriteUSDC()  ──► USDC file (via CrateWriter)
 src/next/
 ├── CMakeLists.txt
 ├── README.md                    # This file
-├── lightusd-next.hh            # Unified header (includes all components)
-├── lightusd-next.cc            # High-level API implementation
+├── lightusd-core.hh            # Unified header (includes all components)
+├── lightusd-core.cc            # High-level API implementation
 │
 ├── types/                       # Core type system
 │   ├── type-id.hh              # TypeId enum (~200 lines)
@@ -477,7 +477,7 @@ Measured with GCC 13.3.0 on Linux.
 ### Simple Usage (Unified Header)
 
 ```cpp
-#include "next/lightusd-next.hh"
+#include "next/lightusd-core.hh"
 
 using namespace lightusd::next;
 

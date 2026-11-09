@@ -8,7 +8,7 @@
 #include "load-usd-internal.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
-#include "next-util.hh"
+#include "core-util.hh"
 #include "format-detect.hh"
 #include "composition/composition.hh"
 #include "pcp/cache.hh"

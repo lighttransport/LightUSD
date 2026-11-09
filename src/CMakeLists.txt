@@ -149,7 +149,7 @@ set(LIGHTUSD_NEXT_SOURCES
     # AOUSD Core validation
 
     # High-level API
-    lightusd-next.cc
+    lightusd-core.cc
     format-detect.cc
 )
 
@@ -283,7 +283,7 @@ set(LIGHTUSD_NEXT_HEADERS
 
     # High-level API
     load-usd.hh
-    lightusd-next.hh
+    lightusd-core.hh
     operation-status.hh
 )
 

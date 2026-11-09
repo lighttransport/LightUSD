@@ -14,7 +14,7 @@
 
 #include "eval/attribute-eval.hh"
 #include "load-usd.hh"
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "schema/geom-mesh.hh"
 #include "schema/geom-xform.hh"
 #include "writer/usda-writer.hh"

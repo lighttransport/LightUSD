@@ -64,7 +64,7 @@
 #include "reader/usdz-reader.hh"
 #include "schema/geom-mesh.hh"
 #include "stage/stage.hh"
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "types/value.hh"
 #include "../../src/tydra/scene-access.hh"
 

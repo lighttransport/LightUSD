@@ -8,7 +8,7 @@
 #if defined(LIGHTUSD_WITH_USDOBJ)
 #include "reader/obj-reader.hh"
 #endif
-#include "next-util.hh"
+#include "core-util.hh"
 #include "safe-file-size.hh"
 
 #include "layer/asset-anchor.hh"

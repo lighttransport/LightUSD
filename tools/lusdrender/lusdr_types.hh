@@ -24,7 +24,7 @@
 #include "schema/geom-mesh.hh"
 #include "reader/usdz-reader.hh"
 #include "stage/stage.hh"
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "types/value.hh"
 #include "../../src/tydra/scene-access.hh"
 #include "tydra/texture-cache.hh"

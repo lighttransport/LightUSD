@@ -49,7 +49,7 @@
 #if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_NEXT
 // The next pipeline headers live under src/next; consumers add src/ and
 // src/next to their include path.
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "tydra/render-converter.hh"
 #endif
 

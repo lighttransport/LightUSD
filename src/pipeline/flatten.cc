@@ -5,7 +5,7 @@
 
 #include "core/native-io.hh"
 #include "flatten.hh"
-#include "next-util.hh"
+#include "core-util.hh"
 
 #include <algorithm>
 #include <cstring>

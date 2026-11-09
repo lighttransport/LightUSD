@@ -4,7 +4,7 @@
 // LightUSD Next - USDC Reader implementation
 
 #include "usdc-reader.hh"
-#include "next-util.hh"
+#include "core-util.hh"
 #include "strfmt.hh"
 
 #include <fstream>

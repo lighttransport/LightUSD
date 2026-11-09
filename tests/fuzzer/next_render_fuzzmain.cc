@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "tydra/render-converter.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {

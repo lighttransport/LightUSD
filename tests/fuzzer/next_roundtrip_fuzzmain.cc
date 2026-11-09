@@ -17,7 +17,7 @@
 #include "reader/usda-reader.hh"
 #include "reader/usdc-reader.hh"
 #include "reader/usdz-reader.hh"
-#include "lightusd-next.hh"
+#include "lightusd-core.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 #include "writer/usdz-writer.hh"
