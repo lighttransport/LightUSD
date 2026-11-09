@@ -16,7 +16,7 @@
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static const char* kScene = R"USD(#usda 1.0
 (

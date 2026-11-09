@@ -6,8 +6,8 @@
 #include <limits>
 
 int main(int argc, char** argv) {
-  lightusd::next::DependencyOptions options;
-  lightusd::next::ResolverConfig config;
+  lightusd::DependencyOptions options;
+  lightusd::ResolverConfig config;
   config.enable_suffix_fallback = false;
   std::string input;
   bool json = false;
@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
                    "Exit: 0 complete, 1 incomplete/unresolved, 2 usage error.\n";
       return 0;
     } else if (arg == "--json") json = true;
-    else if (arg == "--composed") options.scope = lightusd::next::DependencyScope::ComposedStage;
+    else if (arg == "--composed") options.scope = lightusd::DependencyScope::ComposedStage;
     else if (arg == "--all-variants") options.all_authored_variants = true;
     else if (arg == "--no-payloads") options.follow_payloads = false;
     else if (arg == "--search-path" && i + 1 < argc) config.search_paths.push_back(argv[++i]);
@@ -41,9 +41,9 @@ int main(int argc, char** argv) {
     else { std::cerr << "lusddeps: invalid argument: " << arg << '\n'; return 2; }
   }
   if (input.empty()) { std::cerr << "lusddeps: input required\n"; return 2; }
-  lightusd::next::AssetResolver resolver(config);
-  const auto report = lightusd::next::CollectDependencies(input, resolver, options);
-  if (json) std::cout << lightusd::next::DependencyReportToJSON(report) << '\n';
+  lightusd::AssetResolver resolver(config);
+  const auto report = lightusd::CollectDependencies(input, resolver, options);
+  if (json) std::cout << lightusd::DependencyReportToJSON(report) << '\n';
   else {
     for (const auto& r : report.records)
       std::cout << r.status << '\t' << r.kind << '\t' << r.referring_layer << ':' << r.location

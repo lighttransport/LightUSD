@@ -38,7 +38,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Paged secure snapshot
@@ -1367,5 +1366,4 @@ bool DecodeCrateArrayAt(const uint8_t* base, size_t size, ValueRep rep,
                               max_elements, out, budget);
 }
 
-}  // namespace next
 }  // namespace lightusd

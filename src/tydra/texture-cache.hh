@@ -30,7 +30,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct TextureBudgetState {
   explicit TextureBudgetState(uint64_t limit_bytes) : limit(limit_bytes) {}
@@ -90,10 +89,8 @@ struct TextureBudgetLease {
   }
 };
 class USDZReader;
-}  // namespace next
 
 namespace tydra {
-namespace next {
 
 /// Decoded 8-bit texture pixels. `channels` is 4 unless the decoder was told to
 /// keep the source channel count (see TextureDecodeOptions::force_rgba).
@@ -106,7 +103,7 @@ struct DecodedImage {
   // LDR callers continue to use pixels above.
   bool hdr = false;
   std::vector<float> float_pixels;  // width * height * 3
-  std::shared_ptr<::lightusd::next::TextureBudgetLease> budget_lease;
+  std::shared_ptr<::lightusd::TextureBudgetLease> budget_lease;
 
   bool empty() const { return hdr ? float_pixels.empty() : pixels.empty(); }
   size_t byte_size() const {
@@ -118,7 +115,7 @@ struct TextureDecodeOptions {
   /// Directory the source USD resolves relative asset paths against.
   std::string base_dir;
   /// Optional .usdz archive to look the asset up in before the filesystem.
-  const ::lightusd::next::USDZReader* usdz = nullptr;
+  const ::lightusd::USDZReader* usdz = nullptr;
   /// Longest-edge cap in texels. 0 = keep the source resolution.
   uint32_t max_edge = 0;
   /// Cap on resident decoded bytes owned by this decoder and its returned
@@ -145,7 +142,7 @@ class TextureDecoder {
  public:
   explicit TextureDecoder(TextureDecodeOptions options)
       : options_(std::move(options)),
-        budget_state_(std::make_shared<::lightusd::next::TextureBudgetState>(
+        budget_state_(std::make_shared<::lightusd::TextureBudgetState>(
             options_.budget_bytes)) {}
 
   /// Decode `asset` into `out`. `srgb` selects the resize filter's color space
@@ -187,7 +184,7 @@ class TextureDecoder {
     std::list<std::string>::iterator lru;
   };
   TextureDecodeOptions options_;
-  std::shared_ptr<::lightusd::next::TextureBudgetState> budget_state_;
+  std::shared_ptr<::lightusd::TextureBudgetState> budget_state_;
   uint64_t downscaled_ = 0;
   std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
   std::list<std::string> ptex_lru_;
@@ -211,6 +208,5 @@ class TextureDecoder {
 /// application's job.
 std::string ReplaceUdimToken(const std::string& asset, int udim);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

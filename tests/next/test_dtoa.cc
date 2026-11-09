@@ -40,11 +40,11 @@
 
 #include "writer/dtoa.hh"
 
-using lightusd::next::dtos;
-using lightusd::next::dtos_append;
-using lightusd::next::dtos_to;
-using lightusd::next::dtos_to_reference;
-using lightusd::next::kDtoaBufSize;
+using lightusd::dtos;
+using lightusd::dtos_append;
+using lightusd::dtos_to;
+using lightusd::dtos_to_reference;
+using lightusd::kDtoaBufSize;
 
 namespace {
 

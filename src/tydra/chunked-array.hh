@@ -15,7 +15,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 constexpr size_t kDefaultChunkSize = 64 * 1024;
 
@@ -312,6 +311,5 @@ struct alignas(16) Vec4f {
 };
 using Vec4fChunked = ChunkedArray<Vec4f>;
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

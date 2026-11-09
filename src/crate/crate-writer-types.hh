@@ -12,11 +12,9 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 CrateTypeId ToCrateTypeId(TypeId type_id);
 uint32_t ArrayComps(TypeId type_id);
 size_t CrateValueSize(CrateTypeId type, bool is_array);
 
-}  // namespace next
 }  // namespace lightusd

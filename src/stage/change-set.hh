@@ -12,7 +12,6 @@
 #include "prim/path.hh"
 
 namespace lightusd {
-namespace next {
 
 class Stage;
 
@@ -76,5 +75,4 @@ struct StageChangeSet {
 bool AppendStageChangeSet(const StageChangeSet& incoming,
                           StageChangeSet* aggregate);
 
-}  // namespace next
 }  // namespace lightusd

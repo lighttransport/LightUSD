@@ -22,7 +22,7 @@ namespace {
 
 enum class Arc { Reference, Payload, Inherit, Specialize };
 
-next::LazyStringList& ArcList(next::PrimMetadata& m, Arc arc) {
+::lightusd::LazyStringList& ArcList(::lightusd::PrimMetadata& m, Arc arc) {
   switch (arc) {
     case Arc::Reference: return m.references;
     case Arc::Payload: return m.payloads;
@@ -31,8 +31,8 @@ next::LazyStringList& ArcList(next::PrimMetadata& m, Arc arc) {
   }
 }
 
-const next::ArcListOp* ArcEdits(const next::PrimMetadata& m, Arc arc) {
-  const next::ArcListOps* e = m.arc_edits();
+const ::lightusd::ArcListOp* ArcEdits(const ::lightusd::PrimMetadata& m, Arc arc) {
+  const ::lightusd::ArcListOps* e = m.arc_edits();
   if (!e) return nullptr;
   switch (arc) {
     case Arc::Reference: return &e->references;
@@ -78,12 +78,12 @@ json ArcToJSON(const std::string& arc, const char* qualifier) {
   return j;
 }
 
-json ListArcs(const next::PrimMetadata& m, Arc arc) {
+json ListArcs(const ::lightusd::PrimMetadata& m, Arc arc) {
   json out = json::array();
-  const next::ArcListOp* edits = ArcEdits(m, arc);
+  const ::lightusd::ArcListOp* edits = ArcEdits(m, arc);
   const bool qualified = edits && edits->has_qualifiers();
   if (!qualified) {
-    for (const std::string& a : ArcList(const_cast<next::PrimMetadata&>(m), arc)) {
+    for (const std::string& a : ArcList(const_cast<::lightusd::PrimMetadata&>(m), arc)) {
       out.push_back(ArcToJSON(a, nullptr));
     }
     return out;
@@ -98,17 +98,17 @@ json ListArcs(const next::PrimMetadata& m, Arc arc) {
   return out;
 }
 
-next::PrimSpec* MutableSpec(lightusd_stage* stage, const std::string& path,
+::lightusd::PrimSpec* MutableSpec(lightusd_stage* stage, const std::string& path,
                             std::string* err) {
-  next::Layer* layer = lightusd_internal::MutableNativeRootLayer(stage);
-  next::PrimSpec* spec = layer ? layer->prim_at_path_mutable(path) : nullptr;
+  ::lightusd::Layer* layer = lightusd_internal::MutableNativeRootLayer(stage);
+  ::lightusd::PrimSpec* spec = layer ? layer->prim_at_path_mutable(path) : nullptr;
   if (!spec) *err = "Prim spec not found in the editable root layer: " + path;
   return spec;
 }
 
-const next::PrimSpec* ReadSpec(const PrimSite& site, const std::string& path) {
-  const next::Stage* s = lightusd_internal::BorrowNativeStage(site.stage);
-  const next::Layer* layer = s ? s->GetRootLayer() : nullptr;
+const ::lightusd::PrimSpec* ReadSpec(const PrimSite& site, const std::string& path) {
+  const ::lightusd::Stage* s = lightusd_internal::BorrowNativeStage(site.stage);
+  const ::lightusd::Layer* layer = s ? s->GetRootLayer() : nullptr;
   return layer ? layer->prim_at_path(path) : nullptr;
 }
 
@@ -141,7 +141,7 @@ bool AddArc(Context& ctx, const json& args, json& result, std::string& err,
   }
   PrimSite site;
   if (!FindPrimSite(ctx, path, &site, &err)) return false;
-  next::PrimSpec* spec = MutableSpec(site.stage, path, &err);
+  ::lightusd::PrimSpec* spec = MutableSpec(site.stage, path, &err);
   if (!spec) return false;
   std::string text;
   if (!asset.empty()) text += "@" + asset + "@";
@@ -150,12 +150,12 @@ bool AddArc(Context& ctx, const json& args, json& result, std::string& err,
       (offset != 0.0 || scale != 1.0)) {
     text += "?layerOffset=" + std::to_string(offset) + ":" + std::to_string(scale);
   }
-  next::PrimMetadata& m = spec->meta();
-  const next::ArcListOp* edits = ArcEdits(m, arc);
+  ::lightusd::PrimMetadata& m = spec->meta();
+  const ::lightusd::ArcListOp* edits = ArcEdits(m, arc);
   if (edits && edits->has_qualifiers()) {
     // Keep the authored list-op form: add to its prepend list.
-    next::ArcListOps& e = m.ensure_arc_edits();
-    next::ArcListOp& target = arc == Arc::Reference ? e.references
+    ::lightusd::ArcListOps& e = m.ensure_arc_edits();
+    ::lightusd::ArcListOp& target = arc == Arc::Reference ? e.references
                             : arc == Arc::Payload ? e.payloads
                             : arc == Arc::Inherit ? e.inherits
                                                   : e.specializes;
@@ -174,7 +174,7 @@ bool ListArcTool(Context& ctx, const json& args, json& result, std::string& err,
   if (!RequirePath(args, "path", &path, &err)) return false;
   PrimSite site;
   if (!FindPrimSite(ctx, path, &site, &err)) return false;
-  const next::PrimSpec* spec = ReadSpec(site, path);
+  const ::lightusd::PrimSpec* spec = ReadSpec(site, path);
   json arcs = spec ? ListArcs(spec->meta(), arc) : json::array();
   result["path"] = path;
   result["layer"] = site.layer;
@@ -207,7 +207,7 @@ bool ReferenceClear(Context& ctx, const json& args, json& result, std::string& e
   if (!RequirePath(args, "path", &path, &err)) return false;
   PrimSite site;
   if (!FindPrimSite(ctx, path, &site, &err)) return false;
-  next::PrimSpec* spec = MutableSpec(site.stage, path, &err);
+  ::lightusd::PrimSpec* spec = MutableSpec(site.stage, path, &err);
   if (!spec) return false;
   spec->meta().references.clear();
   if (spec->meta().arc_edits()) spec->meta().ensure_arc_edits().references = {};

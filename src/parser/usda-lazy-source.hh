@@ -27,7 +27,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 // Implemented by value-parser.cc through value-parser-arrays.inc.
 ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
@@ -158,5 +157,4 @@ class UsdaLazyArraySource final : public LazyArraySource {
   size_t size_ = 0;
 };
 
-}  // namespace next
 }  // namespace lightusd

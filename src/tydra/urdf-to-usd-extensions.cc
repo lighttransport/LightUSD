@@ -9,7 +9,7 @@
 #include <cmath>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 
 std::vector<std::string> NewtonActuatorSchemas(const Json &act) {
@@ -913,4 +913,4 @@ void AddContactPairFromJson(Scope *scope, std::set<std::string> *used,
 
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

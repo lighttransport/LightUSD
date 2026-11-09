@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Persistent, revisioned next::Stage -> Tydra render update conversion.
+// Persistent, revisioned ::lightusd::Stage -> Tydra render update conversion.
 #pragma once
 
 #include <cstddef>
@@ -15,7 +15,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 struct ConverterConfig;
 class RenderScene;
@@ -85,8 +84,8 @@ class SceneUpdateSink {
 
 struct RenderUpdateResult {
   bool success = false;
-  ::lightusd::next::OperationStatus status =
-      ::lightusd::next::OperationStatus::InvalidData;
+  ::lightusd::OperationStatus status =
+      ::lightusd::OperationStatus::InvalidData;
   bool cancelled = false;
   uint64_t revision = 0;
   size_t upsert_count = 0;
@@ -150,21 +149,21 @@ class RenderSession {
   RenderSession& operator=(const RenderSession&) = delete;
 
   RenderUpdateResult Initialize(
-      const ::lightusd::next::StageSnapshot& snapshot,
+      const ::lightusd::StageSnapshot& snapshot,
       SceneUpdateSink* sink);
-  RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
-                           const ::lightusd::next::StageChangeSet& changes,
+  RenderUpdateResult Apply(const ::lightusd::StageSnapshot& snapshot,
+                           const ::lightusd::StageChangeSet& changes,
                            SceneUpdateSink* sink);
 
   /// Convert and allocate a candidate without invoking the sink or publishing
   /// it. Commit may run later on the render thread. A candidate becomes stale
   /// if another update commits first.
   RenderUpdateResult Prepare(
-      const ::lightusd::next::StageSnapshot& snapshot,
-      const ::lightusd::next::StageChangeSet& changes,
+      const ::lightusd::StageSnapshot& snapshot,
+      const ::lightusd::StageChangeSet& changes,
       PreparedRenderUpdate* prepared);
   RenderUpdateResult PrepareInitialize(
-      const ::lightusd::next::StageSnapshot& snapshot,
+      const ::lightusd::StageSnapshot& snapshot,
       PreparedRenderUpdate* prepared);
   /// Emit a prepared candidate to the sink and publish it only after EndUpdate
   /// succeeds. Failure calls AbortUpdate and preserves the old revision/scene.
@@ -192,6 +191,5 @@ class RenderSession {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -6,7 +6,6 @@
 #include "crate-writer-types.hh"
 
 namespace lightusd {
-namespace next {
 
 CrateTypeId ToCrateTypeId(TypeId type_id) {
   switch (type_id) {
@@ -182,5 +181,4 @@ size_t CrateValueSize(CrateTypeId type, bool is_array) {
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -11,7 +11,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 
 /// Absolute ceiling on a file this library will read whole into memory.
 /// Deliberately generous -- it exists to reject the impossible, not to police
@@ -51,5 +50,4 @@ inline bool SafeStreamSize(std::ifstream& f, uint64_t max_bytes, size_t* out) {
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

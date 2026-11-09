@@ -24,7 +24,7 @@
 #include "layer/layer.hh"
 #include "reader/usdc-reader.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 

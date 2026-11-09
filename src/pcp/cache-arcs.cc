@@ -3,7 +3,6 @@
 #include "cache-internal.hh"
 #include <tuple>
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 std::string Cache::Impl::RealAnchorOf(std::string id) {
@@ -810,5 +809,4 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
   }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

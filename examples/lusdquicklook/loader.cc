@@ -20,8 +20,8 @@
 
 namespace lusdql {
 
-namespace tnext = ::lightusd::next;
-namespace tyn = ::lightusd::tydra::next;
+namespace tnext = ::lightusd;
+namespace tyn = ::lightusd::tydra;
 
 const char* LoadPhaseName(LoadPhase phase) {
   switch (phase) {
@@ -188,9 +188,9 @@ class TextureSource {
     for (char& c : ext) c = static_cast<char>(::tolower(c));
     if (ext != ".usdz") return;
 
-    ::lightusd::next::USDZReadOptions zopts;
+    ::lightusd::USDZReadOptions zopts;
     zopts.max_archive_size = max_archive_bytes;
-    zip_ = std::make_unique<::lightusd::next::USDZReader>();
+    zip_ = std::make_unique<::lightusd::USDZReader>();
     if (!zip_->OpenFile(root_path, zopts)) zip_.reset();
   }
 
@@ -231,7 +231,7 @@ class TextureSource {
 
  private:
   std::string root_path_;
-  std::unique_ptr<::lightusd::next::USDZReader> zip_;
+  std::unique_ptr<::lightusd::USDZReader> zip_;
   size_t max_image_bytes_ = 0;
 };
 

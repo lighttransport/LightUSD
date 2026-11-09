@@ -9,7 +9,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -807,5 +806,4 @@ std::vector<std::string> UsdPrim::GetAppliedSchemas() const {
   return GetSchemaRegistry().AppliedSchemas(*spec_);
 }
 
-}  // namespace next
 }  // namespace lightusd

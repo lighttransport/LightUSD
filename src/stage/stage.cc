@@ -13,7 +13,6 @@
 #include <unordered_set>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -1300,5 +1299,4 @@ const std::string& Stage::GetUpAxis() const { return meta_.upAxis; }
 double Stage::GetMetersPerUnit() const { return meta_.metersPerUnit; }
 LayerBuilder& StageBuilder::GetLayerBuilder() { return *layer_builder_; }
 
-}  // namespace next
 }  // namespace lightusd

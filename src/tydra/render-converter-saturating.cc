@@ -4,7 +4,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 size_t SaturatingAdd(size_t a, size_t b) {
   if (b > std::numeric_limits<size_t>::max() - a) {
@@ -26,6 +25,5 @@ bool WouldOverflowSizeMul(size_t a, size_t b) {
 
 
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

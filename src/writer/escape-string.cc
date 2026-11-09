@@ -3,7 +3,7 @@
 #include "c/usda-string.h"
 #include <cstdint>
 #include <cstdlib>
-namespace lightusd { namespace next {
+namespace lightusd {
 std::string EscapeUSDAString(const std::string& text) {
   const size_t size = lu_usda_quote(text.data(), text.size(), nullptr, 0);
   // Matches the existing no-exceptions string allocation failure policy.
@@ -12,4 +12,4 @@ std::string EscapeUSDAString(const std::string& text) {
   lu_usda_quote(text.data(), text.size(), &result[0], result.size());
   return result;
 }
-} }
+ }

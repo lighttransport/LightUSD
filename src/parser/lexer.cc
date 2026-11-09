@@ -15,7 +15,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -1026,5 +1025,4 @@ const char* TokenTypeName(TokenType type) {
   return "Unknown";
 }
 
-}  // namespace next
 }  // namespace lightusd

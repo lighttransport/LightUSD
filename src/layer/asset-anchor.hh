@@ -25,7 +25,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 class Layer;
 
 /// Intern an anchor directory or package-layer identifier and return its id. The empty string maps to 0
@@ -44,5 +43,4 @@ std::string ResolveAssetAnchorPath(const std::string& asset, uint32_t id);
 /// Stamp a loaded package layer with its full package-layer identifier.
 void StampPackageAssetAnchor(Layer* layer, const std::string& identifier);
 
-}  // namespace next
 }  // namespace lightusd

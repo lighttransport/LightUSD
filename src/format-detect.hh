@@ -6,7 +6,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 enum class FileFormat {
   Unknown,
@@ -19,5 +18,4 @@ FileFormat DetectFormat(const uint8_t* data, size_t size);
 FileFormat DetectFormatFromExtension(const std::string& filename);
 FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* err);
 
-}  // namespace next
 }  // namespace lightusd

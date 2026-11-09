@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "value.hh"
-namespace lightusd { namespace next {
+namespace lightusd {
 static void AdoptPod(Value& value, const void* data, size_t size) { value.adopt_pod(data, size); }
 Value Value::MakePoint3f(float x, float y, float z) {
   Value v;
@@ -209,12 +209,12 @@ Value Value::MakeMatrix4d(const double* data) {
   AdoptPod(v, data, static_cast<size_t>(16) * sizeof(double));
   return v;
 }
-}}
+}
 
 #include "array-builder.hh"
 #include <cstring>
 #include <new>
-namespace lightusd { namespace next { namespace detail {
+namespace lightusd {  namespace detail {
 ArrayBuilderStorage::ArrayBuilderStorage(size_t width, size_t alignment)
     : width_(width), alignment_(alignment) {}
 ArrayBuilderStorage::~ArrayBuilderStorage() { lu_buffer_release(buffer_); }
@@ -258,4 +258,4 @@ Value ArrayBuilderStorage::take(TypeId type) {
   }
   return v;
 }
-}}} // namespace lightusd::next::detail
+}} // namespace lightusd::detail

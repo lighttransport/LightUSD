@@ -11,7 +11,6 @@
 #include <map>
 
 namespace lightusd {
-namespace next {
 
 /// Shader input/output info
 struct ShaderPort {
@@ -203,5 +202,4 @@ std::string GetPrimvarReaderVarname(const UsdPrim& shader);
 /// (e.g. to a Material's inputs:frame:stPrimvarName interface attribute).
 std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
 
-}  // namespace next
 }  // namespace lightusd

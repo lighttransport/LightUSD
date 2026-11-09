@@ -30,7 +30,7 @@
 #define CRASH_REGRESSION_DIR "."
 #endif
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static bool read_file(const std::string &path, std::string &out) {
   std::ifstream f(path, std::ios::binary | std::ios::ate);

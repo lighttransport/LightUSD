@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 int main() {
   auto& t = GetPropNameTable();

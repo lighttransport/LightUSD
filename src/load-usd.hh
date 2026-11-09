@@ -9,7 +9,6 @@
 #include "stage/stage-session.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Load a USD file (auto-detects format: USDA, USDC).
 bool LoadUSD(const std::string& filename, Stage* stage,
@@ -81,5 +80,4 @@ bool WriteUSDA(const Stage& stage, const std::string& filename,
 bool WriteUSDC(const Stage& stage, const std::string& filename,
                std::string* err = nullptr);
 
-}  // namespace next
 }  // namespace lightusd

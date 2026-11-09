@@ -17,7 +17,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 constexpr double pi = 3.14159265358979323846, radians = pi / 180;
 constexpr size_t max_bytes = 4u << 20, max_angles = 4096, max_values = 1u << 20;
@@ -434,6 +433,5 @@ bool WritePreviewIes(const std::string& path, const PreviewIesProfile& p,
   if (!file) return Error(error, "cannot write portable IES profile");
   return true;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

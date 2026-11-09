@@ -15,7 +15,7 @@
 
 namespace {
 using lightusd_internal::Fail;
-namespace n = lightusd::next;
+namespace n = lightusd;
 
 lightusd_status ToStatus(n::OperationStatus status) {
   switch (status) {
@@ -131,11 +131,11 @@ std::string_view DocumentSnapshotSourceDir(
     const lightusd_document_snapshot* snapshot) {
   return snapshot ? std::string_view(snapshot->source_dir) : std::string_view();
 }
-const lightusd::next::StageSnapshot& DocumentSnapshotStage(
+const lightusd::StageSnapshot& DocumentSnapshotStage(
     const lightusd_document_snapshot* snapshot) {
   return snapshot->snapshot;
 }
-const lightusd::next::StageChangeSet& DocumentSnapshotChanges(
+const lightusd::StageChangeSet& DocumentSnapshotChanges(
     const lightusd_document_snapshot* snapshot) {
   return snapshot->changes;
 }

@@ -38,14 +38,14 @@ using lusdchecker::KeywordToGroups;
 
 namespace {
 
-using lightusd::next::GetAOUSDCoreSpecVersionString;
-using lightusd::next::GetOrderedValidationIssues;
-using lightusd::next::GetValidationGroupNames;
-using lightusd::next::Layer;
-using lightusd::next::USDValidationIssue;
-using lightusd::next::USDValidationResult;
-using lightusd::next::USDValidationSeverity;
-using lightusd::next::ValidationOptions;
+using lightusd::GetAOUSDCoreSpecVersionString;
+using lightusd::GetOrderedValidationIssues;
+using lightusd::GetValidationGroupNames;
+using lightusd::Layer;
+using lightusd::USDValidationIssue;
+using lightusd::USDValidationResult;
+using lightusd::USDValidationSeverity;
+using lightusd::ValidationOptions;
 
 constexpr int kExitValid = 0;
 constexpr int kExitInvalid = 1;
@@ -191,7 +191,7 @@ lightusd::minijson::Value MakeReport(const Args& args,
   const auto ordered = GetOrderedValidationIssues(result);
   for (size_t i = 0; i < ordered.size(); ++i) {
     const auto& issue = *ordered[i];
-    auto meta = lightusd::next::GetValidationRuleMetadata(issue.rule_id);
+    auto meta = lightusd::GetValidationRuleMetadata(issue.rule_id);
     if (args.groups.registry) for (const auto& rule : args.groups.registry->validators())
       if (rule.id == issue.rule_id) meta = rule.metadata;
     Json& row = report["issues"][i];
@@ -298,14 +298,14 @@ bool ReadFile(const std::string& filename, size_t limit, std::string* data,
 }
 
 std::shared_ptr<Layer> LoadInput(const std::string& path, std::string* warnings,
-    std::string* errors, const lightusd::next::pcp::LayerLoadOptions& options,
+    std::string* errors, const lightusd::pcp::LayerLoadOptions& options,
     const lusdchecker::Environment* environment) {
 #ifndef LUSDCHECKER_MEMORY_ONLY
-  if (!environment) return lightusd::next::pcp::LoadLayerFromFile(path, warnings, errors, options);
+  if (!environment) return lightusd::pcp::LoadLayerFromFile(path, warnings, errors, options);
 #endif
   std::string bytes;
   if (!ReadFile(path, options.max_memory, &bytes, errors, environment)) return {};
-  return lightusd::next::pcp::LoadLayerFromMemory(path,
+  return lightusd::pcp::LoadLayerFromMemory(path,
       reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), warnings, errors, options);
 }
 
@@ -671,7 +671,7 @@ void ValidatePackageCentralDirectory(const uint8_t* bytes, size_t size,
 }
 
 void CollectValueDependencies(
-    lightusd::next::ValueView value,
+    lightusd::ValueView value,
     std::unordered_set<std::string>* dependencies) {
   if (!dependencies) return;
   if (auto asset = value.as_asset_path()) {
@@ -679,7 +679,7 @@ void CollectValueDependencies(
     return;
   }
   if (value.is_array() &&
-      value.type_id() == lightusd::next::TypeId::AssetPath) {
+      value.type_id() == lightusd::TypeId::AssetPath) {
     if (const auto assets = value.as_token_array()) {
       for (const std::string& asset : *assets) {
         if (!asset.empty()) dependencies->insert(asset);
@@ -708,7 +708,7 @@ void CollectLayerDependencies(const Layer& layer,
   for (const auto& prim : layer.prims()) {
     const auto collect_arcs = [&](const std::vector<std::string>& arcs) {
       for (const std::string& encoded : arcs) {
-        const auto arc = lightusd::next::Compositor::ParseReference(encoded);
+        const auto arc = lightusd::Compositor::ParseReference(encoded);
         if (!arc.asset_path.empty()) dependencies->insert(arc.asset_path);
       }
     };
@@ -719,7 +719,7 @@ void CollectLayerDependencies(const Layer& layer,
     CollectValueDependencies(prim.meta().sdrMetadata(), dependencies);
     CollectValueDependencies(prim.meta().clips(), dependencies);
     for (const auto& slot : prim.properties().slots()) {
-      const lightusd::next::Value* value = prim.property_value(slot.name_id);
+      const lightusd::Value* value = prim.property_value(slot.name_id);
       if (value) CollectValueDependencies(*value, dependencies);
       if (const auto* meta = prim.property_meta(slot.name_id)) {
         CollectValueDependencies(meta->customData, dependencies);
@@ -728,7 +728,7 @@ void CollectLayerDependencies(const Layer& layer,
       }
       if (const auto* samples = prim.time_samples(slot.name_id)) {
         for (const auto& sample : *samples) {
-          if (const lightusd::next::Value* sample_value =
+          if (const lightusd::Value* sample_value =
                   prim.time_sample_value(sample.second)) {
             CollectValueDependencies(*sample_value, dependencies);
           }
@@ -789,11 +789,11 @@ void ValidateCrate(const uint8_t* bytes, size_t size,
                    USDValidationResult* result) {
   if (!result) return;
   result->checked_groups.crate = true;
-  lightusd::next::CrateReadOptions options;
+  lightusd::CrateReadOptions options;
   options.max_memory = max_memory;
   options.lazy_arrays = true;
-  lightusd::next::CrateReader reader(options);
-  lightusd::next::CrateReadResult read = reader.Read(bytes, size);
+  lightusd::CrateReader reader(options);
+  lightusd::CrateReadResult read = reader.Read(bytes, size);
   if (!read.success) {
     for (const auto& error : read.errors) {
       AddIssue(result, USDValidationSeverity::Error, "crate.structure",
@@ -859,7 +859,7 @@ void ValidateCrate(const uint8_t* bytes, size_t size,
 std::string ResolveDependencyPath(const std::string& anchor,
                                   const std::string& asset) {
 #ifdef LUSDCHECKER_MEMORY_ONLY
-  using Resolver = lightusd::next::AssetResolver;
+  using Resolver = lightusd::AssetResolver;
   return Resolver::NormalizePath(Resolver::JoinPath(Resolver::GetDirectory(anchor), asset));
 #else
   namespace fs = std::filesystem;
@@ -902,15 +902,15 @@ std::string MapComposedPath(const std::string& source_path,
   return std::string();
 }
 
-std::string PropertyTypeName(const lightusd::next::PrimSpec& prim,
-                             const lightusd::next::PropSlot& slot) {
+std::string PropertyTypeName(const lightusd::PrimSpec& prim,
+                             const lightusd::PropSlot& slot) {
   const std::string name(
-      lightusd::next::GetPropNameTable().get(slot.name_id));
+      lightusd::GetPropNameTable().get(slot.name_id));
   if (const std::string* declared = prim.property_type_name(name)) {
     if (!declared->empty()) return *declared;
   }
-  const char* type = lightusd::next::GetTypeName(
-      static_cast<lightusd::next::TypeId>(slot.value_type));
+  const char* type = lightusd::GetTypeName(
+      static_cast<lightusd::TypeId>(slot.value_type));
   return type ? std::string(type) : std::to_string(slot.value_type);
 }
 
@@ -922,15 +922,15 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
     const std::string mapped = MapComposedPath(
         weak_prim.path().str(), weaker_prefix, stronger_prefix);
     if (mapped.empty()) continue;
-    const lightusd::next::PrimSpec* strong_prim =
+    const lightusd::PrimSpec* strong_prim =
         stronger.prim_at_path(mapped);
     if (!strong_prim) continue;
     for (const auto& weak_slot : weak_prim.properties().slots()) {
-      const lightusd::next::PropSlot* strong_slot =
+      const lightusd::PropSlot* strong_slot =
           strong_prim->property(weak_slot.name_id);
       if (!strong_slot) continue;
       const std::string property(
-          lightusd::next::GetPropNameTable().get(weak_slot.name_id));
+          lightusd::GetPropNameTable().get(weak_slot.name_id));
       const bool weak_rel = weak_slot.is_relationship();
       const bool strong_rel = strong_slot->is_relationship();
       if (weak_rel != strong_rel) {
@@ -956,7 +956,7 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
 
 void AuditLayerTypesRecursive(
     const Layer& layer, const std::string& anchor,
-    const lightusd::next::pcp::LayerLoadOptions& options,
+    const lightusd::pcp::LayerLoadOptions& options,
     std::unordered_set<std::string>* visited, USDValidationResult* result,
     const lusdchecker::Environment* environment) {
   if (!visited || !result) return;
@@ -995,7 +995,7 @@ void AuditLayerTypesRecursive(
   for (const auto& prim : layer.prims()) {
     const auto audit_arcs = [&](const std::vector<std::string>& arcs) {
       for (const std::string& encoded : arcs) {
-        const auto arc = lightusd::next::Compositor::ParseReference(encoded);
+        const auto arc = lightusd::Compositor::ParseReference(encoded);
         if (!arc.asset_path.empty()) {
           load_and_audit(arc.asset_path, arc.prim_path, prim.path().str());
         }
@@ -1016,28 +1016,28 @@ void ValidateDependencyResolution(const Layer& layer,
                                   bool require_complete,
                                   size_t max_memory,
                                   const lusdchecker::Environment* environment) {
-  lightusd::next::ResolverConfig resolver_config;
+  lightusd::ResolverConfig resolver_config;
   resolver_config.enable_suffix_fallback = false;
-  lightusd::next::AssetResolver resolver = environment
-      ? *environment->resolver : lightusd::next::AssetResolver(resolver_config);
-  const auto package_exists = [&](const lightusd::next::ResolvedAsset& asset) {
-    lightusd::next::USDZReadOptions options;
+  lightusd::AssetResolver resolver = environment
+      ? *environment->resolver : lightusd::AssetResolver(resolver_config);
+  const auto package_exists = [&](const lightusd::ResolvedAsset& asset) {
+    lightusd::USDZReadOptions options;
     options.max_archive_size = options.max_entry_size = max_memory;
-    lightusd::next::USDZReader archive;
+    lightusd::USDZReader archive;
     std::string package_bytes, read_error;
     if (environment) {
       if (!ReadFile(asset.package_path, max_memory, &package_bytes, &read_error, environment) ||
           !archive.Open(reinterpret_cast<const uint8_t*>(package_bytes.data()), package_bytes.size(), options)) return false;
     } else if (!archive.OpenFile(asset.package_path, options)) return false;
-    std::function<bool(const lightusd::next::USDZReader&, const std::string&, size_t)> contains;
-    contains = [&](const lightusd::next::USDZReader& zip, const std::string& path, size_t depth) {
+    std::function<bool(const lightusd::USDZReader&, const std::string&, size_t)> contains;
+    contains = [&](const lightusd::USDZReader& zip, const std::string& path, size_t depth) {
       if (depth > 32) return false;
       const size_t bracket = path.find('[');
       const std::string name = path.substr(0, bracket);
       for (size_t i = 0; i < zip.NumEntries(); ++i) if (zip.EntryName(i) == name) {
         if (bracket == std::string::npos) return true;
         if (path.back() != ']') return false;
-        lightusd::next::USDZReader inner;
+        lightusd::USDZReader inner;
         return inner.Open(zip.EntryData(i), zip.EntrySize(i), options) &&
             contains(inner, path.substr(bracket+1, path.size()-bracket-2), depth+1);
       }
@@ -1146,7 +1146,7 @@ void MergeDedupedIssues(USDValidationResult* dst,
 }  // namespace
 
 int lusdchecker::RunConfiguredChecker(CheckerOptions args,
-    const lightusd::next::ValidationRegistry& initial_registry,
+    const lightusd::ValidationRegistry& initial_registry,
     const Environment* environment) {
   args.environment = environment;
 #ifdef LUSDCHECKER_MEMORY_ONLY
@@ -1166,7 +1166,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     return ReportError(args, "checker.usage", "--max-memory-mb is too large");
   }
   const size_t max_memory = args.max_memory_mb * size_t{1024} * 1024;
-  lightusd::next::ValidationRegistry registry = initial_registry;
+  lightusd::ValidationRegistry registry = initial_registry;
   for (const auto& file : args.schema_files) {
     std::string text;
     if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
@@ -1197,9 +1197,9 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
 #ifndef LUSDCHECKER_MEMORY_ONLY
   if (args.dump_rules) {
     size_t count = 0;
-    const auto* rules = lightusd::next::GetValidationRuleTable(&count);
+    const auto* rules = lightusd::GetValidationRuleTable(&count);
     for (size_t i = 0; i < count; ++i) {
-      const auto metadata = lightusd::next::GetValidationRuleMetadata(rules[i].id);
+      const auto metadata = lightusd::GetValidationRuleMetadata(rules[i].id);
       std::cout << "[" << rules[i].group << ":" << rules[i].id << "]:\n\tDoc: " << rules[i].doc
                 << "\n\tCategory: " << metadata.category << '\n';
       if (!metadata.lean_ref.empty()) std::cout << "\tLean: " << metadata.lean_ref << '\n';
@@ -1211,7 +1211,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
 
 #endif
 
-  lightusd::next::pcp::LayerLoadOptions load_options;
+  lightusd::pcp::LayerLoadOptions load_options;
   load_options.max_memory = max_memory;
   load_options.strict_aousd_conformance = args.strict_parse;
 
@@ -1223,7 +1223,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     if (!ReadStdin(max_memory, &input_bytes, &error)) {
       return ReportError(args, "checker.io", error);
     }
-    layer = lightusd::next::pcp::LoadLayerFromMemory(
+    layer = lightusd::pcp::LoadLayerFromMemory(
         "stdin.usda", reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors,
         load_options);
@@ -1231,7 +1231,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     if (!ReadFile(args.input, max_memory, &input_bytes, &error, environment)) {
       return ReportError(args, "checker.io", error);
     }
-    layer = lightusd::next::pcp::LoadLayerFromMemory(
+    layer = lightusd::pcp::LoadLayerFromMemory(
         args.input, reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors, load_options);
   } else {
@@ -1264,19 +1264,19 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
   };
   std::map<std::string, VariantChoice> discovered;
   auto compose_pass = [&](const std::map<std::string, std::string>& overrides,
-      std::vector<lightusd::next::CompositionError>* errors) -> std::unique_ptr<Layer> {
-    lightusd::next::ResolverConfig config;
+      std::vector<lightusd::CompositionError>* errors) -> std::unique_ptr<Layer> {
+    lightusd::ResolverConfig config;
     config.enable_suffix_fallback = !args.strict_parse;
-    lightusd::next::AssetResolver resolver = environment
-        ? *environment->resolver : lightusd::next::AssetResolver(config);
+    lightusd::AssetResolver resolver = environment
+        ? *environment->resolver : lightusd::AssetResolver(config);
     resolver.SetConfig(config);
-    lightusd::next::Compositor compositor(&resolver);
-    lightusd::next::CompositionOptions options;
+    lightusd::Compositor compositor(&resolver);
+    lightusd::CompositionOptions options;
     options.strict_aousd_conformance = args.strict_parse;
     options.max_layer_memory = max_memory;
     options.variant_overrides = overrides;
     options.variant_observer = [&](const std::string& path,
-        const lightusd::next::PrimVariantSetData& set, const std::string& chosen) {
+        const lightusd::PrimVariantSetData& set, const std::string& chosen) {
       auto& choice = discovered[path + "{" + set.name + "}"];
       choice.key = path + "{" + set.name + "}";
       choice.set_name = set.name; choice.selected = chosen;
@@ -1294,38 +1294,38 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     if (errors) *errors = compositor.GetErrors();
     return composed;
   };
-  std::vector<lightusd::next::CompositionError> composition_errors;
+  std::vector<lightusd::CompositionError> composition_errors;
   size_t variant_pass_count = 1;
   bool variant_limit_hit = false;
   bool any_pass_composed = false;
 
   std::unordered_set<std::string> seen_issue_keys;
   auto validate_stage = [&](std::unique_ptr<Layer> composed, const std::string& selections) {
-    lightusd::next::Stage stage;
+    lightusd::Stage stage;
     stage.SetRootLayer(std::move(*composed));
     auto options = args.groups;
     options.stage_presence_checks = false;
     options.run_callbacks = false;
-    auto pass_result = lightusd::next::ValidateLayerAgainstAOUSDCore(*stage.GetRootLayer(), options);
-    lightusd::next::ValidationContext context;
+    auto pass_result = lightusd::ValidateLayerAgainstAOUSDCore(*stage.GetRootLayer(), options);
+    lightusd::ValidationContext context;
     context.layer = stage.GetRootLayer(); context.stage = &stage;
     context.options = options; context.source_asset = args.input; context.variants = selections;
     context.limits.max_value_clip_samples = args.max_samples;
     context.limits.max_resident_bytes = max_memory;
-    registry.RunCallbacks(lightusd::next::ValidationScope::Stage, context, nullptr, &pass_result);
+    registry.RunCallbacks(lightusd::ValidationScope::Stage, context, nullptr, &pass_result);
     for (const auto& prim : stage.GetRootLayer()->prims())
-      registry.RunCallbacks(lightusd::next::ValidationScope::Prim, context, &prim, &pass_result);
+      registry.RunCallbacks(lightusd::ValidationScope::Prim, context, &prim, &pass_result);
     for (auto& issue : pass_result.issues) {
       issue.source_asset = args.input; issue.variants = selections;
     }
     MergeDedupedIssues(&result, &seen_issue_keys, pass_result);
     if (args.all_samples) {
-      lightusd::next::EvalOptions eval;
-      eval.clip_stage_cache = std::make_shared<lightusd::next::ValueClipStageCache>();
-      eval.clip_stage_loader = [&](const std::string& path, lightusd::next::Stage* out,
+      lightusd::EvalOptions eval;
+      eval.clip_stage_cache = std::make_shared<lightusd::ValueClipStageCache>();
+      eval.clip_stage_loader = [&](const std::string& path, lightusd::Stage* out,
                                     std::string*, std::string* error) {
-        lightusd::next::AssetResolver resolver = environment
-            ? *environment->resolver : lightusd::next::AssetResolver();
+        lightusd::AssetResolver resolver = environment
+            ? *environment->resolver : lightusd::AssetResolver();
         const std::string resolved = resolver.ResolvePath(path, args.input);
         auto loaded = load_cached(resolved.empty() ? path : resolved, error);
         if (!loaded) return false;
@@ -1333,20 +1333,20 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
         return true;
       };
       MergeDedupedIssues(&result, &seen_issue_keys,
-          lightusd::next::ValidateStageSamples(stage, context, eval));
+          lightusd::ValidateStageSamples(stage, context, eval));
     }
   };
   if (!args.composed) {
-    result = lightusd::next::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
+    result = lightusd::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
     if (args.all_samples) validate_stage(std::make_unique<Layer>(layer->Clone()), "");
     else {
-      lightusd::next::Stage stage;
+      lightusd::Stage stage;
       stage.SetRootLayer(layer->Clone());
-      lightusd::next::ValidationContext context;
+      lightusd::ValidationContext context;
       context.layer = stage.GetRootLayer(); context.stage = &stage;
       context.options = args.groups; context.source_asset = args.input;
       context.limits.max_resident_bytes = max_memory;
-      registry.RunCallbacks(lightusd::next::ValidationScope::Stage, context, nullptr, &result);
+      registry.RunCallbacks(lightusd::ValidationScope::Stage, context, nullptr, &result);
     }
   } else {
     struct Pass { std::map<std::string, std::string> selections; size_t base; };
@@ -1365,12 +1365,12 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     variant_pass_count = 0;
     const size_t cap = args.disable_variant_limit ? SIZE_MAX : kVariantValidationLimit;
     if (args.groups.stage_presence_checks)
-      lightusd::next::ValidateStageMetadataPresence(*layer, args.groups, &result);
+      lightusd::ValidateStageMetadataPresence(*layer, args.groups, &result);
     while (!pending.empty()) {
       if (variant_pass_count >= cap) { variant_limit_hit = true; break; }
       Pass pass = std::move(pending.front()); pending.pop_front();
       discovered.clear();
-      std::vector<lightusd::next::CompositionError> errors;
+      std::vector<lightusd::CompositionError> errors;
       auto composed = compose_pass(pass.selections, &errors);
       composition_errors.insert(composition_errors.end(), errors.begin(), errors.end());
       ++variant_pass_count;
@@ -1412,16 +1412,16 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
       options.stage_presence_checks = false;
       options.require_complete = false; // incomplete fragments may inherit their type/API
       options.run_callbacks = false;
-      auto authored = lightusd::next::ValidateLayerAgainstAOUSDCore(*entry.second, options);
+      auto authored = lightusd::ValidateLayerAgainstAOUSDCore(*entry.second, options);
       authored.issues.erase(std::remove_if(authored.issues.begin(), authored.issues.end(),
           [](const USDValidationIssue& issue) {
-            const auto category = lightusd::next::GetValidationRuleMetadata(issue.rule_id).category;
+            const auto category = lightusd::GetValidationRuleMetadata(issue.rule_id).category;
             return category != "normative" && issue.rule_id != "core.schema.attributeType" &&
                    issue.rule_id != "core.schema.propertyKind";
           }), authored.issues.end());
-      lightusd::next::ValidationContext context;
+      lightusd::ValidationContext context;
       context.layer = entry.second.get(); context.options = options; context.source_asset = entry.first;
-      registry.RunCallbacks(lightusd::next::ValidationScope::Layer, context, nullptr, &authored);
+      registry.RunCallbacks(lightusd::ValidationScope::Layer, context, nullptr, &authored);
       for (auto& issue : authored.issues) issue.source_asset = entry.first;
       MergeDedupedIssues(&result, &seen_issue_keys, authored);
     }
@@ -1539,10 +1539,10 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     }
   }
   if (args.groups.core) {
-    lightusd::next::AddParserDiagnosticsToResult(parser_warnings, &result);
+    lightusd::AddParserDiagnosticsToResult(parser_warnings, &result);
   }
   if (args.usdchecker_compat) {
-    lightusd::next::ApplyUsdcheckerCompatSeverities(&result);
+    lightusd::ApplyUsdcheckerCompatSeverities(&result);
   }
   const bool warnings_fail =
       args.strict && (result.warning_count() > 0 || !parser_warnings.empty());
@@ -1554,7 +1554,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
   if (args.groups.normative_only) {
     result.issues.erase(std::remove_if(result.issues.begin(), result.issues.end(),
         [](const USDValidationIssue& issue) {
-          const auto category = lightusd::next::GetValidationRuleMetadata(issue.rule_id).category;
+          const auto category = lightusd::GetValidationRuleMetadata(issue.rule_id).category;
           return category != "normative" && category != "coverage";
         }), result.issues.end());
   }
@@ -1608,7 +1608,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
       *output << "\nParser warnings:\n" << parser_warnings;
       if (parser_warnings.back() != '\n') *output << '\n';
     }
-    *output << lightusd::next::FormatValidationResult(result);
+    *output << lightusd::FormatValidationResult(result);
     if (warnings_fail && result.ok()) {
       *output << "Strict result: FAILED - warnings are errors\n";
     }

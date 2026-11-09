@@ -7,7 +7,7 @@
 //
 //   Default (no define):      CompositionGraph (old, stable).
 //   LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE:
-//                             next::pcp::Cache (new, incremental payload
+//                             ::lightusd::pcp::Cache (new, incremental payload
 //                             load/unload without full stage rebuild).
 //
 #pragma once
@@ -50,7 +50,7 @@ struct LargeSceneLoadOptions {
   double payload_extent_budget{0.0};
 
   // Keep uncompressed USDC arrays mmap-backed through composition. Fully
-  // supported by the next::pcp backend, whose LazyArrayRef owns a shared
+  // supported by the ::lightusd::pcp backend, whose LazyArrayRef owns a shared
   // per-layer CrateDataSource. The legacy backend uses copy mode because its
   // Stage mmap table represents only one source file.
   bool mmap_zero_copy{true};
@@ -61,7 +61,7 @@ struct LargeSceneLoadOptions {
 
   // Parse each referenced/payload file exactly once and share it (the single
   // biggest win for scenes with tens of thousands of files). Backed by
-  // pcp::LayerRegistry in the old path; the new next::pcp::Cache always dedups.
+  // pcp::LayerRegistry in the old path; the new ::lightusd::pcp::Cache always dedups.
   bool dedup_layers{true};
 
   // Detect scenegraph instances during composition.
@@ -109,9 +109,9 @@ class LargeSceneLoader {
   // over stage() when payload streaming can run concurrently.
   std::shared_ptr<const Stage> stage_snapshot() const;
 #else
-  next::Stage &stage() { return *_stage; }
-  const next::Stage &stage() const { return *_stage; }
-  std::shared_ptr<const next::Stage> stage_snapshot() const;
+  ::lightusd::Stage &stage() { return *_stage; }
+  const ::lightusd::Stage &stage() const { return *_stage; }
+  std::shared_ptr<const ::lightusd::Stage> stage_snapshot() const;
 #endif
 
   // -- Deferred (unloaded) payload streaming --
@@ -146,7 +146,7 @@ class LargeSceneLoader {
 #if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   std::shared_ptr<Stage> _stage{std::make_shared<Stage>()};
 #else
-  std::shared_ptr<next::Stage> _stage{std::make_shared<next::Stage>()};
+  std::shared_ptr<::lightusd::Stage> _stage{std::make_shared<::lightusd::Stage>()};
 #endif
   bool _loaded{false};
   mutable std::mutex _mutex;
@@ -155,8 +155,8 @@ class LargeSceneLoader {
   bool RebuildStageLocked(std::string *warn, std::string *err);
 
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-  std::unique_ptr<next::AssetResolver> _resolver;
-  std::unique_ptr<next::pcp::Cache> _cache;
+  std::unique_ptr<::lightusd::AssetResolver> _resolver;
+  std::unique_ptr<::lightusd::pcp::Cache> _cache;
 #else
   static const Layer *LoadLayerThunk(void *userdata,
                                      const std::string &asset_path,
@@ -173,7 +173,7 @@ class LargeSceneLoader {
 // One-shot convenience: load + compose into `stage`. Does NOT keep a handle for
 // on-demand payload streaming (use LargeSceneLoader for that).
 // Available only in the old backend path (CompositionGraph).
-// In the new backend path use LargeSceneLoader or next::pcp::ComposeStageFromFile.
+// In the new backend path use LargeSceneLoader or ::lightusd::pcp::ComposeStageFromFile.
 #if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,

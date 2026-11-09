@@ -58,7 +58,7 @@
 
 struct GLFWwindow;
 
-namespace lightusd { namespace next { class Stage; } }
+namespace lightusd {  class Stage;  }
 namespace lusdview {
 
 // The orbit camera is shared with examples/lmetalview
@@ -125,13 +125,13 @@ class App
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
   }
-  void setScenePreviewLods(const lightusd::tydra::next::ScenePreviewLods& lods,
+  void setScenePreviewLods(const lightusd::tydra::ScenePreviewLods& lods,
                            double pixelError) {
     previewLods_ = lods;
     previewLodPixelError_ = pixelError;
   }
   void setScenePreviewRequest(
-      const lightusd::tydra::next::ScenePreviewRequest& request) {
+      const lightusd::tydra::ScenePreviewRequest& request) {
     previewRequest_ = request;
   }
   void setDynamicPrototypeLod(bool enabled) {
@@ -698,14 +698,14 @@ class App
   void stepScenePreviewLods();
   bool renderScenePreviewVolume(std::vector<uint8_t>*, int*, int*,
                                 std::string*, bool advance = true);
-  std::unique_ptr<lightusd::tydra::next::PreviewVolumeRenderer>
+  std::unique_ptr<lightusd::tydra::PreviewVolumeRenderer>
       previewVolumeRenderer_;
   std::string previewVolumeRoot_;
-  lightusd::tydra::next::ScenePreviewLods previewLods_;
+  lightusd::tydra::ScenePreviewLods previewLods_;
   double previewLodPixelError_ = 2;
-  lightusd::tydra::next::ScenePreviewRequest previewRequest_;
-  using PreviewRefinement = std::pair<lightusd::tydra::next::ScenePreviewResult,
-                                      lightusd::tydra::next::ScenePreviewLods>;
+  lightusd::tydra::ScenePreviewRequest previewRequest_;
+  using PreviewRefinement = std::pair<lightusd::tydra::ScenePreviewResult,
+                                      lightusd::tydra::ScenePreviewLods>;
   std::future<PreviewRefinement> previewRefinement_;
   std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
   bool previewRefinementTried_ = false;

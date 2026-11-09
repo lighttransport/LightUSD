@@ -13,13 +13,13 @@
 #include <memory>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 using namespace urdf_detail;
 
 static bool ConvertPayloadLayer(
     const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
+    ::lightusd::Stage *out_stage, std::string *warn, std::string *err) {
   if (!out_stage) {
     if (err) *err = "Output Stage pointer is null";
     return false;
@@ -808,7 +808,7 @@ static bool ConvertPayloadLayer(
 static bool ConvertPayload(
     const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
+    ::lightusd::Stage *out_stage, std::string *warn, std::string *err) {
   ResetDefineCapacity();
   const bool ok = ConvertPayloadLayer(payload, mesh_buffers, out_stage, warn, err);
   if (DefineCapacityExceeded()) {
@@ -824,7 +824,7 @@ static bool ConvertPayload(
 
 bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& value,
     std::map<std::string, URDFMeshBuffer>* mesh_buffers,
-    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+    ::lightusd::Stage* out_stage, std::string* warn, std::string* err) {
   ::lightusd::tydra::detail::URDFPayload payload;
   if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
   urdf_detail::MeshBufferConsumption consume(true);
@@ -833,29 +833,29 @@ bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& va
 
 bool ConvertURDFJsonToUSDStage(const std::string& robot_json,
     const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
-    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+    ::lightusd::Stage* out_stage, std::string* warn, std::string* err) {
   ::lightusd::tydra::detail::URDFPayload payload;
   if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload, err)) return false;
   return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
 }
 bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& value,
-    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+    ::lightusd::Stage* out_stage, std::string* warn, std::string* err) {
   return ConvertURDFPayloadToUSDStage(value, nullptr, out_stage, warn, err);
 }
 
 bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& value,
     const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
-    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+    ::lightusd::Stage* out_stage, std::string* warn, std::string* err) {
   ::lightusd::tydra::detail::URDFPayload payload;
   if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
   return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string &robot_json,
-                               ::lightusd::next::Stage *out_stage,
+                               ::lightusd::Stage *out_stage,
                                std::string *warn, std::string *err) {
   return ConvertURDFJsonToUSDStage(robot_json, nullptr, out_stage, warn, err);
 }
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

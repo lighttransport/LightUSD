@@ -1137,18 +1137,18 @@ int main(int argc, char **argv) {
       std::cerr << "Collection diff requires matching input kinds and supports authored semantic comparison only\n";
       return 2;
     }
-    lightusd::next::DiffOptions opts;
+    lightusd::DiffOptions opts;
     opts.floatUlps = diff_opts.floatUlps; opts.doubleUlps = diff_opts.doubleUlps;
     opts.absEps = diff_opts.absEps; opts.compareMetadata = diff_opts.compareMetadata;
     return DiffCollections(file1, file2, opts, json_output, quiet);
   }
 
   if (flatten) {
-    lightusd::next::Stage stage1;
-    lightusd::next::Stage stage2;
+    lightusd::Stage stage1;
+    lightusd::Stage stage2;
     std::string next_warn;
     std::string next_err;
-    if (!lightusd::next::LoadUSDComposed(file1, &stage1, &next_warn,
+    if (!lightusd::LoadUSDComposed(file1, &stage1, &next_warn,
                                          &next_err)) {
       std::cerr << "Error loading/composing " << file1 << ": " << next_err
                 << std::endl;
@@ -1160,7 +1160,7 @@ int main(int argc, char **argv) {
     }
     next_warn.clear();
     next_err.clear();
-    if (!lightusd::next::LoadUSDComposed(file2, &stage2, &next_warn,
+    if (!lightusd::LoadUSDComposed(file2, &stage2, &next_warn,
                                          &next_err)) {
       std::cerr << "Error loading/composing " << file2 << ": " << next_err
                 << std::endl;
@@ -1171,9 +1171,9 @@ int main(int argc, char **argv) {
                 << std::endl;
     }
 
-    lightusd::next::Layer layer1 = stage1.Flatten();
-    lightusd::next::Layer layer2 = stage2.Flatten();
-    lightusd::next::DiffOptions next_opts;
+    lightusd::Layer layer1 = stage1.Flatten();
+    lightusd::Layer layer2 = stage2.Flatten();
+    lightusd::DiffOptions next_opts;
     next_opts.floatUlps = diff_opts.floatUlps;
     next_opts.doubleUlps = diff_opts.doubleUlps;
     next_opts.timeUlps = diff_opts.timeUlps;
@@ -1181,19 +1181,19 @@ int main(int argc, char **argv) {
     next_opts.compareMetadata = diff_opts.compareMetadata;
     next_opts.fuzzyAssetPaths = diff_opts.fuzzyAssetPaths;
 
-    std::unordered_map<std::string, lightusd::next::PrimSpecDiff> ps_diffs;
-    std::unordered_map<std::string, lightusd::next::PropDiff> prop_diffs;
-    lightusd::next::LayerMetaDiff meta_diff;
-    lightusd::next::Diff(layer1, layer2, ps_diffs, prop_diffs, next_opts,
+    std::unordered_map<std::string, lightusd::PrimSpecDiff> ps_diffs;
+    std::unordered_map<std::string, lightusd::PropDiff> prop_diffs;
+    lightusd::LayerMetaDiff meta_diff;
+    lightusd::Diff(layer1, layer2, ps_diffs, prop_diffs, next_opts,
                          &meta_diff);
     const bool has_diffs =
         !ps_diffs.empty() || !prop_diffs.empty() || meta_diff.changed();
     if (!quiet) {
       if (json_output) {
-        std::cout << lightusd::next::DiffToJSON(layer1, layer2, file1, file2,
+        std::cout << lightusd::DiffToJSON(layer1, layer2, file1, file2,
                                                 next_opts);
       } else if (has_diffs) {
-        std::cout << lightusd::next::DiffToText(layer1, layer2, file1, file2,
+        std::cout << lightusd::DiffToText(layer1, layer2, file1, file2,
                                                 next_opts);
       } else {
         std::cout << "No differences found." << std::endl;

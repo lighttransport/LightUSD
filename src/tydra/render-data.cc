@@ -10,7 +10,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 RenderMesh::RenderMesh() = default;
 RenderMesh::~RenderMesh() = default;
@@ -725,6 +724,5 @@ RenderScene::Stats RenderScene::get_stats() const {
   return s;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

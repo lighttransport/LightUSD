@@ -44,7 +44,7 @@ bool RenderStream::prepareCopyMesh_(int mesh_id, int source_index,
     return ok;
 }
 
-bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
+bool RenderStream::buildRenderMesh_(const lightusd::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
     // Every real build replaces shared scratch, including unscoped callers
     // (merge, other mesh views and failures). Only a successful scoped
@@ -208,7 +208,7 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
         mesh_only_triangulation.face_vertex_indices.push_back(
             static_cast<uint32_t>(index));
       }
-      if (const lightusd::next::Value *orientation =
+      if (const lightusd::Value *orientation =
               prim.GetPropertyValue("orientation")) {
         if (auto token = orientation->as_token()) {
           mesh_only_triangulation.left_handed = (*token == "leftHanded");

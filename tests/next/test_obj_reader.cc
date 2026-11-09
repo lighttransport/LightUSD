@@ -6,7 +6,7 @@
 #include "external/tinyobjloader-c/tiny_obj_c.h"
 #include "../../src/pcp/layer-registry.hh"
 #include "reader/obj-reader.hh"
-using namespace lightusd::next;
+using namespace lightusd;
 int main() {
   const char* obj =
       "v 0 0 0\nv 1 0 0\nv 0 1 0\nvw 0 1 .25 2 -.5\nvw 1 1 2\nf 1 2 3\nl 1 "

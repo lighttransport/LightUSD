@@ -28,7 +28,7 @@
 #include "resolver/asset-resolver.hh"
 #include "stage/stage.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 

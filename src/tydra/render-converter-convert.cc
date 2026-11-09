@@ -46,7 +46,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 std::string LeafNameFromJointPath(const std::string& path) {
@@ -73,11 +72,11 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
 std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
                                                  const std::string& name) {
   std::vector<std::string> out;
-  const std::vector<::lightusd::next::Path>* targets =
+  const std::vector<::lightusd::Path>* targets =
       prim.GetRelationship(name);
   if (!targets) return out;
   out.reserve(targets->size());
-  for (const ::lightusd::next::Path& target : *targets) {
+  for (const ::lightusd::Path& target : *targets) {
     out.push_back(target.str());
   }
   return out;
@@ -146,7 +145,7 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
   ResetOperationState();
   ResetImageIdCache();
   if (!config_.limits.valid() || config_.execution.max_threads < 0) {
-    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.status = ::lightusd::OperationStatus::InvalidArgument;
     result.error = "invalid converter limits or execution policy";
     return result;
   }
@@ -177,9 +176,9 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     result.scene.start_time = meta.startTimeCode;
     result.scene.end_time = meta.endTimeCode;
     result.scene.frames_per_second = meta.timeCodesPerSecond;
-    ::lightusd::next::color_management::RenderingColorConfig color_config;
+    ::lightusd::color_management::RenderingColorConfig color_config;
     std::string color_warning;
-    (void)::lightusd::next::color_management::ResolveRenderingColorConfig(
+    (void)::lightusd::color_management::ResolveRenderingColorConfig(
         stage, config_.material.render_settings_path, &color_config,
         &color_warning);
     result.scene.render_settings_path = color_config.render_settings_path;
@@ -206,7 +205,7 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     RenderExtractResult extracted;
     CollectRenderPrims(stage, xopts, &extracted);
     if (extracted.limit_exceeded) {
-      result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+      result.status = ::lightusd::OperationStatus::ResourceLimit;
       result.error = "render extraction limit exceeded";
       return result;
     }
@@ -327,10 +326,10 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     } else {
       mesh_workers = std::min<size_t>(
           static_cast<size_t>(config_.execution.max_threads),
-          static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
+          static_cast<size_t>(::lightusd::kMaxExecutionThreads));
     }
 #endif
-    ::lightusd::next::TaskArena task_arena(mesh_workers);
+    ::lightusd::TaskArena task_arena(mesh_workers);
 
     // Dynamic work distribution: instead of fixed-size batch waves (where one
     // oversized mesh idled the other workers until the wave barrier), all
@@ -597,7 +596,7 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
       const bool callbacks_may_run_concurrently =
           config_.execution.callback_concurrency ==
-          ::lightusd::next::CallbackConcurrency::Concurrent;
+          ::lightusd::CallbackConcurrency::Concurrent;
       const bool resolver_has_callbacks =
           config_.asset_resolver && config_.asset_resolver->HasUserCallbacks();
       const bool material_parallel_safe =
@@ -825,7 +824,7 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
               skeleton.animation_source_path = sources[0];
               break;
             }
-            if (::lightusd::tydra::next::IsSkelRoot(anc)) break;
+            if (::lightusd::tydra::IsSkelRoot(anc)) break;
             anc = GetParent(stage, anc);
           }
         }
@@ -923,13 +922,13 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         conversion_diagnostics_.begin(), conversion_diagnostics_.end());
     NormalizeConversionDiagnostics(&result.scene.conversion_diagnostics);
     if (config_.strict_conversion && !warnings_.empty()) {
-      result.status = ::lightusd::next::OperationStatus::InvalidData;
+      result.status = ::lightusd::OperationStatus::InvalidData;
       result.error = "strict render conversion rejected warnings: " + warnings_.front();
       result.warnings = std::move(warnings_);
       return result;
     }
     if (result.scene.memory_usage() > config_.limits.max_resident_bytes) {
-      result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+      result.status = ::lightusd::OperationStatus::ResourceLimit;
       result.error = "converted render scene exceeds resident memory limit";
       result.warnings = std::move(warnings_);
       return result;
@@ -940,13 +939,12 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     }
 
     result.success = true;
-    result.status = ::lightusd::next::OperationStatus::Ok;
+    result.status = ::lightusd::OperationStatus::Ok;
     result.warnings = std::move(warnings_);
   }
 
   return result;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

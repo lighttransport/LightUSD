@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 class RenderScene;
 
 /// Refresh existing expanded mesh clones for the given source mesh indices,
@@ -17,5 +17,5 @@ bool RefreshPointInstanceExpandedMeshes(
     RenderScene* scene, const std::vector<size_t>& changed_meshes,
     std::vector<std::string>* refreshed_paths);
 
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra
 #endif

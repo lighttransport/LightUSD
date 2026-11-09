@@ -68,19 +68,19 @@ def SkelRoot "Rig"
 )";
 
 // Compose `kSkelUsda` into a next Stage (hermetic: parsed straight from memory).
-bool BuildSkelStage(lightusd::next::Stage *stage) {
+bool BuildSkelStage(lightusd::Stage *stage) {
   std::string warn, err;
   const std::string src(kSkelUsda);
-  std::shared_ptr<lightusd::next::Layer> layer =
-      lightusd::next::pcp::LoadLayerFromMemory(
+  std::shared_ptr<lightusd::Layer> layer =
+      lightusd::pcp::LoadLayerFromMemory(
           "skel.usda", reinterpret_cast<const uint8_t *>(src.data()), src.size(),
           &warn, &err);
   if (!layer) {
     TEST_MSG("LoadLayerFromMemory failed: %s", err.c_str());
     return false;
   }
-  lightusd::next::AssetResolver resolver;
-  auto cache = lightusd::next::pcp::Cache::Open(resolver, layer);
+  lightusd::AssetResolver resolver;
+  auto cache = lightusd::pcp::Cache::Open(resolver, layer);
   if (!cache) {
     TEST_MSG("Cache::Open failed: %s", cache.error().c_str());
     return false;
@@ -99,16 +99,16 @@ bool BuildSkelStage(lightusd::next::Stage *stage) {
 // prefixed name -- or asking for a float array -- yields nothing, and an empty
 // bind pose silently becomes the IDENTITY, which skews every skinning matrix.
 void test_next_skel_bind_rest_transforms(void) {
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
     return;
   }
-  lightusd::next::UsdPrim skel = stage.GetPrimAtPath("/Rig/Skel");
+  lightusd::UsdPrim skel = stage.GetPrimAtPath("/Rig/Skel");
   TEST_CHECK(skel.IsValid());
 
-  lightusd::next::SkeletonData data;
-  TEST_CHECK(lightusd::next::GetSkeletonData(stage, skel, &data));
+  lightusd::SkeletonData data;
+  TEST_CHECK(lightusd::GetSkeletonData(stage, skel, &data));
 
   TEST_CHECK(data.joints.size() == 2);
 
@@ -134,16 +134,16 @@ void test_next_skel_bind_rest_transforms(void) {
 // token accessors leaves it EMPTY, which drops the entire animation (every joint
 // keeps its rest transform, so the rig renders unposed at every time code).
 void test_next_skelanim_joints_is_an_array(void) {
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
     return;
   }
-  lightusd::next::UsdPrim anim = stage.GetPrimAtPath("/Rig/Skel/Anim");
+  lightusd::UsdPrim anim = stage.GetPrimAtPath("/Rig/Skel/Anim");
   TEST_CHECK(anim.IsValid());
 
-  lightusd::next::SkelAnimationData data;
-  TEST_CHECK(lightusd::next::GetSkelAnimationData(stage, anim, &data, 1.0));
+  lightusd::SkelAnimationData data;
+  TEST_CHECK(lightusd::GetSkelAnimationData(stage, anim, &data, 1.0));
 
   TEST_CHECK_(data.joints.size() == 2,
               "SkelAnimation joints: got %zu, expected 2. Empty means the "
@@ -161,18 +161,18 @@ void test_next_skelanim_joints_is_an_array(void) {
 // order. A consumer that unpacks the flat array as (x, y, z, w) builds a garbage
 // quaternion. Sanity anchor: the IDENTITY quat reads as (1,0,0,0), NOT (0,0,0,1).
 void test_next_skelanim_rotations_are_real_first(void) {
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
     return;
   }
-  lightusd::next::UsdPrim anim = stage.GetPrimAtPath("/Rig/Skel/Anim");
+  lightusd::UsdPrim anim = stage.GetPrimAtPath("/Rig/Skel/Anim");
   TEST_CHECK(anim.IsValid());
 
   // t=1: both joints identity.
   {
-    lightusd::next::SkelAnimationData d;
-    TEST_CHECK(lightusd::next::GetSkelAnimationData(stage, anim, &d, 1.0));
+    lightusd::SkelAnimationData d;
+    TEST_CHECK(lightusd::GetSkelAnimationData(stage, anim, &d, 1.0));
     TEST_CHECK(d.hasRotations);
     TEST_CHECK(d.rotations.size() == 8);  // 2 joints x 4 floats
     if (d.rotations.size() == 8) {
@@ -189,8 +189,8 @@ void test_next_skelanim_rotations_are_real_first(void) {
   // t=2: Bone1 is a 90-degree rotation about X = (w, x, y, z) = (.707, .707, 0, 0).
   // The time sample must also actually be evaluated at `time`.
   {
-    lightusd::next::SkelAnimationData d;
-    TEST_CHECK(lightusd::next::GetSkelAnimationData(stage, anim, &d, 2.0));
+    lightusd::SkelAnimationData d;
+    TEST_CHECK(lightusd::GetSkelAnimationData(stage, anim, &d, 2.0));
     TEST_CHECK(d.rotations.size() == 8);
     if (d.rotations.size() == 8) {
       const float w = d.rotations[4], x = d.rotations[5];

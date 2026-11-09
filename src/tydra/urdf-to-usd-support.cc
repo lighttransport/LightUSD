@@ -11,7 +11,7 @@
 #include <set>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 
 std::string JsonString(const Json &j, const char *key,
@@ -473,4 +473,4 @@ tn::PrimSpec* Scope::Add(const std::string& name, const std::string& type) {
 
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

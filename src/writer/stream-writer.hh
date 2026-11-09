@@ -24,7 +24,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 class StreamWriter {
  public:
@@ -111,5 +110,4 @@ inline StreamWriter::BlockSink OstreamSink(std::ostream& os) {
   };
 }
 
-}  // namespace next
 }  // namespace lightusd

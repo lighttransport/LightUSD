@@ -9,7 +9,6 @@
 #include "core/safe-arithmetic.hh"
 
 namespace lightusd {
-namespace next {
 
 // Monotonic allocation accounting shared by a read and its deferred values.
 // Temporary buffers are charged too, matching the reader's cumulative policy.
@@ -73,5 +72,4 @@ inline bool CrateIntegerWorkspaceBytes(size_t count, size_t lane_bytes,
   return safe::mul(maximum, size_t(2), bytes);
 }
 
-}  // namespace next
 }  // namespace lightusd

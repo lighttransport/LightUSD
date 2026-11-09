@@ -16,7 +16,7 @@
 #include "layer/property-index.hh"
 #include "schema/schema-registry.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 void test_frozen_string_view_lookup_is_safe() {

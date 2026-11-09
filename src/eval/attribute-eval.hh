@@ -21,7 +21,6 @@
 #include <memory>
 
 namespace lightusd {
-namespace next {
 
 namespace pcp { class Cache; }  // lazy (cache-backed) evaluation entry point
 class Path;
@@ -266,5 +265,4 @@ T AttributeEval::EvalOr(const UsdPrim& prim, const std::string& attr_name, T fal
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -30,6 +30,10 @@
 #endif
 
 namespace lightusd {
+// Shared (core + legacy) evaluator; its own namespace so the core spline
+// data types (lightusd::SplineKnot, SplineData) do not collide with these
+// evaluator templates.
+namespace spline_eval {
 
 // AOUSD Core Spec 7.4.2.4.1
 enum class SplineCurveType {
@@ -538,6 +542,7 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   return false;
 }
 
+}  // namespace spline_eval
 }  // namespace lightusd
 
 #ifdef __clang__

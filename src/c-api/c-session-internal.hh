@@ -7,16 +7,16 @@
 #include "stage/stage-session.hh"
 
 struct lightusd_document_snapshot {
-  lightusd::next::StageSnapshot snapshot;
-  lightusd::next::StageChangeSet changes;
+  lightusd::StageSnapshot snapshot;
+  lightusd::StageChangeSet changes;
   std::string source_dir;
   std::string source_filename;
   std::string warnings;
 };
 
 struct lightusd_document_session {
-  lightusd::next::StageSession session;
-  lightusd::next::StageSessionOptions options;
+  lightusd::StageSession session;
+  lightusd::StageSessionOptions options;
   std::string source_dir;
   lightusd_document_preview_fn preview_callback = nullptr;
   void* preview_userdata = nullptr;

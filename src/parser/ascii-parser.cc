@@ -23,7 +23,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 namespace {
 
 ParseOptions NormalizeParseOptions(const ParseOptions& options) {
@@ -1512,5 +1511,4 @@ bool AsciiParser::UsedFastPath() const {
   return impl_->UsedFastPath();
 }
 
-}  // namespace next
 }  // namespace lightusd

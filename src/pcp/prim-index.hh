@@ -33,7 +33,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 /// The namespace edits a layer stack authors (`relocates`), resolved in THAT
@@ -401,5 +400,4 @@ class PrimIndex {
 };
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

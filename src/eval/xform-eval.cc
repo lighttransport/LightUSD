@@ -12,13 +12,12 @@
 #include "c/lightusd-core-c.h"  // lu_mat4_*
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
-const ::lightusd::next::PropNameId& kXformOpOrder() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("xformOpOrder");
+const ::lightusd::PropNameId& kXformOpOrder() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("xformOpOrder");
   return id;
 }
 
@@ -67,7 +66,7 @@ void MatMulD(double* dst, const double* a, const double* b) {
 // time sample. A NaN time keeps the exact default-value path (byte-identical to
 // the previous, time-unaware behaviour).
 const Value* PropAtTime(const UsdPrim& prim,
-                        ::lightusd::next::PropNameId name_id,
+                        ::lightusd::PropNameId name_id,
                         double time) {
   if (!name_id.is_valid()) return nullptr;
   if (std::isnan(time)) return prim.GetPropertyValue(name_id);
@@ -86,7 +85,7 @@ const Value* PropAtTime(const UsdPrim& prim,
 // Read a 3-component op value (translate/scale/rotate) as double, trying
 // float3 then double3 (matches the legacy evaluator's exact-type promotion),
 // then the converting read for authored half3 (raw half-bit lanes).
-bool ReadVec3D(const UsdPrim& prim, ::lightusd::next::PropNameId name_id,
+bool ReadVec3D(const UsdPrim& prim, ::lightusd::PropNameId name_id,
                double v[3],
                double time) {
   const Value* val = PropAtTime(prim, name_id, time);
@@ -107,7 +106,7 @@ bool ReadVec3D(const UsdPrim& prim, ::lightusd::next::PropNameId name_id,
   return false;
 }
 
-bool ReadFloat1D(const UsdPrim& prim, ::lightusd::next::PropNameId name_id,
+bool ReadFloat1D(const UsdPrim& prim, ::lightusd::PropNameId name_id,
                  double* out,
                  double time) {
   const Value* val = PropAtTime(prim, name_id, time);
@@ -175,7 +174,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
     }
     const std::string_view op = XformOpName(tok);
     if (op.empty()) continue;
-    const auto name_id = ::lightusd::next::GetPropNameTable().find(tok);
+    const auto name_id = ::lightusd::GetPropNameTable().find(tok);
 
     double m[16];
     SetIdentity(m);
@@ -329,5 +328,4 @@ bool HasResetXformStack(const UsdPrim& prim) {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

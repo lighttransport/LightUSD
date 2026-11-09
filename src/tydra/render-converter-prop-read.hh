@@ -12,12 +12,11 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-inline bool GetPropToken(const ::lightusd::next::UsdPrim& prim,
+inline bool GetPropToken(const ::lightusd::UsdPrim& prim,
                          const std::string& name, std::string* out) {
   if (!out) return false;
-  const ::lightusd::next::Value* value = prim.GetPropertyValue(name);
+  const ::lightusd::Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
   if (auto token = value->as_token()) {
     *out = *token;
@@ -30,10 +29,10 @@ inline bool GetPropToken(const ::lightusd::next::UsdPrim& prim,
   return false;
 }
 
-inline bool GetPropBool(const ::lightusd::next::UsdPrim& prim,
+inline bool GetPropBool(const ::lightusd::UsdPrim& prim,
                         const std::string& name, bool* out) {
   if (!out) return false;
-  const ::lightusd::next::Value* value = prim.GetPropertyValue(name);
+  const ::lightusd::Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
   const bool* result = value->as_bool();
   if (!result) return false;
@@ -41,6 +40,5 @@ inline bool GetPropBool(const ::lightusd::next::UsdPrim& prim,
   return true;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

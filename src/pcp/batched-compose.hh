@@ -27,7 +27,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 struct BatchedComposeOptions {
@@ -133,5 +132,4 @@ bool FlattenToUSDCFileBatched(const std::string &filename,
                               std::string *err = nullptr);
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

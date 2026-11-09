@@ -12,7 +12,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 bool QueryScenePreviewGpuMemory(
     uint64_t* capacity, uint64_t* available,
     const std::shared_ptr<const HostServices>& host_services,
@@ -330,7 +329,7 @@ bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
                  static_cast<unsigned long long>(n));
     return true;
   };
-  ::lightusd::next::AssetResolver resolver;
+  ::lightusd::AssetResolver resolver;
   if (request.options.kind == ScenePreviewKind::Volume && request.direct_volume)
     request.options.volume_surface_carrier = false;
   request.source = *source;
@@ -369,6 +368,5 @@ bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
   }
   return true;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

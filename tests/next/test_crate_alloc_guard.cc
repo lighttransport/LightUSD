@@ -27,7 +27,7 @@
 #include "crate/lazy-array.hh"
 #include "types/value.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static bool RejectsHugeArray(CrateTypeId type) {
   // 16-byte buffer; u64 count = 1e9 at offset 8. The element data is absent.

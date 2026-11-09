@@ -19,7 +19,7 @@
 #include "external/tinyobjloader-c/tiny_obj_c.h"
 #include "reader/obj-reader.hh"
 namespace ia = lightusd::tydra::import_asset;
-namespace n = lightusd::next;
+namespace n = lightusd;
 namespace {
 void Check(bool ok, const char* what) {
   if (!ok) { std::cerr << "OBJ regression failed: " << what << '\n'; std::exit(1); }

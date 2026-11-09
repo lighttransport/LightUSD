@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Unit/stress tests for next::pcp parallel per-prim index building
+// Unit/stress tests for ::lightusd::pcp parallel per-prim index building
 // (PrewarmPrimIndices with num_threads > 1). Scenes are synthetically generated
 // (prims / attributes / composition arcs) so the parallel build is exercised on
 // a wide variety of topologies. The core invariant under test:
@@ -43,7 +43,7 @@
 #include "writer/usdc-writer.hh"
 #include "writer/usdz-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // Canonical, interning-order-independent dumps (compare composition, not the

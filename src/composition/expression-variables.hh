@@ -8,7 +8,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Policy for backtick-delimited variable expressions in composition asset
 /// paths. Disabled preserves the authored path, Evaluate preserves an
@@ -49,5 +48,4 @@ Value ComposeExpressionVariables(const Value& weaker, const Value& stronger);
 ExpressionEvaluation EvaluateAssetPathExpression(const std::string& path,
                                                  const Value& variables);
 
-}  // namespace next
 }  // namespace lightusd

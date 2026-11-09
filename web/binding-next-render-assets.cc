@@ -68,7 +68,7 @@ int RenderStream::provideAssetBytes(const uint8_t* name, uint32_t name_size,
 }
 
 int RenderStream::importAssetStore(const NextAssetStore& store) {
-    lightusd::next::AssetResolver candidate;
+    lightusd::AssetResolver candidate;
     candidate.SetAssetReader(
         [](const std::string&, std::vector<uint8_t>*, std::string* error) {
           if (error) *error = "asset is not present in the imported memory store";
@@ -166,7 +166,7 @@ int RenderStream::beginCachedAsset(NextAssetStore& store,
 }
 
 int RenderStream::clearImportedAssetStore() {
-    lightusd::next::AssetResolver candidate;
+    lightusd::AssetResolver candidate;
     candidate.SetAssetReader(
         [](const std::string&, std::vector<uint8_t>*, std::string* error) {
           if (error) *error = "asset is not present in the imported memory store";

@@ -5,7 +5,6 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 // Stable, allocation-free operation outcome shared by loading/composition and
 // render conversion APIs.
@@ -23,5 +22,4 @@ enum class OperationStatus : uint8_t {
   SinkRejected,
 };
 
-}  // namespace next
 }  // namespace lightusd

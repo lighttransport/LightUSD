@@ -5,7 +5,6 @@
 #include "eval/attribute-eval.hh"
 
 namespace lightusd {
-namespace next {
 
 bool HasGeomModelAPI(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
@@ -64,5 +63,4 @@ uint32_t ComputeModelCardFaceMask(const Stage& stage, const UsdPrim& prim,
   return kAllCardFaces & ~(kCardZNeg | kCardZPos);
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -22,7 +22,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace load_detail {
 USDZReadOptions EffectiveUSDZOptions(const LoadUSDOptions& options) {
@@ -654,5 +653,4 @@ bool WriteUSDC(const Stage& stage, const std::string& filename,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

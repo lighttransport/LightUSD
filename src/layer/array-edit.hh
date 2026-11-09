@@ -21,7 +21,6 @@
 #include "types/value.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Upper bound on the element count a growth op (`resize`/`minsize`) may ask
 /// for. Matches CrateReadOptions::max_array_elements. The op operand comes
@@ -48,5 +47,4 @@ std::string BuildArrayEditText(const ArrayEditData& edit);
 bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
                     TypeId elem_type, Value* out, std::string* err);
 
-}  // namespace next
 }  // namespace lightusd

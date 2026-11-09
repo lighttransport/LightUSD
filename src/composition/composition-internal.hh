@@ -5,7 +5,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // Shared composition.cc / composition-variants.cc helpers (previously
 // file-local in composition.cc's anonymous namespace).
@@ -20,5 +19,4 @@ bool PrimHasComposableArcs(const PrimSpec& p);
 bool PathInSubtree(const std::string& path, const std::string& root,
                    const std::string& root_slash);
 
-}  // namespace next
 }  // namespace lightusd

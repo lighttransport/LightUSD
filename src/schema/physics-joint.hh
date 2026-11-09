@@ -11,7 +11,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Joint type checking
@@ -162,5 +161,4 @@ bool GetPhysicsBallJointData(const Stage& stage, const UsdPrim& prim,
                               PhysicsBallJointData* out,
                               double time = 0.0);
 
-} // namespace next
 } // namespace lightusd

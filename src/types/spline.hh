@@ -22,7 +22,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct SplineKnot {
   double time{0.0};
@@ -135,5 +134,4 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
                       double tolerance, std::vector<SplinePolyline>* out,
                       std::string* err);
 
-}  // namespace next
 }  // namespace lightusd

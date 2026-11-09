@@ -11,7 +11,6 @@
 #include <cmath>
 
 namespace lightusd {
-namespace next {
 
 UsdGeomXform::UsdGeomXform(const UsdPrim& prim) : prim_(prim) {}
 
@@ -245,7 +244,7 @@ bool BuildRotateABC(const XformOpType type, const double x, const double y,
   auto append = [&](const char axis) {
     const double* r = (axis == 'X') ? rx : ((axis == 'Y') ? ry : rz);
     // USD uses row-vector matrices. Apply rotateXYZ in authored axis order,
-    // matching tydra::next::ComputeLocalTransform and the legacy evaluator.
+    // matching tydra::ComputeLocalTransform and the legacy evaluator.
     Multiply(m, r, tmp);
     std::memcpy(m, tmp, sizeof(tmp));
   };
@@ -580,5 +579,4 @@ bool IsXform(const UsdPrim& prim) {
   return prim.GetTypeName() == "Xform";
 }
 
-}  // namespace next
 }  // namespace lightusd

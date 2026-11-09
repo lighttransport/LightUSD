@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "string-index.hh"
 #include <utility>
-namespace lightusd { namespace next { namespace detail {
+namespace lightusd {  namespace detail {
 StringIndex::~StringIndex() { lu_string_index_destroy(&index_); }
 StringIndex::StringIndex(StringIndex&& other) noexcept { std::swap(index_, other.index_); }
 StringIndex& StringIndex::operator=(StringIndex&& other) noexcept {
@@ -17,4 +17,4 @@ bool StringIndex::insert(size_t index, Key keys, const void* context) {
 bool StringIndex::rebuild(size_t count, Key keys, const void* context) {
   return lu_string_index_rebuild(&index_, count, keys, context) != 0;
 }
-} } }
+}  }

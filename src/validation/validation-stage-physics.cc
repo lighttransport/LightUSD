@@ -6,7 +6,7 @@
 #include <cmath>
 #include <limits>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 namespace {
 using namespace validation_detail;
 bool Api(const PrimSpec& p, const std::string& name) {
@@ -111,4 +111,4 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
     }
   }
 }
-} }
+ }

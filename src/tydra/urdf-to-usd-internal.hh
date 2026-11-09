@@ -11,12 +11,12 @@
 #include <set>
 #include <string>
 #include <vector>
-namespace lightusd { namespace next { class Layer; class PrimSpec; class Value; } }
+namespace lightusd {  class Layer; class PrimSpec; class Value;  }
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 using Json = ::lightusd::tydra::detail::JSONValue;
-namespace tn = ::lightusd::next;
+namespace tn = ::lightusd;
 using NameMap = std::map<std::string, std::string>;
 using Matrix4 = std::array<double, 16>;  // row-major, translation in row 3
 
@@ -277,4 +277,4 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
                          const Json &m, size_t index);
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

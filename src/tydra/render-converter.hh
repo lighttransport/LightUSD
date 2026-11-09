@@ -3,7 +3,7 @@
 //
 // Tydra Next - Render Scene Converter
 //
-// Converts next::Stage to RenderScene with minimal intermediate copies
+// Converts ::lightusd::Stage to RenderScene with minimal intermediate copies
 
 #pragma once
 
@@ -20,19 +20,16 @@
 #include "resource-limits.hh"
 
 namespace lightusd {
-namespace next {
 class AssetResolver;
 class Stage;
 class UsdPrim;
-}  // namespace next
 }  // namespace lightusd
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-using ::lightusd::next::Stage;
-using ::lightusd::next::UsdPrim;
+using ::lightusd::Stage;
+using ::lightusd::UsdPrim;
 
 //
 // Conversion configuration
@@ -179,7 +176,7 @@ struct AnimationConfig {
   // avoid per-prim time-sample scans when animations are not needed.
   bool enabled = true;
   using ClipStageLoader = std::function<bool(
-      const std::string& asset_path, ::lightusd::next::Stage* stage,
+      const std::string& asset_path, ::lightusd::Stage* stage,
       std::string* warn, std::string* err)>;
   ClipStageLoader clip_stage_loader;
 
@@ -194,10 +191,10 @@ struct ConverterConfig {
 
   // Shared finite resource ceilings. Zero-valued fields are invalid; use
   // ResourceLimits::Unlimited() only for an intentional trusted opt-out.
-  ::lightusd::next::ResourceLimits limits;
+  ::lightusd::ResourceLimits limits;
 
   // Unified execution policy: 0=bounded auto, 1=serial, >1=fixed.
-  ::lightusd::next::ExecutionOptions execution;
+  ::lightusd::ExecutionOptions execution;
 
   // Time code for evaluation
   double time_code = 0.0;
@@ -210,7 +207,7 @@ struct ConverterConfig {
   // Optional next-core AssetResolver (non-owning). When set it takes over
   // texture asset-path resolution (anchor/working-dir/search paths +
   // suffix fallback) instead of the plain asset_base_dir prefix above.
-  const ::lightusd::next::AssetResolver* asset_resolver = nullptr;
+  const ::lightusd::AssetResolver* asset_resolver = nullptr;
 
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;
@@ -238,8 +235,8 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory);
 
 struct ConvertResult {
   bool success = false;
-  ::lightusd::next::OperationStatus status =
-      ::lightusd::next::OperationStatus::InvalidData;
+  ::lightusd::OperationStatus status =
+      ::lightusd::OperationStatus::InvalidData;
   std::string error;
   std::vector<std::string> warnings;
 
@@ -264,8 +261,8 @@ struct GeometryInfo {
 
 struct StreamConvertResult {
   bool success = false;
-  ::lightusd::next::OperationStatus status =
-      ::lightusd::next::OperationStatus::InvalidData;
+  ::lightusd::OperationStatus status =
+      ::lightusd::OperationStatus::InvalidData;
   bool cancelled = false;
   std::string error;
   std::vector<std::string> warnings;
@@ -308,13 +305,13 @@ class RenderSceneConverter {
   // Main conversion entry point
   /// Read-only retained conversion. This never evicts values from `stage`, so
   /// it is safe to use with an immutable StageSnapshot.
-  ConvertResult Convert(const ::lightusd::next::Stage& stage);
+  ConvertResult Convert(const ::lightusd::Stage& stage);
 
   // Low-memory, destructive conversion entry point. Only one converted
   // geometry prim is live outside the destination sink at a time. Static
   // source arrays may be evicted as their last consumer completes, hence the
   // deliberately mutable Stage reference.
-  StreamConvertResult ConvertToSink(::lightusd::next::Stage& stage,
+  StreamConvertResult ConvertToSink(::lightusd::Stage& stage,
                                     SceneSink* sink);
 
   // Cheap preflight and extent-only conversion for application-managed
@@ -333,16 +330,16 @@ class RenderSceneConverter {
                      RenderPoints* out);
   bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
-  bool ConvertMaterial(const ::lightusd::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
-  bool ConvertMaterial(const ::lightusd::next::Stage& stage,
+  bool ConvertMaterial(const ::lightusd::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
+  bool ConvertMaterial(const ::lightusd::Stage& stage,
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene);
-  bool ConvertLight(const ::lightusd::next::Stage& stage,
+  bool ConvertLight(const ::lightusd::Stage& stage,
                     const UsdPrim& prim, RenderLight* out);
-  bool ConvertCamera(const ::lightusd::next::Stage& stage,
+  bool ConvertCamera(const ::lightusd::Stage& stage,
                      const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
-  bool ConvertAnimation(const ::lightusd::next::Stage& stage,
+  bool ConvertAnimation(const ::lightusd::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);
 
   // Robustly triangulate an already-populated RenderMesh. Custom/lazy
@@ -376,6 +373,5 @@ class RenderSceneConverter {
 // link error. Fan triangulation and vertex-normal generation live on
 // RenderSceneConverter.)
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -11,7 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <utility>
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 
 namespace lightusd {
 namespace web_next {

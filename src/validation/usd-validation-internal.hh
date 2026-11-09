@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <unordered_set>
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 inline constexpr const char *kLayerLocation = "<layer>";
@@ -622,5 +621,4 @@ void ValidatePrimSpecs(const Layer &layer, uint32_t prim_index,
                        USDValidationResult *result);
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

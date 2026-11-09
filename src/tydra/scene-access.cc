@@ -13,11 +13,10 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-using ::lightusd::next::Path;
-using ::lightusd::next::PrimSpec;
-using ::lightusd::next::PropMeta;
+using ::lightusd::Path;
+using ::lightusd::PrimSpec;
+using ::lightusd::PropMeta;
 
 //
 // Prim type checking
@@ -146,14 +145,14 @@ std::vector<UsdPrim> FindPrims(const Stage& stage, PrimPredicate pred) {
 
 const Value* GetAttribute(const UsdPrim& prim, const std::string& name) {
   if (!prim.IsValid()) return nullptr;
-  auto name_id = lightusd::next::GetPropNameTable().find(name);
+  auto name_id = lightusd::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
   return prim.GetPropertyValue(name_id);
 }
 
 const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time) {
   if (!prim.IsValid()) return nullptr;
-  auto name_id = lightusd::next::GetPropNameTable().find(name);
+  auto name_id = lightusd::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
   return prim.GetValueAtTime(name_id, time);
 }
@@ -364,13 +363,13 @@ std::vector<std::string> GetTokenArray(const UsdPrim& prim,
   return result;
 }
 
-::lightusd::next::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
+::lightusd::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
                                             const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   return val ? val->as_int_array() : nullptr;
 }
 
-::lightusd::next::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
+::lightusd::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
                                             const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   return val ? val->as_float_array() : nullptr;
@@ -635,8 +634,8 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
 // Some encoders author float[] instead; the view keeps that representation and
 // converts one lane at a time at the final destination.
 struct DoubleArrayView {
-  ::lightusd::next::ValueArrayView<const double> doubles = nullptr;
-  ::lightusd::next::ValueArrayView<const float> floats = nullptr;
+  ::lightusd::ValueArrayView<const double> doubles = nullptr;
+  ::lightusd::ValueArrayView<const float> floats = nullptr;
 
   size_t size() const {
     return doubles ? doubles->size() : (floats ? floats->size() : 0);
@@ -801,7 +800,7 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
       }
       return 1;
     };
-    auto expand_indexed = [](auto& vals, ::lightusd::next::ValueArrayView<const int32_t> idx,
+    auto expand_indexed = [](auto& vals, ::lightusd::ValueArrayView<const int32_t> idx,
                              size_t esize) {
       if (idx.empty() || vals.empty() || esize == 0 ||
           (vals.size() % esize) != 0) {
@@ -826,9 +825,9 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
     // Views: these index arrays are only read. On a dense skin each can be
     // tens of MB, and the expansion below already builds the owned result.
     static const std::vector<int32_t> kNoIdx;
-    ::lightusd::next::ValueArrayView<const int32_t> ji_idx =
+    ::lightusd::ValueArrayView<const int32_t> ji_idx =
         GetIntArrayView(mesh_prim, "primvars:skel:jointIndices:indices");
-    ::lightusd::next::ValueArrayView<const int32_t> jw_idx =
+    ::lightusd::ValueArrayView<const int32_t> jw_idx =
         GetIntArrayView(mesh_prim, "primvars:skel:jointWeights:indices");
     expand_indexed(out->joint_indices, ji_idx ? *ji_idx : kNoIdx,
                    elem_size("primvars:skel:jointIndices"));
@@ -910,6 +909,5 @@ std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name)
   return "";
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -61,9 +61,9 @@ const tr::RenderMesh* RenderStream::sourceRenderMesh_(int mesh_id) const {
 
 namespace {
 template <typename Visitor>
-bool VisitLayerAssetPaths(const lightusd::next::Stage& stage, uint8_t kind,
+bool VisitLayerAssetPaths(const lightusd::Stage& stage, uint8_t kind,
                           Visitor&& visitor) {
-    const lightusd::next::Layer* root = stage.GetRootLayer();
+    const lightusd::Layer* root = stage.GetRootLayer();
     if (!root || kind > 2) return true;
     if (kind == 0) {
       for (const std::string& path : root->meta().subLayers)
@@ -71,15 +71,15 @@ bool VisitLayerAssetPaths(const lightusd::next::Stage& stage, uint8_t kind,
       return true;
     }
     for (size_t i = 0; i < root->prim_count(); ++i) {
-      const lightusd::next::PrimSpec* prim =
+      const lightusd::PrimSpec* prim =
           root->prim(static_cast<uint32_t>(i));
       if (!prim) continue;
       const auto& arcs = kind == 1 ? prim->meta().references
                                    : prim->meta().payloads;
       for (const std::string& encoded : arcs) {
         const auto arc = kind == 1
-            ? lightusd::next::Compositor::ParseReference(encoded)
-            : lightusd::next::Compositor::ParsePayload(encoded);
+            ? lightusd::Compositor::ParseReference(encoded)
+            : lightusd::Compositor::ParsePayload(encoded);
         if (kind == 1 && arc.is_internal) continue;
         if (arc.asset_path.empty()) continue;
         if (!visitor(arc.asset_path)) return false;
@@ -103,7 +103,7 @@ bool RenderStream::beginOwned(std::string &&crate) {
     end();
     error_.clear();
     warning_.clear();
-    composition_report_ = lightusd::next::pcp::CompositionReport{};
+    composition_report_ = lightusd::pcp::CompositionReport{};
     stats_ = Stats{};
     stats_.input_copy_ms = pending_input_copy_ms_;
     stats_.input_bytes = crate.size();
@@ -124,7 +124,7 @@ bool RenderStream::beginOwned(std::string &&crate) {
         memory_limit - asset_bytes - crate.size();
     const double stage_load_start_ms = emscripten_get_now();
     if (IsUSDCBytes(crate)) {
-      lightusd::next::USDCLoadOptions opts;
+      lightusd::USDCLoadOptions opts;
       opts.crate_options.max_memory = std::min(
           opts.crate_options.max_memory,
           std::min(static_cast<size_t>(max_input_bytes_),
@@ -134,8 +134,8 @@ bool RenderStream::beginOwned(std::string &&crate) {
         return reportNextLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
       };
-      lightusd::next::USDCLoadResult res =
-          lightusd::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
+      lightusd::USDCLoadResult res =
+          lightusd::LoadUSDCFromMemoryOwned(std::move(crate), opts);
       if (!res.success) {
         error_ = res.error_summary.empty() ? std::string("USDC load failed")
                                            : res.error_summary;
@@ -143,7 +143,7 @@ bool RenderStream::beginOwned(std::string &&crate) {
       }
       stage_ = std::move(res.stage);
     } else {
-      lightusd::next::LoadUSDOptions opts;
+      lightusd::LoadUSDOptions opts;
       opts.limits.max_input_bytes = max_input_bytes_;
       opts.limits.max_resident_bytes = load_resident_limit;
       opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
@@ -159,7 +159,7 @@ bool RenderStream::beginOwned(std::string &&crate) {
       };
       std::string warn;
       std::string err;
-      const bool ok = lightusd::next::LoadUSDFromMemoryOwned(
+      const bool ok = lightusd::LoadUSDFromMemoryOwned(
           std::move(crate), &stage_, opts, &warn, &err);
       if (!ok) {
         error_ = err.empty() ? std::string("USD memory load failed") : err;
@@ -170,9 +170,9 @@ bool RenderStream::beginOwned(std::string &&crate) {
     stats_.stage_load_ms = emscripten_get_now() - stage_load_start_ms;
     bool authored_has_inherits = false;
     bool authored_has_specializes = false;
-    if (const lightusd::next::Layer* root = stage_.GetRootLayer()) {
+    if (const lightusd::Layer* root = stage_.GetRootLayer()) {
       for (size_t i = 0; i < root->prim_count(); ++i) {
-        const lightusd::next::PrimSpec* prim =
+        const lightusd::PrimSpec* prim =
             root->prim(static_cast<uint32_t>(i));
         if (!prim) continue;
         authored_has_inherits = authored_has_inherits ||
@@ -199,27 +199,27 @@ bool RenderStream::beginOwned(std::string &&crate) {
       });
     }
     authored_arc_present_[0] = [&] {
-      const lightusd::next::Layer* root = stage_.GetRootLayer();
+      const lightusd::Layer* root = stage_.GetRootLayer();
       return root && !root->meta().subLayers.empty();
     }();
     for (uint8_t kind = 1; kind < 3; ++kind) {
       authored_arc_present_[kind] = false;
-      if (const lightusd::next::Layer* root = stage_.GetRootLayer()) {
+      if (const lightusd::Layer* root = stage_.GetRootLayer()) {
         for (size_t i = 0; i < root->prim_count() && !authored_arc_present_[kind]; ++i) {
-          const lightusd::next::PrimSpec* prim = root->prim(static_cast<uint32_t>(i));
+          const lightusd::PrimSpec* prim = root->prim(static_cast<uint32_t>(i));
           if (prim) authored_arc_present_[kind] = !(kind == 1 ? prim->meta().references
                                                             : prim->meta().payloads).empty();
         }
       }
     }
-    if (enable_composition_ && lightusd::next::StageNeedsComposition(stage_)) {
-      lightusd::next::pcp::CompositionOptions copts;
+    if (enable_composition_ && lightusd::StageNeedsComposition(stage_)) {
+      lightusd::pcp::CompositionOptions copts;
       copts.variant_overrides = variant_overrides_;
       std::string cwarn, cerr;
-      lightusd::next::LoadUSDOptions composition_options;
+      lightusd::LoadUSDOptions composition_options;
       composition_options.limits.max_input_bytes = max_input_bytes_;
       composition_options.limits.max_resident_bytes = load_resident_limit;
-      if (!lightusd::next::ComposeLoadedStage(
+      if (!lightusd::ComposeLoadedStage(
               &stage_, asset_resolver_, "memory-root", composition_options,
               &cwarn, &cerr, &copts, &composition_report_)) {
         error_ = cerr.empty() ? std::string("in-memory composition failed")
@@ -233,12 +233,12 @@ bool RenderStream::beginOwned(std::string &&crate) {
     }
     if (stage_.GetMemoryUsage() >= load_resident_limit) {
       error_ = "Stage exceeds configured resident memory limit";
-      stage_ = lightusd::next::Stage();
+      stage_ = lightusd::Stage();
       return false;
     }
     stats_.composition_ms = emscripten_get_now() - composition_start_ms;
     const double mesh_discovery_start_ms = emscripten_get_now();
-    meshes_ = lightusd::next::GetAllMeshes(stage_);
+    meshes_ = lightusd::GetAllMeshes(stage_);
     tangent_requests_.assign(meshes_.size(), 0);
     stats_.mesh_discovery_ms =
         emscripten_get_now() - mesh_discovery_start_ms;
@@ -259,18 +259,18 @@ bool RenderStream::beginOwned(std::string &&crate) {
       const double material_start_ms = emscripten_get_now();
       bool has_unbound_mesh = false;
       for (const auto& mesh : meshes_) {
-        const lightusd::next::UsdPrim& prim = mesh.GetPrim();
-        const lightusd::next::UsdPrim bound = lightusd::next::GetBoundMaterial(stage_, prim);
+        const lightusd::UsdPrim& prim = mesh.GetPrim();
+        const lightusd::UsdPrim bound = lightusd::GetBoundMaterial(stage_, prim);
         if (bound.IsValid()) (void)registerMaterial_(bound);
         else has_unbound_mesh = true;
-        for (const lightusd::next::UsdPrim& child : prim.GetChildren()) {
+        for (const lightusd::UsdPrim& child : prim.GetChildren()) {
           if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
-          const lightusd::next::UsdPrim subset_bound =
-              lightusd::next::GetBoundMaterial(stage_, child);
+          const lightusd::UsdPrim subset_bound =
+              lightusd::GetBoundMaterial(stage_, child);
           if (subset_bound.IsValid()) (void)registerMaterial_(subset_bound);
         }
       }
-      if (has_unbound_mesh) (void)registerMaterial_(lightusd::next::UsdPrim());
+      if (has_unbound_mesh) (void)registerMaterial_(lightusd::UsdPrim());
       stats_.material_ms += emscripten_get_now() - material_start_ms;
     }
     if (mesh_merge_) {
@@ -454,7 +454,7 @@ void RenderStream::end() {
     invalidateCopyPreparation_();
     loaded_ = false;
     warning_.clear();
-    composition_report_ = lightusd::next::pcp::CompositionReport{};
+    composition_report_ = lightusd::pcp::CompositionReport{};
     authored_has_inherits_ = false;
     authored_has_specializes_ = false;
     for (auto& paths : authored_arc_paths_) paths.clear();
@@ -487,7 +487,7 @@ void RenderStream::end() {
     source_material_keys_.clear();
     source_texture_keys_.clear();
     texture_keys_.clear();
-    stage_ = lightusd::next::Stage();
+    stage_ = lightusd::Stage();
     freeVec_(s_points_);
     freeVec_(s_normals_);
     freeVec_(s_uv_);
@@ -531,11 +531,11 @@ int RenderStream::exportStageUSDC() {
       error_ = "USDC export exceeds remaining resident memory limit";
       return 0;
     }
-    lightusd::next::USDCWriteOptions options;
+    lightusd::USDCWriteOptions options;
     options.crate_options.max_file_size_bytes = budget;
     options.crate_options.max_memory_bytes = budget;
-    const lightusd::next::USDCWriteResult result =
-        lightusd::next::WriteUSDCToMemory(stage_usdc_export_, stage_, options);
+    const lightusd::USDCWriteResult result =
+        lightusd::WriteUSDCToMemory(stage_usdc_export_, stage_, options);
     if (!result.success) {
       stage_usdc_export_.clear();
       error_ = result.error.empty() ? "USDC export failed" : result.error;
@@ -751,7 +751,7 @@ void RenderStream::flattenRenderTree_() {
 
 void RenderStream::collectVariantSets_() {
     variant_sets_.clear();
-    const lightusd::next::Layer *root = stage_.GetRootLayer();
+    const lightusd::Layer *root = stage_.GetRootLayer();
     if (!root) return;
     for (const auto &prim : root->prims()) {
       const auto &meta = prim.meta();

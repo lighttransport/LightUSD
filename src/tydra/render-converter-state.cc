@@ -5,7 +5,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 bool RenderSceneConverter::Impl::BudgetWouldExceed(size_t estimate,
                                              const char* phase) {
@@ -59,6 +58,5 @@ void RenderSceneConverter::Impl::SetLastError(std::string msg) {
   last_error_ = std::move(msg);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

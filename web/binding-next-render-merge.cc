@@ -8,8 +8,8 @@
 #include "schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
-bool RenderStream::hasGeomSubset_(const lightusd::next::UsdPrim &prim) {
-    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+bool RenderStream::hasGeomSubset_(const lightusd::UsdPrim &prim) {
+    for (const lightusd::UsdPrim &child : prim.GetChildren()) {
       if (child.IsValid() && child.GetTypeName() == "GeomSubset") return true;
     }
     return false;
@@ -102,7 +102,7 @@ bool RenderStream::expandMergePrimvars_(int source_index,
       auto doubles = pv->value->as_double_array();
       auto ints = pv->value->as_int_array();
       const size_t elements = pv->scalar_count / pv->components;
-      lightusd::next::ValueArrayView<const int32_t> indices =
+      lightusd::ValueArrayView<const int32_t> indices =
           pv->indices && !pv->indices->empty() ? pv->indices : nullptr;
       const bool constant = pv->interpolation == tr::Interpolation::Constant;
       const size_t comps = pv->components;
@@ -154,7 +154,7 @@ void RenderStream::flushAccumulator_(MergeAccumulator *acc) {
     acc->primvar_signature.clear();
   }
 
-bool RenderStream::appendToAccumulator_(const lightusd::next::UsdPrim &prim,
+bool RenderStream::appendToAccumulator_(const lightusd::UsdPrim &prim,
                             int source_index,
                             int32_t material_id,
                             bool double_sided,
@@ -237,7 +237,7 @@ bool RenderStream::appendToAccumulator_(const lightusd::next::UsdPrim &prim,
     return true;
   }
 
-uint8_t RenderStream::purposeCode_(const lightusd::next::UsdPrim &prim) {
+uint8_t RenderStream::purposeCode_(const lightusd::UsdPrim &prim) {
     const std::string purpose = tr::ComputeInheritedPurpose(prim);
     if (purpose == "render") return 1;
     if (purpose == "proxy") return 2;
@@ -255,7 +255,7 @@ void RenderStream::buildOptimizedOutputs_() {
     constexpr size_t kMaxGroupIndices = size_t(3) << 20;
 
     for (size_t i = 0; i < meshes_.size(); ++i) {
-      const lightusd::next::UsdPrim &prim = meshes_[i].GetPrim();
+      const lightusd::UsdPrim &prim = meshes_[i].GetPrim();
       const double material_start_ms = emscripten_get_now();
       const int32_t material_id = materialIdForBoundPrim_(prim);
       stats_.material_ms += emscripten_get_now() - material_start_ms;
@@ -379,12 +379,12 @@ void RenderStream::buildMeshTransformCaches_() {
   }
 
 std::array<double, 16> RenderStream::localMatrix_(
-      const lightusd::next::UsdPrim &prim) const {
+      const lightusd::UsdPrim &prim) const {
     const std::string path = prim.GetPath().str();
     const auto cached = local_matrix_cache_.find(path);
     if (cached != local_matrix_cache_.end()) return cached->second;
     std::array<double, 16> m = identityMatrix_();
-    lightusd::next::UsdGeomXform xform(prim);
+    lightusd::UsdGeomXform xform(prim);
     double raw[16];
     if (xform.ComputeLocalTransform(raw)) {
       for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
@@ -394,10 +394,10 @@ std::array<double, 16> RenderStream::localMatrix_(
   }
 
 std::array<double, 16> RenderStream::worldMatrix_(
-      const lightusd::next::UsdPrim &prim) const {
-    std::vector<lightusd::next::UsdPrim> chain;
+      const lightusd::UsdPrim &prim) const {
+    std::vector<lightusd::UsdPrim> chain;
     std::array<double, 16> world = identityMatrix_();
-    for (lightusd::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+    for (lightusd::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
       const auto cached = world_matrix_cache_.find(p.GetPath().str());
       if (cached != world_matrix_cache_.end()) {
         world = cached->second;
@@ -414,7 +414,7 @@ std::array<double, 16> RenderStream::worldMatrix_(
   }
 
 std::array<double, 16> RenderStream::worldMatrixForPrim_(
-      const lightusd::next::UsdPrim &prim) const {
+      const lightusd::UsdPrim &prim) const {
     if (render_scene_valid_) {
       const auto it = render_scene_.node_by_path.find(prim.GetPath().str());
       if (it != render_scene_.node_by_path.end() && it->second >= 0 &&

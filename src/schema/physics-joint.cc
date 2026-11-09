@@ -7,7 +7,6 @@
 #include <cstring>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Joint type checking
@@ -475,5 +474,4 @@ bool GetPhysicsBallJointData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

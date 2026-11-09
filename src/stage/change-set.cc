@@ -4,7 +4,6 @@
 #include <algorithm>
 
 namespace lightusd {
-namespace next {
 
 bool AppendStageChangeSet(const StageChangeSet& incoming,
                           StageChangeSet* aggregate) {
@@ -41,5 +40,4 @@ bool AppendStageChangeSet(const StageChangeSet& incoming,
   return continuous;
 }
 
-}  // namespace next
 }  // namespace lightusd

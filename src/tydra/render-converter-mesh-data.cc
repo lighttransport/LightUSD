@@ -11,9 +11,9 @@
 #include <cstdint>
 #include <string>
 
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
 namespace {
 
 
@@ -69,8 +69,8 @@ bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, Render
 
 bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
-  ::lightusd::next::EvalOptions evaluation;
-  evaluation.time = ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+  ::lightusd::EvalOptions evaluation;
+  evaluation.time = ::lightusd::TimeQuery::Numeric(config_.time_code);
   evaluation.follow_connections = false;
   evaluation.clip_stage_loader = config_.animation.clip_stage_loader;
   if (!ReadFloatArray(prim, "points", evaluation, &points)) {
@@ -116,4 +116,4 @@ bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, Render
 }
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

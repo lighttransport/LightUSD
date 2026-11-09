@@ -11,7 +11,6 @@
 #include <cstring>
 
 namespace lightusd {
-namespace next {
 
 bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
   return lu_type_is_linear_interpolatable(static_cast<uint16_t>(type)) != 0;
@@ -565,5 +564,4 @@ SampleResult TimeInterpolator::Interpolate(
   return result;
 }
 
-}  // namespace next
 }  // namespace lightusd

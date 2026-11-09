@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
@@ -472,4 +472,4 @@ bool RenderSceneConverter::Impl::ComputeVertexNormals(RenderMesh* mesh) {
 //
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

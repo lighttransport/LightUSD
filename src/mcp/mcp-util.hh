@@ -12,11 +12,9 @@
 #include "mcp-context.hh"
 
 namespace lightusd {
-namespace next {
 class Stage;
 class UsdPrim;
 class Value;
-}  // namespace next
 
 namespace mcp {
 
@@ -29,7 +27,7 @@ std::string EncodeBase64(const uint8_t* data, size_t size);
 std::string GenerateUUID();
 
 // Read-only view of a C stage (nullptr for an empty reference).
-const next::Stage* NativeStage(const StageRef& ref);
+const ::lightusd::Stage* NativeStage(const StageRef& ref);
 
 // A prim found in the session: the session stage first, then loaded layers.
 struct PrimSite {
@@ -45,20 +43,20 @@ bool RequireStage(const Context& ctx, std::string* err);
 
 // {"type": "<usd type>", "value": <json>, "usda": "<literal>"}; arrays longer
 // than `max_elements` (0 = no limit) are truncated and marked.
-json ValueToJSON(const next::Value& value, const std::string& type_name,
+json ValueToJSON(const ::lightusd::Value& value, const std::string& type_name,
                  size_t max_elements = 1000);
 
 // Parse {"type": "<usd type>", "value": <json>} (a string value for a
 // non-string type is taken as a USDA literal) into a next value.
-bool ValueFromJSON(const json& j, std::string* type_name, next::Value* out,
+bool ValueFromJSON(const json& j, std::string* type_name, ::lightusd::Value* out,
                    std::string* err);
 
 const char* SpecifierName(int specifier);
-json PrimToJSON(const next::UsdPrim& prim, lightusd_stage* stage,
+json PrimToJSON(const ::lightusd::UsdPrim& prim, lightusd_stage* stage,
                 int max_depth, bool include_attributes);
-json PrimMetaToJSON(const next::UsdPrim& prim);
+json PrimMetaToJSON(const ::lightusd::UsdPrim& prim);
 // Declared type name of a property ("" when unknown).
-std::string PropertyTypeName(const next::UsdPrim& prim, const std::string& name);
+std::string PropertyTypeName(const ::lightusd::UsdPrim& prim, const std::string& name);
 
 // Tool result helper: {"content": [{"type": "text", "text": text}]}.
 void SetTextContent(json& result, const std::string& text,

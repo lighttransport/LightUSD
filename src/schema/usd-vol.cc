@@ -8,7 +8,6 @@
 #include "eval/attribute-eval.hh"
 
 namespace lightusd {
-namespace next {
 namespace {
 
 
@@ -129,5 +128,4 @@ bool GetParticleFieldData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

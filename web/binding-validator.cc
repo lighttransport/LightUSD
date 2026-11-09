@@ -7,7 +7,7 @@
 #include <memory>
 
 namespace {
-using Resolver = lightusd::next::AssetResolver;
+using Resolver = lightusd::AssetResolver;
 using Json = lightusd::minijson::Value;
 std::unique_ptr<Resolver> assets;
 Json metadata;

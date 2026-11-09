@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 namespace {
 bool Starts(const std::string& text, const char* prefix) { return text.rfind(prefix, 0) == 0; }
 bool PhysicsName(const std::string& name) {
@@ -153,4 +153,4 @@ expected<PhysicsSnapshot, std::string> QueryPhysics(const Stage& stage, const Ph
   if (!error.empty()) return make_unexpected(std::move(error));
   return snapshot;
 }
-} }
+ }

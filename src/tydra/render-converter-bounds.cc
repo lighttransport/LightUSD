@@ -16,10 +16,9 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
 
 namespace {
 
@@ -132,6 +131,5 @@ bool RenderSceneConverter::Impl::ConvertBoundsProxy(const UsdPrim& prim,
   return !out->has_alloc_failure();
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

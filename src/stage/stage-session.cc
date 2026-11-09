@@ -18,7 +18,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 using load_detail::DirOfPath;
 using load_detail::EffectiveUSDZOptions;
 using change_set_detail::BuildStageChangeSet;
@@ -995,5 +994,4 @@ std::string StageSession::GetError() const {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

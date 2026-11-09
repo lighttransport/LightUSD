@@ -20,7 +20,7 @@
 #include "stage/stage.hh"
 #include "tydra/render-converter.hh"
 namespace lightusd {
-namespace tydra { namespace next { template <typename T> struct ValueArrayRead; } }
+namespace tydra {  template <typename T> struct ValueArrayRead;  }
 namespace web_next {
 class NextAssetStore;
 class NextLayerDocument;
@@ -507,7 +507,7 @@ class RenderStream {
 
   const std::string& error() const { return error_; }
   const std::string& warning() const { return warning_; }
-  const lightusd::next::pcp::CompositionReport& compositionReport() const {
+  const lightusd::pcp::CompositionReport& compositionReport() const {
     return composition_report_;
   }
 
@@ -628,7 +628,7 @@ class RenderStream {
 
   void buildAnalyticOutputs_();
   void remapNodeMeshIds_();
-  static uint8_t purposeCode_(const lightusd::next::UsdPrim &prim);
+  static uint8_t purposeCode_(const lightusd::UsdPrim &prim);
 
   struct Stats {
     size_t source_mesh_count = 0;
@@ -662,8 +662,8 @@ class RenderStream {
 
   struct MeshOnlyPrimvar {
     std::string name;
-    const lightusd::next::Value* value = nullptr;
-    lightusd::next::ValueArrayView<const int32_t> indices;
+    const lightusd::Value* value = nullptr;
+    lightusd::ValueArrayView<const int32_t> indices;
     tr::VertexFormat format = tr::VertexFormat::Float;
     tr::Interpolation interpolation = tr::Interpolation::Vertex;
     uint32_t components = 1;
@@ -687,19 +687,19 @@ class RenderStream {
   // GeomSubset material) has a normal-map texture, either eagerly when
   // deferral is off or after an explicit computeMeshTangents request.
   bool wantsTangents_(int source_index) const;
-  bool hasNormalMap_(const lightusd::next::UsdPrim &prim) const;
+  bool hasNormalMap_(const lightusd::UsdPrim &prim) const;
   void prepareScratchSkin_(const tr::RenderMesh* mesh);
 
-  bool readFloatArray_(const lightusd::next::UsdPrim &prim, const char *name,
+  bool readFloatArray_(const lightusd::UsdPrim &prim, const char *name,
                        tr::ValueArrayRead<float> *out);
-  bool readIntArray_(const lightusd::next::UsdPrim &prim, const char *name,
+  bool readIntArray_(const lightusd::UsdPrim &prim, const char *name,
                      tr::ValueArrayRead<int32_t> *out);
-  static bool matBool_(const lightusd::next::UsdPrim &prim, const char *name,
+  static bool matBool_(const lightusd::UsdPrim &prim, const char *name,
                        bool fallback);
 
   static bool pointsArePlanar_(const std::vector<float> &points);
 
-  bool effectiveDoubleSided_(const lightusd::next::UsdPrim &prim,
+  bool effectiveDoubleSided_(const lightusd::UsdPrim &prim,
                              int32_t material_id,
                              const std::vector<float> &points) const;
 
@@ -715,7 +715,7 @@ class RenderStream {
   //     index + hash-map overhead).
   // The full soup is never materialized in the welded path; at most one mesh is
   // resident at a time either way.
-  bool buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
+  bool buildRenderMesh_(const lightusd::UsdPrim &prim, bool *soup_out,
                         std::string *err);
   bool prepareCopyMesh_(int mesh_id, int source_index, bool* soup_out,
                         std::string* err);
@@ -751,24 +751,24 @@ class RenderStream {
   static void appendMaterialKey_(const MaterialRecord &m,
                                  std::ostringstream *ss);
 
-  static bool populateHairMaterial_(const lightusd::next::UsdPrim &prim,
+  static bool populateHairMaterial_(const lightusd::UsdPrim &prim,
                                     MaterialRecord *rec);
 
-  bool ensureRenderMaterial_(const lightusd::next::UsdPrim &mat);
+  bool ensureRenderMaterial_(const lightusd::UsdPrim &mat);
 
-  bool requiresRenderMaterial_(const lightusd::next::UsdPrim &mat) const;
+  bool requiresRenderMaterial_(const lightusd::UsdPrim &mat) const;
 
   std::string materialSourceIdentity_(
-      const lightusd::next::UsdPrim &mat) const;
+      const lightusd::UsdPrim &mat) const;
 
   MaterialRecord materialRecordForPrim_(
-      const lightusd::next::UsdPrim &mat);
+      const lightusd::UsdPrim &mat);
 
-  int32_t registerMaterial_(const lightusd::next::UsdPrim &mat);
+  int32_t registerMaterial_(const lightusd::UsdPrim &mat);
 
-  int32_t materialIdForBoundPrim_(const lightusd::next::UsdPrim &prim);
+  int32_t materialIdForBoundPrim_(const lightusd::UsdPrim &prim);
 
-  static bool hasGeomSubset_(const lightusd::next::UsdPrim &prim);
+  static bool hasGeomSubset_(const lightusd::UsdPrim &prim);
 
   static bool sameMatrix_(const std::array<double, 16> &a,
                           const std::array<double, 16> &b);
@@ -803,7 +803,7 @@ class RenderStream {
 
   void flushAccumulator_(MergeAccumulator *acc);
 
-  bool appendToAccumulator_(const lightusd::next::UsdPrim &prim,
+  bool appendToAccumulator_(const lightusd::UsdPrim &prim,
                             int source_index,
                             int32_t material_id,
                             bool double_sided,
@@ -893,7 +893,7 @@ class RenderStream {
       const std::vector<int32_t> &fvc);
 
   static std::vector<int32_t> matIntStatic_(
-      const lightusd::next::UsdPrim &prim, const char *name);
+      const lightusd::UsdPrim &prim, const char *name);
 
   // Area-weighted vertex normals from the triangulated indices.
   static void computeNormals_(const std::vector<float> &pos,
@@ -905,25 +905,25 @@ class RenderStream {
       const std::array<double, 16> &a, const std::array<double, 16> &b);
   void buildMeshTransformCaches_();
   std::array<double, 16> localMatrix_(
-      const lightusd::next::UsdPrim &prim) const;
+      const lightusd::UsdPrim &prim) const;
 
   std::array<double, 16> worldMatrix_(
-      const lightusd::next::UsdPrim &prim) const;
+      const lightusd::UsdPrim &prim) const;
 
   // World transform for a prim, preferring the RenderScene node table: its
   // hierarchy traversal handles native instances correctly, while the plain
   // GetParent() chain in worldMatrix_ drops the instance root's own xform.
   std::array<double, 16> worldMatrixForPrim_(
-      const lightusd::next::UsdPrim &prim) const;
+      const lightusd::UsdPrim &prim) const;
 
-  lightusd::next::Stage stage_;
+  lightusd::Stage stage_;
   tr::RenderScene render_scene_;
   bool render_scene_valid_ = false;
   std::vector<std::string> render_scene_warnings_;
   // UsdVol world-space samples: returned to the caller as a borrowed pointer,
   // overwritten by the next volumeSample call.
   mutable std::vector<float> volume_sample_scratch_;
-  std::vector<lightusd::next::UsdGeomMesh> meshes_;
+  std::vector<lightusd::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<OutputMesh> analytic_outputs_;
   std::vector<MaterialRecord> materials_;
@@ -948,8 +948,8 @@ class RenderStream {
   std::set<std::string> texture_keys_;
   std::map<std::string, std::string> clip_assets_;
   std::map<std::string, std::shared_ptr<void>> clip_asset_budget_reservations_;
-  lightusd::next::AssetResolver asset_resolver_;
-  std::shared_ptr<lightusd::next::AssetPayloadBudget> payload_budget_;
+  lightusd::AssetResolver asset_resolver_;
+  std::shared_ptr<lightusd::AssetPayloadBudget> payload_budget_;
   size_t imported_asset_bytes_{0};
   struct StreamingAsset {
     std::string bytes;
@@ -1019,7 +1019,7 @@ class RenderStream {
   std::string render_settings_path_;
   std::string error_;
   std::string warning_;
-  lightusd::next::pcp::CompositionReport composition_report_;
+  lightusd::pcp::CompositionReport composition_report_;
   std::string mesh_view_error_;
   int mesh_view_source_id_ = -1;
   int mesh_copy_scope_id_ = -1;

@@ -799,7 +799,7 @@ void lightusd_combined_free(uint8_t* ptr);
 
 #include <string>
 #include <vector>
-namespace lightusd::next::pipeline {
+namespace lightusd::pipeline {
 struct FlattenStats;
 }
 namespace lightusd::web::combined {
@@ -810,7 +810,7 @@ namespace lightusd::web::combined {
 // `stats` is required for status 3 and ignored otherwise.
 void StoreFlattenResult(int32_t status, std::string&& message,
                         std::vector<uint8_t>&& data,
-                        lightusd::next::pipeline::FlattenStats* stats,
+                        lightusd::pipeline::FlattenStats* stats,
                         lightusd_combined_flatten_step_info* out);
 // Replaces the retained string table read by lightusd_combined_table_*.
 void StoreStringTable(std::vector<std::string>&& strings,

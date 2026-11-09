@@ -12,7 +12,6 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 /// Composition arc types in LIVRPS strength order (lower value == stronger).
@@ -67,5 +66,4 @@ inline bool HasFlag(NodeFlags flags, NodeFlags f) {
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

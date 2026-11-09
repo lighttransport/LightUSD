@@ -54,16 +54,16 @@ void print_mem(const char *tag) {
 }
 
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-size_t count_prims(const lightusd::next::Stage &stage) {
+size_t count_prims(const lightusd::Stage &stage) {
   size_t n = 0;
-  stage.Traverse([&](const lightusd::next::UsdPrim &) {
+  stage.Traverse([&](const lightusd::UsdPrim &) {
     ++n;
     return true;
   });
   return n;
 }
 
-size_t root_prim_count(const lightusd::next::Stage &stage) {
+size_t root_prim_count(const lightusd::Stage &stage) {
   return stage.GetRootPrims().size();
 }
 #else

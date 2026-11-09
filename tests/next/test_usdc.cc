@@ -21,7 +21,7 @@
 #include "writer/usdc-writer.hh"
 #include "writer/usda-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // ============================================================
 // Crate format tests

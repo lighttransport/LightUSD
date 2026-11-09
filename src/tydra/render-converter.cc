@@ -48,11 +48,10 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-using ::lightusd::next::Stage;
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
+using ::lightusd::Stage;
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
 
 
 //
@@ -67,7 +66,7 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory) {
   config.execution.max_threads = 1;
   config.execution.max_in_flight_bytes = max_memory;
   config.execution.callback_concurrency =
-      ::lightusd::next::CallbackConcurrency::Serialized;
+      ::lightusd::CallbackConcurrency::Serialized;
   return config;
 }
 
@@ -75,11 +74,11 @@ RenderSceneConverter::RenderSceneConverter(const ConverterConfig& config)
     : impl_(new Impl(config)) {}
 RenderSceneConverter::~RenderSceneConverter() = default;
 
-ConvertResult RenderSceneConverter::Convert(const ::lightusd::next::Stage& stage) {
+ConvertResult RenderSceneConverter::Convert(const ::lightusd::Stage& stage) {
   return impl_->Convert(stage);
 }
 
-StreamConvertResult RenderSceneConverter::ConvertToSink(::lightusd::next::Stage& stage,
+StreamConvertResult RenderSceneConverter::ConvertToSink(::lightusd::Stage& stage,
                                     SceneSink* sink) {
   return impl_->ConvertToSink(stage, sink);
 }
@@ -120,22 +119,22 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim, RenderPoin
   return impl_->ConvertPointInstancer(prim, out);
 }
 
-bool RenderSceneConverter::ConvertMaterial(const ::lightusd::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out) {
+bool RenderSceneConverter::ConvertMaterial(const ::lightusd::Stage& stage, const UsdPrim& prim, RenderMaterial* out) {
   return impl_->ConvertMaterial(stage, prim, out);
 }
 
-bool RenderSceneConverter::ConvertMaterial(const ::lightusd::next::Stage& stage,
+bool RenderSceneConverter::ConvertMaterial(const ::lightusd::Stage& stage,
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene) {
   return impl_->ConvertMaterial(stage, prim, out, scene);
 }
 
-bool RenderSceneConverter::ConvertLight(const ::lightusd::next::Stage& stage,
+bool RenderSceneConverter::ConvertLight(const ::lightusd::Stage& stage,
                                        const UsdPrim& prim, RenderLight* out) {
   return impl_->ConvertLight(stage, prim, out);
 }
 
-bool RenderSceneConverter::ConvertCamera(const ::lightusd::next::Stage& stage,
+bool RenderSceneConverter::ConvertCamera(const ::lightusd::Stage& stage,
                      const UsdPrim& prim, RenderCamera* out) {
   return impl_->ConvertCamera(stage, prim, out);
 }
@@ -144,7 +143,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   return impl_->ConvertSkeleton(prim, out);
 }
 
-bool RenderSceneConverter::ConvertAnimation(const ::lightusd::next::Stage& stage,
+bool RenderSceneConverter::ConvertAnimation(const ::lightusd::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out) {
   return impl_->ConvertAnimation(stage, prim, out);
 }
@@ -244,6 +243,5 @@ void ComputeTriangleNormal(const float* p0, const float* p1, const float* p2, fl
 }
 
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

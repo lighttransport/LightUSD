@@ -8,7 +8,6 @@
 #include "layer/prim-spec.hh"
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Helpers
@@ -347,5 +346,4 @@ bool GetARImagingAPIData(const UsdPrim& prim, ARImagingAPIData* out) {
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

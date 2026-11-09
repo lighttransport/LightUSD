@@ -10,7 +10,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 class StreamWriter;
 
@@ -92,5 +91,4 @@ std::string FormatAssetPathForUsda(const std::string& path);
 std::string PrintAttributeValue(const std::string& type_name, const std::string& attr_name,
                                  const Value& value, const PrintOptions& opts = {});
 
-}  // namespace next
 }  // namespace lightusd

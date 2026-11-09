@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 // Shader Parameter - value or texture reference
 
@@ -98,4 +98,4 @@ struct RenderMaterial {
 
 
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

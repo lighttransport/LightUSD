@@ -6,7 +6,6 @@
 #include "usd-media.hh"
 
 namespace lightusd {
-namespace next {
 
 bool IsMediaAudio(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "MediaAudio";
@@ -75,5 +74,4 @@ bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

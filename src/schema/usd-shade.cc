@@ -10,7 +10,6 @@
 #include <cmath>
 
 namespace lightusd {
-namespace next {
 
 bool IsMaterial(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "Material";
@@ -708,7 +707,7 @@ std::string GetPrimvarReaderVarname(const Stage& stage,
   std::string value = TokenishValue(shader.GetPropertyValue("inputs:varname"));
   if (!value.empty()) return value;
 
-  const ::lightusd::next::PrimSpec* spec = shader.GetPrimSpec();
+  const ::lightusd::PrimSpec* spec = shader.GetPrimSpec();
   const std::vector<Path>* conns =
       spec ? spec->connection("inputs:varname") : nullptr;
   for (int hop = 0; conns && !conns->empty() && hop < 4; ++hop) {
@@ -721,11 +720,10 @@ std::string GetPrimvarReaderVarname(const Stage& stage,
     if (!src.IsValid()) break;
     value = TokenishValue(src.GetPropertyValue(prop_name));
     if (!value.empty()) return value;
-    const ::lightusd::next::PrimSpec* src_spec = src.GetPrimSpec();
+    const ::lightusd::PrimSpec* src_spec = src.GetPrimSpec();
     conns = src_spec ? src_spec->connection(prop_name) : nullptr;
   }
   return "";
 }
 
-}  // namespace next
 }  // namespace lightusd

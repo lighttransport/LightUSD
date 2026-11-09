@@ -47,7 +47,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -68,7 +67,7 @@ namespace {
 
 
 size_t AuthoredArraySize(const UsdPrim& prim,
-                        const ::lightusd::next::PropNameId& name_id) {
+                        const ::lightusd::PropNameId& name_id) {
   const Value* value = prim.GetPropertyValue(name_id);
   return value && value->is_array() ? value->array_size() : 0;
 }
@@ -146,6 +145,5 @@ GeometryInfo RenderSceneConverter::Impl::GetGeometryInfo(const UsdPrim& prim,
   return BuildGeometryInfo(prim, kind, id);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

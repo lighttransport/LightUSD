@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 void RenderSceneConverter::Impl::SanitizeMeshTopology(RenderMesh* mesh) {
   const uint32_t point_count = static_cast<uint32_t>(mesh->point_count());
@@ -103,4 +103,4 @@ void RenderSceneConverter::Impl::SanitizeMeshTopology(RenderMesh* mesh) {
 }
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

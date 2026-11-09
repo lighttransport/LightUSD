@@ -2,8 +2,8 @@
 #include "render-converter-internal.hh"
 #include "schema/usd-lux.hh"
 #include <string>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
 bool LocalVisibility(const UsdPrim& prim) {
   const Value* value = prim.GetPropertyValue("visibility");
@@ -44,7 +44,7 @@ void RenderSceneConverter::Impl::BuildNodeHierarchy(const RenderExtractResult& e
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
     else if (type == "Skeleton") node.type = NodeType::Skeleton;
-    else if (::lightusd::tydra::next::IsLight(prim)) {
+    else if (::lightusd::tydra::IsLight(prim)) {
       LightKind kind = GetLightKind(prim);
       switch (kind) {
         case LightKind::DistantLight: node.type = NodeType::DirectionalLight; break;
@@ -91,4 +91,4 @@ void RenderSceneConverter::Impl::BuildNodeHierarchy(const RenderExtractResult& e
     scene->nodes.push_back(std::move(node));
   }
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

@@ -15,10 +15,10 @@
 
 namespace lusdql {
 
-using MemBudget = lightusd::tydra::next::MemBudget;
-using MemPool = lightusd::tydra::next::MemPool;
+using MemBudget = lightusd::tydra::MemBudget;
+using MemPool = lightusd::tydra::MemPool;
 template <class T>
-using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
+using PoolAlloc = lightusd::tydra::PoolAlloc<T>;
 
 // How the cap is divided. These are advisory ceilings for the individual
 // phases; the hard stop is the shared MemBudget cap, which counts every
@@ -26,7 +26,7 @@ using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
 struct PreviewBudget {
   uint64_t total = 0;
 
-  uint64_t stage = 0;     // USD stage + composition (next::StageSession)
+  uint64_t stage = 0;     // USD stage + composition (::lightusd::StageSession)
   uint64_t geometry = 0;  // QlMesh vertex/index data
   uint64_t textures = 0;  // decoded, downsampled base-color maps
   uint64_t render = 0;    // framebuffers, accumulation, BVH

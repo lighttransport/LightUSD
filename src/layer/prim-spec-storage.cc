@@ -16,7 +16,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 PrimMetadataRare::PrimMetadataRare(const PrimMetadataRare &o)
       : doc(o.doc),
@@ -951,5 +950,4 @@ TimeSampleBlock::Stats TimeSampleBlock::stats() const {
 // per prim dominated the per-prim fixed cost on high-prim-count layers.
 
 
-}  // namespace next
 }  // namespace lightusd

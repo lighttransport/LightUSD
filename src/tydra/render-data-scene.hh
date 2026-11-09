@@ -14,7 +14,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 struct ConversionDiagnostic {
   ConversionDisposition disposition = ConversionDisposition::Failed;
@@ -141,4 +141,4 @@ class RenderScene {
   Stats get_stats() const;
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

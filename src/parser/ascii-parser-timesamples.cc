@@ -8,7 +8,6 @@
 #include "value-parser-numeric.hh"
 
 namespace lightusd {
-namespace next {
 
 bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
                                          TypeId type_id, bool is_array) {
@@ -77,5 +76,4 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
   return Match(TokenType::CloseBrace);
 }
 
-}  // namespace next
 }  // namespace lightusd

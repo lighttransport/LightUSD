@@ -20,7 +20,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
   // Array element count header: uint32 for crate < 0.7.0, uint64 for >= 0.7.0
@@ -1458,5 +1457,4 @@ bool CrateReader::Impl::ReadPaths() {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

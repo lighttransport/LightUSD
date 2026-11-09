@@ -7,8 +7,8 @@
 #include "schema/usd-geom-camera.hh"
 #include <cstring>
 #include <string>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
 
 bool GetFloat(const UsdPrim& prim, const char* name, float* out) {
@@ -33,7 +33,7 @@ bool GetDouble(const UsdPrim& prim, const char* name, double* out) {
 bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderCamera* out) {
-  if (!out || !::lightusd::tydra::next::IsCamera(prim)) {
+  if (!out || !::lightusd::tydra::IsCamera(prim)) {
     SetLastError("Invalid camera prim");
     return false;
   }
@@ -103,8 +103,8 @@ bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
     if (schema.compare(0, std::strlen(kBackPlatePrefix), kBackPlatePrefix) != 0)
       continue;
     const std::string instance = schema.substr(std::strlen(kBackPlatePrefix));
-    ::lightusd::next::BackPlateData source;
-    if (!::lightusd::next::GetBackPlateData(stage, prim, instance, &source,
+    ::lightusd::BackPlateData source;
+    if (!::lightusd::GetBackPlateData(stage, prim, instance, &source,
                                              config_.time_code)) {
       continue;
     }
@@ -135,4 +135,4 @@ bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
 
   return true;
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

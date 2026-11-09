@@ -20,7 +20,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 // Cache internals the batch driver needs (Cache is otherwise opaque).
@@ -1091,5 +1090,4 @@ bool FlattenToUSDCFileBatched(const std::string &filename,
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

@@ -12,11 +12,11 @@
 #include "reader/usda-reader.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  lightusd::next::LoadOptions opts;
+  lightusd::LoadOptions opts;
   opts.parse_options.max_depth = 128;
   opts.parse_options.max_file_size = 16u << 20;  // 16 MB
 
-  lightusd::next::LoadResult result = lightusd::next::LoadUSDAFromString(
+  lightusd::LoadResult result = lightusd::LoadUSDAFromString(
       reinterpret_cast<const char *>(data), size, opts);
   (void)result;
   return 0;

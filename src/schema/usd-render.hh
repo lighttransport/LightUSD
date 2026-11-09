@@ -9,7 +9,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct RenderSettingsBaseData {
   std::vector<Path> camera;
@@ -69,5 +68,4 @@ bool GetRenderVarData(const Stage& stage, const UsdPrim& prim,
 bool GetRenderPassData(const Stage& stage, const UsdPrim& prim,
                        RenderPassData* out, double time = 0.0);
 
-}  // namespace next
 }  // namespace lightusd

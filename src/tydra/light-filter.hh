@@ -20,13 +20,10 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 class Stage;
 class UsdPrim;
-}  // namespace next
 
 namespace tydra {
-namespace next {
 
 struct LightFilter {
   std::string prim_path;
@@ -40,7 +37,7 @@ struct LightFilter {
 };
 
 using LightFilterParser = std::function<bool(
-    const ::lightusd::next::Stage&, const ::lightusd::next::UsdPrim&,
+    const ::lightusd::Stage&, const ::lightusd::UsdPrim&,
     double time_code, LightFilter*, std::string*)>;
 
 // Registers the built-in `intensity` and `color` kinds. Idempotent and safe to
@@ -55,8 +52,8 @@ bool HasLightFilter(const std::string& kind);
 // Parses one filter prim. On failure `error` explains why (missing or unknown
 // `lightusd:filter:kind`, malformed or out-of-range parameters); callers keep
 // the light unchanged and report a conversion warning.
-bool ParseLightFilter(const ::lightusd::next::Stage& stage,
-                      const ::lightusd::next::UsdPrim& prim, double time_code,
+bool ParseLightFilter(const ::lightusd::Stage& stage,
+                      const ::lightusd::UsdPrim& prim, double time_code,
                       LightFilter* out, std::string* error);
 
 // Folds receiver-independent filters into a light's effective intensity and
@@ -64,6 +61,5 @@ bool ParseLightFilter(const ::lightusd::next::Stage& stage,
 void ApplyLightFilters(const std::vector<LightFilter>& filters,
                        float* intensity, std::array<float, 3>* color);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

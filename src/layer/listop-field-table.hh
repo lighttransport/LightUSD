@@ -20,7 +20,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct StringListOpFieldDef {
   const char* name;
@@ -201,5 +200,4 @@ inline void MergeWeakerStringListOpField(const StringListOpFieldDef& def,
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

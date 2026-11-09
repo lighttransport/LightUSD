@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 namespace lightusd { namespace web_next {
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 namespace {
 
 tn::ValidationOptions ParseValidationOptionsJSONForWeb(
@@ -94,7 +94,7 @@ lightusd::minijson::Value ValidationResultToJSON(const tn::USDValidationResult& 
 
 // validateFromBinary(bytes, filename, optionsJson) -> JSON string, matching
 // the legacy LightUSDLoaderNative.validateFromBinary contract consumed by
-// web/js/validation.js. Runs AOUSD-core validation over next::Layer.
+// web/js/validation.js. Runs AOUSD-core validation over ::lightusd::Layer.
 static std::string validateFromBytes(const uint8_t* data, size_t size,
                                       const std::string& filename,
                                       const std::string& options_json) {

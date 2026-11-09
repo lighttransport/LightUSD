@@ -6,7 +6,7 @@
 #include "reader/obj-reader.hh"
 
 namespace ia = lightusd::tydra::import_asset;
-namespace n = lightusd::next;
+namespace n = lightusd;
 namespace {
 void Check(bool ok, const char* message) {
   if (!ok) { std::cerr << "Texture regression failed: " << message << '\n'; std::exit(1); }

@@ -7,7 +7,6 @@
 #include "scene-preview.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 ScenePreviewResult OpenScenePreviewVolume(const std::string&,
                                           const ScenePreviewOptions&);
 bool ValidatePreviewDispatch(const std::vector<uint32_t>&, size_t,
@@ -50,6 +49,5 @@ class PreviewVolumeRenderer {
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 //
-// Value-level layer diff tools of the next MCP server (next::Diff; the same
+// Value-level layer diff tools of the next MCP server (::lightusd::Diff; the same
 // summary / paths / tree / prim / text / json contract as the legacy tools).
 #include <algorithm>
 #include <map>
@@ -18,11 +18,11 @@
 namespace lightusd {
 namespace mcp {
 
-using next::DiffOptions;
-using next::LayerMetaDiff;
-using next::ModifiedPrimSpec;
-using next::PrimSpecDiff;
-using next::PropDiff;
+using ::lightusd::DiffOptions;
+using ::lightusd::LayerMetaDiff;
+using ::lightusd::ModifiedPrimSpec;
+using ::lightusd::PrimSpecDiff;
+using ::lightusd::PropDiff;
 
 namespace {
 
@@ -44,15 +44,15 @@ std::string LeafName(const std::string &path) {
 }
 
 // Root layer of a stage, or its flattened composition.
-next::Layer SideLayer(const next::Stage &stage, bool flatten) {
+::lightusd::Layer SideLayer(const ::lightusd::Stage &stage, bool flatten) {
   if (flatten) return stage.Flatten();
-  const next::Layer *root = stage.GetRootLayer();
-  return root ? root->Clone() : next::Layer();
+  const ::lightusd::Layer *root = stage.GetRootLayer();
+  return root ? root->Clone() : ::lightusd::Layer();
 }
 
 // Load one diff side from {path | data(base64) | uuid}.
 bool LoadDiffSide(Context &ctx, const json &side, bool flatten,
-                  next::Layer *out, std::string *default_name,
+                  ::lightusd::Layer *out, std::string *default_name,
                   std::string &err) {
   if (side.contains("uuid") && side["uuid"].is_string()) {
     const std::string uuid = side["uuid"].get<std::string>();
@@ -100,8 +100,8 @@ bool LoadDiffSide(Context &ctx, const json &side, bool flatten,
   return true;
 }
 
-next::DiffOptions BuildDiffOptions(const json &args) {
-  next::DiffOptions opts;
+::lightusd::DiffOptions BuildDiffOptions(const json &args) {
+  ::lightusd::DiffOptions opts;
   if (args.contains("ulps") && args["ulps"].is_number()) {
     const uint64_t u = args["ulps"].get<uint64_t>();
     opts.floatUlps = static_cast<uint32_t>(u);
@@ -415,7 +415,7 @@ void DiffComputePrim(const DiffSession &d, const std::string &path,
     for (const auto &m : ppit->second.modifiedPropDetails) {
       // Center long values on the first difference so a shared prefix (e.g.
       // asset paths) does not hide what changed.
-      auto pr = next::CenterValuePairForDiff(m.lhs, m.rhs);
+      auto pr = ::lightusd::CenterValuePairForDiff(m.lhs, m.rhs);
       out["propsModified"].push_back({{"name", m.name},
                                       {"left", pr.first},
                                       {"right", pr.second},
@@ -455,7 +455,7 @@ bool DiffOpen(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   session->right_name = args["right"].value("name", session->right_name);
 
   const bool flatten = args.value("flatten", false);
-  next::Diff(session->left, session->right, session->psDiffs, session->propDiffs,
+  ::lightusd::Diff(session->left, session->right, session->psDiffs, session->propDiffs,
        session->opts, &session->layerMetaDiff);
 
   ctx.diff = std::move(session);
@@ -522,7 +522,7 @@ bool DiffText(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
     err = "No diff loaded. Call diff_open first.";
     return false;
   }
-  result["text"] = next::DiffToText(ctx.diff->left, ctx.diff->right,
+  result["text"] = ::lightusd::DiffToText(ctx.diff->left, ctx.diff->right,
                               ctx.diff->left_name, ctx.diff->right_name,
                               ctx.diff->opts);
   return true;
@@ -535,7 +535,7 @@ bool DiffJson(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
     err = "No diff loaded. Call diff_open first.";
     return false;
   }
-  const std::string s = next::DiffToJSON(ctx.diff->left, ctx.diff->right,
+  const std::string s = ::lightusd::DiffToJSON(ctx.diff->left, ctx.diff->right,
                                    ctx.diff->left_name, ctx.diff->right_name,
                                    ctx.diff->opts);
   result["json"] = nlohmann::json::parse(s, nullptr, false);

@@ -12,14 +12,13 @@
 #pragma once
 
 #include "crate-format.hh"      // ValueRep, CrateTypeId
-#include "types/type-id.hh"  // next::TypeId
+#include "types/type-id.hh"  // ::lightusd::TypeId
 
 #include <atomic>
 #include <memory>
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 class CrateDataSource;
 class LazyArraySource {
@@ -85,5 +84,4 @@ struct LazyArrayRef {
 bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep rep,
                      size_t max_elements, LazyArrayRef* out);
 
-}  // namespace next
 }  // namespace lightusd

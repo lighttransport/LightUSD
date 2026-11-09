@@ -14,7 +14,6 @@
 #include <map>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Typed prims
@@ -96,5 +95,4 @@ struct MaterialXNodeIOData {
 bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
                              MaterialXNodeIOData* out);
 
-} // namespace next
 } // namespace lightusd

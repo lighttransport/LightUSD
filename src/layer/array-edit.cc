@@ -13,7 +13,6 @@
 #include "writer/value-printer.hh"
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -262,5 +261,4 @@ bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

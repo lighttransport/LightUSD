@@ -4,10 +4,10 @@
 #include <cstdint>
 #include <vector>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 class Stage;
 class UsdPrim;
-}}
+}
 
 namespace lusdr {
 
@@ -28,9 +28,9 @@ void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
                                     std::vector<float> *uvs,
                                     std::vector<uint32_t> *indices);
 
-bool IsTriangleMeshNext(const lightusd::next::UsdPrim &prim);
-bool GenerateAnalyticMeshNext(const lightusd::next::Stage &stage,
-                              const lightusd::next::UsdPrim &prim, double time,
+bool IsTriangleMeshNext(const lightusd::UsdPrim &prim);
+bool GenerateAnalyticMeshNext(const lightusd::Stage &stage,
+                              const lightusd::UsdPrim &prim, double time,
                               GeneratedMeshNext *out);
 
 }  // namespace lusdr

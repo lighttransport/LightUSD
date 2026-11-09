@@ -13,11 +13,11 @@
 #include <cstdio>
 #include <string>
 
-using namespace lightusd::next;
+using namespace lightusd;
 
-namespace lightusd { namespace next {
+namespace lightusd { 
 bool ParseUsdaArrayElementCount(const char*, size_t, size_t, TypeId, size_t*);
-}}
+}
 
 int main() {
   size_t count = 1;

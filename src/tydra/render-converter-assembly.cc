@@ -4,7 +4,7 @@
 #include <limits>
 #include <unordered_set>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 void AssignNodeDataId(RenderScene* scene,
                       const std::string& prim_path,
                       int32_t data_id) {
@@ -302,4 +302,4 @@ void AppendPointInstanceDraws(int32_t instancer_id,
                               RenderScene* scene) {
   AppendPointInstanceDrawsImpl(instancer_id, instancer, scene);
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

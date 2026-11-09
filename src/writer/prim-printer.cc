@@ -21,7 +21,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -563,5 +562,4 @@ void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& op
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // Vertex Attribute
@@ -139,7 +139,7 @@ struct Skeleton {
 };
 
 //
-// USD Physics annotations extracted from next::Stage.
+// USD Physics annotations extracted from ::lightusd::Stage.
 // These are descriptive data for render/tool consumers; tydra-next does not
 // simulate physics.
 //
@@ -239,4 +239,4 @@ enum class ConversionDisposition : uint8_t {
   Failed
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

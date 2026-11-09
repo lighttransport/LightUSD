@@ -9,7 +9,6 @@
 #include <cmath>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 constexpr float kPI = 3.14159265358979323846f;
@@ -216,5 +215,4 @@ void ComputeProjectionMatrix(const CameraData& camera, float aspect_ratio, float
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

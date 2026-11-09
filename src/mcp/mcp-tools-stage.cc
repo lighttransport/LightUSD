@@ -38,8 +38,8 @@ std::string TakeString(lightusd_string* s) {
   return out;
 }
 
-void StageSummary(const next::Stage& stage, json& result) {
-  const next::StageMeta& m = stage.GetMeta();
+void StageSummary(const ::lightusd::Stage& stage, json& result) {
+  const ::lightusd::StageMeta& m = stage.GetMeta();
   result["upAxis"] = m.upAxis;
   result["defaultPrim"] = m.defaultPrim;
   result["rootPrimCount"] = stage.GetRootPrims().size();
@@ -126,9 +126,9 @@ bool FindAttribute(Context& ctx, const json& args, PrimSite* site,
   return FindPrimSite(ctx, *path, site, err);
 }
 
-next::UsdPrim NativePrim(lightusd_stage* stage, const std::string& path) {
-  const next::Stage* s = lightusd_internal::BorrowNativeStage(stage);
-  return s ? s->GetPrimAtPath(path) : next::UsdPrim();
+::lightusd::UsdPrim NativePrim(lightusd_stage* stage, const std::string& path) {
+  const ::lightusd::Stage* s = lightusd_internal::BorrowNativeStage(stage);
+  return s ? s->GetPrimAtPath(path) : ::lightusd::UsdPrim();
 }
 
 }  // namespace
@@ -255,8 +255,8 @@ bool StageToString(Context& ctx, const json& args, json& result, std::string& er
 
 bool StageInfo(Context& ctx, const json&, json& result, std::string& err) {
   if (!RequireStage(ctx, &err)) return false;
-  const next::Stage& stage = *NativeStage(ctx.stage);
-  const next::StageMeta& m = stage.GetMeta();
+  const ::lightusd::Stage& stage = *NativeStage(ctx.stage);
+  const ::lightusd::StageMeta& m = stage.GetMeta();
   result["upAxis"] = m.upAxis;
   result["defaultPrim"] = m.defaultPrim;
   result["metersPerUnit"] = m.metersPerUnit;
@@ -271,20 +271,20 @@ bool StageInfo(Context& ctx, const json&, json& result, std::string& err) {
   result["rootPrimCount"] = stage.GetRootPrims().size();
   result["totalPrimCount"] = stage.GetPrimCount();
   json roots = json::array();
-  for (const next::UsdPrim& p : stage.GetRootPrims()) roots.push_back(p.GetName());
+  for (const ::lightusd::UsdPrim& p : stage.GetRootPrims()) roots.push_back(p.GetName());
   result["rootPrims"] = std::move(roots);
   return true;
 }
 
 bool PrimList(Context& ctx, const json& args, json& result, std::string& err) {
   if (!RequireStage(ctx, &err)) return false;
-  const next::Stage& stage = *NativeStage(ctx.stage);
+  const ::lightusd::Stage& stage = *NativeStage(ctx.stage);
   const std::string path = args.value("path", std::string("/"));
   const int max_depth = args.value("max_depth", -1);
   const bool include_attributes = args.value("include_attributes", false);
   if (path == "/" || path.empty()) {
     json prims = json::array();
-    for (const next::UsdPrim& p : stage.GetRootPrims()) {
+    for (const ::lightusd::UsdPrim& p : stage.GetRootPrims()) {
       prims.push_back(PrimToJSON(p, ctx.stage.stage, max_depth, include_attributes));
     }
     result["path"] = "/";
@@ -292,10 +292,10 @@ bool PrimList(Context& ctx, const json& args, json& result, std::string& err) {
     result["prims"] = std::move(prims);
     return true;
   }
-  const next::UsdPrim prim = stage.GetPrimAtPath(path);
+  const ::lightusd::UsdPrim prim = stage.GetPrimAtPath(path);
   if (!prim) {
     json roots = json::array();
-    for (const next::UsdPrim& p : stage.GetRootPrims()) roots.push_back("/" + p.GetName());
+    for (const ::lightusd::UsdPrim& p : stage.GetRootPrims()) roots.push_back("/" + p.GetName());
     result["error"] = "Prim not found: " + path;
     result["availableRootPrims"] = std::move(roots);
     return true;  // not a hard error (legacy contract)
@@ -312,7 +312,7 @@ bool PrimGet(Context& ctx, const json& args, json& result, std::string& err) {
     return false;
   }
   const std::string path = args["path"].get<std::string>();
-  const next::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
+  const ::lightusd::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
   if (!prim) {
     err = "Prim not found: " + path;
     return false;
@@ -350,7 +350,7 @@ bool PrimCreate(Context& ctx, const json& args, json& result, std::string& err) 
   result["success"] = true;
   result["path"] = path;
   result["type"] = type_name;
-  if (!type_name.empty() && !next::GetSchemaRegistry().IsKnownSchema(type_name)) {
+  if (!type_name.empty() && !::lightusd::GetSchemaRegistry().IsKnownSchema(type_name)) {
     result["warning"] = "Unregistered prim type: " + type_name;
   }
   return true;
@@ -404,7 +404,7 @@ bool PrimGetMetadata(Context& ctx, const json& args, json& result, std::string& 
     return false;
   }
   const std::string path = args["path"].get<std::string>();
-  const next::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
+  const ::lightusd::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
   if (!prim) {
     err = "Prim not found: " + path;
     return false;
@@ -421,7 +421,7 @@ bool AttrList(Context& ctx, const json& args, json& result, std::string& err) {
     return false;
   }
   const std::string path = args["path"].get<std::string>();
-  const next::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
+  const ::lightusd::UsdPrim prim = NativeStage(ctx.stage)->GetPrimAtPath(path);
   if (!prim) {
     err = "Prim not found: " + path;
     return false;
@@ -429,11 +429,11 @@ bool AttrList(Context& ctx, const json& args, json& result, std::string& err) {
   const json j = PrimToJSON(prim, ctx.stage.stage, 0, true);
   json attrs = j.contains("attributes") ? j["attributes"] : json::array();
   // Schema properties the prim does not author (fallback values apply).
-  if (const next::PrimSpec* spec = prim.GetPrimSpec()) {
-    const next::SchemaRegistry& reg = next::GetSchemaRegistry();
+  if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+    const ::lightusd::SchemaRegistry& reg = ::lightusd::GetSchemaRegistry();
     for (const std::string& name : reg.PropertyNames(*spec)) {
       if (prim.HasAuthoredProperty(name)) continue;
-      const next::SchemaPropertyDefinition* def = reg.FindProperty(*spec, name);
+      const ::lightusd::SchemaPropertyDefinition* def = reg.FindProperty(*spec, name);
       json a;
       a["name"] = name;
       a["type"] = def ? def->type_name : std::string();
@@ -456,7 +456,7 @@ bool AttrGet(Context& ctx, const json& args, json& result, std::string& err) {
   PrimSite site;
   std::string path, name;
   if (!FindAttribute(ctx, args, &site, &path, &name, &err)) return false;
-  const next::UsdPrim prim = NativePrim(site.stage, path);
+  const ::lightusd::UsdPrim prim = NativePrim(site.stage, path);
   const size_t max_elements =
       args.value("max_elements", static_cast<size_t>(1000));
   result["path"] = prim.GetPath().str();
@@ -470,11 +470,11 @@ bool AttrGet(Context& ctx, const json& args, json& result, std::string& err) {
   if (args.contains("time") && args["time"].is_number() &&
       prim.HasTimeSamples(name)) {
     const double t = args["time"].get<double>();
-    const next::Value v = prim.GetInterpolatedValue(name, t);
+    const ::lightusd::Value v = prim.GetInterpolatedValue(name, t);
     result["time"] = t;
     result["hasValue"] = true;
     result["value"] = ValueToJSON(v, type, max_elements);
-  } else if (const next::Value* v = prim.GetPropertyValueOrEarliestTimeSample(name)) {
+  } else if (const ::lightusd::Value* v = prim.GetPropertyValueOrEarliestTimeSample(name)) {
     result["hasValue"] = !blocked;
     result["value"] = blocked ? json({{"type", "None"}})
                               : ValueToJSON(*v, type, max_elements);
@@ -501,7 +501,7 @@ bool AttrSet(Context& ctx, const json& args, json& result, std::string& err) {
     return false;
   }
   std::string type_name;
-  next::Value value;
+  ::lightusd::Value value;
   if (!ValueFromJSON(args["value"], &type_name, &value, &err)) {
     err = "Failed to parse value: " + err;
     return false;

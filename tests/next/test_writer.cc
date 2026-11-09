@@ -28,7 +28,7 @@
 #include "writer/dtoa.hh"
 #include "crate/lazy-array.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // Helper to check if string contains substring
 bool contains(const std::string& str, const std::string& substr) {

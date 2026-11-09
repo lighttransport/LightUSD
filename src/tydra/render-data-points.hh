@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 struct RenderMesh;
 struct RenderMaterial;
 
@@ -197,4 +197,4 @@ struct RenderPointInstanceDrawRange {
   const RenderPointInstanceDraw& operator[](size_t i) const { return data[i]; }
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

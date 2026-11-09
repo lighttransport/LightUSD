@@ -10,7 +10,7 @@
 #include <cstddef>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 // The single authoritative walk over every ShaderParam a RenderMaterial owns.
 // Both parallel texture-id remapping and material-driven UV promotion use this
@@ -218,6 +218,5 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
   PromoteMaterialUVPrimvarsImpl(scene, warnings);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

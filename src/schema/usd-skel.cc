@@ -11,7 +11,6 @@
 #include <unordered_map>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Prim type checking
@@ -552,5 +551,4 @@ bool SkelSortInfluences(std::vector<int>& indices,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

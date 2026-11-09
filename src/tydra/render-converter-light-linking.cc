@@ -17,10 +17,10 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage;
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage;
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
 namespace {
 
 
@@ -160,7 +160,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
                                  std::vector<int32_t>* mesh_indices) {
   const Value* value = owner.GetPropertyValue(property_name);
   if (!value ||
-      value->type_id() != ::lightusd::next::TypeId::PathExpression) return false;
+      value->type_id() != ::lightusd::TypeId::PathExpression) return false;
   auto text = value->as_string();
   if (!text) return false;
   ParsedPathExpression expression = ParsedPathExpression::Parse(*text);
@@ -183,7 +183,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
     const Value* ref_value = ref_owner.GetPropertyValue(
         "collection:" + ref.name + ":membershipExpression");
     if (!ref_value || ref_value->type_id() !=
-                          ::lightusd::next::TypeId::PathExpression) return nullptr;
+                          ::lightusd::TypeId::PathExpression) return nullptr;
     auto ref_text = ref_value->as_string();
     if (!ref_text) return nullptr;
     std::string qualified = *ref_text;
@@ -226,9 +226,9 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
     return;
   }
 
-  const std::vector<::lightusd::next::Path>* includes =
+  const std::vector<::lightusd::Path>* includes =
       prim.GetRelationship(base + "includes");
-  const std::vector<::lightusd::next::Path>* excludes =
+  const std::vector<::lightusd::Path>* excludes =
       prim.GetRelationship(base + "excludes");
   if (!includes && !excludes) return;  // unauthored -> links all
 
@@ -247,7 +247,7 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   // the matched subtrees, not to the whole scene.
   index.NewGeneration();
   if (excludes) {
-    for (const ::lightusd::next::Path& p : *excludes) {
+    for (const ::lightusd::Path& p : *excludes) {
       const std::string ep = p.str();
       const int32_t exact = index.ExactMatch(ep);
       if (exact >= 0) index.Mark(exact);
@@ -268,7 +268,7 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
 
   if (include_root) add_subtree(owner_path);
   if (includes) {
-    for (const ::lightusd::next::Path& p : *includes) {
+    for (const ::lightusd::Path& p : *includes) {
       const std::string ip = p.str();
       if (explicit_only) {
         const int32_t exact = index.ExactMatch(ip);
@@ -313,6 +313,5 @@ void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
   ResolveLightLinkingImpl(stage, scene);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

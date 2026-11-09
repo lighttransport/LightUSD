@@ -12,7 +12,6 @@
 #include <ostream>
 
 namespace lightusd {
-namespace next {
 
 /// Options for USDA output
 struct USDAWriteOptions {
@@ -114,5 +113,4 @@ USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
 USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer,
                                   const USDAWriteOptions& options = {});
 
-}  // namespace next
 }  // namespace lightusd

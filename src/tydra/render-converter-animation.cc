@@ -13,8 +13,8 @@
 #include <set>
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
 bool ValueToFloat4(const Value& value, Float4* out) {
   if (!out || value.is_empty() || value.is_array()) return false;
@@ -69,11 +69,11 @@ bool ValueToFloat4(const Value& value, Float4* out) {
 // element_count consecutive elements. Half arrays are not animated.
 bool FlattenCustomAnimationValue(const Value& value, std::vector<float>* out,
                                  uint32_t* stride, uint32_t* count) {
-  using ::lightusd::next::TypeId;
+  using ::lightusd::TypeId;
   if (!out || !stride || !count || value.is_empty() || value.is_block())
     return false;
-  const ::lightusd::next::TypeInfo* info =
-      ::lightusd::next::GetTypeInfo(value.type_id());
+  const ::lightusd::TypeInfo* info =
+      ::lightusd::GetTypeInfo(value.type_id());
   if (!info || info->size == 0 || info->component_count == 0) return false;
   const TypeId lane = info->component_type == TypeId::Invalid
                           ? info->id : info->component_type;
@@ -215,10 +215,10 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
   // next-core Values keep quats real-first (w, x, y, z); render animation
   // channels use xyzw (three.js quaternion order). xformOp:orient is the
   // quat-valued xform op.
-  const ::lightusd::next::TypeId tid = value.type_id();
-  if (tid == ::lightusd::next::TypeId::Quatf ||
-      tid == ::lightusd::next::TypeId::Quatd ||
-      tid == ::lightusd::next::TypeId::Quath) {
+  const ::lightusd::TypeId tid = value.type_id();
+  if (tid == ::lightusd::TypeId::Quatf ||
+      tid == ::lightusd::TypeId::Quatd ||
+      tid == ::lightusd::TypeId::Quath) {
     *out = Float4(out->y, out->z, out->w, out->x);
     return true;
   }
@@ -305,13 +305,13 @@ bool IsXformAnimationProperty(const std::string& prop_name) {
 }
 
 std::vector<double> ValueClipSampleTimes(
-    const Stage& stage, const ::lightusd::next::ValueClipSet& meta,
+    const Stage& stage, const ::lightusd::ValueClipSet& meta,
     uint32_t max_samples, float sample_rate, bool use_time_range,
     double range_start, double range_end) {
   std::set<double> exact;
   for (const auto& value : meta.times) exact.insert(value.first);
   for (const auto& value : meta.active) exact.insert(value.first);
-  const ::lightusd::next::StageMeta stage_meta = stage.GetMeta();
+  const ::lightusd::StageMeta stage_meta = stage.GetMeta();
   double start = exact.empty() ? 0.0 : *exact.begin();
   double end = exact.empty() ? start : *exact.rbegin();
   if (stage_meta.startTimeCode_set) start = stage_meta.startTimeCode;
@@ -367,7 +367,7 @@ std::vector<std::string> ReadTokenArrayProperty(const UsdPrim& prim,
   return out;
 }
 
-bool FirstArrayElementToFloat4(::lightusd::next::ValueArrayView<const float> values,
+bool FirstArrayElementToFloat4(::lightusd::ValueArrayView<const float> values,
                                uint32_t stride,
                                Float4* out) {
   if (!out || values.empty() || stride == 0) return false;
@@ -389,7 +389,7 @@ bool FirstArrayElementToFloat4(::lightusd::next::ValueArrayView<const float> val
 }  // namespace
 
 bool RenderSceneConverter::Impl::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
-  if (!out || !::lightusd::next::IsSkeleton(prim)) {
+  if (!out || !::lightusd::IsSkeleton(prim)) {
     SetLastError("Invalid skeleton prim");
     return false;
   }
@@ -409,9 +409,9 @@ bool RenderSceneConverter::Impl::ConvertSkeleton(const UsdPrim& prim, Skeleton* 
   // local empty Stage out of the hot path and read directly from the prim.
   (void)stage_ptr;
 
-  ::lightusd::next::SkeletonData skel;
+  ::lightusd::SkeletonData skel;
   // The schema accessor does not dereference Stage for Skeleton fields.
-  if (!::lightusd::next::GetSkeletonData(stage, prim, &skel) ||
+  if (!::lightusd::GetSkeletonData(stage, prim, &skel) ||
       skel.joints.empty()) {
     return true;
   }
@@ -439,7 +439,7 @@ bool RenderSceneConverter::Impl::ConvertSkeleton(const UsdPrim& prim, Skeleton* 
 
   std::vector<int> topology;
   std::string err;
-  if (!::lightusd::next::BuildSkelTopology(skel.joints, topology, &err)) {
+  if (!::lightusd::BuildSkelTopology(skel.joints, topology, &err)) {
     AddWarning("Invalid skeleton topology for " + prim.GetPath().str() +
                         ": " + err);
     topology.assign(skel.joints.size(), -1);
@@ -540,15 +540,15 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
     // once, then resolve every (property, time) sample through
     // ResolveValueClipFromSets (set-name strength order, times jump
     // discontinuities, out-of-range mapping, manifest gating, nested clips).
-    std::vector<::lightusd::next::ValueClipSet> clip_sets;
+    std::vector<::lightusd::ValueClipSet> clip_sets;
     std::string clip_error;
-    if (::lightusd::next::ParseValueClipSets(prim, &clip_sets, &clip_error)) {
+    if (::lightusd::ParseValueClipSets(prim, &clip_sets, &clip_error)) {
       // Pre-load every clip asset once: records clip_asset_paths for
       // diagnostics, drives property ENUMERATION (the bake needs the property
       // names, which the resolver does not report), and seeds the shared
       // stage cache the core resolver consumes (no double loading).
-      ::lightusd::next::ValueClipStageCache clip_cache;
-      for (const ::lightusd::next::ValueClipSet& clip_set : clip_sets) {
+      ::lightusd::ValueClipStageCache clip_cache;
+      for (const ::lightusd::ValueClipSet& clip_set : clip_sets) {
         for (const std::string& asset_path : clip_set.asset_paths) {
           if (std::find(out->clip_asset_paths.begin(),
                         out->clip_asset_paths.end(), asset_path) ==
@@ -560,7 +560,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
           auto clip_stage = std::make_shared<Stage>();
           std::string warn;
           std::string err;
-          ::lightusd::next::ValueClipStageCache::Entry entry;
+          ::lightusd::ValueClipStageCache::Entry entry;
           if (config_.animation.clip_stage_loader(asset_path,
                                                   clip_stage.get(), &warn,
                                                   &err)) {
@@ -579,7 +579,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
       // A property provided by more than one set bakes ONCE: the core
       // resolver already applies the set strength order per query.
       std::set<std::string> baked_properties;
-      for (const ::lightusd::next::ValueClipSet& clip_set : clip_sets) {
+      for (const ::lightusd::ValueClipSet& clip_set : clip_sets) {
         std::set<std::string> properties;
         const std::string clip_prim_path =
             clip_set.prim_path.empty() ? prim_path
@@ -607,7 +607,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
         for (const std::string& property : properties) {
           if (!baked_properties.insert(property).second) continue;
           const auto prop_id =
-              ::lightusd::next::GetPropNameTable().find(property);
+              ::lightusd::GetPropNameTable().find(property);
           const bool has_property = prim.HasProperty(prop_id);
           AnimationChannel channel;
           channel.target_path =
@@ -625,7 +625,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
 
           for (double stage_time : sample_times) {
             Value value;
-            bool have_value = ::lightusd::next::ResolveValueClipFromSets(
+            bool have_value = ::lightusd::ResolveValueClipFromSets(
                 clip_sets, prim, property, stage_time,
                 config_.animation.clip_stage_loader, &value, nullptr, nullptr,
                 nullptr, &clip_cache);
@@ -655,7 +655,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
     }
   }
 
-  if (::lightusd::next::IsSkelAnimation(prim)) {
+  if (::lightusd::IsSkelAnimation(prim)) {
     const std::vector<std::string> joint_order =
         ReadTokenArrayProperty(prim, "joints");
     const std::vector<std::string> blend_shape_order =
@@ -665,7 +665,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
                                    AnimationChannel::TargetPath target_path,
                                    uint32_t stride) {
       const auto prop_id =
-          ::lightusd::next::GetPropNameTable().find(prop_name);
+          ::lightusd::GetPropNameTable().find(prop_name);
       if (!prop_id.is_valid()) return;
       const auto* samples = prim.GetTimeSamples(prop_id);
       if (!samples || samples->empty()) return;
@@ -788,7 +788,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
     }
   }
 
-  const ::lightusd::next::PrimSpec* prim_spec = prim.GetPrimSpec();
+  const ::lightusd::PrimSpec* prim_spec = prim.GetPrimSpec();
   if (!prim_spec) {
     if (out->channels.empty()) {
       out->start_time = 0.0;
@@ -800,11 +800,11 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
 
   // Visit sampled properties in authored order (the time-sample store's own
   // order is not stable), then any sampled property without a slot.
-  std::vector<::lightusd::next::PropNameId> sampled_props;
+  std::vector<::lightusd::PropNameId> sampled_props;
   {
-    const std::vector<::lightusd::next::PropNameId> stored =
+    const std::vector<::lightusd::PropNameId> stored =
         prim_spec->time_sampled_properties();
-    std::set<::lightusd::next::PropNameId> pending(stored.begin(), stored.end());
+    std::set<::lightusd::PropNameId> pending(stored.begin(), stored.end());
     for (const auto& slot : prim_spec->properties().slots()) {
       if (pending.erase(slot.name_id)) sampled_props.push_back(slot.name_id);
     }
@@ -814,7 +814,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
   }
   for (const auto& prop_id : sampled_props) {
     const std::string prop_name(
-        ::lightusd::next::GetPropNameTable().get(prop_id));
+        ::lightusd::GetPropNameTable().get(prop_id));
     const auto* samples = prim.GetTimeSamples(prop_id);
     if (!samples || samples->empty()) continue;
 
@@ -883,4 +883,4 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
 
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

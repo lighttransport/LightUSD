@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// Options for USDC output
 struct USDCWriteOptions {
@@ -57,5 +56,4 @@ USDCWriteResult WriteLayerToUSDCMemory(std::vector<uint8_t>& buffer, const Layer
 bool IsUSDCPath(const std::string& path);
 bool IsUSDCPath(const char* path);
 
-}  // namespace next
 }  // namespace lightusd

@@ -14,8 +14,8 @@ std::string_view DocumentSessionSourceDir(
     const lightusd_document_session* session);
 std::string_view DocumentSnapshotSourceDir(
     const lightusd_document_snapshot* snapshot);
-const lightusd::next::StageSnapshot& DocumentSnapshotStage(
+const lightusd::StageSnapshot& DocumentSnapshotStage(
     const lightusd_document_snapshot* snapshot);
-const lightusd::next::StageChangeSet& DocumentSnapshotChanges(
+const lightusd::StageChangeSet& DocumentSnapshotChanges(
     const lightusd_document_snapshot* snapshot);
 }  // namespace lightusd_internal

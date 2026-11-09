@@ -9,7 +9,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace color_management {
 namespace {
 
@@ -260,5 +259,4 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 }
 
 }  // namespace color_management
-}  // namespace next
 }  // namespace lightusd

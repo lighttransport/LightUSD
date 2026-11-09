@@ -42,7 +42,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -546,7 +545,6 @@ void htos_append(std::string& out, uint16_t bits) {
   out.append(buffer, htos_to(buffer, bits));
 }
 
-}  // namespace next
 }  // namespace lightusd
 
 #if defined(__GNUC__) && !defined(__clang__)

@@ -35,20 +35,20 @@ static lightusd_status ExportGLBWithResolver(
     max_bytes = static_cast<size_t>(max_output_bytes);
   }
 
-  lightusd::next::ResolverConfig config;
+  lightusd::ResolverConfig config;
   config.allow_filesystem = false;
-  lightusd::next::AssetResolver portable_resolver(config);
+  lightusd::AssetResolver portable_resolver(config);
   const auto* resolver = supplied_resolver
       ? lightusd_internal::AssetResolverForLoad(supplied_resolver) : &portable_resolver;
-  lightusd::tydra::next::GltfExportOptions options;
+  lightusd::tydra::GltfExportOptions options;
   options.max_output_bytes = max_bytes;
   options.fail_on_loss = strict != 0;
   if (source_path[0]) {
     options.resolver = resolver;
     options.asset_anchor = resolver->Resolve(source_path).resolved_path;
     if (std::filesystem::path(options.asset_anchor).extension() == ".usdz") {
-      lightusd::next::USDZReader package;
-      lightusd::next::USDZReadOptions read;
+      lightusd::USDZReader package;
+      lightusd::USDZReadOptions read;
       read.max_archive_size = max_bytes;
       std::vector<uint8_t> bytes;
       std::string error;
@@ -65,8 +65,8 @@ static lightusd_status ExportGLBWithResolver(
     }
   }
   const auto* data = lightusd_internal::RenderSceneForExport(scene);
-  lightusd::tydra::next::GltfExportResult result =
-      lightusd::tydra::next::ExportGLB(*data, options);
+  lightusd::tydra::GltfExportResult result =
+      lightusd::tydra::ExportGLB(*data, options);
   lightusd_strlist* loss_list = new (std::nothrow) lightusd_strlist();
   if (!loss_list) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "GLB loss list alloc failed");
   loss_list->items = std::move(result.losses);

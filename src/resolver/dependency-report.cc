@@ -14,7 +14,7 @@
 #include <set>
 #include <tuple>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 namespace {
 class Collector {
  public:
@@ -390,4 +390,4 @@ std::string DependencyReportToJSON(const DependencyReport& report) {
   return Json{{"schemaVersion", 1}, {"root", report.root}, {"complete", report.complete}, {"scope", report.scope},
               {"dependencies", records}, {"diagnostics", diagnostics}}.dump(2);
 }
-} }  // namespace lightusd::next
+ }  // namespace lightusd

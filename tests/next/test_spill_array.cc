@@ -16,7 +16,7 @@
 // Tiny chunks (64 KiB) so the randomized exercise crosses many eviction
 // boundaries without large allocations; the default 8 MiB suits the writer.
 template <typename T>
-using SpillVec = lightusd::next::SpillVec<T, 64 * 1024>;
+using SpillVec = lightusd::SpillVec<T, 64 * 1024>;
 
 namespace {
 

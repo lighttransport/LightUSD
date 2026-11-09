@@ -16,7 +16,7 @@
 #include <optional>
 #include <set>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace shader_param_detail {
 bool CombineUDIMTileImages(RenderScene* scene,
                            const std::vector<RenderUDIMTexture::Tile>& tiles,
@@ -127,7 +127,7 @@ bool CombineUDIMTileImages(RenderScene* scene,
 
 static bool GetFloat2Local(const UsdPrim& prim, const std::string& name,
                            float* out2) {
-  const ::lightusd::next::Value* v = GetAttribute(prim, name);
+  const ::lightusd::Value* v = GetAttribute(prim, name);
   if (!v) return false;
   const float* f = v->as_float2();
   if (!f) return false;
@@ -153,8 +153,8 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
   double T[2] = {0.0, 0.0};                   // accumulated offset
 
   for (int hop = 0; hop < 4 && cur.IsValid(); ++hop) {
-    const ::lightusd::next::PrimSpec* spec = cur.GetPrimSpec();
-    const std::vector<::lightusd::next::Path>* conns =
+    const ::lightusd::PrimSpec* spec = cur.GetPrimSpec();
+    const std::vector<::lightusd::Path>* conns =
         spec ? spec->connection(prop) : nullptr;
     if (!conns || conns->empty()) break;
     const std::string next_path = SourcePrimPathFromConnection((*conns)[0].str());
@@ -202,7 +202,7 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
       continue;
     }
     if (id.rfind("UsdPrimvarReader", 0) == 0) {
-      out->uv_primvar = ::lightusd::next::GetPrimvarReaderVarname(stage, np);
+      out->uv_primvar = ::lightusd::GetPrimvarReaderVarname(stage, np);
       break;
     }
     break;
@@ -245,7 +245,7 @@ bool ExtractTextureNodeData(const Stage& stage,
   // not necessarily on the texture shader itself.
   auto apply_file_metadata = [out](const UsdPrim& owner,
                                    const std::string& property) {
-    const ::lightusd::next::PropMeta* pm = owner.GetPropertyMeta(property);
+    const ::lightusd::PropMeta* pm = owner.GetPropertyMeta(property);
     if (!pm) return;
     if (!pm->colorSpace.empty()) out->source_color_space = pm->colorSpace;
     if (const auto cd = pm->customData.as_dictionary()) {
@@ -259,7 +259,7 @@ bool ExtractTextureNodeData(const Stage& stage,
     }
   };
 
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
 
   // Anchor of the prim that authors the selected property value. A texture
@@ -290,8 +290,8 @@ bool ExtractTextureNodeData(const Stage& stage,
     return spec ? spec->asset_anchor_id() : 0u;
   };
 
-  ::lightusd::next::UVTextureData uv;
-  if (::lightusd::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
+  ::lightusd::UVTextureData uv;
+  if (::lightusd::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
     out->file = uv.file;
     out->wrap_s = uv.wrap_s;
     out->wrap_t = uv.wrap_t;
@@ -410,4 +410,4 @@ bool ExtractTextureNodeData(const Stage& stage,
 
 }  // namespace shader_param_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

@@ -107,7 +107,7 @@ void lu_spline_anti_regress(double t0, double *tw0_post, double *tw1_pre,
 /* ------------------------------------------------------------------
  * AutoEase tangents (ComputeAutoEaseTangents / ts/knotData.cpp)
  *
- * Faithful port of next::ComputeAutoEaseTangents. Reads only the authored
+ * Faithful port of ::lightusd::ComputeAutoEaseTangents. Reads only the authored
  * time/value/pre_value/dual/interp/algo fields, so it is safe to run in place:
  * the tangent fields it writes are never read back by the algorithm.
  * ------------------------------------------------------------------ */

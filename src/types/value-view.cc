@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Read-only array views for next::Value.
+// Read-only array views for ::lightusd::Value.
 
 #include "value-view.hh"
 #include "c/lightusd-core-c.h"
@@ -14,7 +14,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 namespace {
 
 TypeId ScalarComponent(TypeId id) {
@@ -264,5 +263,4 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
   return FinishBorrowedView(scratch->materialized.as_uint64_array(), out);
 }
 
-}  // namespace next
 }  // namespace lightusd

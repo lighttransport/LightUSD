@@ -51,7 +51,7 @@
 #include "types/spline.hh"
 #include "eval/value-clip.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 

@@ -2,7 +2,7 @@
 #pragma once
 #include <cstddef>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // Basic math types (GPU-aligned)
@@ -47,4 +47,4 @@ struct Matrix4d {
   static Matrix4d Identity() { return Matrix4d(); }
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

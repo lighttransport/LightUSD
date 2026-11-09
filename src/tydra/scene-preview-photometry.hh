@@ -8,7 +8,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 // LM-63 photometry in the light's local frame: -Z is the beam axis, X the
 // luminaire width and Y its length. Candela rows are horizontal-major.
@@ -30,6 +29,5 @@ bool LoadPreviewIes(const std::string&, PreviewIesProfile*, std::string*,
 bool WritePreviewIes(const std::string&, const PreviewIesProfile&,
                      std::string*);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

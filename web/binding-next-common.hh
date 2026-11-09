@@ -12,11 +12,11 @@
 #include "../src/tydra/render-data.hh"
 
 namespace lightusd {
-namespace next { class Layer; struct CrateReadOptions; }
+ class Layer; struct CrateReadOptions; 
 }
 
-namespace tn = lightusd::next;
-namespace tr = lightusd::tydra::next;
+namespace tn = lightusd;
+namespace tr = lightusd::tydra;
 namespace lightusd {
 namespace web_next {
 extern "C" bool reportNextLoadProgress(const char* phase, double current, double total)

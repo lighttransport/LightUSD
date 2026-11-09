@@ -10,7 +10,6 @@
 #include "core/security-policy.hh"
 
 namespace lightusd {
-namespace next {
 
 // Controls assumptions that cannot be expressed by a byte/count ceiling.
 // Untrusted is deliberately the default for every public next entry point.
@@ -66,5 +65,4 @@ struct ResourceLimits {
   }
 };
 
-}  // namespace next
 }  // namespace lightusd

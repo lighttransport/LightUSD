@@ -13,7 +13,7 @@
 #include "resolver/asset-resolver.hh"
 #include "stage/stage.hh"
 #include "tydra/scene-preview-compute.hh"
-namespace td = lightusd::tydra::next;
+namespace td = lightusd::tydra;
 namespace fs = std::filesystem;
 int main(int argc, char** argv) {
   const std::string name = argc > 1 ? argv[1] : "cpu";
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
   options.gpu_budget_bytes = budget;
   options.resolution = 8;
   options.cache_directory = (folder / "cache").string();
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   const auto result =
       td::ConvertScenePreview(source.string(), resolver, options);
   if (!require(result.success, result.error)) return 1;
@@ -1214,16 +1214,16 @@ int main(int argc, char** argv) {
   const auto instance_result =
       td::ConvertScenePreview(instances.string(), resolver, instance_options);
   if (!require(instance_result.success, instance_result.error)) return 1;
-  lightusd::next::Stage stage;
-  lightusd::next::pcp::CompositionOptions compose;
+  lightusd::Stage stage;
+  lightusd::pcp::CompositionOptions compose;
   compose.num_threads = 1;
   std::string warning;
-  if (!lightusd::next::pcp::ComposeStageFromFile(instance_result.usd_path,
+  if (!lightusd::pcp::ComposeStageFromFile(instance_result.usd_path,
                                                  resolver, &stage, compose,
                                                  &warning, &error))
     return 1;
   double minimum = 1e30, maximum = -1e30;
-  stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
     if (const auto* positions = prim.GetPropertyValue("positions")) {
       auto values = positions->view().as_float_array();
       for (size_t i = 0; i < values.size(); i += 3) {

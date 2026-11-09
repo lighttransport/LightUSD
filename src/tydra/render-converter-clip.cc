@@ -4,30 +4,30 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 enum class ClipRead { Failed, InvalidArray, Ready };
-ClipRead ReadOwner(const ::lightusd::next::UsdPrim& owner,
-               const ::lightusd::next::UsdPrim& prim, const char* name,
-               double time, const ::lightusd::next::ValueClipStageLoader& loader,
+ClipRead ReadOwner(const ::lightusd::UsdPrim& owner,
+               const ::lightusd::UsdPrim& prim, const char* name,
+               double time, const ::lightusd::ValueClipStageLoader& loader,
                ValueArrayRead<float>* out) {
-  std::vector<::lightusd::next::ValueClipSet> sets;
-  if (!::lightusd::next::ParseValueClipSets(owner, &sets, nullptr))
+  std::vector<::lightusd::ValueClipSet> sets;
+  if (!::lightusd::ParseValueClipSets(owner, &sets, nullptr))
     return ClipRead::Failed;
   for (auto& set : sets) set.prim_path = prim.GetPath().str();
-  ::lightusd::next::Value clipped;
-  if (!::lightusd::next::ResolveValueClipFromSets(
+  ::lightusd::Value clipped;
+  if (!::lightusd::ResolveValueClipFromSets(
           sets, prim, name, time, loader, &clipped)) return ClipRead::Failed;
   out->scratch.materialized = std::move(clipped);
-  return ::lightusd::next::GetFloatArrayView(
+  return ::lightusd::GetFloatArrayView(
       out->scratch.materialized, &out->scratch, &out->view)
       ? ClipRead::Ready : ClipRead::InvalidArray;
 }
 }  // namespace
 
 bool ReadFloatArrayFromValueClips(
-    const ::lightusd::next::UsdPrim& prim, const char* name, double time,
-    const ::lightusd::next::ValueClipStageLoader& loader,
+    const ::lightusd::UsdPrim& prim, const char* name, double time,
+    const ::lightusd::ValueClipStageLoader& loader,
     ValueArrayRead<float>* out) {
   if (!out || !name || !loader) return false;
   for (auto owner = prim; owner.IsValid(); owner = owner.GetParent()) {
@@ -48,13 +48,13 @@ bool ReadFloatArrayFromValueClips(
     path.resize(slash);
     const uint32_t index = layer->index_at_path(path);
     if (index == UINT32_MAX) continue;
-    const auto* spec = layer->prim_at_path(::lightusd::next::Path(path));
+    const auto* spec = layer->prim_at_path(::lightusd::Path(path));
     if (!spec || !spec->meta().clips().is_dictionary()) continue;
     const ClipRead result = ReadOwner(
-        ::lightusd::next::UsdPrim(spec, layer, index), prim, name, time,
+        ::lightusd::UsdPrim(spec, layer, index), prim, name, time,
         loader, out);
     if (result == ClipRead::Failed) return false;
     if (result == ClipRead::Ready) return true;
   }
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

@@ -4,7 +4,7 @@
 // LightUSD Next - AOUSD Core semantic validation.
 //
 // Port of the legacy validator (src/usd-validation.{hh,cc}) onto the next-core
-// layer model (next::Layer / next::PrimSpec). Rule ids, severities and message
+// layer model (::lightusd::Layer / ::lightusd::PrimSpec). Rule ids, severities and message
 // wording mirror the legacy validator so reports are interchangeable between
 // the two paths. Checks that depend on legacy-only typed schema reconstruction
 // are approximated structurally; each such divergence is noted with a comment
@@ -21,7 +21,6 @@
 #include "layer/layer.hh"
 
 namespace lightusd {
-namespace next {
 
 class ValidationRegistry;
 
@@ -189,5 +188,4 @@ void ValidateStageMetadataPresence(const Layer &layer,
 
 std::string FormatValidationResult(const USDValidationResult &result);
 
-}  // namespace next
 }  // namespace lightusd

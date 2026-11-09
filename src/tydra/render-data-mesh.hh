@@ -8,7 +8,7 @@
 #include <vector>
 #include <memory>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // RenderMesh - GPU-ready mesh data
@@ -176,4 +176,4 @@ struct RenderMesh {
   size_t memory_usage() const;
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

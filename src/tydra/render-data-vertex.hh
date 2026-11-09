@@ -4,7 +4,7 @@
 #include "chunked-array.hh"
 #include <string>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // Stores raw vertex data with format and interpolation info
@@ -64,4 +64,4 @@ struct VertexAttribute {
   }
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

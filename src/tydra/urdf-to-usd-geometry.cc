@@ -10,7 +10,7 @@
 #include <cmath>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 
 constexpr int32_t kMjcfDefaultCondim = 3;
@@ -785,4 +785,4 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
 
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

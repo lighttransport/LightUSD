@@ -12,7 +12,7 @@
 #include <limits>
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 void ComputePointBounds(const FloatChunked& p, Float3* lo, Float3* hi, bool* has) { if (!lo || !hi || !has || p.size()<3) return; *lo=Float3(1e30f,1e30f,1e30f); *hi=Float3(-1e30f,-1e30f,-1e30f); for(size_t i=0;i<p.size()/3;++i){ const float x=p[i*3],y=p[i*3+1],z=p[i*3+2]; lo->x=std::min(lo->x,x);lo->y=std::min(lo->y,y);lo->z=std::min(lo->z,z);hi->x=std::max(hi->x,x);hi->y=std::max(hi->y,y);hi->z=std::max(hi->z,z);} *has=true; }
 }  // namespace
@@ -253,7 +253,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
             break;
           }
           // Binding inheritance is scoped to the SkelRoot subtree.
-          if (::lightusd::tydra::next::IsSkelRoot(anc)) {
+          if (::lightusd::tydra::IsSkelRoot(anc)) {
             skel_root = anc;
             break;
           }
@@ -265,7 +265,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
         // wins, matching legacy.
         if (sb.skeleton_path.empty() && skel_root.IsValid()) {
           for (const UsdPrim& desc : GetDescendants(skel_root)) {
-            if (::lightusd::tydra::next::IsSkeleton(desc)) {
+            if (::lightusd::tydra::IsSkeleton(desc)) {
               sb.skeleton_path = desc.GetPath().str();
               break;
             }
@@ -429,8 +429,8 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
   for (const BlendShapeInfo& bs : GetBlendShapes(prim)) {
     UsdPrim bs_prim = stage.GetPrimAtPath(bs.path);
     if (!bs_prim.IsValid()) continue;
-    ::lightusd::next::BlendShapeData bd;
-    if (!::lightusd::next::GetBlendShapeData(stage, bs_prim, &bd)) continue;
+    ::lightusd::BlendShapeData bd;
+    if (!::lightusd::GetBlendShapeData(stage, bs_prim, &bd)) continue;
     if (bd.offsets.empty()) continue;
     // Cumulative budget guard: a scene with many blend-shape targets (or
     // dense per-vertex offsets on a single target) can sum well past the cap
@@ -501,7 +501,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
                                           bd.normalOffsets.size());
       }
     }
-    for (const ::lightusd::next::BlendShapeData::Inbetween& source :
+    for (const ::lightusd::BlendShapeData::Inbetween& source :
          bd.inbetweens) {
       if (source.offsets.size() != bd.offsets.size()) {
         AddWarning("Ignoring malformed in-between '" + source.name +
@@ -573,4 +573,4 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
 // per-vertex path. MikkTSpace-style methods expand to face corners first so
 // UV seams and mirrored islands are not averaged through shared point indices.
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

@@ -19,7 +19,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace diff_detail {
 std::string NormalizeAssetPathForDiff(std::string path) {
   std::replace(path.begin(), path.end(), '\\', '/');
@@ -350,5 +349,4 @@ bool ValuesEquivalentForDiff(const Value &lhs, const Value &rhs,
 
 }  // namespace diff_detail
 
-}  // namespace next
 }  // namespace lightusd

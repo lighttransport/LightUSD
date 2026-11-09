@@ -16,7 +16,6 @@
 #include "c/lightusd-core-c.h"
 
 namespace lightusd {
-namespace next {
 
 namespace identifier_detail {
 
@@ -48,5 +47,4 @@ inline bool IsValidPathString(const std::string& text) {
   return lu_is_valid_path_string(text.data(), text.size()) != 0;
 }
 
-}  // namespace next
 }  // namespace lightusd

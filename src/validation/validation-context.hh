@@ -11,7 +11,7 @@
 #include <optional>
 #include <string_view>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 
 struct ValidationPropertyDefinition {
   std::string type;
@@ -122,4 +122,4 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
 USDValidationResult ValidateStageSamples(const Stage& stage,
     const ValidationContext& context, const EvalOptions& eval_options = {});
 
-} }  // namespace lightusd::next
+ }  // namespace lightusd

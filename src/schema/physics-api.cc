@@ -9,7 +9,6 @@
 #include <cstring>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Helper: check if prim has applied API schema
@@ -347,5 +346,4 @@ bool GetPhysicsLimitData(const UsdPrim& prim, const std::string& dof,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

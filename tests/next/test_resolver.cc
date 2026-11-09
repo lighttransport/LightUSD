@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \

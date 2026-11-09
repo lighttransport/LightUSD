@@ -16,7 +16,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 // ============================================================
 // MaterialX Node Types (common shader patterns)
@@ -215,8 +214,8 @@ public:
   ///        materials whose shader neither side converts directly (e.g.
   ///        ND_standard_surface_surfaceshader).
   /// @return true on success
-  bool ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
-                               const lightusd::next::UsdPrim& material_prim,
+  bool ConvertUsdMtlxMaterial(const lightusd::Stage& stage,
+                               const lightusd::UsdPrim& material_prim,
                                RenderMaterial* out,
                                bool allow_converter_delegation = true);
 
@@ -252,14 +251,13 @@ private:
 // ============================================================
 
 /// Check if prim has MaterialX binding
-bool HasMtlxBinding(const lightusd::next::UsdPrim& prim);
+bool HasMtlxBinding(const lightusd::UsdPrim& prim);
 
 /// Get MaterialX file path from material binding
-std::string GetMtlxFilePath(const lightusd::next::UsdPrim& material_prim);
+std::string GetMtlxFilePath(const lightusd::UsdPrim& material_prim);
 
 /// Parse MaterialX colorspace string to ColorSpace enum
 ColorSpace ParseMtlxColorSpace(const std::string& cs);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

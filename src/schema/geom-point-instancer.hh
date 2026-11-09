@@ -14,7 +14,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct PointInstancerTransform {
   double matrix[16] = {
@@ -70,5 +69,4 @@ class UsdGeomPointInstancer {
 bool IsPointInstancer(const UsdPrim& prim);
 std::vector<UsdGeomPointInstancer> GetAllPointInstancers(const Stage& stage);
 
-}  // namespace next
 }  // namespace lightusd

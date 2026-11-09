@@ -116,12 +116,12 @@ int32_t RunFlatten(std::string&& input, uint8_t lazy_arrays,
   g_flatten_output.clear();
   g_flatten_error.clear();
   ClearFlattenStrings();
-  lightusd::next::pipeline::FlattenOptions options;
+  lightusd::pipeline::FlattenOptions options;
   options.read.lazy_arrays = lazy_arrays != 0;
   options.asset_path_remap = remap;
   options.composition.variant_overrides = variants;
-  lightusd::next::pipeline::FlattenStats stats;
-  if (!lightusd::next::pipeline::FlattenUSDCToUSDCOwned(
+  lightusd::pipeline::FlattenStats stats;
+  if (!lightusd::pipeline::FlattenUSDCToUSDCOwned(
           std::move(input), g_flatten_output, options, &stats,
           &g_flatten_error)) {
     g_flatten_output.clear();
@@ -164,7 +164,7 @@ int32_t lightusd::web::combined::NextFlattenOwnedWithMaps(
 
 void lightusd::web::combined::StoreFlattenResult(
     int32_t status, std::string&& message, std::vector<uint8_t>&& data,
-    lightusd::next::pipeline::FlattenStats* stats,
+    lightusd::pipeline::FlattenStats* stats,
     lightusd_combined_flatten_step_info* out) {
   const uint32_t struct_size = out->struct_size;
   *out = {};

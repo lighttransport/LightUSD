@@ -11,7 +11,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 inline std::string FormatMilliseconds(double ms) {
@@ -38,5 +37,4 @@ inline bool IsPathAtOrUnder(const std::string& child,
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

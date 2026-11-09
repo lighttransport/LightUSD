@@ -11,7 +11,7 @@
 #pragma once
 
 #include "crate-format.hh"      // CrateVersion, ValueRep, CrateTypeId
-#include "types/type-id.hh"  // next::TypeId
+#include "types/type-id.hh"  // ::lightusd::TypeId
 #include "lazy-array.hh"
 #include "stream-reader.hh"
 
@@ -23,7 +23,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 class StreamReader;
 
@@ -290,7 +289,7 @@ uint32_t CrateArrayCountHeaderBytes(CrateVersion version);
 bool ReadCrateArrayCount(class StreamReader& r, CrateVersion version,
                          uint64_t* count);
 
-/// next::TypeId that materialize() would surface for an array CrateTypeId.
+/// ::lightusd::TypeId that materialize() would surface for an array CrateTypeId.
 TypeId CrateArrayValueType(CrateTypeId id);
 
 /// Whether an array type can be represented as a lazy byte reference without
@@ -298,5 +297,4 @@ TypeId CrateArrayValueType(CrateTypeId id);
 /// decoded eagerly, so they keep the normal element-count guard.
 bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed);
 
-}  // namespace next
 }  // namespace lightusd

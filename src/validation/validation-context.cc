@@ -13,7 +13,7 @@
 #include <sstream>
 #include <vector>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 namespace {
 using Json = lightusd::minijson::Value;
 using namespace validation_detail;
@@ -871,4 +871,4 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
   }
   return m;
 }
-} }  // namespace lightusd::next
+ }  // namespace lightusd

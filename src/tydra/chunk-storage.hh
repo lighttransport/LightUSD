@@ -11,7 +11,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 /// Thread-safe accounting object owned by one conversion. Chunk storage keeps
 /// it alive for as long as the resulting scene retains any accounted arrays.
@@ -100,6 +99,5 @@ class ChunkStorage {
 };
 
 }  // namespace detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

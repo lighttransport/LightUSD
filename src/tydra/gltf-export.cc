@@ -10,7 +10,7 @@
 #include <map>
 #include <set>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 using Json = minijson::Value;
 void U32(std::vector<uint8_t>& bytes, uint32_t n) {
@@ -90,8 +90,8 @@ class Exporter {
       bool loaded = false;
       if (resolved.is_package) {
         // ReadAsset returns the archive bytes, not the selected entry.
-        lightusd::next::USDZReader package;
-        lightusd::next::USDZReadOptions read;
+        lightusd::USDZReader package;
+        lightusd::USDZReadOptions read;
         read.max_archive_size = opt.max_output_bytes;
         read.max_entry_size = opt.max_output_bytes;
         std::vector<uint8_t> archive;
@@ -377,4 +377,4 @@ GltfExportResult ExportGLB(const RenderScene& scene, const GltfExportOptions& op
   exporter.result.losses.assign(exporter.losses.begin(), exporter.losses.end());
   return std::move(exporter.result);
 }
-} } }
+ } }

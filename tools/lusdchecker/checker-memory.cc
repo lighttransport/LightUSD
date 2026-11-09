@@ -10,7 +10,7 @@
 namespace lusdchecker {
 namespace {
 using Json = lightusd::minijson::Value;
-using Resolver = lightusd::next::AssetResolver;
+using Resolver = lightusd::AssetResolver;
 
 Json Failure(const std::string& input, const std::string& profile,
              const std::string& message) {
@@ -35,12 +35,12 @@ bool ReadMemory(const Resolver& assets, const std::string& key, size_t limit,
   if (view->size() > limit) { *error = "Asset exceeds memory limit: " + key; return false; }
   const uint8_t* data = view->data();
   size_t size = view->size();
-  std::vector<std::unique_ptr<lightusd::next::USDZReader>> archives;
+  std::vector<std::unique_ptr<lightusd::USDZReader>> archives;
   if (packaged) {
     for (size_t depth = 0; ; ++depth) {
       if (depth >= 32) { *error = "Package nesting exceeds 32 levels"; return false; }
-      auto zip = std::make_unique<lightusd::next::USDZReader>();
-      lightusd::next::USDZReadOptions options;
+      auto zip = std::make_unique<lightusd::USDZReader>();
+      lightusd::USDZReadOptions options;
       options.max_archive_size = options.max_entry_size = limit;
       if (!zip->Open(data, size, options)) { *error = zip->Error(); return false; }
       std::string name, nested;
@@ -81,7 +81,7 @@ Json CheckMemory(const uint8_t* data, size_t size, const std::string& filename,
   CheckerOptions args;
   args.input = filename;
   args.json = true;
-  auto registry = lightusd::next::GetBuiltinValidationRegistry();
+  auto registry = lightusd::GetBuiltinValidationRegistry();
   static const struct { const char* name; bool CheckerOptions::*member; } flags[] = {
     {"strict", &CheckerOptions::strict}, {"strictParse", &CheckerOptions::strict_parse},
     {"composed", &CheckerOptions::composed}, {"allTimeSamples", &CheckerOptions::all_samples},
@@ -129,7 +129,7 @@ Json CheckMemory(const uint8_t* data, size_t size, const std::string& filename,
         args.composed = true;
       } else if (key == "includeKeywords") {
         args.group_selection = true; args.keywords = Split(joined, ',');
-        args.groups = lightusd::next::ValidationOptions(); args.groups.core = false;
+        args.groups = lightusd::ValidationOptions(); args.groups.core = false;
         std::string groups;
         for (const auto& keyword : args.keywords) {
           if (keyword.empty()) return fail("empty validator keyword");

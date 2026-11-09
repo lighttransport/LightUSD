@@ -21,7 +21,6 @@
 #include "tydra/vol/volume-field.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 namespace kernel {
 using uint = uint32_t;
@@ -351,7 +350,7 @@ bool PreviewVolumeRenderer::load(const ScenePreviewResult& result,
                                  const PreviewComputeOptions& compute_options) {
   if (!::lightusd::NativeIOAvailable(error)) return false;
 
-  namespace usd = ::lightusd::next;
+  namespace usd = ::lightusd;
   impl_.reset(new Impl);
   impl_->budget = budget;
   impl_->compute = CreatePreviewCompute(backend, budget, error, compute_options);
@@ -1129,6 +1128,5 @@ bool PreviewVolumeRenderer::render(const PreviewVolumeCamera& camera, int width,
   impl_->have_image = true;
   return true;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

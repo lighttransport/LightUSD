@@ -18,17 +18,15 @@
 #include "types/value.hh"
 
 namespace lightusd {
-namespace next {
 class AssetResolver;
 struct LoadUSDOptions;
 struct ImportedAssets;
 struct ValueClipStageCache;
-}
 }  // namespace lightusd
 
 namespace lightusd_internal {
 // Borrowed native resolver behind a public C handle (null-safe).
-lightusd::next::AssetResolver* AssetResolverForLoad(
+lightusd::AssetResolver* AssetResolverForLoad(
     struct lightusd_asset_resolver* resolver);
 }  // namespace lightusd_internal
 
@@ -53,15 +51,15 @@ struct lightusd_buffer {
 };
 
 struct lightusd_value {
-  lightusd::next::Value v;
+  lightusd::Value v;
 };
 
 struct lightusd_stage {
   std::atomic<size_t> references{1};
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   // Non-null only for immutable handles retained from document snapshots.
-  std::shared_ptr<const lightusd::next::Stage> snapshot_stage;
-  const lightusd::next::Stage& ReadStage() const {
+  std::shared_ptr<const lightusd::Stage> snapshot_stage;
+  const lightusd::Stage& ReadStage() const {
     return snapshot_stage ? *snapshot_stage : stage;
   }
 
@@ -81,11 +79,11 @@ struct lightusd_stage {
   std::string source_filename;
   // File-backed clip evaluation must retain the caller's finite load limits.
   // Custom resolvers remain borrowed only during the original load call.
-  std::shared_ptr<const lightusd::next::LoadUSDOptions> file_eval_options;
+  std::shared_ptr<const lightusd::LoadUSDOptions> file_eval_options;
   // Value-clip stages are parsed on demand. Keep one stage-lifetime cache so
   // repeated time queries reuse them instead of reloading per attribute.
   mutable std::mutex clip_cache_mutex;
-  mutable std::shared_ptr<lightusd::next::ValueClipStageCache> clip_stage_cache;
+  mutable std::shared_ptr<lightusd::ValueClipStageCache> clip_stage_cache;
   // Bumped by structural mutations (define/remove prim) so bindings can
   // detect stale lightusd_prim handles.
   std::atomic<uint64_t> generation{0};
@@ -94,15 +92,15 @@ struct lightusd_stage {
   // std::map nodes keep borrowed path views stable until structural mutation.
   mutable std::mutex proxy_mutex;
   mutable uint64_t proxy_generation = 0;
-  mutable std::map<std::string, lightusd::next::UsdPrim> proxy_prims;
-  mutable std::vector<const lightusd::next::UsdPrim*> proxy_ids;
+  mutable std::map<std::string, lightusd::UsdPrim> proxy_prims;
+  mutable std::vector<const lightusd::UsdPrim*> proxy_ids;
   mutable std::map<std::string, uint32_t> proxy_path_ids;
 
 };
 
 namespace lightusd_internal {
 void RetainImportedAssets(lightusd_stage* stage,
-                         const lightusd::next::ImportedAssets& assets);
+                         const lightusd::ImportedAssets& assets);
 }
 
 namespace lightusd_internal {
@@ -118,10 +116,10 @@ inline lightusd_status Fail(lightusd_status st, const std::string& msg) {
 }
 
 // Compiled handle validation keeps storage details out of binding headers.
-const lightusd::next::PrimSpec* SpecFromC(lightusd_prim p);
-lightusd::next::UsdPrim FromC(lightusd_prim p);
+const lightusd::PrimSpec* SpecFromC(lightusd_prim p);
+lightusd::UsdPrim FromC(lightusd_prim p);
 lightusd_prim ToC(const lightusd_stage* owner,
-                 const lightusd::next::UsdPrim& prim);
+                 const lightusd::UsdPrim& prim);
 
 inline lightusd_sv SV(const std::string& s) {
   lightusd_sv v;
@@ -147,11 +145,11 @@ inline lightusd_sv EmptySV() {
 // Build a borrowed zero-copy view from a Value. Materializes lazy arrays
 // (serialized by an internal mutex). String-family / dictionary / token-array
 // values yield data == NULL with storage == LIGHTUSD_COMP_NONE.
-lightusd_status MakeView(lightusd::next::ValueView v, lightusd_value_view* out);
+lightusd_status MakeView(lightusd::ValueView v, lightusd_value_view* out);
 
-// Build a next::Value from raw (type, is_array, data, count) as documented on
+// Build a ::lightusd::Value from raw (type, is_array, data, count) as documented on
 // lightusd_attr_set. Returns an empty Value and sets the error on failure.
 bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
-                  size_t count, lightusd::next::Value* out);
+                  size_t count, lightusd::Value* out);
 
 }  // namespace lightusd_internal

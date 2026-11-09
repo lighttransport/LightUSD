@@ -86,12 +86,12 @@ struct Screenshot {
 struct DiffSession {
   std::string left_name{"left"};
   std::string right_name{"right"};
-  next::Layer left;
-  next::Layer right;
-  next::DiffOptions opts;
-  std::unordered_map<std::string, next::PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, next::PropDiff> propDiffs;
-  next::LayerMetaDiff layerMetaDiff;
+  ::lightusd::Layer left;
+  ::lightusd::Layer right;
+  ::lightusd::DiffOptions opts;
+  std::unordered_map<std::string, ::lightusd::PrimSpecDiff> psDiffs;
+  std::unordered_map<std::string, ::lightusd::PropDiff> propDiffs;
+  ::lightusd::LayerMetaDiff layerMetaDiff;
 };
 
 struct Context {

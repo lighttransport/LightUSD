@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 uint64_t ImageCacheHash(const std::string& resolved,
                         ColorSpace color_space) noexcept {
@@ -37,7 +37,7 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   // root yields a nonexistent path. Fall back to the stage base dir for prims
   // with no anchor (the root layer itself, and USDZ package entries).
   const std::string& anchor =
-      ::lightusd::next::AssetAnchorPath(asset_anchor_id);
+      ::lightusd::AssetAnchorPath(asset_anchor_id);
   const std::string& base = anchor.empty() ? config_.asset_base_dir : anchor;
 
   // A configured AssetResolver owns resolution (anchor/search paths + suffix
@@ -45,22 +45,22 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   auto resolve_against = [&](const std::string& dir,
                              bool* exists) -> std::string {
     if (config_.asset_resolver) {
-      ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
+      ::lightusd::ResolvedAsset resolved = config_.asset_resolver->Resolve(
           file, dir.empty() ? std::string()
-                            : (::lightusd::next::AssetResolver::IsPackagePath(dir)
+                            : (::lightusd::AssetResolver::IsPackagePath(dir)
                                    ? dir : dir + "/"));
       if (exists) *exists = resolved.exists && !resolved.resolved_path.empty();
       return resolved.resolved_path;
     }
     if (exists) {
-      const std::string candidate = ::lightusd::next::AssetResolver::NormalizePath(
-          ::lightusd::next::AssetResolver::JoinPath(dir, file));
+      const std::string candidate = ::lightusd::AssetResolver::NormalizePath(
+          ::lightusd::AssetResolver::JoinPath(dir, file));
       // No implicit filesystem probes during an in-memory conversion.
       *exists = false;
       return candidate;
     }
-    return ::lightusd::next::AssetResolver::NormalizePath(
-        ::lightusd::next::AssetResolver::JoinPath(dir, file));
+    return ::lightusd::AssetResolver::NormalizePath(
+        ::lightusd::AssetResolver::JoinPath(dir, file));
   };
 
   // The prim's spec anchor is the best first guess, but a flattened prim merges
@@ -70,23 +70,23 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   // is a look-scope element layer) and root-layer overlays need this.
   const std::string& fallback = config_.asset_base_dir;
 
-  if (!base.empty() && !::lightusd::next::AssetResolver::IsPackagePath(base)) {
+  if (!base.empty() && !::lightusd::AssetResolver::IsPackagePath(base)) {
     bool anchored_exists = false;
     const std::string anchored = resolve_against(base, &anchored_exists);
     if (anchored_exists) return anchored;
     if (!fallback.empty() && fallback != base &&
-        !::lightusd::next::AssetResolver::IsPackagePath(fallback)) {
+        !::lightusd::AssetResolver::IsPackagePath(fallback)) {
       bool fallback_exists = false;
       const std::string candidate = resolve_against(fallback, &fallback_exists);
       if (fallback_exists) return candidate;
     }
     // Nothing found: keep the anchored location (pre-fallback behaviour), never
     // a bare relative path that would be looked up against the process CWD.
-    return ::lightusd::next::AssetResolver::NormalizePath(
-        ::lightusd::next::AssetResolver::JoinPath(base, file));
+    return ::lightusd::AssetResolver::NormalizePath(
+        ::lightusd::AssetResolver::JoinPath(base, file));
   }
-  if (!anchor.empty() && ::lightusd::next::AssetResolver::IsPackagePath(anchor)) {
-    return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
+  if (!anchor.empty() && ::lightusd::AssetResolver::IsPackagePath(anchor)) {
+    return ::lightusd::ResolveAssetAnchorPath(file, asset_anchor_id);
   }
   if (base.empty()) {
     // No anchor and no configured base directory: a resolver may still find
@@ -105,12 +105,12 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
   }
   // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
   // an un-collapsed path would also defeat the `resolved_path` image dedup.
-  return ::lightusd::next::AssetResolver::NormalizePath(
-      ::lightusd::next::AssetResolver::JoinPath(base, file));
+  return ::lightusd::AssetResolver::NormalizePath(
+      ::lightusd::AssetResolver::JoinPath(base, file));
 }
 
 uint32_t RenderSceneConverter::Impl::AssetAnchorOf(const UsdPrim& prim) {
-  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
+  const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
   return spec ? spec->asset_anchor_id() : 0u;
 }
 
@@ -240,4 +240,4 @@ void RenderSceneConverter::Impl::ResetImageIdCache() {
 
 
 
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

@@ -66,14 +66,14 @@ class NextAssetStore {
   int setMetadataLimit(uint64_t limit_bytes);
   uint64_t metadataBytes() const { return metadata_bytes_; }
   uint64_t metadataLimit() const { return metadata_limit_bytes_; }
-  std::shared_ptr<lightusd::next::AssetPayloadBudget> payloadBudget() const {
+  std::shared_ptr<lightusd::AssetPayloadBudget> payloadBudget() const {
     return payload_budget_;
   }
   int clear();
   std::string snapshotMetadata() const;
   // Import a snapshot into another resolver without copying payload bytes.
   // Aliases are materialized as additional keys sharing the same immutable data.
-  int copyAssetsTo(lightusd::next::AssetResolver* destination,
+  int copyAssetsTo(lightusd::AssetResolver* destination,
                    size_t* accounted_bytes) const;
 
  private:
@@ -82,7 +82,7 @@ class NextAssetStore {
   static bool assetMetadataCost_(size_t identifier_size, uint64_t* out);
   static bool aliasMetadataCost_(size_t authored_size, size_t resolved_size,
                                  uint64_t* out);
-  lightusd::next::AssetResolver resolver_;
+  lightusd::AssetResolver resolver_;
   std::map<std::string, size_t> assets_;
   std::map<std::string, std::string> aliases_;
   std::map<std::string, std::string> uuids_;
@@ -94,8 +94,8 @@ class NextAssetStore {
   uint64_t metadata_bytes_{0};
   uint64_t metadata_limit_bytes_{uint64_t{1} << 26};
   uint32_t memory_limit_bytes_{uint32_t{1} << 29};
-  std::shared_ptr<lightusd::next::AssetPayloadBudget> payload_budget_ =
-      std::make_shared<lightusd::next::AssetPayloadBudget>(uint32_t{1} << 29);
+  std::shared_ptr<lightusd::AssetPayloadBudget> payload_budget_ =
+      std::make_shared<lightusd::AssetPayloadBudget>(uint32_t{1} << 29);
   uint64_t cache_max_bytes_{0};
   uint64_t next_anonymous_id_{1};
 };

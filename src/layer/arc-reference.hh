@@ -6,7 +6,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // References retain their canonical asset/path/offset spelling. A dictionary
 // suffix belongs to the reference item itself (including list-op identity),
@@ -37,5 +36,4 @@ inline std::string ArcReferenceCustomData(const std::string& arc) {
   return pos == std::string::npos ? std::string() : arc.substr(pos + 1);
 }
 
-}  // namespace next
 }  // namespace lightusd

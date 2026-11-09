@@ -3,7 +3,7 @@
 // Compiled comparison primitives shared by structural diff helpers. Not installed.
 #pragma once
 #include "layer-diff.hh"
-namespace lightusd { namespace next { namespace diff_detail {
+namespace lightusd {  namespace diff_detail {
 constexpr uint32_t kMaxTraversalDepth = 1024;
 std::string JoinPrimPath(const std::string& parent, const std::string& child);
 bool AssetPathStringsEquivalentForDiff(const std::string& lhs,
@@ -16,4 +16,4 @@ bool DictsHaveTypeConflict(const Value& lhs, const Value& rhs);
 bool CompareDictValues(const Value& lhs, const Value& rhs,
                        const DiffOptions& options,
                        std::vector<std::string>* changed);
-} } }
+}  }

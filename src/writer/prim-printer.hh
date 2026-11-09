@@ -11,7 +11,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Options for prim printing
 struct PrimPrintOptions {
@@ -57,5 +56,4 @@ void PrintPrimSpec(StreamWriter& os, const PrimSpec& spec, int depth, const Prim
 std::string PrintLayer(const Layer& layer, const PrimPrintOptions& opts = {});
 void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& opts = {});
 
-}  // namespace next
 }  // namespace lightusd

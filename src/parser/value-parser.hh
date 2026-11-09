@@ -16,7 +16,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 class Lexer;
 class LazyArraySource;
@@ -158,5 +157,4 @@ ParseResult ParseDict(Lexer& lexer);
 /// Handles both simple types ("float") and array types ("float[]")
 TypeId ParseTypeName(const std::string& type_name, bool& is_array);
 
-}  // namespace next
 }  // namespace lightusd

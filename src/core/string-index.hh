@@ -5,7 +5,6 @@
 #include "c/string-index.h"
 
 namespace lightusd {
-namespace next {
 namespace detail {
 
 // An index into caller-owned strings. Stores only integer positions, never
@@ -34,5 +33,4 @@ class StringIndex {
 };
 
 }  // namespace detail
-}  // namespace next
 }  // namespace lightusd

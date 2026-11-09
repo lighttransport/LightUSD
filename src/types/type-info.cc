@@ -15,7 +15,6 @@
 #include "c/lightusd-core-c.h"
 
 namespace lightusd {
-namespace next {
 namespace {
 
 // C/C++ enum values are an ABI contract.
@@ -200,5 +199,4 @@ TypeId GetComponentType(TypeId id) {
 
 size_t GetComponentCount(TypeId id) { return lu_type_component_count(T(id)); }
 
-}  // namespace next
 }  // namespace lightusd

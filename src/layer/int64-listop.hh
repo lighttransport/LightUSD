@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 struct DecodedExtensionField;
 
 // AOUSD ListOp wire order: explicit, added, prepended, appended, deleted,
@@ -25,4 +25,4 @@ Value ApplyInt64ListOps(const Int64ListOpStack& stack);
 size_t Int64ListOpsMemoryUsage(const Int64ListOpStack& stack);
 DecodedExtensionField MakeInt64ListOpField(std::string name, Int64ListOp op);
 void ResolveInt64ListOpFields(std::vector<DecodedExtensionField>* fields);
-} }
+ }

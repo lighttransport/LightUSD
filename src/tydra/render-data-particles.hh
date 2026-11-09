@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 struct RenderParticleField {
   std::string prim_path;
@@ -30,6 +30,5 @@ struct RenderParticleField {
   std::vector<std::string> warnings;
 };
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

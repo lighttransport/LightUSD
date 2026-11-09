@@ -46,10 +46,10 @@ using lightusd::legacy::value::matrix4d;
 // Memory budget + tracking pool allocator now live in the shared header so
 // examples/lusdquicklook can use them too. These aliases keep every lusdr call
 // site (MemBudget::Get(), PoolAlloc<T>, MemPool::Get()) unchanged.
-using MemBudget = lightusd::tydra::next::MemBudget;
-using MemPool = lightusd::tydra::next::MemPool;
+using MemBudget = lightusd::tydra::MemBudget;
+using MemPool = lightusd::tydra::MemPool;
 template <class T>
-using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
+using PoolAlloc = lightusd::tydra::PoolAlloc<T>;
 
 // Conservative estimate of the extra memory LightRT's BVH build adds per
 // triangle (the re-swizzled vertex copy ~36 B + wide-BVH nodes/leaves). Used by

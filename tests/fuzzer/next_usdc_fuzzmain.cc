@@ -18,7 +18,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   std::string buf("PXR-USDC");
   buf.append(reinterpret_cast<const char *>(data), size);
 
-  lightusd::next::USDCLoadOptions opts;
+  lightusd::USDCLoadOptions opts;
   // Tight caps so allocator OOM on absurd-but-wellformed counts is not
   // reported as a finding; bugs we want are OOB/overflow/UB, not bad_alloc.
   opts.crate_options.max_array_elements = 1u << 20;  // 1M elems
@@ -28,7 +28,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   opts.crate_options.max_specs = 1u << 18;
   opts.crate_options.max_paths = 1u << 18;
 
-  lightusd::next::USDCLoadResult result = lightusd::next::LoadUSDCFromMemory(
+  lightusd::USDCLoadResult result = lightusd::LoadUSDCFromMemory(
       reinterpret_cast<const uint8_t *>(buf.data()), buf.size(), opts);
   (void)result;
   return 0;

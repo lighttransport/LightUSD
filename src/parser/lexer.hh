@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// Token types
 enum class TokenType : uint8_t {
@@ -347,5 +346,4 @@ private:
 /// Get string name for token type (for debugging)
 const char* TokenTypeName(TokenType type);
 
-}  // namespace next
 }  // namespace lightusd

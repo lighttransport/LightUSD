@@ -30,14 +30,14 @@ bool ContainsCI(const std::string& haystack, const std::string& needle) {
 
 // Map the optional `groups` argument; no `groups` -> core only, "all" ->
 // every group (lusdcat --validate-all).
-next::ValidationOptions ParseGroups(const json& args) {
-  next::ValidationOptions opts;
+::lightusd::ValidationOptions ParseGroups(const json& args) {
+  ::lightusd::ValidationOptions opts;
   if (!args.contains("groups") || !args["groups"].is_array()) return opts;
   opts.core = false;
   for (const json& g : args["groups"]) {
     if (!g.is_string()) continue;
     const std::string name = g.get<std::string>();
-    if (name == "all") return next::MakeValidateAllOptions();
+    if (name == "all") return ::lightusd::MakeValidateAllOptions();
     if (name == "core") opts.core = true;
     else if (name == "geom") opts.geom = true;
     else if (name == "shade") opts.shade = true;
@@ -55,19 +55,19 @@ next::ValidationOptions ParseGroups(const json& args) {
   return opts;
 }
 
-void ValidationToJSON(const next::USDValidationResult& v, json& result) {
+void ValidationToJSON(const ::lightusd::USDValidationResult& v, json& result) {
   result["ok"] = v.ok();
   result["error_count"] = v.error_count();
   result["warning_count"] = v.warning_count();
-  result["spec_version"] = next::GetAOUSDCoreSpecVersionString();
+  result["spec_version"] = ::lightusd::GetAOUSDCoreSpecVersionString();
   json groups = json::array();
-  for (const std::string& g : next::GetValidationGroupNames(v.checked_groups)) {
+  for (const std::string& g : ::lightusd::GetValidationGroupNames(v.checked_groups)) {
     groups.push_back(g);
   }
   result["checked_groups"] = std::move(groups);
   json issues = json::array();
-  for (const next::USDValidationIssue* issue : next::GetOrderedValidationIssues(v)) {
-    issues.push_back({{"severity", issue->severity == next::USDValidationSeverity::Error
+  for (const ::lightusd::USDValidationIssue* issue : ::lightusd::GetOrderedValidationIssues(v)) {
+    issues.push_back({{"severity", issue->severity == ::lightusd::USDValidationSeverity::Error
                                        ? "error" : "warning"},
                       {"rule_id", issue->rule_id},
                       {"location", issue->location},
@@ -86,7 +86,7 @@ bool QueryPrimsByType(Context& ctx, const json& args, json& result, std::string&
   }
   const std::string type = args["type_name"].get<std::string>();
   json paths = json::array();
-  for (const next::UsdPrim& p : NativeStage(ctx.stage)->GetPrimsOfType(type)) {
+  for (const ::lightusd::UsdPrim& p : NativeStage(ctx.stage)->GetPrimsOfType(type)) {
     paths.push_back(p.GetPath().str());
   }
   result["type_name"] = type;
@@ -96,7 +96,7 @@ bool QueryPrimsByType(Context& ctx, const json& args, json& result, std::string&
 }
 
 bool SchemaListTypes(Context&, const json&, json& result, std::string&) {
-  const std::vector<std::string> types = next::GetSchemaRegistry().SchemaTypes();
+  const std::vector<std::string> types = ::lightusd::GetSchemaRegistry().SchemaTypes();
   result["count"] = types.size();
   result["types"] = types;
   return true;
@@ -108,16 +108,16 @@ bool SchemaGetType(Context&, const json& args, json& result, std::string& err) {
     return false;
   }
   const std::string type = args["type_name"].get<std::string>();
-  const next::SchemaRegistry& reg = next::GetSchemaRegistry();
+  const ::lightusd::SchemaRegistry& reg = ::lightusd::GetSchemaRegistry();
   if (!reg.IsKnownSchema(type)) {
     err = "Unknown prim type: " + type + ". Use schema_list_types for available types.";
     return false;
   }
-  next::PrimSpec probe("Probe");
+  ::lightusd::PrimSpec probe("Probe");
   probe.set_type_name(type);
   json attrs = json::array();
   for (const std::string& name : reg.PropertyNames(probe)) {
-    const next::SchemaPropertyDefinition* def = reg.FindProperty(probe, name);
+    const ::lightusd::SchemaPropertyDefinition* def = reg.FindProperty(probe, name);
     json a;
     a["name"] = name;
     a["type"] = def ? def->type_name : std::string();
@@ -146,7 +146,7 @@ bool Search(Context& ctx, const json& args, json& result, std::string& err) {
   const std::string query = args["query"].get<std::string>();
   const std::string scope = args.value("scope", std::string("all"));
   json by_name = json::array(), by_type = json::array();
-  NativeStage(ctx.stage)->Traverse([&](const next::UsdPrim& p) {
+  NativeStage(ctx.stage)->Traverse([&](const ::lightusd::UsdPrim& p) {
     if ((scope == "names" || scope == "all") && ContainsCI(p.GetName(), query)) {
       by_name.push_back(p.GetPath().str());
     }
@@ -162,15 +162,15 @@ bool Search(Context& ctx, const json& args, json& result, std::string& err) {
 }
 
 bool UsdValidate(Context& ctx, const json& args, json& result, std::string& err) {
-  const next::ValidationOptions options = ParseGroups(args);
-  next::USDValidationResult validation;
+  const ::lightusd::ValidationOptions options = ParseGroups(args);
+  ::lightusd::USDValidationResult validation;
   std::string warn;
   std::string source;
   if (args.contains("data") && args["data"].is_string()) {
     std::string binary;
     if (!DecodeBase64(args["data"].get<std::string>(), &binary, &err)) return false;
     const std::string name = args.value("name", std::string("memory.usd"));
-    if (!next::ValidateUSDFromMemoryAgainstAOUSDCore(
+    if (!::lightusd::ValidateUSDFromMemoryAgainstAOUSDCore(
             reinterpret_cast<const uint8_t*>(binary.data()), binary.size(), name,
             options, &validation, &warn, &err)) {
       return false;
@@ -190,7 +190,7 @@ bool UsdValidate(Context& ctx, const json& args, json& result, std::string& err)
       return false;
     }
     StageRef ref(stage);
-    validation = next::ValidateLayerAgainstAOUSDCore(
+    validation = ::lightusd::ValidateLayerAgainstAOUSDCore(
         *NativeStage(ref)->GetRootLayer(), options);
     source = "uri";
 #endif
@@ -201,7 +201,7 @@ bool UsdValidate(Context& ctx, const json& args, json& result, std::string& err)
       err = "No layer found for layer_uuid: " + uuid;
       return false;
     }
-    validation = next::ValidateLayerAgainstAOUSDCore(
+    validation = ::lightusd::ValidateLayerAgainstAOUSDCore(
         *NativeStage(it->second.stage)->GetRootLayer(), options);
     source = "layer_uuid";
   } else {
@@ -210,7 +210,7 @@ bool UsdValidate(Context& ctx, const json& args, json& result, std::string& err)
             "`layer_uuid`, or load a stage first.";
       return false;
     }
-    validation = next::ValidateLayerAgainstAOUSDCore(
+    validation = ::lightusd::ValidateLayerAgainstAOUSDCore(
         *NativeStage(ctx.stage)->GetRootLayer(), options);
     source = "stage";
   }

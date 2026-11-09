@@ -21,7 +21,6 @@
 #include <memory>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -1401,5 +1400,4 @@ std::string PrintAttributeValue(const std::string& type_name, const std::string&
   return s;
 }
 
-}  // namespace next
 }  // namespace lightusd

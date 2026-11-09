@@ -7,7 +7,6 @@
 #include "core/security-policy.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Options for reading USDZ/ZIP archives.
 struct USDZReadOptions {
@@ -68,5 +67,4 @@ private:
   std::string error_;
 };
 
-} // namespace next
 } // namespace lightusd

@@ -15,7 +15,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_impl = preview_detail;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -192,7 +191,7 @@ std::string DefaultScenePreviewCacheDirectory() {
   return (fs::path(".cache") / "lightusd" / "scene-preview").string();
 }
 ScenePreviewResult ConvertScenePreview(
-    const std::string& source, ::lightusd::next::AssetResolver& resolver,
+    const std::string& source, ::lightusd::AssetResolver& resolver,
     const ScenePreviewOptions& options) {
   if (!::lightusd::NativeIOEnabled()) { ScenePreviewResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
 
@@ -369,19 +368,19 @@ ScenePreviewResult ConvertScenePreview(
     result.source_instances = sampled.source_instances;
     result.warning = sampled.warning;
     build.cell_size = sampled.voxel_size;
-    ::lightusd::next::Stage stage;
-    ::lightusd::next::pcp::CompositionOptions read;
+    ::lightusd::Stage stage;
+    ::lightusd::pcp::CompositionOptions read;
     read.num_threads = 1;
-    if (!::lightusd::next::pcp::ComposeStageFromFile(
+    if (!::lightusd::pcp::ComposeStageFromFile(
             sampled.usd_path, resolver, &stage, read, &result.warning,
             &result.error))
       return finish();
-    ::lightusd::next::pcp::ComposedBatch batch;
+    ::lightusd::pcp::ComposedBatch batch;
     batch.layer = stage.ReleaseRootLayer();
     if (!build.plan(batch) || !build.finish_plan()) return finish();
     stage.SetRootLayer(std::move(*batch.layer));
     bool ok = true;
-    stage.Traverse([&](const ::lightusd::next::UsdPrim& prim) {
+    stage.Traverse([&](const ::lightusd::UsdPrim& prim) {
       if (prim.GetTypeName() != "ParticleField3DGaussianSplat") return true;
       const auto samples =
           preview_impl::ReadPreviewSamples(prim, ScenePreviewKind::Gaussian);
@@ -406,13 +405,13 @@ ScenePreviewResult ConvertScenePreview(
     auto compose = options.composition;
     compose.flatten_instances = false;
     compose.instance_flatten_mode =
-        ::lightusd::next::pcp::InstanceFlattenMode::Native;
+        ::lightusd::pcp::InstanceFlattenMode::Native;
     compose.release_layers_during_fill = true;
-    ::lightusd::next::pcp::BatchedComposeOptions batches;
+    ::lightusd::pcp::BatchedComposeOptions batches;
     batches.target_batch_prims = options.batch_prims;
     batches.roots_per_batch = options.batch_roots;
     batches.pipeline = false;
-    ::lightusd::next::pcp::BatchedComposer composer;
+    ::lightusd::pcp::BatchedComposer composer;
     if (!build.check("light-upgrade", 0) ||
         !composer.Open(source, resolver, compose, batches, &result.warning,
                        &result.error) ||
@@ -424,15 +423,15 @@ ScenePreviewResult ConvertScenePreview(
                       &result.warning, &result.error))
       return finish();
     build.material_specs.clear();
-    ::lightusd::next::Stage old;
-    ::lightusd::next::pcp::CompositionOptions read;
+    ::lightusd::Stage old;
+    ::lightusd::pcp::CompositionOptions read;
     read.num_threads = 1;
-    if (!::lightusd::next::pcp::ComposeStageFromFile(
+    if (!::lightusd::pcp::ComposeStageFromFile(
             (directory / "root.usdc").string(), resolver, &old, read,
             &result.warning, &result.error))
       return finish();
     bool ok = true;
-    old.Traverse([&](const ::lightusd::next::UsdPrim& prim) {
+    old.Traverse([&](const ::lightusd::UsdPrim& prim) {
       if (prim.GetTypeName() == "ParticleField3DGaussianSplat")
         for (const auto& sample : preview_impl::ReadPreviewSamples(
                  prim, ScenePreviewKind::Gaussian)) {
@@ -476,15 +475,15 @@ ScenePreviewResult ConvertScenePreview(
       // Indexed geometry catalogs predate lighting upgrades. The canonical
       // preview owns the current portable light assets and camera catalog.
       if (!options.base_preview_path.empty()) {
-        ::lightusd::next::Stage base;
-        ::lightusd::next::pcp::CompositionOptions read;
+        ::lightusd::Stage base;
+        ::lightusd::pcp::CompositionOptions read;
         read.num_threads = 1;
-        if (!::lightusd::next::pcp::ComposeStageFromFile(
+        if (!::lightusd::pcp::ComposeStageFromFile(
                 options.base_preview_path, resolver, &base, read,
                 &result.warning, &result.error))
           return finish();
         build.extras.clear();
-        ::lightusd::next::pcp::ComposedBatch batch;
+        ::lightusd::pcp::ComposedBatch batch;
         batch.layer = base.ReleaseRootLayer();
         if (!build.plan(batch)) return finish();
       }
@@ -497,17 +496,17 @@ ScenePreviewResult ConvertScenePreview(
         result.error = "cannot create source geometry index";
         return finish();
       }
-      ::lightusd::next::pcp::CompositionOptions compose = options.composition;
+      ::lightusd::pcp::CompositionOptions compose = options.composition;
       compose.flatten_instances = false;
       compose.instance_flatten_mode =
-          ::lightusd::next::pcp::InstanceFlattenMode::Native;
+          ::lightusd::pcp::InstanceFlattenMode::Native;
       compose.background_reclaim = true;
       compose.release_layers_during_fill = true;
-      ::lightusd::next::pcp::BatchedComposeOptions batches;
+      ::lightusd::pcp::BatchedComposeOptions batches;
       batches.target_batch_prims = options.batch_prims;
       batches.roots_per_batch = options.batch_roots;
       batches.pipeline = false;
-      ::lightusd::next::pcp::BatchedComposer composer;
+      ::lightusd::pcp::BatchedComposer composer;
       if (!build.check("open", 0) ||
           !composer.Open(source, resolver, compose, batches, &result.warning,
                          &result.error) ||
@@ -594,15 +593,15 @@ ScenePreviewResult ConvertScenePreview(
     build.max_cells = static_cast<size_t>(std::max(
         uint64_t(1), std::min((options.gpu_budget_bytes - reserve) / 1024,
                               options.host_budget_bytes / 1024)));
-    ::lightusd::next::Stage base;
-    ::lightusd::next::pcp::CompositionOptions read;
+    ::lightusd::Stage base;
+    ::lightusd::pcp::CompositionOptions read;
     read.num_threads = 1;
-    if (!::lightusd::next::pcp::ComposeStageFromFile(
+    if (!::lightusd::pcp::ComposeStageFromFile(
             options.base_preview_path, resolver, &base, read, &result.warning,
             &result.error))
       return finish();
     std::vector<preview_impl::Sample> outside;
-    base.Traverse([&](const ::lightusd::next::UsdPrim& prim) {
+    base.Traverse([&](const ::lightusd::UsdPrim& prim) {
       if (prim.GetTypeName() != "ParticleField3DGaussianSplat") return true;
       for (const auto& s :
            preview_impl::ReadPreviewSamples(prim, ScenePreviewKind::Gaussian)) {
@@ -723,17 +722,17 @@ ScenePreviewResult RefineScenePreview(const std::string& source,
   if (!base.success || width < 1 || height < 1 || !std::isfinite(pixel_error) ||
       pixel_error <= 0 || camera.focal_pixels <= 0)
     return base;
-  ::lightusd::next::AssetResolver resolver;
+  ::lightusd::AssetResolver resolver;
   auto canonical_options = options;
   canonical_options.kind = ScenePreviewKind::Gaussian;
   const auto canonical =
       ConvertScenePreview(source, resolver, canonical_options);
   if (!canonical.success) return canonical;
-  ::lightusd::next::Stage stage;
-  ::lightusd::next::pcp::CompositionOptions read;
+  ::lightusd::Stage stage;
+  ::lightusd::pcp::CompositionOptions read;
   read.num_threads = 1;
   std::string warning, error;
-  if (!::lightusd::next::pcp::ComposeStageFromFile(
+  if (!::lightusd::pcp::ComposeStageFromFile(
           canonical.usd_path, resolver, &stage, read, &warning, &error)) {
     auto failure = base;
     failure.success = false;
@@ -743,7 +742,7 @@ ScenePreviewResult RefineScenePreview(const std::string& source,
   double depth = 0, score = 1e300, visible_spacing = 0;
   // Inspect only cached samples to choose a visible source window. This avoids
   // refining around an unrelated distant environment shell or behind the eye.
-  stage.Traverse([&](const ::lightusd::next::UsdPrim& prim) {
+  stage.Traverse([&](const ::lightusd::UsdPrim& prim) {
     if (prim.GetTypeName() != "ParticleField3DGaussianSplat") return true;
     for (const auto& s :
          preview_impl::ReadPreviewSamples(prim, ScenePreviewKind::Gaussian)) {
@@ -903,6 +902,5 @@ bool Build::check(const std::string& phase, uint64_t n) {
   return true;
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

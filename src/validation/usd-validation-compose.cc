@@ -27,7 +27,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 // ---------------------------------------------------------------------------
@@ -1130,5 +1129,4 @@ void ValidateRelationshipMetadata(const PrimSpec &ps,
 }
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

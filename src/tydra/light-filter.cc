@@ -13,7 +13,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 
 std::mutex& RegistryMutex() {
@@ -26,8 +25,8 @@ std::map<std::string, LightFilterParser>& Registry() {
   return registry;
 }
 
-bool EvalFloat(const ::lightusd::next::AttributeEval& eval,
-               const ::lightusd::next::UsdPrim& prim, const char* name,
+bool EvalFloat(const ::lightusd::AttributeEval& eval,
+               const ::lightusd::UsdPrim& prim, const char* name,
                float* out) {
   if (const auto result = eval.EvalFloat(prim, name)) {
     *out = *result;
@@ -40,8 +39,8 @@ bool EvalFloat(const ::lightusd::next::AttributeEval& eval,
   return false;
 }
 
-bool EvalColor(const ::lightusd::next::AttributeEval& eval,
-               const ::lightusd::next::UsdPrim& prim, const char* name,
+bool EvalColor(const ::lightusd::AttributeEval& eval,
+               const ::lightusd::UsdPrim& prim, const char* name,
                std::array<float, 3>* out) {
   float value[3];
   if (eval.EvalFloat3(prim, name, value)) {
@@ -57,10 +56,10 @@ bool EvalColor(const ::lightusd::next::AttributeEval& eval,
   return false;
 }
 
-bool ParseIntensity(const ::lightusd::next::Stage& stage,
-                    const ::lightusd::next::UsdPrim& prim, double time_code,
+bool ParseIntensity(const ::lightusd::Stage& stage,
+                    const ::lightusd::UsdPrim& prim, double time_code,
                     LightFilter* out, std::string* error) {
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   float intensity = 1.0f;
   if (EvalFloat(eval, prim, "lightusd:filter:intensity", &intensity) &&
@@ -73,10 +72,10 @@ bool ParseIntensity(const ::lightusd::next::Stage& stage,
   return true;
 }
 
-bool ParseColor(const ::lightusd::next::Stage& stage,
-                const ::lightusd::next::UsdPrim& prim, double time_code,
+bool ParseColor(const ::lightusd::Stage& stage,
+                const ::lightusd::UsdPrim& prim, double time_code,
                 LightFilter* out, std::string* error) {
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   std::array<float, 3> color{1, 1, 1};
   if (EvalColor(eval, prim, "lightusd:filter:color", &color)) {
@@ -126,13 +125,13 @@ bool HasLightFilter(const std::string& kind) {
   return Registry().find(kind) != Registry().end();
 }
 
-bool ParseLightFilter(const ::lightusd::next::Stage& stage,
-                      const ::lightusd::next::UsdPrim& prim, double time_code,
+bool ParseLightFilter(const ::lightusd::Stage& stage,
+                      const ::lightusd::UsdPrim& prim, double time_code,
                       LightFilter* out, std::string* error) {
   if (!out) return false;
   RegisterBuiltinLightFilters();
   out->prim_path = prim.GetPath().str();
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   std::string kind;
   if (const auto token = eval.EvalToken(prim, "lightusd:filter:kind"))
@@ -170,6 +169,5 @@ void ApplyLightFilters(const std::vector<LightFilter>& filters,
   }
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

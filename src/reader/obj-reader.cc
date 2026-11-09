@@ -7,9 +7,8 @@
 #include <map>
 #include <set>
 namespace lightusd {
-namespace next {
 namespace {
-namespace tn = ::lightusd::next;
+namespace tn = ::lightusd;
 using Json = tydra::import_asset::Json;
 std::string JsonString(const Json& j, const char* k,
                        const std::string& fallback = {}) {
@@ -519,5 +518,4 @@ std::shared_ptr<Layer> LoadOBJLayerFromFile(
   if (layer) session.Succeed();
   return layer;
 }
-}  // namespace next
 }  // namespace lightusd

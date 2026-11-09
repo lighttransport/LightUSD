@@ -13,7 +13,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -112,5 +111,4 @@ LoadResult LoadUSDAFromStringOwned(std::string&& data,
 }
 
 
-}  // namespace next
 }  // namespace lightusd

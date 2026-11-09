@@ -9,7 +9,6 @@
 #include "value-parser.hh"
 
 namespace lightusd {
-namespace next {
 
 bool AsciiParser::Impl::ParseStageMetadata() {
   // Check for #usda header
@@ -333,5 +332,4 @@ bool AsciiParser::Impl::ParseStageMetadata() {
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

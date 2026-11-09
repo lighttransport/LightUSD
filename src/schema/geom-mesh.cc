@@ -9,7 +9,6 @@
 #include <cmath>
 
 namespace lightusd {
-namespace next {
 
 UsdGeomMesh::UsdGeomMesh(const UsdPrim& prim) : prim_(prim) {
   if (prim_.IsValid()) {
@@ -300,5 +299,4 @@ std::vector<UsdGeomMesh> GetAllMeshes(const Stage& stage) {
   return meshes;
 }
 
-}  // namespace next
 }  // namespace lightusd

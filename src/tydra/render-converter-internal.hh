@@ -10,7 +10,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 using ConverterStateMutex = ::lightusd::Mutex;
@@ -28,8 +27,8 @@ struct ConverterStateLock {
 // Volumes convert before materials; map their material paths to ids.
 void ResolveVolumeMaterials(RenderScene* scene);
 
-bool ConvertParticleField(const ::lightusd::next::Stage& stage,
-                          const ::lightusd::next::UsdPrim& prim, double time,
+bool ConvertParticleField(const ::lightusd::Stage& stage,
+                          const ::lightusd::UsdPrim& prim, double time,
                           RenderParticleField* out);
 
 class RenderSceneConverter::Impl {
@@ -48,13 +47,13 @@ class RenderSceneConverter::Impl {
   // Main conversion entry point
   /// Read-only retained conversion. This never evicts values from `stage`, so
   /// it is safe to use with an immutable StageSnapshot.
-  ConvertResult Convert(const ::lightusd::next::Stage& stage);
+  ConvertResult Convert(const ::lightusd::Stage& stage);
 
   // Low-memory, destructive conversion entry point. Only one converted
   // geometry prim is live outside the destination sink at a time. Static
   // source arrays may be evicted as their last consumer completes, hence the
   // deliberately mutable Stage reference.
-  StreamConvertResult ConvertToSink(::lightusd::next::Stage& stage,
+  StreamConvertResult ConvertToSink(::lightusd::Stage& stage,
                                     SceneSink* sink);
 
   // Cheap preflight and extent-only conversion for application-managed
@@ -73,16 +72,16 @@ class RenderSceneConverter::Impl {
                      RenderPoints* out);
   bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
-  bool ConvertMaterial(const ::lightusd::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
-  bool ConvertMaterial(const ::lightusd::next::Stage& stage,
+  bool ConvertMaterial(const ::lightusd::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
+  bool ConvertMaterial(const ::lightusd::Stage& stage,
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene);
-  bool ConvertLight(const ::lightusd::next::Stage& stage,
+  bool ConvertLight(const ::lightusd::Stage& stage,
                     const UsdPrim& prim, RenderLight* out);
-  bool ConvertCamera(const ::lightusd::next::Stage& stage,
+  bool ConvertCamera(const ::lightusd::Stage& stage,
                      const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
-  bool ConvertAnimation(const ::lightusd::next::Stage& stage,
+  bool ConvertAnimation(const ::lightusd::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);
 
   // Robustly triangulate an already-populated RenderMesh. Custom/lazy
@@ -102,11 +101,11 @@ class RenderSceneConverter::Impl {
  private:
   // Build scene hierarchy
   void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
-  void ExtractPhysicsAnnotations(const ::lightusd::next::Stage& stage,
+  void ExtractPhysicsAnnotations(const ::lightusd::Stage& stage,
                                  RenderScene* scene);
-  void AssignMaterialBindings(const ::lightusd::next::Stage& stage,
+  void AssignMaterialBindings(const ::lightusd::Stage& stage,
                               RenderScene* scene);
-  void AssignMeshMaterialBinding(const ::lightusd::next::Stage& stage,
+  void AssignMeshMaterialBinding(const ::lightusd::Stage& stage,
                                  const RenderScene& scene,
                                  RenderMesh* mesh);
 
@@ -147,11 +146,11 @@ class RenderSceneConverter::Impl {
                                uint32_t asset_anchor_id = 0) const;
   /// UsdVol Volume: field:* relationships resolved through scene->volume_cache
   /// (created on first use), world transform, extent and volume material.
-  bool ConvertVolume(const ::lightusd::next::Stage& stage,
-                     const ::lightusd::next::UsdPrim& prim, RenderScene* scene,
+  bool ConvertVolume(const ::lightusd::Stage& stage,
+                     const ::lightusd::UsdPrim& prim, RenderScene* scene,
                      RenderVolume* out);
   /// The anchor stamped on `prim`'s spec (0 when it has none).
-  static uint32_t AssetAnchorOf(const ::lightusd::next::UsdPrim& prim);
+  static uint32_t AssetAnchorOf(const ::lightusd::UsdPrim& prim);
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).
   int32_t ResolveImageId(RenderScene* scene, const std::string& file,
                          ColorSpace color_space, uint32_t asset_anchor_id = 0);
@@ -183,23 +182,23 @@ class RenderSceneConverter::Impl {
   bool budget_exceeded_ = false;
 
   // Material extraction
-  bool ExtractPreviewSurface(const ::lightusd::next::Stage& stage,
+  bool ExtractPreviewSurface(const ::lightusd::Stage& stage,
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,
                              RenderScene* scene);
-  bool ExtractStandardSurfaceAsOpenPBR(const ::lightusd::next::Stage& stage,
-                                       const ::lightusd::next::UsdPrim& shader_prim,
+  bool ExtractStandardSurfaceAsOpenPBR(const ::lightusd::Stage& stage,
+                                       const ::lightusd::UsdPrim& shader_prim,
                                        OpenPBRSurfaceShader* out,
                                        RenderScene* scene);
-  bool ExtractPxrDisneyAsOpenPBR(const ::lightusd::next::Stage& stage,
-                                 const ::lightusd::next::UsdPrim& shader_prim,
+  bool ExtractPxrDisneyAsOpenPBR(const ::lightusd::Stage& stage,
+                                 const ::lightusd::UsdPrim& shader_prim,
                                  OpenPBRSurfaceShader* out,
                                  RenderScene* scene);
-  bool ExtractOpenPBRSurface(const ::lightusd::next::Stage& stage,
+  bool ExtractOpenPBRSurface(const ::lightusd::Stage& stage,
                              const UsdPrim& shader_prim,
                              OpenPBRSurfaceShader* out,
                              RenderScene* scene);
-  bool ExtractShaderParam(const ::lightusd::next::Stage& stage,
+  bool ExtractShaderParam(const ::lightusd::Stage& stage,
                           const UsdPrim& shader_prim,
                           const std::string& param_name,
                           ShaderParam* out,
@@ -261,6 +260,5 @@ bool WouldOverflowSizeMul(size_t a, size_t b);
 GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
                                int32_t id = -1);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

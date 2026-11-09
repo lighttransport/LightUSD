@@ -26,7 +26,7 @@
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // Timer helper
 class Timer {

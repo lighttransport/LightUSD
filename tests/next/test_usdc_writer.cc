@@ -21,7 +21,7 @@
 #include "writer/usda-writer.hh"
 #include "reader/usdc-reader.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 bool contains(const std::string& str, const std::string& substr) {
   return str.find(substr) != std::string::npos;

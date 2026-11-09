@@ -15,7 +15,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 struct PrimSpec::ColdData {
   std::vector<PropNameId> authored_property_names;
@@ -1786,5 +1785,4 @@ bool StringListOps::has_nonexplicit_items() const {
            !deleted.empty() || !ordered.empty();
   }
 
-}  // namespace next
 }  // namespace lightusd

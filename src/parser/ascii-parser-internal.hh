@@ -21,7 +21,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 /// One dispatched run of sibling prim subtrees, parsed by a worker into its
@@ -173,5 +172,4 @@ private:
 
 bool IsNameToken(const Token& tok);
 
-}  // namespace next
 }  // namespace lightusd

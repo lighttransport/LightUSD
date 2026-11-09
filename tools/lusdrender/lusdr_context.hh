@@ -17,11 +17,11 @@
 namespace lusdr {
 
 struct RenderContext {
-  lightusd::next::Stage stage;  // keeps the lazy point/index arrays alive
+  lightusd::Stage stage;  // keeps the lazy point/index arrays alive
   // Loader used by procedural/value-clip curves. It is populated while the
   // composed session is still alive so relative clip assets can use its layer
   // dependency anchors.
-  lightusd::next::ValueClipStageLoader clip_stage_loader;
+  lightusd::ValueClipStageLoader clip_stage_loader;
   // Flat (no-instance) path buffers: default allocator so the shared
   // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced
   // geometry lives in the budget-tracked Blas buffers below.
@@ -337,7 +337,7 @@ bool LoadProgress(float progress, void *);
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
 void RefreshVolumesNext(RenderContext &ctx, double time);
-bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
+bool BuildNextGaussianEllipses(const lightusd::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh = false);
 
@@ -421,21 +421,21 @@ CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
 matrix4d Mat4FromArray(const double d[16]);
 uint32_t PurposeBit(lightusd::legacy::Purpose purpose);
 
-std::vector<float> ReadFloatArrayLazy(const lightusd::next::UsdPrim &prim,
+std::vector<float> ReadFloatArrayLazy(const lightusd::UsdPrim &prim,
                                       const char *name, double time);
 
 bool ReadFloatArrayViewLazy(
-    const lightusd::next::UsdPrim &prim, const char *name, double time,
-    lightusd::tydra::next::ValueArrayRead<float> *out);
+    const lightusd::UsdPrim &prim, const char *name, double time,
+    lightusd::tydra::ValueArrayRead<float> *out);
 
 // Large compressed SH payloads are optional for preview: only the DC RGB
 // coefficient is consumed, so avoid materializing an oversized array.
-bool AllowGaussianSHDecode(const lightusd::next::UsdPrim &prim);
+bool AllowGaussianSHDecode(const lightusd::UsdPrim &prim);
 
-std::vector<int32_t> ReadIntArrayLazy(const lightusd::next::UsdPrim &prim,
+std::vector<int32_t> ReadIntArrayLazy(const lightusd::UsdPrim &prim,
                                       const char *name, double time);
 
-std::vector<int64_t> ReadInt64ArrayLazy(const lightusd::next::UsdPrim &prim,
+std::vector<int64_t> ReadInt64ArrayLazy(const lightusd::UsdPrim &prim,
                                         const char *name, double time);
 
 std::string DirName(const std::string &path);
@@ -443,22 +443,22 @@ std::string DirName(const std::string &path);
 bool UsdzEntryMatches(const std::string &entry, const std::string &asset);
 
 
-lightusd::next::UsdPrim ConnectedPrimNext(const lightusd::next::Stage &stage,
-                                          const lightusd::next::UsdPrim &prim,
+lightusd::UsdPrim ConnectedPrimNext(const lightusd::Stage &stage,
+                                          const lightusd::UsdPrim &prim,
                                           const std::string &prop);
 
 WrapMode ParseWrapMode(const std::string &s);
 
-void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
-                              const lightusd::next::UsdPrim &surf,
+void ResolveScalarTextureNext(const lightusd::Stage &stage,
+                              const lightusd::UsdPrim &surf,
                               const std::string &input, TextureCache &tc,
                               ScalarTex *out);
 
-UvXform ResolveUvXform(const lightusd::next::Stage &stage,
-                       const lightusd::next::UsdPrim &uvtex);
+UvXform ResolveUvXform(const lightusd::Stage &stage,
+                       const lightusd::UsdPrim &uvtex);
 
-void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
-                             const lightusd::next::UsdPrim &mesh,
+void ResolveMeshMaterialNext(const lightusd::Stage &stage,
+                             const lightusd::UsdPrim &mesh,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
                              int32_t *normal_tex_id, UvXform *uv_xform,
@@ -481,22 +481,22 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
                              ScalarTex *displacement_tex = nullptr);
 
 void ResolveMeshMaterialCached(
-    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &mesh,
+    const lightusd::Stage &stage, const lightusd::UsdPrim &mesh,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
     MeshJobNext *job);
 
 bool PathMatchesMask(const std::string &path,
                      const std::vector<std::string> &mask);
 
-bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim);
+bool PrimHasAnimatedXform(const lightusd::UsdPrim &prim);
 
-bool MeshHasAnimatedGeom(const lightusd::next::UsdPrim &prim);
+bool MeshHasAnimatedGeom(const lightusd::UsdPrim &prim);
 
-bool SubtreeGeometryAnimated(const lightusd::next::UsdPrim &prim,
+bool SubtreeGeometryAnimated(const lightusd::UsdPrim &prim,
                              const std::vector<std::string> &mask,
                              bool ancestor_xform_animated);
 
-bool SceneGeometryAnimated(const lightusd::next::Stage &stage,
+bool SceneGeometryAnimated(const lightusd::Stage &stage,
                            const std::vector<std::string> &mask);
 
 // When `expand_instancers` is true, UsdGeomPointInstancer prims are EXPANDED in
@@ -511,8 +511,8 @@ bool SceneGeometryAnimated(const lightusd::next::Stage &stage,
 // instancer expansion stops early. This bounds host memory on scenes with tens of
 // millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
 // a budget so a huge instancer yields a bounded preview instead of OOMing.
-void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
-                                const lightusd::next::UsdPrim &prim,
+void CollectRTPreviewMeshesNext(const lightusd::Stage &stage,
+                                const lightusd::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 lightusd::legacy::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
@@ -527,7 +527,7 @@ void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
 // per instance (each ~392 B); a large instanced scene then costs ~88 B/placement
 // of host memory during collection instead of ~392 B, so Moana island fits in far
 // less RAM. See CollectRTInstancePlacementsNext.
-using RtInstanceSink = std::function<void(const lightusd::next::UsdPrim & /*prim*/,
+using RtInstanceSink = std::function<void(const lightusd::UsdPrim & /*prim*/,
                                           const matrix4d & /*world*/,
                                           lightusd::legacy::Purpose /*purpose*/)>;
 
@@ -536,8 +536,8 @@ using RtInstanceSink = std::function<void(const lightusd::next::UsdPrim & /*prim
 // placement to `sink` instead of appending a MeshJobNext. Stops after
 // `max_placements` sink calls (0 = unlimited). Returns the number of placements
 // emitted (so the caller can report a hit budget).
-size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
-                                       const lightusd::next::UsdPrim &prim,
+size_t CollectRTInstancePlacementsNext(const lightusd::Stage &stage,
+                                       const lightusd::UsdPrim &prim,
                                        const matrix4d &parent_world,
                                        lightusd::legacy::Purpose inherited_purpose,
                                        double time,
@@ -545,27 +545,27 @@ size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
                                        const RtInstanceSink &sink,
                                        size_t max_placements);
 
-float ReadCamFloatNext(const lightusd::next::UsdPrim &prim, const char *name,
+float ReadCamFloatNext(const lightusd::UsdPrim &prim, const char *name,
                        float fallback);
 
-bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
-                                  const lightusd::next::UsdPrim &prim,
+bool FindNextCameraFrameRecursive(const lightusd::Stage &stage,
+                                  const lightusd::UsdPrim &prim,
                                   const matrix4d &parent_world,
                                   const std::string &query, double time,
                                   CameraFrame *frame, float *aspect);
 
-bool FindNextCameraFrame(const lightusd::next::Stage &stage,
+bool FindNextCameraFrame(const lightusd::Stage &stage,
                          const std::string &query, double time,
                          CameraFrame *frame, float *aspect);
 
 CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::legacy::Axis up_axis,
                                 int width, int *out_height);
 
-bool IsCurvePrimNext(const lightusd::next::UsdPrim &prim);
+bool IsCurvePrimNext(const lightusd::UsdPrim &prim);
 
 std::vector<lightusd::legacy::value::point3f> ReadCurvePointsNext(
-    const lightusd::next::UsdPrim &prim, double time,
-    const lightusd::next::ValueClipStageLoader &clip_loader);
+    const lightusd::UsdPrim &prim, double time,
+    const lightusd::ValueClipStageLoader &clip_loader);
 
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                      double time, bool include_flat = true);
@@ -575,35 +575,35 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 // flat-curve intersector.
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
-    const lightusd::next::ValueClipStageLoader &clip_loader,
+    const lightusd::ValueClipStageLoader &clip_loader,
     const CameraFrame &camera, const Options &opt,
     std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
 bool BuildNextFlatCurveBounds(
     const std::vector<CurveJobNext> &jobs, double time,
-    const lightusd::next::ValueClipStageLoader &clip_loader, Bounds *bounds);
+    const lightusd::ValueClipStageLoader &clip_loader, Bounds *bounds);
 
 matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
                      const float *scale3);
 
-void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
+void CollectCurvesNextRec(const lightusd::UsdPrim &prim,
                           const matrix4d &parent_world,
                           lightusd::legacy::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out);
 
-void CollectProtoCurves(const lightusd::next::Stage &stage,
+void CollectProtoCurves(const lightusd::Stage &stage,
                         const std::string &proto_path,
                         lightusd::legacy::Purpose start_purpose, double time,
                         std::vector<CurveJobNext> *out);
 
-int32_t ReserveCurveProto(const lightusd::next::Stage &stage,
+int32_t ReserveCurveProto(const lightusd::Stage &stage,
                           const std::string &proto_path,
                           lightusd::legacy::Purpose purpose, double time,
                           CurveProtoCollect *curve_inst);
 
-void CollectPointInstancer(const lightusd::next::Stage &stage,
-                           const lightusd::next::UsdPrim &instancer,
+void CollectPointInstancer(const lightusd::Stage &stage,
+                           const lightusd::UsdPrim &instancer,
                            const matrix4d &instancer_world,
                            lightusd::legacy::Purpose purpose, double time,
                            const std::vector<std::string> &mask,
@@ -618,8 +618,8 @@ void CollectPointInstancer(const lightusd::next::Stage &stage,
                            // still deduped into curve_inst.
                            std::vector<CurveInstanceRT> *curve_out = nullptr);
 
-void CollectSceneSplit(const lightusd::next::Stage &stage,
-                       const lightusd::next::UsdPrim &prim,
+void CollectSceneSplit(const lightusd::Stage &stage,
+                       const lightusd::UsdPrim &prim,
                        const matrix4d &parent_world,
                        lightusd::legacy::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
@@ -632,7 +632,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
                        const std::unordered_set<std::string> *proto_holders);
 
 void CollectProtoMeshNestingRec(
-    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
+    const lightusd::Stage &stage, const lightusd::UsdPrim &prim,
     const matrix4d &parent_world, lightusd::legacy::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
     std::vector<CurveInstanceRT> *nested_curves,
@@ -642,7 +642,7 @@ void CollectProtoMeshNestingRec(
     const std::unordered_set<std::string> *proto_holders);
 
 void CollectProtoMeshNesting(
-    const lightusd::next::Stage &stage, const std::string &proto_path,
+    const lightusd::Stage &stage, const std::string &proto_path,
     lightusd::legacy::Purpose purpose, double time, const std::vector<std::string> &mask,
     std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -650,33 +650,33 @@ void CollectProtoMeshNesting(
     RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders);
 
-void CollectPrototypePaths(const lightusd::next::UsdPrim &prim,
+void CollectPrototypePaths(const lightusd::UsdPrim &prim,
                            std::unordered_set<std::string> *out);
 
-void CollectProtoJobs(const lightusd::next::Stage &stage,
+void CollectProtoJobs(const lightusd::Stage &stage,
                       const std::string &proto_path,
                       lightusd::legacy::Purpose start_purpose, double time,
                       std::vector<MeshJobNext> *jobs);
 
-inline size_t EstimateTrisForJob(const lightusd::next::UsdPrim &prim,
+inline size_t EstimateTrisForJob(const lightusd::UsdPrim &prim,
                                  double time);
 
 void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
                                   const float o2w[12]);
 
-void CollectLightsNext(const lightusd::next::Stage &stage,
-                       const lightusd::next::UsdPrim &prim,
+void CollectLightsNext(const lightusd::Stage &stage,
+                       const lightusd::UsdPrim &prim,
                        const matrix4d &parent_world, double time,
                        LightCache *cache);
 
-lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
+lightusd::UsdPrim FindDomeLightRec(const lightusd::UsdPrim &prim);
 
-bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
+bool BuildNextIbl(const lightusd::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
 // Vulkan descriptor path: add the stage DomeLight as an analytic dome entry
 // (plus its latlong texture) instead of IBL. No-op if one is already present.
-bool CollectDomeLightForGpu(const lightusd::next::Stage &stage, double time,
+bool CollectDomeLightForGpu(const lightusd::Stage &stage, double time,
                             LightCache *cache,
                             std::vector<Texture> *textures);
 
@@ -688,9 +688,9 @@ int RunRTPreviewNext(const Options &opt);
 
 // Compose through the persistent next-core session with aggregate accounting,
 // then release transient PCP caches before returning the retained Stage.
-bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
+bool LoadNextStageBudgeted(const Options &opt, lightusd::Stage *stage,
                            std::string *warn, std::string *err,
-                           lightusd::next::ValueClipStageLoader *clip_loader = nullptr);
+                           lightusd::ValueClipStageLoader *clip_loader = nullptr);
 
 // ---- lusdr_lod.cc (view-dependent district LOD pre-pass) ----
 // Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.

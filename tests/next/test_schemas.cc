@@ -18,7 +18,7 @@
 #include <vector>
 #include <cmath>
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static int test_count = 0;
 static int pass_count = 0;

@@ -8,7 +8,7 @@
 #include "writer/usdc-writer.hh"
 #include "writer/usdz-writer.hh"
 #include "../../src/tydra/urdf-to-usd.hh"
-using OutputStage = lightusd::next::Stage;
+using OutputStage = lightusd::Stage;
 #else
 #include "lightusd.hh"
 #include "tydra/urdf-to-usd.hh"
@@ -49,7 +49,7 @@ void Help() {
          "legacy writer always emits legacy)\n";
 }
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
-using MeshBuffers = std::map<std::string, lightusd::tydra::next::URDFMeshBuffer>;
+using MeshBuffers = std::map<std::string, lightusd::tydra::URDFMeshBuffer>;
 #else
 using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
 #endif
@@ -60,9 +60,9 @@ bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputS
              std::string* warn, std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
   if (consume)
-    return lightusd::tydra::next::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
+    return lightusd::tydra::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
                                                                         warn, err);
-  return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
+  return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
                                                           warn, err);
 #else
   (void)meshes;
@@ -76,18 +76,18 @@ bool Save(const OutputStage& stage, const std::string& path,
           const ia::AssetMap& assets,
           std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
-  if (format == "usda") return lightusd::next::WriteUSDA(stage, path, err);
-  if (format == "usdc") return lightusd::next::WriteUSDC(stage, path, err);
+  if (format == "usda") return lightusd::WriteUSDA(stage, path, err);
+  if (format == "usdc") return lightusd::WriteUSDC(stage, path, err);
   std::vector<uint8_t> crate, zip;
-  auto cr = lightusd::next::WriteUSDCToMemory(crate, stage);
+  auto cr = lightusd::WriteUSDCToMemory(crate, stage);
   if (!cr.success) {
     *err = cr.error;
     return false;
   }
-  lightusd::next::USDZAssetViews views;
+  lightusd::USDZAssetViews views;
   for (const auto& asset : assets)
     if (asset.second) views[asset.first] = {asset.second->data(), asset.second->size()};
-  auto z = lightusd::next::WriteUSDZFromUSDCAndAssetViewsToMemory(
+  auto z = lightusd::WriteUSDZFromUSDCAndAssetViewsToMemory(
       zip, crate.data(), crate.size(), views);
   if (!z.success) {
     *err = z.error;

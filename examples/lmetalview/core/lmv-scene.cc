@@ -6,7 +6,7 @@
 // (lightusd_stage_load + lightusd_render_convert), so the example consumes the
 // same composed stage / tydra-next conversion surface as every other language
 // binding. Pixel decoding is the one thing the C API does not do (tydra records
-// texture metadata only), so it runs through tydra::next::TextureDecoder here -
+// texture metadata only), so it runs through tydra::TextureDecoder here -
 // the same decoder lusdview and lusdrender use.
 //
 // This file is C++17 and builds with -fno-exceptions like the rest of lightusd;
@@ -355,7 +355,7 @@ struct SceneData {
 // time change never re-decodes a texture.
 struct ImageCache {
   std::unordered_map<std::string, std::shared_ptr<const ImageData>> by_key;
-  std::unique_ptr<lightusd::next::USDZReader> usdz;
+  std::unique_ptr<lightusd::USDZReader> usdz;
   std::string base_dir;
   uint32_t max_edge = 2048;
   uint64_t max_bytes = 512ull << 20;
@@ -1322,7 +1322,7 @@ bool ReadInstanceArrays(lightusd_stage* stage, const std::string& path,
   return have_positions;
 }
 
-// Mirrors next::UsdGeomPointInstancer's ComposeTRS (row-vector, row-major).
+// Mirrors ::lightusd::UsdGeomPointInstancer's ComposeTRS (row-vector, row-major).
 void ComposeInstanceTRS(const InstanceArrays& arrays, uint32_t index,
                         Mat4d* out) {
   if (!out) return;
@@ -2235,7 +2235,7 @@ bool ReadAssetBytes(ImageCache* cache, const std::string& resolved,
   if (cache->usdz) {
     for (size_t i = 0; i < cache->usdz->NumEntries(); ++i) {
       const std::string& entry = cache->usdz->EntryName(i);
-      if (!lightusd::tydra::next::UsdzEntryMatches(entry, asset)) continue;
+      if (!lightusd::tydra::UsdzEntryMatches(entry, asset)) continue;
       const uint8_t* data = cache->usdz->EntryData(i);
       const size_t size = cache->usdz->EntrySize(i);
       if (!data || size == 0) break;
@@ -2765,7 +2765,7 @@ bool AssetExists(ImageCache* cache, const std::string& resolved) {
   const std::string asset = UsdzEntryName(resolved);
   if (cache->usdz) {
     for (size_t i = 0; i < cache->usdz->NumEntries(); ++i) {
-      if (lightusd::tydra::next::UsdzEntryMatches(cache->usdz->EntryName(i),
+      if (lightusd::tydra::UsdzEntryMatches(cache->usdz->EntryName(i),
                                                   asset)) {
         return true;
       }
@@ -2813,9 +2813,9 @@ void GatherNonMeshGeometry(lightusd_render_scene* render, SceneData* out,
       continue;
     }
     const bool is_points =
-        info.type == static_cast<uint8_t>(lightusd::tydra::next::NodeType::Points);
+        info.type == static_cast<uint8_t>(lightusd::tydra::NodeType::Points);
     const bool is_curves =
-        info.type == static_cast<uint8_t>(lightusd::tydra::next::NodeType::Curves);
+        info.type == static_cast<uint8_t>(lightusd::tydra::NodeType::Curves);
     if ((!is_points && !is_curves) || info.data_id < 0) continue;
     const float* world = info.world_transform;
     const float scale = ColumnScale(world);
@@ -3362,7 +3362,7 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
       continue;
     }
     if (info.type != static_cast<uint8_t>(
-                           lightusd::tydra::next::NodeType::Mesh)) {
+                           lightusd::tydra::NodeType::Mesh)) {
       continue;
     }
     if (info.data_id < 0 || static_cast<uint32_t>(info.data_id) >= mesh_count) {
@@ -3731,7 +3731,7 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
       const bool tile_srgb =
           info.image_id < 0 ||
           tile_info.color_space ==
-              static_cast<uint8_t>(lightusd::tydra::next::ColorSpace::sRGB);
+              static_cast<uint8_t>(lightusd::tydra::ColorSpace::sRGB);
       for (uint32_t udim = 1001; udim <= 1100; ++udim) {
         const std::string tile_path = ReplaceUdimToken(pattern, udim);
         if (!AssetExists(cache, tile_path)) continue;
@@ -3889,7 +3889,7 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
             info.component_type == LIGHTUSD_COMP_FLOAT32 ||
             info.component_type == LIGHTUSD_COMP_FLOAT16;
         data->srgb = info.color_space ==
-                     static_cast<uint8_t>(lightusd::tydra::next::ColorSpace::sRGB);
+                     static_cast<uint8_t>(lightusd::tydra::ColorSpace::sRGB);
         data->channels = data->is_float ? 3u : 4u;
         if (data->is_float) {
           const float* src = static_cast<const float*>(view.data);
@@ -3909,7 +3909,7 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
       // shared next TextureDecoder (same code path as lusdview/lusdrender).
       const bool srgb =
           info.color_space ==
-          static_cast<uint8_t>(lightusd::tydra::next::ColorSpace::sRGB);
+          static_cast<uint8_t>(lightusd::tydra::ColorSpace::sRGB);
       const std::string image_path = Sv(info.resolved_path);
       std::string hint;
       auto hint_it = ktx2_by_image.find(image_id);
@@ -4383,7 +4383,7 @@ lmv_status lmv_load(const char* path, const lmv_load_options* options,
   scene->cache->max_bytes =
       opts.max_texture_bytes ? opts.max_texture_bytes : (512ull << 20);
   if (EndsWith(scene->path, ".usdz")) {
-    lightusd::next::USDZReader* reader = new (std::nothrow) lightusd::next::USDZReader();
+    lightusd::USDZReader* reader = new (std::nothrow) lightusd::USDZReader();
     if (reader && reader->OpenFile(scene->path)) {
       scene->cache->usdz.reset(reader);
     } else {

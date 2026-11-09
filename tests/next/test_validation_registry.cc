@@ -5,7 +5,7 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
-using namespace lightusd::next;
+using namespace lightusd;
 // AOUSD Core 1.1 "Schema Families and Versioning" (table rows + edges).
 static void TestSchemaFamilies() {
   struct Case { const char* name; const char* family; uint32_t version; bool versioned; };
@@ -87,9 +87,9 @@ int main() {
   size_t calls = 0;
   ValidatorDefinition rule;
   rule.id = "test.callback"; rule.keywords = {"Test"}; rule.schema_types = {"Sphere"};
-  rule.callback = [&](const ValidationContext&, const PrimSpec*) -> lightusd::next::expected<USDValidationResult, std::string> {
+  rule.callback = [&](const ValidationContext&, const PrimSpec*) -> lightusd::expected<USDValidationResult, std::string> {
     ++calls;
-    return lightusd::next::make_unexpected(std::string("required service unavailable"));
+    return lightusd::make_unexpected(std::string("required service unavailable"));
   };
   assert(a.RegisterValidator(rule));
   assert(!a.RegisterValidator(rule));
@@ -123,7 +123,7 @@ int main() {
   ValidatorDefinition sampled;
   sampled.id = "test.sampled";
   sampled.schema_types = {"Sphere"};
-  sampled.callback = [&](const ValidationContext& c, const PrimSpec* p) -> lightusd::next::expected<USDValidationResult, std::string> {
+  sampled.callback = [&](const ValidationContext& c, const PrimSpec* p) -> lightusd::expected<USDValidationResult, std::string> {
     assert(c.stage && c.layer && c.time.is_numeric());
     const auto* radius = p->property_value("radius");
     assert(radius && radius->as_double() && *radius->as_double() == c.time.numeric_time());

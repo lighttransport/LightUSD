@@ -20,7 +20,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 // Exact first-read bytes, independent of the original path or reader. The
@@ -189,5 +188,4 @@ class LayerSourceSnapshot {
 };
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

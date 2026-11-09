@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 class StreamWriter {
  public:
@@ -118,5 +117,4 @@ class StreamWriter {
   bool failed_{false};
 };
 
-}  // namespace next
 }  // namespace lightusd

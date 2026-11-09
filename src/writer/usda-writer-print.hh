@@ -23,7 +23,6 @@
 #include "value-printer.hh"
 
 namespace lightusd {
-namespace next {
 
 // released after its last chunk has been written -- so a decoded buffer only
 // lives while its chunks are inside the formatting window, never for the whole
@@ -244,5 +243,4 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec, const Layer& laye
 void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta);
 void WriteStageBodySerial(StreamWriter& os, const Layer& layer, const LayerMeta& meta, const USDAWriteOptions& opts);
 
-}  // namespace next
 }  // namespace lightusd

@@ -37,7 +37,7 @@
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static void emit_lines(const std::string &msgs, const char *prefix) {
   size_t pos = 0;

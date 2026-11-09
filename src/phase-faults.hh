@@ -11,7 +11,6 @@
 #include "core/host-services.hh"
 
 namespace lightusd {
-namespace next {
 
 using FaultCounters = HostFaultCounters;
 
@@ -21,5 +20,4 @@ inline FaultCounters ReadFaultCounters(
       ? services->fault_counters() : FaultCounters{};
 }
 
-}  // namespace next
 }  // namespace lightusd

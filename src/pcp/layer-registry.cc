@@ -22,7 +22,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 bool LayerRegistry::EnableSourceSnapshots(const std::string& directory,
@@ -348,5 +347,4 @@ std::vector<std::shared_ptr<Layer>> LayerRegistry::TakeFileLayersForRelease() {
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

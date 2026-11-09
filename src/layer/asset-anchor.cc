@@ -15,7 +15,6 @@
 
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -113,5 +112,4 @@ void StampPackageAssetAnchor(Layer* layer, const std::string& identifier) {
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

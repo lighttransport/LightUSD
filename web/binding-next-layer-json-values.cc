@@ -7,7 +7,7 @@
 #include "types/value.hh"
 #include <cmath>
 #include <utility>
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 #include "parser/lexer.hh"
 #include "parser/value-parser.hh"
 #include "writer/value-printer.hh"

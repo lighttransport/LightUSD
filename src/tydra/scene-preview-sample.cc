@@ -16,7 +16,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace {
 double Length(const double* a) {
@@ -1220,6 +1219,5 @@ bool Build::finish_placements() {
   return false;
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

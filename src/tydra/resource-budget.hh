@@ -13,7 +13,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 constexpr uint64_t GiB(uint64_t value) {
   return value > ((std::numeric_limits<uint64_t>::max)() >> 30)
@@ -108,7 +107,7 @@ inline ResourceBudget ComputeResourceBudget(uint64_t host_capacity,
 }
 
 // Decode-time texture limits derived from a resource budget. Applications hand
-// these to tydra::next::TextureDecoder so a large scene's textures are capped
+// these to tydra::TextureDecoder so a large scene's textures are capped
 // while they are decoded, rather than after they are all resident.
 struct TextureBudget {
   // Longest-edge cap in texels. 0 = keep source resolution.
@@ -231,6 +230,5 @@ inline uint32_t TextureFitPercent(const TextureFit& fit) {
   }
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

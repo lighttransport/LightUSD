@@ -6,7 +6,6 @@
 #include "physics-collision.hh"
 
 namespace lightusd {
-namespace next {
 
 bool IsPhysicsCollisionGroup(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "PhysicsCollisionGroup";
@@ -39,5 +38,4 @@ bool GetPhysicsCollisionGroupData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

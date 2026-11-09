@@ -29,7 +29,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -678,5 +677,4 @@ USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer
   return result;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -16,7 +16,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct ValueClipSet {
   std::string name;
@@ -127,5 +126,4 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               ValueClipResolutionInfo* resolution_info = nullptr,
                       TimeInterpolation interpolation = TimeInterpolation::Linear);
 
-}  // namespace next
 }  // namespace lightusd

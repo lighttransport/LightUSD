@@ -24,7 +24,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -55,12 +54,12 @@ bool ReadExplicitPackageBytes(const TextureDecodeOptions& opt,
                               const std::string& asset,
                               std::vector<uint8_t>* out) {
   std::string package, entry;
-  if (!out || !::lightusd::next::AssetResolver::ParsePackagePath(asset, &package, &entry))
+  if (!out || !::lightusd::AssetResolver::ParsePackagePath(asset, &package, &entry))
     return false;
-  if (!::lightusd::next::AssetResolver::IsAbsolutePath(package) && !opt.base_dir.empty())
-    package = ::lightusd::next::AssetResolver::JoinPath(opt.base_dir, package);
-  ::lightusd::next::USDZReadOptions limits;
-  ::lightusd::next::USDZReader reader;
+  if (!::lightusd::AssetResolver::IsAbsolutePath(package) && !opt.base_dir.empty())
+    package = ::lightusd::AssetResolver::JoinPath(opt.base_dir, package);
+  ::lightusd::USDZReadOptions limits;
+  ::lightusd::USDZReader reader;
   if (!reader.OpenFile(package, limits)) return false;
   for (size_t i = 0; i < reader.NumEntries(); ++i) {
     if (reader.EntryName(i) != entry) continue;
@@ -77,7 +76,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
                      const std::vector<size_t>* usdz_candidates,
                      ::lightusd::Image* out) {
   if (asset.empty()) return false;
-  if (::lightusd::next::AssetResolver::IsPackagePath(asset)) {
+  if (::lightusd::AssetResolver::IsPackagePath(asset)) {
     std::vector<uint8_t> bytes;
     if (!ReadExplicitPackageBytes(opt, asset, &bytes) ||
         !SourceImageWithinLimit(opt, bytes.data(), bytes.size(), asset)) return false;
@@ -106,7 +105,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
   }
   if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
-  if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
+  if (!::lightusd::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
@@ -145,7 +144,7 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
                      const std::vector<size_t>* usdz_candidates,
                      std::vector<uint8_t>* out) {
   if (asset.empty() || !out) return false;
-  if (::lightusd::next::AssetResolver::IsPackagePath(asset))
+  if (::lightusd::AssetResolver::IsPackagePath(asset))
     return ReadExplicitPackageBytes(opt, asset, out);
   if (opt.usdz && usdz_candidates) {
     for (size_t i : *usdz_candidates) {
@@ -163,14 +162,14 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
   }
   if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
-  if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
+  if (!::lightusd::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
   std::ifstream f(path, std::ios::binary | std::ios::ate);
   if (!f) return false;
   size_t n = 0;
-  if (!::lightusd::next::SafeStreamSize(f, 0, &n)) return false;
+  if (!::lightusd::SafeStreamSize(f, 0, &n)) return false;
   if (opt.max_source_bytes != 0 &&
       static_cast<uint64_t>(n) > opt.max_source_bytes) {
     return false;
@@ -243,7 +242,7 @@ bool ToDecoded(::lightusd::Image* src, bool force_rgba,
       }
       uint16_t h = 0;
       std::memcpy(&h, src->data.data() + index * sizeof(uint16_t), sizeof(h));
-      return ::lightusd::next::HalfToFloat(h);
+      return ::lightusd::HalfToFloat(h);
     };
     for (size_t i = 0; i < npix; ++i) {
       const size_t s = i * ch;
@@ -406,7 +405,7 @@ bool TextureDecoder::AttachBudgetLease(DecodedImage* image, bool srgb) {
   if (bytes > max_size) return false;
   if (budget_state_->try_add(bytes)) {
     image->budget_lease =
-        std::make_shared<::lightusd::next::TextureBudgetLease>(
+        std::make_shared<::lightusd::TextureBudgetLease>(
             budget_state_, bytes);
     return true;
   }
@@ -445,7 +444,7 @@ bool TextureDecoder::AttachBudgetLease(DecodedImage* image, bool srgb) {
     budget_state_->resident.fetch_add(bytes, std::memory_order_relaxed);
   }
   image->budget_lease =
-      std::make_shared<::lightusd::next::TextureBudgetLease>(
+      std::make_shared<::lightusd::TextureBudgetLease>(
           budget_state_, bytes);
   return true;
 }
@@ -577,6 +576,5 @@ std::string ReplaceUdimToken(const std::string& asset, int udim) {
   return out;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

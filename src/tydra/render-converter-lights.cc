@@ -7,11 +7,11 @@
 #include "schema/usd-lux.hh"
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim;
 namespace {
 
-bool GetBool(const ::lightusd::next::AttributeEval& eval,
+bool GetBool(const ::lightusd::AttributeEval& eval,
              const UsdPrim& prim, const char* name, bool* out) {
   if (!out) return false;
   const auto result = eval.EvalBool(prim, name);
@@ -19,7 +19,7 @@ bool GetBool(const ::lightusd::next::AttributeEval& eval,
   *out = *result;
   return true;
 }
-bool GetFloat(const ::lightusd::next::AttributeEval& eval,
+bool GetFloat(const ::lightusd::AttributeEval& eval,
               const UsdPrim& prim, const char* name, float* out) {
   if (!out) return false;
   if (const auto result = eval.EvalFloat(prim, name)) {
@@ -32,7 +32,7 @@ bool GetFloat(const ::lightusd::next::AttributeEval& eval,
   }
   return false;
 }
-bool GetFloat3(const ::lightusd::next::AttributeEval& eval,
+bool GetFloat3(const ::lightusd::AttributeEval& eval,
                const UsdPrim& prim, const char* name,
                float* x, float* y, float* z) {
   if (!x || !y || !z) return false;
@@ -50,14 +50,14 @@ bool GetFloat3(const ::lightusd::next::AttributeEval& eval,
   }
   return false;
 }
-bool GetToken(const ::lightusd::next::AttributeEval& eval,
+bool GetToken(const ::lightusd::AttributeEval& eval,
               const UsdPrim& prim, const char* name, std::string* out) {
   if (!out) return false;
   if (const auto result = eval.EvalToken(prim, name)) { *out = *result; return true; }
   if (const auto result = eval.EvalString(prim, name)) { *out = *result; return true; }
   return false;
 }
-bool ReadStringLikeProperty(const ::lightusd::next::AttributeEval& eval,
+bool ReadStringLikeProperty(const ::lightusd::AttributeEval& eval,
                             const UsdPrim& prim, const char* name,
                             std::string* out) {
   if (!out) return false;
@@ -81,14 +81,14 @@ std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim, const char
 
 bool RenderSceneConverter::Impl::ConvertLight(
     const Stage& stage, const UsdPrim& prim, RenderLight* out) {
-  if (!out || !::lightusd::tydra::next::IsLight(prim)) {
+  if (!out || !::lightusd::tydra::IsLight(prim)) {
     SetLastError("Invalid light prim");
     return false;
   }
 
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
 
   // Determine light type
@@ -258,4 +258,4 @@ bool RenderSceneConverter::Impl::ConvertLight(
 
   return true;
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstring>
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -744,5 +743,4 @@ std::string ValidationOptions::group_summary() const {
   return s;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -23,7 +23,6 @@
 #include <cstdlib>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -563,5 +562,4 @@ ExpressionEvaluation EvaluateAssetPathExpression(const std::string& path,
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

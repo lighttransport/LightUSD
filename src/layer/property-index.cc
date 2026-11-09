@@ -12,7 +12,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // PropNameTable
@@ -508,5 +507,4 @@ const std::vector<PropSlot>& PropIndex::slots() const { return slots_; }
 size_t PropIndex::size() const { return slots_.size(); }
 bool PropIndex::is_sorted() const { return sorted_; }
 
-}  // namespace next
 }  // namespace lightusd

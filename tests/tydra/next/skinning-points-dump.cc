@@ -8,7 +8,7 @@
 #include "tydra/render-extract.hh"
 int main(int argc,char** argv){
  if(argc!=3)return 2;
- namespace n=lightusd::next;namespace t=lightusd::tydra::next;
+ namespace n=lightusd;namespace t=lightusd::tydra;
  n::Stage stage;std::string error,warn;
  if(!n::LoadUSDComposed(argv[1],&stage,&warn,&error)){std::cerr<<error;return 1;}
  char* end=nullptr;const double time=std::strtod(argv[2],&end);

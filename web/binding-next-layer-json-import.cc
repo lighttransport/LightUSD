@@ -12,7 +12,7 @@
 #include <cstring>
 #include <limits>
 #include <utility>
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 #include "core/security-policy.hh"
 #include "parser/lexer.hh"
 #include "parser/value-parser.hh"

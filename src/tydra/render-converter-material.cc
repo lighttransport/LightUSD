@@ -38,8 +38,8 @@
 #include <iomanip>
 #include <atomic>
 #include <unordered_set>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
 constexpr float kAlphaEpsilon = 1.0e-6f;
 
@@ -124,7 +124,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   const UsdPrim material = shader.GetParent();
   if (!material.IsValid()) return {};
   std::vector<UsdPrim> graphs;
-  ::lightusd::next::AttributeEval shader_connections(&stage);
+  ::lightusd::AttributeEval shader_connections(&stage);
   for (const std::string& prop : shader.GetPropertyNames()) {
     if (prop.compare(0, 7, "inputs:") != 0 ||
         !shader_connections.HasConnection(shader, prop)) continue;
@@ -132,7 +132,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
         shader_connections.GetConnectionPath(shader, prop);
     UsdPrim candidate = stage.GetPrimAtPath(
         SourcePrimPathFromConnection(connection));
-    if (::lightusd::next::IsNodeGraph(candidate) &&
+    if (::lightusd::IsNodeGraph(candidate) &&
         std::none_of(graphs.begin(), graphs.end(), [&](const UsdPrim& item) {
           return item.GetPath() == candidate.GetPath();
         })) {
@@ -142,7 +142,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   for (size_t i = 0; i < material.GetChildCount(); ++i) {
     if (!graphs.empty()) break;
     UsdPrim child = material.GetChildAt(i);
-    if (::lightusd::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
+    if (::lightusd::IsNodeGraph(child)) { graphs.push_back(child); break; }
   }
   const bool direct_graph = graphs.empty();
   const bool graph_forest = graphs.size() > 1;
@@ -154,18 +154,18 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   std::function<void(const UsdPrim&)> collect_nodes = [&](const UsdPrim& parent) {
     for (size_t ci = 0; ci < parent.GetChildCount(); ++ci) {
       const UsdPrim child = parent.GetChildAt(ci);
-      if (::lightusd::next::IsShader(child)) graph_nodes.push_back(child);
-      else if (::lightusd::next::IsNodeGraph(child)) collect_nodes(child);
+      if (::lightusd::IsShader(child)) graph_nodes.push_back(child);
+      else if (::lightusd::IsNodeGraph(child)) collect_nodes(child);
     }
   };
   if (direct_graph) {
     std::unordered_set<std::string> visited;
     std::function<void(const UsdPrim&)> collect_upstream =
         [&](const UsdPrim& node) {
-          if (!node.IsValid() || !::lightusd::next::IsShader(node) ||
+          if (!node.IsValid() || !::lightusd::IsShader(node) ||
               node.GetPath() == shader.GetPath() ||
               !visited.insert(node.GetPath().str()).second) return;
-          ::lightusd::next::AttributeEval eval(&stage);
+          ::lightusd::AttributeEval eval(&stage);
           for (const std::string& prop : node.GetPropertyNames()) {
             if (prop.compare(0, 7, "inputs:") != 0 ||
                 !eval.HasConnection(node, prop)) continue;
@@ -215,10 +215,10 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     for (int depth = 0; depth < 16; ++depth) {
       const UsdPrim source = stage.GetPrimAtPath(
           SourcePrimPathFromConnection(connection));
-      if (!source.IsValid() || !::lightusd::next::IsNodeGraph(source)) break;
+      if (!source.IsValid() || !::lightusd::IsNodeGraph(source)) break;
       const std::string property = ConnectionPropertyName(connection);
       if (property.empty()) break;
-      ::lightusd::next::AttributeEval eval(&stage);
+      ::lightusd::AttributeEval eval(&stage);
       if (!eval.HasConnection(source, property)) break;
       const std::string forwarded = eval.GetConnectionPath(source, property);
       if (forwarded.empty() || forwarded == connection) break;
@@ -251,7 +251,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
        << "\",\"type\":\"" << JsonEscape(node_id)
        << "\",\"inputs\":[";
     bool first_input = true;
-    ::lightusd::next::AttributeEval eval(&stage);
+    ::lightusd::AttributeEval eval(&stage);
     for (const std::string& prop : node.GetPropertyNames()) {
       if (prop.compare(0, 7, "inputs:") != 0) continue;
       if (!first_input) os << ',';
@@ -269,14 +269,14 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
            << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << '"';
       } else if (const Value* value = node.GetPropertyValueOrEarliestTimeSample(prop)) {
         os << ",\"value\":"; EmitNextGraphValue(os, *value);
-        if (const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec()) {
+        if (const ::lightusd::PrimSpec* spec = node.GetPrimSpec()) {
           if (const std::string* type = spec->property_type_name(prop))
             os << ",\"type\":\"" << JsonEscape(*type) << '"';
         }
       }
       std::string color_space;
       bool color_space_authored = false;
-      if (::lightusd::next::color_management::ComputeColorSpaceName(
+      if (::lightusd::color_management::ComputeColorSpaceName(
               node, prop, &color_space, &color_space_authored) &&
           color_space_authored) {
         os << ",\"colorspace\":\"" << JsonEscape(color_space) << '"';
@@ -287,7 +287,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   }
   os << "],\"outputs\":[";
   bool first_output = true;
-  ::lightusd::next::AttributeEval shader_eval(&stage);
+  ::lightusd::AttributeEval shader_eval(&stage);
   auto runtime_input_name = [&](const std::string& name) {
     if (!volume_graph) return name;
     if (name == "density") return std::string("volume_density");
@@ -318,7 +318,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
          << "\"}";
     }
   } else for (const UsdPrim& graph : graphs) {
-    ::lightusd::next::AttributeEval graph_eval(&stage);
+    ::lightusd::AttributeEval graph_eval(&stage);
     for (const std::string& prop : graph.GetPropertyNames()) {
       if (prop.compare(0, 8, "outputs:") != 0 ||
           !graph_eval.HasConnection(graph, prop)) continue;
@@ -347,7 +347,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     const UsdPrim source = stage.GetPrimAtPath(
         SourcePrimPathFromConnection(connection));
     if (direct_graph) {
-      if (!::lightusd::next::IsShader(source) ||
+      if (!::lightusd::IsShader(source) ||
           graph_node_names.find(source.GetPath().str()) == graph_node_names.end())
         continue;
       if (!first_connection) os << ',';
@@ -357,7 +357,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
          << "\",\"output\":\"" << JsonEscape(prop.substr(7)) << "\"}";
       continue;
     }
-    if (!::lightusd::next::IsNodeGraph(source)) continue;
+    if (!::lightusd::IsNodeGraph(source)) continue;
     const auto graph_it = std::find_if(
         graphs.begin(), graphs.end(), [&](const UsdPrim& graph) {
           return graph.GetPath() == source.GetPath();
@@ -436,7 +436,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
                                            const UsdPrim& prim,
                                            RenderMaterial* out,
                                            RenderScene* scene) {
-  if (!out || !::lightusd::next::IsMaterial(prim)) {
+  if (!out || !::lightusd::IsMaterial(prim)) {
     SetLastError("Invalid material prim");
     return false;
   }
@@ -452,9 +452,9 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
   // and color_config_scene_ is a shared member no worker thread may write.
   if (scene && scene != color_config_scene_ && !tl_material_local_scope_) {
     color_config_scene_ = scene;
-    ::lightusd::next::color_management::RenderingColorConfig color_config;
+    ::lightusd::color_management::RenderingColorConfig color_config;
     std::string color_warning;
-    if (::lightusd::next::color_management::ResolveRenderingColorConfig(
+    if (::lightusd::color_management::ResolveRenderingColorConfig(
             stage, config_.material.render_settings_path, &color_config,
             &color_warning)) {
       scene->render_settings_path = color_config.render_settings_path;
@@ -481,12 +481,12 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
   // converted into shader networks).
   {
     const std::string disp =
-        ::lightusd::next::GetDisplacementShader(stage, prim);
+        ::lightusd::GetDisplacementShader(stage, prim);
     if (!disp.empty()) {
       out->has_displacement = true;
       out->displacement_shader_path = disp;
     }
-    const std::string vol = ::lightusd::next::GetVolumeShader(stage, prim);
+    const std::string vol = ::lightusd::GetVolumeShader(stage, prim);
     if (!vol.empty()) {
       out->has_volume = true;
       out->volume_shader_path = vol;
@@ -509,8 +509,8 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
   // fallback on outputs:surface and the authoritative MaterialX graph on
   // outputs:mtlx:surface. Prefer the explicit MaterialX render context; using
   // the fallback made every graph-driven parameter look unauthored.
-  if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-    const std::vector<::lightusd::next::Path>* mtlx_surface =
+  if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+    const std::vector<::lightusd::Path>* mtlx_surface =
         spec->connection("outputs:mtlx:surface");
     if (mtlx_surface && !mtlx_surface->empty()) {
       UsdPrim sp = stage.GetPrimAtPath(
@@ -523,14 +523,14 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
     // prefer the MaterialX terminal. Blender commonly emits a textured OpenPBR
     // graph plus an untextured PreviewSurface fallback; selecting the fallback
     // here silently turns the material white.
-    ::lightusd::next::AttributeEval eval(&stage);
+    ::lightusd::AttributeEval eval(&stage);
     if (eval.HasConnection(prim, "outputs:mtlx:surface")) {
       const std::string mtlx_surface =
           eval.GetConnectionPath(prim, "outputs:mtlx:surface");
       UsdPrim sp = stage.GetPrimAtPath(
           SourcePrimPathFromConnection(mtlx_surface));
       if (sp.IsValid()) candidates.push_back(sp);
-    } else if (const std::vector<::lightusd::next::Path>* targets =
+    } else if (const std::vector<::lightusd::Path>* targets =
                    prim.GetRelationship("outputs:mtlx:surface")) {
       if (!targets->empty()) {
         UsdPrim sp = stage.GetPrimAtPath(
@@ -540,7 +540,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
     }
     // External MaterialX references are synthesized by the next layer
     // registry with this relationship instead of outputs:mtlx:surface.
-    if (const std::vector<::lightusd::next::Path>* sources =
+    if (const std::vector<::lightusd::Path>* sources =
             prim.GetRelationship("mtlx:surface:source")) {
       if (!sources->empty()) {
         UsdPrim sp = stage.GetPrimAtPath(sources->front().str());
@@ -554,7 +554,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
       }
     }
     const std::string surf =
-        ::lightusd::next::GetSurfaceShaderWithRenderContextFallback(stage,
+        ::lightusd::GetSurfaceShaderWithRenderContextFallback(stage,
                                                                     prim);
     if (!surf.empty()) {
       UsdPrim sp = stage.GetPrimAtPath(surf);
@@ -588,20 +588,20 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
               !visited.insert(source.GetPath().str()).second) {
             return;
           }
-          if (!::lightusd::next::IsNodeGraph(source)) return;
+          if (!::lightusd::IsNodeGraph(source)) return;
 
-          const ::lightusd::next::PrimSpec* spec = source.GetPrimSpec();
+          const ::lightusd::PrimSpec* spec = source.GetPrimSpec();
           if (!spec) return;
           static const char* kOutputs[] = {"outputs:surface", "outputs:out"};
           for (const char* output : kOutputs) {
-            const std::vector<::lightusd::next::Path>* connections =
+            const std::vector<::lightusd::Path>* connections =
                 spec->connection(output);
             if (!connections || connections->empty()) continue;
             UsdPrim target = stage.GetPrimAtPath(
                 SourcePrimPathFromConnection((*connections)[0].str()));
             if (!target.IsValid()) continue;
             candidates.push_back(target);
-            if (::lightusd::next::IsNodeGraph(target)) {
+            if (::lightusd::IsNodeGraph(target)) {
               append_graph_shader(target, depth + 1);
             }
             return;
@@ -615,7 +615,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
 
   for (const auto& child : candidates) {
     if (found_shader) break;
-    if (::lightusd::next::IsShader(child)) {
+    if (::lightusd::IsShader(child)) {
       std::string shader_id;
       GetToken(child, "info:id", &shader_id);
 
@@ -909,7 +909,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
     std::string displacementId;
     GetToken(displacement, "info:id", &displacementId);
     if (displacement.IsValid() && displacementId == "PxrDisplace") {
-      ::lightusd::next::AttributeEval eval(&stage);
+      ::lightusd::AttributeEval eval(&stage);
       eval.SetTime(config_.time_code);
       const std::string scalarConnection =
           eval.GetConnectionPath(displacement, "inputs:dispScalar");
@@ -987,4 +987,4 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
 
   return found_shader;
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

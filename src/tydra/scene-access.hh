@@ -3,7 +3,7 @@
 //
 // Tydra Next - Scene Access API
 //
-// Provides traversal and query functions for next::Stage
+// Provides traversal and query functions for ::lightusd::Stage
 
 #pragma once
 
@@ -17,12 +17,11 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-using ::lightusd::next::Stage;
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
-using ::lightusd::next::TypeId;
+using ::lightusd::Stage;
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
+using ::lightusd::TypeId;
 
 //
 // Prim type checking
@@ -108,9 +107,9 @@ std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name);
 /// above duplicate the whole array, which for something like
 /// `primvars:skel:jointIndices:indices` on a dense skin is tens of MB copied
 /// and thrown away.
-::lightusd::next::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
+::lightusd::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
                                             const std::string& name);
-::lightusd::next::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
+::lightusd::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
                                             const std::string& name);
 
 //
@@ -130,9 +129,9 @@ std::string GetBoundSkeleton(const UsdPrim& prim);
 // Transform operations
 //
 
-using ::lightusd::next::ComputeLocalTransform;
-using ::lightusd::next::ComputeWorldTransform;
-using ::lightusd::next::HasResetXformStack;
+using ::lightusd::ComputeLocalTransform;
+using ::lightusd::ComputeWorldTransform;
+using ::lightusd::HasResetXformStack;
 
 //
 // Hierarchy access
@@ -165,9 +164,9 @@ struct GeomSubset {
   /// full duplicate of every subset's face-index list per mesh, on top of the
   /// working copy the consumer builds anyway. Null when unauthored; use
   /// indices() for an empty-safe read.
-  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
+  ::lightusd::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+  ::lightusd::ValueArrayView<const int32_t> indices() const {
     return indices_view;
   }
 
@@ -200,9 +199,9 @@ struct Primvar {
   /// Copying every index array here duplicated arrays the caller often throws
   /// away immediately (the render converter skips `skel:`-prefixed primvars
   /// outright). Use indices() for an empty-safe read.
-  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
+  ::lightusd::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+  ::lightusd::ValueArrayView<const int32_t> indices() const {
     return indices_view;
   }
 };
@@ -279,6 +278,5 @@ const Value* ResolveConnection(const Stage& stage, const UsdPrim& prim, const st
 // Get connected prim path (for input:xxx.connect)
 std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

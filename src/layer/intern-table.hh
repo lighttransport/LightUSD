@@ -16,7 +16,6 @@
 #include "core/string-index.hh"
 
 namespace lightusd {
-namespace next {
 namespace detail {
 
 template <typename IdT, size_t MaxN>
@@ -92,5 +91,4 @@ class StringInternTable {
 };
 
 }  // namespace detail
-}  // namespace next
 }  // namespace lightusd

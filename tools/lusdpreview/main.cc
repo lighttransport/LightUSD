@@ -11,7 +11,7 @@
 #include "tydra/scene-preview.hh"
 
 int main(int argc, char** argv) {
-  using namespace lightusd::tydra::next;
+  using namespace lightusd::tydra;
   ScenePreviewRequest request;
   std::string argument_error;
   if (!ExtractScenePreviewArguments(&argc, argv, &request, &argument_error)) {
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   options.composition.max_array_elements=static_cast<size_t>(std::min(uint64_t(1)<<30,options.host_budget_bytes/16));
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   if (!budget_explicit) {
     uint64_t capacity = 0, available = 0;
     // Capacity is supplied by the application; conversion does no GPU probing.

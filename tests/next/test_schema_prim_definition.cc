@@ -8,7 +8,7 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
-using namespace lightusd::next;
+using namespace lightusd;
 
 #define CHECK(c)                                                    \
   do {                                                              \

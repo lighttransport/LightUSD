@@ -11,7 +11,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 /// Time sample interpolation mode
 /// Note: This is distinct from primvar Interpolation (Constant, Vertex, etc.)
@@ -187,5 +186,4 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
   return result;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -15,7 +15,6 @@
 #include <map>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // PhysicsRigidBodyAPI
@@ -151,5 +150,4 @@ bool HasPhysicsLimitAPI(const UsdPrim& prim, const std::string& dof);
 bool GetPhysicsLimitData(const UsdPrim& prim, const std::string& dof,
                           PhysicsLimitData* out);
 
-} // namespace next
 } // namespace lightusd

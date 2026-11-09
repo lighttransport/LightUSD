@@ -20,7 +20,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 // ---------------------------------------------------------------------------
@@ -831,5 +830,4 @@ void ValidateDictValue(const Value &v, const std::string &rule_id,
 }
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

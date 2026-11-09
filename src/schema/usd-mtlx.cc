@@ -8,7 +8,6 @@
 #include <cstring>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Typed prims
@@ -236,5 +235,4 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

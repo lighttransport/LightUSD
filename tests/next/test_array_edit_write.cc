@@ -21,7 +21,7 @@
 #include "crate/crate-writer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static int g_failures = 0;
 #define AE_CHECK(cond, msg)                                                  \

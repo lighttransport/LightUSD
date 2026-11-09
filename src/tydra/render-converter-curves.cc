@@ -16,7 +16,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -170,9 +169,9 @@ bool ReadFloatsFlexible(const UsdPrim& prim, const char* name, double time,
   }
   const Value* v = GetAttribute(prim, name);
   if (!v) return false;
-  ::lightusd::next::ArrayScratch<double> scratch;
-  ::lightusd::next::ArrayView<double> view;
-  if (!::lightusd::next::GetDoubleArrayView(*v, &scratch, &view) ||
+  ::lightusd::ArrayScratch<double> scratch;
+  ::lightusd::ArrayView<double> view;
+  if (!::lightusd::GetDoubleArrayView(*v, &scratch, &view) ||
       view.empty()) {
     return false;
   }
@@ -214,11 +213,11 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
 
-  ::lightusd::next::EvalOptions evaluation;
-  evaluation.time = ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+  ::lightusd::EvalOptions evaluation;
+  evaluation.time = ::lightusd::TimeQuery::Numeric(config_.time_code);
   evaluation.follow_connections = false;
   evaluation.clip_stage_loader = config_.animation.clip_stage_loader;
-  evaluation.clip_stage_cache = std::make_shared<::lightusd::next::ValueClipStageCache>();
+  evaluation.clip_stage_cache = std::make_shared<::lightusd::ValueClipStageCache>();
   ValueArrayRead<int32_t> counts;
   if (!ReadIntArray(prim, "curveVertexCounts", evaluation, &counts) ||
       counts.empty()) {
@@ -524,10 +523,10 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
                      &colors) &&
       !colors.empty() && (colors.view.size % 3) == 0) {
     std::string interp_tok = "constant";
-    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::lightusd::next::PropMeta* pm =
+    if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
-        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -568,10 +567,10 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
                      &opacities) && !opacities.empty()) {
     std::string interp_tok = "constant";
-    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::lightusd::next::PropMeta* pm =
+    if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::PropMeta* pm =
               spec->property_meta("primvars:displayOpacity")) {
-        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -875,6 +874,5 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
 }
 
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

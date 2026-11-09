@@ -4,7 +4,6 @@
 #include "layer/int64-listop.hh"
 
 namespace lightusd {
-namespace next {
 
 std::string DictMetaLine(const std::string& key, const Value& v, int level,
                          const USDAWriteOptions& opts);
@@ -1635,5 +1634,4 @@ void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

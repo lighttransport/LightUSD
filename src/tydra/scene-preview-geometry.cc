@@ -7,7 +7,6 @@
 #include "scene-preview-internal.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace {
 void Put(std::vector<uint32_t>& out, size_t i, float value) {
@@ -149,6 +148,5 @@ bool GeometryBatch::flush() {
   return build.check("geometry-kernel", index);
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

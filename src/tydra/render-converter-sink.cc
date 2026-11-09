@@ -47,7 +47,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -57,7 +56,7 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
   // Core UsdShade resolution now validates targets at every purpose/ancestor
   // step and associates bindMaterialAs with the relationship that actually
   // won. Keep one implementation shared by the converter and applications.
-  return ::lightusd::next::GetInheritedBoundMaterialPathForPurpose(
+  return ::lightusd::GetInheritedBoundMaterialPathForPurpose(
       stage, prim_path, purpose.empty() ? "preview" : purpose);
 }
 
@@ -104,7 +103,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   ResetOperationState();
   ResetImageIdCache();
   if (!config_.limits.valid() || config_.execution.max_threads < 0) {
-    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.status = ::lightusd::OperationStatus::InvalidArgument;
     result.error = "invalid converter limits or execution policy";
     return result;
   }
@@ -116,7 +115,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   auto chunk_budget = std::make_shared<ChunkAllocationBudget>(chunk_limit);
   ScopedChunkAllocationBudget chunk_budget_scope(chunk_budget);
   if (!sink) {
-    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.status = ::lightusd::OperationStatus::InvalidArgument;
     result.error = "ConvertToSink: null scene sink";
     return result;
   }
@@ -124,7 +123,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     return config_.cancel_callback && config_.cancel_callback();
   };
   if (cancellation_requested()) {
-    result.status = ::lightusd::next::OperationStatus::Cancelled;
+    result.status = ::lightusd::OperationStatus::Cancelled;
     result.cancelled = true;
     result.error = "conversion cancelled";
     return result;
@@ -143,9 +142,9 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   catalog.start_time = meta.startTimeCode;
   catalog.end_time = meta.endTimeCode;
   catalog.frames_per_second = meta.timeCodesPerSecond;
-  ::lightusd::next::color_management::RenderingColorConfig color_config;
+  ::lightusd::color_management::RenderingColorConfig color_config;
   std::string color_warning;
-  (void)::lightusd::next::color_management::ResolveRenderingColorConfig(
+  (void)::lightusd::color_management::ResolveRenderingColorConfig(
       stage, config_.material.render_settings_path, &color_config,
       &color_warning);
   catalog.render_settings_path = color_config.render_settings_path;
@@ -171,7 +170,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   RenderExtractResult extracted;
   CollectRenderPrims(stage, xopts, &extracted);
   if (extracted.limit_exceeded) {
-    result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+    result.status = ::lightusd::OperationStatus::ResourceLimit;
     result.error = "render extraction limit exceeded";
     return result;
   }
@@ -180,7 +179,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
       (stage.HasTimeSamples() || stage.HasValueClips());
   const bool has_time_samples = emit_animations;
   if (cancellation_requested()) {
-    result.status = ::lightusd::next::OperationStatus::Cancelled;
+    result.status = ::lightusd::OperationStatus::Cancelled;
     result.cancelled = true;
     result.error = "conversion cancelled";
     return result;
@@ -381,7 +380,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   }
 
   if (catalog.memory_usage() > config_.limits.max_resident_bytes) {
-    result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+    result.status = ::lightusd::OperationStatus::ResourceLimit;
     result.error = "stream render catalog exceeds resident memory limit";
     result.warnings = std::move(warnings_);
     return result;
@@ -398,7 +397,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     return result;
   }
   if (!sink->BeginScene(std::move(catalog))) {
-    result.status = ::lightusd::next::OperationStatus::SinkRejected;
+    result.status = ::lightusd::OperationStatus::SinkRejected;
     result.error = "scene sink rejected catalog";
     return result;
   }
@@ -417,8 +416,8 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     capture_diagnostics();
     sink->AbortScene();
     result.status = cancelled
-                        ? ::lightusd::next::OperationStatus::Cancelled
-                        : ::lightusd::next::OperationStatus::SinkRejected;
+                        ? ::lightusd::OperationStatus::Cancelled
+                        : ::lightusd::OperationStatus::SinkRejected;
     result.cancelled = cancelled;
     result.error = error;
     result.warnings = std::move(warnings_);
@@ -582,7 +581,7 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   if (config_.strict_conversion && !warnings_.empty()) {
     sink->AbortScene();
     capture_diagnostics();
-    result.status = ::lightusd::next::OperationStatus::InvalidData;
+    result.status = ::lightusd::OperationStatus::InvalidData;
     result.error = "strict render conversion rejected warnings: " + warnings_.front();
     result.warnings = std::move(warnings_);
     return result;
@@ -593,11 +592,10 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     return result;
   }
   result.success = true;
-  result.status = ::lightusd::next::OperationStatus::Ok;
+  result.status = ::lightusd::OperationStatus::Ok;
   result.warnings = std::move(warnings_);
   return result;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

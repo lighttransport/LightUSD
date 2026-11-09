@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // LightUSD Next - dictionary value parser.
-// Included inside namespace lightusd::next.
+// Included inside namespace lightusd.
 
 // Recursive dictionary body parser. Grammar (USD):
 //   { [<typeName>] <key> = <value>   ... }

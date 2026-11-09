@@ -28,7 +28,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 /// Prim specifier (def, over, class)
 enum class PrimSpecifier : uint8_t {
@@ -553,5 +552,4 @@ private:
   PrimMetadata meta_;
 };
 
-}  // namespace next
 }  // namespace lightusd

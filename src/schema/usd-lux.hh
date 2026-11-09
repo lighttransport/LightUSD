@@ -10,7 +10,6 @@
 #include "eval/attribute-eval.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Light type enumeration
 enum class LightType {
@@ -142,5 +141,4 @@ bool IsCylinderLight(const UsdPrim& prim);
 bool GetCylinderLightData(const Stage& stage, const UsdPrim& prim,
                           CylinderLightData* out, double time = 0.0);
 
-}  // namespace next
 }  // namespace lightusd

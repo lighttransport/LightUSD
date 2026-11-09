@@ -21,7 +21,6 @@
 #include <functional>
 
 namespace lightusd {
-namespace next {
 
 /// Composition arc types (in LIVRPS strength order)
 enum class ArcType : uint8_t {
@@ -380,5 +379,4 @@ bool HasCompositionArcs(const PrimSpec& prim);
 /// including local edits, namespace changes and inactive-subtree pruning.
 bool LayerNeedsComposition(const Layer& layer);
 
-}  // namespace next
 }  // namespace lightusd

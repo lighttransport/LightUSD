@@ -16,8 +16,8 @@
 #include "tydra/vol/volume-field.hh"
 
 namespace fs = std::filesystem;
-namespace usd = lightusd::next;
-namespace td = lightusd::tydra::next;
+namespace usd = lightusd;
+namespace td = lightusd::tydra;
 namespace {
 void Require(bool ok, const std::string& message) {
   if (!ok) {

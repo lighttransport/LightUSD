@@ -7,7 +7,6 @@
 #include <algorithm>
 
 namespace lightusd {
-namespace next {
 namespace crate_stage_detail {
 // Decode dictionary fields preserved as USDA text by older crate writers.
 // Return an empty Value on failure, matching ordinary field decoding.
@@ -289,5 +288,4 @@ void CrateReader::Impl::DecodeStageMetadata(
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -8,7 +8,6 @@
 #include "type-id.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Immutable built-in type metadata. Variable-sized types have size == 0.
 /// Lifetime operations belong to Value, not a per-type callback table.
@@ -31,5 +30,4 @@ const TypeInfo* GetTypeInfo(TypeId id);
 /// Compatibility no-op: built-in metadata needs no runtime initialization.
 void InitTypeRegistry();
 
-}  // namespace next
 }  // namespace lightusd

@@ -5,11 +5,11 @@
 #include <memory>
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim;
 namespace {
 std::string FirstValidBoundMaterialPath(const Stage& stage,
-                                        const ::lightusd::next::UsdPrim& prim,
+                                        const ::lightusd::UsdPrim& prim,
                                         const std::string& purpose) {
   static const char* kPreviewOrder[] = {"material:binding:preview",
                                         "material:binding",
@@ -21,11 +21,11 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
                                                        : kPreviewOrder;
   for (size_t i = 0; i < 3; ++i) {
     const char* rel = bindingOrder[i];
-    const std::vector<::lightusd::next::Path>* targets =
+    const std::vector<::lightusd::Path>* targets =
         prim.GetRelationship(rel);
     if (!targets || targets->empty()) continue;
     const std::string p = (*targets)[0].str();
-    if (!p.empty() && ::lightusd::tydra::next::IsMaterial(
+    if (!p.empty() && ::lightusd::tydra::IsMaterial(
                           stage.GetPrimAtPath(p))) {
       return p;
     }
@@ -39,7 +39,7 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
   // Core UsdShade resolution now validates targets at every purpose/ancestor
   // step and associates bindMaterialAs with the relationship that actually
   // won. Keep one implementation shared by the converter and applications.
-  return ::lightusd::next::GetInheritedBoundMaterialPathForPurpose(
+  return ::lightusd::GetInheritedBoundMaterialPathForPurpose(
       stage, prim_path, purpose.empty() ? "preview" : purpose);
 }
 }  // namespace
@@ -197,4 +197,4 @@ void RenderSceneConverter::Impl::AssignPointInstanceDrawMaterials(RenderScene* s
     draw.material_id = scene->meshes[static_cast<size_t>(draw.mesh_id)].material_id;
   }
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

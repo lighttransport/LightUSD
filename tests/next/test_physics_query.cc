@@ -7,7 +7,7 @@
 #include "schema/physics-query.hh"
 #include "layer/layer.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 void Check(bool ok, const char* message) {
   if (!ok) { std::cerr << message << ": " << lightusd_last_error() << '\n'; std::exit(1); }
 }

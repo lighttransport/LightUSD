@@ -9,7 +9,7 @@
 #include <cmath>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 
 Matrix4 LightTransformMatrix(const Matrix4 &world,
@@ -280,4 +280,4 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
 
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

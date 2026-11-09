@@ -21,7 +21,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// A std::vector<std::string> that costs one pointer while empty.
 class LazyStringList {
@@ -263,7 +262,6 @@ class LazyString {
   std::unique_ptr<std::string> s_;
 };
 
-}  // namespace next
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_NEXT_LAYER_LAZY_CONTAINERS_HH_

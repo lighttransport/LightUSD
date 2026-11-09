@@ -12,13 +12,10 @@
 #include "core/host-services.hh"
 
 namespace lightusd {
-namespace next {
 class AssetResolver;
-}
 }  // namespace lightusd
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 enum class ScenePreviewKind { Gaussian, Points, Volume };
 enum class PreviewComputeBackend { Auto, Cpu, Vulkan, Cuda };
@@ -57,7 +54,7 @@ struct ScenePreviewOptions {
   size_t batch_roots = 0;  // deterministic small-batch qualification
   std::string cache_directory;
   bool refresh = false;
-  ::lightusd::next::pcp::CompositionOptions composition;
+  ::lightusd::pcp::CompositionOptions composition;
   // False cancels. Called at bounded composition/sampling/output boundaries.
   std::function<bool(const std::string&, uint64_t)> progress;
   PreviewComputeOptions compute_options;
@@ -105,7 +102,7 @@ std::string DefaultScenePreviewCacheDirectory();
 // The returned USD is a portable cache root with relative USDC/VDB sidecars.
 // A cache hit performs dependency checks, but never composes source geometry.
 ScenePreviewResult ConvertScenePreview(
-    const std::string& source, ::lightusd::next::AssetResolver& resolver,
+    const std::string& source, ::lightusd::AssetResolver& resolver,
     const ScenePreviewOptions& options = {});
 
 // Export a cache entry as a portable directory (root.usdc plus sidecars).
@@ -213,6 +210,5 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
 bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
                          uint64_t gpu_capacity, std::string* error);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

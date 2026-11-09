@@ -19,7 +19,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 using crate_stage_detail::kSkipEntry;
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -671,5 +670,4 @@ bool CrateReader::Impl::BuildStage() {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

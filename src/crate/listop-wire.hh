@@ -6,7 +6,6 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 // AOUSD Core 1.1, List Operations: vector order is independent of bit order.
 // The framing decoder retains the raw header. Separate helpers below model
@@ -44,5 +43,4 @@ bool DecodeCrateListOpWire(StreamReader& input, uint64_t max_elements,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

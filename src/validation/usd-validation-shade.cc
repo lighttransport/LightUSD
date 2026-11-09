@@ -19,7 +19,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 // ---------------------------------------------------------------------------
@@ -359,7 +358,7 @@ void ValidateMaterialXSynthesizedMaterial(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Dictionary metadata helpers (next::Dict)
+// Dictionary metadata helpers (::lightusd::Dict)
 // ---------------------------------------------------------------------------
 
 bool GetMetaDouble(DictView dict, const std::string &key, double *out) {
@@ -438,5 +437,4 @@ bool GetMetaDouble2Array(DictView dict, const std::string &key,
 
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

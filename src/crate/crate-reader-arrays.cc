@@ -17,7 +17,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // An empty array (payload 0) is cheaper to build than to look up.
@@ -616,5 +615,4 @@ bool CrateReader::Impl::UnpackArrayUncached(ValueRep rep, Value& out) {
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

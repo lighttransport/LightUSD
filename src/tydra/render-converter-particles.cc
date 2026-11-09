@@ -12,7 +12,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -35,12 +34,12 @@ void FitPerParticle(std::vector<float>* v, size_t count, size_t width, const flo
 
 }  // namespace
 
-bool ConvertParticleField(const ::lightusd::next::Stage& stage, const UsdPrim& prim, double time,
+bool ConvertParticleField(const ::lightusd::Stage& stage, const UsdPrim& prim, double time,
                           RenderParticleField* out) {
-  if (!out || !::lightusd::next::IsParticleField(prim)) return false;
-  ::lightusd::next::ParticleFieldData data;
+  if (!out || !::lightusd::IsParticleField(prim)) return false;
+  ::lightusd::ParticleFieldData data;
   std::string warning;
-  if (!::lightusd::next::GetParticleFieldData(stage, prim, &data, time, &warning)) return false;
+  if (!::lightusd::GetParticleFieldData(stage, prim, &data, time, &warning)) return false;
   *out = RenderParticleField{};
   out->prim_path = prim.GetPath().str();
   out->type_name = prim.GetTypeName();
@@ -90,9 +89,9 @@ bool ConvertParticleField(const ::lightusd::next::Stage& stage, const UsdPrim& p
     FitPerParticle(&out->sh_coefficients, n, 3, kGray, "spherical harmonics", out);
   }
   switch (data.kernel) {
-    case ::lightusd::next::ParticleKernel::GaussianEllipsoid: out->kernel = "gaussianEllipsoid"; break;
-    case ::lightusd::next::ParticleKernel::GaussianSurflet: out->kernel = "gaussianSurflet"; break;
-    case ::lightusd::next::ParticleKernel::ConstantSurflet: out->kernel = "constantSurflet"; break;
+    case ::lightusd::ParticleKernel::GaussianEllipsoid: out->kernel = "gaussianEllipsoid"; break;
+    case ::lightusd::ParticleKernel::GaussianSurflet: out->kernel = "gaussianSurflet"; break;
+    case ::lightusd::ParticleKernel::ConstantSurflet: out->kernel = "constantSurflet"; break;
     default: break;
   }
   out->projection_mode_hint = data.projection_mode_hint;
@@ -100,6 +99,5 @@ bool ConvertParticleField(const ::lightusd::next::Stage& stage, const UsdPrim& p
   return true;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

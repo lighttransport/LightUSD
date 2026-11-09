@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // LightUSD Next - array value parsing helpers and optimized bracket-literal parser.
-// Included inside namespace lightusd::next.
+// Included inside namespace lightusd.
 
 // Helper to check if type stores float3-like data
 bool IsFloat3Like(TypeId type) {

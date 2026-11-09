@@ -8,7 +8,6 @@
 #include "prim/identifier.hh"
 
 namespace lightusd {
-namespace next {
 
 bool HasSemanticsLabelsAPI(const UsdPrim& prim,
                            const std::string& instance_name) {
@@ -36,5 +35,4 @@ bool GetSemanticsLabels(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -12,7 +12,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Prim type checking (free functions)
@@ -146,5 +145,4 @@ bool SkelSortInfluences(std::vector<int>& indices,
                         std::vector<float>& weights,
                         int numInfluencesPerComponent);
 
-} // namespace next
 } // namespace lightusd

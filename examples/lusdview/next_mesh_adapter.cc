@@ -10,7 +10,7 @@
 #include "tydra/render-converter.hh"
 
 namespace lusdview {
-namespace tydn = ::lightusd::tydra::next;
+namespace tydn = ::lightusd::tydra;
 namespace {
 template <typename Chunked, typename Element>
 bool AppendPublicBuffer(const lightusd::api::RenderScene& scene, int32_t meshId,

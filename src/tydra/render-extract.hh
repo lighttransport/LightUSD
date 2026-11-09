@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Shared render-oriented extraction helpers for next::Stage.
+// Shared render-oriented extraction helpers for ::lightusd::Stage.
 
 #pragma once
 
@@ -20,7 +20,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 enum class RenderPrimKind {
   Other,
@@ -40,10 +39,10 @@ bool IsMeshRenderableTypeName(const std::string& type_name);
 bool IsUnsupportedRenderableTypeName(const std::string& type_name);
 // UsdGeomImageable computed purpose ("default", "render", "proxy" or
 // "guide"): the nearest authored purpose on the prim or an ancestor.
-std::string ComputeInheritedPurpose(const ::lightusd::next::UsdPrim& prim);
+std::string ComputeInheritedPurpose(const ::lightusd::UsdPrim& prim);
 
 struct RenderPrimRecord {
-  ::lightusd::next::UsdPrim prim;
+  ::lightusd::UsdPrim prim;
   RenderPrimKind kind = RenderPrimKind::Other;
   std::string path;
   std::string type_name;
@@ -175,9 +174,9 @@ struct RenderExtractResult {
 };
 
 struct PointInstancerData {
-  ::lightusd::next::UsdPrim prim;
+  ::lightusd::UsdPrim prim;
   std::string path;
-  std::vector<::lightusd::next::Path> prototypes;
+  std::vector<::lightusd::Path> prototypes;
   std::vector<int32_t> proto_indices;
   std::vector<float> positions;
   std::vector<float> orientations;
@@ -187,30 +186,30 @@ struct PointInstancerData {
   std::vector<int64_t> ids;
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
-  std::vector<::lightusd::next::PointInstancerTransform> transforms;
+  std::vector<::lightusd::PointInstancerTransform> transforms;
   bool valid = false;
   std::string validation_error;
 };
 
-bool CollectRenderPrims(const ::lightusd::next::Stage& stage,
+bool CollectRenderPrims(const ::lightusd::Stage& stage,
                         const RenderExtractOptions& options,
                         RenderExtractResult* out);
 
-bool ReadPointInstancerData(const ::lightusd::next::UsdPrim& prim,
+bool ReadPointInstancerData(const ::lightusd::UsdPrim& prim,
                             double time_code,
                             PointInstancerData* out,
                             bool compute_transforms = true);
 
-void GatherMeshPrims(const ::lightusd::next::UsdPrim& root,
-                     std::vector<::lightusd::next::UsdPrim>* out);
+void GatherMeshPrims(const ::lightusd::UsdPrim& root,
+                     std::vector<::lightusd::UsdPrim>* out);
 
-void CollectPrototypePaths(const ::lightusd::next::Stage& stage,
+void CollectPrototypePaths(const ::lightusd::Stage& stage,
                            std::unordered_set<std::string>* out);
 
 template <typename T>
 struct ValueArrayRead {
-  ::lightusd::next::ArrayScratch<T> scratch;
-  ::lightusd::next::ArrayView<T> view;
+  ::lightusd::ArrayScratch<T> scratch;
+  ::lightusd::ArrayView<T> view;
 
   bool empty() const { return view.empty(); }
   size_t size() const { return view.size; }
@@ -232,15 +231,15 @@ struct MeshFloatAttribute {
 // Empty output means no skeleton binding. On failure the caller must reject
 // the mesh; unsupported skinning must not silently render the bind pose.
 bool EvaluateSkinnedPoints(
-    const ::lightusd::next::Stage& stage, const ::lightusd::next::UsdPrim& mesh,
+    const ::lightusd::Stage& stage, const ::lightusd::UsdPrim& mesh,
     double time, const ValueArrayRead<float>& points,
     std::vector<float>* output, std::string* error,
     std::vector<double>* point_normal_matrices = nullptr);
 // Subdivision schemes define their own normals; authored mesh normals are
 // only meaningful for polygonal subdivisionScheme="none" geometry.
-bool MeshUsesAuthoredNormals(const ::lightusd::next::UsdPrim& prim);
+bool MeshUsesAuthoredNormals(const ::lightusd::UsdPrim& prim);
 // Polygonal and bilinear surfaces keep flat normals when none are authored.
-bool MeshUsesGeneratedSmoothNormals(const ::lightusd::next::UsdPrim& prim);
+bool MeshUsesGeneratedSmoothNormals(const ::lightusd::UsdPrim& prim);
 // Smooth shading policy for meshes without authored normals: sum oriented
 // incident polygon corner cross products, then normalize in mesh-local space.
 // Uses evaluated (already deformed) points. Rejects malformed topology.
@@ -248,72 +247,71 @@ bool ComputeMeshSmoothNormals(const ValueArrayRead<float>& points,
                               const ValueArrayRead<int32_t>& counts,
                               const ValueArrayRead<int32_t>& indices,
                               bool left_handed, std::vector<float>* normals);
-bool ReadMeshFloatAttribute(const ::lightusd::next::UsdPrim& prim,
+bool ReadMeshFloatAttribute(const ::lightusd::UsdPrim& prim,
                             const std::string& name,
-                            const ::lightusd::next::EvalOptions& options,
+                            const ::lightusd::EvalOptions& options,
                             size_t components, size_t point_count,
                             size_t corner_count, MeshFloatAttribute* out);
 
-bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim, const char* name,
+bool ReadFloatArray(const ::lightusd::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out);
 // Full evaluation, including clip precedence. The returned array owns any
 // evaluated storage for as long as the caller retains ValueArrayRead.
-bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim, const char* name,
-                    const ::lightusd::next::EvalOptions& options,
+bool ReadFloatArray(const ::lightusd::UsdPrim& prim, const char* name,
+                    const ::lightusd::EvalOptions& options,
                     ValueArrayRead<float>* out);
-bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim,
-                    const ::lightusd::next::PropNameId& name,
+bool ReadFloatArray(const ::lightusd::UsdPrim& prim,
+                    const ::lightusd::PropNameId& name,
                     double time, ValueArrayRead<float>* out);
-bool ReadIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
+bool ReadIntArray(const ::lightusd::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out);
-bool ReadIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
-                  const ::lightusd::next::EvalOptions& options,
+bool ReadIntArray(const ::lightusd::UsdPrim& prim, const char* name,
+                  const ::lightusd::EvalOptions& options,
                   ValueArrayRead<int32_t>* out);
-bool ReadIntArray(const ::lightusd::next::UsdPrim& prim,
-                  const ::lightusd::next::PropNameId& name,
+bool ReadIntArray(const ::lightusd::UsdPrim& prim,
+                  const ::lightusd::PropNameId& name,
                   double time, ValueArrayRead<int32_t>* out);
-bool ReadInt64Array(const ::lightusd::next::UsdPrim& prim, const char* name,
+bool ReadInt64Array(const ::lightusd::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out);
-bool ReadInt64Array(const ::lightusd::next::UsdPrim& prim,
-                    const ::lightusd::next::PropNameId& name,
+bool ReadInt64Array(const ::lightusd::UsdPrim& prim,
+                    const ::lightusd::PropNameId& name,
                     double time, ValueArrayRead<int64_t>* out);
-bool ReadUIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
+bool ReadUIntArray(const ::lightusd::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out);
-bool ReadUIntArray(const ::lightusd::next::UsdPrim& prim,
-                   const ::lightusd::next::PropNameId& name,
+bool ReadUIntArray(const ::lightusd::UsdPrim& prim,
+                   const ::lightusd::PropNameId& name,
                    double time, ValueArrayRead<uint32_t>* out);
-bool ReadUInt64Array(const ::lightusd::next::UsdPrim& prim, const char* name,
+bool ReadUInt64Array(const ::lightusd::UsdPrim& prim, const char* name,
                      double time, ValueArrayRead<uint64_t>* out);
-bool ReadUInt64Array(const ::lightusd::next::UsdPrim& prim,
-                     const ::lightusd::next::PropNameId& name,
+bool ReadUInt64Array(const ::lightusd::UsdPrim& prim,
+                     const ::lightusd::PropNameId& name,
                      double time, ValueArrayRead<uint64_t>* out);
 
-std::vector<float> ReadFloatArrayCopy(const ::lightusd::next::UsdPrim& prim,
+std::vector<float> ReadFloatArrayCopy(const ::lightusd::UsdPrim& prim,
                                       const char* name, double time);
-std::vector<float> ReadFloatArrayCopy(const ::lightusd::next::UsdPrim& prim,
-                                      const ::lightusd::next::PropNameId& name,
+std::vector<float> ReadFloatArrayCopy(const ::lightusd::UsdPrim& prim,
+                                      const ::lightusd::PropNameId& name,
                                       double time);
-std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
+std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::UsdPrim& prim,
                                       const char* name, double time);
-std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
-                                      const ::lightusd::next::PropNameId& name,
+std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::UsdPrim& prim,
+                                      const ::lightusd::PropNameId& name,
                                       double time);
-std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
+std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::UsdPrim& prim,
                                         const char* name, double time);
-std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
-                                        const ::lightusd::next::PropNameId& name,
+std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::UsdPrim& prim,
+                                        const ::lightusd::PropNameId& name,
                                         double time);
-std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
+std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::UsdPrim& prim,
                                         const char* name, double time);
-std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
-                                        const ::lightusd::next::PropNameId& name,
+std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::UsdPrim& prim,
+                                        const ::lightusd::PropNameId& name,
                                         double time);
-std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::UsdPrim& prim,
                                           const char* name, double time);
-std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
-                                          const ::lightusd::next::PropNameId& name,
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::UsdPrim& prim,
+                                          const ::lightusd::PropNameId& name,
                                           double time);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

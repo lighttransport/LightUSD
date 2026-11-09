@@ -10,7 +10,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Typed collision primitives
@@ -39,5 +38,4 @@ struct PhysicsContactData {
   float separation = 0.0f;
 };
 
-} // namespace next
 } // namespace lightusd

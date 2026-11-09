@@ -12,7 +12,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 // A (ptr, len) slice, so the matcher compares path components without the
 // substr() allocations the original implementation did per candidate entry.
@@ -69,6 +68,5 @@ inline std::string UsdzAssetBaseKey(const std::string& asset) {
   return std::string(b.data, b.size);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

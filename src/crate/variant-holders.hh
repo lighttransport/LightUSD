@@ -24,7 +24,6 @@
 #include "layer/layer.hh"
 
 namespace lightusd {
-namespace next {
 
 /// True when `layer` carries inline variant data (PrimVariantSetData with variant
 /// options) for which no bracketed holder prim exists yet — i.e. a crate
@@ -35,5 +34,4 @@ bool LayerNeedsVariantHolders(const Layer& layer);
 /// variants (see file comment). The clone's path index is rebuilt.
 Layer MaterializeVariantHolders(const Layer& layer);
 
-}  // namespace next
 }  // namespace lightusd

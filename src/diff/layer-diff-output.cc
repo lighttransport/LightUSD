@@ -8,7 +8,6 @@
 #include <sstream>
 
 namespace lightusd {
-namespace next {
 using diff_detail::JoinPrimPath;
 
 namespace {
@@ -295,5 +294,4 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
   return ss.str();
 }
 
-}  // namespace next
 }  // namespace lightusd

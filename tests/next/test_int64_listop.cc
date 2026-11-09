@@ -16,7 +16,7 @@
 #include <chrono>
 #include <filesystem>
 
-using namespace lightusd::next;
+using namespace lightusd;
 static int failures = 0;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); ++failures; } } while (0)
 

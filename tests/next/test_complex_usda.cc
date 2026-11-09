@@ -12,7 +12,7 @@
 #include "reader/usda-reader.hh"
 #include "writer/usda-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 void test_cube_with_material() {
   std::cout << "Testing complex cube with material..." << std::endl;

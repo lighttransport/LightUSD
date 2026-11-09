@@ -3,7 +3,7 @@
  *
  * path.c -- C11 USD path string algorithms.
  *
- * The string decomposition behind next::Path (src/next/prim/path.cc): parent,
+ * The string decomposition behind ::lightusd::Path (src/next/prim/path.cc): parent,
  * name, property name, prim path and element splitting, over counted buffers.
  * The C++ Path class owns the std::string and forwards here. Every function
  * writes at most `cap` bytes and sets *out_len to the full length; it returns 0

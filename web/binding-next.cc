@@ -59,8 +59,8 @@
 #include "tydra/render-extract.hh"
 #include "../src/tydra/urdf-to-usd.hh"
 
-namespace tn = lightusd::next;
-namespace tr = lightusd::tydra::next;
+namespace tn = lightusd;
+namespace tr = lightusd::tydra;
 using lightusd::web_next::NextPropertyConnections;
 using lightusd::web_next::NextConnectionPrimPath;
 using lightusd::web_next::BuildNextNodeGraphJson;

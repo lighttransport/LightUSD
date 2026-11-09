@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 enum class DependencyScope {
   AuthoredSelections,
   AllAuthoredVariants,
@@ -48,4 +48,4 @@ struct DependencyReport {
 DependencyReport CollectDependencies(const std::string& root,
     AssetResolver& resolver, const DependencyOptions& options = {});
 std::string DependencyReportToJSON(const DependencyReport& report);
-} }  // namespace lightusd::next
+ }  // namespace lightusd

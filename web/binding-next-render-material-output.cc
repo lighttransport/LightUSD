@@ -8,8 +8,8 @@ namespace lightusd {
 namespace web_next {
 namespace {
 
-using NextRenderMaterial = lightusd::tydra::next::RenderMaterial;
-using NextShaderParam = lightusd::tydra::next::ShaderParam;
+using NextRenderMaterial = lightusd::tydra::RenderMaterial;
+using NextShaderParam = lightusd::tydra::ShaderParam;
 
 static void CopyMaterialParam(lightusd::legacy::tydra::ShaderParam<float>& dst,
                               const NextShaderParam& src) {
@@ -26,12 +26,12 @@ static void CopyMaterialParam(lightusd::legacy::tydra::ShaderParam<lightusd::leg
 }
 
 static lightusd::legacy::tydra::RenderMaterial ToLegacyMaterial(
-    const NextRenderMaterial& src, const lightusd::next::Stage& stage) {
+    const NextRenderMaterial& src, const lightusd::Stage& stage) {
   lightusd::legacy::tydra::RenderMaterial dst;
   dst.name = src.name;
   dst.abs_path = src.prim_path;
-  const lightusd::next::UsdPrim prim = stage.GetPrimAtPath(src.prim_path);
-  const lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
+  const lightusd::UsdPrim prim = stage.GetPrimAtPath(src.prim_path);
+  const lightusd::PrimSpec* spec = prim.GetPrimSpec();
   if (spec && !spec->meta().displayName().empty())
     dst.display_name = spec->meta().displayName();
   dst.materialXConfig.authored = src.mtlx_config.authored;
@@ -155,7 +155,7 @@ static std::string LegacyPreviewMaterialJSON(
 }
 
 static lightusd::legacy::tydra::RenderScene ToLegacyMaterialScene(
-    const lightusd::tydra::next::RenderScene& src) {
+    const lightusd::tydra::RenderScene& src) {
   lightusd::legacy::tydra::RenderScene dst;
   const auto legacy_color_space = [](const std::string& name,
                                      lightusd::legacy::tydra::ColorSpace fallback) {
@@ -181,19 +181,19 @@ static lightusd::legacy::tydra::RenderScene ToLegacyMaterialScene(
     converted.channels = image.channels;
     converted.decoded = image.is_loaded();
     switch (image.color_space) {
-      case lightusd::tydra::next::ColorSpace::sRGB:
+      case lightusd::tydra::ColorSpace::sRGB:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::sRGB; break;
-      case lightusd::tydra::next::ColorSpace::Linear:
+      case lightusd::tydra::ColorSpace::Linear:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_Rec709; break;
-      case lightusd::tydra::next::ColorSpace::Raw:
+      case lightusd::tydra::ColorSpace::Raw:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Raw; break;
-      case lightusd::tydra::next::ColorSpace::ACEScg:
+      case lightusd::tydra::ColorSpace::ACEScg:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_ACEScg; break;
-      case lightusd::tydra::next::ColorSpace::Rec709:
+      case lightusd::tydra::ColorSpace::Rec709:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Rec709; break;
-      case lightusd::tydra::next::ColorSpace::Rec2020:
+      case lightusd::tydra::ColorSpace::Rec2020:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_Rec2020; break;
-      case lightusd::tydra::next::ColorSpace::DisplayP3:
+      case lightusd::tydra::ColorSpace::DisplayP3:
         converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_DisplayP3; break;
       default: converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Unknown; break;
     }
@@ -216,9 +216,9 @@ static lightusd::legacy::tydra::RenderScene ToLegacyMaterialScene(
 }
 
 static lightusd::legacy::tydra::RenderLight ToLegacyLight(
-    const lightusd::tydra::next::RenderLight& src,
-    const lightusd::tydra::next::RenderScene& scene) {
-  using NextType = lightusd::tydra::next::LightType;
+    const lightusd::tydra::RenderLight& src,
+    const lightusd::tydra::RenderScene& scene) {
+  using NextType = lightusd::tydra::LightType;
   using Legacy = lightusd::legacy::tydra::RenderLight;
   Legacy dst;
   dst.name = src.name;
@@ -386,9 +386,9 @@ int RenderStream::outputMaterialStringCopy(int material_id, uint8_t kind,
           value = render_mat->preview_surface_nodegraph_json;
         }
         if (value.empty()) {
-          const lightusd::next::UsdPrim mat = stage_.GetPrimAtPath(rec.prim_path);
-          lightusd::next::UsdPrim shader;
-          const std::vector<lightusd::next::Path>* mtlx_connections =
+          const lightusd::UsdPrim mat = stage_.GetPrimAtPath(rec.prim_path);
+          lightusd::UsdPrim shader;
+          const std::vector<lightusd::Path>* mtlx_connections =
               NextPropertyConnections(mat, "outputs:mtlx:surface");
           if (mtlx_connections && !mtlx_connections->empty()) {
             shader = stage_.GetPrimAtPath(
@@ -396,7 +396,7 @@ int RenderStream::outputMaterialStringCopy(int material_id, uint8_t kind,
           }
           if (!shader.IsValid()) {
             const std::string shader_path =
-                lightusd::next::GetSurfaceShader(stage_, mat);
+                lightusd::GetSurfaceShader(stage_, mat);
             if (!shader_path.empty()) shader = stage_.GetPrimAtPath(shader_path);
           }
           value = BuildNextNodeGraphJson(
@@ -431,7 +431,7 @@ int RenderStream::prepareMaterialFormat_(int material_id, uint8_t format) const 
     formatted_material_text_ = "Scene not loaded";
     return 0;
   }
-  const tydra::next::RenderMaterial* found = outputRenderMaterial_(material_id);
+  const tydra::RenderMaterial* found = outputRenderMaterial_(material_id);
   if (!found) {
     formatted_material_text_ = "Invalid material ID";
     return 0;
@@ -441,7 +441,7 @@ int RenderStream::prepareMaterialFormat_(int material_id, uint8_t format) const 
     return 0;
   }
   constexpr size_t kMaxMaterialFormatBytes = size_t{512} << 20;
-  const tydra::next::RenderMaterial& material = *found;
+  const tydra::RenderMaterial& material = *found;
   size_t escaped_bytes = 0;
   const auto add_escaped_source = [&escaped_bytes](size_t size) {
     if (size > (std::numeric_limits<size_t>::max)() - escaped_bytes) return false;
@@ -710,7 +710,7 @@ int RenderStream::meshSubsetOutputCopy(int mesh_id, uint8_t* out,
   }
   if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size())
     return 0;
-  const lightusd::next::UsdPrim& prim =
+  const lightusd::UsdPrim& prim =
       meshes_[static_cast<size_t>(source_index)].GetPrim();
   std::vector<int32_t> materials;
   std::vector<std::array<int32_t, 3>> groups;
@@ -777,20 +777,20 @@ int RenderStream::meshSubsetOutputCopy(int mesh_id, uint8_t* out,
   const std::vector<int32_t> face_counts = matIntStatic_(prim, "faceVertexCounts");
   if (face_counts.empty()) return 0;
   struct SubsetInfo {
-    lightusd::next::UsdPrim prim;
+    lightusd::UsdPrim prim;
     std::vector<int32_t> faces;
   };
   std::vector<SubsetInfo> subsets;
-  for (const lightusd::next::UsdPrim& child : prim.GetChildren()) {
+  for (const lightusd::UsdPrim& child : prim.GetChildren()) {
     if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
-    const lightusd::next::Value* family = child.GetPropertyValue("familyName");
+    const lightusd::Value* family = child.GetPropertyValue("familyName");
     if (family) {
       auto token = family->as_token();
       if (token && *token != "materialBind") continue;
     }
     std::vector<int32_t> faces = matIntStatic_(child, "indices");
     if (faces.empty() ||
-        !lightusd::next::GetBoundMaterial(stage_, child).IsValid()) continue;
+        !lightusd::GetBoundMaterial(stage_, child).IsValid()) continue;
     subsets.push_back({child, std::move(faces)});
   }
   if (subsets.empty()) return 0;
@@ -802,8 +802,8 @@ int RenderStream::meshSubsetOutputCopy(int mesh_id, uint8_t* out,
       if (face >= 0 && static_cast<size_t>(face) < face_material.size())
         face_material[static_cast<size_t>(face)] = material_index;
     }
-    const lightusd::next::UsdPrim mat =
-        lightusd::next::GetBoundMaterial(stage_, subsets[i].prim);
+    const lightusd::UsdPrim mat =
+        lightusd::GetBoundMaterial(stage_, subsets[i].prim);
     materials.push_back(registerMaterial_(mat));
   }
   const std::vector<uint32_t> triangle_starts = faceTriangleStarts_(face_counts);

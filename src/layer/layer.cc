@@ -18,7 +18,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 void LayerMeta::FillAbsentStageMetaFrom(const LayerMeta& weaker) {
     if (!rootPrimOrder_set &&
@@ -994,5 +993,4 @@ bool LayerBuilder::contains_path(const std::string& path_str) {
   }
 void LayerBuilder::set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
 
-}  // namespace next
 }  // namespace lightusd

@@ -7,7 +7,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcType kind,
@@ -780,5 +779,4 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
 
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

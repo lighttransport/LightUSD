@@ -344,7 +344,7 @@ LU_CORE_API uint16_t lu_float_to_half(float value);
 /* ============================================================
  * USDA lexer token types (src/next/c/lexer.c)
  *
- * Mirror of next::TokenType (parser/lexer.hh); the numeric values must stay in
+ * Mirror of ::lightusd::TokenType (parser/lexer.hh); the numeric values must stay in
  * sync. Used by lu_lex_lookup_keyword.
  * ============================================================ */
 
@@ -393,7 +393,7 @@ typedef enum lu_token_type {
  * field from these records; they do not alias the C storage.
  * ============================================================ */
 
-/* TypeId values; keep in sync with next::TypeId (type-id.hh). */
+/* TypeId values; keep in sync with ::lightusd::TypeId (type-id.hh). */
 typedef enum lu_type_id {
   LU_TYPE_INVALID = 0,
   LU_TYPE_BOOL = 1,
@@ -725,7 +725,7 @@ typedef struct lu_spline_knot {
 
 /* Recompute the pre/post tangent slope+width of every AutoEase (algo==2) knot
  * from its neighbors, in place. Zeroes the tangent at a discontinuity. Matches
- * next::ComputeAutoEaseTangents (which forwards here). */
+ * ::lightusd::ComputeAutoEaseTangents (which forwards here). */
 LU_CORE_API void lu_spline_compute_auto_ease(lu_spline_knot *knots, size_t n);
 
 /* ============================================================
@@ -763,7 +763,7 @@ LU_CORE_API int lu_lz4_compress(const uint8_t *src, size_t src_size,
  * Crate value-type metadata (src/next/c/crate-typeid.c)
  *
  * Wire values of the SdfValueTypeName byte and per-type fixed sizes. Keep in
- * sync with next::CrateTypeId (crate-format.hh).
+ * sync with ::lightusd::CrateTypeId (crate-format.hh).
  * ============================================================ */
 
 typedef enum lu_crate_type_id {

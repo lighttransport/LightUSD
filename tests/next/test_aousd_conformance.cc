@@ -30,7 +30,7 @@
 #endif
 #include "schema/schema-registry.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 

@@ -12,7 +12,7 @@
 
 namespace {
 namespace fs = std::filesystem;
-namespace n = lightusd::next;
+namespace n = lightusd;
 using Json = lightusd::minijson::Value;
 constexpr size_t kByteLimit = size_t(1) << 30;
 constexpr size_t kEntryLimit = 100000;

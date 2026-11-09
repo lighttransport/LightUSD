@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 struct GltfExportOptions {
   size_t max_output_bytes = size_t(1) << 30;
-  const ::lightusd::next::AssetResolver* resolver = nullptr;
+  const ::lightusd::AssetResolver* resolver = nullptr;
   std::string asset_anchor;
   bool fail_on_loss = false;
 };
@@ -21,4 +21,4 @@ struct GltfExportResult {
 // Static, triangulated RenderScene -> self-contained glTF 2.0 binary.
 // Unsupported features are listed in losses; fail_on_loss refuses the output.
 GltfExportResult ExportGLB(const RenderScene& scene, const GltfExportOptions& options = {});
-} } }
+ } }

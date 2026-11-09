@@ -11,14 +11,14 @@
 #include <optional>
 #include <set>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 using shader_param_detail::FindConnectedUtilityScalar;
 
 bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  PreviewSurfaceShader* out,
                                                  RenderScene* scene) {
-  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::IsShader(shader_prim)) return false;
 
   // AttributeEval returns a successful zero-valued result for an unauthored
   // shader input.  Those zeros are not the UsdPreviewSurface schema defaults
@@ -26,7 +26,7 @@ bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
   // PreviewSurfaceShader defaults unless the input is actually authored or
   // connected.  This also keeps the 0.5 roughness, 1.5 IOR and unit occlusion
   // fallbacks instead of silently replacing them with zero.
-  ::lightusd::next::AttributeEval authored_eval(&stage);
+  ::lightusd::AttributeEval authored_eval(&stage);
   authored_eval.SetTime(config_.time_code);
   auto extract_authored = [&](const char* name, ShaderParam* param) {
     const std::string attr_name = std::string("inputs:") + name;
@@ -51,7 +51,7 @@ bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
   extract_authored("displacement", &out->displacement);
   extract_authored("occlusion", &out->occlusion);
 
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
   if (std::optional<int32_t> use_spec =
           eval.EvalInt(shader_prim, "inputs:useSpecularWorkflow")) {
@@ -64,7 +64,7 @@ bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
 bool RenderSceneConverter::Impl::ExtractPxrDisneyAsOpenPBR(
     const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
     RenderScene* scene) {
-  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::IsShader(shader_prim)) return false;
 
   // RenderMan's PxrDisney is a layered Disney BRDF. The preview transport is
   // OpenPBR, so map the lobes with a direct counterpart and leave the rest at
@@ -93,7 +93,7 @@ bool RenderSceneConverter::Impl::ExtractPxrDisneyAsOpenPBR(
     SetParamFloat(&out->coat_roughness, std::max(0.0f, 1.0f - gloss.value.x));
   }
   // `isThin` switches the Disney transmission from refraction to a thin wall.
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
   if (std::optional<int32_t> thin = eval.EvalInt(shader_prim, "inputs:isThin")) {
     SetParamFloat(&out->thin_walled, *thin != 0 ? 1.0f : 0.0f);
@@ -104,7 +104,7 @@ bool RenderSceneConverter::Impl::ExtractPxrDisneyAsOpenPBR(
 bool RenderSceneConverter::Impl::ExtractStandardSurfaceAsOpenPBR(
     const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
     RenderScene* scene) {
-  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::IsShader(shader_prim)) return false;
 
   // Base layer
   // AttributeEval can return a successful zero-valued result for an
@@ -113,7 +113,7 @@ bool RenderSceneConverter::Impl::ExtractStandardSurfaceAsOpenPBR(
   // input is explicitly authored or connected.
   const bool base_authored =
       GetAttribute(shader_prim, "inputs:base") != nullptr ||
-      ::lightusd::next::AttributeEval(&stage).HasConnection(
+      ::lightusd::AttributeEval(&stage).HasConnection(
           shader_prim, "inputs:base");
   if (base_authored) {
     ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
@@ -198,7 +198,7 @@ bool RenderSceneConverter::Impl::ExtractOpenPBRSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  OpenPBRSurfaceShader* out,
                                                  RenderScene* scene) {
-  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::IsShader(shader_prim)) return false;
 
   ExtractShaderParam(stage, shader_prim, "base_weight", &out->base_weight, scene);
   ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
@@ -353,4 +353,4 @@ bool RenderSceneConverter::Impl::ExtractOpenPBRSurface(const Stage& stage,
   return true;
 }
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

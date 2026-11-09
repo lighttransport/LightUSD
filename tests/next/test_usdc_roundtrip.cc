@@ -37,7 +37,7 @@
 #include "schema/color-space.hh"
 #include "writer/usda-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 #if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \

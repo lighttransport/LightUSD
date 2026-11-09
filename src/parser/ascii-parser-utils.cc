@@ -9,7 +9,6 @@
 #include "prim/relocate-path.hh"
 
 namespace lightusd {
-namespace next {
 
 bool AsciiParser::Impl::ResolveRelocatePath(const std::string& path,
                                              const std::string& anchor,
@@ -377,5 +376,4 @@ bool AsciiParser::Impl::AtEnd() {
   return !lexer_ || lexer_->peek_view().type == TokenType::Eof;
 }
 
-}  // namespace next
 }  // namespace lightusd

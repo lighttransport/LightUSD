@@ -16,7 +16,7 @@
 
 #include "resolver/dependency-report.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 using lightusd_internal::Fail;
 
 namespace {

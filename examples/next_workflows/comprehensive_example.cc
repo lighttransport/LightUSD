@@ -20,7 +20,7 @@
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static void PrintStageInfo(const Stage& stage) {
   std::cout << "Stage loaded successfully\n";

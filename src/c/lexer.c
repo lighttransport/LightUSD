@@ -104,7 +104,7 @@ uint8_t lu_lex_lookup_keyword(const char *p, size_t n) {
 }
 
 /* Consume one numeric literal from [p, end) and return its byte length. Mirrors
- * next::Lexer::scan_number's position progression: optional sign, a signed
+ * ::lightusd::Lexer::scan_number's position progression: optional sign, a signed
  * inf/infinity/nan word, a hex literal, or a decimal integer/float with an
  * optional (only-if-followed-by-digits) exponent. */
 size_t lu_lex_scan_number(const char *p, const char *end) {

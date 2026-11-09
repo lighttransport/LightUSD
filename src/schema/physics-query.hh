@@ -3,7 +3,7 @@
 #include "eval/attribute-eval.hh"
 #include "expected.hh"
 
-namespace lightusd { namespace next {
+namespace lightusd {
 enum class PhysicsGroup : uint8_t {
   Scenes, RigidBodies, Colliders, Joints, Materials, ArticulationRoots,
   FilteredPairs, Actuators, Sites, Tendons, Equalities, Sensors, Contacts,
@@ -40,4 +40,4 @@ struct PhysicsSnapshot {
 // retain immutable C11 storage instead of expanding into per-element objects.
 expected<PhysicsSnapshot, std::string> QueryPhysics(
     const Stage& stage, const PhysicsQueryOptions& options = {});
-} }
+ }

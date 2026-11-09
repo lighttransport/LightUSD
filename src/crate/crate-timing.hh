@@ -12,7 +12,6 @@
 #include "phase-faults.hh"
 
 namespace lightusd {
-namespace next {
 
 // Logs "[tag] phase=<ms>ms minf=<n> majf=<n>" at INFO for each lap() when
 // enabled (the caller's enable_timing option); a disabled timer costs one
@@ -48,5 +47,4 @@ class CratePhaseTimer {
   FaultCounters last_faults_;
 };
 
-}  // namespace next
 }  // namespace lightusd

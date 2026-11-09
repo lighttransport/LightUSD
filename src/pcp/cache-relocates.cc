@@ -2,7 +2,6 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 NamespaceMapping Cache::Impl::WithStackRelocates(uint32_t stack, NamespaceMapping m) const {
@@ -720,5 +719,4 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
   }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

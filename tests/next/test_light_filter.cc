@@ -15,7 +15,7 @@
 #include "tydra/render-converter.hh"
 #include "tydra/scene-preview.hh"
 
-namespace td = lightusd::tydra::next;
+namespace td = lightusd::tydra;
 namespace fs = std::filesystem;
 
 namespace {
@@ -68,12 +68,12 @@ int main(int argc, char** argv) {
 )usd";
   }
 
-  lightusd::next::AssetResolver resolver;
-  lightusd::next::Stage stage;
-  lightusd::next::pcp::CompositionOptions compose;
+  lightusd::AssetResolver resolver;
+  lightusd::Stage stage;
+  lightusd::pcp::CompositionOptions compose;
   compose.num_threads = 1;
   std::string warning, error;
-  if (!lightusd::next::pcp::ComposeStageFromFile(fixture.string(), resolver,
+  if (!lightusd::pcp::ComposeStageFromFile(fixture.string(), resolver,
                                                  &stage, compose, &warning,
                                                  &error)) {
     std::cerr << "compose failed: " << error << "\n";
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
   // A custom kind can be registered without core changes.
   if (!Check(td::RegisterLightFilter(
                  "gain",
-                 [](const lightusd::next::Stage&, const lightusd::next::UsdPrim&,
+                 [](const lightusd::Stage&, const lightusd::UsdPrim&,
                     double, td::LightFilter* out, std::string*) {
                    out->intensity = 0.25f;
                    return true;
@@ -171,14 +171,14 @@ int main(int argc, char** argv) {
   const auto result =
       td::ConvertScenePreview(fixture.string(), resolver, options);
   if (!Check(result.success, result.error)) return 1;
-  lightusd::next::Stage cached;
-  if (!Check(lightusd::next::pcp::ComposeStageFromFile(
+  lightusd::Stage cached;
+  if (!Check(lightusd::pcp::ComposeStageFromFile(
                  result.usd_path, resolver, &cached, compose, &warning, &error),
              "compose cached preview"))
     return 1;
   bool found_light = false;
   bool cached_fold = false;
-  cached.Traverse([&](const lightusd::next::UsdPrim& prim) {
+  cached.Traverse([&](const lightusd::UsdPrim& prim) {
     if (prim.GetPath().str().rfind("/Key") != prim.GetPath().str().size() - 4)
       return true;
     found_light = true;

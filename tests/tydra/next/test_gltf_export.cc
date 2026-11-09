@@ -6,7 +6,7 @@
 
 #define CHECK(x) do { if (!(x)) { std::cerr << "failed at " << __LINE__ << ": " #x "\n"; return 1; } } while (0)
 int main() {
-  namespace r = lightusd::tydra::next;
+  namespace r = lightusd::tydra;
   r::RenderScene scene;
   scene.meters_per_unit = 1;
   scene.up_axis = r::RenderScene::UpAxis::Y;

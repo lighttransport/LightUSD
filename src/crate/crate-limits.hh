@@ -13,7 +13,6 @@
 #include <cstddef>
 
 namespace lightusd {
-namespace next {
 
 struct CrateLimits {
   /// Maximum number of tokens allowed
@@ -41,5 +40,4 @@ struct CrateLimits {
   size_t max_path_depth = 256;
 };
 
-}  // namespace next
 }  // namespace lightusd

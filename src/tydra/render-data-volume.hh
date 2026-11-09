@@ -9,7 +9,7 @@
 
 #include "tydra/vol/volume-field.hh"
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 struct RenderVolumeField {
   std::string binding;                 // "density", "temperature", ...
@@ -42,6 +42,5 @@ struct RenderVolume {
   }
 };
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

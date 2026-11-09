@@ -4,7 +4,7 @@
 // the shared adapter keeps growth and lifetime code out of typed callers.
 #include "value.hh"
 #include <vector>
-namespace lightusd { namespace next { namespace detail {
+namespace lightusd {  namespace detail {
 class ArrayBuilderStorage {
  public:
   ArrayBuilderStorage(size_t width, size_t alignment);
@@ -50,4 +50,4 @@ template<class T> class ArrayBuilder : public ArrayBuilderStorage {
   }
 };
 template<> class ArrayBuilder<std::string> : public std::vector<std::string> {};
-}}} // namespace lightusd::next::detail
+}} // namespace lightusd::detail

@@ -334,32 +334,32 @@ size_t LargeSceneLoader::layer_parse_count() const {
 }
 
 // =========================================================================
-// New backend (next::pcp::Cache, enabled by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+// New backend (::lightusd::pcp::Cache, enabled by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 // =========================================================================
 #else
 
 namespace {
 
 // Wraps a LargeSceneLoadOptions::PayloadMode + (optional) budget state into a
-// callback compatible with next::pcp::CompositionOptions::payload_policy.
-// Signature: bool(const next::Path &prim_path, const std::string &asset_path).
+// callback compatible with ::lightusd::pcp::CompositionOptions::payload_policy.
+// Signature: bool(const ::lightusd::Path &prim_path, const std::string &asset_path).
 
 struct NextBudgetPolicyState {
   uint64_t loaded_bytes{0};
   double loaded_extent_coverage{0.0};
   uint64_t budget_bytes{0};
   double extent_budget{0.0};
-  next::AssetResolver *resolver{nullptr};
+  ::lightusd::AssetResolver *resolver{nullptr};
   std::mutex mu;
 };
 
-bool ExtentCoverage(const next::PrimSpec &owner, double *coverage) {
+bool ExtentCoverage(const ::lightusd::PrimSpec &owner, double *coverage) {
   if (!coverage) return false;
-  const next::Value *value = owner.property_value("extentsHint");
+  const ::lightusd::Value *value = owner.property_value("extentsHint");
   if (!value || !value->is_array()) return false;
-  next::ArrayScratch<float> scratch;
-  next::ArrayView<float> points;
-  if (!next::GetFloatArrayView(*value, &scratch, &points) ||
+  ::lightusd::ArrayScratch<float> scratch;
+  ::lightusd::ArrayView<float> points;
+  if (!::lightusd::GetFloatArrayView(*value, &scratch, &points) ||
       points.size < 6 || (points.size % 6) != 0) {
     return false;
   }
@@ -386,10 +386,10 @@ bool ExtentCoverage(const next::PrimSpec &owner, double *coverage) {
   return std::isfinite(*coverage);
 }
 
-std::function<bool(const next::Path &, const std::string &,
-                   const next::PrimSpec &)>
+std::function<bool(const ::lightusd::Path &, const std::string &,
+                   const ::lightusd::PrimSpec &)>
 MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
-                      next::AssetResolver *resolver,
+                      ::lightusd::AssetResolver *resolver,
                       bool *load_payloads) {
   if (load_payloads) *load_payloads = false;
   switch (opts.payload_mode) {
@@ -397,21 +397,21 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
       if (load_payloads) *load_payloads = true;
       return nullptr;  // null policy + load_payloads=true => eager load.
     case LargeSceneLoadOptions::PayloadMode::LoadNone:
-      return [](const next::Path &, const std::string &,
-                const next::PrimSpec &) { return false; };
+      return [](const ::lightusd::Path &, const std::string &,
+                const ::lightusd::PrimSpec &) { return false; };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
       auto st = std::make_shared<NextBudgetPolicyState>();
       st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
       st->extent_budget = opts.payload_extent_budget;
       st->resolver = resolver;
-      return [st](const next::Path &, const std::string &ap,
-                  const next::PrimSpec &owner) -> bool {
+      return [st](const ::lightusd::Path &, const std::string &ap,
+                  const ::lightusd::PrimSpec &owner) -> bool {
         std::lock_guard<std::mutex> lk(st->mu);
         const std::string &anchor_dir =
-            next::AssetAnchorPath(owner.asset_anchor_id());
+            ::lightusd::AssetAnchorPath(owner.asset_anchor_id());
         const std::string anchor = anchor_dir.empty()
                                        ? std::string()
-                                       : next::AssetResolver::IsPackagePath(anchor_dir)
+                                       : ::lightusd::AssetResolver::IsPackagePath(anchor_dir)
                                            ? anchor_dir : anchor_dir + "/__layer__.usd";
         const std::string rp = st->resolver->ResolvePath(ap, anchor);
         const uint64_t sz = FileSizeBytes(rp);
@@ -436,8 +436,8 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
       };
     }
   }
-  return [](const next::Path &, const std::string &,
-            const next::PrimSpec &) { return false; };
+  return [](const ::lightusd::Path &, const std::string &,
+            const ::lightusd::PrimSpec &) { return false; };
 }
 
 }  // namespace
@@ -452,9 +452,9 @@ bool LargeSceneLoader::Load(const std::string &filename,
   _loaded = false;
 
   // 1. Setup next-style resolver anchored at the scene's base directory.
-  _resolver = std::make_unique<next::AssetResolver>();
+  _resolver = std::make_unique<::lightusd::AssetResolver>();
   const std::string base_dir = io::GetBaseDir(filename);
-  next::ResolverConfig rconf;
+  ::lightusd::ResolverConfig rconf;
   rconf.working_directory = base_dir.empty() ? "./" : base_dir;
   rconf.search_paths = {base_dir.empty() ? "./" : base_dir};
   for (const auto &p : options.search_paths) {
@@ -465,16 +465,16 @@ bool LargeSceneLoader::Load(const std::string &filename,
 
   // 2. Load the root layer using the next module's layer loader, which
   //    dispatches by extension to the next USDA/USDC readers and returns
-  //    a shared_ptr<next::Layer> (the type that Cache::Open expects).
+  //    a shared_ptr<::lightusd::Layer> (the type that Cache::Open expects).
   std::string resolved_path = _resolver->ResolvePath(filename);
   if (resolved_path.empty()) resolved_path = filename;
-  next::pcp::LayerLoadOptions root_load_options;
+  ::lightusd::pcp::LayerLoadOptions root_load_options;
   root_load_options.max_memory = static_cast<size_t>(std::min<uint64_t>(
       BudgetMiBToBytes(options.max_asset_bytes_mb),
       static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
   root_load_options.usdc_lazy_arrays = options.mmap_zero_copy;
   root_load_options.usdc_use_mmap = options.mmap_zero_copy;
-  auto root_shared = next::pcp::LoadLayerFromFile(
+  auto root_shared = ::lightusd::pcp::LoadLayerFromFile(
       resolved_path, warn, err, root_load_options);
   if (!root_shared) {
     if (err) {
@@ -485,9 +485,9 @@ bool LargeSceneLoader::Load(const std::string &filename,
     return false;
   }
 
-  // 3. Open the next::pcp::Cache (handles sublayers, references + payload
+  // 3. Open the ::lightusd::pcp::Cache (handles sublayers, references + payload
   //    according to options).
-  next::pcp::CompositionOptions copts;
+  ::lightusd::pcp::CompositionOptions copts;
   copts.payload_policy_with_prim =
       MakeNextPayloadPolicy(options, _resolver.get(), &copts.load_payloads);
   copts.detect_instances = options.detect_instances;
@@ -496,16 +496,16 @@ bool LargeSceneLoader::Load(const std::string &filename,
   copts.usdc_lazy_arrays = options.mmap_zero_copy;
   copts.usdc_use_mmap = options.mmap_zero_copy;
 
-  auto cache_r = next::pcp::Cache::Open(*_resolver, root_shared,
+  auto cache_r = ::lightusd::pcp::Cache::Open(*_resolver, root_shared,
                                         filename, copts);
   if (!cache_r) {
-    if (err) *err = "next::pcp::Cache::Open failed: " + cache_r.error();
+    if (err) *err = "::lightusd::pcp::Cache::Open failed: " + cache_r.error();
     return false;
   }
-  _cache = std::make_unique<next::pcp::Cache>(std::move(*cache_r));
+  _cache = std::make_unique<::lightusd::pcp::Cache>(std::move(*cache_r));
 
   // 4. Materialize the Stage.
-  auto rebuilt = std::make_shared<next::Stage>();
+  auto rebuilt = std::make_shared<::lightusd::Stage>();
   if (!_cache->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
@@ -515,20 +515,20 @@ bool LargeSceneLoader::Load(const std::string &filename,
   return true;
 }
 
-/// Helper: convert lightusd::legacy::Path (old) to lightusd::next::Path (new).
-static next::Path ToNextPath(const Path &p) {
-  return next::Path(p.full_path_name());
+/// Helper: convert lightusd::legacy::Path (old) to lightusd::Path (new).
+static ::lightusd::Path ToNextPath(const Path &p) {
+  return ::lightusd::Path(p.full_path_name());
 }
 
-/// Helper: convert lightusd::next::Path (new) to lightusd::legacy::Path (old).
-static Path FromNextPath(const next::Path &np) {
+/// Helper: convert lightusd::Path (new) to lightusd::legacy::Path (old).
+static Path FromNextPath(const ::lightusd::Path &np) {
   return Path(np.str(), "");
 }
 
 std::vector<Path> LargeSceneLoader::deferred_payload_paths() const {
   std::lock_guard<std::mutex> lock(_mutex);
   if (!_cache) return {};
-  const std::vector<next::Path> npaths = _cache->GetDeferredPayloadPaths();
+  const std::vector<::lightusd::Path> npaths = _cache->GetDeferredPayloadPaths();
   std::vector<Path> out;
   out.reserve(npaths.size());
   for (const auto &np : npaths) out.push_back(FromNextPath(np));
@@ -541,7 +541,7 @@ size_t LargeSceneLoader::deferred_count() const {
   return _cache->GetDeferredPayloadPaths().size();
 }
 
-std::shared_ptr<const next::Stage> LargeSceneLoader::stage_snapshot() const {
+std::shared_ptr<const ::lightusd::Stage> LargeSceneLoader::stage_snapshot() const {
   std::lock_guard<std::mutex> lock(_mutex);
   return _stage;
 }
@@ -592,7 +592,7 @@ bool LargeSceneLoader::RebuildStageLocked(std::string *warn,
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
   }
-  auto rebuilt = std::make_shared<next::Stage>();
+  auto rebuilt = std::make_shared<::lightusd::Stage>();
   if (!_cache->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
@@ -601,7 +601,7 @@ bool LargeSceneLoader::RebuildStageLocked(std::string *warn,
 }
 
 size_t LargeSceneLoader::estimate_stage_memory_bytes() const {
-  const std::shared_ptr<const next::Stage> snapshot = stage_snapshot();
+  const std::shared_ptr<const ::lightusd::Stage> snapshot = stage_snapshot();
   return snapshot ? snapshot->GetMemoryUsage() : 0;
 }
 
@@ -614,7 +614,7 @@ size_t LargeSceneLoader::layer_parse_count() const {
 
 // =========================================================================
 // One-shot convenience (old path only; new path users call LargeSceneLoader
-// directly or use next::pcp::ComposeStageFromFile).
+// directly or use ::lightusd::pcp::ComposeStageFromFile).
 // =========================================================================
 
 #if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)

@@ -9,7 +9,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 bool HasSemanticsLabelsAPI(const UsdPrim& prim,
                            const std::string& instance_name);
@@ -18,5 +17,4 @@ bool GetSemanticsLabels(const Stage& stage, const UsdPrim& prim,
                         std::vector<std::string>* out,
                         double time = 0.0);
 
-}  // namespace next
 }  // namespace lightusd

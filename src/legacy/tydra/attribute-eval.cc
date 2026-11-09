@@ -17,6 +17,8 @@
 #include <mutex>
 
 namespace lightusd { namespace legacy {
+// Shared spline evaluator (core/spline-eval.hh).
+namespace tydra { using namespace ::lightusd::spline_eval; }  // NOLINT
 namespace tydra {
 
 // For PUSH_ERROR_AND_RETURN

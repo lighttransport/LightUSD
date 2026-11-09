@@ -11,7 +11,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// Path - represents a USD scene path
 /// Examples: "/World/Cube", "/Materials/Metal.outputs:surface"
@@ -122,14 +121,13 @@ private:
 /// Stream output for debugging
 std::ostream& operator<<(std::ostream& os, const Path& path);
 
-}  // namespace next
 }  // namespace lightusd
 
 // Hash specialization for use in unordered containers
 namespace std {
 template <>
-struct hash<lightusd::next::Path> {
-  size_t operator()(const lightusd::next::Path& path) const {
+struct hash<lightusd::Path> {
+  size_t operator()(const lightusd::Path& path) const {
     return hash<string>()(path.str());
   }
 };

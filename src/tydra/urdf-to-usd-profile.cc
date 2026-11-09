@@ -7,7 +7,7 @@
 #include <map>
 #include <unordered_map>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 namespace {
 thread_local const Profile *active_profile = nullptr;
@@ -118,4 +118,4 @@ bool IsEngineSchema(const std::string &schema) {
 }
 
 }  // namespace urdf_detail
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

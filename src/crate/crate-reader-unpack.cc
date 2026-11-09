@@ -15,7 +15,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -729,5 +728,4 @@ bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

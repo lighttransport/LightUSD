@@ -17,7 +17,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 // AOUSD §6.6.2 / §12.2: dictionary opinions combine recursively. Keys from
 // the stronger value keep their values; missing keys (including nested keys)
@@ -171,5 +170,4 @@ void ApplyRelationshipEdit(std::vector<Path>* values, const ArcListOp& edit) {
 
 
 
-}  // namespace next
 }  // namespace lightusd

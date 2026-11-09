@@ -7,79 +7,77 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
-inline const ::lightusd::next::PropNameId& kIdFaceVertexCounts() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("faceVertexCounts");
+inline const ::lightusd::PropNameId& kIdFaceVertexCounts() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("faceVertexCounts");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdFaceVertexIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("faceVertexIndices");
+inline const ::lightusd::PropNameId& kIdFaceVertexIndices() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("faceVertexIndices");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdHoleIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("holeIndices");
+inline const ::lightusd::PropNameId& kIdHoleIndices() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("holeIndices");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdPoints() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("points");
+inline const ::lightusd::PropNameId& kIdPoints() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("points");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdTetVertexIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("tetVertexIndices");
+inline const ::lightusd::PropNameId& kIdTetVertexIndices() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("tetVertexIndices");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdNormals() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("normals");
+inline const ::lightusd::PropNameId& kIdNormals() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("normals");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdDisplayColor() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:displayColor");
+inline const ::lightusd::PropNameId& kIdDisplayColor() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("primvars:displayColor");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdDisplayOpacity() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:displayOpacity");
+inline const ::lightusd::PropNameId& kIdDisplayOpacity() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("primvars:displayOpacity");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdPrimvarsSt() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:st");
+inline const ::lightusd::PropNameId& kIdPrimvarsSt() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("primvars:st");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdExtent() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("extent");
+inline const ::lightusd::PropNameId& kIdExtent() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("extent");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdCurveVertexCounts() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("curveVertexCounts");
+inline const ::lightusd::PropNameId& kIdCurveVertexCounts() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("curveVertexCounts");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdWidths() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("widths");
+inline const ::lightusd::PropNameId& kIdWidths() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("widths");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdInputsTextureFile() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:texture:file");
+inline const ::lightusd::PropNameId& kIdInputsTextureFile() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("inputs:texture:file");
   return id;
 }
-inline const ::lightusd::next::PropNameId& kIdOutputsOut() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("outputs:out");
+inline const ::lightusd::PropNameId& kIdOutputsOut() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("outputs:out");
   return id;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

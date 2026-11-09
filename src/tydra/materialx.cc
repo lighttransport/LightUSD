@@ -18,7 +18,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 MtlxConverter::MtlxConverter() = default;
 MtlxConverter::~MtlxConverter() = default;
@@ -36,12 +35,12 @@ void SetShaderParam(ShaderParam& param, float r, float g, float b) {
   param.value = {r, g, b, 1};
 }
 
-bool GetStringLikeProperty(const lightusd::next::UsdPrim& prim,
+bool GetStringLikeProperty(const lightusd::UsdPrim& prim,
                            const std::string& name,
                            std::string* out) {
   if (!out) return false;
 
-  const lightusd::next::Value* value = prim.GetPropertyValue(name);
+  const lightusd::Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
 
   if (auto s = value->as_string()) {
@@ -65,18 +64,18 @@ bool HasPrefix(const std::string& s, const char* prefix) {
   return s.size() >= n && s.compare(0, n, prefix) == 0;
 }
 
-std::string GetMtlxSurfaceShaderPath(const lightusd::next::Stage& stage,
-                                     const lightusd::next::UsdPrim& material) {
-  std::string path = lightusd::next::GetSurfaceShader(stage, material);
+std::string GetMtlxSurfaceShaderPath(const lightusd::Stage& stage,
+                                     const lightusd::UsdPrim& material) {
+  std::string path = lightusd::GetSurfaceShader(stage, material);
   if (!path.empty()) return path;
 
-  lightusd::next::AttributeEval eval(&stage);
+  lightusd::AttributeEval eval(&stage);
   if (eval.HasConnection(material, "outputs:surface")) {
     path = eval.GetConnectionPath(material, "outputs:surface");
     if (!path.empty()) return path;
   }
 
-  const std::vector<lightusd::next::Path>* targets =
+  const std::vector<lightusd::Path>* targets =
       material.GetRelationship("outputs:mtlx:surface");
   if (targets && !targets->empty()) {
     return (*targets)[0].str();
@@ -566,8 +565,8 @@ bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
   return ConvertToRenderMaterial(ss.str(), material_name, out);
 }
 
-bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
-                                            const lightusd::next::UsdPrim& material_prim,
+bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::Stage& stage,
+                                            const lightusd::UsdPrim& material_prim,
                                             RenderMaterial* out,
                                             bool allow_converter_delegation) {
   if (!out) {
@@ -576,7 +575,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
   }
 
   // Check if this is a material
-  if (!lightusd::next::IsMaterial(material_prim)) {
+  if (!lightusd::IsMaterial(material_prim)) {
     error_ = "Prim is not a Material";
     return false;
   }
@@ -592,7 +591,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
   }
 
   // Get the shader prim
-  lightusd::next::UsdPrim shader_prim =
+  lightusd::UsdPrim shader_prim =
       stage.GetPrimAtPath(StripPropertyPath(surface_shader_path));
   if (!shader_prim.IsValid()) {
     error_ = "Surface shader not found: " + surface_shader_path;
@@ -600,7 +599,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
   }
 
   // Check shader ID for MaterialX
-  std::string shader_id = lightusd::next::GetShaderId(shader_prim);
+  std::string shader_id = lightusd::GetShaderId(shader_prim);
 
   // Prefer the shared next render converter when the shader is material-local.
   // It already handles UsdPreviewSurface, MaterialX UsdPreviewSurface, and
@@ -618,8 +617,8 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
 
   // If it's a standard UsdPreviewSurface, use the existing schema fallback.
   if (shader_id == "UsdPreviewSurface") {
-    lightusd::next::PreviewSurfaceData ps_data;
-    if (!lightusd::next::GetPreviewSurfaceData(stage, shader_prim, &ps_data)) {
+    lightusd::PreviewSurfaceData ps_data;
+    if (!lightusd::GetPreviewSurfaceData(stage, shader_prim, &ps_data)) {
       error_ = "Failed to get PreviewSurface data";
       return false;
     }
@@ -641,7 +640,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
   }
 
   // Check for MaterialX shader binding (implementationSource = "mtlx")
-  std::string impl_source = lightusd::next::GetShaderImplementationSource(shader_prim);
+  std::string impl_source = lightusd::GetShaderImplementationSource(shader_prim);
   if (impl_source != "mtlx" && shader_id.find("ND_") != 0) {
     // Not MaterialX, and not a shader anyone else claimed either: hand back a
     // neutral stand-in rather than failing, but mark it, or the mesh silently
@@ -942,14 +941,14 @@ void MtlxConverter::PopulateRenderMaterial(
 // Utility functions
 // ============================================================
 
-bool HasMtlxBinding(const lightusd::next::UsdPrim& prim) {
+bool HasMtlxBinding(const lightusd::UsdPrim& prim) {
   if (!prim.IsValid()) return false;
 
-  if (lightusd::next::IsShader(prim)) {
-    const std::string impl = lightusd::next::GetShaderImplementationSource(prim);
+  if (lightusd::IsShader(prim)) {
+    const std::string impl = lightusd::GetShaderImplementationSource(prim);
     if (impl == "mtlx") return true;
 
-    const std::string id = lightusd::next::GetShaderId(prim);
+    const std::string id = lightusd::GetShaderId(prim);
     if (HasPrefix(id, "ND_") || id == "open_pbr_surface" ||
         id == "UsdPreviewSurface") {
       return true;
@@ -970,7 +969,7 @@ bool HasMtlxBinding(const lightusd::next::UsdPrim& prim) {
 
   const size_t child_count = prim.GetChildCount();
   for (size_t i = 0; i < child_count; ++i) {
-    const lightusd::next::UsdPrim child = prim.GetChildAt(i);
+    const lightusd::UsdPrim child = prim.GetChildAt(i);
     if (!child.IsValid()) continue;
     if (HasMtlxBinding(child)) return true;
   }
@@ -978,7 +977,7 @@ bool HasMtlxBinding(const lightusd::next::UsdPrim& prim) {
   return false;
 }
 
-std::string GetMtlxFilePath(const lightusd::next::UsdPrim& material_prim) {
+std::string GetMtlxFilePath(const lightusd::UsdPrim& material_prim) {
   if (!material_prim.IsValid()) return "";
 
   static const char* kFileProps[] = {
@@ -1015,6 +1014,5 @@ ColorSpace ParseMtlxColorSpace(const std::string& cs) {
   return ColorSpace::sRGB;  // Default
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

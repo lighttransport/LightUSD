@@ -5,7 +5,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 /// Maps a RenderMaterial to Tydra's backend-neutral real-time PBR block.
 inline bool MapRenderMaterialToRealtimePbr(
@@ -18,6 +17,5 @@ inline bool MapRenderMaterialToLightRtOpenPBR(
   return MapRenderMaterialToRealtimePbr(mat, p);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

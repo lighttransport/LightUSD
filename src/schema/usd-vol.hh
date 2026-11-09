@@ -8,7 +8,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 enum class ParticleKernel {
   None,
@@ -43,5 +42,4 @@ bool GetParticleFieldData(const Stage& stage, const UsdPrim& prim,
                           ParticleFieldData* out, double time = 0.0,
                           std::string* warning = nullptr);
 
-}  // namespace next
 }  // namespace lightusd

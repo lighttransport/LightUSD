@@ -11,7 +11,7 @@ void RenderStream::buildAnalyticOutputs_() {
     analytic_outputs_.clear();
     if (!render_scene_valid_) return;
     for (const tr::RenderMesh& source : render_scene_.meshes) {
-      const lightusd::next::UsdPrim prim =
+      const lightusd::UsdPrim prim =
           stage_.GetPrimAtPath(source.prim_path);
       if (!prim.IsValid() || prim.GetTypeName() == "Mesh") continue;
 
@@ -23,7 +23,7 @@ void RenderStream::buildAnalyticOutputs_() {
       out.local_matrix = localMatrix_(prim);
       out.world_matrix = worldMatrixForPrim_(prim);
 
-      lightusd::next::UsdPrim material;
+      lightusd::UsdPrim material;
       if (source.material_id >= 0 &&
           static_cast<size_t>(source.material_id) <
               render_scene_.materials.size()) {
@@ -32,7 +32,7 @@ void RenderStream::buildAnalyticOutputs_() {
                 .prim_path);
       }
       if (!material.IsValid()) {
-        material = lightusd::next::GetBoundMaterial(stage_, prim);
+        material = lightusd::GetBoundMaterial(stage_, prim);
       }
       out.material_id = registerMaterial_(material);
 
@@ -206,7 +206,7 @@ int RenderStream::meshView(int mesh_id, lightusd_next_mesh_view* out) {
     }
 
     if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size()) return -1;
-    const lightusd::next::UsdPrim& prim = meshes_[static_cast<size_t>(source_index)].GetPrim();
+    const lightusd::UsdPrim& prim = meshes_[static_cast<size_t>(source_index)].GetPrim();
     bool soup = false;
     std::string mesh_error;
     s_tangents_.clear();
@@ -269,7 +269,7 @@ int RenderStream::meshViewStringCopy(int mesh_id, uint8_t kind, uint8_t* out,
       if (kind == 1) value = output->prim_path;
     } else if (source_index >= 0 &&
                static_cast<size_t>(source_index) < meshes_.size()) {
-      const lightusd::next::UsdPrim& prim =
+      const lightusd::UsdPrim& prim =
           meshes_[static_cast<size_t>(source_index)].GetPrim();
       if (kind == 0) value = prim.GetName();
       if (kind == 1) value = prim.GetPath().str();

@@ -38,8 +38,8 @@
 #include <atomic>
 #include <unordered_set>
 
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim; using ::lightusd::Value;
 
 std::string SourcePrimPathFromConnection(const std::string& connection_path) {
   size_t dot = connection_path.find(".outputs:");
@@ -199,7 +199,7 @@ bool TransformMtlxColorInput(const UsdPrim& node,
                              MtlxConstantValue* value) {
   if (!value) return false;
   if (value->components < 3 || evaluation_space.empty()) return true;
-  const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
+  const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
   const std::string* type = spec ? spec->property_type_name(property) : nullptr;
   if (!type || (type->rfind("color3", 0) != 0 &&
                 type->rfind("color4", 0) != 0)) {
@@ -208,13 +208,13 @@ bool TransformMtlxColorInput(const UsdPrim& node,
 
   std::string source;
   bool authored = false;
-  if (!::lightusd::next::color_management::ComputeColorSpaceName(
+  if (!::lightusd::color_management::ComputeColorSpaceName(
           node, property, &source, &authored)) {
     return false;
   }
   if (!authored) source = evaluation_space;
   ::lightusd::color::ColorTransform transform;
-  if (!::lightusd::next::color_management::BuildColorTransform(
+  if (!::lightusd::color_management::BuildColorTransform(
           node, source, evaluation_space, &transform)) {
     return false;
   }
@@ -235,19 +235,19 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
                    int depth) {
   if (!out || depth > kMaxMtlxConstantDepth) return false;
   const std::string property = "inputs:" + input;
-  const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
-  const std::vector<::lightusd::next::Path>* connections =
+  const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+  const std::vector<::lightusd::Path>* connections =
       spec ? spec->connection(property) : nullptr;
   if (connections && !connections->empty()) {
     return EvalMtlxConstantConnection(stage, (*connections)[0].str(),
                                       time_code, evaluation_space, out,
                                       visiting, depth + 1);
   }
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  ::lightusd::next::EvalOptions options = eval.GetOptions();
+  ::lightusd::EvalOptions options = eval.GetOptions();
   options.follow_connections = false;
-  const ::lightusd::next::EvalResult result =
+  const ::lightusd::EvalResult result =
       eval.EvalWith(node, property, options);
   return result.success && ValueToMtlxConstant(result.value, out) &&
          TransformMtlxColorInput(node, property, evaluation_space, out);
@@ -512,19 +512,19 @@ bool EvalMtlxConstantConnection(const Stage& stage,
   if (!SplitConnectionPath(connection, &prim_path, &property)) return false;
   const UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
-  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
-  const std::vector<::lightusd::next::Path>* forwarded =
+  const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
+  const std::vector<::lightusd::Path>* forwarded =
       spec ? spec->connection(property) : nullptr;
   if (forwarded && !forwarded->empty()) {
     return EvalMtlxConstantConnection(stage, (*forwarded)[0].str(), time_code,
                                       evaluation_space, out, visiting,
                                       depth + 1);
   }
-  if (::lightusd::next::IsShader(prim)) {
+  if (::lightusd::IsShader(prim)) {
     return EvalMtlxConstantNode(stage, prim, time_code, evaluation_space, out,
                                 visiting, depth + 1);
   }
   return false;
 }
 
-}}}
+}}

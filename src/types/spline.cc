@@ -18,15 +18,14 @@
 #include "writer/dtoa.hh"
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
 // Use the canonical half converters so spline-encoded halves are byte-identical
 // to pxr (round-to-nearest-even) and to next's own half evaluation cast; a
 // truncating local copy silently diverged from both.
-using lightusd::next::FloatToHalf;
-using lightusd::next::HalfToFloat;
+using lightusd::FloatToHalf;
+using lightusd::HalfToFloat;
 
 template <typename T>
 void Wr(std::vector<uint8_t>* buf, const T& v) {
@@ -713,7 +712,7 @@ void ComputeAutoEaseTangents(SplineData& sd) {
 
 // Bridge SplineData to the shared evaluator's Spline<double> (AutoEase
 // tangents resolved).
-void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
+void BuildEvalSpline(const SplineData& sd, lightusd::spline_eval::Spline<double>* out_sp) {
   // AutoEase knots carry placeholder tangents; derive the real ones first.
   bool has_auto = false;
   for (const SplineKnot& k : sd.knots) {
@@ -730,19 +729,19 @@ void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
     src = &work;
   }
 
-  lightusd::Spline<double>& sp = *out_sp;
-  sp = lightusd::Spline<double>();
-  sp.curveType = (src->curve_type == 1) ? lightusd::SplineCurveType::Hermite
-                                      : lightusd::SplineCurveType::Bezier;
+  lightusd::spline_eval::Spline<double>& sp = *out_sp;
+  sp = lightusd::spline_eval::Spline<double>();
+  sp.curveType = (src->curve_type == 1) ? lightusd::spline_eval::SplineCurveType::Hermite
+                                      : lightusd::spline_eval::SplineCurveType::Bezier;
   auto extrap = [](int m) {
     switch (m) {
-      case 0: return lightusd::SplineExtrapolationMode::None;
-      case 2: return lightusd::SplineExtrapolationMode::Linear;
-      case 3: return lightusd::SplineExtrapolationMode::Sloped;
-      case 4: return lightusd::SplineExtrapolationMode::LoopRepeat;
-      case 5: return lightusd::SplineExtrapolationMode::LoopReset;
-      case 6: return lightusd::SplineExtrapolationMode::LoopOscillate;
-      default: return lightusd::SplineExtrapolationMode::Held;
+      case 0: return lightusd::spline_eval::SplineExtrapolationMode::None;
+      case 2: return lightusd::spline_eval::SplineExtrapolationMode::Linear;
+      case 3: return lightusd::spline_eval::SplineExtrapolationMode::Sloped;
+      case 4: return lightusd::spline_eval::SplineExtrapolationMode::LoopRepeat;
+      case 5: return lightusd::spline_eval::SplineExtrapolationMode::LoopReset;
+      case 6: return lightusd::spline_eval::SplineExtrapolationMode::LoopOscillate;
+      default: return lightusd::spline_eval::SplineExtrapolationMode::Held;
     }
   };
   sp.preExtrapolation = extrap(src->pre_extrap);
@@ -757,7 +756,7 @@ void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
 
   sp.knots.reserve(src->knots.size());
   for (const SplineKnot& k : src->knots) {
-    lightusd::SplineKnot<double> sk;
+    lightusd::spline_eval::SplineKnot<double> sk;
     sk.time = k.time;
     sk.value = k.value;
     sk.preValue = k.pre_value;
@@ -767,10 +766,10 @@ void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
     sk.postTangentSlope = k.post_tan_slope;
     sk.postTangentWidth = k.post_tan_width;
     switch (k.interp) {
-      case 0: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::None; break;
-      case 1: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Held; break;
-      case 2: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Linear; break;
-      default: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Curve; break;
+      case 0: sk.nextInterpolationMode = lightusd::spline_eval::SplineInterpolationMode::None; break;
+      case 1: sk.nextInterpolationMode = lightusd::spline_eval::SplineInterpolationMode::Held; break;
+      case 2: sk.nextInterpolationMode = lightusd::spline_eval::SplineInterpolationMode::Linear; break;
+      default: sk.nextInterpolationMode = lightusd::spline_eval::SplineInterpolationMode::Curve; break;
     }
     sp.knots.push_back(sk);
   }
@@ -780,9 +779,9 @@ void BuildEvalSpline(const SplineData& sd, lightusd::Spline<double>* out_sp) {
 
 bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
   if (!out) return false;
-  lightusd::Spline<double> sp;
+  lightusd::spline_eval::Spline<double> sp;
   BuildEvalSpline(sd, &sp);
-  return lightusd::EvaluateSpline(sp, time, out);
+  return lightusd::spline_eval::EvaluateSpline(sp, time, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -811,11 +810,11 @@ double LeftStep(double b) {
   return std::max(4e-15, 8.0 * (b - std::nextafter(b, -HUGE_VAL)));
 }
 
-bool EvalLeft(const lightusd::Spline<double>& sp, double a, double b,
+bool EvalLeft(const lightusd::spline_eval::Spline<double>& sp, double a, double b,
               double* v) {
   double t = b - LeftStep(b);
   if (!(t > a)) t = 0.5 * (a + b);
-  return lightusd::EvaluateSpline(sp, t, v);
+  return lightusd::spline_eval::EvaluateSpline(sp, t, v);
 }
 
 struct SubSpan {
@@ -839,11 +838,11 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
     return false;
   }
 
-  lightusd::Spline<double> base;
+  lightusd::spline_eval::Spline<double> base;
   BuildEvalSpline(sd, &base);
-  const lightusd::Spline<double> sp =
-      lightusd::detail::HasInnerLoops(base)
-          ? lightusd::detail::ExpandInnerLoops(base)
+  const lightusd::spline_eval::Spline<double> sp =
+      lightusd::spline_eval::detail::HasInnerLoops(base)
+          ? lightusd::spline_eval::detail::ExpandInnerLoops(base)
           : base;
   if (sp.knots.empty()) return true;  // no value anywhere
 
@@ -874,13 +873,13 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
     feat.push_back(k0.time);
     is_knot.push_back(1);
     if (i + 1 >= sp.knots.size() ||
-        sp.curveType != lightusd::SplineCurveType::Bezier ||
-        k0.nextInterpolationMode != lightusd::SplineInterpolationMode::Curve) {
+        sp.curveType != lightusd::spline_eval::SplineCurveType::Bezier ||
+        k0.nextInterpolationMode != lightusd::spline_eval::SplineInterpolationMode::Curve) {
       continue;
     }
     const double t0 = k0.time, t3 = sp.knots[i + 1].time;
     double w0 = k0.postTangentWidth, w1 = sp.knots[i + 1].preTangentWidth;
-    lightusd::detail::AntiRegress(t0, w0, w1, t3);
+    lightusd::spline_eval::detail::AntiRegress(t0, w0, w1, t3);
     const double c1 = t0 + w0, c2 = t3 - w1;
     const double A = c2 - 2.0 * c1 + t0, B = t3 - 2.0 * c2 + c1;
     if (A != B) {
@@ -895,17 +894,17 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
     }
   }
   for (size_t i = 0; i < feat.size(); ++i) add(feat[i], is_knot[i] != 0);
-  auto is_loop = [](lightusd::SplineExtrapolationMode m) {
-    return m == lightusd::SplineExtrapolationMode::LoopRepeat ||
-           m == lightusd::SplineExtrapolationMode::LoopReset ||
-           m == lightusd::SplineExtrapolationMode::LoopOscillate;
+  auto is_loop = [](lightusd::spline_eval::SplineExtrapolationMode m) {
+    return m == lightusd::spline_eval::SplineExtrapolationMode::LoopRepeat ||
+           m == lightusd::spline_eval::SplineExtrapolationMode::LoopReset ||
+           m == lightusd::spline_eval::SplineExtrapolationMode::LoopOscillate;
   };
   const bool pre_loop = is_loop(sp.preExtrapolation) && t_min < first;
   const bool post_loop = is_loop(sp.postExtrapolation) && t_max > last;
   if (period > 0.0 && (pre_loop || post_loop)) {
     const bool mirror =
-        sp.preExtrapolation == lightusd::SplineExtrapolationMode::LoopOscillate ||
-        sp.postExtrapolation == lightusd::SplineExtrapolationMode::LoopOscillate;
+        sp.preExtrapolation == lightusd::spline_eval::SplineExtrapolationMode::LoopOscillate ||
+        sp.postExtrapolation == lightusd::spline_eval::SplineExtrapolationMode::LoopOscillate;
     const double c_lo = pre_loop ? std::floor((t_min - first) / period) : 0.0;
     const double c_hi = post_loop ? std::ceil((t_max - first) / period) : 0.0;
     const double ncycles = c_hi - c_lo + 1.0;
@@ -944,7 +943,7 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
 
   if (bp.size() == 1) {  // degenerate interval
     double v;
-    if (lightusd::EvaluateSpline(sp, t_min, &v)) emit(t_min, v);
+    if (lightusd::spline_eval::EvaluateSpline(sp, t_min, &v)) emit(t_min, v);
     return true;
   }
 
@@ -952,8 +951,8 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
   for (size_t i = 0; i + 1 < bp.size(); ++i) {
     const double a = bp[i], b = bp[i + 1];
     double ya, yb, ym;
-    if (!lightusd::EvaluateSpline(sp, 0.5 * (a + b), &ym) ||
-        !lightusd::EvaluateSpline(sp, a, &ya) || !EvalLeft(sp, a, b, &yb)) {
+    if (!lightusd::spline_eval::EvaluateSpline(sp, 0.5 * (a + b), &ym) ||
+        !lightusd::spline_eval::EvaluateSpline(sp, a, &ya) || !EvalLeft(sp, a, b, &yb)) {
       close_line();  // value block: gap in the approximation
       continue;
     }
@@ -980,7 +979,7 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
         const double u = 0.25 * (q + 1);
         const double x = s.x0 + u * (s.x1 - s.x0);
         // Probes that round onto the piece end must see its left limit.
-        okq[q] = (x < b_left) ? lightusd::EvaluateSpline(sp, x, &yq[q])
+        okq[q] = (x < b_left) ? lightusd::spline_eval::EvaluateSpline(sp, x, &yq[q])
                               : EvalLeft(sp, a, b, &yq[q]);
         eq[q] = okq[q] ? yq[q] - (s.y0 + u * (s.y1 - s.y0)) : 0.0;
         if (!okq[q] || std::fabs(eq[q]) > kSplineProbeMargin * tolerance) {
@@ -1020,5 +1019,4 @@ bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

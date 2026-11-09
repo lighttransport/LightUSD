@@ -11,7 +11,7 @@
 #include <utility>
 #include "c/value.h"
 
-namespace lightusd { namespace next {
+namespace lightusd {
 // A missing view differs from a present, empty string.
 class StringView : public std::string_view {
  public:
@@ -118,4 +118,4 @@ class StringArrayView {
  private:
   const lu_value* value_ = nullptr;
 };
-}}  // namespace lightusd::next
+}  // namespace lightusd

@@ -4,7 +4,7 @@
 #include "validation/usd-validation.hh"
 #include "validation/validation-context.hh"
 #include <new>
-namespace n = lightusd::next;
+namespace n = lightusd;
 using lightusd_internal::Fail;
 struct lightusd_validation_report {
   n::USDValidationResult result;

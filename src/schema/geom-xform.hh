@@ -12,7 +12,6 @@
 #include <array>
 
 namespace lightusd {
-namespace next {
 
 /// Transform operation types
 enum class XformOpType {
@@ -105,5 +104,4 @@ private:
 /// Check if a prim is specifically an Xform
 bool IsXform(const UsdPrim& prim);
 
-}  // namespace next
 }  // namespace lightusd

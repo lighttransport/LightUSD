@@ -6,7 +6,7 @@
 #include <iostream>
 
 #include "tydra/scene-preview-photometry.hh"
-namespace td = lightusd::tydra::next;
+namespace td = lightusd::tydra;
 namespace fs = std::filesystem;
 int main() {
   std::string error;

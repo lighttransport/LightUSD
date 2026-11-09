@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 class RenderScene;
 struct RenderPointInstancer;
 void AssignNodeDataId(RenderScene* scene, const std::string& prim_path,
@@ -14,5 +14,5 @@ void AssignNodeDataId(RenderScene* scene, const std::string& prim_path,
 void ResolveSkeletalAnimationTargets(RenderScene* scene);
 void ResolvePointInstancerPrototypeBindings(RenderScene* scene, RenderPointInstancer* instancer);
 void AppendPointInstanceDraws(int32_t instancer_id, RenderPointInstancer* instancer, RenderScene* scene);
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra
 #endif

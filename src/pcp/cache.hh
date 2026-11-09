@@ -29,7 +29,6 @@
 #include "expected.hh"
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 // Owning, opt-in property-stack record. No provenance is retained by normal
@@ -356,5 +355,4 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            CompositionReport *report = nullptr);
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

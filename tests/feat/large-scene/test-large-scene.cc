@@ -39,12 +39,12 @@ int g_failures = 0;
 const char *kRoot = "tests/feat/large-scene/fixture/root.usda";
 
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-bool HasPrim(const next::Stage &stage, const char *path) {
+bool HasPrim(const ::lightusd::Stage &stage, const char *path) {
   return stage.HasPrimAtPath(path);
 }
 
-std::string PrimTypeName(const next::Stage &stage, const char *path) {
-  next::UsdPrim prim = stage.GetPrimAtPath(path);
+std::string PrimTypeName(const ::lightusd::Stage &stage, const char *path) {
+  ::lightusd::UsdPrim prim = stage.GetPrimAtPath(path);
   return prim ? prim.GetTypeName() : std::string();
 }
 #else

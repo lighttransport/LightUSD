@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// Binary stream reader for USDC files
 /// Wraps a memory buffer with position tracking and endian-aware reading
@@ -243,5 +242,4 @@ private:
   size_t pos_;
 };
 
-}  // namespace next
 }  // namespace lightusd

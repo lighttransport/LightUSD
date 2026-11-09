@@ -12,7 +12,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 // Serializes the Cache's shared mutable state so it is safe to use
@@ -38,18 +37,17 @@ using PcpMutex = std::mutex;
 #endif
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd
 
 #if defined(LIGHTUSD_NEXT_FINE_LOCKS)
-#define NEXT_PCP_READ_LOCK(m) std::shared_lock<lightusd::next::pcp::PcpMutex> _pcp_rlk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::unique_lock<lightusd::next::pcp::PcpMutex> _pcp_wlk(m)
+#define NEXT_PCP_READ_LOCK(m) std::shared_lock<lightusd::pcp::PcpMutex> _pcp_rlk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::unique_lock<lightusd::pcp::PcpMutex> _pcp_wlk(m)
 #elif defined(LIGHTUSD_NEXT_RECURSIVE_LOCK)
-#define NEXT_PCP_READ_LOCK(m) std::lock_guard<lightusd::next::pcp::PcpMutex> _pcp_lk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<lightusd::next::pcp::PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_READ_LOCK(m) std::lock_guard<lightusd::pcp::PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<lightusd::pcp::PcpMutex> _pcp_lk(m)
 #else
-#define NEXT_PCP_READ_LOCK(m) std::lock_guard<lightusd::next::pcp::PcpMutex> _pcp_lk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<lightusd::next::pcp::PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_READ_LOCK(m) std::lock_guard<lightusd::pcp::PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<lightusd::pcp::PcpMutex> _pcp_lk(m)
 #endif
 #define NEXT_PCP_LOCK(m) NEXT_PCP_WRITE_LOCK(m)
 

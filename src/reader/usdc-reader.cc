@@ -10,7 +10,6 @@
 #include <fstream>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -82,5 +81,4 @@ USDCLoadResult LoadUSDCFromMemoryOwned(std::string&& data, const USDCLoadOptions
 
 // Note: IsUSDCFile and IsUSDCData are defined in crate-reader.cc
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,7 @@
 #include <limits>
 #include <memory>
 #include <string>
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace {
 template <typename Chunked>
 
@@ -227,4 +227,4 @@ void RenderSceneConverter::Impl::DuplicatePointInstanceMeshes(RenderScene* scene
     draw.expanded_mesh_id = mesh_id;
   }
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

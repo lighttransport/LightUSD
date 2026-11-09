@@ -8,7 +8,6 @@
 #include "core/safe-arithmetic.hh"
 
 namespace lightusd {
-namespace next {
 
 bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
                                                   CrateTypeId type_id,
@@ -70,5 +69,4 @@ bool CrateReader::Impl::UnpackDoubleVector(ValueRep rep, Value& out) {
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

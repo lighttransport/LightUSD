@@ -10,7 +10,6 @@
 #include "identifier.hh"
 
 namespace lightusd {
-namespace next {
 
 std::ostream& operator<<(std::ostream& os, const Path& path) {
   return os << path.str();
@@ -193,5 +192,4 @@ bool Path::empty() const { return path_.empty(); }
 const std::string& Path::str() const { return path_; }
 const char* Path::c_str() const { return path_.c_str(); }
 
-}  // namespace next
 }  // namespace lightusd

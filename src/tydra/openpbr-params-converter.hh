@@ -9,7 +9,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 inline void CopyShaderParam3ToOpenPBR(const ShaderParam &param, float dst[3]) {
   dst[0] = param.value.x;
@@ -131,6 +130,5 @@ inline bool BuildLightRtOpenPBRParams(
   return BuildRealtimePbrMaterial(rm, out);
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -18,10 +18,9 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace fs = std::filesystem;
-namespace usd = ::lightusd::next;
+namespace usd = ::lightusd;
 struct Sample {
   double p[3] = {0, 0, 0};
   float n[3] = {0, 0, 1};
@@ -164,6 +163,5 @@ bool WriteProxy(Build&);
 void AppendPreviewExtras(const Build&, usd::Layer&);
 bool WriteVolume(Build&, usd::Layer&, const std::vector<Sample>&);
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -10,7 +10,6 @@
 #include "value-parser-numeric.hh"
 
 namespace lightusd {
-namespace next {
 
 // Grammar and type validation plus canonical-text reconstruction for a
 // VtArrayEdit value: `edit [ <op>; ... ]` (usda 1.2, crate 0.14). The next
@@ -196,7 +195,7 @@ namespace {
 // .prop, ..) against the owning prim's absolute path. Crate files never
 // hold relative paths, and downstream lookups are absolute-only — resolve
 // at parse time (pxr does the same when building SdfPaths).
-std::string ResolveRelativeTargetPath(const ::lightusd::next::PrimSpec* prim,
+std::string ResolveRelativeTargetPath(const ::lightusd::PrimSpec* prim,
                                       const std::string& target) {
   if (target.empty() || target[0] == '/' || !prim) return target;
   std::string base = prim->path().str();
@@ -917,7 +916,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   }
   std::vector<Path> targets;
   const bool value_block = Check(TokenType::None);
-  const ::lightusd::next::PrimSpec* owner = builder_->current();
+  const ::lightusd::PrimSpec* owner = builder_->current();
   if (Check(TokenType::OpenBracket)) {
     lexer_->next();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
@@ -1002,5 +1001,4 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

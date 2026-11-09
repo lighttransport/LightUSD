@@ -19,7 +19,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 // Optional allocator/page hints. The portable default performs no host calls.
 inline void ReturnFreeMemoryToOS(
@@ -95,5 +94,4 @@ class MemoryTrimmer {
 #endif
 };
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,7 @@
 // Port of the legacy validator (src/usd-validation.cc) onto the next-core
 // layer model. Rule ids / severities / messages mirror the legacy validator.
 //
-// Legacy checks that are not fully expressible on next::Layer / next::PrimSpec
+// Legacy checks that are not fully expressible on ::lightusd::Layer / ::lightusd::PrimSpec
 // are skipped or structurally approximated:
 //  - crate/package rules require the original bytes and are run by callers
 //    such as lusdchecker, not by Layer-only validation.
@@ -48,7 +48,6 @@
 #include "core/color-transform.hh"
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 
@@ -89,7 +88,7 @@ bool EndsWith(const std::string &s, const std::string &suffix) {
 // parser and lexer use. The previous file-local approximation accepted ANY
 // byte >= 0x80, so malformed UTF-8 and non-XID codepoints passed validation.
 // (The shared IsValidIdentifier / IsValidNamespacedIdentifier are visible
-// here through the enclosing lightusd::next namespace.)
+// here through the enclosing lightusd namespace.)
 
 // ---------------------------------------------------------------------------
 // Issue helpers
@@ -325,7 +324,7 @@ bool ValueTypesAgree(const std::string &authored, const std::string &expected) {
 }
 
 // ---------------------------------------------------------------------------
-// Path validation (string-based; next::Path is an unvalidated string wrapper)
+// Path validation (string-based; ::lightusd::Path is an unvalidated string wrapper)
 // ---------------------------------------------------------------------------
 
 void SplitScenePathString(const std::string &path, std::string *prim_part,
@@ -2066,5 +2065,4 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

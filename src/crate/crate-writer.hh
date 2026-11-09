@@ -16,7 +16,6 @@
 #include <unordered_map>
 
 namespace lightusd {
-namespace next {
 
 /// Output sink for streaming crate writes: receives the file bytes in order, in
 /// chunks. Returns false to abort the write. See WriteLayerToSink().
@@ -223,5 +222,4 @@ private:
   std::unique_ptr<BatchedFile> batched_file_;
 };
 
-}  // namespace next
 }  // namespace lightusd

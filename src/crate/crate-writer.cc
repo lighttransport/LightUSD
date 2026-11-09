@@ -73,7 +73,6 @@
 #include "lz4/lz4.h"
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -351,5 +350,4 @@ CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const
   return impl_->Write(layer, &sink);
 }
 
-}  // namespace next
 }  // namespace lightusd

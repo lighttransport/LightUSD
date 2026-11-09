@@ -14,7 +14,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -330,5 +329,4 @@ Layer MaterializeVariantHolders(const Layer& layer) {
   return out;
 }
 
-}  // namespace next
 }  // namespace lightusd

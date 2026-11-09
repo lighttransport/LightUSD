@@ -26,7 +26,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 namespace {
@@ -923,5 +922,4 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

@@ -24,7 +24,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 class LoadRules {
@@ -75,5 +74,4 @@ class LoadRules {
 };
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

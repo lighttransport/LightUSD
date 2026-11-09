@@ -38,7 +38,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 bool AssetPayloadBudget::SetLimit(uint64_t limit_bytes) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -2097,5 +2096,4 @@ void SetDefaultResolver(std::unique_ptr<AssetResolver> resolver) {
   g_default_resolver = std::move(resolver);
 }
 
-}  // namespace next
 }  // namespace lightusd

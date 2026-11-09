@@ -10,7 +10,6 @@
 #include <unordered_set>
 
 namespace lightusd {
-namespace next {
 
 // ZIP local file header signature
 static const uint32_t kLocalFileHeaderSig = 0x04034b50;
@@ -300,5 +299,4 @@ int USDZReader::FindUSDAFile() const {
   return -1;
 }
 
-} // namespace next
 } // namespace lightusd

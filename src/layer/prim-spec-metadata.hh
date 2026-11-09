@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-// Included inside namespace lightusd::next by prim-spec.hh (which includes
+// Included inside namespace lightusd by prim-spec.hh (which includes
 // lazy-containers.hh first).
 
 #include "prim-spec-variant-data.hh"

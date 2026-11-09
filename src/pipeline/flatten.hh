@@ -22,7 +22,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pipeline {
 
 /// Accounting for a flatten run.
@@ -184,5 +183,4 @@ bool FlattenUSDMemoryToUSDCToSink(const std::string& key, const uint8_t* data,
                                   std::string* err = nullptr);
 
 }  // namespace pipeline
-}  // namespace next
 }  // namespace lightusd

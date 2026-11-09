@@ -22,7 +22,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -805,5 +804,4 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
   return false;
 }
 
-}  // namespace next
 }  // namespace lightusd

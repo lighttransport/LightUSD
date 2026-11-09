@@ -9,7 +9,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 namespace color_management {
 
 using ::lightusd::color::ColorSpaceDesc;
@@ -48,5 +47,4 @@ bool ResolveRenderingColorConfig(const Stage &stage,
                                  std::string *warning = nullptr);
 
 }  // namespace color_management
-}  // namespace next
 }  // namespace lightusd

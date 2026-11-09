@@ -35,7 +35,7 @@
 #include "stage/stage.hh"
 #include "types/value.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static int g_failures = 0;
 #define IG_CHECK(cond, msg)                                                 \
@@ -83,7 +83,7 @@ static void test_large_instance_group() {
   IG_CHECK(opened.has_value(), "Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
 
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   std::string warn, err;
   const auto t1 = std::chrono::steady_clock::now();
   IG_CHECK(cache.BuildStage(&stage, &warn, &err), "BuildStage failed");

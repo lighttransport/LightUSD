@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
-using namespace lightusd::next;
+using namespace lightusd;
 static int failures;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); ++failures; } } while (0)
 constexpr size_t kWindow = size_t(4) << 20;

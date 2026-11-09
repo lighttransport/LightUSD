@@ -20,7 +20,7 @@
 #include "reader/usdc-reader.hh"
 #include "stage/stage.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 // 1233 bytes: pxr-authored USDC (OpenUSD usdcat) with nested customLayerData,

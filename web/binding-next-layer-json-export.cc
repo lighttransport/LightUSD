@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <limits>
 #include <utility>
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 #include "writer/value-printer.hh"
 #include "parser/lexer.hh"
 #include "parser/value-parser.hh"

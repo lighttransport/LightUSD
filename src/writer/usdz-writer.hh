@@ -9,7 +9,6 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 /// Result of a USDZ write operation.
 struct USDZWriteResult {
@@ -86,5 +85,4 @@ USDZWriteResult WriteUSDZFromUSDAAndAssetsToMemory(
     const std::map<std::string, std::vector<uint8_t>>& assets,
     const USDZWriteOptions& options = {});
 
-} // namespace next
 } // namespace lightusd

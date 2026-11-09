@@ -12,7 +12,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace {
 tvdb_grid_t Template(double size, const double* origin,
@@ -444,6 +443,5 @@ bool WriteVolume(Build& build, usd::Layer& root,
   return false;
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

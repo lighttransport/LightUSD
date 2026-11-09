@@ -9,7 +9,6 @@
 #include "eval/attribute-eval.hh"
 
 namespace lightusd {
-namespace next {
 
 bool IsPhysicsScene(const UsdPrim& prim);
 
@@ -21,5 +20,4 @@ struct PhysicsSceneData {
 bool GetPhysicsSceneData(const Stage& stage, const UsdPrim& prim,
                          PhysicsSceneData* out, double time = 0.0);
 
-} // namespace next
 } // namespace lightusd

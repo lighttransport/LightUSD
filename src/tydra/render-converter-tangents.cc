@@ -17,7 +17,7 @@
 #include <limits>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 bool RenderSceneConverter::Impl::ComputeVertexTangents(RenderMesh* mesh) {
   if (!mesh->is_triangulated) {
@@ -294,4 +294,4 @@ bool RenderSceneConverter::Impl::ComputeVertexTangents(RenderMesh* mesh) {
 }
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

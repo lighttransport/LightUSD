@@ -4,7 +4,6 @@
 #include "layer/asset-anchor.hh"
 #include "prim/relocate-path.hh"
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 void Cache::Impl::AppendExpressionVarsFingerprint(ValueView vars,
@@ -386,10 +385,9 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
   }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd
 
-namespace lightusd { namespace next { namespace pcp {
+namespace lightusd {  namespace pcp {
 
 auto Cache::Impl::AddIssue(ErrorCode code, const std::string &site,
                 const std::string &message, std::string *err) -> void {
@@ -397,4 +395,4 @@ auto Cache::Impl::AddIssue(ErrorCode code, const std::string &site,
     if (err) *err += message + "\n";
   }
 
-}}} // namespace lightusd::next::pcp
+}} // namespace lightusd::pcp

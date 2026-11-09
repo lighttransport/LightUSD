@@ -3,7 +3,6 @@
 #include "core/color-transform.hh"
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 // ---------------------------------------------------------------------------
@@ -216,5 +215,4 @@ void ValidateColorSpaceDefinitionProperty(const PrimSpec &ps,
 }
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

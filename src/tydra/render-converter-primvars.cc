@@ -11,9 +11,9 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim;
-using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim;
+using ::lightusd::Value;
 
 namespace {
 
@@ -33,7 +33,7 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 // every UV/color/normal primvar (40 MB for a 5M-vertex `st` set) on top of the
 // copies the caller already makes.
 uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
-                         ::lightusd::next::ValueArrayView<const float>* view) {
+                         ::lightusd::ValueArrayView<const float>* view) {
   if (!v.is_array()) return 0;
   const uint32_t comps =
       static_cast<uint32_t>(GetComponentCount(v.type_id()));
@@ -136,8 +136,8 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
   };
 
   // Expand an indexed primvar to direct form; false on any out-of-range index.
-  auto expand_indexed = [](::lightusd::next::ValueArrayView<const float> data, uint32_t comps,
-                           ::lightusd::next::ValueArrayView<const int32_t> idxs,
+  auto expand_indexed = [](::lightusd::ValueArrayView<const float> data, uint32_t comps,
+                           ::lightusd::ValueArrayView<const int32_t> idxs,
                            std::vector<float>* out) -> bool {
     const size_t elems = comps ? data.size() / comps : 0;
     out->clear();
@@ -157,10 +157,10 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
     if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
         !normals.empty()) {
       std::string interp_tok = "vertex";
-      if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-        if (const ::lightusd::next::PropMeta* pm =
+      if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+        if (const ::lightusd::PropMeta* pm =
                 spec->property_meta("normals")) {
-          if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
+          if (pm->authored & ::lightusd::PropMeta::kInterpolation) {
             interp_tok = pm->interpolation;
           }
         }
@@ -197,7 +197,7 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
     if (custom_only && builtin) continue;
 
     std::vector<float> data;
-    ::lightusd::next::ValueArrayView<const float> fdata;
+    ::lightusd::ValueArrayView<const float> fdata;
     const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
 
     // Unauthored interpolation defaults to `constant` per the USD spec
@@ -346,4 +346,4 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
 }
 
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

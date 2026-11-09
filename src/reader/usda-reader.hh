@@ -11,7 +11,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Options for loading USDA files
 struct LoadOptions {
@@ -50,5 +49,4 @@ LoadResult LoadUSDAFromStringOwned(std::string&& data,
 
 /// Quick check if a file appears to be USDA format (checks magic bytes)
 
-}  // namespace next
 }  // namespace lightusd

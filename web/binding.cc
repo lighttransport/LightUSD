@@ -2484,10 +2484,10 @@ void AppendPhysicsPrimJson(const lightusd::legacy::Prim &prim, const std::string
 // bytes keep the lazy CrateReader path (arrays pass through verbatim);
 // anything else (USDA text, USDZ package) dispatches through the
 // content-sniffing pcp memory loader.
-static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytesOwned(
+static std::unique_ptr<lightusd::Layer> ParseNextLayerBytesOwned(
     std::string &&bytes, const std::string &key,
-    const lightusd::next::CrateReadOptions &read_opts, std::string *error) {
-  namespace tn = lightusd::next;
+    const lightusd::CrateReadOptions &read_opts, std::string *error) {
+  namespace tn = lightusd;
   if (bytes.size() >= 8 && std::memcmp(bytes.data(), "PXR-USDC", 8) == 0) {
     tn::CrateReader reader(read_opts);
     tn::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
@@ -2522,10 +2522,10 @@ static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytesOwned(
   return layer;
 }
 
-static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytes(
+static std::unique_ptr<lightusd::Layer> ParseNextLayerBytes(
     const uint8_t *data, size_t size, const std::string &key,
-    const lightusd::next::CrateReadOptions &read_opts, std::string *error) {
-  namespace tn = lightusd::next;
+    const lightusd::CrateReadOptions &read_opts, std::string *error) {
+  namespace tn = lightusd;
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     tn::CrateReader reader(read_opts);
     tn::CrateReadResult rr = reader.Read(data, size);
@@ -8366,7 +8366,7 @@ class LightUSDLoaderNative {
   static bool DecodeFlattenMaps(
       const uint8_t *remap_pairs, uint32_t remap_pairs_size,
       const uint8_t *variant_pairs, uint32_t variant_pairs_size,
-      lightusd::next::pipeline::FlattenOptions *opts, std::string *error) {
+      lightusd::pipeline::FlattenOptions *opts, std::string *error) {
     if (!DecodeFlattenStringMap(remap_pairs, remap_pairs_size,
                                 &opts->asset_path_remap)) {
       *error = "Invalid asset path remap";
@@ -8389,7 +8389,7 @@ class LightUSDLoaderNative {
   static std::string ResolveFlattenLayerKey(const std::string &asset,
                                             const std::string &anchor,
                                             const HasKey &has_key) {
-    using lightusd::next::AssetResolver;
+    using lightusd::AssetResolver;
     auto try_key = [&has_key](std::string key) -> std::string {
       key = AssetResolver::NormalizePath(key);
       while (key.rfind("./", 0) == 0) key = key.substr(2);
@@ -8433,7 +8433,7 @@ class LightUSDLoaderNative {
                          nullptr, out);
       return 0;
     }
-    lightusd::next::pipeline::FlattenOptions opts;
+    lightusd::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazy_arrays != 0;
     opts.write.streaming = true;
     std::string err;
@@ -8442,9 +8442,9 @@ class LightUSDLoaderNative {
       StoreFlattenResult(-1, std::move(err), {}, nullptr, out);
       return 0;
     }
-    lightusd::next::pipeline::FlattenStats stats;
+    lightusd::pipeline::FlattenStats stats;
     bool aborted = false;
-    lightusd::next::CrateWriteSink sink =
+    lightusd::CrateWriteSink sink =
         [&](const uint8_t *data, size_t size) -> bool {
       if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
         aborted = true;
@@ -8452,7 +8452,7 @@ class LightUSDLoaderNative {
       }
       return true;
     };
-    if (!lightusd::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
+    if (!lightusd::pipeline::FlattenUSDCToUSDCOwnedToSink(
             std::move(input), sink, opts, &stats, &err)) {
       StoreFlattenResult(0, aborted ? "aborted by sink" : std::move(err), {},
                          nullptr, out);
@@ -8497,7 +8497,7 @@ class LightUSDLoaderNative {
       return 0;
     }
 
-    lightusd::next::pipeline::FlattenOptions opts;
+    lightusd::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazy_arrays != 0;
     opts.root_anchor_path = rootName;
     std::string err;
@@ -8513,7 +8513,7 @@ class LightUSDLoaderNative {
     auto consumed = std::make_shared<std::unordered_set<std::string>>();
     auto resolved_cache =
         std::make_shared<std::unordered_map<std::string, std::string>>();
-    lightusd::next::AssetResolver resolver;
+    lightusd::AssetResolver resolver;
     resolver.SetCustomResolver(
         [this, consumed, resolved_cache, exists_id](
             const std::string &asset, const std::string &anchor) -> std::string {
@@ -8534,10 +8534,10 @@ class LightUSDLoaderNative {
     // Loader: pull the layer's bytes out of the asset cache (consuming the
     // entry — the parsed layer retains its own copy as the lazy-array source)
     // and parse it as a lazy crate, mirroring MakeFileSystemLayerLoader.
-    const lightusd::next::CrateReadOptions read_opts = opts.read;
+    const lightusd::CrateReadOptions read_opts = opts.read;
     opts.layer_loader = [this, read_opts, consumed, fetch_id](
                             const std::string &key, std::string *error)
-        -> std::unique_ptr<lightusd::next::Layer> {
+        -> std::unique_ptr<lightusd::Layer> {
       std::string bytes;
       if (em_resolver_.has(key)) {
         bytes = em_resolver_.takeAssetString(key);
@@ -8556,16 +8556,16 @@ class LightUSDLoaderNative {
       return ParseNextLayerBytesOwned(std::move(bytes), key, read_opts, error);
     };
 
-    lightusd::next::pipeline::FlattenStats stats;
+    lightusd::pipeline::FlattenStats stats;
     std::vector<uint8_t> output;
     bool ok = false;
     bool aborted = false;
     if (!sink_id) {
-      ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDCOwned(
+      ok = lightusd::pipeline::FlattenUSDMemoryToUSDCOwned(
           rootName, std::move(input), output, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      lightusd::next::CrateWriteSink sink =
+      lightusd::CrateWriteSink sink =
           [&](const uint8_t *data, size_t size) -> bool {
         if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
           aborted = true;
@@ -8573,7 +8573,7 @@ class LightUSDLoaderNative {
         }
         return true;
       };
-      ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDCOwnedToSink(
+      ok = lightusd::pipeline::FlattenUSDMemoryToUSDCOwnedToSink(
           rootName, std::move(input), sink, opts, &stats, &err);
     }
     if (!ok) {
@@ -8717,7 +8717,7 @@ class LightUSDLoaderNative {
       layer_key.assign(reinterpret_cast<const char *>(key), key_size);
     }
     std::string bytes(reinterpret_cast<const char *>(data), data_size);
-    std::string norm_key = lightusd::next::AssetResolver::NormalizePath(layer_key);
+    std::string norm_key = lightusd::AssetResolver::NormalizePath(layer_key);
     while (norm_key.rfind("./", 0) == 0) norm_key = norm_key.substr(2);
     it->second.layers[norm_key] = std::move(bytes);
     it->second.parsed_layers.erase(norm_key);
@@ -8745,14 +8745,14 @@ class LightUSDLoaderNative {
     }
     NextAsyncFlattenSession &state = sit->second;
 
-    lightusd::next::pipeline::FlattenOptions opts;
+    lightusd::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = state.lazy_arrays;
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
     opts.asset_path_remap = state.asset_path_remap;
     opts.composition.variant_overrides = state.variant_overrides;
 
-    using lightusd::next::AssetResolver;
+    using lightusd::AssetResolver;
     AssetResolver resolver;
     std::string missing_key;
     auto consumed = std::make_shared<std::unordered_set<std::string>>();
@@ -8784,15 +8784,15 @@ class LightUSDLoaderNative {
     });
     opts.resolver = &resolver;
 
-    const lightusd::next::CrateReadOptions read_opts = opts.read;
+    const lightusd::CrateReadOptions read_opts = opts.read;
     opts.layer_loader = [&state, read_opts, consumed, &missing_key](
                             const std::string &key, std::string *error)
-        -> std::unique_ptr<lightusd::next::Layer> {
+        -> std::unique_ptr<lightusd::Layer> {
       auto cached = state.parsed_layers.find(key);
       if (cached != state.parsed_layers.end() && cached->second) {
         consumed->insert(key);
-        std::unique_ptr<lightusd::next::Layer> layer(
-            new lightusd::next::Layer(cached->second->Clone()));
+        std::unique_ptr<lightusd::Layer> layer(
+            new lightusd::Layer(cached->second->Clone()));
         layer->build_path_index();
         return layer;
       }
@@ -8805,17 +8805,17 @@ class LightUSDLoaderNative {
       }
       consumed->insert(key);
       const std::string &src = it->second;
-      std::unique_ptr<lightusd::next::Layer> layer = ParseNextLayerBytes(
+      std::unique_ptr<lightusd::Layer> layer = ParseNextLayerBytes(
           reinterpret_cast<const uint8_t *>(src.data()), src.size(), key,
           read_opts, error);
       if (!layer) return nullptr;
       state.parsed_layers[key] =
-          std::shared_ptr<lightusd::next::Layer>(
-              new lightusd::next::Layer(layer->Clone()));
+          std::shared_ptr<lightusd::Layer>(
+              new lightusd::Layer(layer->Clone()));
       return layer;
     };
 
-    lightusd::next::pipeline::FlattenStats stats;
+    lightusd::pipeline::FlattenStats stats;
     std::string err;
     bool ok = false;
     std::vector<uint8_t> output;
@@ -8824,11 +8824,11 @@ class LightUSDLoaderNative {
         reinterpret_cast<const uint8_t *>(state.root.data());
     const size_t root_size = state.root.size();
     if (!sink_id) {
-      ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDC(
+      ok = lightusd::pipeline::FlattenUSDMemoryToUSDC(
           state.root_name, root_data, root_size, output, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      lightusd::next::CrateWriteSink sink =
+      lightusd::CrateWriteSink sink =
           [&](const uint8_t *data, size_t size) -> bool {
         if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
           aborted = true;
@@ -8836,7 +8836,7 @@ class LightUSDLoaderNative {
         }
         return true;
       };
-      ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDCToSink(
+      ok = lightusd::pipeline::FlattenUSDMemoryToUSDCToSink(
           state.root_name, root_data, root_size, sink, opts, &stats, &err);
     }
 
@@ -10786,7 +10786,7 @@ class LightUSDLoaderNative {
     std::map<std::string, std::string> asset_path_remap;
     std::map<std::string, std::string> variant_overrides;
     std::map<std::string, std::string> layers;
-    std::map<std::string, std::shared_ptr<lightusd::next::Layer>> parsed_layers;
+    std::map<std::string, std::shared_ptr<lightusd::Layer>> parsed_layers;
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
 #endif  // LIGHTUSD_WASM_WITH_NEXT
@@ -12338,15 +12338,15 @@ class RenderStream {
     error_.clear();
     if (source.size() >= 8 &&
         std::memcmp(source.data(), "PXR-USDC", 8) == 0) {
-      lightusd::next::USDCLoadOptions opts;
+      lightusd::USDCLoadOptions opts;
       opts.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
         reportNextCrateProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
         return true;
       };
-      lightusd::next::USDCLoadResult res =
-          lightusd::next::LoadUSDCFromMemoryOwned(std::move(source), opts);
+      lightusd::USDCLoadResult res =
+          lightusd::LoadUSDCFromMemoryOwned(std::move(source), opts);
       if (!res.success) {
         error_ = res.error_summary.empty() ? std::string("USDC load failed")
                                            : res.error_summary;
@@ -12356,10 +12356,10 @@ class RenderStream {
       }
       stage_ = std::move(res.stage);
     } else {
-      lightusd::next::LoadOptions opts;
+      lightusd::LoadOptions opts;
       opts.parse_options.enable_usda_lazy_arrays = true;
-      lightusd::next::LoadResult res =
-          lightusd::next::LoadUSDAFromStringOwned(std::move(source), opts);
+      lightusd::LoadResult res =
+          lightusd::LoadUSDAFromStringOwned(std::move(source), opts);
       if (!res.success) {
         error_ = res.error_summary.empty() ? std::string("USDA load failed")
                                            : res.error_summary;
@@ -12369,7 +12369,7 @@ class RenderStream {
       }
       stage_ = std::move(res.stage);
     }
-    meshes_ = lightusd::next::GetAllMeshes(stage_);
+    meshes_ = lightusd::GetAllMeshes(stage_);
     stats_ = Stats{};
     stats_.source_mesh_count = meshes_.size();
     if (mesh_merge_) {
@@ -12437,7 +12437,7 @@ class RenderStream {
   emscripten::val getSceneMetadata() const {
     emscripten::val metadata = emscripten::val::object();
     if (!loaded_) return metadata;
-    const lightusd::next::StageMeta &meta = stage_.GetMeta();
+    const lightusd::StageMeta &meta = stage_.GetMeta();
     metadata.set("upAxis", meta.upAxis);
     metadata.set("metersPerUnit", meta.metersPerUnit);
     metadata.set("framesPerSecond", meta.framesPerSecond);
@@ -12477,7 +12477,7 @@ class RenderStream {
     source_material_keys_.clear();
     source_texture_keys_.clear();
     texture_keys_.clear();
-    stage_ = lightusd::next::Stage();
+    stage_ = lightusd::Stage();
     freeVec_(s_points_);
     freeVec_(s_normals_);
     freeVec_(s_uv_);
@@ -12534,7 +12534,7 @@ class RenderStream {
       out.set("error", std::string("invalid source mesh index"));
       return out;
     }
-    const lightusd::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
+    const lightusd::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
     bool soup = false;  // indexed, or non-indexed soup
     std::string mesh_err;
@@ -12583,15 +12583,15 @@ class RenderStream {
 
   // Read an array property through a COPY of the lazy Value, so the Stage's own
   // property stays lazy (per-mesh decode does not accumulate across meshes).
-  std::vector<float> matFloat_(const lightusd::next::UsdPrim &prim, const char *name) {
-    const lightusd::next::Value *v = prim.GetPropertyValue(name);
+  std::vector<float> matFloat_(const lightusd::UsdPrim &prim, const char *name) {
+    const lightusd::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
     const auto a = v->as_float_array();
     if (!a || a.empty()) return {};
     return std::vector<float>(a.begin(), a.end());
   }
-  std::vector<int32_t> matInt_(const lightusd::next::UsdPrim &prim, const char *name) {
-    const lightusd::next::Value *v = prim.GetPropertyValue(name);
+  std::vector<int32_t> matInt_(const lightusd::UsdPrim &prim, const char *name) {
+    const lightusd::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
     const auto a = v->as_int_array();
     if (!a || a.empty()) return {};
@@ -12610,7 +12610,7 @@ class RenderStream {
   //     index + hash-map overhead).
   // The full soup is never materialized in the welded path; at most one mesh is
   // resident at a time either way.
-  bool buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
+  bool buildRenderMesh_(const lightusd::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
     if (soup_out) *soup_out = false;
     std::vector<float> P = matFloat_(prim, "points");
@@ -12933,7 +12933,7 @@ class RenderStream {
   }
 
   MaterialRecord materialRecordForPrim_(
-      const lightusd::next::UsdPrim &mat) {
+      const lightusd::UsdPrim &mat) {
     MaterialRecord rec;
     if (!mat.IsValid()) {
       rec.prim_path = "__default";
@@ -12943,17 +12943,17 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
-    lightusd::next::UsdPrim shader;
-    const std::string shaderPath = lightusd::next::GetSurfaceShader(stage_, mat);
+    lightusd::UsdPrim shader;
+    const std::string shaderPath = lightusd::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
     if (!shader.IsValid()) {
       for (const auto &ch : mat.GetChildren()) {
-        if (lightusd::next::IsPreviewSurface(ch)) { shader = ch; break; }
+        if (lightusd::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
     if (shader.IsValid()) {
-      lightusd::next::PreviewSurfaceData ps;
-      if (lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
+      lightusd::PreviewSurfaceData ps;
+      if (lightusd::GetPreviewSurfaceData(stage_, shader, &ps)) {
         rec.base_color[0] = ps.diffuse_color[0];
         rec.base_color[1] = ps.diffuse_color[1];
         rec.base_color[2] = ps.diffuse_color[2];
@@ -12981,7 +12981,7 @@ class RenderStream {
     return rec;
   }
 
-  int32_t registerMaterial_(const lightusd::next::UsdPrim &mat) {
+  int32_t registerMaterial_(const lightusd::UsdPrim &mat) {
     const std::string mat_path = mat.IsValid() ? mat.GetPath().str()
                                                : std::string("__default");
     MaterialRecord rec = materialRecordForPrim_(mat);
@@ -13010,13 +13010,13 @@ class RenderStream {
     return rec.id;
   }
 
-  int32_t materialIdForBoundPrim_(const lightusd::next::UsdPrim &prim) {
-    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
+  int32_t materialIdForBoundPrim_(const lightusd::UsdPrim &prim) {
+    lightusd::UsdPrim mat = lightusd::GetBoundMaterial(stage_, prim);
     return registerMaterial_(mat);
   }
 
-  static bool hasGeomSubset_(const lightusd::next::UsdPrim &prim) {
-    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+  static bool hasGeomSubset_(const lightusd::UsdPrim &prim) {
+    for (const lightusd::UsdPrim &child : prim.GetChildren()) {
       if (child.IsValid() && child.GetTypeName() == "GeomSubset") return true;
     }
     return false;
@@ -13088,7 +13088,7 @@ class RenderStream {
     acc->source_count = 0;
   }
 
-  void appendToAccumulator_(const lightusd::next::UsdPrim &prim,
+  void appendToAccumulator_(const lightusd::UsdPrim &prim,
                             int32_t material_id,
                             bool soup,
                             MergeAccumulator *acc) {
@@ -13145,7 +13145,7 @@ class RenderStream {
     constexpr size_t kMaxGroupIndices = size_t(3) << 20;
 
     for (size_t i = 0; i < meshes_.size(); ++i) {
-      const lightusd::next::UsdPrim &prim = meshes_[i].GetPrim();
+      const lightusd::UsdPrim &prim = meshes_[i].GetPrim();
       const int32_t material_id = materialIdForBoundPrim_(prim);
       if (hasGeomSubset_(prim)) {
         OutputMesh out;
@@ -13203,9 +13203,9 @@ class RenderStream {
     const size_t slash = connPath.rfind('/');
     const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
     const std::string primPath = (dot == std::string::npos) ? connPath : connPath.substr(0, dot);
-    lightusd::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    lightusd::UsdPrim tex = stage_.GetPrimAtPath(primPath);
     if (!tex.IsValid()) return "";
-    const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
+    const lightusd::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
     if (auto a = v->as_asset_path()) return *a;
     if (auto s = v->as_string()) return *s;
@@ -13271,8 +13271,8 @@ class RenderStream {
   }
 
   static std::vector<int32_t> matIntStatic_(
-      const lightusd::next::UsdPrim &prim, const char *name) {
-    const lightusd::next::Value *v = prim.GetPropertyValue(name);
+      const lightusd::UsdPrim &prim, const char *name) {
+    const lightusd::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
     const auto a = v->as_int_array();
     if (!a || a.empty()) return {};
@@ -13357,18 +13357,18 @@ class RenderStream {
     return r;
   }
   static std::array<double, 16> localMatrix_(
-      const lightusd::next::UsdPrim &prim) {
+      const lightusd::UsdPrim &prim) {
     std::array<double, 16> m = identityMatrix_();
-    lightusd::next::UsdGeomXform xform(prim);
+    lightusd::UsdGeomXform xform(prim);
     double raw[16];
     if (!xform.ComputeLocalTransform(raw)) return m;
     for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
     return m;
   }
   static std::array<double, 16> worldMatrix_(
-      const lightusd::next::UsdPrim &prim) {
-    std::vector<lightusd::next::UsdPrim> chain;
-    for (lightusd::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+      const lightusd::UsdPrim &prim) {
+    std::vector<lightusd::UsdPrim> chain;
+    for (lightusd::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
       chain.push_back(p);
     }
     std::array<double, 16> world = identityMatrix_();
@@ -13380,23 +13380,23 @@ class RenderStream {
   }
 
   emscripten::val materialObjectForPrim_(
-      const lightusd::next::UsdPrim &mat) {
+      const lightusd::UsdPrim &mat) {
     emscripten::val m = emscripten::val::object();
     if (!mat.IsValid()) return m;
     // Resolve the surface shader: prefer the material's outputs:surface (a
     // connection), but fall back to the first UsdPreviewSurface child shader —
     // the common case and robust when the output connection is not resolved.
-    lightusd::next::UsdPrim shader;
-    const std::string shaderPath = lightusd::next::GetSurfaceShader(stage_, mat);
+    lightusd::UsdPrim shader;
+    const std::string shaderPath = lightusd::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
     if (!shader.IsValid()) {
       for (const auto &ch : mat.GetChildren()) {
-        if (lightusd::next::IsPreviewSurface(ch)) { shader = ch; break; }
+        if (lightusd::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
     if (!shader.IsValid()) return m;
-    lightusd::next::PreviewSurfaceData ps;
-    if (!lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
+    lightusd::PreviewSurfaceData ps;
+    if (!lightusd::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
     m.set("baseColor", arr3_(ps.diffuse_color));
     m.set("metallic", ps.metallic);
     m.set("roughness", ps.roughness);
@@ -13461,31 +13461,31 @@ class RenderStream {
 
   // Resolve the prim's bound material to UsdPreviewSurface values + texture
   // asset paths (resolved to GPU textures by the JS caller from the archive).
-  emscripten::val resolveMaterial_(const lightusd::next::UsdPrim &prim) {
-    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
+  emscripten::val resolveMaterial_(const lightusd::UsdPrim &prim) {
+    lightusd::UsdPrim mat = lightusd::GetBoundMaterial(stage_, prim);
     return materialObjectForPrim_(mat);
   }
 
-  void addGeomSubsetMaterials_(const lightusd::next::UsdPrim &prim,
+  void addGeomSubsetMaterials_(const lightusd::UsdPrim &prim,
                                emscripten::val &out) {
     std::vector<int32_t> fvc = matIntStatic_(prim, "faceVertexCounts");
     if (fvc.empty()) return;
 
     struct SubsetInfo {
-      lightusd::next::UsdPrim prim;
+      lightusd::UsdPrim prim;
       std::vector<int32_t> faces;
     };
     std::vector<SubsetInfo> subsets;
-    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+    for (const lightusd::UsdPrim &child : prim.GetChildren()) {
       if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
-      const lightusd::next::Value *family = child.GetPropertyValue("familyName");
+      const lightusd::Value *family = child.GetPropertyValue("familyName");
       if (family) {
         auto tok = family->as_token();
         if (tok && *tok != "materialBind") continue;
       }
       std::vector<int32_t> faces = matIntStatic_(child, "indices");
       if (faces.empty()) continue;
-      lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, child);
+      lightusd::UsdPrim mat = lightusd::GetBoundMaterial(stage_, child);
       if (!mat.IsValid()) continue;
       subsets.push_back({child, std::move(faces)});
     }
@@ -13500,8 +13500,8 @@ class RenderStream {
           face_material[static_cast<size_t>(face)] = mat_index;
         }
       }
-      lightusd::next::UsdPrim mat =
-          lightusd::next::GetBoundMaterial(stage_, subsets[i].prim);
+      lightusd::UsdPrim mat =
+          lightusd::GetBoundMaterial(stage_, subsets[i].prim);
       const int32_t material_id = registerMaterial_(mat);
       materials.set(mat_index, materialObject_(material_id));
     }
@@ -13536,8 +13536,8 @@ class RenderStream {
     out.set("submeshes", groups);
   }
 
-  lightusd::next::Stage stage_;
-  std::vector<lightusd::next::UsdGeomMesh> meshes_;
+  lightusd::Stage stage_;
+  std::vector<lightusd::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
@@ -15160,7 +15160,7 @@ emscripten::val usddiff(const emscripten::val& opts) {
 
   USDLoadOptions loadOpts;
 
-  Layer lhsLayer, rhsLayer;
+  lightusd::legacy::Layer lhsLayer, rhsLayer;
   std::string warn, err;
 
   if (!LoadLayerFromMemory(lhsBuf.data(), lhsBuf.size(), lhsName, &lhsLayer,

@@ -211,7 +211,7 @@ bool IsOBJ(const std::string& source, const ia::Options& options) {
   for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return options.format == "obj" || (options.format == "auto" && ext == ".obj");
 }
-lightusd_status FinishOBJ(std::shared_ptr<lightusd::next::Layer> layer,
+lightusd_status FinishOBJ(std::shared_ptr<lightusd::Layer> layer,
                          const std::string& source, std::string warnings,
                          lightusd_stage** out) {
   auto* handle = new (std::nothrow) lightusd_stage;
@@ -234,7 +234,7 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   if (!handle)
     return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "Cannot allocate imported stage");
   std::string warn, err;
-  std::map<std::string, lightusd::tydra::next::URDFMeshBuffer> meshes;
+  std::map<std::string, lightusd::tydra::URDFMeshBuffer> meshes;
   for (auto& entry : result.meshes) {
     auto& buffer = meshes[entry.first];
     buffer.positions = std::move(entry.second.positions);
@@ -244,7 +244,7 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   }
   result.meshes.clear();
   // Converted once: the buffers are moved into the stage as it is built.
-  if (!lightusd::tydra::next::ConvertURDFPayloadToUSDStageConsuming(
+  if (!lightusd::tydra::ConvertURDFPayloadToUSDStageConsuming(
           result.payload, &meshes, &handle->stage, &warn, &err)) {
     delete handle;
     return Failure(err);
@@ -338,7 +338,7 @@ lightusd_status lightusd_import_file(const char* filename,
 #ifdef LIGHTUSD_WITH_USDOBJ
     if (IsOBJ(filename, opts)) {
       std::string warn;
-      auto layer = lightusd::next::LoadOBJLayerFromFile(filename, opts, &warn, err);
+      auto layer = lightusd::LoadOBJLayerFromFile(filename, opts, &warn, err);
       if (!layer) return Failure(*err);
       return FinishOBJ(std::move(layer), filename, std::move(warn), out);
     }
@@ -371,7 +371,7 @@ lightusd_status lightusd_import_memory(const uint8_t* data, size_t size,
 #ifdef LIGHTUSD_WITH_USDOBJ
     if (IsOBJ(source ? source : "", opts)) {
       std::string warn;
-      auto layer = lightusd::next::LoadOBJLayerFromMemory(source ? source : "",
+      auto layer = lightusd::LoadOBJLayerFromMemory(source ? source : "",
           data, size, opts, &warn, err);
       if (!layer) return Failure(*err);
       return FinishOBJ(std::move(layer), source ? source : "", std::move(warn), out);

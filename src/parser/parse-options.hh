@@ -6,7 +6,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 struct ParseOptions {
   /// Enforce AOUSD Core grammar and fail rather than accepting constructs that
@@ -77,6 +76,5 @@ struct ParseOptions {
     size_t column = 0;
     std::string message;
   };
-}  // namespace next
 }  // namespace lightusd
 

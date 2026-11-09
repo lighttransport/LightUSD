@@ -33,7 +33,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -451,5 +450,4 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
 #include "value-parser-dict.inc"
 
 
-}  // namespace next
 }  // namespace lightusd

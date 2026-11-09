@@ -34,7 +34,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace pipeline {
 
 namespace {
@@ -622,5 +621,4 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
 }
 
 }  // namespace pipeline
-}  // namespace next
 }  // namespace lightusd

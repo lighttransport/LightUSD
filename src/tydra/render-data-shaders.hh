@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 struct ShaderParam {
@@ -148,4 +148,4 @@ enum class MaterialDiagnosticKind : uint8_t {
   DegradedMaterial
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

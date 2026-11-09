@@ -36,7 +36,7 @@
 #include "stage/stage.hh"
 #include "types/value.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static long peak_rss_kb() {
   struct rusage ru;

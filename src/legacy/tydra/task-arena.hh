@@ -4,7 +4,7 @@
 // Minimal persistent worker pool for legacy tydra conversion phases.
 //
 // Self-contained on purpose: the legacy lightusd static lib does not link
-// tydra_next, so it cannot reuse next::TaskArena. Run() distributes indices
+// tydra_next, so it cannot reuse ::lightusd::TaskArena. Run() distributes indices
 // dynamically through an atomic counter (work stealing at index granularity),
 // which keeps all workers busy even when item costs are heavily skewed --
 // unlike fixed-size batch waves.

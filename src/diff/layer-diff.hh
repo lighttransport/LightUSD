@@ -3,7 +3,7 @@
 //
 // LightUSD Next - Layer / PrimSpec diff
 //
-// Structural + value-level diff over two next::Layer trees, mirroring the
+// Structural + value-level diff over two ::lightusd::Layer trees, mirroring the
 // legacy tydra diff-and-compare semantics (src/tydra/diff-and-compare.hh):
 // prim added/removed/modified (with reasons), property added/removed/modified
 // (with per-aspect reasons and rendered lhs/rhs values), stage/layer metadata
@@ -25,7 +25,6 @@
 #include "layer/layer.hh"
 
 namespace lightusd {
-namespace next {
 
 ///
 /// Options controlling value-level comparison.
@@ -141,5 +140,4 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
 std::pair<std::string, std::string> CenterValuePairForDiff(
     const std::string &lhs, const std::string &rhs, size_t window = 240);
 
-}  // namespace next
 }  // namespace lightusd

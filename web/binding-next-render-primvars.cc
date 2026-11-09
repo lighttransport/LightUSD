@@ -40,7 +40,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
   auto inserted = source_primvars_.emplace(
       source_index, std::vector<MeshOnlyPrimvar>{});
   std::vector<MeshOnlyPrimvar>& catalog = inserted.first->second;
-  const lightusd::next::UsdPrim& prim =
+  const lightusd::UsdPrim& prim =
       meshes_[static_cast<size_t>(source_index)].GetPrim();
   const std::vector<tr::Primvar> authored = tr::GetPrimvars(prim);
   if (authored.empty()) return &catalog;
@@ -59,7 +59,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
   auto is_float2 = [&](const std::string& name) {
     for (const tr::Primvar& pv : authored) {
       if (pv.name == name && pv.value && pv.value->is_array())
-        return lightusd::next::GetComponentCount(pv.value->type_id()) == 2;
+        return lightusd::GetComponentCount(pv.value->type_id()) == 2;
     }
     return false;
   };
@@ -77,7 +77,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
     for (const tr::Primvar& pv : authored) {
       if (pv.name == uv_base || pv.name.rfind("skel:", 0) == 0 ||
           !pv.value || !pv.value->is_array() ||
-          lightusd::next::GetComponentCount(pv.value->type_id()) != 2) continue;
+          lightusd::GetComponentCount(pv.value->type_id()) != 2) continue;
       if (uv_second.empty() || pv.name < uv_second) uv_second = pv.name;
     }
   }
@@ -90,7 +90,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
       });
   if (!has_candidate) return &catalog;
   auto array_size = [&](const char* name, size_t divisor) -> size_t {
-    const lightusd::next::Value* value = prim.GetPropertyValue(name);
+    const lightusd::Value* value = prim.GetPropertyValue(name);
     if (!value) return 0;
     if (auto floats = value->as_float_array())
       return floats->size() / divisor;
@@ -111,7 +111,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
     auto ints = pv.value->as_int_array();
     if (!floats && !doubles && !ints) continue;
     const uint32_t components = ints ? 1u : static_cast<uint32_t>(
-        lightusd::next::GetComponentCount(pv.value->type_id()));
+        lightusd::GetComponentCount(pv.value->type_id()));
     if (components != 1 && components != 2 && components != 3 &&
         components != 4 && components != 9 && components != 16) continue;
     const size_t scalars = floats ? floats->size()
@@ -132,7 +132,7 @@ RenderStream::sourcePrimvars_(int source_index) const {
     item.indices = pv.indices_view;
     item.components = components;
     item.scalar_count = scalars;
-    const lightusd::next::PropMeta* property_meta =
+    const lightusd::PropMeta* property_meta =
         prim.GetPropertyMeta("primvars:" + pv.name);
     if (property_meta && property_meta->elementSize > 0) {
       item.element_size = property_meta->elementSize;
@@ -225,9 +225,9 @@ int RenderStream::meshPrimvarField(int mesh_id, int primvar_id, uint8_t field) c
                    : static_cast<int>(elements);
       }
       case 4: {
-        const lightusd::next::UsdPrim prim =
+        const lightusd::UsdPrim prim =
             stage_.GetPrimAtPath(mesh->prim_path);
-        const lightusd::next::PropMeta* meta =
+        const lightusd::PropMeta* meta =
             prim.GetPropertyMeta("primvars:" + primvar.name);
         return meta && meta->elementSize > 0 ? meta->elementSize : 1;
       }

@@ -10,7 +10,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Typed prims
@@ -34,5 +33,4 @@ struct MediaAudioData {
 bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
                         MediaAudioData* out);
 
-} // namespace next
 } // namespace lightusd

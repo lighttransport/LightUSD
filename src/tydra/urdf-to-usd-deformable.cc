@@ -14,7 +14,7 @@
 #include <cmath>
 #include <map>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 namespace {
 
@@ -395,4 +395,4 @@ bool AddSkinsFromJson(tn::Layer *layer, const Json &items, const NameMap &link_n
 }
 
 }  // namespace urdf_detail
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

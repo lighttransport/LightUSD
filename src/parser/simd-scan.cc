@@ -12,7 +12,6 @@
 #include "c/lightusd-core-c.h"
 
 namespace lightusd {
-namespace next {
 namespace simdscan {
 
 const char* ScanArrayStructural(const char* p, const char* end,
@@ -28,5 +27,4 @@ const char* ScanPrimStructural(const char* p, const char* end,
 const char* Backend() { return lu_simd_scan_backend(); }
 
 }  // namespace simdscan
-}  // namespace next
 }  // namespace lightusd

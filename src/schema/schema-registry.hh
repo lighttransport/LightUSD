@@ -11,7 +11,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 struct SchemaPropertyDefinition {
   std::string schema_type;
@@ -88,5 +87,4 @@ const SchemaRegistry& GetSchemaRegistry();
 bool ParseSchemaFamilyAndVersion(const std::string& name, std::string* family,
                                  uint32_t* version, bool* has_version);
 
-}  // namespace next
 }  // namespace lightusd

@@ -21,9 +21,9 @@ tr::MeshConfig::TangentComputationMethod RenderStream::tangentMethod_() const {
     return tr::MeshConfig::TangentComputationMethod::Hybrid;
   }
 
-bool RenderStream::hasNormalMap_(const lightusd::next::UsdPrim &prim) const {
-    const auto bound_has_normal_map = [&](const lightusd::next::UsdPrim &bound) {
-      const lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, bound);
+bool RenderStream::hasNormalMap_(const lightusd::UsdPrim &prim) const {
+    const auto bound_has_normal_map = [&](const lightusd::UsdPrim &bound) {
+      const lightusd::UsdPrim mat = lightusd::GetBoundMaterial(stage_, bound);
       if (!mat.IsValid()) return false;
       const auto it = material_path_to_id_.find(mat.GetPath().str());
       return it != material_path_to_id_.end() && it->second >= 0 &&
@@ -31,7 +31,7 @@ bool RenderStream::hasNormalMap_(const lightusd::next::UsdPrim &prim) const {
              !materials_[static_cast<size_t>(it->second)].normal_texture.empty();
     };
     if (bound_has_normal_map(prim)) return true;
-    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+    for (const lightusd::UsdPrim &child : prim.GetChildren()) {
       if (child.IsValid() && child.GetTypeName() == "GeomSubset" &&
           bound_has_normal_map(child)) return true;
     }
@@ -236,7 +236,7 @@ bool RenderStream::computeScratchTangents_() {
     return true;
   }
 
-bool RenderStream::readFloatArray_(const lightusd::next::UsdPrim &prim, const char *name,
+bool RenderStream::readFloatArray_(const lightusd::UsdPrim &prim, const char *name,
                        tr::ValueArrayRead<float> *out) {
     if (!tr::ReadFloatArray(prim, name, 0.0, out)) return false;
     if (out->view.borrowed) {
@@ -247,7 +247,7 @@ bool RenderStream::readFloatArray_(const lightusd::next::UsdPrim &prim, const ch
     return true;
   }
 
-bool RenderStream::readIntArray_(const lightusd::next::UsdPrim &prim, const char *name,
+bool RenderStream::readIntArray_(const lightusd::UsdPrim &prim, const char *name,
                      tr::ValueArrayRead<int32_t> *out) {
     if (!tr::ReadIntArray(prim, name, 0.0, out)) return false;
     if (out->view.borrowed) {
@@ -258,9 +258,9 @@ bool RenderStream::readIntArray_(const lightusd::next::UsdPrim &prim, const char
     return true;
   }
 
-bool RenderStream::matBool_(const lightusd::next::UsdPrim &prim, const char *name,
+bool RenderStream::matBool_(const lightusd::UsdPrim &prim, const char *name,
                        bool fallback) {
-    const lightusd::next::Value *v = prim.GetPropertyValue(name);
+    const lightusd::Value *v = prim.GetPropertyValue(name);
     if (!v) return fallback;
     if (const bool *b = v->as_bool()) return *b;
     return fallback;
@@ -328,7 +328,7 @@ bool RenderStream::pointsArePlanar_(const std::vector<float> &points) {
     return true;
   }
 
-bool RenderStream::effectiveDoubleSided_(const lightusd::next::UsdPrim &prim,
+bool RenderStream::effectiveDoubleSided_(const lightusd::UsdPrim &prim,
                              int32_t material_id,
                              const std::vector<float> &points) const {
     // An authored USD opinion always wins, including an explicit false.
@@ -385,10 +385,10 @@ std::vector<uint32_t> RenderStream::faceTriangleStarts_(
   }
 
 std::vector<int32_t> RenderStream::matIntStatic_(
-      const lightusd::next::UsdPrim &prim, const char *name) {
-    const lightusd::next::Value *v = prim.GetPropertyValue(name);
+      const lightusd::UsdPrim &prim, const char *name) {
+    const lightusd::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    lightusd::next::Value tmp = v->materialized_copy();
+    lightusd::Value tmp = v->materialized_copy();
     auto a = tmp.as_int_array();
     return a ? std::vector<int32_t>(a->begin(), a->end()) : std::vector<int32_t>{};
   }

@@ -13,7 +13,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 using namespace crate_stage_detail;
 
 void CrateReader::Impl::EmitPrimBody(
@@ -775,5 +774,4 @@ void CrateReader::Impl::EmitPrimBody(
     ps->finalize_properties();
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -12,7 +12,7 @@
 #include "stage/stage.hh"
 #include "eval/attribute-eval.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 void test_stage_builder() {
   std::cout << "Testing StageBuilder..." << std::endl;

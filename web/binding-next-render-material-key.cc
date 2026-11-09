@@ -22,10 +22,10 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
     const std::string primPath = (dot == std::string::npos)
                                      ? connPath
                                      : connPath.substr(0, dot);
-    lightusd::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    lightusd::UsdPrim tex = stage_.GetPrimAtPath(primPath);
     if (!tex.IsValid()) return meta;
 
-    const lightusd::next::Value *file = tex.GetPropertyValue("inputs:file");
+    const lightusd::Value *file = tex.GetPropertyValue("inputs:file");
     if (file) {
       if (auto a = file->as_asset_path()) {
         meta.path = *a;
@@ -35,7 +35,7 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
     }
     auto read_tokenish = [&](const char *name, std::string *out) {
       if (!out) return;
-      const lightusd::next::Value *v = tex.GetPropertyValue(name);
+      const lightusd::Value *v = tex.GetPropertyValue(name);
       if (!v) return;
       if (auto tok = v->as_token()) {
         *out = *tok;
@@ -46,7 +46,7 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
     read_tokenish("inputs:sourceColorSpace", &meta.source_color_space);
     // colorSpace asset metadata on inputs:file wins over sourceColorSpace
     // (legacy tydra resolution order).
-    if (const lightusd::next::PropMeta *file_meta =
+    if (const lightusd::PropMeta *file_meta =
             tex.GetPropertyMeta("inputs:file")) {
       if (!file_meta->colorSpace.empty()) {
         meta.source_color_space = file_meta->colorSpace;
@@ -91,10 +91,10 @@ void RenderStream::appendMaterialKey_(const MaterialRecord &m,
     }
   }
 
-bool RenderStream::populateHairMaterial_(const lightusd::next::UsdPrim &prim,
+bool RenderStream::populateHairMaterial_(const lightusd::UsdPrim &prim,
                                     MaterialRecord *rec) {
     if (!prim.IsValid() || !rec) return false;
-    const lightusd::next::Value *id_value = prim.GetPropertyValue("info:id");
+    const lightusd::Value *id_value = prim.GetPropertyValue("info:id");
     std::string shader_id;
     if (id_value) {
       if (auto token = id_value->as_token()) shader_id = *token;
@@ -105,15 +105,15 @@ bool RenderStream::populateHairMaterial_(const lightusd::next::UsdPrim &prim,
     if (found) {
       rec->has_hair = true;
       auto color = [&](const char *name, float *out) {
-        const lightusd::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float3(out);
       };
       auto pair = [&](const char *name, float *out) {
-        const lightusd::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float2(out);
       };
       auto scalar = [&](const char *name, float *out) {
-        const lightusd::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float(out);
       };
       color("inputs:tint_R", rec->hair_tint_r);
@@ -126,13 +126,13 @@ bool RenderStream::populateHairMaterial_(const lightusd::next::UsdPrim &prim,
       scalar("inputs:ior", &rec->hair_ior);
       scalar("inputs:cuticle_angle", &rec->hair_cuticle_angle);
     }
-    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+    for (const lightusd::UsdPrim &child : prim.GetChildren()) {
       found = populateHairMaterial_(child, rec) || found;
     }
     return found;
   }
 
-bool RenderStream::ensureRenderMaterial_(const lightusd::next::UsdPrim &mat) {
+bool RenderStream::ensureRenderMaterial_(const lightusd::UsdPrim &mat) {
     if (!mat.IsValid()) return false;
     const std::string path = mat.GetPath().str();
     if (render_scene_.material_by_path.find(path) !=
@@ -163,36 +163,36 @@ bool RenderStream::ensureRenderMaterial_(const lightusd::next::UsdPrim &mat) {
     return true;
   }
 
-bool RenderStream::requiresRenderMaterial_(const lightusd::next::UsdPrim &mat) const {
+bool RenderStream::requiresRenderMaterial_(const lightusd::UsdPrim &mat) const {
     if (!mat.IsValid()) return false;
 
     // PreviewSurface is decoded directly below and does not need the much
     // heavier RenderSceneConverter. Keep that converter for MaterialX and
     // other non-Preview terminals whose graph evaluation is authoritative.
-    if (const lightusd::next::PrimSpec *spec = mat.GetPrimSpec()) {
-      const std::vector<lightusd::next::Path> *mtlx =
+    if (const lightusd::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<lightusd::Path> *mtlx =
           spec->connection("outputs:mtlx:surface");
       if (mtlx && !mtlx->empty()) return true;
     }
-    if (const std::vector<lightusd::next::Path> *mtlx =
+    if (const std::vector<lightusd::Path> *mtlx =
             mat.GetRelationship("outputs:mtlx:surface")) {
       if (!mtlx->empty()) return true;
     }
-    if (const std::vector<lightusd::next::Path> *source =
+    if (const std::vector<lightusd::Path> *source =
             mat.GetRelationship("mtlx:surface:source")) {
       if (!source->empty()) return true;
     }
 
     const std::string surface_path =
-        lightusd::next::GetSurfaceShader(stage_, mat);
+        lightusd::GetSurfaceShader(stage_, mat);
     if (surface_path.empty()) return false;
-    const lightusd::next::UsdPrim surface =
+    const lightusd::UsdPrim surface =
         stage_.GetPrimAtPath(surface_path);
-    return surface.IsValid() && !lightusd::next::IsPreviewSurface(surface);
+    return surface.IsValid() && !lightusd::IsPreviewSurface(surface);
   }
 
 std::string RenderStream::materialSourceIdentity_(
-      const lightusd::next::UsdPrim &mat) const {
+      const lightusd::UsdPrim &mat) const {
     if (!mat.IsValid()) return {};
 
     // MaterialX exports often repeat the same local graph under hundreds of
@@ -200,16 +200,16 @@ std::string RenderStream::materialSourceIdentity_(
     // before conversion so exact semantic duplicates share one
     // RenderMaterial; absolute material paths are normalized by the encoder.
     bool has_mtlx_surface = false;
-    if (const lightusd::next::PrimSpec *spec = mat.GetPrimSpec()) {
-      const std::vector<lightusd::next::Path> *mtlx =
+    if (const lightusd::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<lightusd::Path> *mtlx =
           spec->connection("outputs:mtlx:surface");
       has_mtlx_surface = mtlx && !mtlx->empty();
     }
-    if (const std::vector<lightusd::next::Path> *mtlx =
+    if (const std::vector<lightusd::Path> *mtlx =
             mat.GetRelationship("outputs:mtlx:surface")) {
       has_mtlx_surface = has_mtlx_surface || !mtlx->empty();
     }
-    if (const std::vector<lightusd::next::Path> *source =
+    if (const std::vector<lightusd::Path> *source =
             mat.GetRelationship("mtlx:surface:source")) {
       has_mtlx_surface = has_mtlx_surface || !source->empty();
     }
@@ -225,9 +225,9 @@ std::string RenderStream::materialSourceIdentity_(
     if (!canonical_preview.empty()) return "preview:" + canonical_preview;
 
     std::string source_asset;
-    const std::vector<lightusd::next::UsdPrim> children = mat.GetChildren();
-    for (const lightusd::next::UsdPrim &child : children) {
-      const lightusd::next::Value *value =
+    const std::vector<lightusd::UsdPrim> children = mat.GetChildren();
+    for (const lightusd::UsdPrim &child : children) {
+      const lightusd::Value *value =
           child.GetPropertyValue("info:unreal:sourceAsset");
       if (!value) continue;
       if (auto asset = value->as_asset_path()) {
@@ -254,14 +254,14 @@ std::string RenderStream::materialSourceIdentity_(
     auto append_float = [&](float value) {
       signature.append(reinterpret_cast<const char *>(&value), sizeof(value));
     };
-    for (const lightusd::next::UsdPrim &child : children) {
-      if (lightusd::next::IsPreviewSurface(child)) {
+    for (const lightusd::UsdPrim &child : children) {
+      if (lightusd::IsPreviewSurface(child)) {
         has_preview_surface = true;
         const char *scalar_names[] = {
             "inputs:metallic", "inputs:roughness", "inputs:opacity",
             "inputs:occlusion", "inputs:opacityThreshold"};
         for (const char *name : scalar_names) {
-          const lightusd::next::Value *scalar_value =
+          const lightusd::Value *scalar_value =
               child.GetPropertyValue(name);
           float scalar = 0.0f;
           append_text(name);
@@ -275,7 +275,7 @@ std::string RenderStream::materialSourceIdentity_(
         const char *color_names[] = {
             "inputs:diffuseColor", "inputs:emissiveColor"};
         for (const char *name : color_names) {
-          const lightusd::next::Value *color_value =
+          const lightusd::Value *color_value =
               child.GetPropertyValue(name);
           float color[3] = {0.0f, 0.0f, 0.0f};
           append_text(name);
@@ -292,17 +292,17 @@ std::string RenderStream::materialSourceIdentity_(
             "inputs:diffuseColor", "inputs:normal", "inputs:roughness",
             "inputs:metallic", "inputs:occlusion", "inputs:emissiveColor",
             "inputs:opacity"};
-        const lightusd::next::PrimSpec *child_spec = child.GetPrimSpec();
+        const lightusd::PrimSpec *child_spec = child.GetPrimSpec();
         for (const char *name : connection_names) {
           append_text(name);
-          const std::vector<lightusd::next::Path> *connections =
+          const std::vector<lightusd::Path> *connections =
               child_spec ? child_spec->connection(name) : nullptr;
           if (!connections) {
             signature.push_back('\0');
             continue;
           }
           signature.push_back('\1');
-          for (const lightusd::next::Path &connection : *connections) {
+          for (const lightusd::Path &connection : *connections) {
             std::string target = connection.str();
             if (target.rfind(material_path, 0) == 0) {
               target.erase(0, material_path.size());
@@ -311,7 +311,7 @@ std::string RenderStream::materialSourceIdentity_(
           }
         }
       }
-      const lightusd::next::Value *file =
+      const lightusd::Value *file =
           child.GetPropertyValue("inputs:file");
       if (file) {
         auto asset = file->as_asset_path();

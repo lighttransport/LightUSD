@@ -19,7 +19,6 @@
 #include "c/lightusd-core-c.h"
 
 namespace lightusd {
-namespace next {
 
 // Format the decimal form of `v` into a caller buffer, returning the byte count.
 // `buf` capacity must be >= 20 (a uint64_t needs at most 20 digits). No heap.
@@ -53,5 +52,4 @@ inline std::string IntToStr(int64_t v) {
   return s;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -4,9 +4,9 @@
 #include "eval/value-clip.hh"
 #include "render-extract.hh"
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 bool ReadFloatArrayFromValueClips(
-    const ::lightusd::next::UsdPrim& prim, const char* name, double time,
-    const ::lightusd::next::ValueClipStageLoader& loader,
+    const ::lightusd::UsdPrim& prim, const char* name, double time,
+    const ::lightusd::ValueClipStageLoader& loader,
     ValueArrayRead<float>* out);
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

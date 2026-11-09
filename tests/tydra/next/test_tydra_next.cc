@@ -47,8 +47,8 @@
 #include "schema/geom-xform.hh"
 #include "schema/usd-skel.hh"
 
-using namespace lightusd::tydra::next;
-using namespace lightusd::next;
+using namespace lightusd::tydra;
+using namespace lightusd;
 
 //
 // ChunkedArray Tests
@@ -534,12 +534,12 @@ void TestRenderDataSafety() {
 
 void TestTextureBudgetLease() {
   std::cout << "Testing resident texture budget leases...\n";
-  auto state = std::make_shared<lightusd::next::TextureBudgetState>(8);
+  auto state = std::make_shared<lightusd::TextureBudgetState>(8);
   assert(state->try_add(8));
   {
     DecodedImage first;
     first.pixels.resize(8);
-    first.budget_lease = std::make_shared<lightusd::next::TextureBudgetLease>(
+    first.budget_lease = std::make_shared<lightusd::TextureBudgetLease>(
         state, 8);
     DecodedImage second = first;
     first.budget_lease.reset();
@@ -762,7 +762,7 @@ def Xform "World"
   auto meshes = FindMeshes(stage);
   assert(meshes.size() == 1);
   assert(meshes[0].GetName() == "Cube");
-  assert(::lightusd::next::IsMesh(meshes[0]));
+  assert(::lightusd::IsMesh(meshes[0]));
 
   // Find cameras
   auto cameras = FindCameras(stage);
@@ -4191,7 +4191,7 @@ def Xform "W"
 // matching rules themselves.
 void TestUsdzEntryMatching() {
   std::cout << "Testing usdz entry matching...\n";
-  using lightusd::tydra::next::UsdzEntryMatches;
+  using lightusd::tydra::UsdzEntryMatches;
 
   // Exact.
   assert(UsdzEntryMatches("tex.png", "tex.png"));
@@ -4420,18 +4420,18 @@ def Xform "World"
     "sensors": [{"name": "position", "type": "jointpos"}]
   })JSON";
 
-  lightusd::tydra::next::URDFMeshBuffer mesh;
+  lightusd::tydra::URDFMeshBuffer mesh;
   mesh.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0};
   mesh.normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
   mesh.uvs = {0, 0, 1, 0, 0, 1};
   mesh.indices = {0, 1, 2};
-  std::map<std::string, lightusd::tydra::next::URDFMeshBuffer> meshes;
+  std::map<std::string, lightusd::tydra::URDFMeshBuffer> meshes;
   meshes["body_mesh"] = mesh;
 
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
-  assert(lightusd::tydra::next::ConvertURDFJsonToUSDStage(
+  assert(lightusd::tydra::ConvertURDFJsonToUSDStage(
       payload, &meshes, &stage, &warn, &err));
   assert(err.empty());
   assert(stage.GetMeta().defaultPrim == "World");
@@ -6199,8 +6199,8 @@ def Xform "World"
   // reader only handled scalar string/token authoring).
   {
     UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
-    ::lightusd::next::SkelAnimationData data;
-    assert(::lightusd::next::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
+    ::lightusd::SkelAnimationData data;
+    assert(::lightusd::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
     assert(data.joints.size() == 2);
     assert(data.joints[0] == "Root");
     assert(data.joints[1] == "Root/Spine");
@@ -7418,7 +7418,7 @@ def Xform "World" (
           result.scene.working_to_display_linear[7] * mtlx_emission.y +
           result.scene.working_to_display_linear[8] * mtlx_emission.z};
   ::lightusd::color::ColorTransform mtlx_to_display;
-  assert(::lightusd::next::color_management::BuildColorTransform(
+  assert(::lightusd::color_management::BuildColorTransform(
       loaded.stage.GetPrimAtPath("/World/MtlxTextureMat/Constant"),
       "studio_ap0", "lin_rec709_scene", &mtlx_to_display));
   float expected_mtlx_emission[3] = {0.1f, 0.2f, 0.3f};
@@ -7853,7 +7853,7 @@ def Material "VolMat"
   StageSnapshot second;
   second.revision = 2;
   second.stage = first.stage;
-  ::lightusd::next::StageChangeSet quiet;
+  ::lightusd::StageChangeSet quiet;
   quiet.base_revision = 1;
   quiet.new_revision = 2;
   RenderUpdateResult no_op = session.Apply(second, quiet, &sink);
@@ -7866,7 +7866,7 @@ def Material "VolMat"
   StageSnapshot third;
   third.revision = 3;
   third.stage = first.stage;
-  ::lightusd::next::StageChangeSet quiet_at_time;
+  ::lightusd::StageChangeSet quiet_at_time;
   quiet_at_time.base_revision = 2;
   quiet_at_time.new_revision = 3;
   RenderUpdateResult timed = session.Apply(third, quiet_at_time, &sink);
@@ -7884,7 +7884,7 @@ def Material "VolMat"
   StageSnapshot fourth;
   fourth.revision = 4;
   fourth.stage = first.stage;
-  ::lightusd::next::StageChangeSet quiet_again;
+  ::lightusd::StageChangeSet quiet_again;
   quiet_again.base_revision = 3;
   quiet_again.new_revision = 4;
   RenderUpdateResult settled = session.Apply(fourth, quiet_again, &sink);
@@ -8442,9 +8442,9 @@ static void TestOpenUsdVdbVolumeFixtures() {
 
   auto convert_fixture = [&](const char* name, double time) {
     const std::string path = (dir / name).string();
-    ::lightusd::next::Stage stage;
+    ::lightusd::Stage stage;
     std::string warn, err;
-    assert(::lightusd::next::LoadUSD(path, &stage, &warn, &err));
+    assert(::lightusd::LoadUSD(path, &stage, &warn, &err));
     ConverterConfig config;
     config.time_code = time;
     config.asset_base_dir = dir.string();
@@ -8892,10 +8892,10 @@ static void TestAuthoredPlaneTextureDomain() {
  }
 )");
   assert(loaded.success);
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.mesh.triangulate = false;
-  lightusd::tydra::next::RenderSceneConverter converter(config);
-  lightusd::tydra::next::RenderMesh mesh;
+  lightusd::tydra::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderMesh mesh;
   assert(converter.ConvertRenderableMesh(loaded.stage,
       loaded.stage.GetPrimAtPath("/Plane"), &mesh));
   assert(mesh.face_vertex_indices.size() == 4 && mesh.texcoords_0.size() == 8);
@@ -8910,7 +8910,7 @@ static void TestAuthoredPlaneTextureDomain() {
 }
 
 static void TestGeneratedSmoothNormals() {
-  using namespace lightusd::tydra::next;
+  using namespace lightusd::tydra;
   auto policy = LoadUSDAFromString(R"(#usda 1.0
  def Mesh "Default" {}
  def Mesh "Polygon" { uniform token subdivisionScheme = "none" }

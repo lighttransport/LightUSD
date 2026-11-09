@@ -34,7 +34,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 namespace cache_detail {
@@ -830,5 +829,4 @@ struct Cache::Impl {
 };
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

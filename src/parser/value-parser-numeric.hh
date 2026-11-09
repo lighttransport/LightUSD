@@ -17,7 +17,6 @@
 #include "c/lightusd-core-c.h"  // lu_decimal_to_*
 
 namespace lightusd {
-namespace next {
 
 namespace value_parser_detail {
 
@@ -120,5 +119,4 @@ inline uint32_t DecimalToU32(std::string_view s) {
 }
 
 }  // namespace value_parser_detail
-}  // namespace next
 }  // namespace lightusd

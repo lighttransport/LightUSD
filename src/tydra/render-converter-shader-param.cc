@@ -18,7 +18,7 @@
 #include "types/type-info.hh"
 #include <limits>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace shader_param_detail {
 namespace {
 bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
@@ -33,7 +33,7 @@ bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
       id.rfind("ND_tiledimage_", 0) == 0) {
     return true;
   }
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   return eval.EvalAssetPath(prim, "inputs:file").has_value() ||
          eval.EvalString(prim, "inputs:file").has_value() ||
@@ -41,16 +41,16 @@ bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
          eval.EvalString(prim, "inputs:filename").has_value();
 }
 
-const std::vector<::lightusd::next::Path>* PrimaryDataInputConnection(
+const std::vector<::lightusd::Path>* PrimaryDataInputConnection(
     const UsdPrim& prim) {
-  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
+  const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return nullptr;
 
   static const char* kPreferredInputs[] = {
       "inputs:in", "inputs:in1", "inputs:dispScalar", "inputs:inputRGB",
       "inputs:fg", "inputs:bg"};
   for (const char* preferred : kPreferredInputs) {
-    const std::vector<::lightusd::next::Path>* connections =
+    const std::vector<::lightusd::Path>* connections =
         spec->connection(preferred);
     if (connections && !connections->empty()) return connections;
   }
@@ -64,7 +64,7 @@ const std::vector<::lightusd::next::Path>* PrimaryDataInputConnection(
     if (property.rfind("inputs:", 0) != 0 || is_factor_input(property)) {
       continue;
     }
-    const std::vector<::lightusd::next::Path>* connections =
+    const std::vector<::lightusd::Path>* connections =
         spec->connection(property);
     if (connections && !connections->empty()) return connections;
   }
@@ -91,8 +91,8 @@ bool ResolveConnectedEndpoint(const Stage& stage,
       return true;
     }
 
-    const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
-    const std::vector<::lightusd::next::Path>* connections =
+    const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
+    const std::vector<::lightusd::Path>* connections =
         spec ? spec->connection(prop_name) : nullptr;
     if (!connections || connections->empty()) {
       connections = PrimaryDataInputConnection(prim);
@@ -123,11 +123,11 @@ bool ResolveConnectedValue(const Stage& stage,
   UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
 
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  ::lightusd::next::EvalOptions opts = eval.GetOptions();
+  ::lightusd::EvalOptions opts = eval.GetOptions();
   opts.follow_connections = false;
-  ::lightusd::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
+  ::lightusd::EvalResult result = eval.EvalWith(prim, prop_name, opts);
   if (result.success) {
     *out = std::move(result.value);
     return true;
@@ -160,7 +160,7 @@ RenderTexture::Channel ChannelFromConnection(
       else if (auto str = value->as_string()) type = *str;
     }
     if (type.empty()) {
-      if (const ::lightusd::next::PrimSpec* spec =
+      if (const ::lightusd::PrimSpec* spec =
               texture_prim.GetPrimSpec()) {
         if (const std::string* declared =
                 spec->property_type_name("outputs:out")) {
@@ -216,7 +216,7 @@ ColorSpace ParseColorSpace(const std::string& token) {
 
 bool IsColorShaderInput(const UsdPrim& prim, const std::string& attr_name,
                         const std::string& param_name) {
-  if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+  if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
     if (const std::string* type = spec->property_type_name(attr_name)) {
       if (type->rfind("color3", 0) == 0 || type->rfind("color4", 0) == 0) {
         return true;
@@ -271,9 +271,9 @@ bool ResolveConnectedColorSource(const Stage& stage,
   // Prefer metadata on the resolved output itself. MaterialX constant and
   // utility nodes usually put it on their value/data input instead, so scan
   // those inputs before falling back to the terminal shader attribute.
-  if (const ::lightusd::next::PropMeta* meta =
+  if (const ::lightusd::PropMeta* meta =
           prim.GetPropertyMeta(property)) {
-    if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
+    if ((meta->authored & ::lightusd::PropMeta::kColorSpace) != 0u) {
       *source_prim = prim;
       *source_property = property;
       return true;
@@ -286,9 +286,9 @@ bool ResolveConnectedColorSource(const Stage& stage,
         candidate == "inputs:in") {
       value_input = candidate;
     }
-    if (const ::lightusd::next::PropMeta* meta =
+    if (const ::lightusd::PropMeta* meta =
             prim.GetPropertyMeta(candidate)) {
-      if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
+      if ((meta->authored & ::lightusd::PropMeta::kColorSpace) != 0u) {
         *source_prim = prim;
         *source_property = candidate;
         return true;
@@ -316,7 +316,7 @@ void ConvertShaderColorToWorking(const UsdPrim& prim,
   }
   std::string source;
   bool authored = false;
-  if (!::lightusd::next::color_management::ComputeColorSpaceName(
+  if (!::lightusd::color_management::ComputeColorSpaceName(
           prim, attr_name, &source, &authored)) {
     return;
   }
@@ -324,7 +324,7 @@ void ConvertShaderColorToWorking(const UsdPrim& prim,
     (void)MaterialXConfiguredColorSpace(prim, &source);
   }
   ::lightusd::color::ColorTransform transform;
-  if (!::lightusd::next::color_management::BuildColorTransform(
+  if (!::lightusd::color_management::BuildColorTransform(
           prim, source, scene->working_color_space, &transform)) {
     return;
   }
@@ -343,7 +343,7 @@ bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
                                 const std::string& node_input,
                                 double time_code, float* out) {
   if (!out || !shader.IsValid()) return false;
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   const std::string property = "inputs:" + shader_input;
   if (!eval.HasConnection(shader, property)) return false;
@@ -366,8 +366,8 @@ bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
       }
       return false;
     }
-    const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
-    const std::vector<::lightusd::next::Path>* connections =
+    const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+    const std::vector<::lightusd::Path>* connections =
         spec ? spec->connection(prop_name) : nullptr;
     if (!connections || connections->empty()) {
       connections = PrimaryDataInputConnection(node);
@@ -391,13 +391,13 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
   // connection semantics as Shader inputs. Accept either here so degraded
   // material recovery can preserve constants authored on the Material prim.
   if (!out || !shader_prim.IsValid() ||
-      (!::lightusd::next::IsShader(shader_prim) &&
-       !::lightusd::next::IsMaterial(shader_prim))) {
+      (!::lightusd::IsShader(shader_prim) &&
+       !::lightusd::IsMaterial(shader_prim))) {
     return false;
   }
 
   const std::string attr_name = "inputs:" + param_name;
-  ::lightusd::next::AttributeEval eval(&stage);
+  ::lightusd::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
 
   if (eval.HasConnection(shader_prim, attr_name)) {
@@ -434,7 +434,7 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
       if (scene && evaluated.components >= 3 && evaluated.color_managed &&
           IsColorShaderInput(shader_prim, attr_name, param_name)) {
         ::lightusd::color::ColorTransform transform;
-        if (::lightusd::next::color_management::BuildColorTransform(
+        if (::lightusd::color_management::BuildColorTransform(
                 evaluation_context, evaluation_space,
                 scene->working_color_space, &transform)) {
           float rgb[3] = {out->value.x, out->value.y, out->value.z};
@@ -480,7 +480,7 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
       {
         bool authored = false;
         std::string inherited;
-        (void)::lightusd::next::color_management::ComputeColorSpaceName(
+        (void)::lightusd::color_management::ComputeColorSpaceName(
             texture_prim, "inputs:file", &inherited, &authored);
         if (authored) {
           tex_data.source_color_space = inherited;
@@ -517,7 +517,7 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           tex_data.file_asset_anchor_valid ? tex_data.file_asset_anchor
                                            : AssetAnchorOf(texture_prim);
       const std::string authored_anchor =
-          ::lightusd::next::AssetAnchorPath(asset_anchor);
+          ::lightusd::AssetAnchorPath(asset_anchor);
       std::vector<RenderUDIMTexture::Tile> udim_tiles;
       int32_t udim_texture_id = -1;
       const bool udim_path = tex_data.file.find("<UDIM>") != std::string::npos;
@@ -528,17 +528,17 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           const size_t udim_token = tile_asset.find("<UDIM>");
           if (udim_token == std::string::npos) break;
           tile_asset.replace(udim_token, 6, std::to_string(udim_id));
-          ::lightusd::next::ResolvedAsset resolved_tile;
+          ::lightusd::ResolvedAsset resolved_tile;
           if (config_.asset_resolver) {
             resolved_tile = config_.asset_resolver->Resolve(
                 tile_asset, authored_anchor.empty() ? std::string()
-                                                    : (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
+                                                    : (::lightusd::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
           } else if (!config_.asset_base_dir.empty()) {
-            ::lightusd::next::AssetResolver local_resolver;
+            ::lightusd::AssetResolver local_resolver;
             local_resolver.SetWorkingDirectory(config_.asset_base_dir);
             if (!authored_anchor.empty()) {
               resolved_tile = local_resolver.Resolve(tile_asset,
-                                                     (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
+                                                     (::lightusd::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
             }
             if (!resolved_tile.exists) {
               resolved_tile = local_resolver.Resolve(tile_asset);
@@ -691,7 +691,7 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           source_space = "srgb_rec709_scene";
         }
         ::lightusd::color::ColorTransform source_to_display;
-        if (::lightusd::next::color_management::BuildColorTransform(
+        if (::lightusd::color_management::BuildColorTransform(
                 texture_prim, source_space, "lin_rec709_scene",
                 &source_to_display)) {
           texture.color_transform_valid = true;
@@ -740,9 +740,9 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
     }
   }
 
-  ::lightusd::next::EvalOptions direct_opts = eval.GetOptions();
+  ::lightusd::EvalOptions direct_opts = eval.GetOptions();
   direct_opts.follow_connections = false;
-  ::lightusd::next::EvalResult direct =
+  ::lightusd::EvalResult direct =
       eval.EvalWith(shader_prim, attr_name, direct_opts);
   if (direct.success && ValueToShaderParam(direct.value, out)) {
     ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
@@ -750,7 +750,7 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
     return true;
   }
 
-  ::lightusd::next::EvalResult followed = eval.Eval(shader_prim, attr_name);
+  ::lightusd::EvalResult followed = eval.Eval(shader_prim, attr_name);
   if (followed.success && ValueToShaderParam(followed.value, out)) {
     ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
                                 out);
@@ -760,4 +760,4 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
   return false;
 }
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

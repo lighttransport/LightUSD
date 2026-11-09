@@ -5,15 +5,15 @@
 #include <vector>
 #include "core/minijson.hh"
 namespace lightusd {
-namespace next { class Path; class Value; class ValueView; class UsdPrim; class Stage; }
+ class Path; class Value; class ValueView; class UsdPrim; class Stage; 
 namespace web_next {
-minijson::Value NextValueJSON(next::ValueView value);
-const std::vector<next::Path>* NextPropertyConnections(
-    const next::UsdPrim& prim, const std::string& property_name);
+minijson::Value NextValueJSON(::lightusd::ValueView value);
+const std::vector<::lightusd::Path>* NextPropertyConnections(
+    const ::lightusd::UsdPrim& prim, const std::string& property_name);
 std::string NextConnectionPrimPath(const std::string& connection);
-std::string BuildNextNodeGraphJson(const next::UsdPrim& material,
-    const next::UsdPrim& shader, const std::string& version);
-std::string CanonicalMaterialGraph(const next::Stage& stage, const next::UsdPrim& material);
-void AppendNextPhysicsPrimJSON(const next::UsdPrim& prim, minijson::Value* out);
+std::string BuildNextNodeGraphJson(const ::lightusd::UsdPrim& material,
+    const ::lightusd::UsdPrim& shader, const std::string& version);
+std::string CanonicalMaterialGraph(const ::lightusd::Stage& stage, const ::lightusd::UsdPrim& material);
+void AppendNextPhysicsPrimJSON(const ::lightusd::UsdPrim& prim, minijson::Value* out);
 }  // namespace web_next
 }  // namespace lightusd

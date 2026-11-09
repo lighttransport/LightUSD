@@ -474,7 +474,7 @@ std::string NextAssetStore::snapshotMetadata() const {
 }
 
 int NextAssetStore::copyAssetsTo(
-    lightusd::next::AssetResolver* destination,
+    lightusd::AssetResolver* destination,
     size_t* accounted_bytes) const {
   if (!destination || !accounted_bytes) return -1;
   destination->SetConfig(resolver_.GetConfig());

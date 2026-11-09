@@ -5,7 +5,6 @@
 #include "phase-faults.hh"
 #include <queue>
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 // ---------------------------------------------------------------------------
@@ -555,10 +554,9 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd
 
-namespace lightusd { namespace next { namespace pcp {
+namespace lightusd {  namespace pcp {
 
 auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) -> void {
@@ -3318,4 +3316,4 @@ auto Cache::Impl::SetVariantSelections(
     for (const std::string &path : changed) Invalidate_locked(Path(path));
   }
 
-}}} // namespace lightusd::next::pcp
+}} // namespace lightusd::pcp

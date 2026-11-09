@@ -14,9 +14,8 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
-namespace usd = ::lightusd::next;
+namespace usd = ::lightusd;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 using preview_detail::Sample;
@@ -583,6 +582,5 @@ ScenePreviewLodCamera InitialScenePreviewLodCamera(
                               : double(std::max(1, height)) * focal / aperture;
   return camera;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

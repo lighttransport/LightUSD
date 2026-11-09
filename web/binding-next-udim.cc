@@ -9,7 +9,7 @@
 #include "udim-layer.hh"
 namespace lightusd::web_next {
 namespace {
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 class Access final : public udim::LayerAccess {
  public:
   explicit Access(tn::Layer& l) : l_(l) {}
@@ -440,7 +440,7 @@ class Access final : public udim::LayerAccess {
   tn::Layer& l_;
 };
 }  // namespace
-std::string UDIMLayerJSON(next::Layer& layer, bool apply,
+std::string UDIMLayerJSON(::lightusd::Layer& layer, bool apply,
                           const std::string& input) {
   Access a(layer);
   return apply ? udim::ApplyJSON(a, input) : udim::DescribeJSON(a);

@@ -14,7 +14,7 @@
 #include "schema/color-space.hh"
 #include "writer/value-printer.hh"
 
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 namespace lightusd {
 namespace web_next {
 namespace {

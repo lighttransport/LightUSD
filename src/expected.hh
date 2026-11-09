@@ -20,7 +20,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 template <class E>
 class unexpected {
@@ -138,5 +137,4 @@ class expected {
   bool has_value_;
 };
 
-}  // namespace next
 }  // namespace lightusd

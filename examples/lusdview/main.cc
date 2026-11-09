@@ -242,9 +242,9 @@ uint64_t HostMemoryCapacityBytes() {
 
 int main(int argc, char** argv) {
   lusdview::PreviewGpuBudgetReport previewBudgetReport;
-  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  lightusd::tydra::ScenePreviewRequest scenePreview;
   std::string scenePreviewError;
-  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+  if (!lightusd::tydra::ExtractScenePreviewArguments(
           &argc, argv, &scenePreview, &scenePreviewError)) {
     std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
     return 1;
@@ -1539,7 +1539,7 @@ int main(int argc, char** argv) {
   if (scenePreview.enabled) {
     scenePreview.options.time_code = timeCode.value_or(0.0);
     scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
-    if (!lightusd::tydra::next::PrepareScenePreview(
+    if (!lightusd::tydra::PrepareScenePreview(
             &file, scenePreview, 0, &scenePreviewError)) {
       LOGE("scene preview: %s", scenePreviewError.c_str());
       return 1;

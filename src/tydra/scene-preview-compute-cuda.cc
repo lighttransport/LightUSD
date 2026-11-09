@@ -11,7 +11,6 @@ extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext*, unsigned int, CUdevice);
 #include <cstdio>
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 class CudaCompute final : public PreviewCompute {
   std::shared_ptr<HostLibrary> driver_, compiler_;
@@ -196,6 +195,5 @@ std::unique_ptr<PreviewCompute> CreateCudaPreviewCompute(
   if (!engine->init(error)) return {};
   return engine;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

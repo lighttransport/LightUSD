@@ -13,7 +13,6 @@
 #include "scene-preview-compute.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 class VulkanCompute final : public PreviewCompute {
   // Private loader dispatch avoids interposing the viewer's Volk globals.
@@ -489,6 +488,5 @@ std::unique_ptr<PreviewCompute> CreateVulkanPreviewCompute(
   if (!engine->init(error)) return {};
   return engine;
 }
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -11,7 +11,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 /// UsdGeomMesh - Typed wrapper for Mesh prims
 /// Provides convenient accessors for mesh-specific properties
@@ -111,5 +110,4 @@ bool IsMesh(const UsdPrim& prim);
 /// Get all meshes in stage
 std::vector<UsdGeomMesh> GetAllMeshes(const Stage& stage);
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,6 @@
 #include <string_view>
 #include "cache-internal.hh"
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 std::string Cache::Impl::SpellSitePath(uint32_t stack,
@@ -797,10 +796,9 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
   }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd
 
-namespace lightusd { namespace next { namespace pcp {
+namespace lightusd {  namespace pcp {
 
 auto Cache::Impl::SelectInlineArc(const PrimMetadata &m,
                                                          ArcSel f) -> const std::vector<std::string> & {
@@ -1551,4 +1549,4 @@ auto Cache::Impl::FillOpinions(
     release_shared();
   }
 
-}}} // namespace lightusd::next::pcp
+}} // namespace lightusd::pcp

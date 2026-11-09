@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Read-only array views for next::Value.
+// Read-only array views for ::lightusd::Value.
 
 #pragma once
 
 #include "value.hh"
 
 namespace lightusd {
-namespace next {
 
 template <typename T>
 struct ArrayView {
@@ -49,5 +48,4 @@ bool GetUIntArrayView(const Value& value, ArrayScratch<uint32_t>* scratch,
 bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
                         ArrayView<uint64_t>* out);
 
-}  // namespace next
 }  // namespace lightusd

@@ -7,7 +7,6 @@
 #include <map>
 
 namespace lightusd {
-namespace next {
 namespace change_set_detail {
 namespace {
 std::string ChildPath(const std::string& parent, const std::string& child) {
@@ -149,5 +148,4 @@ StageChangeSet BuildStageChangeSet(const Stage* previous, const Stage& next,
 
 }  // namespace change_set_detail
 
-}  // namespace next
 }  // namespace lightusd

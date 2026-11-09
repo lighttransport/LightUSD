@@ -11,7 +11,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 thread_local std::shared_ptr<ChunkAllocationBudget> current_budget;
 }
@@ -50,6 +49,5 @@ bool ChunkStorage::append(const void* data, size_t count) {
   return lu_chunks_append(&state_, data, count, current_budget ? current_budget->core() : nullptr) != 0;
 }
 } // namespace detail
-} // namespace next
 } // namespace tydra
 } // namespace lightusd

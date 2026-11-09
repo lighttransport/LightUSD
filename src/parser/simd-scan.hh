@@ -14,7 +14,6 @@
 #include <cstddef>
 
 namespace lightusd {
-namespace next {
 namespace simdscan {
 
 // Scan [p, end) for the first byte in the array-structural set
@@ -43,5 +42,4 @@ const char* ScanPrimStructural(const char* p, const char* end,
 const char* Backend();
 
 }  // namespace simdscan
-}  // namespace next
 }  // namespace lightusd

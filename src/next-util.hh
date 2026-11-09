@@ -8,7 +8,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 // Smallest non-zero of two sizes; zero means "unset".
 inline size_t MinNonZero(size_t a, size_t b) {
@@ -39,5 +38,4 @@ inline std::string GetBaseDir(const std::string& filename) {
   return "";
 }
 
-}  // namespace next
 }  // namespace lightusd

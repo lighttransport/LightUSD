@@ -11,7 +11,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // Typed prims
@@ -134,5 +133,4 @@ struct ARImagingAPIData {
 
 bool GetARImagingAPIData(const UsdPrim& prim, ARImagingAPIData* out);
 
-} // namespace next
 } // namespace lightusd

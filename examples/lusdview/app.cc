@@ -729,7 +729,7 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
         {"direct_volume",
          previewRequest_.direct_volume &&
              previewRequest_.options.kind ==
-                 lightusd::tydra::next::ScenePreviewKind::Volume}};
+                 lightusd::tydra::ScenePreviewKind::Volume}};
   }
   if(previewLods_.success) {
     uint64_t bytes=0;std::array<size_t,4> levels{};
@@ -2803,7 +2803,7 @@ void App::updateRtLodCamera() {
 void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   if (ok && previewRequest_.enabled &&
       previewRequest_.options.kind ==
-          lightusd::tydra::next::ScenePreviewKind::Points)
+          lightusd::tydra::ScenePreviewKind::Points)
     for (auto& points : draw_.points) points.previewAlbedo = true;
   // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
   // main thread before the render thread drains the queued appendMesh ops (a
@@ -2935,7 +2935,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (!rtOwnsScreenshot_ &&
         !(previewRequest_.enabled && previewRequest_.direct_volume &&
           previewRequest_.options.kind ==
-              lightusd::tydra::next::ScenePreviewKind::Volume)) {
+              lightusd::tydra::ScenePreviewKind::Volume)) {
       const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
       if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
       for (size_t i = 0; i < draw_.meshes.size(); ++i)
@@ -4724,7 +4724,7 @@ bool App::tryApplyNextSceneUpdate(
 
 bool App::renderScenePreviewVolume(std::vector<uint8_t>* rgba, int* width,
                                    int* height, std::string* error, bool advance) {
-  namespace preview = lightusd::tydra::next;
+  namespace preview = lightusd::tydra;
   if (!previewVolumeRenderer_ ||
       previewVolumeRoot_ != previewRequest_.result.usd_path) {
     // Retain the old viewport image, but release its grid buffers before
@@ -4804,7 +4804,7 @@ void App::stepScenePreviewLods() {
       (gui_.cameraInteractive() ||
        now - previewLodStillSince_ < std::chrono::milliseconds(250)))
     return;
-  lightusd::tydra::next::ScenePreviewLodCamera camera;
+  lightusd::tydra::ScenePreviewLodCamera camera;
   camera.eye = {eye.x, eye.y, eye.z};
   camera.forward = {forward.x, forward.y, forward.z};
   camera.orthographic = std::abs(projection.m[15]) > .5f;
@@ -4820,7 +4820,7 @@ void App::stepScenePreviewLods() {
       previewRequest_.result = std::move(refined.first);
       previewLods_ = std::move(refined.second);
       loadOpts_.variantOverrides =
-          lightusd::tydra::next::SelectScenePreviewLods(previewLods_, camera,
+          lightusd::tydra::SelectScenePreviewLods(previewLods_, camera,
                                                         previewLodPixelError_);
       previewLodReloadPending_ = true;
       LOGI("source refinement: cell %.9g, samples %llu",
@@ -4851,21 +4851,21 @@ void App::stepScenePreviewLods() {
                 }
                 return !cancel->load();
               };
-          auto result = lightusd::tydra::next::RefineScenePreview(
+          auto result = lightusd::tydra::RefineScenePreview(
               request.source, request.result, request.options, camera, width,
               height, request.lod_pixel_error);
-          lightusd::tydra::next::ScenePreviewLods lods;
+          lightusd::tydra::ScenePreviewLods lods;
           if (result.success && result.usd_path != request.result.usd_path &&
               !cancel->load()) {
             if (request.direct_volume &&
                 request.options.kind ==
-                    lightusd::tydra::next::ScenePreviewKind::Volume) {
+                    lightusd::tydra::ScenePreviewKind::Volume) {
               lods.success = true;
               lods.root_path = result.render_usd_path;
               lods.cell_size = result.voxel_size;
               lods.gpu_budget_bytes = request.options.gpu_budget_bytes;
             } else
-              lods = lightusd::tydra::next::BuildScenePreviewLods(
+              lods = lightusd::tydra::BuildScenePreviewLods(
                   result, request.options);
           }
           return PreviewRefinement{std::move(result), std::move(lods)};
@@ -4873,9 +4873,9 @@ void App::stepScenePreviewLods() {
   }
   if (previewRequest_.enabled && previewRequest_.direct_volume &&
       previewRequest_.options.kind ==
-          lightusd::tydra::next::ScenePreviewKind::Volume)
+          lightusd::tydra::ScenePreviewKind::Volume)
     return;
-  const auto choices = lightusd::tydra::next::SelectScenePreviewLods(
+  const auto choices = lightusd::tydra::SelectScenePreviewLods(
       previewLods_, camera, previewLodPixelError_, loadOpts_.variantOverrides);
   if (choices.empty() || choices == loadOpts_.variantOverrides) return;
   loadOpts_.variantOverrides = choices;
@@ -8683,7 +8683,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       const bool directVolume =
           previewRequest_.enabled && previewRequest_.direct_volume &&
           previewRequest_.options.kind ==
-              lightusd::tydra::next::ScenePreviewKind::Volume;
+              lightusd::tydra::ScenePreviewKind::Volume;
       if (directVolume) {
         std::vector<uint8_t> rgba;
         int width = 0, height = 0;
@@ -8809,7 +8809,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       if (previewRequest_.enabled && previewRequest_.direct_volume &&
           previewRequest_.options.kind ==
-              lightusd::tydra::next::ScenePreviewKind::Volume) {
+              lightusd::tydra::ScenePreviewKind::Volume) {
         std::vector<uint8_t> rgba;
         int width = 0, height = 0;
         std::string error;
@@ -9280,7 +9280,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   };
   if (previewRequest_.enabled && previewRequest_.direct_volume &&
       previewRequest_.options.kind ==
-          lightusd::tydra::next::ScenePreviewKind::Volume &&
+          lightusd::tydra::ScenePreviewKind::Volume &&
       !screenshot.empty()) {
     std::vector<uint8_t> rgba;
     int width = 0, height = 0;

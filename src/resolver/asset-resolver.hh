@@ -19,7 +19,6 @@
 #include <unordered_map>
 
 namespace lightusd {
-namespace next {
 
 class AssetResolver;
 
@@ -469,5 +468,4 @@ AssetResolver& GetDefaultResolver();
 /// Set the global default resolver
 void SetDefaultResolver(std::unique_ptr<AssetResolver> resolver);
 
-}  // namespace next
 }  // namespace lightusd

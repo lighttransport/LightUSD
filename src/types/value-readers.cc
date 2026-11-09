@@ -2,7 +2,7 @@
 #include "value.hh"
 #include "type-info.hh"
 #include <cstring>
-namespace lightusd { namespace next {
+namespace lightusd {
 static const void* PodData(const lu_value& v) { return lu_value_data(&v); }
 static bool Boxed(const lu_value& v) { return v.kind == LU_VALUE_BOX; }
 const bool* ValueView::as_bool() const {
@@ -218,4 +218,4 @@ bool ValueView::to_float2(float* out) const { return ToFloatLanes(2, out); }
 bool ValueView::to_float3(float* out) const { return ToFloatLanes(3, out); }
 
 bool ValueView::to_float4(float* out) const { return ToFloatLanes(4, out); }
-}}
+}

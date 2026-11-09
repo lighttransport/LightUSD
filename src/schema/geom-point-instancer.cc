@@ -12,60 +12,59 @@
 #include <unordered_set>
 
 namespace lightusd {
-namespace next {
 namespace {
 
-const ::lightusd::next::PropNameId& kIdProtoIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("protoIndices");
+const ::lightusd::PropNameId& kIdProtoIndices() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("protoIndices");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdPositions() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("positions");
+const ::lightusd::PropNameId& kIdPositions() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("positions");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdOrientations() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("orientations");
+const ::lightusd::PropNameId& kIdOrientations() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("orientations");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdScales() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("scales");
+const ::lightusd::PropNameId& kIdScales() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("scales");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdVelocities() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("velocities");
+const ::lightusd::PropNameId& kIdVelocities() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("velocities");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdAngularVelocities() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("angularVelocities");
+const ::lightusd::PropNameId& kIdAngularVelocities() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("angularVelocities");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdIds() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("ids");
+const ::lightusd::PropNameId& kIdIds() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("ids");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdInvisibleIds() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("invisibleIds");
+const ::lightusd::PropNameId& kIdInvisibleIds() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("invisibleIds");
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdInactiveIds() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inactiveIds");
+const ::lightusd::PropNameId& kIdInactiveIds() {
+  static const ::lightusd::PropNameId id =
+      ::lightusd::GetPropNameTable().intern("inactiveIds");
   return id;
 }
 
@@ -114,20 +113,20 @@ bool ReadInt64View(const UsdPrim& prim, const PropNameId name_id, double time,
 bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
                   ArrayScratch<float>* scratch, ArrayView<float>* view) {
   return ReadFloatView(prim,
-                       lightusd::next::GetPropNameTable().find(name), time,
+                       lightusd::GetPropNameTable().find(name), time,
                        scratch, view);
 }
 
 bool ReadIntView(const UsdPrim& prim, const char* name, double time,
                 ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
-  return ReadIntView(prim, lightusd::next::GetPropNameTable().find(name), time,
+  return ReadIntView(prim, lightusd::GetPropNameTable().find(name), time,
                      scratch, view);
 }
 
 bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
                   ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
   return ReadInt64View(prim,
-                       lightusd::next::GetPropNameTable().find(name), time,
+                       lightusd::GetPropNameTable().find(name), time,
                        scratch, view);
 }
 
@@ -442,5 +441,4 @@ std::vector<UsdGeomPointInstancer> GetAllPointInstancers(const Stage& stage) {
   return instancers;
 }
 
-}  // namespace next
 }  // namespace lightusd

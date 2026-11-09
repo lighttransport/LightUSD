@@ -9,7 +9,6 @@
 #include <cctype>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -116,5 +115,4 @@ bool IsUSDCPath(const char* path) {
   return IsUSDCPath(std::string(path));
 }
 
-}  // namespace next
 }  // namespace lightusd

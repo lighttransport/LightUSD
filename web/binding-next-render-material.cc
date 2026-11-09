@@ -5,12 +5,12 @@
 namespace lightusd {
 namespace web_next {
 int32_t RenderStream::materialIdForBoundPrim_(
-    const lightusd::next::UsdPrim& prim) {
-  return registerMaterial_(lightusd::next::GetBoundMaterial(stage_, prim));
+    const lightusd::UsdPrim& prim) {
+  return registerMaterial_(lightusd::GetBoundMaterial(stage_, prim));
 }
 
 RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
-      const lightusd::next::UsdPrim &mat) {
+      const lightusd::UsdPrim &mat) {
     MaterialRecord rec;
     if (!mat.IsValid()) {
       rec.prim_path = "__default";
@@ -113,17 +113,17 @@ RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
         }
       }
     }
-    lightusd::next::UsdPrim shader;
-    const std::string shaderPath = lightusd::next::GetSurfaceShader(stage_, mat);
+    lightusd::UsdPrim shader;
+    const std::string shaderPath = lightusd::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
     if (!shader.IsValid()) {
       for (const auto &ch : mat.GetChildren()) {
-        if (lightusd::next::IsPreviewSurface(ch)) { shader = ch; break; }
+        if (lightusd::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
     if (!populated_from_render_scene && shader.IsValid()) {
-      lightusd::next::PreviewSurfaceData ps;
-      if (lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
+      lightusd::PreviewSurfaceData ps;
+      if (lightusd::GetPreviewSurfaceData(stage_, shader, &ps)) {
         rec.base_color[0] = ps.diffuse_color[0];
         rec.base_color[1] = ps.diffuse_color[1];
         rec.base_color[2] = ps.diffuse_color[2];
@@ -158,8 +158,8 @@ RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
     // graph. Preserve that cutoff even when the render catalog correctly chose
     // outputs:mtlx:surface above.
     if (rec.opacity_threshold <= 0.0f && shader.IsValid()) {
-      lightusd::next::PreviewSurfaceData ps;
-      if (lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps) &&
+      lightusd::PreviewSurfaceData ps;
+      if (lightusd::GetPreviewSurfaceData(stage_, shader, &ps) &&
           ps.opacity_threshold > 0.0f) {
         rec.opacity_threshold = ps.opacity_threshold;
       }
@@ -202,7 +202,7 @@ RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
     return rec;
   }
 
-int32_t RenderStream::registerMaterial_(const lightusd::next::UsdPrim &mat) {
+int32_t RenderStream::registerMaterial_(const lightusd::UsdPrim &mat) {
     const std::string mat_path = mat.IsValid() ? mat.GetPath().str()
                                                : std::string("__default");
     const auto path_it = material_path_to_id_.find(mat_path);
@@ -276,9 +276,9 @@ std::string RenderStream::texFile_(const std::string &connPath) {
     const size_t slash = connPath.rfind('/');
     const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
     const std::string primPath = (dot == std::string::npos) ? connPath : connPath.substr(0, dot);
-    lightusd::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    lightusd::UsdPrim tex = stage_.GetPrimAtPath(primPath);
     if (!tex.IsValid()) return "";
-    const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
+    const lightusd::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
     if (auto a = v->as_asset_path()) return *a;
     if (auto s = v->as_string()) return *s;

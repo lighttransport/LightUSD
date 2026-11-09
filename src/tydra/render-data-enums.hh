@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <cstdint>
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 enum class ColorSpace : uint8_t {
   sRGB = 0,
   Linear,
@@ -113,4 +113,4 @@ enum class CameraType : uint8_t {
 };
 
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

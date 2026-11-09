@@ -3,7 +3,7 @@
 #include "attribute-eval.hh"
 #include "../pcp/cache.hh"
 
-namespace lightusd { namespace next {
+namespace lightusd {
 struct PropertyResolutionTrace {
   Path prim_path;
   std::string property;
@@ -20,4 +20,4 @@ PropertyResolutionTrace TraceProperty(pcp::Cache& cache, const Path& prim_path,
     const std::string& property, const EvalOptions& options = {},
     size_t max_opinions = 4096);
 std::string PropertyResolutionTraceToJSON(const PropertyResolutionTrace& trace);
-} }
+ }

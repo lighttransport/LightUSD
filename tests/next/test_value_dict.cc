@@ -3,7 +3,7 @@
 //
 // LightUSD Next - Dict (USD dictionary value) unit test
 //
-// Covers the O(1) key index on next::Dict: insertion order is preserved (the
+// Covers the O(1) key index on ::lightusd::Dict: insertion order is preserved (the
 // writer re-emits dicts as authored), set() is last-wins for a repeated key,
 // find() is O(1), and the key index survives the copy-on-write copy/move used
 // by Value (DetachDict / MakeDictionary). A hostile 100k-key dict must build
@@ -20,7 +20,7 @@
 #include "types/value.hh"
 #include "core/string-index.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 static void TestSmallDict() {
   Value v = Value::MakeDictionary();

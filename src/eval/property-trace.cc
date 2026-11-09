@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <set>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 PropertyResolutionTrace TraceProperty(pcp::Cache& cache, const Path& path,
     const std::string& property, const EvalOptions& options, size_t max_opinions) {
   PropertyResolutionTrace trace;
@@ -126,4 +126,4 @@ std::string PropertyResolutionTraceToJSON(const PropertyResolutionTrace& trace) 
           {"upperStageTime", r.clip_resolution.upper_stage_time}}},
       {"connectionChain", connection_chain}, {"opinions", opinions}}.dump(2);
 }
-} }
+ }

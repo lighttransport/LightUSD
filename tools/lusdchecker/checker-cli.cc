@@ -6,8 +6,8 @@
 #include <limits>
 namespace {
 using namespace lusdchecker;
-using lightusd::next::ValidationOptions;
-using lightusd::next::GetAOUSDCoreSpecVersionString;
+using lightusd::ValidationOptions;
+using lightusd::GetAOUSDCoreSpecVersionString;
 using Args = CheckerOptions;
 void PrintUsage(std::ostream& os) {
   os << "Usage: lusdchecker [options] FILE\n"
@@ -218,7 +218,7 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
       args->group_selection = true;
       args->groups = ValidationOptions();
     } else if (arg == "--all") {
-      args->groups = lightusd::next::MakeValidateAllOptions();
+      args->groups = lightusd::MakeValidateAllOptions();
     } else if (arg == "--arkit") {
       // The ARKit profile: the ARKit-only rules plus the base rule groups that
       // OpenUSD's `usdchecker --arkit` always runs (stage metadata, prim
@@ -262,7 +262,7 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
 }
 }
 int lusdchecker::RunChecker(int argc, char** argv,
-    const lightusd::next::ValidationRegistry& registry, const Environment* environment) {
+    const lightusd::ValidationRegistry& registry, const Environment* environment) {
   CheckerOptions args;
   std::string error;
   const auto parsed = ParseArgs(argc, argv, &args, &error);

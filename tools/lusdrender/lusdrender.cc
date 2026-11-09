@@ -233,7 +233,7 @@ void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
 }
 
 void CollectGpuPointsRec(
-    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
+    const lightusd::Stage &stage, const lightusd::UsdPrim &prim,
     const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth,
@@ -247,24 +247,24 @@ void CollectGpuPointsRec(
   }
   if (!prim.IsActive()) return;
   double dmat[16];
-  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
-  if (lightusd::next::IsParticleField(prim)) {
-    lightusd::next::ParticleFieldData field;
+  if (lightusd::IsParticleField(prim)) {
+    lightusd::ParticleFieldData field;
     std::string field_warning;
-    if (!lightusd::next::GetParticleFieldData(
+    if (!lightusd::GetParticleFieldData(
             stage, prim, &field, time, &field_warning)) {
       std::cerr << "Gaussian fallback: invalid ParticleField data at "
                 << prim.GetPath().str() << ".\n";
       return;
     }
     if (!field_warning.empty()) std::cerr << field_warning << "\n";
-    lightusd::tydra::next::ValueArrayRead<float> points;
-    lightusd::tydra::next::ValueArrayRead<float> scales;
-    lightusd::tydra::next::ValueArrayRead<float> orientations;
-    lightusd::tydra::next::ValueArrayRead<float> opacities;
-    lightusd::tydra::next::ValueArrayRead<float> sh;
+    lightusd::tydra::ValueArrayRead<float> points;
+    lightusd::tydra::ValueArrayRead<float> scales;
+    lightusd::tydra::ValueArrayRead<float> orientations;
+    lightusd::tydra::ValueArrayRead<float> opacities;
+    lightusd::tydra::ValueArrayRead<float> sh;
     const bool have_points = !field.positions_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                &points);
@@ -286,7 +286,7 @@ void CollectGpuPointsRec(
                 << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
-      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1, opt);
       return;
@@ -390,9 +390,9 @@ void CollectGpuPointsRec(
               << ", GPU chunks: " << (geos->size() - gaussian_geo_first)
               << ", limit: " << batch_limit << " tris\n";
   } else if (prim.GetTypeName() == "Points") {
-    lightusd::tydra::next::ValueArrayRead<float> points;
-    lightusd::tydra::next::ValueArrayRead<float> widths;
-    lightusd::tydra::next::ValueArrayRead<float> normals;
+    lightusd::tydra::ValueArrayRead<float> points;
+    lightusd::tydra::ValueArrayRead<float> widths;
+    lightusd::tydra::ValueArrayRead<float> normals;
     const bool have_points = ReadFloatArrayViewLazy(prim, "points", time, &points);
     ReadFloatArrayViewLazy(prim, "widths", time, &widths);
     ReadFloatArrayViewLazy(prim, "normals", time, &normals);
@@ -407,7 +407,7 @@ void CollectGpuPointsRec(
       emitted = 0;
     };
     if (!have_points) {
-      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1, opt);
       return;
@@ -444,7 +444,7 @@ void CollectGpuPointsRec(
     }
     flush();
   }
-  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::UsdPrim &child : prim.GetChildren())
     CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                         depth + 1, opt);
 }
@@ -555,15 +555,15 @@ static void ApplyLargeSceneProfile(Options *opt) {
   const uint64_t host_capacity =
       host_available
           ? std::min<uint64_t>(host_available,
-                               lightusd::tydra::next::GiB(32))
-          : lightusd::tydra::next::GiB(32);
-  const lightusd::tydra::next::ResourceBudget budget =
-      lightusd::tydra::next::ComputeResourceBudget(
+                               lightusd::tydra::GiB(32))
+          : lightusd::tydra::GiB(32);
+  const lightusd::tydra::ResourceBudget budget =
+      lightusd::tydra::ComputeResourceBudget(
           host_capacity, QueryDeviceLocalVRAMBytes());
   const double host_gib = double(budget.host_limit) /
-                          double(lightusd::tydra::next::GiB(1));
+                          double(lightusd::tydra::GiB(1));
   const double vram_gib = double(budget.vram_limit) /
-                          double(lightusd::tydra::next::GiB(1));
+                          double(lightusd::tydra::GiB(1));
 
   if (!opt->backend_explicit) {
     opt->vulkan = true;
@@ -575,8 +575,8 @@ static void ApplyLargeSceneProfile(Options *opt) {
   // Bound texture residency the way geometry already is. -texMaxSize /
   // -texBudgetMb still win; these only fill in the profile defaults.
   {
-    const lightusd::tydra::next::TextureBudget texture_budget =
-        lightusd::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::TextureBudget texture_budget =
+        lightusd::tydra::DeriveTextureBudget(budget);
     if (!opt->texture_max_size_explicit && texture_budget.max_edge > 0) {
       opt->texture_max_size = int(texture_budget.max_edge);
     }
@@ -629,7 +629,7 @@ static void ApplyLargeSceneProfile(Options *opt) {
 // Resolve the GPU render camera exactly like the flat -vk/-vkr path (named
 // camera, else USD record camera for -autoframe, else auto-fit). *out_height
 // starts at opt.height (<=0 = derive).
-static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
+static CameraFrame ResolveGpuCameraInst(const lightusd::Stage &stage,
                                         const Options &opt, const Bounds &bounds,
                                         lightusd::legacy::Axis usdUp, int *out_height) {
   const int cam_width = opt.width > 0 ? opt.width : 960;
@@ -688,21 +688,21 @@ static void NormalMatrixFromO2W(const float o2w[12], float n2w[9]) {
 // across placements. Six-sided tubes are a declared GPU approximation; they are
 // not an analytic-curve or material-fidelity claim.
 static bool ExtractCurveProto(const Options& opt,
-                              const lightusd::next::UsdPrim& prim,
-                              const lightusd::next::EvalOptions& evaluation,
+                              const lightusd::UsdPrim& prim,
+                              const lightusd::EvalOptions& evaluation,
                               GpuInstProto* out) {
   if (prim.GetTypeName() != "BasisCurves") {
     std::cerr << "[vkInstanced] unsupported curve type: "
               << prim.GetPath().str() << "\n";
     return false;
   }
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.time_code = opt.timecode;
   config.curves.retain_control_points = false;
   config.curves.tessellation_segments = opt.curve_segments;
   config.animation.clip_stage_loader = evaluation.clip_stage_loader;
-  lightusd::tydra::next::RenderSceneConverter converter(config);
-  lightusd::tydra::next::RenderCurves curves;
+  lightusd::tydra::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderCurves curves;
   if (!converter.ConvertCurves(prim, &curves) || curves.has_alloc_failure()) {
     std::cerr << "[vkInstanced] curve conversion: " << prim.GetPath().str()
               << ": " << converter.GetLastError() << "\n";
@@ -808,31 +808,31 @@ static bool EndsWithPtxPath(const std::string &path) {
 // Cheap material-subtree scan: does any authored asset property name a .ptx?
 // This avoids resolving/loading ordinary image textures for the many
 // non-Ptex prototypes in an Island-scale instanced scene.
-static bool PrimSubtreeHasPtex(const lightusd::next::UsdPrim &prim) {
+static bool PrimSubtreeHasPtex(const lightusd::UsdPrim &prim) {
   if (!prim.IsValid()) return false;
   for (const std::string &name : prim.GetPropertyNames()) {
-    const lightusd::next::Value *value = prim.GetPropertyValue(name);
+    const lightusd::Value *value = prim.GetPropertyValue(name);
     if (!value) continue;
     std::optional<std::string> asset = value->as_asset_path();
     if (!asset) asset = value->as_string();
     if (asset && EndsWithPtxPath(*asset)) return true;
   }
-  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::UsdPrim &child : prim.GetChildren())
     if (PrimSubtreeHasPtex(child)) return true;
   return false;
 }
 
 static bool ExtractProtoGeo(
-    const lightusd::next::Stage& stage, const Options& opt, TextureCache& tc,
+    const lightusd::Stage& stage, const Options& opt, TextureCache& tc,
     std::unordered_map<std::string, ResolvedMat>& material_cache,
     std::unordered_map<std::string, bool>& ptex_material_cache,
-    const lightusd::next::UsdPrim& prim,
-    const lightusd::next::EvalOptions& evaluation, GpuInstProto* out) {
+    const lightusd::UsdPrim& prim,
+    const lightusd::EvalOptions& evaluation, GpuInstProto* out) {
   // Resolve the prototype's base-colour material only when its subtree binds a
   // .ptx. The instanced path previously carried only primvars:displayColor, so
   // a Ptex-bound material rendered with its constant fallback.
   const std::string material_path =
-      lightusd::next::GetInheritedBoundMaterialPath(stage,
+      lightusd::GetInheritedBoundMaterialPath(stage,
                                                     prim.GetPath().str());
   bool has_ptex = false;
   if (!material_path.empty()) {
@@ -862,7 +862,7 @@ static bool ExtractProtoGeo(
   if (IsCurvePrimNext(prim)) {
     if (!ExtractCurveProto(opt, prim, evaluation, out)) return false;
     nv = uint32_t(out->verts.size() / 3);
-  } else if (lightusd::tydra::next::IsAnalyticGeomTypeName(
+  } else if (lightusd::tydra::IsAnalyticGeomTypeName(
                  prim.GetTypeName())) {
     GeneratedMeshNext generated;
     if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
@@ -876,8 +876,8 @@ static bool ExtractProtoGeo(
       vn[j] = Vec3{normals[j * 3], normals[j * 3 + 1], normals[j * 3 + 2]};
     perVertexN = true;
   } else {
-    lightusd::tydra::next::ValueArrayRead<float> point_values, normal_values;
-    if (!lightusd::tydra::next::ReadFloatArray(prim, "points", evaluation,
+    lightusd::tydra::ValueArrayRead<float> point_values, normal_values;
+    if (!lightusd::tydra::ReadFloatArray(prim, "points", evaluation,
                                                &point_values) ||
         point_values.empty() || point_values.size() % 3 != 0 ||
         point_values.size() / 3 > UINT32_MAX)
@@ -886,7 +886,7 @@ static bool ExtractProtoGeo(
     std::vector<float> skinned_points;
     std::vector<double> skin_normals;
     std::string skin_error;
-    if (!lightusd::tydra::next::EvaluateSkinnedPoints(
+    if (!lightusd::tydra::EvaluateSkinnedPoints(
             stage, prim, opt.timecode, point_values, &skinned_points,
             &skin_error,
             (prim.GetPropertyValue("normals") ||
@@ -901,27 +901,27 @@ static bool ExtractProtoGeo(
       out->verts.assign(point_values.begin(), point_values.end());
     else
       out->verts = std::move(skinned_points);
-    lightusd::tydra::next::ValueArrayRead<int32_t> index_values, count_values;
-    lightusd::tydra::next::ReadIntArray(prim, "faceVertexIndices", evaluation,
+    lightusd::tydra::ValueArrayRead<int32_t> index_values, count_values;
+    lightusd::tydra::ReadIntArray(prim, "faceVertexIndices", evaluation,
                                         &index_values);
-    lightusd::tydra::next::ReadIntArray(prim, "faceVertexCounts", evaluation,
+    lightusd::tydra::ReadIntArray(prim, "faceVertexCounts", evaluation,
                                         &count_values);
-    lightusd::tydra::next::MeshFloatAttribute normals;
-    bool have_normals = lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
-                              (lightusd::tydra::next::ReadMeshFloatAttribute(
+    lightusd::tydra::MeshFloatAttribute normals;
+    bool have_normals = lightusd::tydra::MeshUsesAuthoredNormals(prim) &&
+                              (lightusd::tydra::ReadMeshFloatAttribute(
                                   prim, "primvars:normals", evaluation, 3, nv,
                                   index_values.size(), &normals) ||
-                              lightusd::tydra::next::ReadMeshFloatAttribute(
+                              lightusd::tydra::ReadMeshFloatAttribute(
                                   prim, "normals", evaluation, 3, nv,
                                   index_values.size(), &normals));
     std::vector<float> generated_smooth_normals;
     if (!have_normals && opt.smooth &&
-        lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
-      lightusd::tydra::next::ValueArrayRead<float> posed_points;
+        lightusd::tydra::MeshUsesGeneratedSmoothNormals(prim)) {
+      lightusd::tydra::ValueArrayRead<float> posed_points;
       posed_points.view={out->verts.data(),out->verts.size(),false};
       const auto* orientation=prim.GetPropertyValue("orientation");
       const bool left_handed=orientation && orientation->as_token() && *orientation->as_token()=="leftHanded";
-      if (lightusd::tydra::next::ComputeMeshSmoothNormals(posed_points,count_values,index_values,
+      if (lightusd::tydra::ComputeMeshSmoothNormals(posed_points,count_values,index_values,
               left_handed,&generated_smooth_normals)) {
         normals.components=3;normals.interpolation="vertex";
         normals.values.view={generated_smooth_normals.data(),generated_smooth_normals.size(),false};
@@ -972,8 +972,8 @@ static bool ExtractProtoGeo(
     const auto* cnt = &count_values;
     if (!idx || idx->empty()) return false;
     if (cnt && !cnt->empty()) {
-      lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
-      lightusd::tydra::next::ReadIntArray(prim, "holeIndices", evaluation,
+      lightusd::tydra::ValueArrayRead<int32_t> hole_values;
+      lightusd::tydra::ReadIntArray(prim, "holeIndices", evaluation,
                                           &hole_values);
       const std::unordered_set<int32_t> holes(hole_values.begin(),
                                               hole_values.end());
@@ -1025,24 +1025,24 @@ static bool ExtractProtoGeo(
   // primvars:st) and offset each vertex along its area-weighted smooth normal.
   if (opt.displace && opt.displace_scale != 0.0f) {
     std::vector<float> uvs = std::move(generated_uvs);
-    if (const lightusd::next::Value* uv =
+    if (const lightusd::Value* uv =
             prim.GetPropertyValue("primvars:st")) {
       const auto u = uv->as_float_array();
       if (u && !u->empty()) uvs.assign(u.begin(), u.end());
     }
     float disp_const = 0.0f;
     ScalarTex disp_tex;
-    const std::vector<lightusd::next::Path>* bind =
+    const std::vector<lightusd::Path>* bind =
         prim.GetRelationship("material:binding");
     if (bind && !bind->empty()) {
-      lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+      lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
       if (mat.IsValid()) {
-        lightusd::next::UsdPrim surf =
+        lightusd::UsdPrim surf =
             ConnectedPrimNext(stage, mat, "outputs:surface");
         if (!surf.IsValid())
           surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
         if (surf.IsValid()) {
-          if (const lightusd::next::Value* d =
+          if (const lightusd::Value* d =
                   surf.GetPropertyValue("inputs:displacement"))
             if (const float* f = d->as_float()) disp_const = *f;
           ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
@@ -1100,7 +1100,7 @@ static bool ExtractProtoGeo(
   }
 
   out->base_color = Vec3{0.5f, 0.5f, 0.5f};
-  if (const lightusd::next::Value* dcv =
+  if (const lightusd::Value* dcv =
           prim.GetPropertyValue("primvars:displayColor")) {
     const auto dc = dcv->as_float_array();
     if (dc && dc->size() >= 3)
@@ -1160,14 +1160,14 @@ static void ChunkProto(const GpuInstProto& src, uint32_t chunk,
 // two-level GPU TLAS. Returns true if it produced an image; false to fall back to
 // the flat path. Geometry is stored ONCE per prototype regardless of instance
 // count (the memory-sharing win over the flat world-space soup).
-static int TryRunInstancedVk(const lightusd::next::Stage &stage,
+static int TryRunInstancedVk(const lightusd::Stage &stage,
                              const Options &opt,
-                             const lightusd::next::ValueClipStageLoader& clip_loader) {
-  lightusd::next::EvalOptions evaluation;
-  evaluation.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
+                             const lightusd::ValueClipStageLoader& clip_loader) {
+  lightusd::EvalOptions evaluation;
+  evaluation.time = lightusd::TimeQuery::Numeric(opt.timecode);
   evaluation.follow_connections = false;
   evaluation.clip_stage_loader = clip_loader;
-  evaluation.clip_stage_cache = std::make_shared<lightusd::next::ValueClipStageCache>();
+  evaluation.clip_stage_cache = std::make_shared<lightusd::ValueClipStageCache>();
   bool invalid_prototype = false;
   GpuInstancedScene scene;
   // Each source prim maps to one OR MORE sub-prototype indices (a huge prototype
@@ -1211,7 +1211,7 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // WITHOUT materializing a MeshJobNext per instance, so a huge instanced scene
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
   // memory per placement instead of a ~392 B MeshJobNext.
-  auto place = [&](const lightusd::next::UsdPrim &prim, const matrix4d &world,
+  auto place = [&](const lightusd::UsdPrim &prim, const matrix4d &world,
                    lightusd::legacy::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
     const std::string key = prim.GetPath().str();
@@ -1447,9 +1447,9 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
 
 int main(int argc, char **argv) {
   lusdview::PreviewGpuBudgetReport previewBudgetReport;
-  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  lightusd::tydra::ScenePreviewRequest scenePreview;
   std::string scenePreviewError;
-  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+  if (!lightusd::tydra::ExtractScenePreviewArguments(
           &argc, argv, &scenePreview, &scenePreviewError)) {
     std::cerr << scenePreviewError << "\n";
     return EXIT_FAILURE;
@@ -1485,7 +1485,7 @@ int main(int argc, char **argv) {
       std::cerr << "scene preview does not yet accept -mask; use a USD wrapper layer\n";
       return EXIT_FAILURE;
     }
-    if (!lightusd::tydra::next::PrepareScenePreview(
+    if (!lightusd::tydra::PrepareScenePreview(
             &opt.input, scenePreview, 0, &scenePreviewError)) {
       std::cerr << "scene preview: " << scenePreviewError << "\n";
       return EXIT_FAILURE;
@@ -1493,13 +1493,13 @@ int main(int argc, char **argv) {
     if (scenePreview.camera_lod ||
         (scenePreview.direct_volume &&
          scenePreview.options.kind ==
-             lightusd::tydra::next::ScenePreviewKind::Volume)) {
+             lightusd::tydra::ScenePreviewKind::Volume)) {
       std::array<double,3> direction={1,.6,1};
       if(opt.has_view_dir) direction={-opt.view_dir.x,-opt.view_dir.y,-opt.view_dir.z};
-      const auto camera=lightusd::tydra::next::InitialScenePreviewLodCamera(
+      const auto camera=lightusd::tydra::InitialScenePreviewLodCamera(
           scenePreview.result,opt.input,opt.camera,opt.height>0?opt.height:540,opt.fit_scale,direction);
       if (scenePreview.source_refinement) {
-        const auto refined = lightusd::tydra::next::RefineScenePreview(
+        const auto refined = lightusd::tydra::RefineScenePreview(
             scenePreview.source, scenePreview.result, scenePreview.options,
             camera, std::max(1, opt.width), opt.height > 0 ? opt.height : 540,
             scenePreview.lod_pixel_error);
@@ -1510,9 +1510,9 @@ int main(int argc, char **argv) {
         if (refined.usd_path != scenePreview.result.usd_path) {
           scenePreview.result = refined;
           if (scenePreview.options.kind !=
-                  lightusd::tydra::next::ScenePreviewKind::Volume ||
+                  lightusd::tydra::ScenePreviewKind::Volume ||
               !scenePreview.direct_volume) {
-            scenePreview.lods = lightusd::tydra::next::BuildScenePreviewLods(
+            scenePreview.lods = lightusd::tydra::BuildScenePreviewLods(
                 refined, scenePreview.options);
             if (!scenePreview.lods.success) {
               std::cerr << scenePreview.lods.error << "\n";
@@ -1523,9 +1523,9 @@ int main(int argc, char **argv) {
         }
       }
       if (scenePreview.options.kind ==
-              lightusd::tydra::next::ScenePreviewKind::Volume &&
+              lightusd::tydra::ScenePreviewKind::Volume &&
           scenePreview.direct_volume) {
-        namespace preview = lightusd::tydra::next;
+        namespace preview = lightusd::tydra;
         const auto backend =
             opt.cuda ? preview::PreviewComputeBackend::Cuda
             : (opt.vulkan || opt.vulkan_rt || opt.vulkan_instanced)
@@ -1582,12 +1582,12 @@ int main(int argc, char **argv) {
                   << " accumulated_frames=" << renderer.accumulatedFrames() << "\n";
         return EXIT_SUCCESS;
       }
-      opt.preview_variant_overrides=lightusd::tydra::next::SelectScenePreviewLods(
+      opt.preview_variant_overrides=lightusd::tydra::SelectScenePreviewLods(
           scenePreview.lods,camera,scenePreview.lod_pixel_error);
       if(opt.preview_variant_overrides.empty()) {std::cerr<<"preview LOD selection exceeds budget\n";return EXIT_FAILURE;}
     }
     opt.rt_preview = true;
-    opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::next::ScenePreviewKind::Volume;
+    opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::ScenePreviewKind::Volume;
     opt.legacy_load = false;
     opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /
                        double(uint64_t(1) << 30);
@@ -1619,11 +1619,11 @@ int main(int argc, char **argv) {
   // profile. Explicit texture flags remain authoritative, including an
   // explicit zero when a caller intentionally requests source resolution.
   {
-    const lightusd::tydra::next::ResourceBudget budget =
-        lightusd::tydra::next::ComputeResourceBudget(
+    const lightusd::tydra::ResourceBudget budget =
+        lightusd::tydra::ComputeResourceBudget(
             MemBudget::Get().Cap(), QueryDeviceLocalVRAMBytes());
-    const lightusd::tydra::next::TextureBudget texture_budget =
-        lightusd::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::TextureBudget texture_budget =
+        lightusd::tydra::DeriveTextureBudget(budget);
     if (!opt.texture_max_size_explicit && texture_budget.max_edge > 0)
       opt.texture_max_size = static_cast<int>(texture_budget.max_edge);
     if (!opt.texture_budget_explicit && texture_budget.budget_bytes > 0) {
@@ -1724,8 +1724,8 @@ int main(int argc, char **argv) {
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) {
     // Load through next loader.
-    lightusd::next::Stage stage;
-    lightusd::next::ValueClipStageLoader clip_stage_loader;
+    lightusd::Stage stage;
+    lightusd::ValueClipStageLoader clip_stage_loader;
     std::string warn, err;
     if (!LoadNextStageBudgeted(opt, &stage, &warn, &err,
                                &clip_stage_loader)) {
@@ -1793,12 +1793,12 @@ int main(int argc, char **argv) {
       tc.usdz = nullptr;
       tc.options = &opt;
       std::unordered_map<std::string, ResolvedMat> material_cache;
-      lightusd::next::EvalOptions mesh_eval;
-      mesh_eval.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
+      lightusd::EvalOptions mesh_eval;
+      mesh_eval.time = lightusd::TimeQuery::Numeric(opt.timecode);
       mesh_eval.follow_connections = false;
       mesh_eval.clip_stage_loader = clip_stage_loader;
       mesh_eval.clip_stage_cache =
-          std::make_shared<lightusd::next::ValueClipStageCache>();
+          std::make_shared<lightusd::ValueClipStageCache>();
       for (const auto &root : stage.GetRootPrims()) {
         // Keep only one root's traversal records alive.  A production stage can
         // contain thousands of roots (or large instancer expansions); collecting
@@ -1816,11 +1816,11 @@ int main(int argc, char **argv) {
         // path; the GPU path used to render every purpose unconditionally, so the
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
         if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
-        lightusd::next::UsdPrim &prim = job.prim;
+        lightusd::UsdPrim &prim = job.prim;
         ResolveMeshMaterialCached(stage, prim, tc, material_cache, &job);
         if (opt.stats && gpu_materials.size() < 8u) {
           std::cerr << "GPU material: prim=" << prim.GetPath().str()
-                    << " binding=" << lightusd::next::GetInheritedBoundMaterialPath(stage,prim.GetPath().str())
+                    << " binding=" << lightusd::GetInheritedBoundMaterialPath(stage,prim.GetPath().str())
                     << " base=" << job.base_color.x << "," << job.base_color.y << "," << job.base_color.z
                     << " emission=" << job.emission.x << "," << job.emission.y << "," << job.emission.z
                     << " openpbr=" << job.has_openpbr
@@ -1828,7 +1828,7 @@ int main(int argc, char **argv) {
         }
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
-        if (lightusd::tydra::next::IsAnalyticGeomTypeName(
+        if (lightusd::tydra::IsAnalyticGeomTypeName(
                 prim.GetTypeName())) {
           GeneratedMeshNext generated;
           if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
@@ -1851,13 +1851,13 @@ int main(int argc, char **argv) {
             geo.normals[j * 3 + 2] = normal.z;
           }
         } else {
-        lightusd::tydra::next::ValueArrayRead<float> point_values;
-        lightusd::tydra::next::ReadFloatArray(
+        lightusd::tydra::ValueArrayRead<float> point_values;
+        lightusd::tydra::ReadFloatArray(
             prim, "points", mesh_eval, &point_values);
         std::vector<float> skinned_points;
         std::vector<double> skin_normals;
         std::string skin_error;
-        if (!lightusd::tydra::next::EvaluateSkinnedPoints(
+        if (!lightusd::tydra::EvaluateSkinnedPoints(
                 stage, prim, opt.timecode, point_values, &skinned_points, &skin_error,
                 (prim.GetPropertyValue("normals") || prim.GetPropertyValue("primvars:normals")) ? &skin_normals : nullptr)) {
           std::cerr << "Skinning failed: " << prim.GetPath().str()
@@ -1882,11 +1882,11 @@ int main(int argc, char **argv) {
 
         // Resolve UV and normal tuples by authored interpolation and optional
         // indices. Split a shared point only when a corner needs another tuple.
-        using lightusd::tydra::next::MeshFloatAttribute;
-        using lightusd::tydra::next::ReadMeshFloatAttribute;
-        lightusd::tydra::next::ValueArrayRead<int32_t> index_values, count_values;
-        lightusd::tydra::next::ReadIntArray(prim, "faceVertexIndices", mesh_eval, &index_values);
-        lightusd::tydra::next::ReadIntArray(prim, "faceVertexCounts", mesh_eval, &count_values);
+        using lightusd::tydra::MeshFloatAttribute;
+        using lightusd::tydra::ReadMeshFloatAttribute;
+        lightusd::tydra::ValueArrayRead<int32_t> index_values, count_values;
+        lightusd::tydra::ReadIntArray(prim, "faceVertexIndices", mesh_eval, &index_values);
+        lightusd::tydra::ReadIntArray(prim, "faceVertexCounts", mesh_eval, &count_values);
         MeshFloatAttribute uvs, uvs1, normals;
         bool have_uvs = false;
         if (!job.uv_primvar.empty()) {
@@ -1894,7 +1894,7 @@ int main(int argc, char **argv) {
               mesh_eval, 2, nv, index_values.size(), &uvs);
         }
         if (!have_uvs) {
-          for (const std::string& name : lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
+          for (const std::string& name : lightusd::tydra::MeshConfig{}.uv_primvar_names) {
             if (ReadMeshFloatAttribute(prim, "primvars:" + name, mesh_eval,
                 2, nv, index_values.size(), &uvs)) { have_uvs = true; break; }
           }
@@ -1908,17 +1908,17 @@ int main(int argc, char **argv) {
               "primvars:" + job.uv_primvar1, mesh_eval, 2, nv,
               index_values.size(), &uvs1);
         }
-        bool have_normals = lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
+        bool have_normals = lightusd::tydra::MeshUsesAuthoredNormals(prim) &&
             (ReadMeshFloatAttribute(prim, "primvars:normals", mesh_eval,
             3, nv, index_values.size(), &normals) ||
             ReadMeshFloatAttribute(prim, "normals", mesh_eval,
             3, nv, index_values.size(), &normals));
         std::vector<float> generated_smooth_normals;
         if (!have_normals && opt.smooth &&
-        lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
+        lightusd::tydra::MeshUsesGeneratedSmoothNormals(prim)) {
           const auto* orientation=prim.GetPropertyValue("orientation");
           const bool left_handed=orientation && orientation->as_token() && *orientation->as_token()=="leftHanded";
-          if (lightusd::tydra::next::ComputeMeshSmoothNormals(point_values,count_values,index_values,
+          if (lightusd::tydra::ComputeMeshSmoothNormals(point_values,count_values,index_values,
                   left_handed,&generated_smooth_normals)) {
             normals.components=3;normals.interpolation="vertex";
             normals.values.view={generated_smooth_normals.data(),generated_smooth_normals.size(),false};
@@ -1987,8 +1987,8 @@ int main(int argc, char **argv) {
           return true;
         };
         bool valid_geometry = true;
-        lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
-        lightusd::tydra::next::ReadIntArray(prim, "holeIndices", mesh_eval, &hole_values);
+        lightusd::tydra::ValueArrayRead<int32_t> hole_values;
+        lightusd::tydra::ReadIntArray(prim, "holeIndices", mesh_eval, &hole_values);
         std::unordered_set<int32_t> holes(hole_values.begin(), hole_values.end());
         const auto visible_face = [&](size_t face) {
           return (job.subset_faces.empty() ||
@@ -2071,17 +2071,17 @@ int main(int argc, char **argv) {
         if (opt.displace && opt.displace_scale != 0.0f && !geo.indices.empty()) {
           float disp_const = 0.0f;
           ScalarTex disp_tex;
-          const std::vector<lightusd::next::Path> *bind =
+          const std::vector<lightusd::Path> *bind =
               prim.GetRelationship("material:binding");
           if (bind && !bind->empty()) {
-            lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+            lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
             if (mat.IsValid()) {
-              lightusd::next::UsdPrim surf =
+              lightusd::UsdPrim surf =
                   ConnectedPrimNext(stage, mat, "outputs:surface");
               if (!surf.IsValid())
                 surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
               if (surf.IsValid()) {
-                if (const lightusd::next::Value *d =
+                if (const lightusd::Value *d =
                         surf.GetPropertyValue("inputs:displacement"))
                   if (const float *f = d->as_float()) disp_const = *f;
                 ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
@@ -2135,7 +2135,7 @@ int main(int argc, char **argv) {
 
         // Base color from primvars:displayColor (constant); mid-grey default.
         Vec3 display_color{1.0f, 1.0f, 1.0f};
-        if (const lightusd::next::Value *dcv =
+        if (const lightusd::Value *dcv =
                 prim.GetPropertyValue("primvars:displayColor")) {
           const auto dc = dcv->as_float_array();
           if (dc && dc->size() >= 3)
@@ -2192,17 +2192,17 @@ int main(int argc, char **argv) {
           float intensity = 1.0f, exposure = 0.0f;
           Vec3 light_color{1.0f, 1.0f, 1.0f};
           bool normalize = false;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:intensity"))
             if (const float *f = v->as_float()) intensity = *f;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:exposure"))
             if (const float *f = v->as_float()) exposure = *f;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:color"))
             if (const float *f = v->as_float3())
               light_color = Vec3{f[0], f[1], f[2]};
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:normalize"))
             if (const bool *b = v->as_bool()) normalize = *b;
           float area = 0.0f;
@@ -2246,7 +2246,7 @@ int main(int argc, char **argv) {
     Bounds gpu_flat_bounds;
     RenderContext gpu_curve_ctx;
     std::vector<CurveJobNext> gpu_curve_jobs;
-    stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
+    stage.Traverse([&](const lightusd::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
       if (type == "BasisCurves" || type == "HermiteCurves" ||
           type == "NurbsCurves") {
@@ -2289,7 +2289,7 @@ int main(int argc, char **argv) {
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
     if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty()) {
-      stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
+      stage.Traverse([&](const lightusd::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
             type == "HermiteCurves" || type == "NurbsCurves") {

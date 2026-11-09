@@ -19,7 +19,6 @@
 #include <unordered_set>
 
 namespace lightusd {
-namespace next {
 
 bool PrimHasComposableArcs(const PrimSpec& p) {
   const auto& m = p.meta();
@@ -922,5 +921,4 @@ bool LayerNeedsComposition(const Layer& layer) {
   return false;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -19,7 +19,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace {
 
 using IdMap = std::unordered_map<std::string, RenderId>;
@@ -69,41 +68,41 @@ std::string KeyOrIndex(const std::string& key, size_t index,
 }
 
 bool KindAffected(RenderResourceKind kind,
-                  ::lightusd::next::StageChangeFlag flags) {
-  using Flag = ::lightusd::next::StageChangeFlag;
-  if (::lightusd::next::HasStageChange(flags, Flag::Resync)) return true;
+                  ::lightusd::StageChangeFlag flags) {
+  using Flag = ::lightusd::StageChangeFlag;
+  if (::lightusd::HasStageChange(flags, Flag::Resync)) return true;
   switch (kind) {
     case RenderResourceKind::Node:
-      return ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Visibility) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Metadata);
+      return ::lightusd::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::HasStageChange(flags, Flag::Visibility) ||
+             ::lightusd::HasStageChange(flags, Flag::Metadata);
     case RenderResourceKind::Mesh:
     case RenderResourceKind::Points:
     case RenderResourceKind::Curves:
     case RenderResourceKind::PointInstancer:
-      return ::lightusd::next::HasStageChange(flags, Flag::Topology) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Primvar) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Animation) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Visibility);
+      return ::lightusd::HasStageChange(flags, Flag::Topology) ||
+             ::lightusd::HasStageChange(flags, Flag::Primvar) ||
+             ::lightusd::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::HasStageChange(flags, Flag::Animation) ||
+             ::lightusd::HasStageChange(flags, Flag::Visibility);
     case RenderResourceKind::Material:
-      return ::lightusd::next::HasStageChange(flags, Flag::Material);
+      return ::lightusd::HasStageChange(flags, Flag::Material);
     case RenderResourceKind::Texture:
     case RenderResourceKind::Image:
-      return ::lightusd::next::HasStageChange(flags, Flag::Texture) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Material);
+      return ::lightusd::HasStageChange(flags, Flag::Texture) ||
+             ::lightusd::HasStageChange(flags, Flag::Material);
     case RenderResourceKind::Light:
-      return ::lightusd::next::HasStageChange(flags, Flag::Light) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Animation);
+      return ::lightusd::HasStageChange(flags, Flag::Light) ||
+             ::lightusd::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::HasStageChange(flags, Flag::Animation);
     case RenderResourceKind::Camera:
-      return ::lightusd::next::HasStageChange(flags, Flag::Camera) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Animation);
+      return ::lightusd::HasStageChange(flags, Flag::Camera) ||
+             ::lightusd::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::HasStageChange(flags, Flag::Animation);
     case RenderResourceKind::Animation:
     case RenderResourceKind::Skeleton:
-      return ::lightusd::next::HasStageChange(flags, Flag::Animation) ||
-             ::lightusd::next::HasStageChange(flags, Flag::Topology);
+      return ::lightusd::HasStageChange(flags, Flag::Animation) ||
+             ::lightusd::HasStageChange(flags, Flag::Topology);
   }
   return true;
 }
@@ -114,7 +113,7 @@ struct PreparedRenderUpdate::Impl {
   std::shared_ptr<const void> owner;
   uint64_t base_revision = 0;
   uint64_t new_revision = 0;
-  ::lightusd::next::StageChangeSet changes;
+  ::lightusd::StageChangeSet changes;
   std::shared_ptr<RenderScene> scene;
   std::map<RenderResourceKind, IdMap> ids;
   RenderId next_id = 1;
@@ -151,7 +150,7 @@ struct RenderSession::Impl {
   bool time_pending = false;
 
   bool IsAffected(RenderResourceKind kind, const std::string& key,
-                  const ::lightusd::next::StageChangeSet& changes) const {
+                  const ::lightusd::StageChangeSet& changes) const {
     if (revision == 0 || changes.full_resync ||
         changes.base_revision != revision) {
       return true;
@@ -165,12 +164,12 @@ struct RenderSession::Impl {
     return changes.stage_metadata_changed && kind == RenderResourceKind::Node;
   }
 
-  bool HasRenderEffect(const ::lightusd::next::StageChangeSet& changes) const {
+  bool HasRenderEffect(const ::lightusd::StageChangeSet& changes) const {
     if (changes.full_resync) return true;
     if (changes.stage_metadata_changed) return true;
     for (const auto& change : changes.prims) {
-      if (::lightusd::next::HasStageChange(
-              change.flags, ::lightusd::next::StageChangeFlag::Resync)) {
+      if (::lightusd::HasStageChange(
+              change.flags, ::lightusd::StageChangeFlag::Resync)) {
         return true;
       }
       for (const auto& kind_map : ids) {
@@ -185,9 +184,9 @@ struct RenderSession::Impl {
     return false;
   }
 
-  bool CanPatchMeshes(const ::lightusd::next::StageChangeSet& changes,
+  bool CanPatchMeshes(const ::lightusd::StageChangeSet& changes,
                       std::vector<size_t>* affected) const {
-    using Flag = ::lightusd::next::StageChangeFlag;
+    using Flag = ::lightusd::StageChangeFlag;
     if (!scene || revision == 0 || changes.full_resync ||
         changes.stage_metadata_changed || changes.prims.empty() || !affected) {
       return false;
@@ -224,7 +223,7 @@ struct RenderSession::Impl {
   }
 
   RenderUpdateResult ApplyNoOp(
-      const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink,
+      const ::lightusd::StageSnapshot& snapshot, SceneUpdateSink* sink,
       bool publish, std::shared_ptr<RenderScene>* prepared_scene,
       std::map<RenderResourceKind, IdMap>* prepared_ids,
       RenderId* prepared_next_id) {
@@ -234,7 +233,7 @@ struct RenderSession::Impl {
     if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
         !scene || !sink->UpdateCatalog(*scene) || !sink->EndUpdate()) {
       out.error = "RenderSession: sink rejected no-op update";
-      out.status = ::lightusd::next::OperationStatus::SinkRejected;
+      out.status = ::lightusd::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
@@ -249,7 +248,7 @@ struct RenderSession::Impl {
       out.revision = snapshot.revision;
     }
     out.success = true;
-    out.status = ::lightusd::next::OperationStatus::Ok;
+    out.status = ::lightusd::OperationStatus::Ok;
     return out;
   }
 
@@ -274,7 +273,7 @@ struct RenderSession::Impl {
 
   template <typename T, typename KeyFn, typename EmitFn>
   bool EmitVector(RenderResourceKind kind, const std::vector<T>& values,
-                  const ::lightusd::next::StageChangeSet& changes,
+                  const ::lightusd::StageChangeSet& changes,
                   KeyFn key_fn, EmitFn emit,
                   IdMap* next_keys, size_t* upserts,
                   RenderId* candidate_next_id,
@@ -297,8 +296,8 @@ struct RenderSession::Impl {
     return true;
   }
 
-  RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
-                           const ::lightusd::next::StageChangeSet& requested,
+  RenderUpdateResult Apply(const ::lightusd::StageSnapshot& snapshot,
+                           const ::lightusd::StageChangeSet& requested,
                            SceneUpdateSink* sink, bool publish = true,
                            std::shared_ptr<RenderScene>* prepared_scene = nullptr,
                            std::map<RenderResourceKind, IdMap>* prepared_ids = nullptr,
@@ -308,16 +307,16 @@ struct RenderSession::Impl {
     if (!snapshot || !sink) {
       out.error = !snapshot ? "RenderSession: invalid stage snapshot"
                             : "RenderSession: null update sink";
-      out.status = ::lightusd::next::OperationStatus::InvalidArgument;
+      out.status = ::lightusd::OperationStatus::InvalidArgument;
       return out;
     }
     if (revision != 0 && snapshot.revision <= revision) {
       out.error = "RenderSession: snapshot revision is not newer";
-      out.status = ::lightusd::next::OperationStatus::StaleRevision;
+      out.status = ::lightusd::OperationStatus::StaleRevision;
       return out;
     }
 
-    ::lightusd::next::StageChangeSet changes = requested;
+    ::lightusd::StageChangeSet changes = requested;
     if (revision == 0 || changes.base_revision != revision ||
         changes.new_revision != snapshot.revision) {
       changes.base_revision = revision;
@@ -345,13 +344,13 @@ struct RenderSession::Impl {
       if (committed) {
         for (size_t index : patched_meshes) {
           const std::string path = committed->meshes[index].prim_path;
-          const ::lightusd::next::UsdPrim prim =
+          const ::lightusd::UsdPrim prim =
               snapshot.stage->GetPrimAtPath(path);
           RenderMesh replacement;
           if (!converter.ConvertRenderableMesh(*snapshot.stage, prim,
                                                &replacement)) {
             out.error = converter.GetLastError();
-            out.status = ::lightusd::next::OperationStatus::InvalidData;
+            out.status = ::lightusd::OperationStatus::InvalidData;
             return out;
           }
           // Geometry-only changes retain the already resolved material table.
@@ -374,9 +373,9 @@ struct RenderSession::Impl {
               "RenderSession: could not refresh a point-instancer clone");
         }
         for (const std::string& path : refreshed_clones) {
-          ::lightusd::next::PrimChange clone_change;
-          clone_change.path = ::lightusd::next::Path(path);
-          clone_change.flags = ::lightusd::next::StageChangeFlag::Topology;
+          ::lightusd::PrimChange clone_change;
+          clone_change.path = ::lightusd::Path(path);
+          clone_change.flags = ::lightusd::StageChangeFlag::Topology;
           changes.prims.push_back(std::move(clone_change));
         }
         out.converted_resource_count =
@@ -395,14 +394,14 @@ struct RenderSession::Impl {
     }
     if (!committed) {
       out.error = "RenderSession: unable to prepare render scene";
-      out.status = ::lightusd::next::OperationStatus::AllocationFailure;
+      out.status = ::lightusd::OperationStatus::AllocationFailure;
       return out;
     }
     RenderScene& next = *committed;
     const size_t retained_bytes = next.memory_usage();
     if (retained_bytes > max_resident_bytes) {
       out.error = "RenderSession: candidate scene exceeds resident memory limit";
-      out.status = ::lightusd::next::OperationStatus::ResourceLimit;
+      out.status = ::lightusd::OperationStatus::ResourceLimit;
       return out;
     }
     if (!mesh_patch) {
@@ -417,7 +416,7 @@ struct RenderSession::Impl {
     if (!sink->BeginUpdate(revision, snapshot.revision, changes.full_resync) ||
         !sink->UpdateCatalog(next)) {
       out.error = "RenderSession: sink rejected update start/catalog";
-      out.status = ::lightusd::next::OperationStatus::SinkRejected;
+      out.status = ::lightusd::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
@@ -473,8 +472,8 @@ struct RenderSession::Impl {
           ? "RenderSession: stable resource ID space exhausted"
           : "RenderSession: sink rejected resource update";
       out.status = candidate_exhausted
-          ? ::lightusd::next::OperationStatus::ResourceLimit
-          : ::lightusd::next::OperationStatus::SinkRejected;
+          ? ::lightusd::OperationStatus::ResourceLimit
+          : ::lightusd::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
@@ -494,7 +493,7 @@ struct RenderSession::Impl {
       out.revision = snapshot.revision;
     }
     out.success = true;
-    out.status = ::lightusd::next::OperationStatus::Ok;
+    out.status = ::lightusd::OperationStatus::Ok;
     return out;
   }
 };
@@ -532,36 +531,36 @@ RenderSession::RenderSession(RenderSession&&) noexcept = default;
 RenderSession& RenderSession::operator=(RenderSession&&) noexcept = default;
 
 RenderUpdateResult RenderSession::Initialize(
-    const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink) {
+    const ::lightusd::StageSnapshot& snapshot, SceneUpdateSink* sink) {
   PreparedRenderUpdate prepared;
   RenderUpdateResult result = PrepareInitialize(snapshot, &prepared);
   return result ? Commit(std::move(prepared), sink) : result;
 }
 
 RenderUpdateResult RenderSession::Apply(
-    const ::lightusd::next::StageSnapshot& snapshot,
-    const ::lightusd::next::StageChangeSet& changes, SceneUpdateSink* sink) {
+    const ::lightusd::StageSnapshot& snapshot,
+    const ::lightusd::StageChangeSet& changes, SceneUpdateSink* sink) {
   PreparedRenderUpdate prepared;
   RenderUpdateResult result = Prepare(snapshot, changes, &prepared);
   return result ? Commit(std::move(prepared), sink) : result;
 }
 
 RenderUpdateResult RenderSession::PrepareInitialize(
-    const ::lightusd::next::StageSnapshot& snapshot,
+    const ::lightusd::StageSnapshot& snapshot,
     PreparedRenderUpdate* prepared) {
-  ::lightusd::next::StageChangeSet full;
+  ::lightusd::StageChangeSet full;
   full.new_revision = snapshot.revision;
   full.full_resync = true;
   return Prepare(snapshot, full, prepared);
 }
 
 RenderUpdateResult RenderSession::Prepare(
-    const ::lightusd::next::StageSnapshot& snapshot,
-    const ::lightusd::next::StageChangeSet& requested,
+    const ::lightusd::StageSnapshot& snapshot,
+    const ::lightusd::StageChangeSet& requested,
     PreparedRenderUpdate* prepared) {
   if (!prepared) {
     RenderUpdateResult result;
-    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.status = ::lightusd::OperationStatus::InvalidArgument;
     result.error = "RenderSession: null prepared-update destination";
     result.revision = revision();
     return result;
@@ -569,14 +568,14 @@ RenderUpdateResult RenderSession::Prepare(
   prepared->impl_.reset();
   if (RenderOperationActive(impl_.get())) {
     RenderUpdateResult result;
-    result.status = ::lightusd::next::OperationStatus::Busy;
+    result.status = ::lightusd::OperationStatus::Busy;
     result.error = "render session update is already in progress";
     result.revision = GetSnapshot().revision;
     return result;
   }
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   RenderOperationScope operation_scope(impl_.get());
-  ::lightusd::next::StageChangeSet changes = requested;
+  ::lightusd::StageChangeSet changes = requested;
   if (impl_->revision == 0 || changes.base_revision != impl_->revision ||
       changes.new_revision != snapshot.revision) {
     changes.base_revision = impl_->revision;
@@ -587,7 +586,7 @@ RenderUpdateResult RenderSession::Prepare(
       new (std::nothrow) PreparedRenderUpdate::Impl());
   if (!candidate) {
     RenderUpdateResult result;
-    result.status = ::lightusd::next::OperationStatus::AllocationFailure;
+    result.status = ::lightusd::OperationStatus::AllocationFailure;
     result.error = "RenderSession: unable to allocate prepared update";
     result.revision = impl_->revision;
     return result;
@@ -613,7 +612,7 @@ RenderUpdateResult RenderSession::Prepare(
 RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
                                          SceneUpdateSink* sink) {
   RenderUpdateResult invalid;
-  invalid.status = ::lightusd::next::OperationStatus::InvalidArgument;
+  invalid.status = ::lightusd::OperationStatus::InvalidArgument;
   invalid.revision = revision();
   if (!prepared.impl_ || !sink ||
       prepared.impl_->owner.get() != impl_->transaction_owner.get()) {
@@ -622,7 +621,7 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
     return invalid;
   }
   if (RenderOperationActive(impl_.get())) {
-    invalid.status = ::lightusd::next::OperationStatus::Busy;
+    invalid.status = ::lightusd::OperationStatus::Busy;
     invalid.error = "render session update is already in progress";
     return invalid;
   }
@@ -633,7 +632,7 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
   if (candidate.base_revision != impl_->revision ||
       candidate.new_revision <= impl_->revision) {
     out.success = false;
-    out.status = ::lightusd::next::OperationStatus::StaleRevision;
+    out.status = ::lightusd::OperationStatus::StaleRevision;
     out.error = "RenderSession: prepared update base revision is stale";
     out.revision = impl_->revision;
     return out;
@@ -642,7 +641,7 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
                          candidate.changes.full_resync) ||
       !sink->UpdateCatalog(*candidate.scene)) {
     out.success = false;
-    out.status = ::lightusd::next::OperationStatus::SinkRejected;
+    out.status = ::lightusd::OperationStatus::SinkRejected;
     out.error = "RenderSession: sink rejected prepared update start/catalog";
     out.revision = impl_->revision;
     sink->AbortUpdate();
@@ -711,7 +710,7 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
   }
   if (!ok || !sink->EndUpdate()) {
     out.success = false;
-    out.status = ::lightusd::next::OperationStatus::SinkRejected;
+    out.status = ::lightusd::OperationStatus::SinkRejected;
     out.error = "RenderSession: sink rejected prepared resource update";
     out.revision = impl_->revision;
     sink->AbortUpdate();
@@ -728,7 +727,7 @@ RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
     if (impl_->time_code == candidate.time_code) impl_->time_pending = false;
   }
   out.success = true;
-  out.status = ::lightusd::next::OperationStatus::Ok;
+  out.status = ::lightusd::OperationStatus::Ok;
   out.revision = candidate.new_revision;
   out.upsert_count = upserts;
   out.remove_count = removes;
@@ -782,6 +781,5 @@ void RenderSession::Reset() {
   impl_->time_pending = false;
 }
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

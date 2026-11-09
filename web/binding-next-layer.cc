@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace tn = lightusd::next;
+namespace tn = lightusd;
 
 namespace lightusd::web_next {
 namespace {

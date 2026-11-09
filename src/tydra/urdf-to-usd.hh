@@ -13,12 +13,9 @@
 
 namespace lightusd {
 namespace minijson { class Value; }
-namespace next {
 class Stage;
-}  // namespace next
 
 namespace tydra {
-namespace next {
 
 /// Pre-registered mesh geometry referenced from the robot JSON via `meshRef`.
 /// Same field layout as the legacy tydra::URDFMeshBuffer.
@@ -47,32 +44,31 @@ struct URDFMeshBuffer {
 // Native frontends already own validated bounded JSON; avoid text serialization
 // and a second full parse (large mesh payloads can exceed JSON text caps).
 bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
-    ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
+    ::lightusd::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
 /// Same, with the payload's `meshRef` geometry in `mesh_buffers`.
 bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
     const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
-    ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
+    ::lightusd::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
 
 /// Same, but the buffers are moved into the stage as each mesh is authored
 /// (lower peak memory); `mesh_buffers` is left with emptied buffers. Use when
 /// the payload is converted once.
 bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& payload,
     std::map<std::string, URDFMeshBuffer>* mesh_buffers,
-    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err);
+    ::lightusd::Stage* out_stage, std::string* warn, std::string* err);
 
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
-    ::lightusd::next::Stage *stage,
+    ::lightusd::Stage *stage,
     std::string *warn = nullptr,
     std::string *err = nullptr);
 
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-    ::lightusd::next::Stage *stage,
+    ::lightusd::Stage *stage,
     std::string *warn = nullptr,
     std::string *err = nullptr);
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

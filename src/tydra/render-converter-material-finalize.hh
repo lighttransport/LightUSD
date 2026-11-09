@@ -7,12 +7,12 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 class RenderScene;
 struct RenderMaterial;
 void RemapMaterialTextureIds(RenderMaterial* material,
                              const std::vector<int32_t>& texture_remap);
 void PromoteMaterialUVPrimvars(RenderScene* scene,
                                std::vector<std::string>* warnings);
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra
 #endif

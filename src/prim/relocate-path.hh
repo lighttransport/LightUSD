@@ -5,7 +5,6 @@
 #include "identifier.hh"
 
 namespace lightusd {
-namespace next {
 
 // Anchor relative prim paths used by relocates. Absolute paths are preserved
 // for separate authoring validation. Empty input is the deletion sentinel.
@@ -59,5 +58,4 @@ inline bool AnchorRelocatePath(const std::string& path, const std::string& ancho
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -9,8 +9,8 @@
 #include <cmath>
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
@@ -254,10 +254,10 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
       // UsdGeomPlane's canonical quad starts at (+width,+length); the
       // generator's face starts at (-width,+length). Remap authored tuples
       // rather than indexing them with the generator's private vertex order.
-      ::lightusd::next::EvalOptions evaluation;
+      ::lightusd::EvalOptions evaluation;
       evaluation.time = std::isnan(config_.time_code)
-          ? ::lightusd::next::TimeQuery::Default()
-          : ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+          ? ::lightusd::TimeQuery::Default()
+          : ::lightusd::TimeQuery::Numeric(config_.time_code);
       evaluation.follow_connections = false;
       MeshFloatAttribute authored;
       if (ReadMeshFloatAttribute(prim, "primvars:st", evaluation, 2, 4, 4,
@@ -341,4 +341,4 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
   }
   return true;
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

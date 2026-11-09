@@ -10,7 +10,6 @@
 #include "scene-preview-internal.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 using json = nlohmann::json;
 // Earlier indices could retain instances excluded by inactiveIds metadata.
@@ -108,6 +107,5 @@ bool Build::source_load_index(const fs::path& directory) {
          source_replay(0, Identity().data());
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

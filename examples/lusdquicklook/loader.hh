@@ -2,7 +2,7 @@
 //
 // lusdquicklook — the loading worker.
 //
-// Runs next::StageSession + tydra_next streaming conversion on a background
+// Runs ::lightusd::StageSession + tydra_next streaming conversion on a background
 // thread and publishes results through a bounded, byte-accounted queue. Nothing
 // here touches the UI, the window or any GPU state.
 //

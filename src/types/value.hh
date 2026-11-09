@@ -3,7 +3,7 @@
 #include "type-id.hh"
 #include "value-views.hh"
 
-namespace lightusd { namespace next {
+namespace lightusd {
 class Value;
 class Dict;
 class DictView;
@@ -384,4 +384,4 @@ class Dict {
 };
 inline DictView Value::as_dictionary() const { return view().as_dictionary(); }
 Value LerpValue(const Value&, const Value&, double);
-}}  // namespace lightusd::next
+}  // namespace lightusd

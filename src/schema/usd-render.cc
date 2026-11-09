@@ -6,7 +6,6 @@
 #include "eval/attribute-eval.hh"
 
 namespace lightusd {
-namespace next {
 namespace {
 
 void CopyRelationship(const UsdPrim& prim, const char* name,
@@ -153,5 +152,4 @@ bool GetRenderPassData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

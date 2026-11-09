@@ -3,10 +3,10 @@
 #ifndef LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_LIGHT_LINKING_HH_
 #define LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_LIGHT_LINKING_HH_
 
-namespace lightusd { namespace next { class Stage; } }
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd {  class Stage;  }
+namespace lightusd { namespace tydra {
 class RenderScene;
-void ResolveLightLinking(const ::lightusd::next::Stage& stage,
+void ResolveLightLinking(const ::lightusd::Stage& stage,
                          RenderScene* scene);
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra
 #endif

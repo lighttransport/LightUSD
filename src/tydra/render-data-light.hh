@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // RenderLight
@@ -153,4 +153,4 @@ struct RenderCamera {
 // Scene Node (transform hierarchy)
 //
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

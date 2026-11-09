@@ -3,8 +3,8 @@
 #include "schema/usdPhysics.hh"
 #include <string>
 #include <vector>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage; using ::lightusd::UsdPrim;
 namespace {
 std::string ValueSummary(const Value& value) {
   if (const bool* v = value.as_bool()) return *v ? "true" : "false";
@@ -15,7 +15,7 @@ std::string ValueSummary(const Value& value) {
   if (auto v = value.as_string()) return *v;
   if (auto v = value.as_token()) return *v;
   if (auto v = value.as_asset_path()) return *v;
-  const char* name = ::lightusd::next::GetTypeName(value.type_id());
+  const char* name = ::lightusd::GetTypeName(value.type_id());
   return name ? name : "value";
 }
 
@@ -42,7 +42,7 @@ std::vector<PhysicsProperty> CollectPhysicsExtensionProperties(
     if (!IsPhysicsExtensionPropertyName(name)) continue;
     PhysicsProperty prop;
     prop.name = name;
-    const std::vector<::lightusd::next::Path>* targets =
+    const std::vector<::lightusd::Path>* targets =
         prim.GetRelationship(name);
     if (targets) {
       prop.value = "rel[" + std::to_string(targets->size()) + "]";
@@ -68,9 +68,9 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
   stage.Traverse([&](const UsdPrim& prim) {
     const std::string path = prim.GetPath().str();
 
-    if (::lightusd::next::IsPhysicsScene(prim)) {
-      ::lightusd::next::PhysicsSceneData data;
-      if (::lightusd::next::GetPhysicsSceneData(stage, prim, &data,
+    if (::lightusd::IsPhysicsScene(prim)) {
+      ::lightusd::PhysicsSceneData data;
+      if (::lightusd::GetPhysicsSceneData(stage, prim, &data,
                                                 config_.time_code)) {
         PhysicsSceneAnnotation out;
         out.prim_path = path;
@@ -81,13 +81,13 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::lightusd::next::HasPhysicsRigidBodyAPI(prim) ||
-        ::lightusd::next::HasPhysicsMassAPI(prim)) {
+    if (::lightusd::HasPhysicsRigidBodyAPI(prim) ||
+        ::lightusd::HasPhysicsMassAPI(prim)) {
       PhysicsRigidBodyAnnotation out;
       out.prim_path = path;
-      if (::lightusd::next::HasPhysicsRigidBodyAPI(prim)) {
-        ::lightusd::next::PhysicsRigidBodyData data;
-        if (::lightusd::next::GetPhysicsRigidBodyData(stage, prim, &data,
+      if (::lightusd::HasPhysicsRigidBodyAPI(prim)) {
+        ::lightusd::PhysicsRigidBodyData data;
+        if (::lightusd::GetPhysicsRigidBodyData(stage, prim, &data,
                                                       config_.time_code)) {
           out.rigid_body_enabled = data.rigidBodyEnabled;
           out.kinematic_enabled = data.kinematicEnabled;
@@ -97,9 +97,9 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
           out.starts_asleep = data.startsAsleep;
         }
       }
-      if (::lightusd::next::HasPhysicsMassAPI(prim)) {
-        ::lightusd::next::PhysicsMassData data;
-        if (::lightusd::next::GetPhysicsMassData(stage, prim, &data)) {
+      if (::lightusd::HasPhysicsMassAPI(prim)) {
+        ::lightusd::PhysicsMassData data;
+        if (::lightusd::GetPhysicsMassData(stage, prim, &data)) {
           out.has_mass = true;
           out.mass = data.mass;
           out.density = data.density;
@@ -112,20 +112,20 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.rigid_bodies.push_back(std::move(out));
     }
 
-    if (::lightusd::next::HasPhysicsCollisionAPI(prim) ||
-        ::lightusd::next::HasPhysicsMeshCollisionAPI(prim)) {
+    if (::lightusd::HasPhysicsCollisionAPI(prim) ||
+        ::lightusd::HasPhysicsMeshCollisionAPI(prim)) {
       PhysicsColliderAnnotation out;
       out.prim_path = path;
-      if (::lightusd::next::HasPhysicsCollisionAPI(prim)) {
-        ::lightusd::next::PhysicsCollisionData data;
-        if (::lightusd::next::GetPhysicsCollisionData(stage, prim, &data)) {
+      if (::lightusd::HasPhysicsCollisionAPI(prim)) {
+        ::lightusd::PhysicsCollisionData data;
+        if (::lightusd::GetPhysicsCollisionData(stage, prim, &data)) {
           out.collision_enabled = data.collisionEnabled;
           out.simulation_owner = data.simulationOwner;
         }
       }
-      if (::lightusd::next::HasPhysicsMeshCollisionAPI(prim)) {
-        ::lightusd::next::PhysicsMeshCollisionData data;
-        if (::lightusd::next::GetPhysicsMeshCollisionData(prim, &data)) {
+      if (::lightusd::HasPhysicsMeshCollisionAPI(prim)) {
+        ::lightusd::PhysicsMeshCollisionData data;
+        if (::lightusd::GetPhysicsMeshCollisionData(prim, &data)) {
           out.has_mesh_collision = true;
           out.approximation = data.approximation;
         }
@@ -134,13 +134,13 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.colliders.push_back(std::move(out));
     }
 
-    if (::lightusd::next::IsPhysicsJoint(prim)) {
+    if (::lightusd::IsPhysicsJoint(prim)) {
       PhysicsJointAnnotation out;
       out.prim_path = path;
       out.type_name = prim.GetTypeName();
 
-      ::lightusd::next::PhysicsJointData base;
-      if (::lightusd::next::GetPhysicsJointData(stage, prim, &base,
+      ::lightusd::PhysicsJointData base;
+      if (::lightusd::GetPhysicsJointData(stage, prim, &base,
                                                 config_.time_code)) {
         out.body0 = base.body0;
         out.body1 = base.body1;
@@ -153,47 +153,47 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
         out.collision_enabled = base.collisionEnabled;
       }
 
-      if (::lightusd::next::IsPhysicsRevoluteJoint(prim)) {
-        ::lightusd::next::PhysicsRevoluteJointData data;
-        if (::lightusd::next::GetPhysicsRevoluteJointData(
+      if (::lightusd::IsPhysicsRevoluteJoint(prim)) {
+        ::lightusd::PhysicsRevoluteJointData data;
+        if (::lightusd::GetPhysicsRevoluteJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::lightusd::next::IsPhysicsPrismaticJoint(prim)) {
-        ::lightusd::next::PhysicsPrismaticJointData data;
-        if (::lightusd::next::GetPhysicsPrismaticJointData(
+      } else if (::lightusd::IsPhysicsPrismaticJoint(prim)) {
+        ::lightusd::PhysicsPrismaticJointData data;
+        if (::lightusd::GetPhysicsPrismaticJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::lightusd::next::IsPhysicsSliderJoint(prim)) {
-        ::lightusd::next::PhysicsSliderJointData data;
-        if (::lightusd::next::GetPhysicsSliderJointData(
+      } else if (::lightusd::IsPhysicsSliderJoint(prim)) {
+        ::lightusd::PhysicsSliderJointData data;
+        if (::lightusd::GetPhysicsSliderJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::lightusd::next::IsPhysicsSphericalJoint(prim)) {
-        ::lightusd::next::PhysicsSphericalJointData data;
-        if (::lightusd::next::GetPhysicsSphericalJointData(
+      } else if (::lightusd::IsPhysicsSphericalJoint(prim)) {
+        ::lightusd::PhysicsSphericalJointData data;
+        if (::lightusd::GetPhysicsSphericalJointData(
                 stage, prim, &data, config_.time_code)) {
           out.cone_angle0_limit = data.coneAngle0Limit;
           out.cone_angle1_limit = data.coneAngle1Limit;
         }
-      } else if (::lightusd::next::IsPhysicsBallJoint(prim)) {
-        ::lightusd::next::PhysicsBallJointData data;
-        if (::lightusd::next::GetPhysicsBallJointData(
+      } else if (::lightusd::IsPhysicsBallJoint(prim)) {
+        ::lightusd::PhysicsBallJointData data;
+        if (::lightusd::GetPhysicsBallJointData(
                 stage, prim, &data, config_.time_code)) {
           out.cone_angle0_limit = data.coneAngle0Limit;
           out.cone_angle1_limit = data.coneAngle1Limit;
         }
-      } else if (::lightusd::next::IsPhysicsDistanceJoint(prim)) {
-        ::lightusd::next::PhysicsDistanceJointData data;
-        if (::lightusd::next::GetPhysicsDistanceJointData(
+      } else if (::lightusd::IsPhysicsDistanceJoint(prim)) {
+        ::lightusd::PhysicsDistanceJointData data;
+        if (::lightusd::GetPhysicsDistanceJointData(
                 stage, prim, &data, config_.time_code)) {
           out.min_distance = data.minDistance;
           out.max_distance = data.maxDistance;
@@ -204,9 +204,9 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.joints.push_back(std::move(out));
     }
 
-    if (::lightusd::next::HasPhysicsMaterialAPI(prim)) {
-      ::lightusd::next::PhysicsMaterialData data;
-      if (::lightusd::next::GetPhysicsMaterialData(stage, prim, &data)) {
+    if (::lightusd::HasPhysicsMaterialAPI(prim)) {
+      ::lightusd::PhysicsMaterialData data;
+      if (::lightusd::GetPhysicsMaterialData(stage, prim, &data)) {
         PhysicsMaterialAnnotation out;
         out.prim_path = path;
         out.static_friction = data.staticFriction;
@@ -218,9 +218,9 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::lightusd::next::HasPhysicsFilteredPairsAPI(prim)) {
-      ::lightusd::next::PhysicsFilteredPairsData data;
-      if (::lightusd::next::GetPhysicsFilteredPairsData(prim, &data)) {
+    if (::lightusd::HasPhysicsFilteredPairsAPI(prim)) {
+      ::lightusd::PhysicsFilteredPairsData data;
+      if (::lightusd::GetPhysicsFilteredPairsData(prim, &data)) {
         PhysicsFilteredPairsAnnotation out;
         out.prim_path = path;
         out.filtered_pair_paths = std::move(data.filteredPairPaths);
@@ -228,11 +228,11 @@ void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::lightusd::next::HasPhysicsArticulationRootAPI(prim)) {
+    if (::lightusd::HasPhysicsArticulationRootAPI(prim)) {
       scene->physics.articulation_roots.push_back(path);
     }
 
     return true;
   });
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

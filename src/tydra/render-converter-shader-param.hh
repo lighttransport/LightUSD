@@ -7,11 +7,11 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-namespace lightusd { namespace next { class Stage; class UsdPrim; } }
+namespace lightusd {  class Stage; class UsdPrim;  }
 
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::Stage;
-using ::lightusd::next::UsdPrim;
+namespace lightusd { namespace tydra {
+using ::lightusd::Stage;
+using ::lightusd::UsdPrim;
 namespace shader_param_detail {
 struct TextureNodeData {
   std::string file;
@@ -56,4 +56,4 @@ bool ExtractTextureNodeData(const Stage& stage,
                             TextureNodeData* out);
 }  // namespace shader_param_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

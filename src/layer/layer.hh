@@ -16,7 +16,6 @@
 #include <unordered_map>
 
 namespace lightusd {
-namespace next {
 // Runtime ownership for dependencies produced by foreign-format readers.
 // This is not authored USD metadata. Shared immutable bytes survive cache
 // teardown and Layer cloning without copying texture payloads.
@@ -441,5 +440,4 @@ private:
   std::string path_prefix_;
 };
 
-}  // namespace next
 }  // namespace lightusd

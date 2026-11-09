@@ -21,7 +21,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 /// An immutable, refcounted path string: one pointer, shared by copies.
@@ -344,5 +343,4 @@ struct NamespaceMapping {
 };
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

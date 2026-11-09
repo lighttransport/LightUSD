@@ -424,7 +424,7 @@ int RenderStream::sceneMetadata(lightusd_next_scene_metadata* out) const {
     const uint32_t size = out->struct_size;
     std::memset(out, 0, sizeof(*out));
     out->struct_size = size;
-    const lightusd::next::StageMeta& meta = stage_.GetMeta();
+    const lightusd::StageMeta& meta = stage_.GetMeta();
     out->reserved = (meta.startTimeCode_set ? 1u : 0u) |
                     (meta.endTimeCode_set ? 2u : 0u) |
                     (meta.autoPlay_set ? 4u : 0u) |

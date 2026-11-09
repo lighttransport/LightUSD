@@ -36,7 +36,6 @@ namespace import_asset {
 struct AssetSource;
 }  // namespace import_asset
 }  // namespace tydra
-namespace next {
 namespace pcp {
 
 struct LayerLoadOptions {
@@ -280,5 +279,4 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(
     std::string *err, const LayerLoadOptions &options = {});
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

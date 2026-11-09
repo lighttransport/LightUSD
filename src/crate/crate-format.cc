@@ -21,7 +21,6 @@
 #include <cstdint>
 
 namespace lightusd {
-namespace next {
 
 const char* CrateTypeIdName(CrateTypeId id) {
   return lu_crate_type_name(static_cast<uint8_t>(id));
@@ -836,5 +835,4 @@ bool StringIndex::is_valid() const { return value != 0xFFFFFFFF; }
 bool PathIndex::is_valid() const { return value != 0xFFFFFFFF; }
 bool FieldsetIndex::is_valid() const { return value != 0xFFFFFFFF; }
 
-}  // namespace next
 }  // namespace lightusd

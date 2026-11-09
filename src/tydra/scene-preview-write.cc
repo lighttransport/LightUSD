@@ -9,7 +9,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace {
 bool Save(const fs::path& file, const usd::Layer& layer, std::string* error) {
@@ -181,6 +180,5 @@ bool WriteProxy(Build& build) {
   return Save(build.directory / "root.usdc", root, &build.result.error);
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

@@ -10,7 +10,6 @@
 #include "layer/arc-reference.hh"
 
 namespace lightusd {
-namespace next {
 
 // Render the internal arc spelling as canonical USDA text. Arc strings are
 // stored as "@asset@</prim>", "</prim>", or a bare asset path, optionally
@@ -75,5 +74,4 @@ inline std::string FormatArcRef(const std::string& arc) {
   return out + suffix;
 }
 
-}  // namespace next
 }  // namespace lightusd

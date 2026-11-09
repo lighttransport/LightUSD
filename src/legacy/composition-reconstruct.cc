@@ -540,7 +540,7 @@ bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim_out,
 namespace {
 
 // Keep recursive variant discovery within the same defensive namespace ceiling
-// used by next::ParseOptions and the Tydra next renderer. The former 1024*1024
+// used by ::lightusd::ParseOptions and the Tydra next renderer. The former 1024*1024
 // call-site limit did not protect the native stack from hostile hierarchies.
 constexpr uint32_t kMaxVariantExtractionDepth = 256;
 

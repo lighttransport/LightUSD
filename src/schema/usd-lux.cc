@@ -6,7 +6,6 @@
 #include "usd-lux.hh"
 
 namespace lightusd {
-namespace next {
 
 LightType GetLightType(const UsdPrim& prim) {
   if (!prim.IsValid()) return LightType::Unknown;
@@ -215,5 +214,4 @@ bool GetCylinderLightData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-}  // namespace next
 }  // namespace lightusd

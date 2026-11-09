@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 using namespace crate_stage_detail;
 
 // Set authored bits for recognized metadata, including malformed known fields.
@@ -406,5 +405,4 @@ bool CrateReader::Impl::CollectPropertyRecords(
 
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -7,7 +7,6 @@
 #include <fstream>
 
 namespace lightusd {
-namespace next {
 
 FileFormat DetectFormat(const uint8_t* data, size_t size) {
   if (size < 8) return FileFormat::Unknown;
@@ -77,5 +76,4 @@ FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* 
   return DetectFormat(header, static_cast<size_t>(nread));
 }
 
-}  // namespace next
 }  // namespace lightusd

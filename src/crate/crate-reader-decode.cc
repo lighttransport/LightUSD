@@ -25,7 +25,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
                                          std::vector<std::pair<std::string_view, Value>>& out,
@@ -663,5 +662,4 @@ int CrateReader::Impl::ResolveBuildThreads() const {
 }
 
 
-}  // namespace next
 }  // namespace lightusd

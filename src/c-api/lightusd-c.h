@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
- * LightUSD C API over the "next" core (lightusd::next).
+ * LightUSD C API over the "next" core (lightusd).
  *
  * Design:
  * - C11, no exceptions cross the boundary (the core is built -fno-exceptions).
@@ -114,7 +114,7 @@ LIGHTUSD_API lightusd_sv lightusd_strlist_get(const lightusd_strlist* l, size_t 
 LIGHTUSD_API void lightusd_strlist_destroy(lightusd_strlist* l);
 
 /* ============================================================
- * Types (mirrors lightusd::next::TypeId numerically)
+ * Types (mirrors lightusd::TypeId numerically)
  * ============================================================ */
 
 typedef uint16_t lightusd_type;
@@ -713,7 +713,7 @@ LIGHTUSD_API lightusd_prim lightusd_prim_child_by_name(lightusd_prim p, const ch
  * Properties / attributes (read)
  * ============================================================ */
 
-/* Property flags (mirror next::PropSlot flag bits). */
+/* Property flags (mirror ::lightusd::PropSlot flag bits). */
 enum {
   LIGHTUSD_PROP_CUSTOM = 0x0001,
   LIGHTUSD_PROP_UNIFORM = 0x0002,

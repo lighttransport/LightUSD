@@ -16,7 +16,6 @@
 #include "c/lightusd-core-c.h"  // lu_half_to_float / lu_float_to_half
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // IEEE 754 half (float16) <-> float32 conversion
@@ -445,5 +444,4 @@ bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size,
 DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
                                          uint64_t* dst, size_t count);
 
-}  // namespace next
 }  // namespace lightusd

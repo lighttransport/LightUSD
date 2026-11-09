@@ -9,7 +9,7 @@
 #include "schema/usd-skel.hh"
 #include "writer/value-printer.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 using lightusd_internal::Fail;
 using lightusd_internal::FromC;
 

@@ -15,11 +15,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   std::string source("#usda 1.0\n");
   source.append(reinterpret_cast<const char*>(data), size);
-  lightusd::next::LoadResult loaded =
-      lightusd::next::LoadUSDAFromString(source);
+  lightusd::LoadResult loaded =
+      lightusd::LoadUSDAFromString(source);
   if (!loaded.success) return 0;
 
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.limits.max_namespace_depth = 64;
   config.limits.max_render_records = 4096;
   config.mesh.sphere_subdivisions = 1;
@@ -27,7 +27,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   config.material.load_textures = false;
   config.animation.enabled = false;
   config.animation.bake_value_clips = false;
-  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderSceneConverter converter(config);
   (void)converter.Convert(loaded.stage);
   return 0;
 }

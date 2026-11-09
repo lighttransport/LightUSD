@@ -39,7 +39,7 @@
 #include "writer/value-printer.hh"
 #include "writer/usdc-writer.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 namespace {
 std::string LazyArrayScratchDirectory() {

@@ -4,7 +4,7 @@
 // Render-conversion benchmark: Stage -> raster/RT renderable mesh conversion.
 //
 // Measures the legacy tydra::RenderSceneConverter pipeline and/or the
-// tydra::next converter over a deterministic synthetic multi-mesh USDA scene
+// tydra converter over a deterministic synthetic multi-mesh USDA scene
 // or an explicit scene file.
 //
 // Pipeline selection at compile time:
@@ -426,7 +426,7 @@ void HashChunked(const ChunkedT &arr, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const lightusd::tydra::next::RenderScene &scene) {
+uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -466,26 +466,26 @@ uint64_t HashScene(const lightusd::tydra::next::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int threads) {
   BenchResult res;
 
-  lightusd::next::StageSession session;
+  lightusd::StageSession session;
   if (!session.OpenFile(path)) {
     res.err = "next StageSession open failed: " + session.GetError();
     return res;
   }
-  const lightusd::next::StageSnapshot stage_snapshot = session.GetSnapshot();
-  const lightusd::next::Stage &stage = *stage_snapshot;
+  const lightusd::StageSnapshot stage_snapshot = session.GetSnapshot();
+  const lightusd::Stage &stage = *stage_snapshot;
 
-  lightusd::tydra::next::ConverterConfig cfg;
+  lightusd::tydra::ConverterConfig cfg;
   cfg.execution.max_threads = threads > 0 ? threads : 0;
   cfg.mesh.compute_normals = true;
   cfg.mesh.triangulate = true;
   cfg.mesh.build_vertex_indices = true;
 
   std::vector<double> times;
-  lightusd::tydra::next::RenderScene ref_scene;
+  lightusd::tydra::RenderScene ref_scene;
   for (int it = 0; it < iters; it++) {
-    lightusd::tydra::next::RenderSceneConverter conv(cfg);
+    lightusd::tydra::RenderSceneConverter conv(cfg);
     const auto t0 = std::chrono::steady_clock::now();
-    lightusd::tydra::next::ConvertResult result = conv.Convert(stage);
+    lightusd::tydra::ConvertResult result = conv.Convert(stage);
     const auto t1 = std::chrono::steady_clock::now();
     if (!result.success) {
       res.err = "next Convert failed: " + result.error;

@@ -11,7 +11,7 @@
 #include "layer/layer.hh"
 #include "types/value-view.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 static int failures = 0;
 #define CHECK(x)                                                        \
   do {                                                                  \

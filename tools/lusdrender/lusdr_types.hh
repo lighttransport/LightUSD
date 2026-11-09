@@ -99,7 +99,7 @@ struct Texture {
   };
   std::vector<Mip> mips;
   // Keep decoder budget reservations alive for retained pixels and mips.
-  std::vector<std::shared_ptr<lightusd::next::TextureBudgetLease>>
+  std::vector<std::shared_ptr<lightusd::TextureBudgetLease>>
       budget_leases;
   bool is_udim{false};
   std::vector<UdimTile> udim_tiles;
@@ -1129,7 +1129,7 @@ inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
 struct ResolvedMat;
 
 struct MeshJobNext {
-  lightusd::next::UsdPrim prim;
+  lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
   // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
@@ -1140,7 +1140,7 @@ struct MeshJobNext {
   // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
   // finds the subset's own binding first, then falls back up the ancestry.
   std::vector<char> subset_faces;
-  lightusd::next::UsdPrim bind_prim;
+  lightusd::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
@@ -1192,10 +1192,10 @@ struct TextureCache {
   std::vector<Texture> *textures{nullptr};
   std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
-  const lightusd::next::USDZReader *usdz{nullptr};
+  const lightusd::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
   // Shared decode + size cap + byte budget (built on first use in lusdr_next).
-  std::shared_ptr<lightusd::tydra::next::TextureDecoder> decoder;
+  std::shared_ptr<lightusd::tydra::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
   size_t *unsupported_mtlx{nullptr};  // -> RTPreviewStats::unsupported_mtlx
@@ -1276,7 +1276,7 @@ struct ProtoBuildReq {
 };
 
 struct CurveJobNext {
-  lightusd::next::UsdPrim prim;
+  lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
 };

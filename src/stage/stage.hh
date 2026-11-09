@@ -15,7 +15,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 class Layer;
 class LayerBuilder;
@@ -473,5 +472,4 @@ private:
   StageMeta meta_;
 };
 
-}  // namespace next
 }  // namespace lightusd

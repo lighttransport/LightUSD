@@ -79,8 +79,8 @@
 
 namespace lusdview {
 
-namespace tydn = ::lightusd::tydra::next;
-namespace tnext = ::lightusd::next;
+namespace tydn = ::lightusd::tydra;
+namespace tnext = ::lightusd;
 using matrix4d = ::lightusd::value::matrix4d;
 
 namespace {
@@ -3618,7 +3618,7 @@ bool ReadPublicCameraPose(const lightusd_stage* stage, lightusd_prim prim,
 // The tydra-next converter records texture *metadata* (RenderTexture: asset
 // path, wrap, value scale/bias, channel) into a scratch RenderScene even with
 // load_textures=false, but never decodes pixels. Decoding is ours, and it runs
-// through tydra::next::TextureDecoder -- the same decoder lusdrender uses, so
+// through tydra::TextureDecoder -- the same decoder lusdrender uses, so
 // the size cap and byte budget are applied identically and AT DECODE TIME (a
 // large scene never has to hold every texture at full resolution first).
 
@@ -7604,7 +7604,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // budget soft: over-subscribe rather than drop, so the failure mode is
   // "blurrier", never "missing".
   texOpts.min_edge = opts.textureFitThresholdBytes > 0 ? 64u : 0u;
-  lightusd::next::USDZReader usdzArchive;
+  lightusd::USDZReader usdzArchive;
   if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
       usdzArchive.OpenFile(path)) {
     texOpts.usdz = &usdzArchive;

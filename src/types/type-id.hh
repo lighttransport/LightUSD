@@ -10,7 +10,6 @@
 #include <cstddef>
 
 namespace lightusd {
-namespace next {
 
 /// Core type identifier enum
 /// All USD value types are represented by a single enum value
@@ -181,5 +180,4 @@ TypeId GetComponentType(TypeId id);
 /// Returns 1 for scalars, 0 for non-numeric types
 size_t GetComponentCount(TypeId id);
 
-}  // namespace next
 }  // namespace lightusd

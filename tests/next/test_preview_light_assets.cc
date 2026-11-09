@@ -11,7 +11,7 @@
 #include "tydra/scene-preview-photometry.hh"
 #include "tydra/scene-preview.hh"
 
-namespace td = lightusd::tydra::next;
+namespace td = lightusd::tydra;
 namespace fs = std::filesystem;
 
 namespace {
@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
 )usd";
   }
 
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   td::ScenePreviewOptions options;
   options.compute_backend = td::PreviewComputeBackend::Cpu;
   options.kind = td::ScenePreviewKind::Gaussian;
@@ -61,17 +61,17 @@ int main(int argc, char** argv) {
              "authored IES profile did not warn: " + result.warning))
     return 1;
 
-  lightusd::next::Stage cached;
-  lightusd::next::pcp::CompositionOptions compose;
+  lightusd::Stage cached;
+  lightusd::pcp::CompositionOptions compose;
   compose.num_threads = 1;
   std::string warning, error;
-  if (!Check(lightusd::next::pcp::ComposeStageFromFile(
+  if (!Check(lightusd::pcp::ComposeStageFromFile(
                  result.usd_path, resolver, &cached, compose, &warning, &error),
              "compose cache: " + error))
     return 1;
 
   std::string profile_path;
-  cached.Traverse([&](const lightusd::next::UsdPrim& prim) {
+  cached.Traverse([&](const lightusd::UsdPrim& prim) {
     if (prim.GetName() != "Key") return true;
     if (const auto* value = prim.GetPropertyValue("inputs:shaping:ies:file"))
       profile_path = value->as_asset_path();
@@ -98,8 +98,8 @@ int main(int argc, char** argv) {
   // The cache is self-contained: removing the authored asset must not change
   // the composed profile path.
   fs::remove(source / "lamp.ies");
-  lightusd::next::Stage reopened;
-  if (!Check(lightusd::next::pcp::ComposeStageFromFile(
+  lightusd::Stage reopened;
+  if (!Check(lightusd::pcp::ComposeStageFromFile(
                  result.usd_path, resolver, &reopened, compose, &warning, &error),
              "cache opens without the source asset: " + error))
     return 1;
@@ -128,14 +128,14 @@ int main(int argc, char** argv) {
                                               linked_options);
   if (!Check(linked.success, "linked preview conversion: " + linked.error))
     return 1;
-  lightusd::next::Stage linked_stage;
-  if (!Check(lightusd::next::pcp::ComposeStageFromFile(
+  lightusd::Stage linked_stage;
+  if (!Check(lightusd::pcp::ComposeStageFromFile(
                  linked.usd_path, resolver, &linked_stage, compose, &warning,
                  &error),
              "compose linked cache: " + error))
     return 1;
   bool light_link = false, shadow_link = false;
-  linked_stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
+  linked_stage.Traverse([&](const lightusd::UsdPrim& prim) {
     if (prim.GetName() != "Key") return true;
     if (const auto* targets = prim.GetRelationship("light:link"))
       light_link = !targets->empty() && targets->front().str() == "/Target";

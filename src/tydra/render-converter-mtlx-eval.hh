@@ -8,12 +8,9 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 class Value; class Stage; class UsdPrim;
-}
 namespace tydra {
-namespace next {
-using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
+using ::lightusd::Stage; using ::lightusd::UsdPrim; using ::lightusd::Value;
 struct ShaderParam;
 
 constexpr int kMaxMtlxConstantDepth = 64;
@@ -40,6 +37,5 @@ bool EvalMtlxConstantConnection(const Stage& stage, const std::string& connectio
 bool TransformMtlxColorInput(const UsdPrim& node, const std::string& property, const std::string& evaluation_space, MtlxConstantValue* value);
 bool EvalMtlxInput(const Stage& stage, const UsdPrim& node, const std::string& input, double time_code, const std::string& evaluation_space, MtlxConstantValue* out, std::set<std::string>* visiting, int depth);
 bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node, double time_code, const std::string& evaluation_space, MtlxConstantValue* out, std::set<std::string>* visiting, int depth);
-}
 }
 }

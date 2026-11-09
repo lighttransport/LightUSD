@@ -30,7 +30,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 /// Ceiling on recursive value nesting (dictionaries, and UnregisteredValue
 /// wrappers around them). Shared by UnpackValue and DecodeDictionary so a
@@ -484,5 +483,4 @@ class CrateReader::Impl {
   void AddWarning(const std::string& msg);
 };
 
-}  // namespace next
 }  // namespace lightusd

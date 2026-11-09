@@ -5,7 +5,7 @@
 #include "c-api/lightusd-validation-cpp.hh"
 #include "validation/usd-validation.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 namespace api = lightusd::api;
 void Check(bool ok, const char* why) {
   if (!ok) { std::cerr << why << ": " << lightusd_last_error() << '\n'; std::exit(1); }

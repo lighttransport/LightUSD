@@ -19,8 +19,8 @@
 
 #define CHECK(x) do { if (!(x)) { std::cerr << "FAIL line " << __LINE__ << ": " #x "\n"; return 1; } } while (0)
 int main() {
-  namespace usd = lightusd::next;
-  namespace td = lightusd::tydra::next;
+  namespace usd = lightusd;
+  namespace td = lightusd::tydra;
   auto services = std::make_shared<lightusd::HostServices>();
   unsigned directory_queries = 0, library_opens = 0;
   std::atomic<unsigned> trims{0}, advice{0};

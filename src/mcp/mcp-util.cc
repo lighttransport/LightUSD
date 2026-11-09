@@ -271,7 +271,7 @@ std::string GenerateUUID() {
   return buf;
 }
 
-const next::Stage* NativeStage(const StageRef& ref) {
+const ::lightusd::Stage* NativeStage(const StageRef& ref) {
   return ref ? lightusd_internal::BorrowNativeStage(ref.stage) : nullptr;
 }
 
@@ -296,7 +296,7 @@ bool FindPrimSite(Context& ctx, const std::string& path, PrimSite* site,
     *err = "Invalid path: " + path;
     return false;
   }
-  if (const next::Stage* s = NativeStage(ctx.stage)) {
+  if (const ::lightusd::Stage* s = NativeStage(ctx.stage)) {
     if (s->GetPrimAtPath(path)) {
       site->stage = ctx.stage.stage;
       site->layer.clear();
@@ -304,7 +304,7 @@ bool FindPrimSite(Context& ctx, const std::string& path, PrimSite* site,
     }
   }
   for (auto& it : ctx.layers) {
-    const next::Stage* s = NativeStage(it.second.stage);
+    const ::lightusd::Stage* s = NativeStage(it.second.stage);
     if (s && s->GetPrimAtPath(path)) {
       site->stage = it.second.stage.stage;
       site->layer = it.second.name;
@@ -315,11 +315,11 @@ bool FindPrimSite(Context& ctx, const std::string& path, PrimSite* site,
   return false;
 }
 
-json ValueToJSON(const next::Value& value, const std::string& type_name,
+json ValueToJSON(const ::lightusd::Value& value, const std::string& type_name,
                  size_t max_elements) {
   json j;
   j["type"] = type_name.empty() ? std::string("unknown") : type_name;
-  next::PrintOptions opts;
+  ::lightusd::PrintOptions opts;
   opts.float_precision = 9;
   opts.double_precision = 17;
   if (value.is_array()) {
@@ -330,7 +330,7 @@ json ValueToJSON(const next::Value& value, const std::string& type_name,
       j["truncated"] = true;
     }
   }
-  std::string text = next::PrintValue(value, opts);
+  std::string text = ::lightusd::PrintValue(value, opts);
   // A truncated print ends with ", ...]"; drop the marker before parsing.
   const std::string marker = ", ...";
   const size_t mark = text.rfind(marker);
@@ -350,7 +350,7 @@ json ValueToJSON(const next::Value& value, const std::string& type_name,
   return j;
 }
 
-bool ValueFromJSON(const json& j, std::string* type_name, next::Value* out,
+bool ValueFromJSON(const json& j, std::string* type_name, ::lightusd::Value* out,
                    std::string* err) {
   if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) {
     *err = "value must be an object {\"type\": \"<usd type>\", \"value\": ...}";
@@ -391,12 +391,12 @@ bool ValueFromJSON(const json& j, std::string* type_name, next::Value* out,
 
   const std::string doc = "#usda 1.0\ndef \"MCPValue\"\n{\n    " + type +
                           " v = " + literal + "\n}\n";
-  next::LoadResult parsed = next::LoadUSDAFromString(doc);
-  const next::Layer* layer = parsed.stage.GetRootLayer();
-  const next::PrimSpec* spec =
+  ::lightusd::LoadResult parsed = ::lightusd::LoadUSDAFromString(doc);
+  const ::lightusd::Layer* layer = parsed.stage.GetRootLayer();
+  const ::lightusd::PrimSpec* spec =
       parsed.success && layer ? layer->prim_at_path(std::string("/MCPValue"))
                               : nullptr;
-  const next::Value* value = spec ? spec->property_value("v") : nullptr;
+  const ::lightusd::Value* value = spec ? spec->property_value("v") : nullptr;
   if (!value) {
     *err = "cannot parse a " + type + " value from " + literal +
            (parsed.error_summary.empty() ? "" : ": " + parsed.error_summary);
@@ -416,18 +416,18 @@ const char* SpecifierName(int specifier) {
   }
 }
 
-std::string PropertyTypeName(const next::UsdPrim& prim, const std::string& name) {
-  const next::PrimSpec* spec = prim.GetPrimSpec();
+std::string PropertyTypeName(const ::lightusd::UsdPrim& prim, const std::string& name) {
+  const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
   if (spec) {
     if (const std::string* t = spec->property_type_name(name)) return *t;
   }
-  if (const next::Value* v = prim.GetPropertyValue(name)) {
-    return next::PrintTypeName(v->type_id(), v->is_array());
+  if (const ::lightusd::Value* v = prim.GetPropertyValue(name)) {
+    return ::lightusd::PrintTypeName(v->type_id(), v->is_array());
   }
   return {};
 }
 
-json PrimToJSON(const next::UsdPrim& prim, lightusd_stage* stage,
+json PrimToJSON(const ::lightusd::UsdPrim& prim, lightusd_stage* stage,
                 int max_depth, bool include_attributes) {
   json j;
   j["name"] = prim.GetName();
@@ -460,7 +460,7 @@ json PrimToJSON(const next::UsdPrim& prim, lightusd_stage* stage,
   if (max_depth != 0 && child_count) {
     json children = json::array();
     const int next_depth = max_depth > 0 ? max_depth - 1 : max_depth;
-    for (const next::UsdPrim& child : prim.GetChildren()) {
+    for (const ::lightusd::UsdPrim& child : prim.GetChildren()) {
       children.push_back(PrimToJSON(child, stage, next_depth, include_attributes));
     }
     j["children"] = std::move(children);
@@ -470,8 +470,8 @@ json PrimToJSON(const next::UsdPrim& prim, lightusd_stage* stage,
   return j;
 }
 
-json PrimMetaToJSON(const next::UsdPrim& prim) {
-  const next::PrimMetadata& m = prim.GetMeta();
+json PrimMetaToJSON(const ::lightusd::UsdPrim& prim) {
+  const ::lightusd::PrimMetadata& m = prim.GetMeta();
   json j = json::object();
   j["active"] = m.active;
   if (m.hidden_authored) j["hidden"] = m.hidden;

@@ -5,7 +5,6 @@
 #include <string_view>
 
 namespace lightusd {
-namespace next {
 
 // OpenUSD-compatible dictionary order for element/property names. ASCII case
 // and leading-zero differences defer to the end. Numeric runs are compared by
@@ -68,5 +67,4 @@ inline bool DictionaryLess(std::string_view left, std::string_view right) {
   return b == '0' || (a != '0' && a < b);
 }
 
-}  // namespace next
 }  // namespace lightusd

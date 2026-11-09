@@ -48,7 +48,7 @@ void Report(const char* gate, const Stamp& start, size_t bytes = 0) {
 
 template <class Element>
 size_t CopyArrays(const std::vector<
-    const lightusd::tydra::next::ChunkedArray<Element>*>& arrays, bool scalar) {
+    const lightusd::tydra::ChunkedArray<Element>*>& arrays, bool scalar) {
   // Retain all buffers of this element type together, as an owned mesh copy
   // does. The caller retains floats and indices separately; this is a native
   // copy lower bound, not JS marshaling/heap-growth or a complete mesh object.
@@ -98,14 +98,14 @@ int main(int argc, char** argv) {
   lightusd::logging::Logger::getInstance().setLogLevel(
       lightusd::logging::LogLevel::Info);
 
-  lightusd::next::CrateReadOptions options;
+  lightusd::CrateReadOptions options;
   options.max_memory = budget_mib << 20;
   options.num_threads = threads;
   options.enable_timing = true;
   options.lazy_arrays = true;
   options.use_mmap = true;
   Stamp start;
-  lightusd::next::CrateReader reader(options);
+  lightusd::CrateReader reader(options);
   auto loaded = reader.ReadFile(argv[1]);
   Report("read_complete", start);
   if (!loaded.success) {
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
               loaded.stage.GetRootLayer()->prim_count(), threads, mode.c_str(),
               budget_mib);
 
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.limits.max_resident_bytes = budget_mib << 20;
   config.execution.max_threads = threads;
   config.material.load_textures = false;
@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
     previous_gate = gate;
     previous = Stamp{};
   };
-  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderSceneConverter converter(config);
   start = Stamp{};
   auto result = converter.Convert(loaded.stage);
   Report("convert_complete", start);

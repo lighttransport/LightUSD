@@ -10,7 +10,7 @@
 #include <cstring>
 #include <utility>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 namespace urdf_detail {
 
 void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
@@ -560,4 +560,4 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
 
 }  // namespace urdf_detail
 
-} } }  // namespace lightusd::tydra::next
+ } }  // namespace lightusd::tydra

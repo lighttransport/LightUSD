@@ -24,7 +24,6 @@
 #include "stage.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Options for high-level USD loading.
 struct LoadUSDOptions {
@@ -222,5 +221,4 @@ class StageSession {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace next
 }  // namespace lightusd

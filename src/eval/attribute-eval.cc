@@ -14,7 +14,6 @@
 #include <cstring>
 
 namespace lightusd {
-namespace next {
 
 // ============================================================
 // AttributeEval
@@ -613,5 +612,4 @@ bool GetMatrix4d(const Stage& stage, const UsdPrim& prim,
   return eval.EvalMatrix4d(prim, name, out16);
 }
 
-}  // namespace next
 }  // namespace lightusd

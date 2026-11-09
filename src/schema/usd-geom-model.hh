@@ -7,7 +7,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 enum ModelCardFace : uint32_t {
   kCardXNeg = 1u << 0,
@@ -42,5 +41,4 @@ std::string ComputeModelCardVisibility(const Stage& stage,
 uint32_t ComputeModelCardFaceMask(const Stage& stage, const UsdPrim& prim,
                                   char up_axis, double time = 0.0);
 
-}  // namespace next
 }  // namespace lightusd

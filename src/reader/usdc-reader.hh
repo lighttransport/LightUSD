@@ -11,7 +11,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Options for loading USDC files
 struct USDCLoadOptions {
@@ -54,5 +53,4 @@ bool IsUSDCFile(const char* filename);
 /// Check if data is USDC format
 bool IsUSDCData(const uint8_t* data, size_t size);
 
-}  // namespace next
 }  // namespace lightusd

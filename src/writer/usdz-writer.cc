@@ -8,7 +8,6 @@
 #include <limits>
 
 namespace lightusd {
-namespace next {
 
 namespace {
 
@@ -670,5 +669,4 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
   return result;
 }
 
-} // namespace next
 } // namespace lightusd

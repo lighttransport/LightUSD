@@ -14,7 +14,6 @@
 
 namespace lightusd {
 namespace tydra {
-namespace next {
 
 namespace {
 
@@ -53,17 +52,17 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderPoints* out) {
-  const bool gaussian = ::lightusd::next::IsParticleField(prim);
+  const bool gaussian = ::lightusd::IsParticleField(prim);
   if (!out || !prim.IsValid() ||
       (prim.GetTypeName() != "Points" && !gaussian)) {
     SetLastError("Invalid Points prim");
     return false;
   }
 
-  ::lightusd::next::ParticleFieldData particle_field;
+  ::lightusd::ParticleFieldData particle_field;
   if (gaussian) {
     std::string particle_warning;
-    if (!::lightusd::next::GetParticleFieldData(
+    if (!::lightusd::GetParticleFieldData(
             stage, prim, &particle_field, config_.time_code,
             &particle_warning)) {
       SetLastError("Invalid ParticleField data");
@@ -129,10 +128,10 @@ bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
                      &colors) &&
       !colors.empty()) {
     std::string interp_tok;
-    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::lightusd::next::PropMeta* pm =
+    if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
-        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -165,10 +164,10 @@ bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
                      &opacities) &&
       !opacities.empty()) {
     std::string interp_tok;
-    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::lightusd::next::PropMeta* pm =
+    if (const ::lightusd::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::PropMeta* pm =
               spec->property_meta("primvars:displayOpacity")) {
-        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -201,6 +200,5 @@ bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
 }
 
 
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

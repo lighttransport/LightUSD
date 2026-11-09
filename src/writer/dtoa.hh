@@ -17,7 +17,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Minimum destination buffer size for dtos_to() (and any raw dtoa buffer).
 /// The zmij SIMD fast path writes 8/16-byte chunks that can run past the
@@ -75,5 +74,4 @@ size_t dtos_to_reference(char* dst, double v);
 std::string format_g(double v, int precision);
 void format_g_append(std::string& out, double v, int precision);
 
-}  // namespace next
 }  // namespace lightusd

@@ -12,7 +12,6 @@
 #include <string>
 
 namespace lightusd {
-namespace next {
 
 /// Camera projection type
 enum class CameraProjection {
@@ -108,5 +107,4 @@ void ComputeProjectionMatrix(const CameraData& camera, float* matrix16);
 /// Compute perspective projection matrix with custom aspect ratio
 void ComputeProjectionMatrix(const CameraData& camera, float aspect_ratio, float* matrix16);
 
-}  // namespace next
 }  // namespace lightusd

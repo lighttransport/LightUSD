@@ -13,7 +13,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 struct TaskArena::Impl {
   explicit Impl(size_t requested)
@@ -122,5 +121,4 @@ void TaskArena::Run(size_t count, void* context, TaskFn task) {
 
 size_t TaskArena::max_threads() const { return impl_->max_threads; }
 
-}  // namespace next
 }  // namespace lightusd

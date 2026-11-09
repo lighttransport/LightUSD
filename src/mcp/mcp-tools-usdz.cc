@@ -38,16 +38,16 @@ std::string DirOf(const std::string& path) {
 }
 
 // Relative asset references authored on the stage (defaults only).
-std::set<std::string> CollectAssetPaths(const next::Stage& stage) {
+std::set<std::string> CollectAssetPaths(const ::lightusd::Stage& stage) {
   std::set<std::string> out;
-  auto add = [&](next::StringView p) {
-    if (!p.empty() && p.find("://") == next::StringView::npos)
+  auto add = [&](::lightusd::StringView p) {
+    if (!p.empty() && p.find("://") == ::lightusd::StringView::npos)
       out.emplace(p.data(), p.size());
   };
-  stage.Traverse([&](const next::UsdPrim& prim) {
+  stage.Traverse([&](const ::lightusd::UsdPrim& prim) {
     for (const std::string& name : prim.GetPropertyNames()) {
-      const next::Value* v = prim.GetPropertyValue(name);
-      if (!v || v->type_id() != next::TypeId::AssetPath) continue;
+      const ::lightusd::Value* v = prim.GetPropertyValue(name);
+      if (!v || v->type_id() != ::lightusd::TypeId::AssetPath) continue;
       if (v->is_array()) {
         if (const auto a = v->as_token_array()) {
           for (const auto p : *a) add(p);
@@ -135,7 +135,7 @@ bool USDZConvert(Context&, const json& args, json& result, std::string& err) {
   }
   StageRef stage(loaded);
   if (args.value("flatten", true)) {
-    next::Layer flat = NativeStage(stage)->Flatten();
+    ::lightusd::Layer flat = NativeStage(stage)->Flatten();
     lightusd_stage* flat_stage = nullptr;
     if (lightusd_stage_create(&flat_stage) != LIGHTUSD_OK ||
         !lightusd_internal::SetNativeRootLayer(flat_stage, std::move(flat))) {
@@ -222,10 +222,10 @@ bool USDZPack(Context& ctx, const json& args, json& result, std::string& err) {
 #endif
   }
   std::vector<uint8_t> out;
-  next::USDZWriteOptions wopts;
+  ::lightusd::USDZWriteOptions wopts;
   wopts.max_file_size_bytes = kMaxUSDZArchiveBytes;
-  const next::USDZWriteResult r =
-      next::WriteUSDZToMemory(out, *NativeStage(ctx.stage), wopts);
+  const ::lightusd::USDZWriteResult r =
+      ::lightusd::WriteUSDZToMemory(out, *NativeStage(ctx.stage), wopts);
   if (!r.success) {
     err = "USDZ write failed: " + r.error;
     return false;

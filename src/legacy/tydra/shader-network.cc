@@ -347,7 +347,7 @@ bool GetBoundMaterial(
   std::vector<value::token> purposes;
   if (materialPurpose.empty()) {
     // No purpose requested: this is a preview/realtime consumer, so use the same
-    // fallback chain as the `next` resolver (lightusd::next::GetBoundMaterialPath)
+    // fallback chain as the `next` resolver (lightusd::GetBoundMaterialPath)
     // -- `material:binding:preview`, then the all-purpose `material:binding`, then
     // `material:binding:full`.
     //

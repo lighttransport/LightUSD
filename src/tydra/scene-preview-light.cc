@@ -8,7 +8,6 @@
 #include "scene-preview-photometry.hh"
 namespace lightusd {
 namespace tydra {
-namespace next {
 namespace preview_detail {
 namespace {
 float Linear(float x) {
@@ -140,6 +139,5 @@ bool Build::bake_lights() {
   return true;
 }
 }  // namespace preview_detail
-}  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

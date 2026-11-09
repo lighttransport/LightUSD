@@ -2,5 +2,5 @@
 #pragma once
 #include "diff/layer-diff.hh"
 int DiffCollections(const std::string& left, const std::string& right,
-                    const lightusd::next::DiffOptions& options, bool json, bool quiet);
+                    const lightusd::DiffOptions& options, bool json, bool quiet);
 bool IsDiffDirectory(const std::string& path);

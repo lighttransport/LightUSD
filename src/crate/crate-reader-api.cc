@@ -14,7 +14,6 @@
 #include <fstream>
 
 namespace lightusd {
-namespace next {
 
 CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
   if (options_.max_memory && bytes.size() > options_.max_memory) {
@@ -294,5 +293,4 @@ bool IsUSDCFile(const char* filename) {
   return std::memcmp(magic, kCrateMagic, 8) == 0;
 }
 
-}  // namespace next
 }  // namespace lightusd

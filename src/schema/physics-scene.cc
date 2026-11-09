@@ -8,7 +8,6 @@
 #include <cmath>
 
 namespace lightusd {
-namespace next {
 
 bool IsPhysicsScene(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "PhysicsScene";
@@ -50,5 +49,4 @@ bool GetPhysicsSceneData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
-} // namespace next
 } // namespace lightusd

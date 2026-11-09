@@ -35,7 +35,7 @@
 #include "../pcp/cache.hh"
 #include "resolver/asset-resolver.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 namespace fs = ghc::filesystem;
 using lightusd_internal::Fail;
 using lightusd_internal::FromC;
@@ -495,7 +495,7 @@ lightusd_status LoadFailureStatus(const std::string& error,
 }
 
 bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
-                      lightusd::next::pcp::CompositionOptions* co) {
+                      lightusd::pcp::CompositionOptions* co) {
   if (!opts) return true;
   constexpr uint32_t kPriorLoadOptionsSize =
       static_cast<uint32_t>(offsetof(lightusd_load_options, progress_callback));
@@ -575,7 +575,7 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
     if (opts->preserve_native_instances) {
       co->flatten_instances = false;
       co->instance_flatten_mode =
-          lightusd::next::pcp::InstanceFlattenMode::Native;
+          lightusd::pcp::InstanceFlattenMode::Native;
     }
     co->load_payloads = opts->load_payloads != 0;
     co->max_depth = opts->max_composition_depth;
@@ -809,14 +809,14 @@ lightusd_status lightusd_stage_load(const char* filename,
   *out = nullptr;
 
   n::LoadUSDOptions lo;
-  lightusd::next::pcp::CompositionOptions co;
+  lightusd::pcp::CompositionOptions co;
   // The binding's composed stage is consumed by value readers AND by
   // export/save round-trips: Native instancing would export instance prims as
   // empty husks (no prototype linkage in usda text). Holder mode keeps the
   // flattened layer self-contained: the prototype member holds the content,
   // other members reference it internally.
   co.flatten_instances = true;
-  co.instance_flatten_mode = lightusd::next::pcp::InstanceFlattenMode::Holder;
+  co.instance_flatten_mode = lightusd::pcp::InstanceFlattenMode::Holder;
   if (!ApplyLoadOptions(opts, &lo, &co)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "invalid v2 load options or zero resource limit");
@@ -1720,7 +1720,7 @@ lightusd_status lightusd_attr_would_materialize_array(
   if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "default value not found");
   if (!value->is_array())
     return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "property is not an array");
-  *out = value->is_lazy() && !lightusd::next::CanBorrowLazyFlat(*value);
+  *out = value->is_lazy() && !lightusd::CanBorrowLazyFlat(*value);
   return LIGHTUSD_OK;
 }
 
@@ -2914,7 +2914,7 @@ void RetainImportedAssets(lightusd_stage* stage, const n::ImportedAssets& assets
   }
 }
 
-lightusd::next::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
+lightusd::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
   if (!stage || stage->snapshot_stage) return nullptr;
   n::Layer* layer = RootLayerOf(stage);
   // The caller may edit structure: invalidate every borrowed handle.

@@ -3,7 +3,7 @@
 // Shared implementation details for loaders and the stage session. Not installed.
 #pragma once
 #include "load-usd.hh"
-namespace lightusd { namespace next { namespace load_detail {
+namespace lightusd {  namespace load_detail {
 USDZReadOptions EffectiveUSDZOptions(const LoadUSDOptions& options);
 std::string DirOfPath(const std::string& path);
-} } }
+}  }

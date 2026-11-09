@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <vector>
 #include <unordered_set>
-namespace lightusd { namespace tydra { namespace next {
-using ::lightusd::next::UsdPrim;
+namespace lightusd { namespace tydra {
+using ::lightusd::UsdPrim;
 namespace {
 Matrix4 MatrixFromPointInstancerTransform(
-    const ::lightusd::next::PointInstancerTransform& src) {
+    const ::lightusd::PointInstancerTransform& src) {
   Matrix4 dst;
   for (size_t i = 0; i < 16; ++i) {
     dst.m[i] = static_cast<float>(src.matrix[i]);
@@ -99,7 +99,7 @@ void BuildCompactInstances(
 
 bool RenderSceneConverter::Impl::ConvertPointInstancer(const UsdPrim& prim,
                                                  RenderPointInstancer* out) {
-  if (!out || !::lightusd::next::IsPointInstancer(prim)) {
+  if (!out || !::lightusd::IsPointInstancer(prim)) {
     SetLastError("Invalid PointInstancer prim");
     return false;
   }
@@ -120,7 +120,7 @@ bool RenderSceneConverter::Impl::ConvertPointInstancer(const UsdPrim& prim,
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
   out->prototype_paths.reserve(data.prototypes.size());
-  for (const ::lightusd::next::Path& path : data.prototypes) {
+  for (const ::lightusd::Path& path : data.prototypes) {
     out->prototype_paths.push_back(path.str());
   }
   std::vector<uint8_t> visibility = BuildInstanceVisibility(
@@ -145,7 +145,7 @@ bool RenderSceneConverter::Impl::ConvertPointInstancer(const UsdPrim& prim,
     out->instance_visible = std::move(visibility);
   }
   out->transforms.reserve(data.transforms.size());
-  for (const ::lightusd::next::PointInstancerTransform& transform :
+  for (const ::lightusd::PointInstancerTransform& transform :
        data.transforms) {
     out->transforms.push_back(MatrixFromPointInstancerTransform(transform));
   }
@@ -153,4 +153,4 @@ bool RenderSceneConverter::Impl::ConvertPointInstancer(const UsdPrim& prim,
   out->validation_error = std::move(data.validation_error);
   return true;
 }
-}}}  // namespace lightusd::tydra::next
+}}  // namespace lightusd::tydra

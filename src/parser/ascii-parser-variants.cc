@@ -9,7 +9,6 @@
 #include "value-parser.hh"
 
 namespace lightusd {
-namespace next {
 
 bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name) {
   PrimSpec* prim = builder_->current();
@@ -613,5 +612,4 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
   return Match(TokenType::CloseBrace);
 }
 
-}  // namespace next
 }  // namespace lightusd

@@ -15,7 +15,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 thread_local CrateReader::Impl::ThreadDecodeCtx*
@@ -469,5 +468,4 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
   }
 }
 
-}  // namespace next
 }  // namespace lightusd

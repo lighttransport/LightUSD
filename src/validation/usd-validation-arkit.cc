@@ -20,7 +20,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 // arkit rules -- the ARKit / RealityKit USDZ delivery profile, modeled on
@@ -465,5 +464,4 @@ void ValidateArkitLayerMetas(const Layer &layer, USDValidationResult *result) {
 }
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

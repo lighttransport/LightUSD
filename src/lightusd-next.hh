@@ -88,7 +88,6 @@
 #include "load-usd.hh"
 
 namespace lightusd {
-namespace next {
 
 // Version info — keep in sync with src/lightusd.hh and web/{npm,js}/package.json
 constexpr int version_major = 1;
@@ -97,5 +96,4 @@ constexpr int version_micro = 0;
 constexpr const char* version_string = "1.0.0";
 
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,6 @@
 #include <algorithm>
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 namespace {
@@ -97,5 +96,4 @@ LoadRules::Effect LoadRules::GetEffect(const std::string &path) const {
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd

@@ -9,7 +9,6 @@
 #include "layer/prim-spec.hh"
 
 namespace lightusd {
-namespace next {
 
 inline bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
   for (const std::string& entry : prim.GetMeta().apiSchemas()) {
@@ -22,5 +21,4 @@ inline bool IsType(const UsdPrim& prim, const std::string& type) {
   return prim.IsValid() && prim.GetTypeName() == type;
 }
 
-}  // namespace next
 }  // namespace lightusd

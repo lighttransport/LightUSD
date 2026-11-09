@@ -29,7 +29,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 namespace diff_detail {
 std::string JoinPrimPath(const std::string &parent, const std::string &child) {
@@ -1103,5 +1102,4 @@ void Diff(const Layer &lhs, const Layer &rhs,
 }
 
 
-}  // namespace next
 }  // namespace lightusd

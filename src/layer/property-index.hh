@@ -21,7 +21,6 @@
 #endif
 
 namespace lightusd {
-namespace next {
 
 /// Interned property name handle
 /// Uses 32-bit index for compact storage
@@ -247,5 +246,4 @@ private:
   bool sorted_ = false;
 };
 
-}  // namespace next
 }  // namespace lightusd

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd { namespace tydra { namespace next {
+namespace lightusd { namespace tydra {
 
 //
 // RenderTexture
@@ -124,4 +124,4 @@ struct TextureImage {
   size_t memory_usage() const { return data.memory_usage(); }
 };
 
-}}} // namespace lightusd::tydra::next
+}} // namespace lightusd::tydra

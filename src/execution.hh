@@ -10,7 +10,6 @@
 #include <utility>
 
 namespace lightusd {
-namespace next {
 
 // Upper bound for any next/tydra worker pool that a caller sizes explicitly
 // (clamped here). Was 16: with a scalable allocator the pcp opinion fill still
@@ -85,5 +84,4 @@ class TaskArena {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace next
 }  // namespace lightusd

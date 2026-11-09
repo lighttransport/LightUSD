@@ -56,7 +56,6 @@
 #include "memory-trim.hh"  // AdviseHugePages (portable no-op off Linux)
 
 namespace lightusd {
-namespace next {
 
 // Type-erased surface of one spilled column, so the writer can budget, drain
 // and diagnose the columns without knowing their element type. Header-only
@@ -510,7 +509,6 @@ class SpillVec final : public SpillColumnBase {
   mutable int spill_fd_ = -1;
 };
 
-}  // namespace next
 }  // namespace lightusd
 
 #if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)

@@ -15,7 +15,7 @@
 #include "prototype_expansion.hh"
 #include "tydra/render-converter.hh"
 
-namespace tydn = lightusd::tydra::next;
+namespace tydn = lightusd::tydra;
 
 int main() {
   const size_t maximum = std::numeric_limits<size_t>::max();

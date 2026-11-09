@@ -25,7 +25,7 @@ def "dora" {
 )USD";
   const std::string requested = argc > 1 ? argv[1] : "bora.usda";
 
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   auto register_text = [&resolver](const std::string& name,
                                    const std::string& text) {
     const auto* begin = reinterpret_cast<const uint8_t*>(text.data());
@@ -50,8 +50,8 @@ def "dora" {
             << bytes.size() << " bytes)\n";
 
   std::string warning;
-  std::shared_ptr<lightusd::next::Layer> layer =
-      lightusd::next::pcp::LoadLayerFromMemoryOwned(
+  std::shared_ptr<lightusd::Layer> layer =
+      lightusd::pcp::LoadLayerFromMemoryOwned(
           resolved.resolved_path,
           std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()),
           &warning, &error);
@@ -60,7 +60,7 @@ def "dora" {
     return 1;
   }
   if (!warning.empty()) std::cerr << "WARN: " << warning;
-  const std::string output = lightusd::next::WriteLayerToString(*layer);
+  const std::string output = lightusd::WriteLayerToString(*layer);
   if (output.empty()) {
     std::cerr << "Failed to print layer as USDA\n";
     return 1;

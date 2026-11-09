@@ -14,7 +14,6 @@
 #include <memory>
 
 namespace lightusd {
-namespace next {
 
 class Lexer;
 struct ArrayEditData;
@@ -90,5 +89,4 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace next
 }  // namespace lightusd

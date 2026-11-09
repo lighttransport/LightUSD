@@ -5,7 +5,6 @@
 #include <cmath>
 #include <limits>
 namespace lightusd {
-namespace next {
 namespace validation_detail {
 
 void ValidateLuxRelationships(const PrimSpec &ps,
@@ -1018,5 +1017,4 @@ void ValidatePhysics(const PrimSpec &ps,
 }
 
 }  // namespace validation_detail
-}  // namespace next
 }  // namespace lightusd

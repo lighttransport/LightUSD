@@ -8,7 +8,7 @@
 #include <new>
 #include <ostream>
 
-namespace lightusd { namespace next {
+namespace lightusd {
 
 Value::~Value() { lu_value_destroy(&core_); }
 Value::Value(const Value& other) { lu_value_copy(&core_, other.core()); }
@@ -235,4 +235,4 @@ Value LerpValue(const Value& a, const Value& b, double t) {
   }
   return a;
 }
-}}  // namespace lightusd::next
+}  // namespace lightusd

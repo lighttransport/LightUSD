@@ -18,7 +18,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 bool Compositor::ComposeLayer(Layer& target, const Layer& source_layer,
                                const std::string& anchor_path, int depth) {
@@ -879,5 +878,4 @@ void Compositor::CopyLocalOpinions(
 }
 
 
-}  // namespace next
 }  // namespace lightusd

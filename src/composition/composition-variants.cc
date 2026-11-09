@@ -18,7 +18,6 @@
 #include <vector>
 
 namespace lightusd {
-namespace next {
 
 // Apply one SELECTED variant option's opinions onto `prim` (fill-absent):
 // inline properties/relationships/doc/state, the content sub-layer (its
@@ -520,5 +519,4 @@ const Layer* Compositor::GetComposedExternalLayer(
 }
 
 
-}  // namespace next
 }  // namespace lightusd

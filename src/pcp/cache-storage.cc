@@ -3,7 +3,6 @@
 #include "cache-internal.hh"
 
 namespace lightusd {
-namespace next {
 namespace pcp {
 
 Cache::Impl::Impl() = default;
@@ -41,10 +40,9 @@ Cache::Impl::~Impl() {
 }
 
 }  // namespace pcp
-}  // namespace next
 }  // namespace lightusd
 
-namespace lightusd { namespace next { namespace pcp {
+namespace lightusd {  namespace pcp {
 
 auto Cache::Impl::Specs(uint32_t stack_idx,
                                     const std::string &site) const -> const std::vector<SpecRef> & {
@@ -1056,9 +1054,9 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
 
 #endif
 
-}}} // namespace lightusd::next::pcp
+}} // namespace lightusd::pcp
 
-namespace lightusd { namespace next { namespace pcp {
+namespace lightusd {  namespace pcp {
 
 auto cache_detail::StackSpecCache::insert(const std::string &site, uint64_t h,
                                std::vector<SpecRef> &&v) -> std::vector<SpecRef> & {
@@ -1465,4 +1463,4 @@ auto Cache::Impl::InternMapping(NamespaceMapping m) -> uint32_t {
     return idx;
   }
 
-}}} // namespace lightusd::next::pcp
+}} // namespace lightusd::pcp

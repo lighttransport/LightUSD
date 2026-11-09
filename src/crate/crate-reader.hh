@@ -17,7 +17,6 @@
 #include "core/security-policy.hh"
 
 namespace lightusd {
-namespace next {
 
 /// Options for reading crate files. The structural table-count limits
 /// (max_tokens ... max_path_depth) come from CrateLimits.
@@ -170,5 +169,4 @@ bool IsUSDCData(const uint8_t* data, size_t size);
 /// Check if file is a USDC file
 bool IsUSDCFile(const char* filename);
 
-}  // namespace next
 }  // namespace lightusd

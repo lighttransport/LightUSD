@@ -3,7 +3,6 @@
 #pragma once
 
 namespace lightusd {
-namespace next {
 class Stage;
 class UsdPrim;
 
@@ -18,5 +17,4 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matr
 // Check if prim has resetXformStack
 bool HasResetXformStack(const UsdPrim& prim);
 
-}  // namespace next
 }  // namespace lightusd
