@@ -426,7 +426,7 @@ CMakeUserPresets.json
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
-!tests/unit/fixtures/*.usda
+!tests/legacy/unit/fixtures/*.usda
 !tests/core/fixtures/*.usda
 !tests/core/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda

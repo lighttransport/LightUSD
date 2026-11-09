@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "../../src/pcp/cache.hh"
-#include "../../src/pcp/layer-registry.hh"
+#include "../../../src/pcp/cache.hh"
+#include "../../../src/pcp/layer-registry.hh"
 #include "resolver/asset-resolver.hh"
 #include "schema/usd-skel.hh"
 #include "stage/stage.hh"

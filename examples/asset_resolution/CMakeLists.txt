@@ -1,5 +1,5 @@
 # Assume this cmake is called from lightusd root(../../)
-set(EXAMPLE_TARGET "asset_resolution_example")
+set(EXAMPLE_TARGET "legacy-asset-resolution-example")
 
 set(LIGHTUSD_API_TUTORIAL_SOURCES
     asset-resolution-example.cc

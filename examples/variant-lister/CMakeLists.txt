@@ -1,5 +1,5 @@
 # Assume this cmake is called from lightusd root(../../)
-set(EXAMPLE_TARGET "variant-lister")
+set(EXAMPLE_TARGET "legacy-variant-lister")
 
 set(SOURCES main.cc)
 

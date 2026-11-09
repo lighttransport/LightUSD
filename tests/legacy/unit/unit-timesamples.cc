@@ -7,7 +7,7 @@
 
 #include "unit-timesamples.h"
 #include "core/prim.hh"
-#include "../../src/legacy/timesamples.hh"
+#include "../../../src/legacy/timesamples.hh"
 #include "core/attribute.hh"
 #include "core/animatable.hh"
 #include "math-util.inc"

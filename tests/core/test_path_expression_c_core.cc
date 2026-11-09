@@ -5,7 +5,7 @@
 //
 // Covers the C11 core in src/next/c/path-expr.c through its C++ adapter
 // (src/next/core/path-expression{,-eval}.hh). The behavioural contract mirrors
-// the legacy path-expression test suite (tests/unit/unit-path-expression.cc):
+// the legacy path-expression test suite (tests/legacy/unit/unit-path-expression.cc):
 // the same acceptance names, canonical texts, structural decomposition and
 // match results must hold after the C11 port.
 //

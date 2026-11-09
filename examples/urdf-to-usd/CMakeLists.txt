@@ -1,4 +1,4 @@
-set(EXAMPLE_TARGET urdf-to-usd)
+set(EXAMPLE_TARGET legacy-urdf-to-usd)
 
 set(SOURCES
   main.cc

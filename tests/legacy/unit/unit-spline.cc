@@ -495,7 +495,7 @@ std::string SplineFixture(const std::string &rel) {
 
 void spline_openusd_crate_read_test(void) {
   const std::string path =
-      SplineFixture("tests/unit/fixtures/openusd/spline_openusd.usdc");
+      SplineFixture("tests/legacy/unit/fixtures/openusd/spline_openusd.usdc");
   std::ifstream probe(path, std::ios::binary);
   if (!probe.good()) {
     TEST_MSG("fixture not found: %s (skipping)", path.c_str());

@@ -49,9 +49,8 @@ endif()
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
     LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   # The legacy WASM bindings link lightusd_static from the root project.
-  # Select that native product even when the root default is next.
-  set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING
-      "Native implementation required by the selected WASM product" FORCE)
+  set(LIGHTUSD_BUILD_LEGACY ON CACHE BOOL
+      "Legacy implementation required by the selected WASM product" FORCE)
   message(DEPRECATION
     "The legacy WASM product is deprecated; use LIGHTUSD_WASM_PRODUCT=next for new integrations. Legacy and combined builds remain available for compatibility and CI.")
 endif()
@@ -333,6 +332,9 @@ endif()
 # not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
 # browser-threading build option opts into it.
 set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+# Every WASM product: a "shared" C API is a static archive under Emscripten and
+# would collide with lightusd_c (liblightusd_c.a).
+set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
 set(LIGHTUSD_LEGACY_ENABLE_THREAD OFF CACHE BOOL "Disable legacy std::thread paths for default WASM builds" FORCE)
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")

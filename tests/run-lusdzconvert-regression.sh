@@ -9,7 +9,7 @@ set -u
 LUSDZCONVERT="${1:?usage: run-lusdzconvert-regression.sh <lusdzconvert> <lusdcat> <srcdir>}"
 LUSDCAT="${2:?usage: run-lusdzconvert-regression.sh <lusdzconvert> <lusdcat> <srcdir>}"
 SRCDIR="${3:?usage: run-lusdzconvert-regression.sh <lusdzconvert> <lusdcat> <srcdir>}"
-FIXTURE="${SRCDIR}/tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda"
+FIXTURE="${SRCDIR}/tests/legacy/unit/fixtures/usdzconvert-regression-textured-two-materials.usda"
 
 if [ ! -x "${LUSDZCONVERT}" ]; then
   echo "FAIL: lusdzconvert not executable: ${LUSDZCONVERT}"

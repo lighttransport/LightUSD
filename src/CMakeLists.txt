@@ -12,15 +12,6 @@ project(lightusd_core C CXX)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/DeprecatedOption.cmake)
 lightusd_apply_deprecated_core_options()
 
-# When the legacy product pulls the core in as a dependency it must not also
-# build/register the core's own tests and examples (legacy owns several of
-# those target names). Normal variables shadow the cache in this scope only.
-if(LIGHTUSD_CORE_AS_DEPENDENCY)
-  set(LIGHTUSD_BUILD_TESTS OFF)
-  set(LIGHTUSD_BUILD_EXAMPLES OFF)
-  set(LIGHTUSD_BUILD_C_API_EXAMPLE OFF)
-  set(LIGHTUSD_TYDRA_BUILD_TESTS OFF)
-endif()
 
 # Core resolves headers only through its own target include directories.
 # When the legacy product adds this directory, drop the inherited
@@ -1988,3 +1979,35 @@ endif()
 
 # (The Python binding is built by setup.py at the repo root; see
 #  src/python/py-*.c and src/c-api/.)
+
+# ---------------------------------------------------------------------------
+# Shell regression drivers run against the core lusdcat (formerly registered
+# only by the legacy build).
+# ---------------------------------------------------------------------------
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusdcat AND UNIX)
+  set(_core_scripts_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
+  set(_core_scripts_env "")
+  if(DEFINED CORE_PXR_USDCAT AND EXISTS "${CORE_PXR_USDCAT}")
+    set(_core_scripts_env "USDCAT_PATH=${CORE_PXR_USDCAT}")
+  endif()
+  # Crate-writer / layer round-trip pins (silently dropped or invented data).
+  add_test(NAME core_scope_imageable_roundtrip
+           COMMAND env ${_core_scripts_env}
+                   bash "${_core_scripts_root}/tests/run-scope-imageable-roundtrip.sh"
+                   "$<TARGET_FILE:lusdcat>")
+  set_tests_properties(core_scope_imageable_roundtrip PROPERTIES
+                       SKIP_RETURN_CODE 77 LABELS "core;scripts")
+  # Variant selection across a ref -> payload -> ref chain.
+  add_test(NAME core_variant_chain
+           COMMAND bash "${_core_scripts_root}/tests/run-variant-chain.sh"
+                   "$<TARGET_FILE:lusdcat>" "${_core_scripts_root}")
+  set_tests_properties(core_variant_chain PROPERTIES LABELS "core;scripts")
+  # Our .usdc output read back by OpenUSD (needs a pinned OpenUSD usdcat).
+  if(_core_scripts_env)
+    add_test(NAME core_pxr_crate_fidelity
+             COMMAND env "LUSDCAT_PATH=$<TARGET_FILE:lusdcat>" ${_core_scripts_env}
+                     bash "${_core_scripts_root}/tests/run-pxr-crate-fidelity.sh")
+    set_tests_properties(core_pxr_crate_fidelity PROPERTIES
+                         LABELS "core;scripts;pxrdiff" TIMEOUT 900)
+  endif()
+endif()

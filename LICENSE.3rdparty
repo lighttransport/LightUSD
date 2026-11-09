@@ -78,4 +78,4 @@ in each entry.
 | Vulkan sample camera code by Sascha Willems | MIT | `examples/common/viewport_camera.hh` |
 | Silicon Graphics trackball code | SGI permissive notice | `examples/common/trackball.h`, `examples/common/trackball.cc` |
 | par_shapes | MIT | `examples/common/par_shapes.h` |
-| acutest | MIT | `tests/unit/LICENSE.acutest` |
+| acutest | MIT | `tests/legacy/unit/LICENSE.acutest` |

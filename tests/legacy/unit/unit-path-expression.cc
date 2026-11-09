@@ -723,7 +723,7 @@ std::string PEFixture(const std::string &rel) {
 
 void path_expression_openusd_crate_read_test(void) {
   const std::string path =
-      PEFixture("tests/unit/fixtures/openusd/pathexpr_openusd.usdc");
+      PEFixture("tests/legacy/unit/fixtures/openusd/pathexpr_openusd.usdc");
   std::ifstream probe(path, std::ios::binary);
   if (!probe.good()) {
     TEST_MSG("fixture not found: %s (skipping)", path.c_str());

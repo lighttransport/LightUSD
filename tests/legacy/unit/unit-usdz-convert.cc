@@ -90,7 +90,7 @@ std::string TestFixturePath(const std::string &rel) {
 
   // ctest sets WORKING_DIRECTORY to the test executable's directory, whose depth
   // below the repo root varies by platform/generator: build/ for single-config
-  // Makefile/Ninja, but build/<Config>/ or build/tests/unit/<Config>/ for MSVC
+  // Makefile/Ninja, but build/<Config>/ or build/tests/legacy/unit/<Config>/ for MSVC
   // multi-config. Walk up several parent levels until the fixture resolves so
   // the same relative path works everywhere.
   std::string candidate = rel;
@@ -996,7 +996,7 @@ void usdz_convert_regression_texture_remap_test(void) {
   const std::string dir = lightusd::io::JoinPath(TempDir(), "regression_remap");
   lightusd::io::CreateDirectories(dir);
   const std::string src_fixture = TestFixturePath(
-      "tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda");
+      "tests/legacy/unit/fixtures/usdzconvert-regression-textured-two-materials.usda");
   const std::string usda_path = lightusd::io::JoinPath(dir, "scene.usda");
   const std::string png_path = lightusd::io::JoinPath(dir, "Texture.png");
   const std::string usdz_path = lightusd::io::JoinPath(dir, "out.usdz");
@@ -1064,7 +1064,7 @@ void usdz_convert_regression_material_preview_dedupe_test(void) {
   std::string warn, err;
   bool loaded = LoadLayerFromFile(
       TestFixturePath(
-          "tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda"),
+          "tests/legacy/unit/fixtures/usdzconvert-regression-textured-two-materials.usda"),
       &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
@@ -1108,7 +1108,7 @@ void usdz_convert_regression_invalid_index_skip_test(void) {
   std::string warn, err;
   bool loaded = LoadLayerFromFile(
       TestFixturePath(
-          "tests/unit/fixtures/usdzconvert-regression-invalid-indices.usda"),
+          "tests/legacy/unit/fixtures/usdzconvert-regression-invalid-indices.usda"),
       &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
@@ -1612,7 +1612,7 @@ void usdz_convert_geometry_multi_binding_skip_test(void) {
   std::string warn, err;
   bool loaded = LoadLayerFromFile(
       TestFixturePath(
-          "tests/unit/fixtures/geometry-optimize-multi-binding-skip-001.usda"),
+          "tests/legacy/unit/fixtures/geometry-optimize-multi-binding-skip-001.usda"),
       &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {

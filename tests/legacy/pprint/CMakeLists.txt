@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
 
 # Include directories
-include_directories(${PROJECT_SOURCE_DIR}/../../src)
+include_directories(${PROJECT_SOURCE_DIR}/../../../src)
 
 # Add executable
 add_executable(pprint_benchmark
