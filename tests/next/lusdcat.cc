@@ -385,7 +385,7 @@ int main(int argc, char **argv) {
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
   std::vector<std::string> required_prims;
   for (int i = 1; i < argc; ++i) {
-    if (std::strcmp(argv[i], "-f") == 0) {
+    if (std::strcmp(argv[i], "-f") == 0 || std::strcmp(argv[i], "--flatten") == 0) {
       flatten = true;
     } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
       rewrite_layer = true;
@@ -575,7 +575,7 @@ int main(int argc, char **argv) {
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: lusdcat [-l|-f|--rewrite-layer] [-o out.usda] "
+    std::fprintf(stderr, "Usage: lusdcat [-l|-f|--flatten|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "

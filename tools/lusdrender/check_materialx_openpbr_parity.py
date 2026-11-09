@@ -204,7 +204,6 @@ def parse_vulkan_devices(value: str):
 def generate_texture_fixtures(repo: pathlib.Path, output: pathlib.Path) -> None:
     env = os.environ.copy()
     env.update({
-        "LUSDVIEW": str(repo / "build_ninja" / "lusdview"),
         "LUSDVIEW_TEST_OUT": str(output),
         "LUSDVIEW_SEMANTIC_GENERATE_ONLY": "1",
     })

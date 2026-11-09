@@ -35,6 +35,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 LUSDCAT_PATH="${LUSDCAT_PATH:-$ROOT_DIR/build/lusdcat}"
+# next lusdcat needs --rewrite-layer for a compose-free layer round-trip
+# (USDC output is otherwise rejected); legacy lusdcat writes the layer as-is.
+# Detect next by its "loaded: N prims" summary. Override via LUSDCAT_LAYER_ARGS.
+if [ -z "${LUSDCAT_LAYER_ARGS+x}" ]; then
+  LUSDCAT_LAYER_ARGS=""
+  _probe=$(mktemp --suffix=.usda); printf '#usda 1.0\n' > "$_probe"
+  if "$LUSDCAT_PATH" "$_probe" 2>/dev/null | head -1 | grep -q '^loaded:'; then
+    LUSDCAT_LAYER_ARGS="--rewrite-layer"
+  fi
+  rm -f "$_probe"
+fi
+
 if [ -z "${USDCAT_PATH:-}" ]; then
   if [ -x "$ROOT_DIR/ref/dist/bin/usdcat" ]; then
     USDCAT_PATH="$ROOT_DIR/ref/dist/bin/usdcat"
@@ -92,7 +104,7 @@ for f in $PATTERN; do
 
   # Fixtures lusdcat cannot write standalone (missing reference targets, ...)
   # are covered by run-usdcat-compare.sh's usdchecker pass instead.
-  if ! "$LUSDCAT_PATH" --output-format usdc -o "$crate" "$f" >/dev/null 2>&1; then
+  if ! "$LUSDCAT_PATH" $LUSDCAT_LAYER_ARGS --output-format usdc -o "$crate" "$f" >/dev/null 2>&1; then
     writefail=$((writefail + 1))
     continue
   fi
