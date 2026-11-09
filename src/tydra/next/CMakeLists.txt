@@ -245,10 +245,15 @@ target_sources(tydra_next PRIVATE
 option(TYDRA_NEXT_BUILD_TESTS "Build tests for Tydra Next" OFF)
 
 if(TYDRA_NEXT_BUILD_TESTS)
-    add_executable(test_tydra_next
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_tydra_next.cc
-    )
-    target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    # src/next (LIGHTUSD_NEXT_BUILD_TESTS) also defines test_tydra_next and
+    # registers it with ctest; define it here only when that has not happened,
+    # so enabling both options does not fail configure with a duplicate target.
+    if(NOT TARGET test_tydra_next)
+        add_executable(test_tydra_next
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_tydra_next.cc
+        )
+        target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    endif()
     add_executable(skinning_points_dump
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/skinning-points-dump.cc)
     target_link_libraries(skinning_points_dump PRIVATE tydra_next lightusd_next)

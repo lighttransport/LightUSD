@@ -1411,10 +1411,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_scene_readback.cc)
     target_link_libraries(bench_scene_readback PRIVATE tydra_next lightusd_next)
 
-    add_executable(test_tydra_next
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
-    )
-    target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    # Also defined by src/tydra/next under TYDRA_NEXT_BUILD_TESTS (processed
+    # earlier); reuse that target instead of failing with a duplicate.
+    if(NOT TARGET test_tydra_next)
+      add_executable(test_tydra_next
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
+      )
+      target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    endif()
 
     add_executable(test_asset_import ../../tests/next/test_asset_import.cc)
     target_link_libraries(test_asset_import PRIVATE lightusd_render_c)
