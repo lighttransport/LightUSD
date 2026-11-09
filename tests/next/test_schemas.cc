@@ -1,7 +1,6 @@
 /// Schema tests for the next library.
 /// Tests detection functions (IsMesh, IsCamera, etc.) and data getters.
 
-#include "next/lightusd-next.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
 #include "next/schema/geom-xform.hh"
@@ -9,6 +8,10 @@
 #include "next/schema/usd-geom-camera.hh"
 #include "next/schema/usd-lux.hh"
 #include "next/schema/usd-shade.hh"
+#include "next/layer/layer.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/stage/stage.hh"
+#include "next/types/value.hh"
 #include <cstdio>
 #include <cassert>
 #include <string>

@@ -34,7 +34,7 @@ jobs:
 
       - name: Build wheels
         # v3.x is required for cp314t (free-threaded) targets; the build
-        # matrix (cp310-abi3 + cp314t) comes from [tool.cibuildwheel] in
+        # matrix (cp311-abi3 + cp314t) comes from [tool.cibuildwheel] in
         # pyproject.toml.
         uses: pypa/cibuildwheel@v3.2
         env:

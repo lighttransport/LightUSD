@@ -1,0 +1,6 @@
+MarchingCubeCpp: public-domain, header-only marching cubes.
+Upstream: https://github.com/aparis69/MarchingCubeCpp
+Commit:   f03a1b3ec29b1d7d865691ca8aea4f1eb2c2873d (the version MuJoCo 3.16.0 fetches)
+Files:    MC.h (unmodified)
+Used by:  src/tydra/asset-import/mjcf-sdf.cc to mesh MuJoCo's analytic SDF
+          plugins exactly as MuJoCo's compiler does (mjCMesh::LoadSDF).

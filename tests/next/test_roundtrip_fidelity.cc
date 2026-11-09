@@ -106,10 +106,10 @@ static void CheckMeta(const Stage& s, const char* via) {
   const LayerMeta& lm = s.GetRootLayer()->meta();
   assert(lm.framesPerSecond_set && lm.framesPerSecond == 24);
   assert(lm.customLayerData.is_dictionary());
-  const Dict* cld = lm.customLayerData.as_dictionary();
+  auto cld = lm.customLayerData.as_dictionary();
   assert(cld && cld->find("creator") && cld->find("creator")->as_string() &&
          *cld->find("creator")->as_string() == "lightusd");
-  const Value* stats = cld->find("stats");
+  auto stats = cld->find("stats");
   assert(stats && stats->is_dictionary() &&
          stats->as_dictionary()->find("prims") &&
          *stats->as_dictionary()->find("prims")->as_int() == 2);
@@ -119,7 +119,7 @@ static void CheckMeta(const Stage& s, const char* via) {
   assert(world.GetMeta().displayName() == "Root");
 
   assert(world.GetMeta().customData().is_dictionary());
-  const Dict* wcd = world.GetMeta().customData().as_dictionary();
+  auto wcd = world.GetMeta().customData().as_dictionary();
   assert(wcd && wcd->find("note") && wcd->find("note")->as_string() &&
          *wcd->find("note")->as_string() == "hello");
   assert(wcd->find("count") && wcd->find("count")->as_int() &&

@@ -22,7 +22,7 @@ bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("media:filePath");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->filePath = *s;
     }
   }

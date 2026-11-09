@@ -1,9 +1,46 @@
 # lusdview
 
-An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3** and
-**Vulkan** behind a common backend interface. It loads a USD file
+An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3**,
+**Vulkan** and native **Metal** on macOS behind a common backend interface. It loads a USD file
 (`.usd/.usda/.usdc/.usdz`), converts it with the Tydra `RenderScene` API and
 displays it with an ImGui docking UI.
+
+Authored stereo pairs can be captured natively side by side from GL or Vulkan:
+
+```sh
+./build_ninja/lusdview --headless --backend vk --frames 1 --stereo \
+  --camera Left --size 640x480 --screenshot stereo.ppm scene.usda
+```
+
+In a window, `--stereo` composes both authored eyes into the live viewport at
+display resolution. The same compositor works with the legacy and next loaders.
+
+The companion tool supplies the same workflow for external tracing modes
+(`--size` is the per-eye resolution):
+
+```sh
+python3 examples/lusdview/render-stereo.py \
+  --lusdview ./build_ninja/lusdview --next --size 640x480 \
+  --output stereo.ppm scene.usda
+```
+
+Authored camera shutters can likewise drive deterministic raster motion exports:
+
+```sh
+./build_ninja/lusdview --next --backend vk --camera Shot --time 24 \
+  --pt-motion-segments 8 scene.usda
+```
+
+When paused, native GL/Vulkan raster evaluates one midpoint shutter pose per
+frame and holds the completed linear-light average. `--no-raster-motion` keeps
+the selected timeline pose unchanged for external sampling or debugging. The
+companion tool performs the same schedule in separate viewer processes:
+
+```sh
+python3 examples/lusdview/render-motion.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
+```
 
 ## Features
 
@@ -84,14 +121,30 @@ displays it with an ImGui docking UI.
     right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
     increases the step.
   - `V` cycles shaded, wireframe-only, and wireframe-with-shading views.
+    Wireframe is depth tested by default so hidden edges are occluded; `X`
+    toggles x-ray mode to draw every edge through surfaces.
   - `N` cycles the master navigation sensitivity through `0.25x`, `0.5x`,
     `1x`, and `1.5x`; the Camera panel also accepts a precise numeric scale.
-    Mouse orbit, pan, and dolly use a calmer 65% base response.
+    Orbit and dolly use a calmer, Maya-like per-pixel response.
   - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
     default and can be toggled with `F1`.
-  - **Click to pick** — a plain left click selects the nearest mesh under the
-    cursor (world-space ray vs. per-mesh AABB then ray/triangle), updating the
-    hierarchy highlight, inspector and selection bbox.
+  - **Click or drag to pick** — a plain left click or drag selects the nearest
+    prim under the cursor (world-space ray vs. per-mesh AABB then
+    ray/triangle, with alpha-cutout rejection), updating the hierarchy
+    highlight, inspector and selection bbox. A merged static batch resolves to
+    the individual prim under the cursor, not the batch's representative path.
+  - **Marquee (multi-prim) selection** — **`Shift` + left-drag** selects every
+    prim *visible* inside the rectangle (the marquee is sampled with the same
+    exact per-pixel picker, so occluded prims behind the surface are not
+    selected). The Selection panel lists every selected prim; the highlight
+    outlines each of them (up to 96 prims / 200k line vertices are outlined,
+    the list always holds them all).
+  - **Multi-selection in the Hierarchy** — `Ctrl`+click toggles a prim in the
+    selection; the right-click menu offers **Select group (descendants)** to
+    select every renderable prim under a group prim, and **Select parent prim**
+    to focus the containing group. The focused prim (first item) drives the
+    inspector, `F` framing (which frames the union of a multi-selection) and the
+    gizmo; the rest are highlighted together.
   - **Hierarchy sync** — viewport or MCP selection auto-expands and scrolls the
     hierarchy to the focused prim when possible.
   - **Selection stepping** — `[` / `]` move to the previous/next visible
@@ -152,8 +205,9 @@ displays it with an ImGui docking UI.
   deterministic eight-point rectangle/disk/cylinder samples in raster and
   stochastic samples in RT. GeometryLight targets are resolved to emissive
   triangle ranges in the software-BVH path, IES profiles are parsed and packed
-  into the shared light record, and PortalLight uses a rectangular opening
-  sample when dome-guided sampling is unavailable. Vulkan hardware ray-query
+  into the shared light record, and PortalLight uses deterministic rectangular
+  opening samples. Raster GeometryLight uses eight area-stratified samples from
+  its resolved emissive mesh and reports unresolved sources. Vulkan RT
   scenes carrying these extended payloads use the hardware shader when
   available, with compute-BVH as the capability fallback. Native Points/Curves currently receive all packed direct lights
   because their light-link carrier mapping has not landed yet.
@@ -209,6 +263,10 @@ displays it with an ImGui docking UI.
   skips inactive, unlinked, and dome lights instead of spending shadow rays on
   them. USD camera optics and
   `--f-stop`/`--focus-distance` drive deterministic thin-lens depth of field.
+  Shaded GL and Vulkan raster views apply the same lens values as a deterministic
+  screen-space depth-of-field pass; pinhole cameras and diagnostic AOVs bypass it.
+  Named USD cameras also apply up to eight authored `clippingPlanes` equations
+  to ordinary, tessellated, and instanced meshes in both GL and Vulkan raster.
   After picking an object, **Camera ▸ Depth of field ▸ Focus selected** moves
   the focal plane to the clicked surface (or to the bounds center for hierarchy
   and marquee selections). The persistent MCP `viewport` operation exposes the
@@ -288,7 +346,13 @@ displays it with an ImGui docking UI.
     (surfaces show base color until their texture lands). The render loop never
     stalls on one big upload. RT/CUDA/HIP paths retain their scene-owned upload
     paths, and headless `--frames` drains the stream synchronously for
-    deterministic screenshots.
+    deterministic capture. Later payload, variant, and retained-layer edits
+    prepare a `tydra::next::RenderSession` candidate on the loader worker and
+    publish it through the same atomic GL/Vulkan transaction on the render
+    thread. `LUSDVIEW_RENDER_SESSION_MAX_MB` bounds this prepared scene (256 MiB
+    by default; `0` disables it for oversized scenes). PointInstancer transform,
+    displayColor, displayOpacity, and count edits retain stable mesh slots; layout
+    and opacity-class changes replace only the affected slot.
   - With an authored `--camera` (including the Caldera profile default), mesh
     admission inherits model/district extents and ranks conservative in-view
     bounds first. Static material batches are capped at 512K vertices during
@@ -339,28 +403,22 @@ unaffected:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
   -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build -j16 --target lusdview
 ```
 
-- **Vulkan** is enabled automatically when `find_package(Vulkan)` succeeds (needs
-  `glslangValidator` to compile the shaders). Force a GL-only build with
-  `-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`.
-- **Vulkan ray tracing** additionally needs a `glslangValidator` that supports
-  `GL_EXT_ray_query` (≈ glslang ≥ 11 / a Vulkan SDK build). CMake probes the
-  compiler at configure time and only enables RT if it can compile
-  `vk/shaders/raytrace.comp`; otherwise it prints a notice and the Vulkan backend
-  uses rasterization. If your system glslang is too old, build a local one once
-  (Linux):
+The compatibility product configures the viewer and links the refactored next
+and Tydra-next libraries used by its default loader. See
+[`doc/lusdview.md`](../../doc/lusdview.md#build) for the current Vulkan build setup.
 
-  ```bash
-  examples/common/build-glslang.sh      # clones + installs to examples/common/glslang
-  cmake -S . -B build                    # auto-detects it (see the configure log)
-  ```
-
-  CMake prefers, in order: `-DLUSDVIEW_GLSLANG=/path`, `examples/common/glslang`,
-  then the system compiler.
+- **Vulkan** defaults on, using vendored headers, the runtime-loaded volk loader
+  and embedded SPIR-V. A Vulkan SDK and `glslangValidator` are unnecessary for
+  this build. Force a GL-only build with `-DLUSDVIEW_WITH_VULKAN=OFF`.
+- **Vulkan ray tracing** uses embedded shaders and selects hardware ray query or
+  the compute-BVH fallback at runtime. Regenerating shaders requires
+  `glslangValidator`; see the build and debugging procedure linked above.
 - The **native file dialog** (File > Open) is enabled when GTK3 is available on
   Linux (always on Windows/macOS); otherwise pass a file on the command line.
 
@@ -542,19 +600,21 @@ Tools (`tools/list` for schemas):
 | tool | does |
 |---|---|
 | `load_usd {path}` / `load_usd {usda}` | load a USD path or inline USDA text (async; poll `get_scene_info`) |
-| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, mesh/triangle/material counts, up axis, world-space AABB |
+| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, stage revision, retained layer dependencies, mesh/triangle/material/texture counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly`/`forward`/`backward {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
+| `reload_layer {path?}` | reload the retained root layer or an exact resolved dependency reported by `get_scene_info`; async and transactionally retains compatible GPU resource slots |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
 | `render_settings {mode?, grid?, adaptive_quality?, target_render_fps?}` | change resettable render state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
 | `shader_reload {action, backend?, source?, watch?}` | inspect, explicitly recompile, or watch the active Vulkan GLSL / CUDA NVRTC / HIP hiprtc source while keeping the viewer and GPU scene alive |
 | `get_render_stats {}` | report UI/render FPS, threaded-render state, adaptive tier, render scale, and target FPS |
 | `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
 | `mouse {type,x,y,...}` | inject viewport-local mouse movement or button events; `type` is `move` or `button`, with `button=0/1/2` and `down=true/false` |
-| `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select the prim covering the most depth-tested pixels in a region; returns USD path, carrier kind, and `covered_pixels` |
+| `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select every prim visible in the region (multi-selection); returns USD path, carrier kind, `selected_count`, and the `paths` array (`path`, `mesh_index`, `source_prim`) |
+| `select {op,path?}` | read or change the selection: `list`, `set`, `add`, `remove`, `group` (every renderable prim under `path`), `clear`; returns `count`, the focused `path`, and `items` |
 
 Example:
 
@@ -744,3 +804,13 @@ quality** (8/16/32/64), or choose full tessellation for comparison. Set
   procedural-node parity remain open. Simple untextured Preview materials use
   a compact graph-free Vulkan RT shader; textured/OpenPBR materials retain the
   full-fidelity shader variant.
+
+### Native Metal on macOS
+
+macOS builds enable `LUSDVIEW_WITH_METAL` and select Metal by default. Use
+`--backend metal` (or `mtl`) for native Metal.hpp rendering, or `--backend gl`
+for OpenGL. Metal also supports `--headless --frames 4 --screenshot out.ppm`
+and the View → Render Technique menu. The initial backend is a mesh raster
+preview with instancing, basic materials/textures and ImGui; advanced
+GL/Vulkan rendering features remain separate. See the build commands, feature
+limits and GPU test in [Native Metal on macOS](../../doc/lusdview.md#native-metal-on-macos).

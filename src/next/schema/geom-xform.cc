@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomXform Schema Implementation
 
 #include "geom-xform.hh"
+#include "../layer/property-index.hh"
 
 #include <algorithm>
 #include <cstring>
@@ -61,8 +62,8 @@ std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
 
   const Value* v = prim_.GetPropertyValue(kIdXformOpOrder());
   if (!v) return result;
-  if (const std::vector<std::string>* toks = v->as_token_array()) {
-    result = *toks;
+  if (auto toks = v->as_token_array()) {
+    result.assign(toks->begin(), toks->end());
   }
   return result;
 }
@@ -573,16 +574,6 @@ bool UsdGeomXform::GetTranslationAtTimecode(double timecode, float* x,
   return false;
 }
 
-bool IsXformable(const UsdPrim& prim) {
-  if (!prim.IsValid()) return false;
-  const std::string& type = prim.GetTypeName();
-  // Most geometry types are xformable
-  return type == "Xform" || type == "Mesh" || type == "Sphere" ||
-         type == "Cube" || type == "Cylinder" || type == "Cone" ||
-         type == "Capsule" || type == "Camera" || type == "Points" ||
-         type == "BasisCurves" || type == "NurbsCurves" ||
-         type == "SkelRoot" || type == "Skeleton";
-}
 
 bool IsXform(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;

@@ -19,12 +19,14 @@
 #include "next/types/value.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/strfmt.hh"
+#include "next/prim/relocate-path.hh"
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
+#include "next/crate/lazy-array.hh"
 
 using namespace lightusd::next;
 
@@ -191,14 +193,14 @@ void test_hot_array_formatting_parity() {
   // dtos_to / IntTo / UIntTo must be byte-identical to the append variants.
   {
     for (float v : fedge) {
-      char buf[24];
+      char buf[kDtoaBufSize];
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
       assert(std::string(buf, n) == s_append);
     }
     for (double v : dedge) {
-      char buf[32];
+      char buf[kDtoaBufSize];
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
@@ -310,12 +312,20 @@ void test_array_range_split_parity() {
   // Non-chunkable types report false.
   {
     PrintOptions opts;
-    assert(!IsChunkableArray(Value::MakeTokenArray({"a", "b"}), opts));
     assert(!IsChunkableArray(Value::MakeBoolArray({true, false}), opts));
     assert(!IsChunkableArray(Value(42), opts));  // scalar
     PrintOptions trunc;
     trunc.max_array_elements = 2;
     assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
+  }
+
+  // String-backed arrays use the same escaping and delimiters at every cut.
+  for (TypeId type : {TypeId::String, TypeId::Token, TypeId::AssetPath,
+                      TypeId::PathExpression}) {
+    std::vector<std::string> strings = {
+        "", "a", "quote\"here", "line\nfeed", "back\\slash", "a@b@@@c"};
+    check_range_reconstruction(Value::MakeStringLikeArray(strings, type),
+                               {1, 2, 4, 5});
   }
 
   // Invalid caller-supplied ranges must fail before indexing or emitting any
@@ -528,15 +538,15 @@ void test_deep_variant_writer() {
   // This depth overflowed the recursive writer stack (especially under ASan
   // and in WASM). Build bottom-up so test setup itself is non-recursive.
   constexpr size_t kDepth = 8192;
-  VariantSetData nested;
+  PrimVariantSetData nested;
   for (size_t i = 0; i < kDepth; ++i) {
-    VariantData option;
+    PrimVariantData option;
     option.name = "o";
     if (!nested.name.empty()) {
       option.variantSets.push_back(std::move(nested));
     }
 
-    VariantSetData outer;
+    PrimVariantSetData outer;
     outer.name = "v";
     outer.variants.push_back(std::move(option));
     nested = std::move(outer);
@@ -565,9 +575,9 @@ void test_deep_variant_writer() {
   // discipline as writing and teardown.
   const PrimSpec* root = stage.GetRootLayer()->prim_at_path("/Root");
   assert(root && !root->meta().variantSets().empty());
-  VariantData copied = root->meta().variantSets()[0].variants[0];
+  PrimVariantData copied = root->meta().variantSets()[0].variants[0];
   size_t copied_depth = 1;
-  const VariantData* current = &copied;
+  const PrimVariantData* current = &copied;
   while (!current->variantSets.empty()) {
     current = &current->variantSets[0].variants[0];
     ++copied_depth;
@@ -682,6 +692,16 @@ void test_parallel_writer_parity() {
     layer.begin_prim("mesh_" + std::to_string(g), "Mesh");
     layer.add_property("points", Value::MakeFloat3Array(std::move(pts)));
     layer.add_property("indices", Value::MakeIntArray(std::move(idx)));
+    if (g == 0) {
+      std::vector<std::string> strings(kPts);
+      for (size_t i = 0; i < strings.size(); ++i)
+        strings[i] = "quoted\"\\\n@" + std::to_string(i);
+      for (TypeId type : {TypeId::String, TypeId::Token, TypeId::AssetPath,
+                          TypeId::PathExpression}) {
+        layer.add_property("strings_" + std::to_string(static_cast<int>(type)),
+                           Value::MakeStringLikeArray(strings, type));
+      }
+    }
     layer.end_prim();
   }
   layer.finalize();
@@ -698,6 +718,232 @@ void test_parallel_writer_parity() {
   assert(serial == parallel);
 
   std::cout << "  parallel-writer byte parity passed!\n\n";
+}
+
+void test_relocate_path_anchoring() {
+  struct Case { const char* anchor; const char* path; const char* expected; };
+  const std::vector<Case> valid = {
+    {"/", "P/A", "/P/A"}, {"/P", "A", "/P/A"},
+    {"/P/Sub", "../A", "/P/A"}, {"/P/Sub", "../../A", "/A"},
+    {"/P/Sub", "..", "/P"}, {"/P/Sub", "../..", "/"},
+    {"/P/Sub", ".", "/P/Sub"}, {"/", "", ""},
+    {"/P", "é/中文", "/P/é/中文"}, {"/P", "/A/B", "/A/B"},
+  };
+  for (const auto& item : valid) {
+    std::string output = "unchanged";
+    assert(AnchorRelocatePath(item.path, item.anchor, &output));
+    assert(output == item.expected);
+  }
+  for (const auto& item : std::vector<Case>{
+      {"/", "..", ""}, {"/", "../A", ""}, {"/P", "../../A", ""},
+      {"/P/Sub", "../../../A", ""}, {"/P", "./A", ""},
+      {"/P", "A/../B", ""}, {"/P", "../", ""}, {"/P", "A/", ""}}) {
+    std::string output = "not-a-delete";
+    assert(!AnchorRelocatePath(item.path, item.anchor, &output));
+    assert(output == "not-a-delete");
+  }
+  const std::string source = "#usda 1.0\n(relocates = { <P/A>: <P/B>, <P/C>: <> })\n"
+      "def Xform \"P\" {}\n";
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  auto parsed = LoadUSDAFromString(source, strict);
+  assert(parsed.success);
+  const auto expected = std::vector<std::pair<std::string, std::string>>{
+      {"/P/A", "/P/B"}, {"/P/C", ""}};
+  assert(parsed.stage.GetRootLayer()->meta().relocates == expected);
+  const auto text = WriteUSDAToString(parsed.stage);
+  auto rewritten = LoadUSDAFromString(text, strict);
+  assert(rewritten.success && rewritten.stage.GetRootLayer()->meta().relocates == expected);
+  std::vector<uint8_t> bytes;
+  assert(WriteUSDCToMemory(bytes, parsed.stage).success);
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success && binary.stage.GetRootLayer()->meta().relocates == expected);
+  const std::string invalid = "#usda 1.0\n(relocates = { </P/A>: <../Gone> })\n"
+      "def Xform \"P\" {}\n";
+  auto rejected = LoadUSDAFromString(invalid, strict);
+  assert(!rejected.success && rejected.error_summary.find("cannot be anchored") != std::string::npos);
+  auto permissive = LoadUSDAFromString(invalid);
+  assert(permissive.success && !permissive.warnings.empty());
+  assert(permissive.stage.GetRootLayer()->meta().relocates[0].second == "../Gone");
+  bytes.clear();
+  const auto invalid_binary = WriteUSDCToMemory(bytes, permissive.stage);
+  assert(!invalid_binary.success && invalid_binary.error.find("anchor") != std::string::npos);
+  parsed.stage.GetRootLayer()->meta().relocates = {{"P/A", "P/B"}, {"P/C", ""}};
+  bytes.clear();
+  assert(WriteUSDCToMemory(bytes, parsed.stage).success);
+  auto raw_binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(raw_binary.success && raw_binary.stage.GetRootLayer()->meta().relocates == expected);
+  std::string legacy = "#usda 1.0\ndef Xform \"P\" {\n def Xform \"Sub\" (\n"
+      " relocates = { <../A>: <../B> }\n) {\n int[] pad = [";
+  for (int i = 0; i < 12000; ++i) legacy += "1,";
+  legacy += "1]\n }\n}\n";
+  for (int i = 0; i < 8192; ++i) legacy += "def \"Padding" + std::to_string(i) + "\" {}\n";
+  for (int threads : {1, 4}) {
+    LoadOptions options;
+    options.parse_options.num_threads = threads;
+    auto result = LoadUSDAFromString(legacy, options);
+    assert(result.success);
+    const auto* sub = result.stage.GetRootLayer()->prim_at_path("/P/Sub");
+    assert(sub && sub->meta().relocates().size() == 1);
+    assert(sub->meta().relocates()[0] == expected[0]);
+    if (threads == 4) {
+      auto* late = result.stage.GetRootLayer()->prim_at_path_mutable("/Padding8191");
+      assert(late);
+      late->meta().relocates() = {{"A", "B"}};
+      USDCWriteOptions write;
+      write.crate_options.num_threads = 4;
+      bytes.clear();
+      assert(WriteUSDCToMemory(bytes, result.stage, write).success);
+      auto worker_binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      assert(worker_binary.success);
+      const auto* saved = worker_binary.stage.GetRootLayer()->prim_at_path("/Padding8191");
+      assert(saved && saved->meta().relocates().size() == 1);
+      assert(saved->meta().relocates()[0].first == "/Padding8191/A" &&
+             saved->meta().relocates()[0].second == "/Padding8191/B");
+      late->meta().relocates() = {{"A", "../../Gone"}};
+      for (int workers : {1, 4}) {
+        write.crate_options.num_threads = workers;
+        bytes.clear();
+        const auto failed = WriteUSDCToMemory(bytes, result.stage, write);
+        assert(!failed.success && failed.error.find("anchor") != std::string::npos);
+      }
+    }
+  }
+}
+
+// The parallel writer builds the document in independent prim ranges (cut from a
+// skeleton walk) and formats/writes them pipelined. Its output must still be
+// byte-identical to the serial writer for any thread count: multiple roots, deep
+// nesting (ranges start/end mid-hierarchy), inactive prims, and a mix of tiny
+// (inline), medium (offloaded whole) and large (chunked) arrays -- both in-memory
+// and as lazy USDC-backed values (compressed int + half arrays take the
+// decode-once split path).
+void test_parallel_writer_multiroot_parity() {
+  std::cout << "Testing parallel-writer multi-root/deep parity...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  int big = 0;  // large arrays emitted so far (kept few for Debug runtime)
+  for (int r = 0; r < 4; ++r) {
+    b.begin_prim("R" + std::to_string(r), "Xform");
+    constexpr int kDepth = 24;
+    for (int d = 0; d < kDepth; ++d) {
+      // A few leaf siblings at each level, then descend into a chain prim.
+      for (int s = 0; s < 3; ++s) {
+        b.begin_prim("leaf_" + std::to_string(d) + "_" + std::to_string(s),
+                     "Mesh");
+        std::vector<float> tiny = {float(d), float(s) * 0.5f, 1.25f, -3.0f};
+        b.add_property("tiny", Value::MakeFloatArray(std::move(tiny)));
+        std::vector<int32_t> med(300 + size_t(d) * 7);
+        for (size_t i = 0; i < med.size(); ++i) med[i] = int32_t(i * 3) - d;
+        b.add_property("faceVertexCounts", Value::MakeIntArray(std::move(med)));
+        b.add_property("purpose", Value::MakeToken("render"));
+        if (s == 1) {
+          b.add_time_sample("xformOp:translate", 1.0,
+                            Value::MakeFloat3(float(d), 0.0f, 1.0f));
+          b.add_time_sample("xformOp:translate", 2.0,
+                            Value::MakeFloat3(float(d), 1.0f, 1.0f));
+          b.add_relationship("material:binding",
+                             Path("/R" + std::to_string(r)));
+          if (d == 3 || d == 17) {
+            // Default + time-sampled arrays (the sampled/default statements
+            // offload too); one sample large enough to be chunked.
+            auto arr = [](size_t n, float k) {
+              std::vector<float> v(n * 3);
+              for (size_t i = 0; i < v.size(); ++i) v[i] = float(i) * k;
+              return Value::MakeFloat3Array(std::move(v));
+            };
+            b.add_property("anim", arr(300, 0.25f));
+            b.add_time_sample("anim", 1.0, arr(400, 0.5f));
+            b.add_time_sample("anim", 2.0,
+                              arr(d == 3 && r == 0 ? 140000 : 20, 0.75f));
+          }
+        }
+        if (s == 2 && d == 5) b.set_active(false);
+        if (s == 0 && (d % 9) == 4 && big < 6) {
+          ++big;
+          const size_t n = 140000 + size_t(r) * 1000;  // > kSplitMinElems
+          std::vector<float> pts;
+          pts.reserve(n * 3);
+          for (size_t i = 0; i < n * 3; ++i) {
+            pts.push_back(float(i % 9973) * 0.37f - float(r));
+          }
+          b.add_property("points", Value::MakeFloat3Array(std::move(pts)));
+          std::vector<int32_t> idx(n);
+          for (size_t i = 0; i < n; ++i) idx[i] = int32_t((i * 7) % 5003);
+          b.add_property("faceVertexIndices", Value::MakeIntArray(std::move(idx)));
+          std::vector<float> h(n * 3);
+          for (size_t i = 0; i < h.size(); ++i) {
+            h[i] = float(int(i % 2049) - 1024) / 64.0f;  // exact halves
+          }
+          b.add_property("primvars:h",
+                         Value::MakeFloatCompArray(std::move(h), TypeId::Half3, 3));
+        }
+        b.end_prim();
+      }
+      b.begin_prim("chain_" + std::to_string(d), "Xform");
+    }
+    for (int d = 0; d < kDepth; ++d) b.end_prim();
+    b.end_prim();
+  }
+  b.finalize();
+
+  auto check_layer = [](const Layer& l, const char* what) {
+    for (int composed = 0; composed < 2; ++composed) {
+      USDAWriteOptions serial_opts;
+      serial_opts.num_threads = 1;
+      serial_opts.composed_stage_output = composed != 0;
+      const std::string serial = WriteLayerToString(l, serial_opts);
+      assert(serial.size() > 1000000);  // sanity: large arrays were emitted
+      assert(contains(serial, "chain_23"));
+      assert(contains(serial, "anim.timeSamples"));
+      for (int nt : {2, 3, 8, 32}) {
+        USDAWriteOptions par_opts = serial_opts;
+        par_opts.num_threads = nt;
+        const std::string parallel = WriteLayerToString(l, par_opts);
+        if (parallel != serial) {
+          std::cerr << "  parity mismatch (" << what << ", threads=" << nt
+                    << ", composed=" << composed << ")\n";
+        }
+        assert(parallel == serial);
+      }
+    }
+  };
+  check_layer(layer, "in-memory");
+
+  // Same layer through USDC: arrays come back lazy (mmap-style borrowed or
+  // compressed), exercising the borrow-chunk and decode-once split paths.
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wr = WriteLayerToUSDCMemory(usdc, layer);
+  assert(wr.success);
+  USDCLoadResult lr = LoadUSDCFromMemory(usdc.data(), usdc.size());
+  assert(lr.success);
+  const Layer* loaded = lr.stage.GetRootLayer();
+  assert(loaded);
+  {
+    // Sanity: the big arrays really are lazy (compressed ints, half3).
+    const PrimSpec* p = loaded->prim_at_path(
+        "/R0/chain_0/chain_1/chain_2/chain_3/leaf_4_0");
+    assert(p);
+    const Value* fvi = p->property_value("faceVertexIndices");
+    const Value* h = p->property_value("primvars:h");
+    assert(fvi && fvi->is_lazy() && fvi->lazy_ref() &&
+           fvi->lazy_ref()->is_compressed);
+    assert(h && h->is_lazy() && h->type_id() == TypeId::Half3);
+  }
+  check_layer(*loaded, "usdc-lazy");
+
+  // Stage entry point (WriteUSDA(Stage)) shares the same body writer.
+  {
+    USDAWriteOptions serial_opts;
+    serial_opts.num_threads = 1;
+    USDAWriteOptions par_opts;
+    par_opts.num_threads = 8;
+    assert(WriteUSDAToString(lr.stage, serial_opts) ==
+           WriteUSDAToString(lr.stage, par_opts));
+  }
+
+  std::cout << "  parallel-writer multi-root/deep parity passed!\n\n";
 }
 
 void test_roundtrip() {
@@ -1134,12 +1380,12 @@ def Scope "E" (
   // Layer offsets re-emit in pxr syntax, not the internal form.
   assert(out1.find("?layerOffset") == std::string::npos);
   assert(out1.find("(offset = 10; scale = 2)") != std::string::npos);
-  // A bare relationship declaration is distinct from authored explicit-empty
-  // targetPaths (`= None` / `= []`), which normalize to `= None`.
+  // A bare declaration, blocked targets, and an authored empty target vector
+  // retain their distinct USDA spellings.
   assert(out1.find("rel material:binding") != std::string::npos);
   assert(out1.find("rel material:binding =") == std::string::npos);
   assert(out1.find("rel none_rel = None") != std::string::npos);
-  assert(out1.find("rel empty_rel = None") != std::string::npos);
+  assert(out1.find("rel empty_rel = []") != std::string::npos);
   // 32-bit integers saturate instead of truncating bits.
   assert(out1.find("int sat = 2147483647") != std::string::npos);
   assert(out1.find("uint usat = 4294967295") != std::string::npos);
@@ -1278,10 +1524,113 @@ def Scope "V"
   std::cout << "  usda audit roundtrip (wave 2) passed!\n\n";
 }
 
+void test_authored_empty_property_metadata_matrix() {
+  const char* fields[] = {
+      "allowedTokens = []", "customData = {}", "assetInfo = {}",
+      "sdrMetadata = {}", "displayName = \"\"", "displayGroup = \"\"",
+      "doc = \"\"", "hidden = false", "elementSize = 1",
+      "unauthoredValuesIndex = -1"};
+  for (const char* field : fields) {
+    for (const char* declaration : {"token value = \"x\"", "rel target = </P>"}) {
+      const std::string source = std::string("#usda 1.0\ndef Xform \"P\" {\n") +
+          declaration + " ( " + field + " )\n}\n";
+      LoadResult loaded = LoadUSDAFromString(source.data(), source.size());
+      assert(loaded.success);
+      const auto normalized = [](std::string text) {
+        text.erase(std::remove_if(text.begin(), text.end(), [](char c) {
+          return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+        }), text.end());
+        return text;
+      };
+      assert(contains(normalized(WriteUSDAToString(loaded.stage)), normalized(field)));
+      std::vector<uint8_t> bytes;
+      assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+      USDCLoadResult reread = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      assert(reread.success);
+      assert(contains(normalized(WriteUSDAToString(reread.stage)), normalized(field)));
+    }
+  }
+  // Use a layer directly to exercise programmatic metadata without authored
+  // bits; extension storage itself is an authored opinion.
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("P", "Xform");
+  builder.add_property("value", Value(1.0f));
+  builder.end_prim();
+  PropMeta& meta = layer.prim(0)->ensure_property_meta("value");
+  meta.unknownMeta.emplace_back("pipelineHint", "\"retained\"");
+  assert(!meta.empty());
+  assert(contains(WriteLayerToString(layer), "pipelineHint = \"retained\""));
+  std::vector<uint8_t> bytes;
+  assert(WriteLayerToUSDCMemory(bytes, layer).success);
+  USDCLoadResult reread = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(reread.success);
+  assert(contains(WriteUSDAToString(reread.stage), "pipelineHint = \"retained\""));
+}
+
+void test_authored_property_order_roundtrips() {
+  const char source[] = R"USD(#usda 1.0
+def "P" (variantSets = "v"
+ variants = {string v = "x"}) {
+ int z = 1
+ rel r = </Target>
+ int a = 2
+ rel s
+ reorder properties = ["s", "a"]
+ variantSet "v" = {
+  "x" {
+   int vz = 3
+   int vz.timeSamples = {0: 3, 1: 5}
+   rel vr = </Target>
+   int va = 4
+   rel vs
+  }
+ }
+}
+)USD";
+  LoadResult loaded = LoadUSDAFromString(source, sizeof(source) - 1);
+  assert(loaded.success);
+  const Layer* layer = loaded.stage.GetRootLayer();
+  assert(layer);
+  const std::vector<std::string> root_names{"z", "r", "a", "s"};
+  const std::vector<std::string> variant_names{"vz", "vr", "va", "vs"};
+  const PrimSpec* prim = layer->prim_at_path("/P");
+  assert(prim && prim->authored_property_names() == root_names);
+  assert(prim->meta().variantSets()[0].variants[0].property_names() == variant_names);
+  PrimSpec clone = prim->Clone();
+  assert(clone.meta().variantSets()[0].variants[0].property_names() == variant_names);
+  USDAWriteOptions options;
+  options.sort_properties = false;
+  const std::string text = WriteLayerToString(*layer, options);
+  assert(text.find("vz.timeSamples") != std::string::npos);
+  LoadResult ascii = LoadUSDAFromString(text.data(), text.size());
+  assert(ascii.success);
+  const PrimSpec* roundtrip = ascii.stage.GetRootLayer()->prim_at_path("/P");
+  assert(roundtrip && roundtrip->authored_property_names() == root_names);
+  assert(roundtrip->meta().variantSets()[0].variants[0].property_names() == variant_names);
+  std::vector<uint8_t> bytes;
+  assert(WriteLayerToUSDCMemory(bytes, *layer).success);
+  USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success);
+  const Layer* binary_layer = binary.stage.GetRootLayer();
+  const PrimSpec* binary_prim = binary_layer->prim_at_path("/P");
+  assert(binary_prim && binary_prim->authored_property_names() == root_names);
+  const PrimSpec* holder = binary_layer->prim_at_path("/P/{v=x}");
+  assert(holder && holder->authored_property_names() == variant_names);
+  const std::string from_binary = WriteLayerToString(*binary_layer, options);
+  LoadResult binary_ascii = LoadUSDAFromString(from_binary.data(), from_binary.size());
+  assert(binary_ascii.success);
+  const PrimSpec* binary_ascii_prim = binary_ascii.stage.GetRootLayer()->prim_at_path("/P");
+  assert(binary_ascii_prim && binary_ascii_prim->authored_property_names() == root_names);
+  assert(binary_ascii_prim->meta().variantSets()[0].variants[0].property_names() == variant_names);
+}
+
 int main() {
   std::cout << "=== LightUSD Next Writer Tests ===\n\n";
 
   try {
+    test_authored_property_order_roundtrips();
+    test_authored_empty_property_metadata_matrix();
     test_value_printer();
     test_hot_array_formatting_parity();
     test_array_range_split_parity();
@@ -1295,6 +1644,8 @@ int main() {
     test_time_samples();
     test_roundtrip();
     test_parallel_writer_parity();
+    test_parallel_writer_multiroot_parity();
+    test_relocate_path_anchoring();
     test_usda_backend_parity();
     test_usda_layer_backend_parity();
     test_usda_stream_failure();

@@ -2,6 +2,7 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 
+#include "core/native-io.hh"
 #include "usdc-writer.hh"
 #include <chrono>
 #include <cstdlib>
@@ -116,10 +117,13 @@ bool WriteAllBytesToFile(FILE *fp, const uint8_t *data, size_t size,
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> output;
 
   if (!SaveAsUSDCToMemory(stage, &output, warn, err, /*max_file_size*/ 0,
-                          /*max_memory*/ 0, options.compress_float_arrays)) {
+                          /*max_memory*/ 0, options.compress_float_arrays,
+                          options.profile_crate)) {
     return false;
   }
 
@@ -190,9 +194,12 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> output;
   if (!SaveAsUSDCToMemory(layer, &output, warn, err, /*max_file_size*/ 0,
-                          /*max_memory*/ 0, options.compress_float_arrays)) {
+                          /*max_memory*/ 0, options.compress_float_arrays,
+                          options.profile_crate)) {
     return false;
   }
 
@@ -240,7 +247,8 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
                         int64_t max_memory_bytes,
-                        bool compress_float_arrays) {
+                        bool compress_float_arrays,
+                        bool profile_crate) {
   (void)warn;
 
   if (!output) {
@@ -265,6 +273,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
   opts.enable_compression = true;
   opts.enable_deduplication = true;
   opts.enable_float_array_compression = compress_float_arrays;
+  opts.profile_crate = profile_crate;
   // Optional caller overrides for the (intentionally small on WASM) resource
   // limits; 0 keeps the built-in default.
   if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
@@ -279,12 +288,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
-  // LIGHTUSD_FLATTEN_TIMING=1: print write-phase timings to stderr
-  // (diagnostic; off by default).
-  const bool flatten_timing = []() {
-    const char* e = ::getenv("LIGHTUSD_FLATTEN_TIMING");
-    return e && e[0] == '1';
-  }();
+  const bool flatten_timing = profile_crate;
   auto phase_start = std::chrono::steady_clock::now();
   auto report_phase = [&](const char* name) {
     if (!flatten_timing) return;
@@ -324,7 +328,8 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
                         int64_t max_memory_bytes,
-                        bool compress_float_arrays) {
+                        bool compress_float_arrays,
+                        bool profile_crate) {
   (void)warn;
 
   if (!output) {
@@ -348,6 +353,7 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
   opts.enable_compression = true;
   opts.enable_deduplication = true;
   opts.enable_float_array_compression = compress_float_arrays;
+  opts.profile_crate = profile_crate;
   if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
   if (max_memory_bytes > 0) opts.max_memory_bytes = max_memory_bytes;
   writer.SetOptions(opts);
@@ -393,6 +399,8 @@ namespace usdc {
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   (void)filename;
   (void)stage;
   (void)warn;
@@ -408,6 +416,8 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   (void)filename;
   (void)layer;
   (void)warn;
@@ -423,7 +433,11 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
-                        int64_t max_memory_bytes) {
+                        int64_t max_memory_bytes,
+                        bool compress_float_arrays,
+                        bool profile_crate) {
+  (void)compress_float_arrays;
+  (void)profile_crate;
   (void)stage;
   (void)output;
   (void)warn;
@@ -440,7 +454,11 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
-                        int64_t max_memory_bytes) {
+                        int64_t max_memory_bytes,
+                        bool compress_float_arrays,
+                        bool profile_crate) {
+  (void)compress_float_arrays;
+  (void)profile_crate;
   (void)layer;
   (void)output;
   (void)warn;

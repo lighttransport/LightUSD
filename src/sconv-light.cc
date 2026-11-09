@@ -307,6 +307,7 @@ bool CrateWriter::ExtractDomeLight1Properties(
     crate::CrateValue crate_val;
     crate_val.Set(tok);
     fields.push_back({"poleAxis", crate_val});
+    sconv_detail::EmitAttrVariability("poleAxis", light->poleAxis, fields);
   }
 
   EXTRACT_COMMON_LIGHT(light)
@@ -354,6 +355,7 @@ bool CrateWriter::ExtractLightFilterProperties(
       value::token purpose_tok(to_string(purpose_val));
       purpose_crate_val.Set(purpose_tok);
       fields.push_back({"purpose", purpose_crate_val});
+      sconv_detail::EmitAttrVariability("purpose", filter->purpose, fields);
     }
   }
 
@@ -399,6 +401,7 @@ bool CrateWriter::ExtractPluginLightFilterProperties(
       value::token purpose_tok(to_string(purpose_val));
       purpose_crate_val.Set(purpose_tok);
       fields.push_back({"purpose", purpose_crate_val});
+      sconv_detail::EmitAttrVariability("purpose", filter->purpose, fields);
     }
   }
 

@@ -48,13 +48,17 @@ if(NOT TARGET lightusd_gpu_rt_common)
       "const char* kKernelSrc = R\"CUDA(${LIGHTUSD_GPU_RT_KERNEL_CONTENT})CUDA\";\n")
   endif()
 
+  include(${PROJECT_SOURCE_DIR}/cmake/lightusd-ptex.cmake)
   set(LIGHTUSD_GPU_RT_SOURCES
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lighting_ies.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ${LIGHTUSD_PTEX_C_SOURCES}
+    ${LIGHTUSD_PTEX_C_FILE_SOURCES}
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/ptex_atlas.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/texture_tools.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_bridge.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc
+    ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_phases.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_pack.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/displacement_bake.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/rt_bvh.cc
@@ -159,6 +163,7 @@ add_executable(lusdrender
   lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
+  lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
@@ -274,6 +279,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-switch-default")
   endif()
+  # libc++ annotates std::mutex, so next headers (pcp/layer-registry.hh) trip
+  # -Wthread-safety-negative on macOS; the core library suppresses it too.
+  if(LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+    set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-thread-safety-negative")
+  endif()
   if(NOT LIGHTUSD_NO_WERROR)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Werror")
   endif()
@@ -291,6 +301,7 @@ set(LUSDRENDER_CXX_SOURCES
   lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
+  lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
@@ -427,5 +438,5 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc PROPERTIES
-    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O1>")
+    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O0>")
 endif()

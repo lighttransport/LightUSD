@@ -95,7 +95,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   lightusd::next::Stage loaded;
   lightusd::next::LoadUSDOptions load_options;
-  load_options.max_memory = kMaxInputSize;
+  load_options.limits.max_input_bytes = kMaxInputSize;
+  load_options.limits.max_asset_bytes = kMaxInputSize;
+  load_options.limits.max_resident_bytes = kMaxInputSize;
   std::string warning;
   std::string error;
   (void)lightusd::next::LoadUSDFromMemory(

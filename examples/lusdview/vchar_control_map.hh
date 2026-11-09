@@ -3,10 +3,10 @@
 
 #include <string>
 #include <vector>
+#include "lightusd-c.h"
 
 namespace lightusd {
 class Stage;
-namespace next { class Stage; }
 }
 
 namespace lusdview {
@@ -20,6 +20,6 @@ struct VcharControl {
 };
 
 std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage);
-std::vector<VcharControl> ReadVcharControls(const lightusd::next::Stage& stage);
+std::vector<VcharControl> ReadVcharControls(const lightusd_stage* stage);
 
 }  // namespace lusdview

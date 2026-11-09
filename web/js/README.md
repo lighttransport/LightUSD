@@ -279,3 +279,16 @@ npm run dev:webgl2       # materialx-webgl2.html
 NPM packaing is not handled in this folder.
 
 Please see `../npm`
+
+## USD validation
+
+`npm run dev:validation` opens the existing validation demo, now using the full
+`lusdchecker` engine in the next WASM backend. Choose default, strict, or AOUSD
+Core profiles; supply dependency files/folders and optional JSON definitions;
+inspect coverage and sampled/variant findings; export JSON or SARIF. Validation
+runs locally in a cancellable worker.
+
+The public API is `module.checkUSD(bytes, filename, options, assetStore)`. See
+[the checker guide](../../tools/lusdchecker/README.md#javascript--wasm) for options
+and [regression instructions](docs/regression.md#full-lusdchecker-wasm-validation).
+Legacy `validateFromBinary` and `validateLoadedLayer` contracts are preserved.

@@ -1,19 +1,7 @@
 import * as THREE from 'three';
+import { LINEAR_COLOR_SPACES, linearColorTransformMatrix as sharedLinearColorTransformMatrix, transformLinearColor as sharedTransformLinearColor } from './ColorSpaceMath.js';
 
-const D65 = [0.3127, 0.3290];
-
-const LINEAR_SPACES = Object.freeze({
-  lin_ap0_scene: [[0.73485524337371, 0.26422532524554],
-    [-0.0061709124786224, 1.0113149590212864],
-    [0.015967559255041, -0.064235503128551], D65],
-  lin_ap1_scene: [[0.71319588766205, 0.29268891446333],
-    [0.15950855654178, 0.83878851615096],
-    [0.128672995285350, 0.043895571160528], D65],
-  lin_rec709_scene: [[0.64, 0.33], [0.30, 0.60], [0.15, 0.06], D65],
-  lin_p3d65_scene: [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06], D65],
-  lin_rec2020_scene: [[0.708, 0.292], [0.17, 0.797], [0.131, 0.046], D65],
-  lin_adobergb_scene: [[0.64, 0.33], [0.21, 0.71], [0.15, 0.06], D65]
-});
+const LINEAR_SPACES = LINEAR_COLOR_SPACES;
 
 const ALIASES = Object.freeze({
   acescg: 'lin_ap1_scene', lin_acescg: 'lin_ap1_scene',
@@ -27,44 +15,6 @@ const ALIASES = Object.freeze({
   adobergb: 'g22_adobergb_scene'
 });
 
-function invert3(m) {
-  const d = m[0] * (m[4] * m[8] - m[5] * m[7]) -
-    m[1] * (m[3] * m[8] - m[5] * m[6]) +
-    m[2] * (m[3] * m[7] - m[4] * m[6]);
-  return [(m[4] * m[8] - m[5] * m[7]) / d,
-    (m[2] * m[7] - m[1] * m[8]) / d,
-    (m[1] * m[5] - m[2] * m[4]) / d,
-    (m[5] * m[6] - m[3] * m[8]) / d,
-    (m[0] * m[8] - m[2] * m[6]) / d,
-    (m[2] * m[3] - m[0] * m[5]) / d,
-    (m[3] * m[7] - m[4] * m[6]) / d,
-    (m[1] * m[6] - m[0] * m[7]) / d,
-    (m[0] * m[4] - m[1] * m[3]) / d];
-}
-
-function mul3(a, b) {
-  return Array.from({ length: 9 }, (_, i) => {
-    const r = Math.floor(i / 3), c = i % 3;
-    return a[r * 3] * b[c] + a[r * 3 + 1] * b[c + 3] +
-      a[r * 3 + 2] * b[c + 6];
-  });
-}
-
-function mulv(m, v) {
-  return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
-    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
-    m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
-}
-
-function rgbToXyz(space) {
-  const [r, g, b, w] = LINEAR_SPACES[space];
-  const p = [r[0], g[0], b[0], r[1], g[1], b[1],
-    1 - r[0] - r[1], 1 - g[0] - g[1], 1 - b[0] - b[1]];
-  const scale = mulv(invert3(p),
-    [w[0] / w[1], 1, (1 - w[0] - w[1]) / w[1]]);
-  return p.map((value, i) => value * scale[i % 3]);
-}
-
 export function canonicalColorSpace(token) {
   const value = String(token || '');
   return ALIASES[value] || value;
@@ -74,15 +24,12 @@ export function linearColorTransformMatrix(source = 'lin_ap0_scene',
   destination = 'lin_rec709_scene') {
   source = canonicalColorSpace(source);
   destination = canonicalColorSpace(destination);
-  if (!LINEAR_SPACES[source] || !LINEAR_SPACES[destination]) {
-    throw new Error(`unsupported color space: ${source} -> ${destination}`);
-  }
-  return mul3(invert3(rgbToXyz(destination)), rgbToXyz(source));
+  return sharedLinearColorTransformMatrix(source, destination);
 }
 
 export function transformLinearColor(rgb, source = 'lin_ap0_scene',
   destination = 'lin_rec709_scene') {
-  return mulv(linearColorTransformMatrix(source, destination), rgb);
+  return sharedTransformLinearColor(rgb, canonicalColorSpace(source), canonicalColorSpace(destination));
 }
 
 // Describe the operations Three.js must perform after fetching a color texel.

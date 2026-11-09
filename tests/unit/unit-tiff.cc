@@ -796,3 +796,31 @@ void image_loader_callback_test(void) {
   lightusd::image::SetImageLoader(nullptr);
   lightusd::image::SetImageInfoLoader(nullptr);
 }
+
+// Packaged (USDZ) images can start at an odd address. The TIFF/DNG signature
+// probe must not perform a misaligned 16-bit load (UBSan alignment check).
+void tinydng_odd_offset_probe_test(void) {
+  const std::vector<uint8_t> tiff = MakeRGBTiff(false);
+  std::vector<uint8_t> storage(tiff.size() + 2);
+  uint8_t* odd = storage.data() + 1;
+  if ((reinterpret_cast<uintptr_t>(odd) & 1u) == 0) odd = storage.data() + 2;
+  std::memcpy(odd, tiff.data(), tiff.size());
+#if defined(LIGHTUSD_WITH_TIFF)
+  auto info = lightusd::image::GetImageInfoFromMemory(odd, tiff.size(), "odd.tif");
+  TEST_CHECK(info.has_value());
+  if (info) TEST_CHECK(info->width == 2 && info->height == 2);
+  auto image = lightusd::image::LoadImageFromMemory(odd, tiff.size(), "odd.tif");
+  TEST_CHECK(image.has_value());
+  if (image) TEST_CHECK(image->image.width == 2 && image->image.height == 2);
+#endif
+  // Non-TIFF bytes at an odd address: the probe must reject them safely.
+  // 3x3 binary PPM (38 bytes) so the probe passes its 32-byte minimum.
+  std::vector<uint8_t> ppm = {'P', '6', '\n', '3', ' ', '3', '\n', '2', '5', '5', '\n'};
+  for (int i = 0; i < 27; ++i) ppm.push_back(static_cast<uint8_t>(i * 9));
+  std::vector<uint8_t> pstore(ppm.size() + 2);
+  uint8_t* podd = pstore.data() + 1;
+  if ((reinterpret_cast<uintptr_t>(podd) & 1u) == 0) podd = pstore.data() + 2;
+  std::memcpy(podd, ppm.data(), ppm.size());
+  (void)lightusd::image::GetImageInfoFromMemory(podd, ppm.size(), "odd.ppm");
+  (void)lightusd::image::LoadImageFromMemory(podd, ppm.size(), "odd.ppm");
+}

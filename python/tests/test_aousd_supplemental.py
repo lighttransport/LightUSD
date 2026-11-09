@@ -83,13 +83,28 @@ def _enumerate_file_formats(limit=CAP):
     return files[:limit] if limit else files
 
 
+# file_formats assets next does not load, with the reason. Each entry must
+# still fail (so a fix is noticed and the entry pruned); every other asset
+# must load.
+KNOWN_FILE_FORMAT_FAILURES = {}
+
+
 def test_aousd_file_formats_load():
     files = _enumerate_file_formats()
     assert files, "no file_formats assets"
+    assets_root = AOUSD_ROOT / "file_formats" / "tests" / "assets"
     ok = 0
     for f in files:
+        known = KNOWN_FILE_FORMAT_FAILURES.get(f.relative_to(assets_root).as_posix())
+        if known:
+            with pytest.raises(lightusd.UsdError):
+                lightusd.load(str(f), composed=False)
+            continue
         try:
-            st = lightusd.load(str(f))
+            # The file_formats suite is parser-level: its assets reference
+            # dependency layers (e.g. layermetadata.usda's subLayers) that the
+            # corpus does not ship, so load them uncomposed.
+            st = lightusd.load(str(f), composed=False)
         except lightusd.UsdError as e:
             pytest.fail(f"file_formats load failed {f}: {e}")
         assert st.stats["prim_count"] >= 0
@@ -98,7 +113,7 @@ def test_aousd_file_formats_load():
             if "points" in prim:
                 arr = prim["points"]
                 a = np.asarray(arr)
-                assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+                assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
                 break
         ok += 1
     print(f"[aousd] file_formats ok {ok}/{len(files)}")
@@ -120,17 +135,19 @@ def test_aousd_value_resolution_load():
     if not entries:
         pytest.skip("no value_resolution entries")
     ok = 0
+    failures = []
     for e in entries:
         try:
             st = lightusd.load(str(e))
         except lightusd.UsdError as e2:
-            # Some value_resolution cases intentionally use features beyond
-            # lightusd coverage; treat as non-blocking but print
-            print(f"[aousd] value_resolution skip {e}: {e2}")
+            failures.append(f"{e.name}: {e2}")
             continue
         assert st.stats["prim_count"] >= 0
         ok += 1
     print(f"[aousd] value_resolution ok {ok}/{len(entries)}")
+    # Every shipped value-resolution case loads today; keep it a hard ratchet
+    # so a newly unsupported case is visible instead of silently skipped.
+    assert not failures, "\n".join(failures)
 
 
 def _enumerate_composition(limit=CAP):
@@ -144,10 +161,215 @@ def _enumerate_composition(limit=CAP):
     return cases[:limit] if limit else cases
 
 
+# Deprecated layer fields the spec reserves but does not give stage semantics.
+# The baselines record them as authored text; they are not compared.
+_DEPRECATED_ROOT_FIELDS = {"framePrecision", "startFrame", "endFrame"}
+
+
+def _plain_type_value(value):
+    """Turn lightusd Array / numpy values into nested Python lists."""
+    if isinstance(value, (list, tuple)):
+        return [_plain_type_value(v) for v in value]
+    if type(value).__name__ == "Array" or hasattr(value, "__array_interface__"):
+        return _plain_type_value(np.asarray(value).tolist())
+    return value
+
+
+def _type_value_equal(got, want):
+    got = _plain_type_value(got)
+    want = _plain_type_value(want)
+    # Matrices are authored as 4x4 rows but exposed as a flat 16-tuple.
+    if (isinstance(want, list) and len(want) == 4 and
+            isinstance(want[0], list) and len(want[0]) == 4 and
+            isinstance(got, list) and len(got) == 16 and
+            not isinstance(got[0], list)):
+        got = [got[i * 4:(i + 1) * 4] for i in range(4)]
+    if isinstance(got, bool) or isinstance(want, bool):
+        return got == want
+    if isinstance(got, (int, float)) and isinstance(want, (int, float)):
+        return abs(float(got) - float(want)) <= 1e-6 * max(1.0, abs(float(want)))
+    if isinstance(got, list) and isinstance(want, list):
+        return len(got) == len(want) and all(
+            _type_value_equal(g, w) for g, w in zip(got, want))
+    return got == want
+
+
+def test_aousd_file_format_baselines():
+    """Compare authored content against the corpus' own baseline JSON.
+
+    The `file_formats` suites ship `text/usda/*.usda` with a matching
+    `text/baseline/*.json` describing the expected prim stack, specifiers, type
+    names, child/property lists and default values. Loading a file is not
+    evidence of parsing it correctly; this walks the baseline.
+    """
+    usda_dir = AOUSD_ROOT / "file_formats" / "tests" / "assets" / "text" / "usda"
+    base_dir = AOUSD_ROOT / "file_formats" / "tests" / "assets" / "text" / "baseline"
+    if not usda_dir.is_dir() or not base_dir.is_dir():
+        pytest.skip("no text baselines")
+    cases = sorted(p.stem for p in base_dir.glob("*.json")
+                   if (usda_dir / (p.stem + ".usda")).is_file())
+    assert cases, "no baseline/usda pairs"
+    checked = variant_paths = 0
+    failures = []
+    for name in cases:
+        baseline = json.loads((base_dir / (name + ".json")).read_text())
+        stage = lightusd.load(str(usda_dir / (name + ".usda")), composed=False)
+        root = baseline.get("/", {})
+        if ("framesPerSecond" in root and
+                not _type_value_equal(stage.frames_per_second,
+                                      root["framesPerSecond"])):
+            failures.append(
+                f"{name}: framesPerSecond {stage.frames_per_second} != "
+                f"{root['framesPerSecond']}")
+        prims = {p.path: p for p in stage.traverse(all_prims=True)}
+        for path, want in baseline.items():
+            if path == "/":
+                if "primChildren" in want:
+                    got = [c.name for c in stage.root_prims]
+                    if got != want["primChildren"]:
+                        failures.append(
+                            f"{name} / primChildren {got} != {want['primChildren']}")
+                continue
+            # Variant spec paths (`/Prim{set=value}`) are not addressable prim
+            # paths. An empty value names the variant set itself, whose variant
+            # names are readable without composing the branch.
+            if "{" in path or "}" in path:
+                variant_paths += 1
+                head, _, brace = path.partition("{")
+                set_name, _, value = brace.partition("=")
+                value = value.rstrip("}")
+                prim = prims.get(head)
+                if (prim is None or value or "}" in value or
+                        path.count("{") != 1):
+                    continue
+                checked += 1
+                expect = want.get("variantChildren")
+                if expect is None:
+                    continue
+                try:
+                    got = list(prim.variant_sets[set_name].names)
+                except KeyError:
+                    failures.append(
+                        f"{name} {path}: variant set {set_name!r} missing")
+                    continue
+                if got != expect:
+                    failures.append(
+                        f"{name} {path} variantChildren {got} != {expect}")
+                continue
+            prim_path, _, prop = path.partition(".")
+            prim = prims.get(prim_path)
+            if prim is None:
+                failures.append(f"{name} {path}: prim missing")
+                continue
+            checked += 1
+            if "variantSetNames" in want:
+                got = list(prim.variant_sets.names())
+                expect = want["variantSetNames"].get("explicit", [])
+                if sorted(got) != sorted(expect):
+                    failures.append(
+                        f"{name} {path} variantSetNames {got} != {expect}")
+            if "variantSetChildren" in want:
+                got = [n for n in prim.variant_sets.names()
+                       if len(prim.variant_sets[n].names)]
+                if got != want["variantSetChildren"]:
+                    failures.append(
+                        f"{name} {path} variantSetChildren {got} != "
+                        f"{want['variantSetChildren']}")
+            if "variantSelection" in want:
+                for set_name, selected in want["variantSelection"].items():
+                    # The authored `variants` dictionary may carry selections
+                    # for sets that are not declared on this prim (the corpus
+                    # adds a `var_expr` entry). Only declared sets are
+                    # addressable through the variant-set API.
+                    if set_name not in prim.variant_sets:
+                        continue
+                    got = prim.variant_sets[set_name].selection
+                    if got != selected:
+                        failures.append(
+                            f"{name} {path} {set_name} selection {got!r} != "
+                            f"{selected!r}")
+            if prop:
+                try:
+                    attr = prim.attribute(prop)
+                except KeyError:
+                    try:
+                        rel = prim.relationship(prop)
+                    except KeyError:
+                        failures.append(f"{name} {path}: property missing")
+                        continue
+                    if "targets" in want and list(rel.targets) != want["targets"]:
+                        failures.append(
+                            f"{name} {path} targets {list(rel.targets)} != "
+                            f"{want['targets']}")
+                    continue
+                if "typeName" in want and attr.type_name != want["typeName"]:
+                    failures.append(
+                        f"{name} {path} typeName {attr.type_name} != {want['typeName']}")
+                if "custom" in want and bool(attr.is_custom) != bool(want["custom"]):
+                    failures.append(
+                        f"{name} {path} custom {attr.is_custom} != {want['custom']}")
+                if "default" in want:
+                    if want["default"] is None:
+                        # `= None` is a value block, not a missing default.
+                        if not attr.is_default_blocked:
+                            failures.append(
+                                f"{name} {path}: expected blocked default")
+                    else:
+                        try:
+                            got = attr.get()
+                        except Exception as exc:  # noqa: BLE001 - report, keep walking
+                            failures.append(
+                                f"{name} {path}: default read failed: {exc}")
+                        else:
+                            if not _type_value_equal(got, want["default"]):
+                                failures.append(
+                                    f"{name} {path} default "
+                                    f"{_plain_type_value(got)} != {want['default']}")
+                continue
+            if "specifier" in want and prim.specifier != want["specifier"]:
+                failures.append(
+                    f"{name} {path} specifier {prim.specifier} != {want['specifier']}")
+            if "typeName" in want and prim.type_name != want["typeName"]:
+                failures.append(
+                    f"{name} {path} typeName {prim.type_name} != {want['typeName']}")
+            if "primChildren" in want:
+                got = [c.name for c in prim.children]
+                if got != want["primChildren"]:
+                    failures.append(
+                        f"{name} {path} primChildren {got} != {want['primChildren']}")
+            if "propertyChildren" in want:
+                got = sorted(list(prim.attributes) + list(prim.relationships))
+                exp = sorted(want["propertyChildren"])
+                if got != exp:
+                    failures.append(
+                        f"{name} {path} propertyChildren {got} != {exp}")
+    print(f"[aousd] baselines {len(cases)} files, {checked} prim/property checks, "
+          f"{variant_paths} variant-spec paths skipped")
+    assert checked >= 50, f"baseline coverage unexpectedly small: {checked}"
+    assert not failures, "\n".join(failures[:40])
+
+
+# Expected `Composing` paths that this bridge cannot confirm, each with the
+# reason. The set is asserted exactly: a fixed case must remove its entry.
+KNOWN_COMPOSING_EXCEPTIONS = {
+    ("BasicNestedVariants_root", "/DirectlyNestedVariants/anim_spooky_anim_sphere"):
+        "bridge forces standin=render, so the anim outer variant is intentionally "
+        "not selected",
+    ("BasicNestedVariants_root", "/DirectlyNestedVariants/anim_spooky_sphere"):
+        "bridge forces standin=render, so the anim outer variant is intentionally "
+        "not selected",
+}
+
+
 def test_aousd_composition_load():
     cases = _enumerate_composition()
     assert cases, "no composition cases"
     ok = 0
+    rejected = []
+    unexpected = []
+    missing_entry = []
+    unresolved = set()
+    path_checks = 0
     for pcp_json in cases:
         data = json.loads(pcp_json.read_text())
         case_dir = pcp_json.parent
@@ -157,33 +379,104 @@ def test_aousd_composition_load():
         if text_entry.is_file():
             entry = text_entry
         if not entry.is_file():
+            missing_entry.append(case_dir.name)
             continue
+        # A case whose pcp.json authors "Errors" is a negative dependency case:
+        # the corpus itself expects composition diagnostics, so the secure
+        # (default) loader may reject it. Any other rejection is a regression.
+        authored_errors = data.get("Errors") or []
         try:
             # next default is now fallback-free; corpus expects standin=render fallback for some cases (e.g. /FergusCloak)
             st = lightusd.load(str(entry), variants={"standin": "render"})
         except lightusd.UsdError as e:
-            # Composition gaps are expected for a small ratchet; print and continue
-            print(f"[aousd] composition skip {case_dir.name}: {e}")
+            if authored_errors:
+                rejected.append(case_dir.name)
+            else:
+                unexpected.append((case_dir.name, str(e)))
             continue
         # basic sanity
         assert st.stats["prim_count"] >= 0
-        # verify composing prims exist when expected
-        for prim_path in data.get("Composing", {}):
-            # path may be instance proxy; just verify stage has some prims
-            pass
+        # Every prim the corpus says must compose has to be addressable, not
+        # merely "some prims loaded".
+        for prim_path in data.get("Composing") or {}:
+            path_checks += 1
+            try:
+                prim = st.prim_at(prim_path)
+                resolved = prim is not None and prim.path == prim_path
+            except Exception:  # KeyError for an uncomposed path
+                resolved = False
+            if not resolved:
+                unresolved.add((case_dir.name, prim_path))
         ok += 1
-    print(f"[aousd] composition ok {ok}/{len(cases)}")
-    # Allow small ratchet: at least 80% should load
-    assert ok >= len(cases) * 0.5, f"too many composition failures {ok}/{len(cases)}"
+    known = set(KNOWN_COMPOSING_EXCEPTIONS)
+    print(f"[aousd] composition ok {ok}/{len(cases)}; "
+          f"composing paths {path_checks - len(unresolved)}/{path_checks} resolved; "
+          f"rejected-as-authored {sorted(rejected)}; "
+          f"missing entry {sorted(missing_entry)}")
+    assert not unexpected, "\n".join(
+        f"{name}: {err}" for name, err in unexpected)
+    assert not missing_entry, f"cases without an entry file: {missing_entry}"
+    assert ok + len(rejected) == len(cases)
+    assert unresolved <= known, "unexpected unresolved composing paths:\n" + "\n".join(
+        f"{name} {path}" for name, path in sorted(unresolved - known))
+    assert unresolved >= known, "known composing exceptions no longer fail:\n" + "\n".join(
+        f"{name} {path}" for name, path in sorted(known - unresolved))
+
+
+# USD value types the corpus names but the current value/type model has no
+# representation for. `opaque` is metadata-oriented and `group` is its role
+# alias. Keep them explicit so implementing one of them fails this test until
+# the list is updated.
+KNOWN_UNSUPPORTED_DATA_TYPES = {"opaque", "group"}
+
+
+def _data_type_element(name):
+    """Strip array/list-op syntax to the element type the C API exposes."""
+    if name.endswith("[]"):
+        name = name[:-2]
+    if name.startswith("listop<") and name.endswith(">"):
+        name = name[7:-1]
+    return name
 
 
 def test_aousd_data_types_types():
-    # data_types JSON describes expected type parsing; verify our type helpers
+    # data_types JSON describes expected type parsing; drive the whole pinned
+    # table through the C API instead of a hand-picked sample.
     dt_root = AOUSD_ROOT / "data_types" / "tests"
     if not dt_root.is_dir():
         pytest.skip("no data_types")
     docs = sorted(dt_root.glob("*.json"))
     assert docs, "no data_types json"
-    # At least verify our type system can resolve core type names
-    for name in ["float", "double", "int", "point3f", "color3f", "matrix4d", "token", "asset"]:
-        assert lightusd.type_from_name(name) != 0
+    names = set()
+    aliases = []
+    for doc in docs:
+        data = json.loads(doc.read_text())
+        names.update(data.get("named_types", []))
+        aliases.extend(data.get("semantic_aliases", []))
+    assert len(names) >= 60, f"corpus type table unexpectedly small: {len(names)}"
+    assert aliases, "no semantic aliases"
+
+    unsupported = set()
+    for name in sorted(names):
+        element = _data_type_element(name)
+        tid = lightusd.type_from_name(element)
+        if tid == 0:
+            unsupported.add(element)
+            continue
+        assert lightusd.type_name(tid) == element, (
+            f"{name}: element {element} does not round-trip through type_name")
+    for alias, base, role in aliases:
+        element = _data_type_element(alias)
+        baseline = _data_type_element(base)
+        if element in unsupported or baseline in unsupported:
+            unsupported.update({element, baseline})
+            continue
+        tid = lightusd.type_from_name(element)
+        assert tid != 0 and lightusd.type_name(tid) == element, (
+            f"semantic alias {alias} ({role}) does not resolve")
+        assert lightusd.type_from_name(baseline) != 0, (
+            f"semantic alias {alias} base {base} does not resolve")
+    print(f"[aousd] data_types {len(names)} named, {len(aliases)} aliases, "
+          f"unsupported {sorted(unsupported)}")
+    assert unsupported == KNOWN_UNSUPPORTED_DATA_TYPES, (
+        f"unsupported type set changed: {sorted(unsupported)}; update the list")

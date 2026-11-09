@@ -71,8 +71,8 @@ static int do_sizes(size_t num_prims) {
   std::printf("=== struct sizes (bytes) ===\n");
   std::printf("Value              %zu\n", sizeof(Value));
   std::printf("PrimSpec           %zu\n", sizeof(PrimSpec));
-  std::printf("PrimSpecMeta       %zu\n", sizeof(PrimSpecMeta));
-  std::printf("VariantSetData     %zu\n", sizeof(VariantSetData));
+  std::printf("PrimMetadata       %zu\n", sizeof(PrimMetadata));
+  std::printf("PrimVariantSetData     %zu\n", sizeof(PrimVariantSetData));
   std::printf("Layer              %zu\n", sizeof(Layer));
   std::printf("Path               %zu\n", sizeof(Path));
   std::printf("LazyArrayRef       %zu\n", sizeof(LazyArrayRef));
@@ -82,7 +82,7 @@ static int do_sizes(size_t num_prims) {
 
   // Per-prim fixed cost: prims with NO properties / samples / arcs, so the
   // number isolates PrimSpec + Layer bookkeeping overhead (target of the
-  // PrimSpecMetaExt split + lazy TimeSampleStorage work).
+  // PrimMetadataCold split + lazy TimeSampleBlock work).
   long rss_before = cur_rss_kb();
   Timer t;
   t.start();

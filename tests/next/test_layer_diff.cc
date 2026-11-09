@@ -321,11 +321,11 @@ static void test_authored_empty_metadata_diff() {
   if (!root) return;
   root->meta().setPrimOrderAuthored();
   root->meta().setPropertyOrderAuthored();
-  StringListOpEdits& variants = root->meta().variantSetNameEdits();
+  StringListOps& variants = root->meta().variantSetNameEdits();
   variants.authored = true;
   variants.is_explicit = true;
   root->meta().setApiSchemasAuthored();
-  StringListOpEdits& api_schemas = root->meta().apiSchemaEdits();
+  StringListOps& api_schemas = root->meta().apiSchemaEdits();
   api_schemas.authored = true;
   api_schemas.is_explicit = true;
 
@@ -480,13 +480,13 @@ static void test_extension_field_diff() {
   Layer a = BuildScene(opts);
   Layer b = BuildScene(opts);
   b.meta().unknownFields.push_back(
-      TypedExtensionField{"layerExt", Value(int32_t(1)), false, {}});
+      DecodedExtensionField{"layerExt", Value(int32_t(1)), false, {}});
   PrimSpec* ball = b.prim_at_path_mutable("/Root/Ball");
   ball->meta().unknownFields().push_back(
-      TypedExtensionField{"primExt", Value(std::string("raw")), true,
+      DecodedExtensionField{"primExt", Value(std::string("raw")), true,
                           "\"raw\""});
   ball->ensure_property_meta("radius").unknownFields.push_back(
-      TypedExtensionField{"propExt", Value(true), false, {}});
+      DecodedExtensionField{"propExt", Value(true), false, {}});
 
   PsDiffs ps;
   PropDiffs pp;

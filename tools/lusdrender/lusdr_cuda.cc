@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Adapter from lusdrender's streamed flat geometry to the GPU RT core shared
 // with lusdview. Material enrichment is performed before this boundary; this
-// file deliberately owns only geometry/camera conversion and image output.
+// file also bridges semantic texture slots to the descriptor graph ABI.
 #if defined(HAVE_CUDA_RT) || defined(HAVE_HIP)
 
+#include "ptex_atlas.hh"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef HAVE_CUDA_RT
@@ -20,11 +22,110 @@
 #include "rt_scene_build.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "light3d/math.h"
+#include "lusdr_camera.hh"
 #include "image-writer.hh"
 #include "lusdr_context.hh"
 
 namespace lusdr {
 namespace {
+
+// Descriptor ray tracing consumes graph routes rather than the legacy texture
+// slots. Preserve connected PreviewSurface inputs when no retained graph route
+// supplies that lane (MaterialX graphs remain authoritative).
+void RouteSemanticTextures(lusdview::DrawMaterialCPU *mat) {
+  using Node = lusdview::MaterialXGraphNodeCPU;
+  using Op = lusdview::MaterialXGraphOpCPU;
+  auto &graph = mat->materialXGraph;
+  const auto append = [&](const Node &node) {
+    graph.nodes.push_back(node);
+    return static_cast<int>(graph.nodes.size() - 1);
+  };
+  std::vector<std::pair<lusdview::DrawTexSampleCPU, int>> coordinates;
+  const auto route = [&](int lane, const lusdview::DrawTexSampleCPU &sample) {
+    if (sample.tex < 0 || graph.output[lane] >= 0) return;
+    int coord = -1;
+    for (const auto &entry : coordinates) {
+      const auto &old = entry.first;
+      if (old.uvSet == sample.uvSet && old.uv.m00 == sample.uv.m00 &&
+          old.uv.m01 == sample.uv.m01 && old.uv.m10 == sample.uv.m10 &&
+          old.uv.m11 == sample.uv.m11) coord = entry.second;
+    }
+    const size_t needed = (coord < 0 ? 4u : 0u) +
+                          (sample.channel >= 0 ? 4u : 3u);
+    if (graph.nodes.size() + needed >
+        static_cast<size_t>(lusdview::kRtMaterialGraphMaxNodes)) {
+      std::cerr << "Semantic texture route exceeds graph capacity: " << lane << "\n";
+      return;
+    }
+    if (coord < 0) {
+      Node uv;
+      uv.op = Op::Texcoord;
+      uv.value[2][2] = static_cast<float>(sample.uvSet);
+      const int source = append(uv);
+      Node row;
+      row.op = Op::Dot;
+      row.input[0] = source;
+      row.value[1][0] = sample.uv.m00;
+      row.value[1][1] = sample.uv.m01;
+      row.value[1][2] = row.value[1][3] = 0.0f;
+      const int u = append(row);
+      row.value[1][0] = sample.uv.m10;
+      row.value[1][1] = sample.uv.m11;
+      const int v = append(row);
+      Node pair;
+      pair.op = Op::Combine;
+      pair.input[0] = u;
+      pair.input[1] = v;
+      coord = append(pair);
+      coordinates.emplace_back(sample, coord);
+    }
+    Node image;
+    image.op = Op::Image;
+    image.input[0] = coord;
+    image.value[2][3] = 0.0f;  // image UVs come from input 0
+    image.textureId = sample.tex;
+    image.isUdim = sample.isUdim;
+    image.uvOffset[0] = sample.uv.tx;
+    image.uvOffset[1] = sample.uv.ty;
+    int value = append(image);
+    if (sample.channel >= 0) {
+      Node channel;
+      channel.op = Op::Extract;
+      channel.input[0] = value;
+      channel.value[1][0] = static_cast<float>(sample.channel);
+      value = append(channel);
+    }
+    Node scale;
+    scale.op = Op::Multiply;
+    scale.input[0] = value;
+    std::copy(sample.scale, sample.scale + 4, scale.value[1]);
+    const int scaled = append(scale);
+    Node bias;
+    bias.op = Op::Add;
+    bias.input[0] = scaled;
+    std::copy(sample.bias, sample.bias + 4, bias.value[1]);
+    graph.output[lane] = append(bias);
+    graph.valid = true;
+    graph.hasImages = true;
+  };
+  route(0, mat->baseColorSample);
+  route(1, mat->metallicSample);
+  route(2, mat->roughnessSample);
+  route(3, mat->opacitySample);
+  route(4, mat->emissiveSample);
+  const bool had_normal_route = graph.output[5] >= 0;
+  route(5, mat->normalSample);
+  // The normal route's tangent basis must follow the UV set that feeds its
+  // normal map. Only the semantic fallback knows that here; an authored graph
+  // keeps its primary-set tangent.
+  if (!had_normal_route && mat->normalSample.tex >= 0)
+    graph.normal_uv_set = mat->normalSample.uvSet;
+  route(10, mat->specularColorSample);
+  route(13, mat->coatWeightSample);
+  route(15, mat->coatRoughnessSample);
+  if (mat->emissiveSample.tex >= 0 && mat->lightRtOpenPBR.emission == 0.0f)
+    mat->lightRtOpenPBR.emission = 1.0f;
+}
 
 void SetIdentity(float m[16]) {
   std::fill(m, m + 16, 0.0f);
@@ -97,7 +198,25 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       dst.geometryTriOffset = src.tri_id;
       dst.geometryTriCount = src.tri_id >= 0 ? 1 : 0;
     }
+    if (src.kind == PreviewLight::Kind::Dome) {
+      dst.envmapTexture = src.texture_id;
+      // The Vulkan descriptor path reads length as "hidden from camera" and
+      // position/direction as the dome's local X/Y axes (zero = identity).
+      dst.length = src.camera_hidden ? 1.0f : 0.0f;
+      if (lights.dome_rotated) {
+        dst.position[0] = lights.dome_rx.x; dst.position[1] = lights.dome_rx.y;
+        dst.position[2] = lights.dome_rx.z;
+        dst.direction[0] = lights.dome_ry.x; dst.direction[1] = lights.dome_ry.y;
+        dst.direction[2] = lights.dome_ry.z;
+      }
+    }
     dst.shadowEnable = src.shadow_enable;
+    // angle is unused for point lights; -1 marks constant (no 1/d^2) falloff
+    // for the reference camera light.
+    dst.angle = src.constant_attenuation ? -1.0f : 0.0f;
+    // Distant lights: angle == -2 tells the Vulkan descriptor path to skip the
+    // shadow ray (Storm renders without shadows by default).
+    if (src.kind == PreviewLight::Kind::Distant && !src.shadow_enable) dst.angle = -2.0f;
     scene->lights.push_back(std::move(dst));
   };
   for (const PreviewLight &light : lights.finite) append_light(light);
@@ -134,7 +253,38 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         if (channels > 3) image->data[p * 4u + 3u] = pixels[p * size_t(channels) + 3u];
       }
     };
-    if (!src.is_udim) {
+    if (src.is_ptex) {
+      // Lazy Ptex source: build the face atlas only now, for textures a
+      // DrawScene consumer (the Vulkan descriptor path) actually binds.
+      if (src.ptex && src.ptex->reader()) {
+        const lightusd::ptx::Reader &reader = *src.ptex->reader();
+        lusdview::PtexAtlasOptions atlas_options;
+        uint32_t max_edge = 0;
+        for (const lightusd::ptx::FaceInfo &fi : reader.info().faceInfo)
+          max_edge = std::max(max_edge, std::max(fi.width(), fi.height()));
+        atlas_options.maxFaceEdge = std::max(1u, std::min(max_edge, src.ptex_max_face_edge));
+        atlas_options.maxAtlasBytes = 256ull * 1024ull * 1024ull;
+        // Keep a short per-face minification chain in the same atlas so the
+        // descriptor shader can pick a level from the ray footprint.
+        atlas_options.mipLevels =
+            std::max(1u, std::min(8u, src.ptex_mip_levels));
+        lusdview::PtexAtlasBuildStats atlas_stats;
+        std::string atlas_err;
+        if (lusdview::BuildPtexAtlas(reader, atlas_options, src.srgb,
+                                     &dst.image, &dst.ptexFaceRects,
+                                     &atlas_stats, &atlas_err)) {
+          dst.isPtex = true;
+          dst.ptexFaces = src.ptex_faces;
+          dst.ptexMipLevels = atlas_stats.mipLevels;
+          dst.ptexRectTexelOffset = atlas_stats.rectTexelOffset;
+          dst.ptexAtlasBytes = dst.image.data.size();
+          dst.ptexDownsampledFaces = atlas_stats.downsampledFaces;
+        } else {
+          std::cerr << "WARN: Ptex atlas for " << src.ptex_path << ": "
+                    << atlas_err << "\n";
+        }
+      }
+    } else if (!src.is_udim) {
       convert_image(src.width, src.height, src.channels, src.pixels, &dst.image);
     } else {
       dst.isUdim = true;
@@ -214,47 +364,62 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       mat.hasLightRtOpenPBR = material_src.has_openpbr;
       mat.lightRtOpenPBR = material_src.openpbr;
       mat.materialXNodeGraphJson = material_src.materialx_graph_json;
-      const auto set_sample = [&](int texture, int channel,
+      const auto set_sample = [&](uint32_t lane, int texture, int channel,
                                   const ScalarTex *scalar,
-                                  lusdview::DrawTexSampleCPU *sample) {
+                                  lusdview::DrawTexSampleCPU *sample,
+                                  bool color_slot = false) {
         sample->tex = texture;
         sample->channel = channel;
+        // Which geometry UV stream this lane samples, recorded per material by
+        // ResolveMeshMaterialTydraNext. RouteSemanticTextures turns it into the
+        // Texcoord node's second-set flag consumed by the vkr shader.
+        sample->uvSet =
+            static_cast<int>(RtTexUvSet(material_src.uv_set_bits, lane));
         sample->uv.m00 = material_src.uv_xform.rc * material_src.uv_xform.sx;
         sample->uv.m01 = -material_src.uv_xform.rs * material_src.uv_xform.sy;
         sample->uv.m10 = material_src.uv_xform.rs * material_src.uv_xform.sx;
         sample->uv.m11 = material_src.uv_xform.rc * material_src.uv_xform.sy;
         sample->uv.tx = material_src.uv_xform.tx;
         sample->uv.ty = material_src.uv_xform.ty;
+        if (color_slot && texture>=0 && size_t(texture)<textures.size()) {
+          const Texture& source=textures[size_t(texture)];
+          sample->scale[0]=source.scale.x;sample->scale[1]=source.scale.y;sample->scale[2]=source.scale.z;
+          sample->bias[0]=source.bias.x;sample->bias[1]=source.bias.y;sample->bias[2]=source.bias.z;
+        }
         if (scalar) {
           sample->scale[0] = scalar->scale;
           sample->bias[0] = scalar->bias;
         }
       };
-      set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample);
-      set_sample(material_src.normal_tex_id, -1, nullptr, &mat.normalSample);
-      set_sample(material_src.coat_normal_tex_id, -1, nullptr,
-                 &mat.coatNormalSample);
-      set_sample(material_src.displacement_tex.id,
+      set_sample(kRtTexUvBase, material_src.tex_id, -1, nullptr,
+                 &mat.baseColorSample, true);
+      set_sample(kRtTexUvSpecular, material_src.specular_tex_id, -1, nullptr,
+                 &mat.specularColorSample, true);
+      set_sample(kRtTexUvNormal, material_src.normal_tex_id, -1, nullptr,
+                 &mat.normalSample);
+      set_sample(kRtTexUvCoatNormal, material_src.coat_normal_tex_id, -1,
+                 nullptr, &mat.coatNormalSample);
+      set_sample(kRtTexUvDisplacement, material_src.displacement_tex.id,
                  material_src.displacement_tex.ch,
                  &material_src.displacement_tex, &mat.displacementSample);
-      set_sample(material_src.rough_tex.id, material_src.rough_tex.ch,
-                 &material_src.rough_tex,
+      set_sample(kRtTexUvRoughness, material_src.rough_tex.id,
+                 material_src.rough_tex.ch, &material_src.rough_tex,
                  &mat.roughnessSample);
-      set_sample(material_src.metal_tex.id, material_src.metal_tex.ch,
-                 &material_src.metal_tex,
+      set_sample(kRtTexUvMetallic, material_src.metal_tex.id,
+                 material_src.metal_tex.ch, &material_src.metal_tex,
                  &mat.metallicSample);
-      set_sample(material_src.emission_tex_id, -1, nullptr,
-                 &mat.emissiveSample);
-      set_sample(material_src.occ_tex.id, material_src.occ_tex.ch,
-                 &material_src.occ_tex,
+      set_sample(kRtTexUvEmissive, material_src.emission_tex_id, -1, nullptr,
+                 &mat.emissiveSample, true);
+      set_sample(kRtTexUvOcclusion, material_src.occ_tex.id,
+                 material_src.occ_tex.ch, &material_src.occ_tex,
                  &mat.occlusionSample);
-      set_sample(material_src.opacity_tex.id, material_src.opacity_tex.ch,
-                 &material_src.opacity_tex,
+      set_sample(kRtTexUvOpacity, material_src.opacity_tex.id,
+                 material_src.opacity_tex.ch, &material_src.opacity_tex,
                  &mat.opacitySample);
-      set_sample(material_src.clearcoat_tex.id,
+      set_sample(kRtTexUvCoatWeight, material_src.clearcoat_tex.id,
                  material_src.clearcoat_tex.ch, &material_src.clearcoat_tex,
                  &mat.coatWeightSample);
-      set_sample(material_src.clearcoat_rough_tex.id,
+      set_sample(kRtTexUvCoatRoughness, material_src.clearcoat_rough_tex.id,
                  material_src.clearcoat_rough_tex.ch,
                  &material_src.clearcoat_rough_tex,
                  &mat.coatRoughnessSample);
@@ -278,6 +443,8 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         }
       }
     }
+    RouteSemanticTextures(&mat);
+    if (!mat.hasLightRtOpenPBR) lusdview::BakeRealtimePbrMaterial(&mat);
     scene->materials.push_back(std::move(mat));
 
     lusdview::DrawMeshCPU mesh;
@@ -400,13 +567,48 @@ bool RunSharedRT(const char *backend, const Options &opt,
                  const std::vector<ResolvedMat> &materials,
                  const std::vector<Texture> &textures,
                  const LightCache &lights,
-                 const CameraFrame &camera, int height) {
+                 const CameraFrame &camera, int height,
+                 const std::vector<EllipseSceneChunk>* ellipses = nullptr) {
   lusdview::DrawScene scene;
   if (!BuildSharedDrawScene(base_colors, geos, materials, textures, lights,
-                            opt.input, &scene)) {
+                            opt.input, &scene) &&
+      !(geos.empty() && ellipses && !ellipses->empty())) {
     std::cerr << backend << " RT scene conversion failed.\n";
     return false;
   }
+  if (ellipses && !ellipses->empty()) {
+    if (scene.materials.empty()) scene.materials.emplace_back();
+    if (!scene.hasBounds) {
+      std::fill(scene.aabbMin, scene.aabbMin+3, std::numeric_limits<float>::max());
+      std::fill(scene.aabbMax, scene.aabbMax+3, -std::numeric_limits<float>::max());
+    }
+    for (const auto& chunk : *ellipses) {
+      lusdview::DrawPointsCPU points;
+      SetIdentity(points.world);
+      points.gaussian = true;
+      points.previewAlbedo=opt.scene_preview_albedo;
+      points.materialId = 0;
+      points.purpose = "default";
+      points.points = chunk.centers;
+      points.ellipseRadii = chunk.radii;
+      points.ellipseNormals = chunk.normals;
+      points.ellipseMajorAxes = chunk.major_axes;
+      for (size_t i=0;i<chunk.count;++i) {
+        const Vec3 color = chunk.info[i].base_color;
+        points.colors.insert(points.colors.end(), {color.x,color.y,color.z});
+        points.opacities.push_back(1.f);
+        const float radius=std::max(chunk.radii[i*2],chunk.radii[i*2+1]);
+        for(int k=0;k<3;++k) {
+          scene.aabbMin[k]=std::min(scene.aabbMin[k],chunk.centers[i*3+size_t(k)]-radius);
+          scene.aabbMax[k]=std::max(scene.aabbMax[k],chunk.centers[i*3+size_t(k)]+radius);
+        }
+      }
+      scene.points.push_back(std::move(points));
+    }
+    scene.hasBounds=true;
+    std::cerr << backend << " native Gaussian carriers: " << scene.points.size() << " chunk(s)\n";
+  }
+  if(opt.scene_preview_albedo)scene.lights.clear();
   Tracer tracer;
   std::string err;
   if (!tracer.init(&err)) {
@@ -425,11 +627,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
   const light3d::Vec3 fwd{camera.forward.x, camera.forward.y, camera.forward.z};
   const light3d::Vec3 up{camera.up.x, camera.up.y, camera.up.z};
   const light3d::Mat4 view = light3d::lookAt(eye, eye + fwd, up);
-  const float znear = std::max(camera.znear, 1.0e-5f);
-  const float zfar = std::max(camera.zfar, znear + 1.0f);
-  const light3d::Mat4 proj = light3d::perspectiveZeroOne(
-      camera.yfov, static_cast<float>(w) / static_cast<float>(h), znear,
-      zfar);
+  const light3d::Mat4 proj = CameraProjectionZeroOne(camera,static_cast<float>(w)/static_cast<float>(h));
   const light3d::Mat4 vp = proj * view;
   const light3d::Mat4 inv = vp.inverse();
   const float cam[3] = {camera.origin.x, camera.origin.y, camera.origin.z};
@@ -456,7 +654,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
               << "," << cam[2] << " forward=" << camera.forward.x << ","
               << camera.forward.y << "," << camera.forward.z
               << " up=" << camera.up.x << "," << camera.up.y << ","
-              << camera.up.z << " clip=" << znear << "," << zfar
+              << camera.up.z << " clip=" << camera.znear << "," << camera.zfar
               << " bounds=["
               << scene.aabbMin[0] << "," << scene.aabbMin[1] << ","
               << scene.aabbMin[2] << "]-[" << scene.aabbMax[0] << ","
@@ -483,7 +681,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
   std::vector<uint8_t> rgba;
   std::vector<float> linear_rgba;
   uint32_t rendered_samples = 0;
-  if (!tracer.trace(inv.m, vp.m, cam, light, clear, 1.0f, 0, 1.0f,
+  if (!tracer.trace(inv.m, vp.m, cam, light, clear, opt.scene_preview_albedo?0.0f:1.0f, 0, 1.0f,
                     scene_min, scene_extent, w, h, &rgba, &err,
                     spp, nullptr, path_trace.enabled ? &path_trace : nullptr,
                     path_trace.enabled ? &linear_rgba : nullptr,
@@ -522,10 +720,11 @@ bool RunCudaSharedRT(const Options &opt,
                      const std::vector<ResolvedMat> &materials,
                      const std::vector<Texture> &textures,
                      const LightCache &lights,
-                     const CameraFrame &camera, int height) {
+                     const CameraFrame &camera, int height,
+                     const std::vector<EllipseSceneChunk>* ellipses) {
   return RunSharedRT<lusdview::CudaRayTracer>(
       "CUDA", opt, base_colors, geos, materials, textures, lights, camera,
-      height);
+      height, ellipses);
 }
 #endif
 

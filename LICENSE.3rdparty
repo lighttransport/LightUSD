@@ -29,6 +29,7 @@ in each entry.
 | TinyEXR and included OpenEXR code | BSD-style | `src/external/tinyexr.h` |
 | TinyDNG | MIT | `src/external/tiny_dng_loader.h`, `src/external/tiny_dng_writer.h` |
 | tinyobjloader | MIT | `src/external/tiny_obj_loader.h` |
+| tinyobjloader C11 loader and tessellator | MIT | `src/external/tinyobjloader-c/LICENSE` |
 | tinygltf | MIT | `src/external/tiny_gltf.h` |
 | pystring | BSD 3-Clause | `src/external/pystring.LICENSE` |
 | fpng | Unlicense | `src/external/fpng.h`, `src/external/fpng.cpp` |

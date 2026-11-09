@@ -11,6 +11,8 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
+#include "tydra/next/scene-preview.hh"
+#include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,13 +27,13 @@
 #include <system_error>
 #include <utility>
 
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 #include "app.hh"
 #include "config.hh"
 #include "log.hh"
 #include "renderer.hh"
-#include "tydra/next/resource-budget.hh"
+#include "lightusd-render-cpp.hh"
 
 namespace {
 
@@ -218,7 +220,10 @@ bool ParseFiniteNonNegativeFloat(const char* text, float* value) {
 // would size the stage/geometry limits far past anything sensible). Falls back
 // to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
 uint64_t HostMemoryCapacityBytes() {
-  constexpr uint64_t kTarget = lightusd::tydra::next::GiB(32);
+  // Default to half of the typical large-scene host (64 GiB on a 128 GiB
+  // Threadripper) rather than a hard 32 GiB ceiling, so Island-class scenes are
+  // not artificially capped while still bounding unbounded allocations.
+  constexpr uint64_t kTarget = (uint64_t{64} << 30);
   std::ifstream f("/proc/meminfo");
   std::string tok;
   while (f >> tok) {
@@ -236,12 +241,22 @@ uint64_t HostMemoryCapacityBytes() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
+    return 1;
+  }
   const std::string executableName =
       (argc > 0 && argv[0]) ? std::filesystem::path(argv[0]).filename().string()
                             : std::string();
   const bool virtualHumanProfile = executableName == "vchar" ||
                                    executableName == "vchar.exe";
-#if defined(HAVE_VULKAN)
+#if defined(HAVE_METAL)
+  lusdview::Backend backend = lusdview::Backend::Metal;
+#elif defined(HAVE_VULKAN)
   lusdview::Backend backend = lusdview::Backend::Vulkan;
 #else
   lusdview::Backend backend = lusdview::Backend::GL;
@@ -352,6 +367,7 @@ int main(int argc, char** argv) {
   std::optional<size_t> curvePreviewPrims;
   std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
+  bool wantWireframeXray = false;  // --wireframe-xray: draw edges through surfaces
   bool wantMaterialId = false;
   std::vector<std::pair<std::string, lusdview::RenderMode>> modeSweep;  // --mode-sweep
   std::optional<lusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -369,7 +385,7 @@ int main(int argc, char** argv) {
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   int streamIdleMs = 350;            // ms of input quiet before the lossless refine
-  bool headless = false;      // windowless offscreen rendering (Vulkan only)
+  bool headless = false;      // windowless offscreen rendering (Metal/Vulkan)
   bool threaded = false;
   bool threadedExplicit = false;
   bool adaptiveQuality = true;
@@ -384,6 +400,8 @@ int main(int argc, char** argv) {
   bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
+  bool stereoRequested = false;             // --stereo: authored left/right pair
+  bool rasterMotionEnabled = true;           // native raster shutter accumulation
   lusdview::CameraConform cameraConform{lusdview::CameraConform::Fit};
   bool cameraConformExplicit = false;
   bool viewDirExplicit = false;              // --view-dir: deterministic auto-fit view
@@ -407,7 +425,7 @@ int main(int argc, char** argv) {
   float envmapIntensity = 1.0f;
   float envmapRotation = 0.0f;
   bool maxTextureSizeExplicit = false;
-  lightusd::tydra::next::TextureFit textureFit{};  // Default (2/3 of VRAM)
+  lightusd::api::TextureFit textureFit{0, LIGHTUSD_TEXTURE_FIT_DEFAULT, 0};  // Default (2/3 of VRAM)
   bool textureFitExplicit = false;
   bool textureBudgetExplicit = false;
   bool textureCompressionExplicit = false;
@@ -427,6 +445,7 @@ int main(int argc, char** argv) {
   bool playAnim = false;                  // --play: start timeline playback on load
 
   for (int i = 1; i < argc; ++i) {
+    const int argumentIndex = i;
     if (std::strcmp(argv[i], "--config") == 0) {
       if ((i + 1) >= argc) {
         LOGE("--config requires a path");
@@ -442,8 +461,11 @@ int main(int argc, char** argv) {
       } else if (std::strcmp(argv[i], "gl") == 0 ||
                  std::strcmp(argv[i], "opengl") == 0) {
         backend = lusdview::Backend::GL;
+      } else if (std::strcmp(argv[i], "metal") == 0 ||
+                 std::strcmp(argv[i], "mtl") == 0) {
+        backend = lusdview::Backend::Metal;
       } else {
-        LOGE("--backend must be gl, opengl, vk, or vulkan");
+        LOGE("--backend must be gl, opengl, vk, vulkan, metal, or mtl");
         return 1;
       }
       backendExplicit = true;
@@ -695,6 +717,10 @@ int main(int argc, char** argv) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
+    } if (std::strcmp(argv[i], "--stereo") == 0) {
+      stereoRequested = true;
+    } if (std::strcmp(argv[i], "--no-raster-motion") == 0) {
+      rasterMotionEnabled = false;
     } if (std::strcmp(argv[i], "--camera-conform") == 0 &&
                (i + 1) < argc) {
       cameraConformExplicit = true;
@@ -796,14 +822,14 @@ int main(int argc, char** argv) {
       }
       subdivisionPrimLevels[prim] = level;
     } if (std::strcmp(argv[i], "--texture-fit") == 0 && (i + 1) < argc) {
-      if (!lightusd::tydra::next::ParseTextureFit(argv[++i], &textureFit)) {
+      if (!lightusd::api::ParseTextureFit(argv[++i], &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
       }
       textureFitExplicit = true;
     } if (std::strncmp(argv[i], "--texture-fit=", 14) == 0) {
-      if (!lightusd::tydra::next::ParseTextureFit(argv[i] + 14, &textureFit)) {
+      if (!lightusd::api::ParseTextureFit(argv[i] + 14, &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
@@ -829,14 +855,14 @@ int main(int argc, char** argv) {
         return 1;
       }
     } if (std::strcmp(argv[i], "--texture-gpu") == 0 && (i + 1) < argc) {
-      const char* backend = argv[++i];
-      if (std::strcmp(backend, "off") == 0) {
+      const char* textureBackend = argv[++i];
+      if (std::strcmp(textureBackend, "off") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::Off;
-      } else if (std::strcmp(backend, "vulkan") == 0) {
+      } else if (std::strcmp(textureBackend, "vulkan") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::Vulkan;
-      } else if (std::strcmp(backend, "cuda") == 0) {
+      } else if (std::strcmp(textureBackend, "cuda") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::CUDA;
-      } else if (std::strcmp(backend, "hip") == 0) {
+      } else if (std::strcmp(textureBackend, "hip") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::HIP;
       } else {
         LOGE("--texture-gpu must be off, vulkan, cuda or hip");
@@ -1114,6 +1140,9 @@ int main(int argc, char** argv) {
       if (rtMaxInstances < 0) rtMaxInstances = 0;
     } if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
+    } if (std::strcmp(argv[i], "--wireframe-xray") == 0) {
+      wantWireframe = true;
+      wantWireframeXray = true;
     } if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
     } if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
@@ -1218,7 +1247,7 @@ int main(int argc, char** argv) {
       streamMotionQuality = std::atoi(argv[++i]);
     } if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
-          "Usage: lusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
+          "Usage: lusdview [--config PATH] [--backend gl|vk|metal] [--rt] [--frames N] "
           "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
@@ -1227,8 +1256,8 @@ int main(int argc, char** argv) {
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
           "default config path).\n"
-          "  --backend gl|vk Select renderer backend (default: Vulkan when built "
-          "and available, otherwise OpenGL).\n"
+          "  --backend gl|vk|metal Select renderer backend (default: Metal on macOS, "
+          "otherwise Vulkan when built, then OpenGL).\n"
           "  --vk-device INDEX|NAME  Select a Vulkan physical device by index or "
           "case-insensitive device/driver substring (e.g. 0, nvidia, rtx, llvmpipe). "
           "Also available in config as vulkan_device.\n"
@@ -1247,9 +1276,38 @@ int main(int argc, char** argv) {
           "lower is stronger, 0 disables; EXR is unaffected).\n"
           "  --pt-denoise off|auto|on  Built-in edge-aware denoising policy.\n"
           "  --pt-motion-segments N  Stratified shutter snapshots.\n"
+          "  --no-raster-motion  Render only the selected timeline pose in "
+          "raster mode (for external sampling and debugging).\n"
           "  --pt-seed N  Deterministic sampling seed.\n"
           "  --linear-output out.exr  Write unfiltered scene-linear half EXR.\n"
           "  --f-stop F / --focus-distance D  Override USD camera lens values.\n"
+          "  --stereo      Resolve authored stereoRole left/right cameras; "
+          "headless raster screenshots are side-by-side (use --camera when "
+          "multiple pairs exist).\n"
+          "  --scene-preview  Convert/cache a bounded scene preview before loading.\n"
+          "  --preview-kind gaussian|points|volume  Representation (default gaussian).\n"
+          "  --preview-budget-mib N  Total renderer budget (default 1/4 VRAM).\n"
+          "  --preview-resolution N  Explicit sampling resolution.\n"
+          "  --preview-cache-dir DIR  Reuse portable cached USD sidecars.\n"
+          "  --preview-refresh  Regenerate the cached preview.\n"
+          "  --preview-lod-pixels N  Camera LOD error (default 2 pixels).\n"
+          "  --preview-no-lod  Load the finest cached representation.\n"
+          "  --preview-compute auto|cpu|vulkan|cuda  Conversion compute backend.\n"
+          "  --preview-volume-grids  Open an existing UsdVol scene directly.\n"
+          "  --preview-volume-mode surface|medium  Direct-grid rendering mode.\n"
+          "  --preview-volume-cutoff F    Residual transmittance, [0,1] (default 1e-7; 0 disables).\n"
+          "  --preview-volume-steps N     Ray step budget, 1..65536 (default 4096).\n"
+          "  --preview-shadow-steps N     Shadow step budget, 1..65536 (default 1024).\n"
+          "  --preview-volume-step-size F  Step in voxel units, (0,2] (default .5).\n"
+          "  --preview-volume-error F     Relative quadrature error, [0,1] (default .001).\n"
+          "  --preview-volume-bounces N   Scattering orders, 1..256 (default 1).\n"
+          "  --preview-volume-samples N   Paths per pixel, 1..64 (default 2).\n"
+          "  --preview-light-samples N    Textured light samples, 1..64 (default 8).\n"
+          "  --preview-accumulation-frames N  Stable-camera frame cap, 1..4096 (default 64).\n"
+          "  --preview-volume-density/scattering/emission/anisotropy F  Medium controls.\n"
+          "  --preview-volume-headlight / --preview-volume-no-shadows  Lighting controls.\n"
+          "  --preview-no-source-refine  Keep the initial cached samples.\n"
+          "  --preview-volume-carrier  Use cached isosurface meshes.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -1329,6 +1387,8 @@ int main(int argc, char** argv) {
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
+          "  --wireframe-xray  Start in wireframe mode with x-ray edges (all "
+          "edges drawn through surfaces; hidden-line removal off).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
           "color per material; all backends).\n"
           "  --mode NAME   Start in a render mode: shaded, wireframe, normals, "
@@ -1350,7 +1410,7 @@ int main(int argc, char** argv) {
           "overriding the SkelAnimation; honors in-between shapes. Also editable "
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
-          "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
+          "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Use the default next-core + tydra-next loader "
           "(compatibility flag).\n"
           "  --legacy-load Use the legacy eager loader.\n"
@@ -1454,7 +1514,7 @@ int main(int argc, char** argv) {
           "  --stream-idle-ms MS  Input-quiet time before the lossless refine "
           "frame is sent (default 350).\n");
       return 0;
-    } else if (argv[i][0] != '-') {
+    } else if (i == argumentIndex && argv[i][0] != '-') {
       file = argv[i];
     }
   }
@@ -1464,11 +1524,40 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+#if !defined(HAVE_METAL)
+  if (backend == lusdview::Backend::Metal) {
+    LOGE("Metal backend not compiled in (requires macOS and LUSDVIEW_WITH_METAL=ON)");
+    return 1;
+  }
+#endif
+
   if ((quitAfterFullUpload || quitAfterConvert) && maxFrames >= 0) {
     LOGE("--quit-after-full-upload/--quit-after-convert cannot be combined with --frames");
     return 1;
   }
 
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = timeCode.value_or(0.0);
+    scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &file, scenePreview, 0, &scenePreviewError)) {
+      LOGE("scene preview: %s", scenePreviewError.c_str());
+      return 1;
+    }
+    useNextLoader = true;
+    largeSceneProfile = LargeSceneProfile::Off;
+    largeSceneProfileExplicit = true;
+    dynamicLod = false;
+    const double budgetGiB = double(scenePreview.options.gpu_budget_bytes) /
+                             double(uint64_t(1) << 30);
+    vramBudgetGiB = budgetGiB;
+    vramBudgetExplicit = true;
+    maxGpuMemGiB = budgetGiB;
+    maxGpuMemExplicit = true;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    textureOptions.textureBudgetMB = 32;
+    textureBudgetExplicit = true;
+  }
   LargeSceneProfile effectiveProfile = largeSceneProfile;
   // Large production assets should receive the interactive streaming budget
   // even when opened directly from the command line. Keep `--large-scene-
@@ -1498,7 +1587,7 @@ int main(int argc, char** argv) {
   uint64_t vramCapacity = 0;
   if (vramBudgetExplicit && vramBudgetGiB > 0.0) {
     vramCapacity = static_cast<uint64_t>(
-        vramBudgetGiB * double(lightusd::tydra::next::GiB(1)));
+        vramBudgetGiB * double((uint64_t{1} << 30)));
   } else {
 #if defined(HAVE_VULKAN)
     // Enumerating physical devices through a throw-away instance can runtime-
@@ -1513,14 +1602,14 @@ int main(int argc, char** argv) {
 #endif
     // No Vulkan, or the probe failed: keep the historical 16 GiB assumption
     // rather than collapsing every budget to zero.
-    if (vramCapacity == 0) vramCapacity = lightusd::tydra::next::GiB(16);
+    if (vramCapacity == 0) vramCapacity = (uint64_t{16} << 30);
   }
-  const lightusd::tydra::next::ResourceBudget targetBudget =
-      lightusd::tydra::next::ComputeResourceBudget(hostCapacity, vramCapacity);
+  const lightusd::api::ResourceBudget targetBudget =
+      lightusd::api::ComputeResourceBudget(hostCapacity, vramCapacity);
   const double targetVramGiB =
-      double(targetBudget.vram_limit) / double(lightusd::tydra::next::GiB(1));
+      double(targetBudget.vram_limit) / double((uint64_t{1} << 30));
   const double targetHostGiB =
-      double(targetBudget.host_limit) / double(lightusd::tydra::next::GiB(1));
+      double(targetBudget.host_limit) / double((uint64_t{1} << 30));
 
   // Bound texture residency for ordinary --next loads as well as named
   // large-scene profiles. The decoder applies these limits while reading, so
@@ -1532,50 +1621,51 @@ int main(int argc, char** argv) {
   // unless the user asked for something specific. Must precede the derivation
   // below, which consumes textureFit.
   if (fullFidelity && !textureFitExplicit) {
-    textureFit.policy = lightusd::tydra::next::TextureFitPolicy::Never;
+    textureFit.policy = LIGHTUSD_TEXTURE_FIT_NEVER;
   }
-  const lightusd::tydra::next::TextureBudget derivedTextureBudget =
-      lightusd::tydra::next::DeriveTextureBudget(targetBudget);
   // The "comfort" budget (25% of resident VRAM) is what the mip decision keeps
   // using. It must NOT follow --texture-fit: widening the mip skip makes every
   // later frame sample minified textures at full resolution, which thrashes the
   // texture cache (it once took the texture-semantic AOV suite from 52 s to
   // over 300 s). Only compression and resize follow the policy.
-  const uint64_t textureComfortBytes = derivedTextureBudget.budget_bytes;
-  uint64_t textureFitThreshold =
-      lightusd::tydra::next::TextureFitThresholdBytes(textureFit, vramCapacity);
+  const uint64_t textureComfortBytes = targetBudget.gpu_texture_limit;
+  uint64_t textureFitThreshold = 0;
+  if (lightusd::api::TextureFitThresholdBytes(textureFit, vramCapacity,
+                                             &textureFitThreshold) != LIGHTUSD_OK) {
+    LOGE("invalid texture-fit policy");
+    return 1;
+  }
   // The threshold is a fraction of VRAM, but the decoded set is resident in
   // HOST memory while loading. On a big card with a small host (24 GiB GPU,
   // 16 GiB RAM) an aggressive policy would otherwise authorise ~21 GiB of host
   // allocation. Clamp, and say so.
   {
     const uint64_t hostClamp =
-        lightusd::tydra::next::Percent(targetBudget.host_limit, 60);
+        lightusd::api::BudgetPercent(targetBudget.host_limit, 60);
     // Only the fraction-of-VRAM policies are clamped. `never` and `always` are
     // explicit user intent -- "never" must mean never, or the escape hatch is
     // not one -- and `absolute` is already a number the user chose.
     const bool clampable =
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Modest ||
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Default ||
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Aggressive;
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_MODEST ||
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_DEFAULT ||
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_AGGRESSIVE;
     if (clampable && hostClamp > 0 && textureFitThreshold > hostClamp) {
       LOGI("texture-fit: threshold %.1f GiB clamped to %.1f GiB by host memory",
-           double(textureFitThreshold) / double(lightusd::tydra::next::GiB(1)),
-           double(hostClamp) / double(lightusd::tydra::next::GiB(1)));
+           double(textureFitThreshold) / double((uint64_t{1} << 30)),
+           double(hostClamp) / double((uint64_t{1} << 30)));
       textureFitThreshold = hostClamp;
     }
   }
   {
-    using lightusd::tydra::next::TextureFitPolicy;
-    if (textureFit.policy == TextureFitPolicy::Always) {
+    if (textureFit.policy == LIGHTUSD_TEXTURE_FIT_ALWAYS) {
       // Pre-policy behaviour: hard 2048 edge cap + 25% byte budget.
-      if (!maxTextureSizeExplicit && derivedTextureBudget.max_edge > 0) {
+      if (!maxTextureSizeExplicit && targetBudget.texture_max_edge > 0) {
         textureOptions.maxTextureSize =
-            static_cast<int>(derivedTextureBudget.max_edge);
+            static_cast<int>(targetBudget.texture_max_edge);
       }
-      if (!textureBudgetExplicit && derivedTextureBudget.budget_bytes > 0) {
+      if (!textureBudgetExplicit && targetBudget.gpu_texture_limit > 0) {
         textureOptions.textureBudgetMB = static_cast<int>(
-            derivedTextureBudget.budget_bytes / (1024ull * 1024ull));
+            targetBudget.gpu_texture_limit / (1024ull * 1024ull));
       }
     } else {
       // Threshold policies (and `never`) leave the edge uncapped: the decoder's
@@ -1586,7 +1676,7 @@ int main(int argc, char** argv) {
       if (!maxTextureSizeExplicit) textureOptions.maxTextureSize = 0;
       if (!textureBudgetExplicit) {
         textureOptions.textureBudgetMB =
-            (textureFit.policy == TextureFitPolicy::Never)
+            (textureFit.policy == LIGHTUSD_TEXTURE_FIT_NEVER)
                 ? 0
                 : static_cast<int>(textureFitThreshold / (1024ull * 1024ull));
       }
@@ -1594,7 +1684,7 @@ int main(int argc, char** argv) {
   }
   if (effectiveProfile != LargeSceneProfile::Off) {
     if (!useNextExplicit) useNextLoader = true;
-    if (!backendExplicit) {
+    if (!backendExplicit && backend != lusdview::Backend::Metal) {
       backend = lusdview::Backend::Vulkan;
       backendExplicit = true;
     }
@@ -1711,19 +1801,19 @@ int main(int argc, char** argv) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
-  // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  // Metal and Vulkan support windowless rendering; GL needs a window/context.
   if (viewDirExplicit && !cameraName.empty()) {
     LOGE("--view-dir cannot be combined with the selected --camera/profile camera");
     return 1;
   }
 
-  if (headless) {
+  if (headless && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
   // The `next` loader is the OpenGL large-scene mesh preview; default it to the
   // GL backend unless the user picked one explicitly (it feeds either backend).
-  if (useNextLoader && !backendExplicit) {
+  if (useNextLoader && !backendExplicit && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::GL;
   }
 
@@ -1747,16 +1837,16 @@ int main(int argc, char** argv) {
   if (effectiveProfile != LargeSceneProfile::Off) {
     LOGI("resource budget: vram capacity=%.1f GiB (%s) -> limit=%.1f GiB, "
          "host capacity=%.1f GiB -> limit=%.1f GiB",
-         double(vramCapacity) / double(lightusd::tydra::next::GiB(1)),
+         double(vramCapacity) / double((uint64_t{1} << 30)),
          vramBudgetExplicit ? "--vram-budget" : "probed",
          targetVramGiB,
-         double(hostCapacity) / double(lightusd::tydra::next::GiB(1)),
+         double(hostCapacity) / double((uint64_t{1} << 30)),
          targetHostGiB);
     LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
          ProfileName(effectiveProfile),
-         backend == lusdview::Backend::Vulkan ? "vk" : "gl",
+         lusdview::BackendName(backend),
          useNextLoader ? "on" : "off",
          rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
          rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
@@ -1975,7 +2065,7 @@ int main(int argc, char** argv) {
         ? 0
         : static_cast<size_t>(
               maxGpuMemExplicit && maxGpuMemGiB > 0.0
-                  ? maxGpuMemGiB * double(lightusd::tydra::next::GiB(1))
+                  ? maxGpuMemGiB * double((uint64_t{1} << 30))
                   : double(targetBudget.gpu_geometry_limit));
     lo.uploadStagingBytes =
         static_cast<size_t>(targetBudget.upload_staging_limit);
@@ -2078,6 +2168,9 @@ int main(int argc, char** argv) {
   }
   if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
+  app.setScenePreviewRequest(scenePreview);
+  if(scenePreview.enabled && scenePreview.camera_lod)
+    app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);
@@ -2131,9 +2224,12 @@ int main(int argc, char** argv) {
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
+  app.setStereoRequested(stereoRequested);
+  app.setRasterMotionEnabled(rasterMotionEnabled);
   app.setCameraConform(cameraConform);
   if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(lusdview::RenderMode::Wireframe);
+  if (wantWireframeXray) app.setWireframeXray(true);
   if (wantMaterialId) app.setRenderMode(lusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
   if (!modeSweep.empty()) {

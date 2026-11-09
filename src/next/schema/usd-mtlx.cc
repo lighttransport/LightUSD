@@ -4,6 +4,7 @@
 // LightUSD Next - UsdMtlx Schema Implementation
 
 #include "usd-mtlx.hh"
+#include "schema-predicates.hh"
 #include <cstring>
 
 namespace lightusd {
@@ -15,9 +16,6 @@ namespace next {
 
 namespace {
 
-static bool IsType(const UsdPrim& prim, const std::string& type) {
-  return prim.IsValid() && prim.GetTypeName() == type;
-}
 
 } // namespace
 
@@ -50,14 +48,14 @@ bool GetMaterialXShaderData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("inputs:nodeUri");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeUri = *s;
     }
   }
   {
     const Value* val = prim.GetPropertyValue("inputs:nodeDefId");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeDefId = *s;
     }
   }
@@ -67,7 +65,7 @@ bool GetMaterialXShaderData(const Stage& stage, const UsdPrim& prim,
     const Value* val = prim.GetPropertyValue("outputs:mtlx:output");
     if (!val) val = prim.GetPropertyValue("info:mtlx:output");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->output = *s;
     }
   }
@@ -112,7 +110,7 @@ bool GetMaterialXNodeGraphData(const Stage& stage, const UsdPrim& prim,
     const Value* val = prim.GetPropertyValue("info:mtlx:docUri");
     if (!val) val = prim.GetPropertyValue("strings:mtlx:docUri");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->docUri = *s;
     }
   }
@@ -120,7 +118,7 @@ bool GetMaterialXNodeGraphData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("outputs:mtlx:output");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->output = *s;
     }
   }
@@ -142,7 +140,7 @@ bool GetMaterialXLightNodeData(const Stage& stage, const UsdPrim& prim,
     const Value* val = nullptr;
     val = prim.GetPropertyValue("inputs:nodeUri");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeUri = *s;
     }
   }
@@ -150,7 +148,7 @@ bool GetMaterialXLightNodeData(const Stage& stage, const UsdPrim& prim,
     const Value* val = nullptr;
     val = prim.GetPropertyValue("inputs:nodeDefId");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeDefId = *s;
     }
   }
@@ -159,8 +157,8 @@ bool GetMaterialXLightNodeData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("inputs:color");
     if (val && val->is_array()) {
-      const std::vector<float>* arr = val->as_float_array();
-      if (arr) out->color = *arr;
+      auto arr = val->as_float_array();
+      if (arr) out->color.assign(arr->begin(), arr->end());
     }
   }
 
@@ -198,7 +196,7 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("strings:mtlx:NodedefInput:nodeUri");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeUri = *s;
     }
   }
@@ -206,7 +204,7 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("strings:mtlx:NodedefInput:nodeDefId");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->nodeDefId = *s;
     }
   }
@@ -214,7 +212,7 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("outputs:mtlx:output");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->output = *s;
     }
   }
@@ -222,7 +220,7 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("inputs:mtlx:input");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->input = *s;
     }
   }
@@ -230,7 +228,7 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("info:mtlx:colorspace");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->colorspace = *s;
     }
   }

@@ -1,0 +1,22 @@
+#usda 1.0
+(defaultPrim = "World"
+ metersPerUnit = 1
+ kilogramsPerUnit = 1
+ upAxis = "Z")
+# Asset-free fixed-base articulation: the world joint is the articulation root.
+def Xform "World" {
+ def PhysicsScene "PhysicsScene" {
+  vector3f physics:gravityDirection = (0, 0, -1)
+  float physics:gravityMagnitude = 0
+ }
+ def Xform "body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {
+  float physics:mass = 1
+  point3f physics:centerOfMass = (0, 0, 0)
+  float3 physics:diagonalInertia = (0.02, 0.03, 0.04)
+  quatf physics:principalAxes = (1, 0, 0, 0)
+ }
+ def PhysicsRevoluteJoint "joint" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
+  uniform token physics:axis = "Z"
+  rel physics:body1 = </World/body>
+ }
+}

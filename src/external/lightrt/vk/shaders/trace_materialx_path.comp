@@ -16,6 +16,10 @@ layout(binding=6, scalar) readonly buffer Texels { uint texels[]; };
 layout(binding=7, scalar) readonly buffer TextureDescs { int textureDescs[]; };
 layout(binding=8, scalar) readonly buffer Lights { float lights[]; };
 layout(binding=9, scalar) writeonly buffer Output { float outputPixels[]; };
+// Per-triangle Ptex reference (uint32): bits 31..2 face id, bit 1 winding swapped,
+// bit 0 fan triangle (0: corners 0,1,2; 1: corners 0,2,3); 0xFFFFFFFF = none. A
+// one-entry 0xFFFFFFFF dummy means the scene has no Ptex material.
+layout(binding=10, scalar) readonly buffer PtexTri { uint ptexTri[]; };
 
 layout(push_constant, scalar) uniform Push {
   mat4 invViewProj;
@@ -28,8 +32,8 @@ layout(push_constant, scalar) uniform Push {
 
 const float PI = 3.14159265358979323846;
 const uint MAT_STRIDE = 80u;
-const uint GRAPH_OUTPUTS = 48u;
-const uint GRAPH_HEADER = 50u;
+const uint GRAPH_OUTPUTS = 49u;
+const uint GRAPH_HEADER = 51u;
 const uint GRAPH_NODE = 21u;
 const uint GRAPH_NODES = 64u;
 const uint GRAPH_STRIDE = GRAPH_HEADER + GRAPH_NODES * GRAPH_NODE;
@@ -64,13 +68,70 @@ float wrapCoord(float x, int mode) {
   if (mode == 2) { float q=mod(x,2.0); if(q<0.0)q+=2.0; return q<=1.0?q:2.0-q; }
   return fract(x);
 }
+// Ptex face and face-local (u,v) of the current hit, set by setPtexHit().
+uint gPtexFace=0xffffffffu; vec2 gPtexUV=vec2(0.0);
+// Primary-hit surface frame/UVs and the UV footprint used to choose a
+// per-face mip. The table packs a short absolute-level chain per face.
+vec3 gPtexP0=vec3(0.0),gPtexP1=vec3(0.0),gPtexP2=vec3(0.0);
+vec2 gPtexUv0=vec2(0.0),gPtexUv1=vec2(0.0),gPtexUv2=vec2(0.0);
+float gPtexUvPerPixel=0.0;
+uint gPtexSelectedMip=0u;
+bool gPtexMipSet=false;
+vec3 gPtexDebugRect=vec3(0.0);
+uint gPtexLastMip=0u;
+bool gPtexLastWasPtex=false;
+uint gPtexBaseMip=0u;
+uint ptexByte(int off,uint texel){return texels[uint(off)+texel]>>24u;}
+// Ptex atlas lookup. The descriptor's reserved ints carry (rect-table texel
+// offset + 1, faceCount | (mipLevels << 24)); each face owns `mipLevels`
+// consecutive 10-texel entries (x,y,w,h,baseMip as little-endian uint16).
+// Atlas rows are top-first, so the face-local v is flipped: y = (1-v).
+vec4 samplePtexAtlas(int off,int w,int h,int tableTexel,int packedFaces,int srgb){
+  uint face=gPtexFace;
+  uint faceCount=uint(packedFaces)&0xffffffu;
+  uint mipLevels=max(1u,uint(packedFaces)>>24u);
+  if(face>=faceCount)face=0u;
+  uint baseTb=uint(tableTexel)+(face*mipLevels)*10u;
+  float rx=float(ptexByte(off,baseTb)|(ptexByte(off,baseTb+1u)<<8u)),ry=float(ptexByte(off,baseTb+2u)|(ptexByte(off,baseTb+3u)<<8u));
+  float baseW=float(ptexByte(off,baseTb+4u)|(ptexByte(off,baseTb+5u)<<8u)),baseH=float(ptexByte(off,baseTb+6u)|(ptexByte(off,baseTb+7u)<<8u));
+  float baseMip=float(ptexByte(off,baseTb+8u)|(ptexByte(off,baseTb+9u)<<8u));
+  gPtexDebugRect=vec3(baseW,baseH,baseMip);
+  float edge=max(baseW,baseH)*exp2(baseMip);
+  float mipF=floor(log2(max(1.0,gPtexUvPerPixel*edge)));
+  int level=clamp(int(mipF)-int(baseMip),0,int(mipLevels)-1);
+  gPtexLastMip=uint(int(baseMip)+level);
+  gPtexLastWasPtex=true;
+  if(!gPtexMipSet){gPtexSelectedMip=gPtexLastMip;gPtexMipSet=true;}
+  uint tb=baseTb+uint(level)*10u;
+  float rw=float(ptexByte(off,tb+4u)|(ptexByte(off,tb+5u)<<8u)),rh=float(ptexByte(off,tb+6u)|(ptexByte(off,tb+7u)<<8u));
+  rx=float(ptexByte(off,tb)|(ptexByte(off,tb+1u)<<8u));ry=float(ptexByte(off,tb+2u)|(ptexByte(off,tb+3u)<<8u));
+  if(rw<1.0||rh<1.0)return vec4(1.0);
+  // Ptex-correct bilinear: texel centers at (i+0.5)/w, taps clamped to the face
+  // (identical to OpenPtex within a face; no cross-face blending). The rect's
+  // clamp gutter makes a coordinate beyond the first/last center replicate.
+  // One texel beyond the face is allowed: the atlas builder fills that gutter
+  // from the Ptex neighbour, so edge taps blend across the face boundary.
+  vec2 fp=vec2(clamp(gPtexUV.x,0.0,1.0)*rw-0.5,(1.0-clamp(gPtexUV.y,0.0,1.0))*rh-0.5);
+  fp=clamp(fp,vec2(-1.0),vec2(rw,rh));
+  vec2 px=vec2(rx,ry)+fp;
+  ivec2 p0=clamp(ivec2(floor(px)),ivec2(0),ivec2(w-1,h-1));
+  ivec2 p1=clamp(p0+1,ivec2(0),ivec2(w-1,h-1));vec2 f=fract(px);
+  vec4 c[4];ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
+  for(int i=0;i<4;++i){uint q=texels[uint(off+p[i].y*w+p[i].x)];c[i]=vec4(q&255u,(q>>8)&255u,(q>>16)&255u,(q>>24)&255u)/255.0;}
+  vec4 r=mix(mix(c[0],c[1],f.x),mix(c[2],c[3],f.x),f.y);
+  r.a=1.0;
+  if(srgb!=0)r.rgb=srgbToLinear(r.rgb);
+  return r;
+}
 vec4 sampleTexture(int id, vec2 uv) {
+  gPtexLastWasPtex=false;
   uint d=uint(id)*TEX_DESC_STRIDE;
   if (id < 0 || d+5u >= textureDescs.length()) return vec4(1.0);
   int off=textureDescs[d], w=textureDescs[d+1u], h=textureDescs[d+2u];
   if (off < 0 || w < 1 || h < 1) return vec4(1.0);
   float x,y;
   int udimMeta=textureDescs[d+6u];
+  if(udimMeta>0)return samplePtexAtlas(off,w,h,udimMeta-1,textureDescs[d+7u],textureDescs[d+5u]);
   if(udimMeta<0){
     uint origin=uint(-udimMeta-1),grid=uint(textureDescs[d+7u]);
     int minU=int(origin&65535u),minV=int(origin>>16u);
@@ -85,6 +146,12 @@ vec4 sampleTexture(int id, vec2 uv) {
     float v=wrapCoord(uv.y,textureDescs[d+4u]);
     x=u*float(max(w-1,0));y=v*float(max(h-1,0));
   }
+  // The packed texel rows are stored bottom-up (row 0 is the image's bottom
+  // row), while USD `st`/Storm address images top-down: v=0 is the top row.
+  // Sampling v directly mirrored every textured surface against the SDK
+  // reference, so flip the row here, after UDIM tile selection, so both the
+  // atlas tile row and the in-tile offset follow the same convention.
+  y=float(max(h-1,0))-y;
   ivec2 p0=ivec2(floor(x),floor(y)); ivec2 p1=min(p0+1,ivec2(w-1,h-1));
   vec2 f=fract(vec2(x,y));
   vec4 c[4]; ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
@@ -100,15 +167,17 @@ vec4 graphInput(int idx, vec4 fallback, vec4 values[64], int count) {
 vec3 rgbToHsv(vec3 c){vec4 K=vec4(0,-1.0/3.0,2.0/3.0,-1),p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g)),q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y),e=1e-10;return vec3(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);}
 vec3 hsvToRgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(0,2.0/3.0,1.0/3.0))*6.0-3.0);return c.z*mix(vec3(1),clamp(p-1.0,0.0,1.0),c.y);}
 vec3 mtlxBlackbody(float kelvin){float temperature=clamp(kelvin,800.0,25000.0),t=1000.0/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.0?-0.2661239*t3-0.2343580*t2+0.8776956*t+0.179910:-3.0258469*t3+2.1070379*t2+0.2226347*t+0.240390,x2=x*x,x3=x2*x,y=temperature<2222.0?-1.1063814*x3-1.34811020*x2+2.18555832*x-0.20219683:(temperature<4000.0?-0.9549476*x3-1.37418593*x2+2.09137015*x-0.16748867:3.0817580*x3-5.87338670*x2+3.75112997*x-0.37001483);if(y<=0.0)return vec3(1);float X=x/y,Z=(1.0-x-y)/y;return max(vec3(3.2406*X-1.5372-.4986*Z,-.9689*X+1.8758+.0415*Z,.0557*X-.2040+1.0570*Z),vec3(0));}
-void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
+void evalGraphAll(uint matId, vec2 uv, vec2 uvb, vec3 normal, vec3 position,
                   vec3 viewDirection, float sceneTime, float sceneFrame,
-                  out vec4 routed[48]) {
+                  out vec4 routed[49]) {
   for(uint r=0u;r<GRAPH_OUTPUTS;++r) routed[r]=vec4(0.0);
   uint gb=matId*GRAPH_STRIDE;
   if(gb+GRAPH_HEADER>graphs.length()) return;
   int count=int(clamp(graphs[gb],0.0,64.0));
   if(count<=0) return;
   vec4 value[64];
+  float nodeMip[64];
+  for(int i=0;i<count;++i) nodeMip[i]=-1.0;
   for(int i=0;i<count;++i){
     uint p=gb+GRAPH_HEADER+uint(i)*GRAPH_NODE;
     int op=int(round(graphs[p])); int ai=int(round(graphs[p+1u]));
@@ -120,7 +189,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
     if(uvInput==0)graphUv=a.xy;else if(uvInput==1)graphUv=b.xy;else if(uvInput==2)graphUv=c.xy;
     vec2 tuv=graphUv*vec2(graphs[p+17u],graphs[p+18u])+vec2(graphs[p+19u],graphs[p+20u]);
     if(op==0) value[i]=a;
-    else if(op==1||op==2) value[i]=sampleTexture(int(round(graphs[p+16u])),tuv);
+    else if(op==1||op==2){value[i]=sampleTexture(int(round(graphs[p+16u])),tuv);if(gPtexLastWasPtex)nodeMip[i]=float(gPtexLastMip);}
     else if(op==3) value[i]=vec4(normalize(a.xyz*2.0-1.0)*0.5+0.5,a.w);
     else if(op==4) value[i]=a+b; else if(op==5) value[i]=a-b;
     else if(op==6) value[i]=a*b; else if(op==7) value[i]=a/max(abs(b),vec4(1e-6));
@@ -134,7 +203,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
     // Texcoord is a geometry source, not an image node. Using `tuv` here
     // accidentally applied the generic image-input routing sentinel and could
     // collapse explicitly connected texcoord graphs to (0,0).
-    else if(op==21) value[i]=vec4(uv,0,1);
+    else if(op==21) value[i]=vec4(graphs[p+14u]>=0.5?uvb:uv,0,1);
     else if(op==22) value[i]=floor(a); else if(op==23) value[i]=ceil(a); else if(op==24) value[i]=fract(a);
     else if(op==25) value[i]=step(b,a); else if(op==26) value[i]=smoothstep(b,c,a);
     else if(op==27) value[i]=vec4(cross(a.xyz,b.xyz),1); else if(op==28) value[i]=vec4(length(a.xyz));
@@ -210,11 +279,14 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
     else if(op==109){int start=clamp(int(floor(graphs[p+17u]+.5)),0,count-1),outputSelector=clamp(int(floor(graphs[p+18u]+.5)),0,3);value[i]=mtlxFlake(value[start],value[min(start+1,count-1)],value[min(start+2,count-1)],value[min(start+3,count-1)],value[min(start+4,count-1)],value[min(start+5,count-1)],value[min(start+6,count-1)],outputSelector);}
     else if(op>=110&&op<=113){int start=clamp(int(floor(graphs[p+17u]+.5)),0,count-1),dim=clamp(int(floor(graphs[p+18u]+.5)),3,4),column=clamp(int(floor(graphs[p+19u]+.5)),0,dim-1),components=clamp(int(floor(graphs[p+20u]+.5)),1,4);vec4 q=vec4(0);if(dim==3){mat3 m=mat3(value[start].xyz,value[min(start+1,count-1)].xyz,value[min(start+2,count-1)].xyz);if(op==110)q=components==2?vec4((m*vec3(a.xy,1)).xy,0,0):vec4(m*a.xyz,0);else if(op==111)q=vec4(transpose(m)[column],0);else if(op==112)q=vec4(inverse(m)[column],0);else q=vec4(determinant(m));}else{mat4 m=mat4(value[start],value[min(start+1,count-1)],value[min(start+2,count-1)],value[min(start+3,count-1)]);if(op==110)q=components==3?vec4((m*vec4(a.xyz,1)).xyz,0):m*a;else if(op==111)q=transpose(m)[column];else if(op==112)q=inverse(m)[column];else q=vec4(determinant(m));}value[i]=q;}
     else value[i]=a;
+    if(nodeMip[i]<0.0){float m=-1.0;if(ai>=0&&ai<count)m=max(m,nodeMip[ai]);if(bi>=0&&bi<count)m=max(m,nodeMip[bi]);if(ci>=0&&ci<count)m=max(m,nodeMip[ci]);if(m>=0.0)nodeMip[i]=m;}
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}
+  int wanted0=int(round(graphs[gb+1u]));
+  if(wanted0>=0&&wanted0<count&&nodeMip[wanted0]>=0.0)gPtexBaseMip=uint(round(nodeMip[wanted0]));
 }
 
-struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec2 uv; uint mat; };
+struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec3 tangentb; vec2 uv; vec2 uvb; uint mat; };
 bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   rayQueryEXT q; rayQueryInitializeEXT(q,scene,gl_RayFlagsOpaqueEXT,0xff,o,tmin,d,tmax);
   while(rayQueryProceedEXT(q)){}
@@ -222,38 +294,103 @@ bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
   h.t=rayQueryGetIntersectionTEXT(q,true); h.prim=rayQueryGetIntersectionPrimitiveIndexEXT(q,true);
   h.bary=rayQueryGetIntersectionBarycentricsEXT(q,true);
   uint i0=indices[h.prim*3u],i1=indices[h.prim*3u+1u],i2=indices[h.prim*3u+2u];
-  vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
-  vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
-  vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+  vec3 p0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);
+  vec3 p1=vec3(vertices[i1*10u],vertices[i1*10u+1u],vertices[i1*10u+2u]);
+  vec3 p2=vec3(vertices[i2*10u],vertices[i2*10u+1u],vertices[i2*10u+2u]);
   float w=1.0-h.bary.x-h.bary.y; h.p=o+d*h.t;
-  vec3 n0=vec3(vertices[i0*8u+3u],vertices[i0*8u+4u],vertices[i0*8u+5u]);
-  vec3 n1=vec3(vertices[i1*8u+3u],vertices[i1*8u+4u],vertices[i1*8u+5u]);
-  vec3 n2=vec3(vertices[i2*8u+3u],vertices[i2*8u+4u],vertices[i2*8u+5u]);
-  h.n=normalize(n0*w+n1*h.bary.x+n2*h.bary.y); if(length(h.n)<0.1)h.n=normalize(cross(p1-p0,p2-p0));
-  vec2 uv0=vec2(vertices[i0*8u+6u],vertices[i0*8u+7u]),uv1=vec2(vertices[i1*8u+6u],vertices[i1*8u+7u]),uv2=vec2(vertices[i2*8u+6u],vertices[i2*8u+7u]);
-  h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
+  vec3 n0=vec3(vertices[i0*10u+3u],vertices[i0*10u+4u],vertices[i0*10u+5u]);
+  vec3 n1=vec3(vertices[i1*10u+3u],vertices[i1*10u+4u],vertices[i1*10u+5u]);
+  vec3 n2=vec3(vertices[i2*10u+3u],vertices[i2*10u+4u],vertices[i2*10u+5u]);
+  vec3 interpolated=n0*w+n1*h.bary.x+n2*h.bary.y;
+  // Test the unnormalized vector: normalize(0) can produce NaNs and hide
+  // emissive diagnostic geometry when the source has no usable normals.
+  h.n=dot(interpolated,interpolated)>1e-12?normalize(interpolated):normalize(cross(p1-p0,p2-p0));
+  vec2 uv0=vec2(vertices[i0*10u+6u],vertices[i0*10u+7u]),uv1=vec2(vertices[i1*10u+6u],vertices[i1*10u+7u]),uv2=vec2(vertices[i2*10u+6u],vertices[i2*10u+7u]);
+  h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;
+  vec2 uw0=vec2(vertices[i0*10u+8u],vertices[i0*10u+9u]),uw1=vec2(vertices[i1*10u+8u],vertices[i1*10u+9u]),uw2=vec2(vertices[i2*10u+8u],vertices[i2*10u+9u]);
+  h.uvb=uw0*w+uw1*h.bary.x+uw2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
   h.tangent=abs(det)>1e-8?normalize(((p1-p0)*duv2.y-(p2-p0)*duv1.y)/det):normalize(abs(h.n.z)<0.9?cross(h.n,vec3(0,0,1)):cross(h.n,vec3(0,1,0)));
+  // Tangent basis of the second UV set, for a normal map that samples it.
+  vec2 dwuv1=uw1-uw0,dwuv2=uw2-uw0;float detb=dwuv1.x*dwuv2.y-dwuv1.y*dwuv2.x;
+  h.tangentb=abs(detb)>1e-8?normalize(((p1-p0)*dwuv2.y-(p2-p0)*dwuv1.y)/detb):h.tangent;
   h.mat=min(triMaterials[h.prim],max(pc.path.z,1u)-1u); return true;
 }
 
 vec3 cosineHemisphere(vec3 n, inout uint seed){ float r=sqrt(rnd(seed)),a=2.0*PI*rnd(seed); vec3 t=normalize(abs(n.z)<0.9?cross(n,vec3(0,0,1)):cross(n,vec3(0,1,0))); vec3 b=cross(n,t); return normalize(t*(r*cos(a))+b*(r*sin(a))+n*sqrt(max(0.0,1.0-r*r))); }
 vec3 fresnelSchlick(float c,vec3 f0){return f0+(vec3(1)-f0)*pow(1.0-clamp(c,0.0,1.0),5.0);}
+vec3 fresnelSchlickF90(float c,vec3 f0,vec3 f90){return mix(f0,f90,pow(1.0-clamp(c,0.0,1.0),5.0));}
 float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,q=nh*nh*(a2-1.0)+1.0;return a2/max(PI*q*q,1e-6);}
 float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}
+// UsdPreviewSurface (Storm previewSurface.glslfx) Geometric(): Schlick-GGX
+// with k = alpha/2, applied to both NdotE and NdotL.
+float ggxGPreview(float nv,float nl,float r){float a=max(r*r,0.002),k=a*0.5;float gv=nv/max(nv*(1.0-k)+k,1e-6),gl=nl/max(nl*(1.0-k)+k,1e-6);return gv*gl;}
 void rotatedBasis(vec3 n,vec3 tangent,float rotation,out vec3 t,out vec3 b){vec3 t0=normalize(tangent-n*dot(n,tangent));if(length(t0)<0.1)t0=normalize(abs(n.z)<0.9?cross(vec3(0,0,1),n):cross(vec3(0,1,0),n));vec3 b0=cross(n,t0);float a=radians(rotation);t=t0*cos(a)+b0*sin(a);b=-t0*sin(a)+b0*cos(a);}
 float ggxDAniso(float nh,float ht,float hb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),q=ht*ht/(ax*ax)+hb*hb/(ay*ay)+nh*nh;return 1.0/max(PI*ax*ay*q*q,1e-6);}
 float ggxG1Aniso(float nv,float vt,float vb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),vn2=max(nv*nv,1e-6),lambda=0.5*(-1.0+sqrt(1.0+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));return 1.0/max(1.0+lambda,1e-6);}
+// Smith lambda for one direction (G1 = 1/(1+lambda)).
+float ggxLambdaAniso(float nv,float vt,float vb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),vn2=max(nv*nv,1e-6);return 0.5*(-1.0+sqrt(1.0+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));}
+// Height-correlated Smith masking-shadowing (Heitz 2014, JCGT 3.2 eq. 99).
+// Reduces exactly to MaterialX's mx_ggx_smith_G2 for isotropic roughness.
+float ggxG2Aniso(float nv,float nl,float vt,float vb,float lt,float lb,float r,float aniso){return 1.0/max(1.0+ggxLambdaAniso(nv,vt,vb,r,aniso)+ggxLambdaAniso(nl,lt,lb,r,aniso),1e-6);}
+// GGX directional albedo AB.x+AB.y for F0=F90=1 (MaterialX's rational fit,
+// mx_ggx_dir_albedo_analytic), used by the multiple-scattering compensation.
+float ggxDirAlbedoEss(float nv,float alpha){
+  float x=clamp(nv,0.0,1.0),y=clamp(alpha,0.0,1.0),x2=x*x,y2=y*y;
+  vec4 r=vec4(0.1003,0.9345,1.0,1.0)
+        +vec4(-0.6303,-2.323,-1.765,0.2281)*x
+        +vec4(9.748,2.229,8.263,15.94)*y
+        +vec4(-2.038,-3.748,11.53,-55.83)*x*y
+        +vec4(29.34,1.424,28.96,13.08)*x2
+        +vec4(-8.245,-0.7684,-7.507,41.26)*y2
+        +vec4(-26.44,1.436,-36.11,54.9)*x2*y
+        +vec4(19.99,0.2913,15.86,300.2)*x*y2
+        +vec4(-5.448,0.6286,33.37,-285.1)*x2*y2;
+  vec2 AB=clamp(r.xy/max(r.zw,vec2(1e-6)),0.0,1.0);
+  return clamp(AB.x+AB.y,1e-3,1.0);
+}
+// GGX multiple-scattering energy compensation (Turquin 2019 eq. 16):
+// 1 + Fss*(1-Ess)/Ess.
+vec3 ggxEnergyComp(float nv,float alpha,vec3 F){float Ess=ggxDirAlbedoEss(nv,alpha);return 1.0+F*(1.0-Ess)/Ess;}
 vec3 sampleGgx(vec3 n,vec3 tangent,vec3 v,float rough,float aniso,float rotation,inout uint seed,out float pdf){float alpha=max(rough*rough,0.002),ax=max(alpha*(1.0+aniso),0.001),ay=max(alpha*(1.0-aniso),0.001),u1=rnd(seed),u2=rnd(seed),phi=atan(ay/ax*tan(2.0*PI*u2));if(u2>0.25&&u2<=0.75)phi+=PI;else if(u2>0.75)phi+=2.0*PI;float cp=cos(phi),sp=sin(phi),alpha2=1.0/(cp*cp/(ax*ax)+sp*sp/(ay*ay)),ct=sqrt(max((1.0-u1)/(1.0+(alpha2-1.0)*u1),0.0)),st=sqrt(max(1.0-ct*ct,0.0));vec3 t,b;rotatedBasis(n,tangent,rotation,t,b);vec3 h=normalize(t*(st*cp)+b*(st*sp)+n*ct);if(dot(h,v)<0.0)h=-h;vec3 l=reflect(-v,h);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);pdf=ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);return normalize(l);}
-vec3 ggxBrdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation,vec3 f0){float nl=max(dot(n,l),0.0),nv=max(dot(n,v),1e-6);if(nl<=0.0)return vec3(0);vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),0.0);return fresnelSchlick(vh,f0)*ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*ggxG1Aniso(nv,dot(v,t),dot(v,b),rough,aniso)*ggxG1Aniso(nl,dot(l,t),dot(l,b),rough,aniso)/max(4.0*nv*nl,1e-6);}
+vec3 ggxBrdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation,vec3 f0,vec3 f90,bool preview){float nl=max(dot(n,l),0.0),nv=max(dot(n,v),1e-6);if(nl<=0.0)return vec3(0);vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),0.0);vec3 F=fresnelSchlickF90(vh,f0,f90);float g2=preview?ggxGPreview(nv,nl,rough):ggxG2Aniso(nv,nl,dot(v,t),dot(v,b),dot(l,t),dot(l,b),rough,aniso);float a=max(rough*rough,0.002),avgAlpha=max(a*sqrt(max(1.0-aniso*aniso,0.0)),1e-4);vec3 comp=preview?vec3(1.0):ggxEnergyComp(nv,avgAlpha,F);return F*ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*g2*comp/max(4.0*nv*nl,1e-6);}
 float ggxPdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation){if(dot(n,l)<=0.0)return 0.0;vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);return ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);}
 vec3 thinFilm(vec3 f0,float ct,float weight,float thickness,float filmIor){float w=clamp(weight,0.0,1.0);if(w<=0.0||thickness<=0.0)return f0;float phase=2.0*PI*max(filmIor,1.0)*thickness*(1.0-clamp(ct,0.0,1.0));vec3 film=0.5+0.5*cos(phase*vec3(1.0,1.17,1.35)+vec3(0.0,2.1,4.2));return mix(f0,clamp(f0+(vec3(1)-f0)*film*0.65,vec3(0),vec3(1)),w);}
 float spectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.0||abbe<=0.0)return iorD;float lc=0.6562725,ld=0.5875618,lf=0.4861327,delta=(iorD-1.0)/max(abbe,1.0)*dispersion,ic=1.0/(lc*lc),id=1.0/(ld*ld),iff=1.0/(lf*lf),B=delta/max(iff-ic,1e-6),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return max(A+B/(lambda*lambda),1.0001);}
 vec3 applyGraphNormal(vec3 n,vec3 tangent,vec3 encoded){vec3 t,b;rotatedBasis(n,tangent,0.0,t,b);vec3 q=encoded*2.0-1.0;return normalize(t*q.x+b*q.y+n*q.z);}
-vec3 environmentRadiance(vec3 dir){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec2 uv=vec2(atan(dir.z,dir.x)/(2.0*PI)+0.5,acos(clamp(dir.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
-float lightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
+// Dome frame: a rotated dome packs its local X/Y axes (world space) in the
+// position/direction slots; an all-zero slot means identity. lights[lb+13] > 0.5
+// hides the dome from primary (camera) rays while it still lights the scene.
+bool domeRotated(uint lb){vec3 rx=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);return dot(rx,rx)>0.25;}
+vec3 domeToLocal(uint lb,vec3 w){if(!domeRotated(lb))return w;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return vec3(dot(w,rx),dot(w,ry),dot(w,rz));}
+vec3 domeToWorld(uint lb,vec3 v){if(!domeRotated(lb))return v;vec3 rx=normalize(vec3(lights[lb],lights[lb+1u],lights[lb+2u])),ry=normalize(vec3(lights[lb+4u],lights[lb+5u],lights[lb+6u])),rz=cross(rx,ry);return v.x*rx+v.y*ry+v.z*rz;}
+vec2 ptexCornerUv(uint o){return o==0u?vec2(0.0,1.0):(o==1u?vec2(1.0,1.0):(o==2u?vec2(1.0,0.0):vec2(0.0,0.0)));}
+void setPtexHit(Hit h){gPtexFace=0xffffffffu;gPtexMipSet=false;if(h.prim>=uint(ptexTri.length()))return;uint r=ptexTri[h.prim];if(r==0xffffffffu)return;gPtexFace=r>>2u;uint i1=(r&1u)+1u,i2=i1+1u;if((r&2u)!=0u){uint t=i1;i1=i2;i2=t;}gPtexUv0=ptexCornerUv(0u);gPtexUv1=ptexCornerUv(i1);gPtexUv2=ptexCornerUv(i2);float w=1.0-h.bary.x-h.bary.y;gPtexUV=gPtexUv0*w+gPtexUv1*h.bary.x+gPtexUv2*h.bary.y;uint t0=h.prim*3u,i0=indices[t0],j0=indices[t0+1u],k0=indices[t0+2u];gPtexP0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);gPtexP1=vec3(vertices[j0*10u],vertices[j0*10u+1u],vertices[j0*10u+2u]);gPtexP2=vec3(vertices[k0*10u],vertices[k0*10u+1u],vertices[k0*10u+2u]);}
+// Face-local UV of a point on the current Ptex triangle (barycentric).
+vec2 ptexUvAt(vec3 p){vec3 e0=gPtexP1-gPtexP0,e1=gPtexP2-gPtexP0,e2=p-gPtexP0;float d00=dot(e0,e0),d01=dot(e0,e1),d11=dot(e1,e1),d20=dot(e2,e0),d21=dot(e2,e1);float den=d00*d11-d01*d01;if(abs(den)<1e-12)return gPtexUV;float b=(d11*d20-d01*d21)/den,c=(d00*d21-d01*d20)/den;return gPtexUv0*(1.0-b-c)+gPtexUv1*b+gPtexUv2*c;}
+// Neighbor primary-ray direction for the differential footprint estimate.
+vec3 ptexCameraDir(vec2 p){vec2 ndc=(p+vec2(0.5))/vec2(pc.frame.xy)*2.0-1.0;ndc.y=-ndc.y;vec4 n=pc.invViewProj*vec4(ndc,0,1);n/=n.w;vec4 f=pc.invViewProj*vec4(ndc,1,1);f/=f.w;return normalize(f.xyz-n.xyz);}
+void updatePtexFootprint(vec3 o,vec3 d,vec2 pixel){gPtexUvPerPixel=0.0;if(gPtexFace==0xffffffffu)return;vec3 n=normalize(cross(gPtexP1-gPtexP0,gPtexP2-gPtexP0));float dn=dot(n,d);if(abs(dn)<1e-8)return;vec3 dx=ptexCameraDir(pixel+vec2(1.0,0.0)),dy=ptexCameraDir(pixel+vec2(0.0,1.0));float tx=dot(n,gPtexP0-o)/dot(n,dx),ty=dot(n,gPtexP0-o)/dot(n,dy);if(isnan(tx)||isinf(tx)||isnan(ty)||isinf(ty))return;vec2 ux=ptexUvAt(o+dx*tx),uy=ptexUvAt(o+dy*ty);float per=max(length(ux-gPtexUV),length(uy-gPtexUV));if(!isnan(per)&&!isinf(per)&&per>0.0)gPtexUvPerPixel=per;}
+vec3 environmentRadiance(vec3 dir,bool primary){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*LIGHT_STRIDE;if(int(round(lights[lb+3u]))!=6)continue;if(primary&&lights[lb+13u]>0.5)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec3 ld=domeToLocal(lb,dir);vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,acos(clamp(ld.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
+float rawLightWeight(uint li){uint lb=li*LIGHT_STRIDE;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
+// A dome is picked as often as all other lights together (power-weighting by
+// 4*pi*radiance would starve a distant/point key light); with no other light it
+// keeps its own weight so a dome-only scene is unchanged.
+float gOtherW=-1.0;
+float lightWeight(uint li){if(int(round(lights[li*LIGHT_STRIDE+3u]))!=6)return rawLightWeight(li);if(gOtherW<0.0){gOtherW=0.0;for(uint k=0u;k<pc.path.w;++k)if(int(round(lights[k*LIGHT_STRIDE+3u]))!=6)gOtherW+=rawLightWeight(k);}return gOtherW>1e-12?gOtherW:rawLightWeight(li);}
 float totalLightWeight(){float total=0.0;for(uint li=0u;li<pc.path.w;++li)total+=lightWeight(li);return total;}
 uint sampleLightIndex(inout uint seed,out float selectionPdf){float total=totalLightWeight();if(total<=1e-12){uint li=min(uint(rnd(seed)*float(max(pc.path.w,1u))),max(pc.path.w,1u)-1u);selectionPdf=1.0/float(max(pc.path.w,1u));return li;}float target=rnd(seed)*total,accum=0.0;for(uint li=0u;li<pc.path.w;++li){float w=lightWeight(li);accum+=w;if(target<=accum){selectionPdf=w/total;return li;}}uint last=max(pc.path.w,1u)-1u;selectionPdf=lightWeight(last)/total;return last;}
-float environmentPdf(){float total=totalLightWeight(),dome=0.0;for(uint li=0u;li<pc.path.w;++li)if(int(round(lights[li*LIGHT_STRIDE+3u]))==6)dome+=lightWeight(li);return total>1e-12?dome/(total*4.0*PI):0.0;}
+// Direct lighting evaluates every delta light (point=0, distant=5) every time and
+// samples ONE of the remaining lights (area/dome/geometry) stochastically, so a
+// sun + camera-light rig has no selection noise. The dome keeps an equal share
+// against the other non-delta lights.
+bool isDeltaLight(uint li){int t=int(round(lights[li*LIGHT_STRIDE+3u]));return t==0||t==5;}
+uint deltaLightCount(){uint n=0u;for(uint li=0u;li<pc.path.w;++li)if(isDeltaLight(li))++n;return n;}
+uint deltaLightIndex(uint k){uint n=0u;for(uint li=0u;li<pc.path.w;++li)if(isDeltaLight(li)){if(n==k)return li;++n;}return 0u;}
+float gOtherS=-1.0;
+float stochWeight(uint li){int t=int(round(lights[li*LIGHT_STRIDE+3u]));if(t==0||t==5)return 0.0;if(t!=6)return rawLightWeight(li);if(gOtherS<0.0){gOtherS=0.0;for(uint k=0u;k<pc.path.w;++k){int kt=int(round(lights[k*LIGHT_STRIDE+3u]));if(kt!=6&&kt!=0&&kt!=5)gOtherS+=rawLightWeight(k);}}return gOtherS>1e-12?gOtherS:rawLightWeight(li);}
+float totalStochWeight(){float total=0.0;for(uint li=0u;li<pc.path.w;++li)total+=stochWeight(li);return total;}
+uint sampleStochIndex(inout uint seed,out float selectionPdf){float total=totalStochWeight();selectionPdf=0.0;if(total<=1e-12)return 0u;float target=rnd(seed)*total,accum=0.0;uint last=0u;for(uint li=0u;li<pc.path.w;++li){float w=stochWeight(li);if(w<=0.0)continue;last=li;accum+=w;if(target<=accum){selectionPdf=w/total;return li;}}selectionPdf=stochWeight(last)/total;return last;}
+float environmentPdf(){float total=totalStochWeight(),dome=0.0;for(uint li=0u;li<pc.path.w;++li)if(int(round(lights[li*LIGHT_STRIDE+3u]))==6)dome+=stochWeight(li);return total>1e-12?dome/(total*4.0*PI):0.0;}
 float powerHeuristic(float a,float b){float aa=a*a,bb=b*b;return aa/max(aa+bb,1e-20);}
 bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
                        out vec3 radiance,out float tmax,
@@ -264,9 +401,9 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
   conditionalPdf=1.0;delta=true;targetTri=-1;if(type==8)return false;
   if(type==6){
     float z=1.0-2.0*rnd(seed),phi=2.0*PI*rnd(seed),r=sqrt(max(0.0,1.0-z*z));
-    l=vec3(r*cos(phi),z,r*sin(phi));int tid=int(round(lights[lb+15u]));
-    if(tid>=0){vec2 uv=vec2(atan(l.z,l.x)/(2.0*PI)+0.5,
-        acos(clamp(l.y,-1.0,1.0))/PI);radiance*=sampleTexture(tid,uv).rgb;}
+    vec3 ld=vec3(r*cos(phi),z,r*sin(phi));l=domeToWorld(lb,ld);int tid=int(round(lights[lb+15u]));
+    if(tid>=0){vec2 uv=vec2(atan(ld.z,ld.x)/(2.0*PI)+0.5,
+        acos(clamp(ld.y,-1.0,1.0))/PI);radiance*=sampleTexture(tid,uv).rgb;}
     tmax=1e30;conditionalPdf=1.0/(4.0*PI);delta=false;return true;
   }
   if(type==5){l=normalize(-vec3(lights[lb+4u],lights[lb+5u],
@@ -277,9 +414,9 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
     int triId=int(round(lights[lb+7u]));
     if(triId>=0&&uint(triId)<indices.length()/3u){
       uint ti=uint(triId)*3u,i0=indices[ti],i1=indices[ti+1u],i2=indices[ti+2u];
-      vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
-      vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
-      vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+      vec3 p0=vec3(vertices[i0*10u],vertices[i0*10u+1u],vertices[i0*10u+2u]);
+      vec3 p1=vec3(vertices[i1*10u],vertices[i1*10u+1u],vertices[i1*10u+2u]);
+      vec3 p2=vec3(vertices[i2*10u],vertices[i2*10u+1u],vertices[i2*10u+2u]);
       float su=sqrt(rnd(seed)),v=rnd(seed);samplePos=p0*(1.0-su)+p1*(su*(1.0-v))+p2*(su*v);
       vec3 crossE=cross(p1-p0,p2-p0);area=0.5*length(crossE);if(area<=1e-10)return false;
       lightNormal=normalize(crossE);delta=false;targetTri=triId;
@@ -308,13 +445,22 @@ bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
   }
   vec3 deltaP=samplePos-p;float d2=dot(deltaP,deltaP);if(d2<1e-8)return false;
   l=deltaP*inversesqrt(d2);tmax=sqrt(d2)-1e-4;
-  if(delta){radiance/=max(d2,1e-6);}
+  // The UsdAppUtilsFrameRecorder camera light uses GlfSimpleLight attenuation
+  // (1,0,0): constant, flagged by angle=-1 on point lights.
+  if(delta){
+    if(type==0&&lights[lb+14u]<-0.5) { /* constant attenuation */ }
+    else radiance/=max(d2,1e-6);
+  }
   else{float cosine=abs(dot(lightNormal,-l));if(cosine<1e-6)return false;
     conditionalPdf=d2/max(cosine*area,1e-8);}
   return true;
 }
 float hgPhase(float cosTheta,float g){float gg=g*g,den=max(1.0+gg-2.0*g*cosTheta,1e-5);return (1.0-gg)/(4.0*PI*den*sqrt(den));}
 vec3 sampleHg(vec3 forward,float g,inout uint seed,out float pdf){float u=rnd(seed),v=rnd(seed),ct=abs(g)<1e-3?1.0-2.0*u:(1.0+g*g-pow((1.0-g*g)/max(1.0-g+2.0*g*u,1e-5),2.0))/(2.0*g);ct=clamp(ct,-1.0,1.0);float st=sqrt(max(1.0-ct*ct,0.0)),phi=2.0*PI*v;vec3 t=normalize(abs(forward.z)<0.9?cross(vec3(0,0,1),forward):cross(vec3(0,1,0),forward)),b=cross(forward,t),outDir=normalize(t*(st*cos(phi))+b*(st*sin(phi))+forward*ct);pdf=hgPhase(ct,g);return outDir;}
+// Storm's usdrecord uses colorCorrectionMode=sRGB: a plain sRGB transfer
+// of the scene-linear radiance, with no filmic shoulder and no exposure.
+vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);return mix(c*12.92,
+  1.055*pow(c,vec3(1.0/2.4))-0.055,greaterThan(c,vec3(0.0031308)));}
 vec3 tonemap(vec3 x){ x=max(x,vec3(0)); x=(x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14); return pow(clamp(x,0.0,1.0),vec3(1.0/2.2)); }
 
 void main(){
@@ -323,17 +469,21 @@ void main(){
   uint seed=hashU(px.x+px.y*pc.frame.x+pc.path.y*1664525u); vec3 sum=vec3(0);
   for(uint s=0u;s<max(pc.frame.z,1u);++s){
     vec2 jitter=vec2(rnd(seed),rnd(seed)); vec2 ndc=(vec2(px)+jitter)/vec2(pc.frame.xy)*2.0-1.0;
-    vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w; vec3 o=pc.camera.xyz,d=normalize(f.xyz-o);
+    ndc.y=-ndc.y; // Output rows use top-left image coordinates.
+    vec4 n=pc.invViewProj*vec4(ndc,0,1); n/=n.w;
+    vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w;
+    vec3 o=n.xyz,d=normalize(f.xyz-n.xyz);
+    float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d)*mis;break;}
+      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);if(depth==0u)updatePtexFootprint(o,d,vec2(px));
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
       vec3 specColor=max(vec3(materials[mb+4u],materials[mb+5u],materials[mb+6u]),vec3(0)); float specWeight=clamp(materials[mb+7u],0.0,1.0);
       vec3 transmissionColor=max(vec3(materials[mb+8u],materials[mb+9u],materials[mb+10u]),vec3(0)); float transmission=clamp(materials[mb+11u],0.0,1.0);
       vec3 transmissionScatter=max(vec3(materials[mb+12u],materials[mb+13u],materials[mb+14u]),vec3(0));float transmissionDepth=max(materials[mb+15u],0.0),transmissionScatterG=clamp(materials[mb+47u],-0.95,0.95);
-      vec3 subsurfaceColor=max(vec3(materials[mb+16u],materials[mb+17u],materials[mb+18u]),vec3(0)); float subsurface=clamp(materials[mb+19u],0.0,1.0);
+      vec3 subsurfaceColor=max(vec3(materials[mb+16u],materials[mb+17u],materials[mb+18u]),vec3(0)); float subsurface=clamp(materials[mb+19u],0.0,1.0),subsurfaceAnisotropy=clamp(materials[mb+63u],-0.95,0.95),subsurfaceScatterAnisotropy=clamp(materials[mb+64u],-0.95,0.95);
       vec3 subsurfaceRadius=max(vec3(materials[mb+20u],materials[mb+21u],materials[mb+22u])*max(materials[mb+23u],0.0),vec3(1e-5));
       vec3 coatColor=max(vec3(materials[mb+24u],materials[mb+25u],materials[mb+26u]),vec3(0)); float coatWeight=clamp(materials[mb+27u],0.0,1.0);
       vec3 sheenColor=max(vec3(materials[mb+28u],materials[mb+29u],materials[mb+30u]),vec3(0)); float sheenWeight=clamp(materials[mb+31u],0.0,1.0);
@@ -347,15 +497,18 @@ void main(){
       float dispersion=max(materials[mb+60u]*materials[mb+62u],0.0),dispersionAbbe=max(materials[mb+61u],0.0);
       float volumeDensity=max(materials[mb+75u],0.0),volumeEmissionScale=max(materials[mb+79u],0.0);vec3 volumeAlbedo=max(vec3(materials[mb+72u],materials[mb+73u],materials[mb+74u]),vec3(0)),volumeEmission=max(vec3(materials[mb+76u],materials[mb+77u],materials[mb+78u]),vec3(0));
       uint gb=h.mat*GRAPH_STRIDE;
+      // Diagnostic capture of the emission route so the graph path can be
+      // compared against the raw sampled texel.
+      vec3 dbgRoute4=vec3(0.0); float dbgRoute44=-1.0; int dbgRoute4Tex=-1;
       if(graphs[gb]>0.0){
-        vec4 gr[48];evalGraphAll(h.mat,h.uv,h.n,h.p,
+        vec4 gr[49];evalGraphAll(h.mat,h.uv,h.uvb,h.n,h.p,
             normalize(pc.camera.xyz-h.p),pc.context.x,pc.context.y,gr);
         if(graphs[gb+1u]>=0.0)base=max(gr[0].rgb,vec3(0));
         if(graphs[gb+2u]>=0.0)metal=clamp(gr[1].x,0.0,1.0);
         if(graphs[gb+3u]>=0.0)rough=clamp(gr[2].x,0.02,1.0);
         if(graphs[gb+4u]>=0.0)opacity=clamp(gr[3].x,0.0,1.0);
         if(graphs[gb+5u]>=0.0)emission=max(gr[4].rgb,vec3(0))*max(materials[mb+35u],0.0);
-        if(graphs[gb+6u]>=0.0)h.n=applyGraphNormal(h.n,h.tangent,gr[5].xyz);
+        if(graphs[gb+6u]>=0.0)h.n=applyGraphNormal(h.n,graphs[gb+50u]>=0.5?h.tangentb:h.tangent,gr[5].xyz);
         if(graphs[gb+7u]>=0.0)subsurface=clamp(gr[6].x,0.0,1.0);
         if(graphs[gb+8u]>=0.0)subsurfaceColor=max(gr[7].rgb,vec3(0));
         if(graphs[gb+9u]>=0.0)subsurfaceRadius=max(gr[8].rgb,vec3(1e-5));
@@ -376,6 +529,7 @@ void main(){
         if(graphs[gb+24u]>=0.0)transmissionDepth=max(gr[23].x,0.0);
         if(graphs[gb+25u]>=0.0)transmissionScatterG=clamp(gr[24].x,-0.95,0.95);
         if(graphs[gb+26u]>=0.0)subsurfaceRadius*=max(gr[25].rgb,vec3(0));
+        if(graphs[gb+27u]>=0.0)subsurfaceAnisotropy=clamp(gr[26].x,-0.95,0.95);
         if(graphs[gb+28u]>=0.0)coatIor=max(gr[27].x,1.0001);
         if(graphs[gb+29u]>=0.0)filmWeight=clamp(gr[28].x,0.0,1.0);
         if(graphs[gb+30u]>=0.0)filmThickness=max(gr[29].x,0.0)*1e-3;
@@ -394,13 +548,75 @@ void main(){
         if(graphs[gb+43u]>=0.0)volumeEmission=max(gr[42].rgb,vec3(0));
         if(graphs[gb+44u]>=0.0)volumeEmissionScale=max(gr[43].x,0.0);
         if(graphs[gb+45u]>=0.0)emission=max(graphs[gb+5u]>=0.0?gr[4].rgb:vec3(materials[mb+32u],materials[mb+33u],materials[mb+34u]),vec3(0))*max(gr[44].x,0.0);
+        dbgRoute4=gr[4].rgb; dbgRoute44=gr[44].x;
+        { int r4node=int(floor(graphs[gb+5u]+0.5f));
+          if(r4node>=0&&r4node<int(clamp(graphs[gb],0.0,64.0))){
+            uint np=gb+GRAPH_HEADER+uint(r4node)*GRAPH_NODE;
+            if(np+16u<graphs.length()) dbgRoute4Tex=int(floor(graphs[np+16u]+0.5f)); } }
         if(graphs[gb+46u]>=0.0)coatAffectColor=clamp(gr[45].x,0.0,1.0);
         if(graphs[gb+47u]>=0.0)coatAffectRoughness=clamp(gr[46].x,0.0,1.0);
         if(graphs[gb+48u]>=0.0)coatDarkening=clamp(gr[47].x,0.0,1.0);
+        if(graphs[gb+49u]>=0.0)subsurfaceScatterAnisotropy=clamp(gr[48].x,-0.95,0.95);
       }
       int alphaMode=int(round(materials[mb+54u]));
-      if(alphaMode==0)opacity=1.0;else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
-      if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      // UsdPreviewSurface opacityMode: "transparent" (slot 56 = 1) attenuates
+      // only diffuse/subsurface/sheen and keeps the specular surface opaque;
+      // "presence" is true coverage and may drop the hit. A textured opacity
+      // arrives through the graph's opacity route (3) and must not be forced
+      // back to 1 by the material-level Opaque alphaMode.
+      bool opacityTransparent=materials[mb+56u]>0.5;
+      if(opacityTransparent){
+        opacity=clamp(opacity,0.0,1.0);
+      }else{
+        // Opaque materials stay opaque unless the opacity is graph-routed
+        // (a sampled opacity is coverage even under a material-level Opaque
+        // alphaMode). Constant opacity on an Opaque material is ignored, as
+        // before, so existing OpenPBR/MaterialX assets are unchanged.
+        if(alphaMode==0&&!(graphs[gb]>0.0&&graphs[gb+4u]>=0.0))opacity=1.0;
+        else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
+        if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      }
+      // Diagnostic AOVs (pc.context.w): 1 = material id, 2 = UV. Written
+      // instead of shaded radiance so the host can attribute a pixel to a
+      // material/texture without a separate render pass.
+      if(depth==0u&&pc.context.w>0.5&&pc.context.w<7.5){
+        if(pc.context.w<1.5) radiance=vec3(float(h.mat)/64.0);
+        else if(pc.context.w<2.5) radiance=vec3(h.uv.x,h.uv.y,0.0);
+        else if(pc.context.w<3.5) radiance=vec3(opacity);
+        else if(pc.context.w<4.5||pc.context.w<5.5){
+          // Continuation diagnostics: what the ray hits *behind* this surface.
+          Hit h2; bool hit2=traceClosest(h.p+d*1e-4,d,1e-4,1e30,h2);
+          radiance=pc.context.w<4.5?vec3(hit2?float(h2.mat)/64.0:1.0)
+                  :vec3(hit2?min(h2.t/100.0,1.0):1.0);
+        }
+        else if(pc.context.w<6.5) radiance=vec3(0.0);
+        else radiance=emission;
+        beta=vec3(0.0); break;
+      }
+      // Ptex diagnostics: 13 = (u, v, face), 14 = base colour after the graph route.
+      if(depth==0u&&pc.context.w>12.5&&pc.context.w<14.5){
+        // 13: exact (u, v, face+1) as raw floats: z = 0 on a miss (clear colour),
+        // -1 on a hit without Ptex data, face+1 otherwise.
+        if(pc.context.w<13.5)radiance=gPtexFace==0xffffffffu?vec3(0.0,0.0,-1.0):vec3(gPtexUV,float(gPtexFace)+1.0);
+        else radiance=base;  // 14: base colour after the graph route
+        beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>14.5&&pc.context.w<15.5){
+        radiance=vec3(float(gPtexBaseMip)); beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>15.5&&pc.context.w<16.5){
+        radiance=vec3(gPtexUvPerPixel); beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>16.5&&pc.context.w<17.5){
+        radiance=gPtexDebugRect/1024.0; beta=vec3(0.0); break;
+      }
+      if(depth==0u&&pc.context.w>9.5&&pc.context.w<12.5){
+        if(pc.context.w<10.5) radiance=dbgRoute4;
+        else if(pc.context.w<11.5) radiance=vec3(max(dbgRoute44,0.0));
+        else radiance=vec3(dbgRoute4Tex>=0?float(dbgRoute4Tex)/256.0:1.0);
+        beta=vec3(0.0); break;
+      }
+      float diffuseOpacity=opacityTransparent?opacity:1.0;
       radiance+=beta*emission;
       base*=1.0-0.2*clamp(coatWeight*coatDarkening,0.0,1.0);
       base*=mix(vec3(1),coatColor,clamp(coatWeight*coatAffectColor,0.0,1.0));
@@ -408,12 +624,26 @@ void main(){
       // A small sky term keeps headless previews legible when a scene has no
       // usable direct light; normal variation also makes blank-frame checks
       // distinguish actual shaded geometry from a flat clear-color image.
-      vec3 diffuseColor=base*(1.0-subsurface)*(1.0-metal)*(1.0-transmission);
-      float radiusGain=clamp(sqrt(dot(subsurfaceRadius,vec3(0.2126,0.7152,0.0722)))*8.0,0.0,1.0);
-      vec3 subsurfaceBrdf=subsurfaceColor*subsurface*(1.0-metal)*(1.0-transmission)*radiusGain;
-      float dielectric=(ior-1.0)/(ior+1.0); vec3 f0=mix(vec3(dielectric*dielectric)*specColor*specWeight,base,metal);f0=thinFilm(f0,max(dot(h.n,-d),0.0),filmWeight,filmThickness,filmIor);
+      vec3 diffuseColor=base*(1.0-subsurface)*(1.0-metal)*(1.0-transmission)*diffuseOpacity;
+      float radiusGain=clamp(sqrt(dot(subsurfaceRadius,vec3(0.2126,0.7152,0.0722)))*8.0*(1.0+0.25*abs(subsurfaceAnisotropy)+0.25*abs(subsurfaceScatterAnisotropy)),0.0,1.0);
+      vec3 subsurfaceBrdf=subsurfaceColor*subsurface*(1.0-metal)*(1.0-transmission)*radiusGain*diffuseOpacity;
+      float dielectric=(ior-1.0)/(ior+1.0); vec3 f0;
+      if(materials[mb+41u]>1.5){
+        // UsdPreviewSurface metallic workflow: Storm's MaterialX graph lerps a
+        // combined specular color by metallic *before* applying the dielectric
+        // reflectance, so F0 = mix(SC*r2, SC, metallic), SC = mix(1, base, m).
+        vec3 SC=mix(vec3(1.0),base,metal);
+        f0=mix(SC*(dielectric*dielectric),SC,metal);
+      }else{
+        f0=mix(vec3(dielectric*dielectric)*specColor*specWeight,base,metal);
+      }
+      f0=thinFilm(f0,max(dot(h.n,-d),0.0),filmWeight,filmThickness,filmIor);
+      // Storm's metal layer uses generalized Schlick with F90 = the combined
+      // specular color; the dielectric layer keeps F90 = 1.
+      bool preview=materials[mb+41u]>1.5;
+      vec3 f90=preview?mix(vec3(1.0),base,metal):vec3(1.0);
       float coatF=(coatIor-1.0)/(coatIor+1.0); vec3 coatF0=coatColor*(coatF*coatF),coatEnergy=coatF0*coatWeight;
-      vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission);
+      vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission)*diffuseOpacity;
       // With a non-zero transmission depth, color describes Beer absorption
       // through the medium, not a second tint at the dielectric interface.
       vec3 interfaceTransmission=transmissionDepth>0.0?vec3(1):transmissionColor;
@@ -421,17 +651,29 @@ void main(){
       if(depth==0u) radiance+=beta*(diffuseColor+subsurfaceBrdf+sheen*0.25)*(0.015+0.025*max(h.n.y,0.0));
       // Descriptor-backed analytic lights use the shared 16-float record.
       vec3 view=-d;
-      if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;bool blocked=traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0)*coatWeight;radiance+=beta*lr*nl*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat)*mis/max(lightPdf,1e-8);}}}
+      // Diagnostic: split the camera-light response into its diffuse and
+      // specular/coat parts so the lit term can be measured separately from
+      // the (already exact) emissive.
+      vec3 dbgDiffuseLit=vec3(0.0),dbgSpecLit=vec3(0.0);
+      uint deltaCount=pc.path.w>0u?deltaLightCount():0u;for(uint dk=0u;pc.path.w>0u&&dk<=deltaCount;++dk){float selectionPdf=1.0;uint li=0u;if(dk<deltaCount)li=deltaLightIndex(dk);else{li=sampleStochIndex(seed,selectionPdf);if(selectionPdf<=0.0)break;}vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;// The host marks the UsdAppUtilsFrameRecorder camera light
+        bool noShadow=int(round(lights[li*LIGHT_STRIDE+3u]))==5&&lights[li*LIGHT_STRIDE+14u]<-1.5;bool blocked=!noShadow&&traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
+      if(depth==0u&&pc.context.w>7.5&&pc.context.w<9.5){radiance=pc.context.w<8.5?dbgDiffuseLit:dbgSpecLit;beta=vec3(0.0);break;}
       float xi=rnd(seed)*max(ws,1e-6),side=1.0;
       if(xi<wt){if(heroChannel<0&&dispersion>0.0&&dispersionAbbe>0.0){heroChannel=min(int(rnd(seed)*3.0),2);beta*=heroChannel==0?vec3(3,0,0):(heroChannel==1?vec3(0,3,0):vec3(0,0,3));}float spectral=spectralIor(ior,dispersionAbbe,dispersion,heroChannel<0?1:heroChannel),targetIor=front?spectral:1.0,eta=mediumIor/targetIor;vec3 q=refract(d,h.n,eta);bool tir=length(q)<0.1;if(tir)q=reflect(d,h.n);else{mediumIor=targetIor;if(front){vec3 absorption=transmissionDepth>0.0?-log(clamp(transmissionColor,vec3(1e-6),vec3(1)))/transmissionDepth:vec3(0);mediumSigmaS=transmissionScatter+volumeAlbedo*volumeDensity;mediumExt=absorption+mediumSigmaS+max(vec3(1)-volumeAlbedo,vec3(0))*volumeDensity;mediumEmission=volumeEmission*volumeEmissionScale;mediumG=transmissionScatterG;}else{mediumExt=vec3(0);mediumSigmaS=vec3(0);mediumEmission=vec3(0);mediumG=0.0;}}d=normalize(q);beta*=interfaceTransmission/max(wt/ws,1e-6);side=tir?1.0:-1.0;previousDelta=true;previousPdf=0.0;}
       else if(xi<wt+wss){d=cosineHemisphere(-h.n,seed);beta*=subsurfaceBrdf/max(wss/ws,1e-6);side=-1.0;previousDelta=true;previousPdf=0.0;}
-      else if(xi<wt+wss+wg){float pdf;d=sampleGgx(h.n,h.tangent,view,rough,aniso,anisoRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation,f0);float selectedPdf=pdf*(wg/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+selectedPdf+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
-      else if(xi<wt+wss+wg+wc){float pdf;d=sampleGgx(h.n,h.tangent,view,coatRough,coatAniso,coatRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation,coatF0)*coatWeight;float selectedPdf=pdf*(wc/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+selectedPdf;previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else if(xi<wt+wss+wg){float pdf;d=sampleGgx(h.n,h.tangent,view,rough,aniso,anisoRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation,f0,f90,preview);float selectedPdf=pdf*(wg/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+selectedPdf+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else if(xi<wt+wss+wg+wc){float pdf;d=sampleGgx(h.n,h.tangent,view,coatRough,coatAniso,coatRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;float selectedPdf=pdf*(wc/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+selectedPdf;previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
       else {d=cosineHemisphere(h.n,seed);float nl=max(dot(h.n,d),0.0);previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=(diffuseColor+sheen)/max(wd/ws,1e-6);}
       o=h.p+h.n*(side*1e-4);
       if(depth>=pc.path.x){float p=clamp(max(beta.r,max(beta.g,beta.b)),0.05,0.95);if(rnd(seed)>p)break;beta/=p;}
     }
     sum+=radiance;
   }
-  vec3 c=tonemap(sum/float(max(pc.frame.z,1u))*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
+  vec3 avg=sum/float(max(pc.frame.z,1u));
+  // pc.context.z selects the display transform: 1 = Storm's plain sRGB
+  // encode (colorCorrectionMode=sRGB), 0 = the filmic beauty curve.
+  vec3 c=(pc.context.w>12.5&&pc.context.w<13.5)?sum  // ptex AOV: exact, unclamped ids
+        :pc.context.w>0.5?clamp(sum,0.0,1.0)
+        :pc.context.z>0.5?linearToSrgb(avg)
+        :tonemap(avg*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
 }

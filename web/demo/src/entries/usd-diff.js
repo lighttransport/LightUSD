@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildNextDemoScene } from '../next-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -135,7 +136,7 @@ async function ensureLoader() {
   if (loader) return loader;
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -179,17 +180,11 @@ async function loadScene(side, url, label) {
   const filename = url.split('/').pop() || 'scene.usd';
 
   const sceneData = await new Promise((resolve, reject) => {
-    loader.parse(data, filename, resolve, reject, { backend: 'legacy', maxMemoryLimitMB: 512 });
+    loader.parse(data, filename, resolve, reject, { backend: 'next', maxMemoryLimitMB: 512 });
   });
 
   view.world.clear();
-  const mat = LightUSDLoaderUtils.createDefaultMaterial();
-  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
-    sceneData.getDefaultRootNode(), mat, sceneData, {
-      preferredMaterialType: 'usdpreviewsurface',
-      textureCache: new Map(),
-    }
-  );
+  const { node: threeNode } = await buildNextDemoScene(sceneData, { sourceUrl: url });
   view.world.add(threeNode);
 
   s.scene = sceneData;

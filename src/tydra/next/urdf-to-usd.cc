@@ -1,459 +1,23 @@
-// SPDX-License-Identifier: Apache 2.0
+// SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 - Present Light Transport Entertainment Inc.
-
-#include "tydra/next/urdf-to-usd.hh"
-
-#include <algorithm>
-#include <cctype>
-#include <cmath>
-#include <set>
-#include <utility>
-
+// URDF/MJCF payload validation, authoring order, and stage publication.
+#include "urdf-to-usd.hh"
+#include "urdf-to-usd-internal.hh"
 #include "next/layer/layer.hh"
+#include "next/layer/prim-spec.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
-#include "tydra/urdf-payload.hh"
+#include "next/reader/obj-reader.hh"
+#include <cmath>
+#include <cstring>
+#include <memory>
+#include <utility>
 
-namespace lightusd {
-namespace tydra {
-namespace next {
-namespace {
+namespace lightusd { namespace tydra { namespace next {
+using namespace urdf_detail;
 
-using Json = ::lightusd::tydra::detail::JSONValue;
-namespace tn = ::lightusd::next;
-
-std::string JsonString(const Json &j, const char *key,
-                       const std::string &fallback = std::string()) {
-  if (!j.is_object() || !j.contains(key) || !j.at(key).is_string()) {
-    return fallback;
-  }
-  return j.at(key).get<std::string>();
-}
-
-double JsonNumber(const Json &j, const char *key, double fallback) {
-  if (!j.is_object() || !j.contains(key) || !j.at(key).is_number()) {
-    return fallback;
-  }
-  return j.at(key).get<double>();
-}
-
-bool JsonBool(const Json &j, const char *key, bool fallback) {
-  if (!j.is_object() || !j.contains(key)) return fallback;
-  const Json &v = j.at(key);
-  if (v.is_boolean()) return v.get<bool>();
-  if (v.is_number_integer()) return v.get<int32_t>() != 0;
-  return fallback;
-}
-
-std::vector<float> JsonFloats(const Json &j, const char *key) {
-  std::vector<float> out;
-  if (!j.is_object() || !j.contains(key) || !j.at(key).is_array()) return out;
-  for (const Json &v : j.at(key)) {
-    if (v.is_number()) out.push_back(static_cast<float>(v.get<double>()));
-  }
-  return out;
-}
-
-std::vector<double> JsonDoubles(const Json &j, const char *key) {
-  std::vector<double> out;
-  if (!j.is_object() || !j.contains(key) || !j.at(key).is_array()) return out;
-  for (const Json &v : j.at(key)) {
-    if (v.is_number()) out.push_back(v.get<double>());
-  }
-  return out;
-}
-
-std::vector<int32_t> JsonInts(const Json &j, const char *key) {
-  std::vector<int32_t> out;
-  if (!j.is_object() || !j.contains(key) || !j.at(key).is_array()) return out;
-  for (const Json &v : j.at(key)) {
-    if (v.is_number_integer()) out.push_back(v.get<int32_t>());
-    else if (v.is_number()) out.push_back(static_cast<int32_t>(v.get<double>()));
-  }
-  return out;
-}
-
-std::string Sanitize(const std::string &source, const std::string &fallback) {
-  const std::string &input = source.empty() ? fallback : source;
-  std::string out;
-  out.reserve(input.size());
-  for (char c : input) {
-    const unsigned char uc = static_cast<unsigned char>(c);
-    out.push_back((std::isalnum(uc) || c == '_') ? c : '_');
-  }
-  if (out.empty()) out = fallback;
-  if (!(std::isalpha(static_cast<unsigned char>(out[0])) || out[0] == '_')) {
-    out.insert(out.begin(), '_');
-  }
-  return out;
-}
-
-std::string Unique(const std::string &source, const std::string &fallback,
-                   std::set<std::string> *used) {
-  const std::string base = Sanitize(source, fallback);
-  std::string name = base;
-  uint32_t suffix = 1;
-  while (used->count(name)) name = base + "_" + std::to_string(suffix++);
-  used->insert(name);
-  return name;
-}
-
-void AppendWarn(std::string *warn, const std::string &message) {
-  if (warn) *warn += message;
-}
-
-void AddAPIs(tn::PrimSpec *prim,
-             std::initializer_list<const char *> schemas) {
-  if (!prim) return;
-  std::vector<std::string> &apis = prim->meta().apiSchemas();
-  prim->meta().apiSchemasQualifier() = "prepend";
-  for (const char *schema : schemas) {
-    if (std::find(apis.begin(), apis.end(), schema) == apis.end()) {
-      apis.emplace_back(schema);
-    }
-  }
-}
-
-void AddAPI(tn::PrimSpec *prim, const std::string &schema) {
-  if (!prim) return;
-  std::vector<std::string> &apis = prim->meta().apiSchemas();
-  prim->meta().apiSchemasQualifier() = "prepend";
-  if (std::find(apis.begin(), apis.end(), schema) == apis.end()) {
-    apis.push_back(schema);
-  }
-}
-
-void Set(tn::PrimSpec *prim, const std::string &name, tn::Value value,
-         const std::string &type_name, bool uniform = false) {
-  if (!prim) return;
-  uint16_t flags = uniform ? tn::PropSlot::kFlagUniform : 0;
-  prim->upsert_property(name, std::move(value), flags);
-  prim->set_property_type_name(name, type_name);
-}
-
-void SetToken(tn::PrimSpec *prim, const std::string &name,
-              const std::string &value, bool uniform = false) {
-  Set(prim, name, tn::Value::MakeToken(value), "token", uniform);
-}
-
-void SetFloat3(tn::PrimSpec *prim, const std::string &name,
-               const std::vector<float> &v, const std::string &type_name) {
-  if (v.size() >= 3) {
-    Set(prim, name, tn::Value::MakeFloat3(v[0], v[1], v[2]), type_name);
-  }
-}
-
-tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
-                     const std::string &type) {
-  const uint32_t index = layer->define_prim_at_path(path, type);
-  return index == UINT32_MAX ? nullptr : layer->prim_mutable(index);
-}
-
-void SetTransform(tn::PrimSpec *prim, const Json &source) {
-  std::vector<double> matrix = JsonDoubles(source, "matrix");
-  if (matrix.size() != 16) matrix = JsonDoubles(source, "originMatrix");
-  if (matrix.size() != 16) return;
-  Set(prim, "xformOp:transform", tn::Value::MakeMatrix4d(matrix.data()),
-      "matrix4d");
-  Set(prim, "xformOpOrder",
-      tn::Value::MakeTokenArray(std::vector<std::string>{"xformOp:transform"}),
-      "token[]", true);
-}
-
-bool JsonValue(const Json &source, tn::Value *value, std::string *type_name) {
-  if (source.is_boolean()) {
-    *value = tn::Value(source.get<bool>());
-    *type_name = "bool";
-    return true;
-  }
-  if (source.is_number_integer()) {
-    *value = tn::Value(source.get<int32_t>());
-    *type_name = "int";
-    return true;
-  }
-  if (source.is_number()) {
-    *value = tn::Value(source.get<double>());
-    *type_name = "double";
-    return true;
-  }
-  if (source.is_string()) {
-    *value = tn::Value::MakeToken(source.get<std::string>());
-    *type_name = "token";
-    return true;
-  }
-  if (!source.is_array() || source.empty()) return false;
-  bool strings = true;
-  bool integers = true;
-  bool numbers = true;
-  for (const Json &item : source) {
-    strings = strings && item.is_string();
-    integers = integers && item.is_number_integer();
-    numbers = numbers && item.is_number();
-  }
-  if (strings) {
-    std::vector<std::string> values;
-    for (const Json &item : source) values.push_back(item.get<std::string>());
-    *value = tn::Value::MakeTokenArray(std::move(values));
-    *type_name = "token[]";
-    return true;
-  }
-  if (integers) {
-    std::vector<int32_t> values;
-    for (const Json &item : source) values.push_back(item.get<int32_t>());
-    *value = tn::Value::MakeIntArray(std::move(values));
-    *type_name = "int[]";
-    return true;
-  }
-  if (numbers) {
-    std::vector<double> values;
-    for (const Json &item : source) values.push_back(item.get<double>());
-    *value = tn::Value::MakeDoubleArray(std::move(values));
-    *type_name = "double[]";
-    return true;
-  }
-  return false;
-}
-
-void AuthorObject(tn::PrimSpec *prim, const Json &object,
-                  const std::string &prefix) {
-  if (!prim || !object.is_object()) return;
-  const auto *members = object.object_items();
-  if (!members) return;
-  for (const auto &member : *members) {
-    const std::string name = prefix + member.key;
-    const Json &member_value = member.value();
-    if (member_value.is_object()) {
-      AuthorObject(prim, member_value, name + ":");
-      continue;
-    }
-    tn::Value value;
-    std::string type_name;
-    if (JsonValue(member_value, &value, &type_name)) {
-      Set(prim, name, std::move(value), type_name, true);
-    }
-  }
-}
-
-void AuthorExtensions(tn::PrimSpec *prim, const Json &source) {
-  if (!source.is_object()) return;
-  for (const char *name : {"mjc", "newton", "physx", "state"}) {
-    if (source.contains(name) && source.at(name).is_object()) {
-      AuthorObject(prim, source.at(name), std::string(name) + ":");
-    }
-  }
-}
-
-std::string AxisToken(const Json &joint) {
-  const std::vector<float> axis = JsonFloats(joint, "axis");
-  if (axis.size() < 3) return "X";
-  const float ax = std::fabs(axis[0]);
-  const float ay = std::fabs(axis[1]);
-  const float az = std::fabs(axis[2]);
-  if (ay >= ax && ay >= az) return "Y";
-  if (az >= ax && az >= ay) return "Z";
-  return "X";
-}
-
-void AddCollisionData(tn::PrimSpec *prim, const Json &source,
-                      bool mesh, bool mjcf_source) {
-  AddAPIs(prim, {"PhysicsCollisionAPI", "MjcCollisionAPI",
-                 "MjcImageableAPI", "NewtonCollisionAPI"});
-  if (mesh) AddAPI(prim, "PhysicsMeshCollisionAPI");
-  Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
-  if (mesh) {
-    SetToken(prim, "physics:approximation",
-             JsonString(source, "approximation", "convexHull"));
-  }
-  const Json *mjc = source.contains("mjc") && source.at("mjc").is_object()
-                        ? &source.at("mjc")
-                        : nullptr;
-  const int32_t default_group = mjcf_source ? 0 : 3;
-  const int32_t group = static_cast<int32_t>(
-      JsonNumber(mjc ? *mjc : source, "group",
-                 JsonNumber(source, "group", default_group)));
-  Set(prim, "mjc:group", tn::Value(group), "int", true);
-  Set(prim, "mjc:contype",
-      tn::Value(static_cast<int32_t>(JsonNumber(
-          mjc ? *mjc : source, "contype", JsonNumber(source, "contype", 1)))),
-      "int", true);
-  Set(prim, "mjc:conaffinity",
-      tn::Value(static_cast<int32_t>(JsonNumber(
-          mjc ? *mjc : source, "conaffinity",
-          JsonNumber(source, "conaffinity", 1)))),
-      "int", true);
-  AuthorExtensions(prim, source);
-}
-
-bool AddMesh(tn::Layer *layer, const std::string &path, const Json &item,
-             const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-             bool collision, bool mjcf_source, std::string *warn) {
-  const Json &geom = item.contains("geometry") && item.at("geometry").is_object()
-                         ? item.at("geometry")
-                         : item;
-  std::vector<float> positions = JsonFloats(geom, "positions");
-  std::vector<float> normals = JsonFloats(geom, "normals");
-  std::vector<float> uvs = JsonFloats(geom, "uvs");
-  std::vector<int32_t> indices = JsonInts(geom, "indices");
-  const std::string mesh_ref = JsonString(item, "meshRef");
-  if (!mesh_ref.empty()) {
-    const auto found = mesh_buffers ? mesh_buffers->find(mesh_ref)
-                                    : std::map<std::string, URDFMeshBuffer>::const_iterator();
-    if (!mesh_buffers || found == mesh_buffers->end()) {
-      AppendWarn(warn, "Skipping meshRef `" + mesh_ref + "`: not registered.\n");
-      return true;
-    }
-    positions = found->second.positions;
-    normals = found->second.normals;
-    uvs = found->second.uvs;
-    indices = found->second.indices;
-  }
-  if (positions.size() < 9 || positions.size() % 3 != 0) {
-    AppendWarn(warn, "Skipping mesh `" + path + "`: invalid positions.\n");
-    return true;
-  }
-  const size_t point_count = positions.size() / 3;
-  if (indices.empty()) {
-    indices.resize(point_count);
-    for (size_t i = 0; i < point_count; ++i) indices[i] = static_cast<int32_t>(i);
-  }
-  if (indices.size() % 3 != 0) {
-    AppendWarn(warn, "Skipping mesh `" + path + "`: indices are not triangles.\n");
-    return true;
-  }
-  for (int32_t index : indices) {
-    if (index < 0 || static_cast<size_t>(index) >= point_count) {
-      AppendWarn(warn, "Skipping mesh `" + path + "`: index out of range.\n");
-      return true;
-    }
-  }
-
-  tn::PrimSpec *prim = Define(layer, path, "Mesh");
-  if (!prim) return false;
-  Set(prim, "points",
-      tn::Value::MakeFloatCompArray(std::move(positions), tn::TypeId::Point3f, 3),
-      "point3f[]");
-  Set(prim, "faceVertexIndices", tn::Value::MakeIntArray(indices), "int[]");
-  Set(prim, "faceVertexCounts",
-      tn::Value::MakeIntArray(std::vector<int32_t>(indices.size() / 3, 3)),
-      "int[]");
-  SetToken(prim, "subdivisionScheme", "none", true);
-  if (normals.size() == point_count * 3) {
-    Set(prim, "normals",
-        tn::Value::MakeFloatCompArray(std::move(normals), tn::TypeId::Normal3f, 3),
-        "normal3f[]");
-    prim->ensure_property_meta("normals").interpolation = "vertex";
-    prim->ensure_property_meta("normals").authored |= tn::PropMeta::kInterpolation;
-  }
-  if (uvs.size() == point_count * 2) {
-    Set(prim, "primvars:st",
-        tn::Value::MakeFloatCompArray(std::move(uvs), tn::TypeId::Texcoord2f, 2),
-        "texCoord2f[]");
-    prim->ensure_property_meta("primvars:st").interpolation = "vertex";
-    prim->ensure_property_meta("primvars:st").authored |= tn::PropMeta::kInterpolation;
-  }
-  SetTransform(prim, item);
-  if (collision) {
-    AddCollisionData(prim, item, true, mjcf_source);
-  } else {
-    AddAPI(prim, "MjcImageableAPI");
-    Set(prim, "mjc:group",
-        tn::Value(static_cast<int32_t>(JsonNumber(item, "group", mjcf_source ? 0 : 2))),
-        "int", true);
-    const std::string material = JsonString(item, "material");
-    if (!material.empty()) {
-      AddAPI(prim, "MaterialBindingAPI");
-      prim->add_relationship("material:binding",
-                             tn::Path("/World/Materials/" +
-                                      Sanitize(material, "material")));
-    }
-    AuthorExtensions(prim, item);
-  }
-  return true;
-}
-
-bool AddShape(tn::Layer *layer, const std::string &path, const Json &item,
-              bool mjcf_source, std::string *warn) {
-  const Json &shape = item.contains("shape") && item.at("shape").is_object()
-                          ? item.at("shape")
-                          : item;
-  const std::string type = JsonString(shape, "type");
-  std::string usd_type;
-  if (type == "box" || type == "cube") usd_type = "Cube";
-  else if (type == "sphere") usd_type = "Sphere";
-  else if (type == "cylinder") usd_type = "Cylinder";
-  else if (type == "capsule") usd_type = "Capsule";
-  else if (type == "plane") usd_type = "Plane";
-  else {
-    AppendWarn(warn, "Skipping shape `" + path + "`: unsupported type `" +
-                         type + "`.\n");
-    return true;
-  }
-  tn::PrimSpec *prim = Define(layer, path, usd_type);
-  if (!prim) return false;
-  if (usd_type == "Cube") Set(prim, "size", tn::Value(2.0), "double");
-  if (usd_type == "Sphere") {
-    Set(prim, "radius", tn::Value(JsonNumber(shape, "radius", 0.5)), "double");
-  }
-  if (usd_type == "Cylinder" || usd_type == "Capsule") {
-    Set(prim, "radius", tn::Value(JsonNumber(shape, "radius", 0.5)), "double");
-    Set(prim, "height",
-        tn::Value(JsonNumber(shape, "height", JsonNumber(shape, "length", 1.0))),
-        "double");
-    SetToken(prim, "axis", JsonString(shape, "axis", "Z"));
-  }
-  if (usd_type == "Plane") {
-    Set(prim, "width", tn::Value(JsonNumber(shape, "width", 2.0)), "double");
-    Set(prim, "length", tn::Value(JsonNumber(shape, "length", 2.0)), "double");
-    SetToken(prim, "axis", JsonString(shape, "axis", "Z"));
-  }
-  SetTransform(prim, item);
-  AddCollisionData(prim, item, false, mjcf_source);
-  return true;
-}
-
-void AddJointDynamics(tn::PrimSpec *prim, const Json &joint,
-                      const std::string &dof) {
-  if (!joint.contains("dynamics") || !joint.at("dynamics").is_object()) return;
-  const Json &dynamics = joint.at("dynamics");
-  const bool angular = dof.rfind("angular", 0) == 0;
-  const std::string physx = angular ? "physxLimit:angular:" : "physxLimit:linear:";
-  for (const char *key : {"damping", "stiffness", "armature", "frictionloss", "ref"}) {
-    if (!dynamics.contains(key) || !dynamics.at(key).is_number()) continue;
-    const double value = dynamics.at(key).get<double>();
-    Set(prim, std::string("mjc:") + key, tn::Value(value), "double");
-    if (std::string(key) == "damping" || std::string(key) == "stiffness") {
-      Set(prim, physx + key, tn::Value(static_cast<float>(value)), "float");
-    } else if (std::string(key) == "armature") {
-      Set(prim, "physxJoint:armature", tn::Value(static_cast<float>(value)), "float");
-    } else if (std::string(key) == "frictionloss") {
-      Set(prim, "physxJoint:jointFriction", tn::Value(static_cast<float>(value)), "float");
-    }
-  }
-  AuthorExtensions(prim, dynamics);
-}
-
-void AuthorGenericScope(tn::Layer *layer, const Json &items,
-                        const std::string &scope_name,
-                        const std::string &prim_type,
-                        const std::string &prefix) {
-  if (!items.is_array() || items.empty()) return;
-  Define(layer, "/World/" + scope_name, "Xform");
-  std::set<std::string> used;
-  for (size_t i = 0; i < items.size(); ++i) {
-    const Json &item = items[i];
-    const std::string name = Unique(JsonString(item, "name"),
-                                    "item_" + std::to_string(i), &used);
-    tn::PrimSpec *prim = Define(layer, "/World/" + scope_name + "/" + name,
-                                prim_type);
-    if (!prim) continue;
-    AuthorObject(prim, item, prefix);
-  }
-}
-
-}  // namespace
-
-bool ConvertURDFJsonToUSDStage(
-    const std::string &robot_json,
+static bool ConvertPayloadLayer(
+    const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
     ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
   if (!out_stage) {
@@ -463,23 +27,101 @@ bool ConvertURDFJsonToUSDStage(
   if (warn) warn->clear();
   if (err) err->clear();
 
-  ::lightusd::tydra::detail::URDFPayload payload;
-  if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload,
-                                                      err)) {
+  const Json &root = payload.Root();
+  // The JSON bridge keeps the historical output unless a profile is named;
+  // native importers always name one (default "newton").
+  Profile profile;
+  if (!ParseProfile(JsonString(root, "profile", "legacy"), &profile)) {
+    if (err) *err = "Unknown output profile `" + JsonString(root, "profile") +
+                    "` (expected legacy, newton or openusd)";
     return false;
   }
-  const Json &root = payload.root;
+  ProfileScope profile_scope(profile);
+  // The openusd profile keeps MjcPhysics records (tendons, MjcActuator,
+  // keyframes, sensors, contact pairs) but has no schema for Newton-only
+  // ones; say what was omitted instead of authoring empty engine-typed prims.
+  auto engine_section = [&](const char *key, const char *what) {
+    if (profile.engine) return true;
+    if (profile.mjc && std::strcmp(key, "actuators") != 0) return true;
+    const Json *items = JsonArray(root, key);
+    if (items && !items->empty())
+      AppendWarn(warn, "openusd profile omits " + std::to_string(items->size()) + " " +
+                           what + " (no standard UsdPhysics schema).\n");
+    return false;
+  };
+  if (JsonString(root, "sourceFormat") == "obj") {
+#if defined(LIGHTUSD_WITH_USDOBJ)
+    tn::Layer obj_layer;
+    if (!tn::ConvertOBJPayloadToLayer(root, &obj_layer, err)) return false;
+    out_stage->SetRootLayer(std::move(obj_layer));
+    return true;
+#else
+    if (err) *err = "OBJ support is disabled";
+    return false;
+#endif
+  }
   const Json &links = payload.Array("links");
   const Json &joints = payload.Array("joints");
+  const bool mjcf_source = payload.mjcf_source;
+  bool no_physics = false;
+  ReadBool(root, "noPhysics", &no_physics);
 
   tn::Layer layer;
+  // Builders keep PrimSpec pointers while adding shader/subset children.
+  // Reserve from structural payload records, never from numeric mesh lanes.
+  size_t prim_capacity = 128;
+  std::vector<const Json*> pending{&root};
+  while (!pending.empty()) {
+    const Json* object = pending.back();
+    pending.pop_back();
+    if (object->is_object()) {
+      if (prim_capacity > size_t(UINT32_MAX) - 16) {
+        if (err) *err = "Robot prim count limit exceeded";
+        return false;
+      }
+      prim_capacity += 16;
+      if (const auto* names = JsonArray(*object, "materialNames")) {
+        if (names->size() > size_t(UINT32_MAX) - prim_capacity) {
+          if (err) *err = "Robot material count limit exceeded";
+          return false;
+        }
+        prim_capacity += names->size();
+      }
+      // One PhysicsAttachment per distinct pin body (a string array).
+      if (const auto* pins = JsonArray(*object, "pinBodies")) {
+        if (pins->size() > size_t(UINT32_MAX) - prim_capacity) {
+          if (err) *err = "Robot pin count limit exceeded";
+          return false;
+        }
+        prim_capacity += pins->size();
+      }
+      for (const auto& item : *object->object_items())
+        if (item.value().is_object() || item.value().is_array())
+          pending.push_back(&item.value());
+    } else if (object->is_array()) {
+      // Heterogeneous arrays may start with a scalar and contain records
+      // later. Count those too, without retaining numeric mesh lanes.
+      for (const auto& item : *object)
+        if (item.is_object() || item.is_array()) pending.push_back(&item);
+    }
+  }
+  layer.reserve(prim_capacity);
   layer.meta().defaultPrim = "World";
-  layer.meta().upAxis = JsonString(root, "upAxis", "Y");
+  if (root["unsupported"].is_array() && !root["unsupported"].empty()) {
+    layer.meta().customLayerData = tn::Value::MakeDictionary();
+    layer.meta().customLayerData.as_dictionary()->set("lightusdImportUnsupported",
+        tn::Value(root["unsupported"].dump()));
+    layer.meta().customLayerData_set = true;
+  }
+  const std::string up_axis = JsonString(root, "upAxis", "Y");
+  const bool y_up = !(up_axis == "Z" || up_axis == "z");
+  layer.meta().upAxis = y_up ? "Y" : "Z";
   layer.meta().upAxis_set = true;
-  layer.meta().metersPerUnit = 1.0;
-  layer.meta().metersPerUnit_set = true;
+  // MuJoCo authors in SI units (1 stage unit = 1 m / 1 kg).
+  layer.meta().metersPerUnit = no_physics ? 0.01 : 1.0;
+  layer.meta().metersPerUnit_set = !no_physics;
   layer.meta().kilogramsPerUnit = 1.0;
-  layer.meta().kilogramsPerUnit_set = true;
+  layer.meta().kilogramsPerUnit_set = !no_physics;
 
   tn::PrimSpec *world = Define(&layer, "/World", "Xform");
   if (!world) {
@@ -487,192 +129,726 @@ bool ConvertURDFJsonToUSDStage(
     return false;
   }
   world->meta().kind() = "assembly";
-  if (layer.meta().upAxis != "Z" && layer.meta().upAxis != "z") {
+  // URDF/MJCF sources are Z-up; a Y-up stage gets a single corrective root
+  // rotation Rx(-90deg) so local-frame physics data rides along unchanged
+  // (doc/usd-physics-upAxis.md).
+  if (y_up && !no_physics) {
     Set(world, "xformOp:rotateX", tn::Value(-90.0), "double");
     Set(world, "xformOpOrder",
         tn::Value::MakeTokenArray(std::vector<std::string>{"xformOp:rotateX"}),
         "token[]", true);
   }
 
-  tn::PrimSpec *scene = Define(&layer, "/World/PhysicsScene", "PhysicsScene");
-  AddAPIs(scene, {"MjcSceneAPI", "NewtonSceneAPI"});
-  std::vector<float> gravity = JsonFloats(root, "gravity");
-  if (gravity.size() < 3) gravity = {0.0f, -1.0f, 0.0f};
-  SetFloat3(scene, "physics:gravityDirection", gravity, "vector3f");
-  Set(scene, "physics:gravityMagnitude", tn::Value(9.80665f), "float");
-  Set(scene, "mjc:timestep", tn::Value(JsonNumber(root, "timestep", 0.002)),
-      "double");
-  AuthorExtensions(scene, root);
-
+  if (!no_physics) AddPhysicsScene(&layer, root);
+  std::unique_ptr<PhysicsMaterials> physics_materials;
+  if (!no_physics && !profile.legacy && mjcf_source)
+    physics_materials.reset(new PhysicsMaterials(&layer));
+  // openusd has no mjc:contype/conaffinity: express them as collision groups.
+  std::unique_ptr<CollisionFilterGroups> collision_groups;
+  if (!no_physics && !profile.legacy && !profile.engine && mjcf_source)
+    collision_groups.reset(new CollisionFilterGroups());
   Define(&layer, "/World/Links", "Xform");
   Define(&layer, "/World/Joints", "Xform");
 
+  // --- Links ---------------------------------------------------------------
   std::set<std::string> child_links;
   for (const Json &joint : joints) {
     const std::string child = JsonString(joint, "child");
     if (!child.empty()) child_links.insert(child);
   }
-  std::set<std::string> used_links;
-  std::map<std::string, std::string> link_names;
-  for (size_t i = 0; i < links.size(); ++i) {
-    const Json &link = links[i];
-    const std::string source_name =
-        JsonString(link, "name", "link_" + std::to_string(i));
-    const std::string name = Unique(source_name, "link", &used_links);
-    link_names[source_name] = name;
+  bool filter_parent = true;
+  if (const Json *ms = JsonObject(root, "mjcScene"))
+    if (const Json *flags = JsonObject(*ms, "flag")) ReadBool(*flags, "filterparent", &filter_parent);
+  bool self_collision_enabled = true;
+  // Non-legacy profiles author newton:selfCollisionEnabled only when the
+  // source sets it: an authored value overrides add_usd's
+  // enable_self_collisions argument.
+  bool self_collision_authored = profile.legacy;
+  if (const Json *newton = JsonObject(root, "newton")) {
+    self_collision_authored =
+        ReadBool(*newton, "selfCollisionEnabled", &self_collision_enabled) ||
+        self_collision_authored;
   }
-
-  for (size_t i = 0; i < links.size(); ++i) {
+  NameMap link_names;
+  NameMap geom_names;  // MJCF tendon wrap geom -> native prim under /World
+  std::map<std::string, std::vector<std::string>> link_colliders;  // by source name
+  std::set<std::string> static_links;                          // by source name
+  std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
+  std::map<std::string, std::set<std::string>> link_children;  // by USD name
+  // The articulation root API belongs on the root BODY, including a fixed
+  // base. MuJoCo's USD decoder treats any prim carrying the API as a body, so
+  // authoring it on the world-anchoring joint created a zero-mass body and
+  // failed compilation. The reference MuJoCo converter also applies it to the
+  // top-level body. `author_articulation` is shared by both base kinds.
+  const auto author_articulation = [&](tn::PrimSpec* target, const Json& link) {
+    AddAPIs(target, {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
+    if (self_collision_authored)
+      Set(target, "newton:selfCollisionEnabled", tn::Value(self_collision_enabled), "bool");
+    bool adds_mobility = false;
+    if (profile.newton && ReadBool(link, "jointsAddMobility", &adds_mobility) && adds_mobility)
+      Set(target, "newton:jointsAddMobility", tn::Value(true), "bool");
+  };
+  std::set<std::string> used_links;
+  // layout="nested": each dynamic link is a child prim of its parent link
+  // (the kinematic tree, as the reference converters write it), with a
+  // parent-relative transform. Link names then hold paths relative to
+  // /World/Links. Links under the world or a static link stay top-level.
+  const bool nested = JsonString(root, "layout", "flat") == "nested";
+  std::vector<size_t> order(links.size());
+  for (size_t i = 0; i < links.size(); ++i) order[i] = i;
+  std::vector<std::string> nested_names(links.size());
+  std::map<std::string, std::string> nested_parent;  // source -> parent source
+  if (nested) {
+    std::map<std::string, size_t> index_of;
+    std::set<std::string> static_sources;
+    for (size_t i = 0; i < links.size(); ++i) {
+      const std::string source = JsonString(links[i], "name", "link_" + std::to_string(i));
+      index_of[source] = i;
+      bool is_static = false;
+      ReadBool(links[i], "static", &is_static);
+      if (is_static) static_sources.insert(source);
+    }
+    for (const Json &joint : joints) {
+      const std::string child = JsonString(joint, "child"), parent = JsonString(joint, "parent");
+      if (!child.empty() && index_of.count(parent) && !static_sources.count(parent) &&
+          !static_sources.count(child) && !nested_parent.count(child))
+        nested_parent[child] = parent;
+    }
+    // Parents first; a cycle (invalid input) falls back to source order.
+    order.clear();
+    std::vector<int> state(links.size(), 0);
+    for (size_t i = 0; i < links.size(); ++i) {
+      std::vector<size_t> chain;
+      for (size_t k = i; state[k] == 0;) {
+        state[k] = 1;
+        chain.push_back(k);
+        const std::string source = JsonString(links[k], "name", "link_" + std::to_string(k));
+        auto up = nested_parent.find(source);
+        if (up == nested_parent.end()) break;
+        k = index_of[up->second];
+      }
+      for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        state[*it] = 2;
+        order.push_back(*it);
+      }
+    }
+    std::map<std::string, std::string> rel_of;
+    for (size_t i : order) {
+      const std::string source = JsonString(links[i], "name", "link_" + std::to_string(i));
+      const std::string name = Unique(source, "link", &used_links);
+      auto up = nested_parent.find(source);
+      std::string rel = name;
+      if (up != nested_parent.end() && rel_of.count(up->second)) {
+        rel = rel_of[up->second] + "/" + name;
+        link_children[rel_of[up->second]].insert(name);  // geometry must not take it
+      } else {
+        nested_parent.erase(source);
+      }
+      rel_of[source] = rel;
+      nested_names[i] = rel;
+    }
+  }
+  for (size_t i : order) {
     const Json &link = links[i];
-    const std::string source_name =
+    const std::string source =
         JsonString(link, "name", "link_" + std::to_string(i));
-    const std::string name = link_names[source_name];
+    const std::string name = nested ? nested_names[i] : Unique(source, "link", &used_links);
+    link_names[source] = name;
     const std::string path = "/World/Links/" + name;
     tn::PrimSpec *prim = Define(&layer, path, "Xform");
-    AddAPIs(prim, {"PhysicsRigidBodyAPI", "PhysicsMassAPI"});
-    const bool is_static = JsonBool(link, "static", false);
-    Set(prim, "physics:rigidBodyEnabled", tn::Value(!is_static), "bool");
-    Set(prim, "physics:startsAsleep", tn::Value(false), "bool");
-    if (!is_static && child_links.count(source_name) == 0) {
-      AddAPIs(prim, {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
-      Set(prim, "newton:selfCollisionEnabled",
-          tn::Value(JsonBool(root.contains("newton") ? root.at("newton") : root,
-                             "selfCollisionEnabled", true)),
-          "bool");
-    }
-    if (JsonBool(link, "mocap", false)) {
-      Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
-    }
-    if (JsonBool(link, "floating", false)) {
-      Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
-    }
-    SetTransform(prim, link);
-    AuthorExtensions(prim, link);
-
-    if (link.contains("inertial") && link.at("inertial").is_object()) {
-      const Json &inertial = link.at("inertial");
-      const double mass = JsonNumber(inertial, "mass", 0.0);
-      if (mass > 0.0) Set(prim, "physics:mass", tn::Value(static_cast<float>(mass)), "float");
-      SetFloat3(prim, "physics:centerOfMass",
-                JsonFloats(inertial, "centerOfMass"), "point3f");
-      SetFloat3(prim, "physics:diagonalInertia",
-                JsonFloats(inertial, "diagonalInertia"), "float3");
-      const std::vector<float> axes = JsonFloats(inertial, "principalAxes");
-      if (axes.size() >= 4) {
-        Set(prim, "physics:principalAxes",
-            tn::Value::MakeQuatf(axes[1], axes[2], axes[3], axes[0]), "quatf");
-      }
-    }
-
-    auto add_items = [&](const char *key, bool collision) -> bool {
-      if (!link.contains(key) || !link.at(key).is_array()) return true;
-      std::set<std::string> used;
-      const Json &items = link.at(key);
-      for (size_t item_index = 0; item_index < items.size(); ++item_index) {
-        const Json &item = items[item_index];
-        const std::string fallback = std::string(collision ? "collision_" : "visual_") +
-                                     std::to_string(item_index);
-        const std::string item_name =
-            Unique(JsonString(item, "name"), fallback, &used);
-        const std::string item_path = path + "/" + item_name;
-        if (collision && item.contains("shape") && item.at("shape").is_object()) {
-          if (!AddShape(&layer, item_path, item, payload.mjcf_source, warn)) return false;
-        } else if (!AddMesh(&layer, item_path, item, mesh_buffers, collision,
-                            payload.mjcf_source, warn)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    if (!add_items("visuals", false) || !add_items("collisions", true)) {
-      if (err) *err = "Failed to author link geometry";
+    if (!prim) {
+      if (err) *err = "Failed to define link `" + name + "`";
       return false;
+    }
+    SetSourceDisplayName(prim, source);
+    // A world-fixed link (e.g. the synthetic "world" link holding worldbody
+    // floor/ground geoms) is a static collider, not a dynamic body.
+    bool is_static = false;
+    ReadBool(link, "static", &is_static);
+    link_worlds[source] = MatrixFromArray(JsonDoubles(link, "matrix"));
+    auto nested_up = nested ? nested_parent.find(source) : nested_parent.end();
+    if (nested_up != nested_parent.end())
+      SetTransform(prim, MultiplyRowMajor(link_worlds[source],
+                                          InverseRigid(link_worlds[nested_up->second])));
+    else
+      SetTransformFromJson(prim, link);
+    if (is_static) static_links.insert(source);
+    // Non-legacy profiles: the synthetic world link is a plain static Xform
+    // holding static colliders, not a disabled rigid body (Newton and the
+    // UsdPhysics parser count every RigidBodyAPI prim as a body).
+    if (!no_physics && !(is_static && !profile.legacy)) {
+      AddAPIs(prim, {"PhysicsRigidBodyAPI", "PhysicsMassAPI"});
+      Set(prim, "physics:rigidBodyEnabled", tn::Value(!is_static), "bool");
+      Set(prim, "physics:startsAsleep", tn::Value(false), "bool");
+      bool flag = false;
+      if (ReadBool(link, "mocap", &flag) && flag) {
+        // Mocap bodies are driven externally: a kinematic rigid body.
+        if (profile.legacy) Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
+        else Set(prim, "physics:kinematicEnabled", tn::Value(true), "bool");
+      }
+      // MuJoCo <freejoint>: distinguishes a floating-base articulation root
+      // from a fixed (anchored) parentless base. UsdPhysics bodies are free
+      // unless jointed, so only legacy output records it.
+      flag = false;
+      ReadBool(link, "floating", &flag);
+      if (flag && profile.legacy)
+        Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
+      double gravcomp = 0.0;
+      if (!profile.legacy && ReadNumber(link, "gravcomp", &gravcomp))
+        Set(prim, "mjc:gravcomp", tn::Value(gravcomp), "double");
+      bool articulation_root = false;
+      ReadBool(link, "articulationRoot", &articulation_root);
+      if (!is_static && (!child_links.count(source) || articulation_root))
+        author_articulation(prim, link);
+      if (const Json* inertial = JsonObject(link, "inertial")) {
+        float mass = 0.0f;
+        bool zero_mass = false;
+        const Json *colliders = JsonArray(link, "collisions");
+        if (ReadNumber(*inertial, "mass", &mass) && mass > 0.0f) {
+          Set(prim, "physics:mass", tn::Value(mass), "float");
+        } else if (profile.newton && ReadBool(*inertial, "zeroMass", &zero_mass) && zero_mass &&
+                   colliders && !colliders->empty()) {
+          // An explicit MJCF mass 0 overrides the geoms; physics:mass = 0
+          // would read as unspecified and be derived from the colliders.
+          Set(prim, "physics:mass", tn::Value(1e-12f), "float");
+        }
+        const bool zero_mass_standin = zero_mass && colliders && !colliders->empty() &&
+                                       profile.newton && !(mass > 0.0f);
+        const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
+        if (com.size() >= 3)
+          SetPoint3(prim, "physics:centerOfMass", com, false);
+        // A full inertia tensor is diagonalized into principal moments +
+        // principal-axes rotation (the lossless USD representation).
+        const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
+        if (zero_mass_standin) {
+          // A massless body has no rotational inertia either (MuJoCo, and
+          // Newton's finalize() zeroes it); use the same stand-in.
+          AuthorInertia(prim, Json{{"diagonalInertia", Json::array({0.0, 0.0, 0.0})},
+                                   {"mass", 1.0}, {"zeroInertia", true}});
+        } else if (!profile.legacy) {
+          AuthorInertia(prim, *inertial);
+        } else if (full.size() >= 6) {
+          // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
+          const double tensor[3][3] = {{full[0], full[3], full[4]},
+                                       {full[3], full[1], full[5]},
+                                       {full[4], full[5], full[2]}};
+          double eval[3];
+          double evec[3][3];
+          JacobiEigenSymmetric3(tensor, eval, evec);
+          Set(prim, "physics:diagonalInertia",
+              tn::Value::MakeFloat3(static_cast<float>(eval[0]),
+                                    static_cast<float>(eval[1]),
+                                    static_cast<float>(eval[2])),
+              "float3");
+          Set(prim, "physics:principalAxes", RotationMatrixToQuatf(evec),
+              "quatf");
+        } else {
+          const std::vector<float> inertia =
+              JsonFloats(*inertial, "diagonalInertia");
+          if (inertia.size() >= 3) {
+            Set(prim, "physics:diagonalInertia",
+                tn::Value::MakeFloat3(inertia[0], inertia[1], inertia[2]),
+                "float3");
+          }
+        }
+        const auto principal = JsonFloats(*inertial, "principalAxes");
+        if (profile.legacy && full.size() < 6 && principal.size() == 4)
+          Set(prim, "physics:principalAxes",
+              tn::Value::MakeQuatf(principal[0], principal[1], principal[2],
+                                   principal[3]),
+              "quatf");
+      }
+
+    }  // physics-bearing link
+
+    // Visuals, collisions and (non-legacy) sites share the link's child
+    // namespace.
+    std::set<std::string> &siblings = link_children[name];
+    if (const Json *visuals = JsonArray(link, "visuals")) {
+      size_t n = 0;
+      for (const Json &visual : *visuals) {
+        const std::string fallback = "visual_" + std::to_string(n++);
+        std::string prim_name;
+        const bool ok =
+            JsonObject(visual, "shape")
+                ? AddNativeCollisionShapeFromJson(&layer, path, &siblings,
+                                                  visual, fallback, mjcf_source,
+                                                  warn, err, false, &prim_name)
+                : AddMeshFromJson(&layer, path, &siblings, visual, mesh_buffers,
+                                  fallback, false, mjcf_source, warn, err);
+        if (!ok) return false;
+        const std::string geom = JsonString(visual, "mjcGeom");
+        if (!geom.empty() && !prim_name.empty())
+          geom_names.emplace(geom, "Links/" + name + "/" + prim_name);
+      }
+    }
+    if (const Json *collisions = JsonArray(link, "collisions")) {
+      size_t n = 0;
+      for (const Json &collision : *collisions) {
+        const std::string fallback = "collision_" + std::to_string(n++);
+        std::string prim_name;
+        const bool ok =
+            JsonObject(collision, "shape")
+                ? AddNativeCollisionShapeFromJson(&layer, path, &siblings,
+                                                  collision, fallback,
+                                                  mjcf_source, warn, err, true,
+                                                  &prim_name)
+                : AddMeshFromJson(&layer, path, &siblings, collision,
+                                  mesh_buffers, fallback, true, mjcf_source,
+                                  warn, err);
+        if (!ok) return false;
+        const std::string geom = JsonString(collision, "mjcGeom");
+        if (!geom.empty() && !prim_name.empty())
+          geom_names[geom] = "Links/" + name + "/" + prim_name;
+        if (!prim_name.empty())
+          link_colliders[source].push_back(path + "/" + prim_name);
+      }
+    }
+    AddURDFCustom(&layer, path, layer.prim_at_path_mutable(path), JsonObject(link, "urdfCustom"),
+                  &siblings);
+  }
+
+  // Robot-level URDF extensions (<gazebo>, ...) under /World/custom, as
+  // urdf-usd-converter's Geometry/custom scope.
+  if (const Json *custom = JsonObject(root, "urdfCustom")) {
+    if (tn::PrimSpec *scope = Define(&layer, "/World/custom", "Scope")) {
+      std::set<std::string> children;
+      AddURDFCustom(&layer, "/World/custom", scope, custom, &children);
     }
   }
 
+  if (collision_groups) collision_groups->Write(&layer);
+
+  // MJCF <contact><exclude> -> physics:filteredPairs on the first body.
+  if (const Json *pairs = JsonArray(root, "filteredPairs")) {
+    std::map<std::string, std::vector<std::string>> filtered;
+    for (const Json &pair : *pairs) {
+      if (!pair.is_object()) continue;
+      const std::string body1 = JsonString(pair, "body1");
+      const std::string body2 = JsonString(pair, "body2");
+      auto it1 = link_names.find(body1);
+      auto it2 = link_names.find(body2);
+      if (it1 == link_names.end() || it2 == link_names.end()) {
+        AppendWarn(warn, "Skipping filtered pair `" + body1 + "` / `" + body2 +
+                             "`: link was not exported.\n");
+        continue;
+      }
+      // A static link has no RigidBodyAPI outside legacy output; filter
+      // against its collider prims from the dynamic side instead.
+      const bool static1 = !profile.legacy && static_links.count(body1);
+      const bool static2 = !profile.legacy && static_links.count(body2);
+      if (static1 && static2) continue;
+      if (static1 || static2) {
+        const std::string &dynamic = static1 ? body2 : body1;
+        const auto &shapes = link_colliders[static1 ? body1 : body2];
+        auto &out = filtered[dynamic];
+        out.insert(out.end(), shapes.begin(), shapes.end());
+        continue;
+      }
+      filtered[body1].push_back("/World/Links/" + it2->second);
+    }
+    for (const auto &entry : filtered) {
+      if (entry.second.empty()) continue;
+      tn::PrimSpec *prim = layer.prim_at_path_mutable(
+          "/World/Links/" + link_names[entry.first]);
+      if (!prim) continue;
+      AddAPI(prim, "PhysicsFilteredPairsAPI");
+      SetRel(prim, "physics:filteredPairs", entry.second);
+    }
+  }
+
+  // --- Joints --------------------------------------------------------------
+  NameMap joint_names;
+  std::vector<std::string> joint_usd_names(joints.size());
   std::set<std::string> used_joints;
-  std::map<std::string, std::string> joint_names;
   for (size_t i = 0; i < joints.size(); ++i) {
-    const std::string source = JsonString(joints[i], "name",
-                                          "joint_" + std::to_string(i));
-    joint_names[source] = Unique(source, "joint", &used_joints);
+    const std::string source =
+        JsonString(joints[i], "name", "joint_" + std::to_string(i));
+    joint_usd_names[i] = Unique(source, "joint", &used_joints);
+    joint_names[source] = joint_usd_names[i];
   }
   constexpr double kRadToDeg = 57.2957795130823208768;
   for (size_t i = 0; i < joints.size(); ++i) {
     const Json &joint = joints[i];
-    const std::string source = JsonString(joint, "name",
-                                          "joint_" + std::to_string(i));
+    const std::string type = JsonString(joint, "type", "fixed");
     const std::string parent = JsonString(joint, "parent");
     const std::string child = JsonString(joint, "child");
     if (!link_names.count(parent) || !link_names.count(child)) {
-      AppendWarn(warn, "Skipping joint `" + source + "`: unknown link.\n");
+      AppendWarn(warn, "Skipping joint `" + JsonString(joint, "name", "joint") +
+                           "`: parent or child link was not exported.\n");
       continue;
     }
-    const std::string type = JsonString(joint, "type", "fixed");
-    std::string usd_type = "PhysicsFixedJoint";
-    if (type == "revolute" || type == "continuous") usd_type = "PhysicsRevoluteJoint";
-    else if (type == "prismatic") usd_type = "PhysicsPrismaticJoint";
-    else if (type == "spherical" || type == "ball") usd_type = "PhysicsSphericalJoint";
-    tn::PrimSpec *prim = Define(&layer, "/World/Joints/" + joint_names[source],
-                                usd_type);
-    prim->add_relationship("physics:body0",
-                           tn::Path("/World/Links/" + link_names[parent]));
-    prim->add_relationship("physics:body1",
-                           tn::Path("/World/Links/" + link_names[child]));
+    const std::string &name = joint_usd_names[i];
     const std::string axis = AxisToken(joint);
-    if (usd_type != "PhysicsFixedJoint") SetToken(prim, "physics:axis", axis);
-    SetFloat3(prim, "physics:localPos0", JsonFloats(joint, "localPos0"), "point3f");
-    SetFloat3(prim, "physics:localPos1", JsonFloats(joint, "localPos1"), "point3f");
-    const std::vector<float> local_rot0 = JsonFloats(joint, "localRot0");
-    const std::vector<float> local_rot1 = JsonFloats(joint, "localRot1");
-    if (local_rot0.size() >= 4) {
-      Set(prim, "physics:localRot0",
-          tn::Value::MakeQuatf(local_rot0[1], local_rot0[2], local_rot0[3], local_rot0[0]),
-          "quatf");
+    // localRot0 is authoritative for the joint frame rotation; originMatrix
+    // contributes only its translation, so surface a dropped rotation.
+    if (!joint.contains("localRot0")) {
+      const std::vector<double> m = JsonDoubles(joint, "originMatrix");
+      const size_t idx[9] = {0, 1, 2, 4, 5, 6, 8, 9, 10};
+      const double expect[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+      bool rotated = false;
+      for (size_t k = 0; m.size() == 16 && k < 9; k++) {
+        rotated = rotated || std::abs(m[idx[k]] - expect[k]) > 1e-6;
+      }
+      if (rotated) {
+        AppendWarn(warn, "Joint `" + name +
+                             "` has a rotation in originMatrix but no "
+                             "localRot0; the rotation is ignored (supply "
+                             "localRot0).\n");
+      }
     }
-    if (local_rot1.size() >= 4) {
-      Set(prim, "physics:localRot1",
-          tn::Value::MakeQuatf(local_rot1[1], local_rot1[2], local_rot1[3], local_rot1[0]),
-          "quatf");
+    std::string usd_type = "PhysicsFixedJoint";
+    if (type == "revolute" || type == "continuous") {
+      usd_type = "PhysicsRevoluteJoint";
+    } else if (type == "prismatic") {
+      usd_type = "PhysicsPrismaticJoint";
+    } else if (type == "spherical") {
+      // MuJoCo ball joint; cone limits are not carried in the JSON.
+      usd_type = "PhysicsSphericalJoint";
+    } else if (type == "planar" && !profile.legacy) {
+      // Generic (D6) joint; locks are authored below.
+      usd_type = "PhysicsJoint";
+    } else if (type != "fixed") {
+      AppendWarn(warn, "Joint `" + name + "` type `" + type +
+                           "` is exported as PhysicsFixedJoint.\n");
     }
-    const bool rotational = usd_type == "PhysicsRevoluteJoint";
-    const std::string dof = std::string(rotational ? "angular" : "linear") + axis;
-    if (joint.contains("limit") && joint.at("limit").is_object()) {
-      const Json &limit = joint.at("limit");
-      const double scale = rotational ? kRadToDeg : 1.0;
-      const double low = JsonNumber(limit, "lower", 0.0) * scale;
-      const double high = JsonNumber(limit, "upper", 0.0) * scale;
-      Set(prim, "physics:lowerLimit", tn::Value(static_cast<float>(low)), "float");
-      Set(prim, "physics:upperLimit", tn::Value(static_cast<float>(high)), "float");
-      AddAPI(prim, "PhysicsLimitAPI:" + dof);
-      Set(prim, "physics:limit:" + dof + ":low",
-          tn::Value(static_cast<float>(low)), "float");
-      Set(prim, "physics:limit:" + dof + ":high",
-          tn::Value(static_cast<float>(high)), "float");
+    tn::PrimSpec *prim = Define(&layer, "/World/Joints/" + name, usd_type);
+    if (!prim) {
+      if (err) *err = "Failed to add joint `" + name + "`";
+      return false;
     }
-    AddJointDynamics(prim, joint, dof);
-    AuthorExtensions(prim, joint);
+    SetSourceDisplayName(prim, JsonString(joint, "name"));
+    {
+      std::set<std::string> children;
+      AddURDFCustom(&layer, "/World/Joints/" + name, prim, JsonObject(joint, "urdfCustom"),
+                    &children);
+    }
+    // An empty body0 means the world frame in UsdPhysics.
+    AssignJointBase(prim, joint,
+                    !profile.legacy && static_links.count(parent)
+                        ? std::string() : link_names[parent],
+                    link_names[child], joint_names);
+    // <flag filterparent="disable"> lets jointed parent/child bodies collide.
+    if (!profile.legacy && !filter_parent)
+      Set(prim, "physics:collisionEnabled", tn::Value(true), "bool", true);
+    if (usd_type != "PhysicsFixedJoint" && usd_type != "PhysicsJoint") {
+      SetToken(prim, "physics:axis", axis, true);
+    }
+    if (usd_type == "PhysicsJoint") {
+      // URDF planar: the joint frame's X is the plane normal (localRot aligns
+      // X with the URDF axis). Translate in Y/Z and rotate about X; lock the
+      // rest with low > high (UsdPhysics "locked axis").
+      for (const char *dof : {"transX", "rotY", "rotZ"}) {
+        AddAPI(prim, std::string("PhysicsLimitAPI:") + dof);
+        Set(prim, std::string("limit:") + dof + ":physics:low", tn::Value(1.0f), "float");
+        Set(prim, std::string("limit:") + dof + ":physics:high", tn::Value(-1.0f), "float");
+      }
+      // Free axes are unlimited, but Newton creates a D6 DOF only for an
+      // axis with a LimitAPI whose low < high.
+      const float inf = std::numeric_limits<float>::infinity();
+      for (const char *dof : {"transY", "transZ", "rotX"}) {
+        AddAPI(prim, std::string("PhysicsLimitAPI:") + dof);
+        Set(prim, std::string("limit:") + dof + ":physics:low", tn::Value(-inf), "float");
+        Set(prim, std::string("limit:") + dof + ":physics:high", tn::Value(inf), "float");
+      }
+    }
+    double cone = 0.0;
+    if (usd_type == "PhysicsSphericalJoint" && ReadNumber(joint, "coneLimit", &cone)) {
+      const float degrees = static_cast<float>(cone * kRadToDeg);
+      Set(prim, "physics:coneAngle0Limit", tn::Value(degrees), "float");
+      Set(prim, "physics:coneAngle1Limit", tn::Value(degrees), "float");
+    }
+    // Limits: revolute in degrees, prismatic in meters (continuous joints
+    // are unlimited).
+    const Json *limit = JsonObject(joint, "limit");
+    const bool revolute_limit = type == "revolute" && limit;
+    const bool prismatic_limit = type == "prismatic" && limit;
+    if (revolute_limit || prismatic_limit) {
+      const double scale = revolute_limit ? kRadToDeg : 1.0;
+      double lower = 0.0;
+      double upper = 0.0;
+      if (ReadNumber(*limit, "lower", &lower)) {
+        Set(prim, "physics:lowerLimit",
+            tn::Value(static_cast<float>(lower * scale)), "float", true);
+      }
+      if (ReadNumber(*limit, "upper", &upper)) {
+        Set(prim, "physics:upperLimit",
+            tn::Value(static_cast<float>(upper * scale)), "float", true);
+      }
+      // Revolute/prismatic joints carry their limits in lower/upperLimit.
+      // PhysicsLimitAPI is the D6 mechanism; legacy output also applied it
+      // with non-standard property names, kept for byte compatibility.
+      if (profile.legacy) {
+        const std::string dof = JointDofName(axis, revolute_limit);
+        AddAPI(prim, "PhysicsLimitAPI:" + dof);
+        Set(prim, "physics:limit:" + dof + ":low",
+            tn::Value(static_cast<float>(lower * scale)), "float");
+        Set(prim, "physics:limit:" + dof + ":high",
+            tn::Value(static_cast<float>(upper * scale)), "float");
+      }
+    }
   }
 
-  AuthorGenericScope(&layer, payload.Array("actuators"), "Actuators",
-                     "NewtonActuator", "newton:");
-  AuthorGenericScope(&layer, payload.Array("sites"), "Sites", "Sphere", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("tendons"), "Tendons", "MjcTendon", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("mjcActuators"), "MjcActuators",
-                     "MjcActuator", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("equalities"), "Equalities", "Xform", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("keyframes"), "Keyframes", "MjcKeyframe", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("sensors"), "Sensors", "MjcSensor", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("contactPairs"), "Contacts", "Xform", "mjc:");
-  AuthorGenericScope(&layer, payload.Array("lights"), "Lights", "SphereLight", "inputs:");
-  AuthorGenericScope(&layer, payload.Array("cameras"), "Cameras", "Camera", "");
-  AuthorGenericScope(&layer, payload.Array("materials"), "Materials", "Material", "mjc:");
+  // --- MJCF / Newton scopes, in the legacy /World child order ---------------
+  Scope actuators_scope(&layer, "Actuators");
+  {
+    std::set<std::string> siblings;
+    const Json &items = payload.Array("actuators");
+    for (size_t i = 0; engine_section("actuators", "Newton actuators") && i < items.size(); ++i) {
+      AddNewtonActuatorFromJson(&actuators_scope, &siblings, items[i],
+                                joint_names, i, warn);
+    }
+  }
 
+  // Site names are resolved up front: spatial tendons route through them
+  // although the legacy Sites scope follows Tendons/Equalities. Values are
+  // paths relative to /World. Non-legacy profiles author each site under its
+  // owning link (Newton only loads sites below rigid bodies).
+  const Json &sites = payload.Array("sites");
+  NameMap site_names;
+  std::vector<std::string> site_usd_names(sites.size());
+  std::vector<bool> site_on_link(sites.size(), false);
+  {
+    std::set<std::string> used;
+    for (size_t i = 0; i < sites.size(); ++i) {
+      const std::string source =
+          JsonString(sites[i], "name", "site_" + std::to_string(i));
+      const auto owner = link_names.find(JsonString(sites[i], "body"));
+      if (!profile.legacy && owner != link_names.end()) {
+        const std::string name =
+            ChildName(Sanitize(source, "site"), &link_children[owner->second]);
+        const std::string path = "/World/Links/" + owner->second + "/" + name;
+        tn::PrimSpec *site = Define(&layer, path, "Sphere");
+        if (site) {
+          const urdf_detail::Matrix4 world = MatrixFromArray(JsonDoubles(sites[i], "matrix"));
+          const urdf_detail::Matrix4 local =
+              MultiplyRowMajor(world, InverseRigid(link_worlds[owner->first]));
+          AuthorMjcSite(site, sites[i], &local);
+        }
+        site_usd_names[i] = name;
+        site_on_link[i] = true;
+        site_names[source] = "Links/" + owner->second + "/" + name;
+        continue;
+      }
+      site_usd_names[i] = Unique(source, "site", &used);
+      site_names[source] = "Sites/" + site_usd_names[i];
+    }
+  }
+
+  if (!profile.legacy) AddDeformablesFromJson(&layer, payload.Array("deformables"), link_names, warn);
+  if (!profile.legacy &&
+      !AddSkinsFromJson(&layer, payload.Array("skins"), link_names, link_worlds, warn, err))
+    return false;
+
+  NameMap tendon_names;
+  Scope tendons_scope(&layer, "Tendons");
+  {
+    std::set<std::string> siblings;
+    const Json &items = payload.Array("tendons");
+    for (size_t i = 0; engine_section("tendons", "MuJoCo tendons") && i < items.size(); ++i) {
+      AddMjcTendonFromJson(&tendons_scope, &siblings, items[i], joint_names,
+                           site_names, geom_names, &tendon_names, i, warn);
+    }
+  }
+
+  Scope equalities_scope(&layer, "Equalities");
+  {
+    std::set<std::string> siblings;
+    const Json &items = payload.Array("equalities");
+    for (size_t i = 0; i < items.size(); ++i) {
+      if (profile.legacy || no_physics) {
+        AddMjcEqualityFromJson(&equalities_scope, &siblings, items[i],
+                               link_names, joint_names, i);
+        continue;
+      }
+      AddEqualityConstraint(&layer, &equalities_scope, &siblings, items[i], i,
+                            link_names, link_worlds, static_links, joint_names,
+                            sites, warn);
+    }
+  }
+
+  Scope sites_scope(&layer, "Sites");
+  for (size_t i = 0; i < sites.size(); ++i) {
+    if (!site_on_link[i])
+      AddMjcSiteFromJson(&sites_scope, sites[i], site_usd_names[i]);
+  }
+
+  Scope mjc_actuators_scope(&layer, "MjcActuators");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("mjcActuators");
+    for (size_t i = 0; engine_section("mjcActuators", "MuJoCo actuators") && i < items.size(); ++i) {
+      AddMjcActuatorFromJson(&mjc_actuators_scope, &used, items[i],
+                             joint_names, tendon_names, site_names, link_names,
+                             i, warn);
+    }
+  }
+
+  Scope keyframes_scope(&layer, "Keyframes");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("keyframes");
+    for (size_t i = 0; engine_section("keyframes", "MuJoCo keyframes") && i < items.size(); ++i) {
+      AddMjcKeyframeFromJson(&keyframes_scope, &used, items[i], i);
+    }
+  }
+
+  Scope lights_scope(&layer, "Lights");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("lights");
+    for (size_t i = 0; i < items.size(); ++i) {
+      AddLightFromJson(&lights_scope, &used, items[i], i);
+    }
+    if (payload.Root().contains("skybox") && payload.Root().at("skybox").is_object())
+      AddSkyboxFromJson(&lights_scope, &used, payload.Root().at("skybox"), !y_up);
+  }
+
+  Scope cameras_scope(&layer, "Cameras");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("cameras");
+    for (size_t i = 0; i < items.size(); ++i) {
+      AddCameraFromJson(&cameras_scope, &used, items[i], i);
+    }
+  }
+
+  // Geoms bind via /World/Materials/<sanitized-name> (see AddMeshFromJson).
+  Scope materials_scope(&layer, "Materials");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("materials");
+    for (size_t i = 0; i < items.size(); ++i) {
+      AddMaterialFromJson(&materials_scope, &used, items[i], i);
+    }
+  }
+
+  Scope sensors_scope(&layer, "Sensors");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("sensors");
+    for (size_t i = 0; engine_section("sensors", "MuJoCo sensors") && i < items.size(); ++i) {
+      AddMjcSensorFromJson(&sensors_scope, &used, items[i], i);
+    }
+  }
+
+  Scope contacts_scope(&layer, "Contacts");
+  {
+    std::set<std::string> used;
+    const Json &items = payload.Array("contactPairs");
+    for (size_t i = 0; engine_section("contactPairs", "MuJoCo contact pairs") && i < items.size(); ++i) {
+      AddContactPairFromJson(&contacts_scope, &used, items[i], i);
+    }
+  }
+
+  // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX
+  // knobs), authored only when it carries at least one entry.
+  if (const Json *custom = (profile.engine || profile.mjc) ? JsonObject(root, "custom") : nullptr) {
+    std::vector<std::pair<std::string, const Json *>> numeric, text;
+    if (const Json *items = JsonArray(*custom, "numeric")) {
+      for (const Json &n : *items) {
+        const std::string nm = JsonString(n, "name");
+        if (!nm.empty()) numeric.emplace_back(nm, &n);
+      }
+    }
+    if (const Json *items = JsonArray(*custom, "text")) {
+      for (const Json &t : *items) {
+        const std::string nm = JsonString(t, "name");
+        if (!nm.empty()) text.emplace_back(nm, &t);
+      }
+    }
+    if (!numeric.empty() || !text.empty()) {
+      tn::PrimSpec *prim = Define(&layer, "/World/MjcCustom", "Xform");
+      for (const auto &entry : numeric) {
+        SetDoubles(prim, "mjc:custom:" + entry.first,
+                   JsonDoubles(*entry.second, "data"));
+      }
+      for (const auto &entry : text) {
+        SetToken(prim, "mjc:customtext:" + entry.first,
+                 JsonString(*entry.second, "data"));
+      }
+    }
+  }
+
+  // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins; the
+  // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
+  // MjcActuator's mjc:instance.
+  if (const Json *plugins = (profile.engine || profile.mjc) ? JsonArray(root, "plugins") : nullptr) {
+    std::vector<std::pair<std::string, std::string>> tokens;
+    for (const Json &p : *plugins) {
+      const std::string inst = JsonString(p, "instance");
+      if (inst.empty()) continue;
+      const std::string plugin_id = JsonString(p, "plugin");
+      if (!plugin_id.empty()) {
+        tokens.emplace_back("mjc:plugin:" + inst + ":plugin", plugin_id);
+      }
+      const Json *config = JsonObject(p, "config");
+      const auto *members = config ? config->object_items() : nullptr;
+      if (!members) continue;
+      for (const auto &member : *members) {
+        if (!member.value().is_string()) continue;
+        tokens.emplace_back("mjc:plugin:" + inst + ":config:" + member.key,
+                            member.value().get<std::string>());
+      }
+    }
+    if (!tokens.empty()) {
+      tn::PrimSpec *prim = Define(&layer, "/World/MjcPlugins", "Xform");
+      for (const auto &entry : tokens) SetToken(prim, entry.first, entry.second);
+    }
+  }
+
+  if (DefineCapacityExceeded()) return false;  // reported by ConvertPayload
   layer.finalize();
   tn::Stage stage;
   stage.SetRootLayer(std::move(layer));
   *out_stage = std::move(stage);
   return true;
+}
+
+static bool ConvertPayload(
+    const ::lightusd::tydra::detail::URDFPayload &payload,
+    const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
+    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
+  ResetDefineCapacity();
+  const bool ok = ConvertPayloadLayer(payload, mesh_buffers, out_stage, warn, err);
+  if (DefineCapacityExceeded()) {
+    // A builder's prim did not fit the reserved capacity: failing keeps the
+    // PrimSpec pointers builders hold valid. The estimate is a bug to fix.
+    if (err)
+      *err = "Robot conversion needs more prims than were reserved (an internal "
+             "estimate; please report the input)";
+    return false;
+  }
+  return ok;
+}
+
+bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& value,
+    std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
+  urdf_detail::MeshBufferConsumption consume(true);
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
+}
+
+bool ConvertURDFJsonToUSDStage(const std::string& robot_json,
+    const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload, err)) return false;
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
+}
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& value,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  return ConvertURDFPayloadToUSDStage(value, nullptr, out_stage, warn, err);
+}
+
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& value,
+    const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string &robot_json,
@@ -681,6 +857,5 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json,
   return ConvertURDFJsonToUSDStage(robot_json, nullptr, out_stage, warn, err);
 }
 
-}  // namespace next
-}  // namespace tydra
-}  // namespace lightusd
+
+} } }  // namespace lightusd::tydra::next

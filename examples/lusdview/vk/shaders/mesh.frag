@@ -97,6 +97,8 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 shadowViewProj;
   vec4 pointShadowLight; // xyz position, w = point cube shadow enabled
   mat4 pointShadowViewProj[6];
+  vec4 clippingPlanes[8];
+  ivec4 clippingInfo;
 } fr;
 
 struct MaterialTexParam {
@@ -166,8 +168,13 @@ struct MaterialTexParam {
   vec4 subsurfaceParams; // weight, scale, radius, reserved
   vec4 subsurfaceColor;
 };
+// Full backend-neutral OpenPBR packet. The 20 vec4 rows are packed by
+// PackRealtimePbrMaterial in src/tydra/openpbr-params.hh and indexed with the
+// canonical raster material id in pc.ids.x.
+struct RasterPbrParam { vec4 p[20]; };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 layout(set = 3, binding = 1, std430) readonly buffer MatGraph { float graphRows[]; } mgraph;
+layout(set = 3, binding = 2, std430) readonly buffer RasterPbr { RasterPbrParam p[]; } rpbr;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -264,32 +271,32 @@ vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
 
 #ifdef LUSDVIEW_GRAPH_FREE
 bool hasGraphRoute(int route) { return false; }
-void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
-  for (int route = 0; route < 9; ++route) result[route] = vec4(0.0);
+void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
+  for (int route = 0; route < 49; ++route) result[route] = vec4(0.0);
 }
 #else
 bool hasGraphRoute(int route) {
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1394u;
-  return route >= 0 && route < 44 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
+  uint base = uint(mid) * 1395u;
+  return route >= 0 && route < 49 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
          mgraph.graphRows[base + uint(route) + 1u] >= 0.0;
 }
 
-void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
+void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
   bool connected = false;
-  for (int route = 0; route < 9; ++route) {
+  for (int route = 0; route < 49; ++route) {
     result[route] = vec4(0.0);
     connected = connected || hasGraphRoute(route);
   }
   if (!connected) return;
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1394u;
+  uint base = uint(mid) * 1395u;
   int count = int(clamp(mgraph.graphRows[base], 0.0, 64.0));
   if (count <= 0) return;
   vec4 v[64];
   // CompileMaterialXGraphRuntime packs dependencies before their consumers.
   for (int i = 0; i < count; ++i) {
-      uint p = base + 50u + uint(i) * 21u;
+      uint p = base + 51u + uint(i) * 21u;
       int op = int(mgraph.graphRows[p] + 0.5);
       int a = int(mgraph.graphRows[p + 1u] + 0.5);
       int b = int(mgraph.graphRows[p + 2u] + 0.5);
@@ -310,7 +317,13 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
       else if (op == 1 || op == 2) {
         int slot = encoded;
         float row = -1.0;
-        if (encoded < 0) { slot = -encoded - 1; row = value.w; }
+        if (encoded < 0) {
+          slot = -encoded - 1;
+          // The raster packer stores the source atlas row in the first
+          // fallback value. Read it directly: a connected UV input replaces
+          // `value` with that input's result before the image is sampled.
+          row = mgraph.graphRows[p + 7u];
+        }
         v[i] = sampleGraphImage(slot, row, graphUv, value);
       } else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
       else if (op == 4) v[i] = av + bv;
@@ -347,6 +360,9 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
       else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 41) v[i] = atan(av, bv);
+      else if (op == 42) v[i] = sign(av);
+      else if (op == 43) v[i] = round(av);
       else if (op == 34) v[i] = vec4(1.0) - av;
       else if (op == 35) v[i] = (av - bv) / max(cv - bv, vec4(1e-6));
       else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
@@ -365,7 +381,7 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
       }
       else v[i] = value;
   }
-  for (int route = 0; route < 9; ++route) {
+  for (int route = 0; route < 49; ++route) {
     if (hasGraphRoute(route)) {
       int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
       if (wanted >= 0 && wanted < count) result[route] = v[wanted];
@@ -374,16 +390,17 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
 }
 #endif
 
-// Specular F0 (T12): specular workflow -> specularColor directly; else the
-// dielectric reflectance from ior lerped toward base by metalness. ior 1.5 (the
-// default) gives exactly 0.04, matching the old fixed constant.
-vec3 computeF0(vec3 base, float metallic) {
-  vec4 sp = mtp.p[max(pc.ids.x, 0)].specParams;
-  if (sp.w < 0.0) return sp.rgb;                 // specular workflow
-  bool openPbr = sp.w > 100.0;
-  float ior = max(1.0, openPbr ? sp.w - 100.0 : sp.w);
+// Specular F0 (T12): specular workflow -> specularColor directly; otherwise
+// derive dielectric F0 from IOR and blend toward the base color by metalness.
+// The OpenPBR packet keeps the workflow decision explicit at the call site so
+// both the legacy PreviewSurface bridge and the packet use the same equation.
+vec3 computeF0(vec3 base, float metallic, vec3 specularColor, float ior,
+               bool specularWorkflow, bool openPbr) {
+  if (specularWorkflow) return max(specularColor, vec3(0.0));
+  ior = max(1.0, ior);
   float d = (ior - 1.0) / (ior + 1.0);
-  vec3 dielectric = vec3(d * d) * (openPbr ? sp.rgb : vec3(1.0));
+  vec3 dielectric = vec3(d * d) * (openPbr ? max(specularColor, vec3(0.0))
+                                            : vec3(1.0));
   return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
 }
 
@@ -396,6 +413,17 @@ float distributionGGX(float NoH, float roughness) {
   return a2 / max(kPi * d * d, 1e-6);
 }
 
+float distributionAnisotropicGGX(float NoH, float ToH, float BoH,
+                                 float roughness, float anisotropy) {
+  float a = max(roughness * roughness, 0.002);
+  float aspect = sqrt(max(1.0 - clamp(anisotropy, -0.95, 0.95) * 0.8,
+                          0.05));
+  float ax = max(a / aspect, 0.002);
+  float ay = max(a * aspect, 0.002);
+  float q = (ToH * ToH) / ax + (BoH * BoH) / ay + NoH * NoH;
+  return 1.0 / max(kPi * sqrt(ax * ay) * q * q, 1e-6);
+}
+
 float geometrySchlickGGX(float NoX, float roughness) {
   float r = roughness + 1.0;
   float k = (r * r) * 0.125;
@@ -405,6 +433,22 @@ float geometrySchlickGGX(float NoX, float roughness) {
 vec3 fresnelSchlick(float VoH, vec3 f0) {
   float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
   return f0 + (vec3(1.0) - f0) * f;
+}
+
+// Compact thin-film approximation shared with the GL raster preview. It keeps
+// the zero-thickness response unchanged while adding a bounded view-dependent
+// spectral shift without another shader variant or LUT.
+vec3 applyThinFilm(vec3 f0, float cosTheta, float filmWeight,
+                   float filmThickness, float filmIor) {
+  float w = clamp(filmWeight, 0.0, 1.0);
+  if (w <= 0.0 || filmThickness <= 0.0) return f0;
+  float eta = max(filmIor, 1.0);
+  float phase = 6.28318530718 * eta * filmThickness *
+                (1.0 - clamp(cosTheta, 0.0, 1.0));
+  vec3 film = 0.5 + 0.5 * cos(phase * vec3(1.0, 1.17, 1.35) +
+                              vec3(0.0, 2.1, 4.2));
+  return mix(f0, clamp(f0 + (vec3(1.0) - f0) * film * 0.65,
+                       0.0, 1.0), w);
 }
 
 // Exact unpolarized Fresnel for a smooth dielectric interface.  Schlick is a
@@ -739,6 +783,9 @@ vec3 applyNormalMap(vec3 n) {
 }
 
 void shadeFragment() {
+  for (int i = 0; i < fr.clippingInfo.x; ++i) {
+    if (dot(vec4(vWorldPos, 1.0), fr.clippingPlanes[i]) < 0.0) discard;
+  }
   // Shading normal, with the tangent-space normal map applied up front so the
   // Normals AOV (mode 2) shows the same perturbed normal the lit path uses --
   // matching the GL backend, which also maps before its AOV branch.
@@ -752,7 +799,7 @@ void shadeFragment() {
   vec3 N = applyNormalMap(Nbase);
   // All outputs share the same topologically ordered graph and UV input.
   // Evaluate once instead of asking the driver to inline nine interpreters.
-  vec4 graphResults[9];
+  vec4 graphResults[49];
   evalRasterMaterialXGraphs(vUV, graphResults);
   vec4 graphBase = graphResults[0];
   vec4 graphMetal = graphResults[1];
@@ -910,10 +957,17 @@ void shadeFragment() {
     }
     if (fr.mode.x == 26) { outColor = vec4(idColor(-1), 1.0); return; }  // instance id: raster non-instanced -> gray
   }
+  RasterPbrParam pbr = rpbr.p[max(pc.ids.x, 0)];
+  MaterialTexParam m = matTexParam();
+  bool pbrValid = pbr.p[12].w > 0.5;
+  vec3 pbrBaseColor = pbrValid ? pbr.p[0].rgb : pc.baseColor.rgb;
+  float pbrBaseWeight = pbrValid ? clamp(pbr.p[0].w, 0.0, 1.0) : 1.0;
+  float pbrOpacity = pbrValid ? clamp(pbr.p[9].w, 0.0, 1.0) : pc.baseColor.a;
   vec4 baseSample = sampleBaseColor(vUV);
-  float opacity = clamp(pc.baseColor.a * baseSample.a * sampleOpacity(vUV) *
+  float opacity = clamp(pbrOpacity * baseSample.a * sampleOpacity(vUV) *
                         vColor.a, 0.0, 1.0);
-  if (hasGraphRoute(3)) opacity = clamp(graphOpacity.x, 0.0, 1.0);
+  if (hasGraphRoute(3)) opacity = clamp(pbrOpacity * graphOpacity.x * vColor.a,
+                                         0.0, 1.0);
   if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
     if (opacity < pc.matAux.w) discard;
     opacity = 1.0;
@@ -931,24 +985,159 @@ void shadeFragment() {
   if ((pc.ids.z & (1 << 30)) != 0) opacity = 1.0;
   // Per-vertex displayColor multiplies the base color (GL parity: attrib 9's
   // vColor does the same in material.cpp). White when the mesh has none.
-  vec3 base = pc.baseColor.rgb * vColor.rgb *
-              (hasGraphRoute(0) ? graphBase.rgb : baseSample.rgb);
-  MaterialTexParam m = matTexParam();
+  vec3 base = (hasGraphRoute(0) ? graphBase.rgb :
+               pbrBaseColor * baseSample.rgb) * vColor.rgb;
   vec4 mt = sampleMetallic(vUV);
   vec4 rt = sampleRoughness(vUV);
-  float metallic = pc.matAux.x * (channelOf(mt, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
-  float roughness = pc.matAux.y * (channelOf(rt, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
-  vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
+  float pbrMetallic = pbrValid ? clamp(pbr.p[10].x, 0.0, 1.0) : pc.matAux.x;
+  float pbrRoughness = pbrValid ? clamp(pbr.p[10].z, 0.02, 1.0) : pc.matAux.y;
+  float metallic = pbrMetallic *
+                   (channelOf(mt, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
+  float roughness = pbrRoughness *
+                    (channelOf(rt, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
+  vec3 emissiveConstant = pbrValid ? pbr.p[8].rgb * max(pbr.p[8].w, 0.0)
+                                   : pc.emissive.xyz;
+  vec3 emissive = emissiveConstant * sampleEmissive(vUV).rgb;
   if (hasGraphRoute(1)) metallic = clamp(graphMetal.x, 0.0, 1.0);
   if (hasGraphRoute(2)) roughness = clamp(graphRough.x, 0.02, 1.0);
   if (hasGraphRoute(4)) emissive = max(graphEmission.rgb, vec3(0.0));
+  float baseWeight = pbrBaseWeight;
+  float specularWeight = pbrValid ? clamp(pbr.p[1].w, 0.0, 1.0) : 1.0;
+  vec3 specularColor = pbrValid ? max(pbr.p[1].rgb, vec3(0.0)) :
+                                  max(m.specParams.rgb, vec3(0.0));
+  float encodedSpecularIor = abs(m.specParams.w);
+  float legacySpecularIor = encodedSpecularIor > 100.0
+                                ? encodedSpecularIor - 100.0
+                                : encodedSpecularIor;
+  float specularIor = pbrValid ? max(pbr.p[10].w, 1.0) :
+                                 max(legacySpecularIor, 1.0);
+  float diffuseRoughness = pbrValid ? clamp(pbr.p[10].y, 0.0, 1.0) : 0.0;
+  float transmissionWeight = pbrValid ? clamp(pbr.p[2].w, 0.0, 1.0) :
+                                         clamp(m.transmissionParams.x, 0.0, 1.0);
+  vec3 transmissionColor = pbrValid ? max(pbr.p[2].rgb, vec3(0.0)) :
+                                      max(m.transmissionColor.rgb, vec3(0.0));
+  float transmissionDepth = pbrValid ? max(pbr.p[3].w, 0.0) :
+                                       max(m.transmissionParams.y, 0.0);
+  vec3 transmissionScatter = pbrValid ? max(pbr.p[3].rgb, vec3(0.0)) :
+                                       vec3(0.0);
+  float transmissionScatterAnisotropy = pbrValid ?
+      clamp(pbr.p[11].w, -1.0, 1.0) : 0.0;
+  float subsurfaceWeight = pbrValid ? clamp(pbr.p[4].w, 0.0, 1.0) :
+                                      clamp(m.subsurfaceParams.x, 0.0, 1.0);
+  vec3 subsurfaceColor = pbrValid ? max(pbr.p[4].rgb, vec3(0.0)) :
+                                   max(m.subsurfaceColor.rgb, vec3(0.0));
+  float subsurfaceScale = pbrValid ? max(pbr.p[5].w, 0.0) :
+                                    max(m.subsurfaceParams.y, 0.0);
+  float subsurfaceRadius = pbrValid ? max(dot(pbr.p[5].rgb,
+                                               vec3(0.2126, 0.7152, 0.0722)), 0.0) :
+                                   max(m.subsurfaceParams.z, 0.0);
+  float coatWeight = pbrValid ? clamp(pbr.p[6].w, 0.0, 1.0) :
+                               clamp(m.coatParams.x, 0.0, 1.0);
+  vec3 coatColor = pbrValid ? max(pbr.p[6].rgb, vec3(0.0)) :
+                              max(m.coatColor.rgb, vec3(0.0));
+  float coatRoughness = pbrValid ? clamp(pbr.p[11].x, 0.02, 1.0) :
+                                   clamp(m.coatParams.y, 0.02, 1.0);
+  float coatIor = pbrValid ? max(pbr.p[11].y, 1.0) :
+                            max(m.coatParams.z, 1.0);
+  vec3 sheenColor = pbrValid ? max(pbr.p[7].rgb, vec3(0.0)) : vec3(1.0);
+  float sheenWeight = pbrValid ? clamp(pbr.p[7].w, 0.0, 1.0) : 0.0;
+  float sheenRoughness = pbrValid ? clamp(pbr.p[11].z, 0.02, 1.0) : 0.3;
+  float thinFilmWeight = pbrValid ? clamp(pbr.p[12].x, 0.0, 1.0) : 0.0;
+  float thinFilmThickness = pbrValid ? max(pbr.p[12].y, 0.0) : 0.0;
+  float thinFilmIor = pbrValid ? max(pbr.p[12].z, 1.0) : 1.5;
+  float specularAnisotropy = pbrValid ? clamp(pbr.p[14].y, -1.0, 1.0) : 0.0;
+  float specularRotation = pbrValid ? pbr.p[14].z : 0.0;
+  float specularRoughnessAnisotropy = pbrValid ? clamp(pbr.p[14].w, -1.0, 1.0) : 0.0;
+  float transmissionDispersion = pbrValid ? max(pbr.p[15].x, 0.0) :
+                                             max(m.transmissionParams.z, 0.0);
+  float transmissionDispersionAbbeNumber = pbrValid ? max(pbr.p[15].y, 0.0) : 0.0;
+  float transmissionDispersionScale = pbrValid ? max(pbr.p[15].z, 0.0) : 1.0;
+  float subsurfaceAnisotropy = pbrValid ? clamp(pbr.p[15].w, -1.0, 1.0) : 0.0;
+  float subsurfaceScatterAnisotropy = pbrValid ? clamp(pbr.p[16].x, -1.0, 1.0) : 0.0;
+  float coatAnisotropy = pbrValid ? clamp(pbr.p[16].y, -1.0, 1.0) : 0.0;
+  float coatRotation = pbrValid ? pbr.p[16].z : 0.0;
+  float coatAffectColor = pbrValid ? clamp(pbr.p[16].w, 0.0, 1.0) : 0.0;
+  float coatAffectRoughness = pbrValid ? clamp(pbr.p[17].x, 0.0, 1.0) : 0.0;
+  float coatRoughnessAnisotropy = pbrValid ? clamp(pbr.p[17].y, -1.0, 1.0) : 0.0;
+  float coatDarkening = pbrValid ? clamp(pbr.p[17].z, 0.0, 1.0) : 0.0;
+  float volumeDensity = pbrValid ? max(pbr.p[18].w, 0.0) : max(m.volumeParams.x, 0.0);
+  vec3 volumeAlbedo = pbrValid ? max(pbr.p[18].rgb, vec3(0.0)) :
+                                 max(m.volumeAlbedo.rgb, vec3(0.0));
+  vec3 volumeEmission = pbrValid ? max(pbr.p[19].rgb, vec3(0.0)) :
+                                   max(m.volumeEmission.rgb, vec3(0.0));
+  float volumeEmissionScale = pbrValid ? max(pbr.p[19].w, 0.0) :
+                                         max(m.volumeParams.y, 0.0);
+  float emissionLuminance = pbrValid ? max(pbr.p[8].w, 0.0) : 1.0;
+  bool thinWalled = pbrValid ? pbr.p[17].w > 0.5 : m.transmissionParams.w > 0.5;
+  if (hasGraphRoute(6)) subsurfaceWeight = clamp(graphSubsurface.x, 0.0, 1.0);
+  if (hasGraphRoute(7)) subsurfaceColor = max(graphSubsurfaceColor.rgb, vec3(0.0));
+  if (hasGraphRoute(8)) subsurfaceRadius = max(dot(graphSubsurfaceRadius.rgb,
+                                                    vec3(0.2126, 0.7152, 0.0722)), 0.0);
+  if (hasGraphRoute(9)) specularWeight = clamp(graphResults[9].x, 0.0, 1.0);
+  if (hasGraphRoute(10)) specularColor = max(graphResults[10].rgb, vec3(0.0));
+  if (hasGraphRoute(11)) transmissionWeight = clamp(graphResults[11].x, 0.0, 1.0);
+  if (hasGraphRoute(12)) transmissionColor = max(graphResults[12].rgb, vec3(0.0));
+  if (hasGraphRoute(13)) coatWeight = clamp(graphResults[13].x, 0.0, 1.0);
+  if (hasGraphRoute(14)) coatColor = max(graphResults[14].rgb, vec3(0.0));
+  if (hasGraphRoute(15)) coatRoughness = clamp(graphResults[15].x, 0.02, 1.0);
+  if (hasGraphRoute(16)) sheenWeight = clamp(graphResults[16].x, 0.0, 1.0);
+  if (hasGraphRoute(17)) sheenColor = max(graphResults[17].rgb, vec3(0.0));
+  if (hasGraphRoute(18)) sheenRoughness = clamp(graphResults[18].x, 0.02, 1.0);
+  if (hasGraphRoute(19)) specularIor = max(graphResults[19].x, 1.0);
+  if (hasGraphRoute(20)) baseWeight = clamp(graphResults[20].x, 0.0, 1.0);
+  if (hasGraphRoute(21)) diffuseRoughness = clamp(graphResults[21].x, 0.0, 1.0);
+  if (hasGraphRoute(22)) transmissionScatter = max(graphResults[22].rgb, vec3(0.0));
+  if (hasGraphRoute(23)) transmissionDepth = max(graphResults[23].x, 0.0);
+  if (hasGraphRoute(24)) transmissionScatterAnisotropy = clamp(graphResults[24].x, -1.0, 1.0);
+  if (hasGraphRoute(25)) subsurfaceScale = max(graphResults[25].x, 0.0);
+  if (hasGraphRoute(26)) subsurfaceAnisotropy = clamp(graphResults[26].x, -1.0, 1.0);
+  if (hasGraphRoute(27)) coatIor = max(graphResults[27].x, 1.0);
+  if (hasGraphRoute(28)) thinFilmWeight = clamp(graphResults[28].x, 0.0, 1.0);
+  if (hasGraphRoute(29)) thinFilmThickness = max(graphResults[29].x, 0.0);
+  if (hasGraphRoute(30)) thinFilmIor = max(graphResults[30].x, 1.0);
+  if (hasGraphRoute(31)) specularAnisotropy = clamp(graphResults[31].x, -1.0, 1.0);
+  if (hasGraphRoute(32)) specularRotation = graphResults[32].x;
+  if (hasGraphRoute(33)) specularRoughnessAnisotropy = clamp(graphResults[33].x, -1.0, 1.0);
+  if (hasGraphRoute(34)) transmissionDispersion = max(graphResults[34].x, 0.0);
+  if (hasGraphRoute(35)) transmissionDispersionAbbeNumber = max(graphResults[35].x, 0.0);
+  if (hasGraphRoute(36)) transmissionDispersionScale = max(graphResults[36].x, 0.0);
+  if (hasGraphRoute(37)) coatAnisotropy = clamp(graphResults[37].x, -1.0, 1.0);
+  if (hasGraphRoute(38)) coatRotation = graphResults[38].x;
+  if (hasGraphRoute(39)) coatRoughnessAnisotropy = clamp(graphResults[39].x, -1.0, 1.0);
+  if (hasGraphRoute(40)) volumeDensity = max(graphResults[40].x, 0.0);
+  if (hasGraphRoute(41)) volumeAlbedo = max(graphResults[41].rgb, vec3(0.0));
+  if (hasGraphRoute(42)) volumeEmission = max(graphResults[42].rgb, vec3(0.0));
+  if (hasGraphRoute(43)) volumeEmissionScale = max(graphResults[43].x, 0.0);
+  if (hasGraphRoute(44)) emissionLuminance = max(graphResults[44].x, 0.0);
+  if (hasGraphRoute(45)) coatAffectColor = clamp(graphResults[45].x, 0.0, 1.0);
+  if (hasGraphRoute(46)) coatAffectRoughness = clamp(graphResults[46].x, 0.0, 1.0);
+  if (hasGraphRoute(47)) coatDarkening = clamp(graphResults[47].x, 0.0, 1.0);
+  if (hasGraphRoute(48)) subsurfaceScatterAnisotropy =
+      clamp(graphResults[48].x, -1.0, 1.0);
+  float volumeOpacity = clamp(1.0 - exp(-volumeDensity * 0.1), 0.0, 1.0);
+  base = mix(base, base * volumeAlbedo, volumeOpacity);
+  emissive = emissive * emissionLuminance +
+             volumeEmission * volumeEmissionScale * volumeOpacity;
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
-
-  // Real-time Cook-Torrance preview, matching light3d/material.cpp.
   vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
   vec3 coatNf = (dot(coatN, V) < 0.0) ? -coatN : coatN;
+  vec3 tangent = dFdx(vWorldPos);
+  tangent = normalize(tangent - Nf * dot(tangent, Nf));
+  if (dot(tangent, tangent) < 1e-8) {
+    vec3 axis = abs(Nf.y) < 0.95 ? vec3(0.0, 1.0, 0.0)
+                                 : vec3(1.0, 0.0, 0.0);
+    tangent = normalize(cross(axis, Nf));
+  }
+  vec3 bitangent = normalize(cross(Nf, tangent));
+  float tangentAngle = radians(specularRotation);
+  vec3 rotatedTangent = tangent * cos(tangentAngle) +
+                         bitangent * sin(tangentAngle);
+  vec3 rotatedBitangent = normalize(cross(Nf, rotatedTangent));
   float NoV = max(dot(Nf, V), 1e-4);
-  float rgh = clamp(roughness, 0.02, 1.0);
+  float met = clamp(metallic, 0.0, 1.0);
+  float rgh = clamp(roughness +
+                    0.25 * clamp(diffuseRoughness, 0.0, 1.0) * (1.0 - met),
+                    0.02, 1.0);
   if (fr.mode.y != 0) {
     // Specular anti-aliasing: widen the microfacet lobe when the shading normal
     // changes rapidly inside a pixel, suppressing normal-map sparkle.
@@ -957,82 +1146,73 @@ void shadeFragment() {
     float normalVariance = min(0.25, 0.5 * (dot(dnx, dnx) + dot(dny, dny)));
     rgh = clamp(sqrt(rgh * rgh + normalVariance), 0.02, 1.0);
   }
-  float met = clamp(metallic, 0.0, 1.0);
-  vec3 F0 = computeF0(base, met);
-  MaterialTexParam pbr = matTexParam();
-  float subsurfaceWeight = clamp(pbr.subsurfaceParams.x, 0.0, 1.0);
-  vec3 subsurfaceColor = max(pbr.subsurfaceColor.rgb, vec3(0.0));
-  if (hasGraphRoute(6)) subsurfaceWeight = clamp(graphSubsurface.x, 0.0, 1.0);
-  if (hasGraphRoute(7)) subsurfaceColor = max(graphSubsurfaceColor.rgb, vec3(0.0));
-  float subsurfaceRadius = max(pbr.subsurfaceParams.z, 0.0);
-  if (hasGraphRoute(8)) subsurfaceRadius = max(dot(graphSubsurfaceRadius.rgb,
-                                                    vec3(0.2126, 0.7152, 0.0722)), 0.0);
-  float volumeOpacity = clamp(1.0 - exp(-max(pbr.volumeParams.x, 0.0) * 0.1),
-                              0.0, 1.0);
-  base = mix(base, base * pbr.volumeAlbedo.rgb, volumeOpacity);
-  emissive += pbr.volumeEmission.rgb * max(pbr.volumeParams.y, 0.0) *
-              volumeOpacity;
-  // inputs:specularColor texture modulates F0, but only in the specular
-  // workflow (where F0 *is* specularColor). Vulkan has the sampler budget for
-  // this slot; the GL path deliberately omits it.
-  if (pbr.specParams.w < 0.0 || pbr.specParams.w > 100.0) {
-    vec2 specSrc = pbr.extraUvSets.x > 0.5 ? vUV1 : vUV;
-    vec2 specUv = xformUv(specSrc, pbr.specColorUv0, pbr.specColorUv1);
-    specUv = ptexUv(uSpecularColorTex, specUv, pbr.ptexSpecularInfo);
+  bool specularWorkflow = m.specParams.w < 0.0;
+  bool openPbrSpecular = pbrValid || m.specParams.w > 100.0;
+  vec3 F0 = computeF0(base, met, specularColor, specularIor,
+                      specularWorkflow, openPbrSpecular);
+  // inputs:specularColor texture modulates F0 in the specular/OpenPBR lanes.
+  // Vulkan has a dedicated sampler for this slot, including the UDIM array.
+  if (specularWorkflow || openPbrSpecular) {
+    vec2 specSrc = m.extraUvSets.x > 0.5 ? vUV1 : vUV;
+    vec2 specUv = xformUv(specSrc, m.specColorUv0, m.specColorUv1);
+    specUv = ptexUv(uSpecularColorTex, specUv, m.ptexSpecularInfo);
     bool ordinarySpec = (pc.ids.w & 4096) != 0;
-    bool udimSpec = !ordinarySpec && pbr.udimSlots1.w >= 0.0;
+    bool udimSpec = !ordinarySpec && m.udimSlots1.w >= 0.0;
+    bool hasSpec = ordinarySpec || udimSpec;
     vec4 specSample = udimSpec
         ? sampleUdim(uSpecularColorUdimTex,
-                     int(pbr.udimSlots1.w + 0.5), specUv, vec4(1.0))
+                     int(m.udimSlots1.w + 0.5), specUv, vec4(1.0))
         : texture(uSpecularColorTex, specUv);
-    bool hasSpec = udimSpec || ordinarySpec;
-    if (hasSpec) F0 *= (specSample * pbr.specColorScale + pbr.specColorBias).rgb;
+    if (hasSpec) F0 *= (specSample * m.specColorScale + m.specColorBias).rgb;
   }
+  F0 = applyThinFilm(F0, NoV, thinFilmWeight, thinFilmThickness, thinFilmIor);
   if (fr.mode.x == 39) { outColor = vec4(F0, 1.0); return; }
   if (fr.mode.x == 40) {
-    float encodedIor = abs(pbr.specParams.w);
-    float ior = max(encodedIor > 100.0 ? encodedIor - 100.0 : encodedIor, 1.0);
+    float ior = max(specularIor, 1.0);
     float d = (ior - 1.0) / (ior + 1.0);
     outColor = vec4(vec3(d * d), 1.0); return;
   }
-  float coatWeight = clamp(pbr.coatParams.x *
-                               sampleCoatScalarUdim(uCoatWeightTex,
-                                                uCoatWeightUdimTex,
-                                                (pc.ids.w & 8192) != 0,
-                                                pbr.semanticUdimSlots.y,
-                                                pbr.coatWeightUv0,
-                                                pbr.coatWeightUv1,
-                                                pbr.coatTexParams.z,
-                                                pbr.coatTexParams.x,
-                                                pbr.coatWeightScale,
-                                                pbr.coatWeightBias,
-                                                pbr.ptexCoatWeightInfo),
-                           0.0, 1.0);
-  float coatRoughness = clamp(pbr.coatParams.y *
-                                  sampleCoatScalarUdim(uCoatRoughnessTex,
-                                                   uCoatRoughnessUdimTex,
-                                                   (pc.ids.w & 32768) != 0,
-                                                   pbr.semanticUdimSlots.w,
-                                                   pbr.coatRoughUv0,
-                                                   pbr.coatRoughUv1,
-                                                   pbr.coatTexParams.w,
-                                                   pbr.coatTexParams.y,
-                                                   pbr.coatRoughScale,
-                                                   pbr.coatRoughBias,
-                                                   pbr.ptexCoatRoughInfo),
-                              0.02, 1.0);
-  vec3 coatTint = pbr.coatColor.rgb *
-                  sampleCoatColorUdim((pc.ids.w & 16384) != 0,
-                                  pbr.semanticUdimSlots.z,
-                                  pbr.coatColorUv0, pbr.coatColorUv1,
-                                  pbr.extraUvSets.y, pbr.coatColorScale,
-                                  pbr.coatColorBias,
-                                  pbr.ptexCoatColorInfo);
-  if (fr.mode.x == 36) { outColor = vec4(vec3(coatWeight), 1.0); return; }
-  if (fr.mode.x == 37) { outColor = vec4(coatTint, 1.0); return; }
-  if (fr.mode.x == 38) { outColor = vec4(vec3(coatRoughness), 1.0); return; }
-  float coatIor = max(pbr.coatParams.z, 1.0);
-  float coatD = (coatIor - 1.0) / (coatIor + 1.0);
+  float cw = clamp(coatWeight *
+                   sampleCoatScalarUdim(uCoatWeightTex,
+                                        uCoatWeightUdimTex,
+                                        (pc.ids.w & 8192) != 0,
+                                        m.semanticUdimSlots.y,
+                                        m.coatWeightUv0,
+                                        m.coatWeightUv1,
+                                        m.coatTexParams.z,
+                                        m.coatTexParams.x,
+                                        m.coatWeightScale,
+                                        m.coatWeightBias,
+                                        m.ptexCoatWeightInfo),
+                   0.0, 1.0);
+  float cr = clamp(coatRoughness *
+                   sampleCoatScalarUdim(uCoatRoughnessTex,
+                                        uCoatRoughnessUdimTex,
+                                        (pc.ids.w & 32768) != 0,
+                                        m.semanticUdimSlots.w,
+                                        m.coatRoughUv0,
+                                        m.coatRoughUv1,
+                                        m.coatTexParams.w,
+                                        m.coatTexParams.y,
+                                        m.coatRoughScale,
+                                        m.coatRoughBias,
+                                        m.ptexCoatRoughInfo),
+                   0.02, 1.0);
+  cr = mix(cr, clamp(roughness, 0.02, 1.0),
+           clamp(coatAffectRoughness, 0.0, 1.0));
+  vec3 sampledCoatTint = coatColor *
+      sampleCoatColorUdim((pc.ids.w & 16384) != 0,
+                          m.semanticUdimSlots.z,
+                          m.coatColorUv0, m.coatColorUv1,
+                          m.extraUvSets.y, m.coatColorScale,
+                          m.coatColorBias, m.ptexCoatColorInfo);
+  if (fr.mode.x == 36) { outColor = vec4(vec3(cw), 1.0); return; }
+  if (fr.mode.x == 37) { outColor = vec4(sampledCoatTint, 1.0); return; }
+  if (fr.mode.x == 38) { outColor = vec4(vec3(cr), 1.0); return; }
+  vec3 coatTint = mix(vec3(1.0), sampledCoatTint,
+                      clamp(coatAffectColor, 0.0, 1.0));
+  float ci = max(coatIor, 1.0);
+  float cd = (ci - 1.0) / (ci + 1.0);
   vec3 direct = vec3(0.0);
   uint lightMask = uint(pc.ids.w) >> 16u;
   for (uint li = 0u; li < min(fr.rasterLightInfo.x, 16u); ++li) {
@@ -1042,12 +1222,21 @@ void shadeFragment() {
     vec4 lc = fr.rasterLights[li].colorDiffuse;
     vec4 ss = fr.rasterLights[li].specularShape;
     int lightType = int(pt.w + 0.5);
-    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4) ? 8 : 1;
+    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4 ||
+                       lightType == 7 ||
+                       lightType == 8) ? 8 : 1;
     for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
     vec3 samplePos = pt.xyz;
+    if (lightType == 7) {
+      int base = sampleIndex * 3;
+      samplePos = vec3(
+          fr.rasterLights[li].iesProfile[base / 4][base % 4],
+          fr.rasterLights[li].iesProfile[(base + 1) / 4][(base + 1) % 4],
+          fr.rasterLights[li].iesProfile[(base + 2) / 4][(base + 2) % 4]);
+    }
     vec3 areaX = normalize(fr.rasterLights[li].iesAxisX.xyz);
     vec3 areaY = normalize(fr.rasterLights[li].iesAxisY.xyz);
-    if (lightType == 3) {
+    if (lightType == 3 || lightType == 8) {
       float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
       float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
       samplePos += areaX * (sx * fr.rasterLights[li].areaParams.y) +
@@ -1085,7 +1274,8 @@ void shadeFragment() {
               pow(max(coneCos, 0.0), max(ss.z, 0.0));
     }
     float ies = 1.0;
-    if (lightType != 5 && dot(fr.rasterLights[li].iesProfile[0],
+    if (lightType != 5 && lightType != 7 &&
+        dot(fr.rasterLights[li].iesProfile[0],
                               fr.rasterLights[li].iesProfile[0]) > 1e-8) {
       vec3 iesDir = normalize(-L);
       float v = degrees(acos(clamp(dot(iesDir, normalize(da.xyz)), -1.0, 1.0)));
@@ -1106,41 +1296,69 @@ void shadeFragment() {
       ies = mix(a0, a1, fy - float(y0));
     }
     float NoL = max(dot(Nf, L), 0.0);
-    if (NoL <= 0.0 || shape <= 0.0) continue;
+    float backNoL = max(dot(-Nf, L), 0.0);
+    if ((NoL <= 0.0 && backNoL <= 0.0) || shape <= 0.0) continue;
     vec3 H = normalize(L + V);
     float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 F = fresnelSchlick(VoH, F0);
-    vec3 specular = distributionGGX(NoH, rgh) *
-                    geometrySchlickGGX(NoV, rgh) *
-                    geometrySchlickGGX(NoL, rgh) * F /
+    float D = distributionAnisotropicGGX(
+        NoH, dot(H, rotatedTangent), dot(H, rotatedBitangent), rgh,
+        specularAnisotropy + specularRoughnessAnisotropy * 0.5);
+    float G = geometrySchlickGGX(NoV, rgh) *
+              geometrySchlickGGX(NoL, rgh);
+    vec3 specular = D * G * F * clamp(specularWeight, 0.0, 1.0) /
                     max(4.0 * NoV * NoL, 1e-5);
-    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
-    float radiusGain = clamp(sqrt(max(pbr.subsurfaceParams.y *
-                                      subsurfaceRadius, 0.0)) * 8.0,
+    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base * baseWeight / kPi;
+    float sheenGrazing = pow(1.0 - max(NoL, 0.0), 5.0);
+    vec3 sheen = sheenColor * clamp(sheenWeight, 0.0, 1.0) *
+                 (0.5 + 0.5 * clamp(sheenRoughness, 0.0, 1.0)) *
+                 sheenGrazing / kPi;
+    float wrap = clamp(subsurfaceWeight, 0.0, 1.0) *
+                 (0.5 + 0.25 * abs(clamp(subsurfaceAnisotropy, -1.0, 1.0)) +
+                  0.25 * abs(clamp(subsurfaceScatterAnisotropy, -1.0, 1.0)));
+    float wrappedNoL = clamp((dot(Nf, L) + wrap) / (1.0 + wrap), 0.0, 1.0);
+    float radiusGain = clamp(sqrt(max(subsurfaceScale *
+                                      subsurfaceRadius * subsurfaceRadius, 0.0)) * 8.0,
                               0.0, 1.0);
-    float diffusionShape = mix(0.15 + 0.85 * NoL,
-                               0.15 + 0.85 * sqrt(NoL), radiusGain);
-    vec3 subsurfaceDiffuse = subsurfaceColor * diffusionShape / kPi;
-    diffuse = mix(diffuse, subsurfaceDiffuse, subsurfaceWeight);
-    float transmissionWeight = clamp(pbr.transmissionParams.x, 0.0, 1.0);
-    vec3 transmissionDiffuse = max(pbr.transmissionColor.rgb, vec3(0.0)) *
-                                transmissionWeight * (1.0 - NoL) *
-                                (1.0 - met) * (0.5 / kPi);
+    float diffusionShape = mix(wrappedNoL + backNoL * 0.35,
+                               0.5 + 0.5 * sqrt(max(NoL, 0.0)), radiusGain);
+    vec3 subsurface = subsurfaceColor * subsurfaceWeight * diffusionShape / kPi;
+    vec3 transmissionMedium = exp(-max(transmissionScatter, vec3(0.0)) *
+                                  max(transmissionDepth, 0.0));
+    float abbeScale = transmissionDispersionAbbeNumber > 0.0
+                          ? 1.0 + 20.0 / max(transmissionDispersionAbbeNumber, 1.0)
+                          : 1.0;
+    float dispersion = clamp(transmissionDispersion *
+                             transmissionDispersionScale * abbeScale,
+                             0.0, 1.0);
+    vec3 dispersionTint = vec3(1.0 + 0.35 * dispersion,
+                                1.0, 1.0 - 0.25 * dispersion);
+    vec3 transmitted = transmissionColor * dispersionTint * transmissionMedium *
+                       clamp(transmissionWeight, 0.0, 1.0) * backNoL *
+                       (1.0 - met) / kPi;
     float coatNoL = max(dot(coatNf, L), 0.0);
     float coatNoV = max(dot(coatNf, V), 1e-4);
     float coatNoH = max(dot(coatNf, H), 0.0);
-    vec3 coatF = fresnelSchlick(VoH, vec3(coatD * coatD));
-    vec3 coatSpecular = distributionGGX(coatNoH, coatRoughness) *
-                        geometrySchlickGGX(coatNoV, coatRoughness) *
-                        geometrySchlickGGX(coatNoL, coatRoughness) * coatF /
+    vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
+    float coatAngle = radians(coatRotation);
+    vec3 coatT = tangent * cos(coatAngle) + bitangent * sin(coatAngle);
+    vec3 coatB = normalize(cross(coatNf, coatT));
+    float coatRgh = clamp(cr * (1.0 + 0.25 * coatRoughnessAnisotropy),
+                          0.02, 1.0);
+    float coatD = distributionAnisotropicGGX(
+        coatNoH, dot(H, coatT), dot(H, coatB), coatRgh, coatAnisotropy);
+    float coatG = geometrySchlickGGX(coatNoV, coatRgh) *
+                  geometrySchlickGGX(coatNoL, coatRgh);
+    vec3 coatSpecular = coatD * coatG * coatF /
                         max(4.0 * coatNoV * coatNoL, 1e-5);
-    vec3 baseBrdf = diffuse * lc.w +
-                    specular * (vec3(1.0) - coatF * coatWeight) * ss.x;
-    vec3 coatBrdf = coatSpecular * coatTint * coatWeight * ss.x;
+    vec3 baseBrdf = (diffuse + sheen + subsurface) *
+                        (1.0 - clamp(coatDarkening, 0.0, 1.0) * cw) * lc.w +
+                    specular * (vec3(1.0) - coatF * cw) * ss.x;
+    vec3 coatBrdf = coatSpecular * coatTint * cw * ss.x;
     float visibility = (int(li) == int(fr.iblParams.z + 0.5))
                            ? sampleShadow(vWorldPos, Nf, L) : 1.0;
     direct += (baseBrdf * NoL + coatBrdf * coatNoL +
-               transmissionDiffuse * (0.25 + 0.75 * NoL)) * lc.rgb *
+               transmitted) * lc.rgb *
               (attenuation * shape * ies * visibility) / float(sampleCount);
     }
   }
@@ -1154,24 +1372,57 @@ void shadeFragment() {
     vec3 H = normalize(L + V);
     float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 F = fresnelSchlick(VoH, F0);
-    vec3 specular = distributionGGX(NoH, rgh) *
-                    geometrySchlickGGX(NoV, rgh) *
-                    geometrySchlickGGX(NoL, rgh) * F /
+    float D = distributionAnisotropicGGX(
+        NoH, dot(H, rotatedTangent), dot(H, rotatedBitangent), rgh,
+        specularAnisotropy + specularRoughnessAnisotropy * 0.5);
+    vec3 specular = D * geometrySchlickGGX(NoV, rgh) *
+                    geometrySchlickGGX(NoL, rgh) * F *
+                    clamp(specularWeight, 0.0, 1.0) /
                     max(4.0 * NoV * NoL, 1e-5);
-    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
-    float radiusGain = clamp(sqrt(max(pbr.subsurfaceParams.y *
-                                      subsurfaceRadius, 0.0)) * 8.0,
+    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base * baseWeight / kPi;
+    float backNoL = max(dot(-Nf, L), 0.0);
+    float wrap = clamp(subsurfaceWeight, 0.0, 1.0) *
+                 (0.5 + 0.25 * abs(clamp(subsurfaceAnisotropy, -1.0, 1.0)) +
+                  0.25 * abs(clamp(subsurfaceScatterAnisotropy, -1.0, 1.0)));
+    float wrappedNoL = clamp((dot(Nf, L) + wrap) / (1.0 + wrap), 0.0, 1.0);
+    float radiusGain = clamp(sqrt(max(subsurfaceScale *
+                                      subsurfaceRadius * subsurfaceRadius, 0.0)) * 8.0,
                               0.0, 1.0);
-    float diffusionShape = mix(0.15 + 0.85 * NoL,
-                               0.15 + 0.85 * sqrt(NoL), radiusGain);
-    vec3 subsurfaceDiffuse = subsurfaceColor * diffusionShape / kPi;
-    diffuse = mix(diffuse, subsurfaceDiffuse, subsurfaceWeight);
-    float transmissionWeight = clamp(pbr.transmissionParams.x, 0.0, 1.0);
-    vec3 transmissionDiffuse = max(pbr.transmissionColor.rgb, vec3(0.0)) *
-                                transmissionWeight * (1.0 - NoL) *
-                                (1.0 - met) * (0.5 / kPi);
-    direct = (diffuse + specular) * lightColor * NoL +
-             transmissionDiffuse * lightColor * 0.25;
+    float diffusionShape = mix(wrappedNoL + backNoL * 0.35,
+                               0.5 + 0.5 * sqrt(max(NoL, 0.0)), radiusGain);
+    vec3 subsurface = subsurfaceColor * subsurfaceWeight * diffusionShape / kPi;
+    vec3 transmissionMedium = exp(-max(transmissionScatter, vec3(0.0)) *
+                                  max(transmissionDepth, 0.0));
+    float abbeScale = transmissionDispersionAbbeNumber > 0.0
+                          ? 1.0 + 20.0 / max(transmissionDispersionAbbeNumber, 1.0)
+                          : 1.0;
+    float dispersion = clamp(transmissionDispersion *
+                             transmissionDispersionScale * abbeScale,
+                             0.0, 1.0);
+    vec3 dispersionTint = vec3(1.0 + 0.35 * dispersion,
+                                1.0, 1.0 - 0.25 * dispersion);
+    vec3 transmitted = transmissionColor * dispersionTint * transmissionMedium *
+                       clamp(transmissionWeight, 0.0, 1.0) * backNoL *
+                       (1.0 - met) / kPi;
+    float coatNoL = max(dot(coatNf, L), 0.0);
+    float coatNoV = max(dot(coatNf, V), 1e-4);
+    float coatNoH = max(dot(coatNf, H), 0.0);
+    vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
+    float coatAngle = radians(coatRotation);
+    vec3 coatT = tangent * cos(coatAngle) + bitangent * sin(coatAngle);
+    vec3 coatB = normalize(cross(coatNf, coatT));
+    float coatRgh = clamp(cr * (1.0 + 0.25 * coatRoughnessAnisotropy),
+                          0.02, 1.0);
+    float coatD = distributionAnisotropicGGX(
+        coatNoH, dot(H, coatT), dot(H, coatB), coatRgh, coatAnisotropy);
+    vec3 coatSpecular = coatD * geometrySchlickGGX(coatNoV, coatRgh) *
+                        geometrySchlickGGX(coatNoL, coatRgh) * coatF /
+                        max(4.0 * coatNoV * coatNoL, 1e-5);
+    vec3 baseBrdf = (diffuse + subsurface) *
+                        (1.0 - clamp(coatDarkening, 0.0, 1.0) * cw) +
+                    specular * (vec3(1.0) - coatF * cw);
+    vec3 coatBrdf = coatSpecular * coatTint * cw;
+    direct = (baseBrdf * NoL + coatBrdf * coatNoL + transmitted) * lightColor;
   }
   // Ambient: DomeLight split-sum IBL when baked, else the constant floor
   // (matches the GL raster path in light3d/material.cpp).
@@ -1182,16 +1433,16 @@ void shadeFragment() {
     vec3 irr = texture(uIrradianceMap, Ne).rgb;
     vec3 pref = textureLod(uPrefilteredMap, Re, rgh * (fr.iblParams.x - 1.0)).rgb;
     vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0), rgh)).rg;
-    vec3 baseIbl = base * (1.0 - met) * irr +
+    vec3 baseIbl = base * (1.0 - met) * baseWeight * irr +
                    pref * (F0 * dfg.x + dfg.y);
     vec3 coatPref = textureLod(uPrefilteredMap, Re,
-        coatRoughness * (fr.iblParams.x - 1.0)).rgb;
+        cr * (fr.iblParams.x - 1.0)).rgb;
     vec2 coatDfg = texture(uBrdfLut,
-                           vec2(max(dot(Nf, V), 0.0), coatRoughness)).rg;
-    vec3 coatF0 = vec3(coatD * coatD);
+                           vec2(max(dot(Nf, V), 0.0), cr)).rg;
+    vec3 coatF0 = vec3(cd * cd);
     vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
-                   coatTint * coatWeight;
-    ambient = (baseIbl * (1.0 - coatWeight * coatF0) + coatIbl) *
+                   coatTint * cw;
+    ambient = (baseIbl * (vec3(1.0) - cw * coatF0) + coatIbl) *
               fr.iblColor.rgb;
   } else {
     // Match the full OpenGL material shader's no-IBL preview floor. Keeping
@@ -1199,7 +1450,35 @@ void shadeFragment() {
     // channels excluded from a light expose the ambient term directly.
     ambient = base * 0.12;
   }
-  ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
+  // Keep the advanced lobes visible in ambient-only preview as well. With an
+  // IBL, transmission uses a refracted environment sample; without one the
+  // neutral floor receives a bounded colored contribution.
+  float lobeWeight = clamp(transmissionWeight, 0.0, 1.0) * (1.0 - met);
+  if (fr.iblColor.w > 0.5 && lobeWeight > 0.0) {
+    vec3 T = refract(-V, Nf, 1.0 / max(specularIor, 1.001));
+    vec3 transmittedIbl = textureLod(uPrefilteredMap, normalize(T),
+                                     rgh * (fr.iblParams.x - 1.0)).rgb;
+    vec3 medium = exp(-max(transmissionScatter, vec3(0.0)) *
+                      max(transmissionDepth, 0.0));
+    float abbeScale = transmissionDispersionAbbeNumber > 0.0
+                          ? 1.0 + 20.0 / max(transmissionDispersionAbbeNumber, 1.0)
+                          : 1.0;
+    float dispersion = clamp(transmissionDispersion *
+                              transmissionDispersionScale * abbeScale,
+                              0.0, 1.0);
+    vec3 dispersionTint = vec3(1.0 + 0.35 * dispersion,
+                                1.0, 1.0 - 0.25 * dispersion);
+    ambient += transmittedIbl * transmissionColor * dispersionTint * medium *
+               lobeWeight * fr.iblColor.rgb;
+  } else {
+    vec3 medium = exp(-max(transmissionScatter, vec3(0.0)) *
+                      max(transmissionDepth, 0.0));
+    ambient += transmissionColor * medium * lobeWeight * 0.04;
+  }
+  ambient += subsurfaceColor * clamp(subsurfaceWeight, 0.0, 1.0) *
+             (fr.iblColor.w > 0.5 ? 0.12 : 0.03);
+  ambient += sheenColor * clamp(sheenWeight, 0.0, 1.0) * 0.025;
+  ambient *= clamp(m.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
   vec3 c = (ambient + direct + emissive) * exp2(fr.iblParams.y);
   float screenTransmission = 0.0;
   vec2 screenRefractionUv = vec2(0.0);
@@ -1210,15 +1489,12 @@ void shadeFragment() {
   // stable physically-directed fallback for off-screen rays and makes authored
   // PreviewSurface opacity+IOR glass respond to the HDR dome immediately.
   if (fr.mode.y != 0 && fr.iblColor.w > 0.5) {
-    float encodedIor = abs(pbr.specParams.w);
-    float ior = max(encodedIor > 100.0 ? encodedIor - 100.0 : encodedIor,
-                    1.0001);
-    float authoredTransmission = clamp(pbr.transmissionParams.x, 0.0, 1.0);
+    float ior = max(specularIor, 1.0001);
+    float authoredTransmission = clamp(transmissionWeight, 0.0, 1.0);
     float previewTransmission = (ior > 1.01) ? (1.0 - opacity) : 0.0;
     float transmission = max(authoredTransmission, previewTransmission) *
                          (1.0 - met);
     if (transmission > 1.0e-4) {
-      bool thinWalled = pbr.transmissionParams.w > 0.5;
       // `transmission_depth` is an attenuation reference distance, not shell
       // geometry. Until the backface-distance attachment supplies an exact
       // entry-to-exit length, use a scene-relative normal thickness and the
@@ -1236,21 +1512,21 @@ void shadeFragment() {
       vec3 Te = normalize(mat3(fr.envRot) * Tw);
       vec3 transmitted = textureLod(
           uPrefilteredMap, Te,
-          clamp(rgh + pbr.transmissionParams.z, 0.02, 1.0) *
+          clamp(rgh + transmissionDepth * 0.05, 0.02, 1.0) *
               (fr.iblParams.x - 1.0)).rgb;
       vec3 tint = vec3(1.0);
       if (authoredTransmission > 0.0) {
-        vec3 transmissionColor = clamp(pbr.transmissionColor.rgb,
-                                       vec3(1.0e-6), vec3(1.0));
+        vec3 sampledTransmissionColor = clamp(transmissionColor,
+                                               vec3(1.0e-6), vec3(1.0));
         // OpenPBR transmission_color is the transmittance observed after
         // transmission_depth stage units, not an interface tint.  Keep the
         // zero-depth convention as a one-time tint, and use Beer-Lambert for
         // positive depths.  The backface thickness pass can replace `travel`
         // with measured shell distance without changing this material math.
-        tint = pbr.transmissionParams.y > 0.0 && !thinWalled
-                   ? exp(log(transmissionColor) *
-                         (travel / pbr.transmissionParams.y))
-                   : transmissionColor;
+        tint = transmissionDepth > 0.0 && !thinWalled
+                   ? exp(log(sampledTransmissionColor) *
+                         (travel / transmissionDepth))
+                   : sampledTransmissionColor;
       }
       // Transmission crosses a dielectric boundary, so use the exact
       // angle/IOR relation rather than the BRDF's Schlick approximation.

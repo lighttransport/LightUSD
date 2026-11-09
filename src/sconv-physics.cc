@@ -24,13 +24,18 @@ namespace experimental {
       fields.push_back({(name), _cv}); \
       /* Preserve the role spelling degraded by ConvertValue (vector3f -> */ \
       /* float3 crate value) -- see AddArrayAttribute in stage-converter.cc. */ \
-      if (_v.type_name() != _cv.type_name()) { \
+      if ((attr).has_actual_type()) { \
+        crate::CrateValue _ty; \
+        _ty.Set(value::token((attr).get_actual_type_name())); \
+        fields.push_back({std::string(name) + ".typeName", _ty}); \
+      } else if (_v.type_name() != _cv.type_name()) { \
         crate::CrateValue _ty; \
         _ty.Set(value::token(_v.type_name())); \
         fields.push_back({std::string(name) + ".typeName", _ty}); \
       } \
     } \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // Helper macro: extract a TypedAttributeWithFallback<T>
@@ -48,12 +53,17 @@ namespace experimental {
     fields.push_back({(name), _cv}); \
     /* Preserve the role spelling degraded by ConvertValue (point3f -> */ \
     /* float3 crate value) -- see AddArrayAttribute in stage-converter.cc. */ \
-    if (_v.type_name() != _cv.type_name()) { \
-      crate::CrateValue _ty; \
-      _ty.Set(value::token(_v.type_name())); \
-      fields.push_back({std::string(name) + ".typeName", _ty}); \
-    } \
+      if ((attr).has_actual_type()) { \
+        crate::CrateValue _ty; \
+        _ty.Set(value::token((attr).get_actual_type_name())); \
+        fields.push_back({std::string(name) + ".typeName", _ty}); \
+      } else if (_v.type_name() != _cv.type_name()) { \
+        crate::CrateValue _ty; \
+        _ty.Set(value::token(_v.type_name())); \
+        fields.push_back({std::string(name) + ".typeName", _ty}); \
+      } \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // Helper macro: extract a token TypedAttribute directly (not as uint index)
@@ -64,6 +74,7 @@ namespace experimental {
     _cv.Set(_opt.value()); \
     fields.push_back({(name), _cv}); \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // Helper macro: extract a token TypedAttributeWithFallback directly
@@ -72,6 +83,7 @@ namespace experimental {
   crate::CrateValue _cv; \
   _cv.Set((attr).get_value()); \
   fields.push_back({(name), _cv}); \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // Like EXTRACT_FALLBACK / EXTRACT_TOKEN_FALLBACK, but only emit when the

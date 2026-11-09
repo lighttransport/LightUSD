@@ -9,8 +9,13 @@
 // nested stage customLayerData dict, prim customData/assetInfo (incl. token[]),
 // and a property-level customData dict.
 
+#include "next/layer/layer.hh"
 #include <cassert>
 #include <iostream>
+#include <algorithm>
+#include <vector>
+#include "next/crate/crate-reader.hh"
+#include "next/validation/usd-validation.hh"
 
 #include "next/reader/usdc-reader.hh"
 #include "next/stage/stage.hh"
@@ -101,12 +106,67 @@ static const unsigned char kPxrDictUsdc[] = {
   0x00,
 };}  // namespace
 
-static const Value* DictFind(const Value& dv, const char* key) {
+static ValueView DictFind(ValueView dv, const char* key) {
   if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
   return dv.as_dictionary()->find(key);
 }
 
+static uint64_t ReadU64(const std::vector<uint8_t>& bytes, size_t offset) {
+  assert(offset <= bytes.size() && bytes.size() - offset >= 8);
+  uint64_t value = 0;
+  for (size_t i = 0; i < 8; ++i) value |= uint64_t(bytes[offset + i]) << (8 * i);
+  return value;
+}
+
+// Reuse the genuine crate layout, changing only a dictionary's second key
+// index to repeat its first. This exercises production decoding and diagnostics.
+static void TestDuplicateDictionaryKeys() {
+  CrateReader reader;
+  assert(reader.Read(kPxrDictUsdc, sizeof(kPxrDictUsdc)).success);
+  const auto tokens = reader.tokens();
+  size_t checked = 0;
+  for (const CrateField& field : reader.fields()) {
+    if (field.value_rep.type_id() != CrateTypeId::Dictionary) continue;
+    std::vector<uint8_t> bytes(std::begin(kPxrDictUsdc), std::end(kPxrDictUsdc));
+    const size_t payload = static_cast<size_t>(field.value_rep.payload());
+    if (ReadU64(bytes, payload) < 2) continue;
+    const size_t first_key = payload + 8;
+    const size_t value_start = first_key + 4;
+    const size_t second_key = value_start + static_cast<size_t>(ReadU64(bytes, value_start)) + 8;
+    assert(second_key <= bytes.size() && bytes.size() - second_key >= 4);
+    std::copy_n(bytes.begin() + first_key, 4, bytes.begin() + second_key);
+    const auto loaded = LoadUSDCFromMemory(bytes.data(), bytes.size());
+    assert(loaded.success);
+    if (tokens[field.token_index.value] == "customLayerData") {
+      const auto& data = loaded.stage.GetRootLayer()->meta().customLayerData;
+      const auto creator = DictFind(data, "creator");
+      assert(creator && creator->is_dictionary());
+      const auto ratio = DictFind(creator, "ratio");
+      assert(ratio && ratio->as_double() && *ratio->as_double() == 0.5);
+      assert(!DictFind(data, "nested"));
+    }
+    USDValidationResult validation;
+    std::string warnings, errors;
+    assert(ValidateUSDFromMemoryAgainstAOUSDCore(bytes.data(), bytes.size(),
+        "duplicate-dictionary.usdc", {}, &validation, &warnings, &errors));
+    bool found = false;
+    for (const auto& issue : validation.issues) {
+      if (issue.rule_id == "core.dict.duplicateKey") {
+        found = true;
+        assert(issue.location.find("<crate>:") == 0);
+      }
+    }
+    assert(found && !validation.ok());
+    CrateReadOptions strict;
+    strict.strict_aousd_conformance = true;
+    assert(!CrateReader(strict).Read(bytes.data(), bytes.size()).success);
+    ++checked;
+  }
+  assert(checked >= 2);  // layer and prim metadata dictionaries
+}
+
 int main() {
+  TestDuplicateDictionaryKeys();
   std::cout << "=== LightUSD Next Binary Dict Decode Test ===" << std::endl;
 
   USDCLoadResult r = LoadUSDCFromMemory(kPxrDictUsdc, sizeof(kPxrDictUsdc));
@@ -120,15 +180,15 @@ int main() {
   const Value& cld = r.stage.GetRootLayer()->meta().customLayerData;
   assert(cld.is_dictionary());
   {
-    const Value* creator = DictFind(cld, "creator");
+    auto creator = DictFind(cld, "creator");
     assert(creator && creator->as_string() && *creator->as_string() == "lightusd-test");
-    const Value* ver = DictFind(cld, "version");
+    auto ver = DictFind(cld, "version");
     assert(ver && ver->as_int() && *ver->as_int() == 7);
-    const Value* nested = DictFind(cld, "nested");
+    auto nested = DictFind(cld, "nested");
     assert(nested && nested->is_dictionary());
-    const Value* inner = DictFind(*nested, "inner");
+    auto inner = DictFind(*nested, "inner");
     assert(inner && inner->as_string() && *inner->as_string() == "deep");
-    const Value* ratio = DictFind(*nested, "ratio");
+    auto ratio = DictFind(*nested, "ratio");
     assert(ratio && ratio->as_double() && *ratio->as_double() == 0.5);
   }
 
@@ -142,11 +202,11 @@ int main() {
   {
     const Value& cd = w.GetMeta().customData();
     assert(cd.is_dictionary());
-    const Value* note = DictFind(cd, "note");
+    auto note = DictFind(cd, "note");
     assert(note && note->as_string() && *note->as_string() == "hello");
-    const Value* flag = DictFind(cd, "flag");
+    auto flag = DictFind(cd, "flag");
     assert(flag && flag->as_bool() && *flag->as_bool() == true);
-    const Value* count = DictFind(cd, "count");
+    auto count = DictFind(cd, "count");
     assert(count && count->as_int() && *count->as_int() == 42);
   }
 
@@ -154,9 +214,9 @@ int main() {
   {
     const Value& ai = w.GetMeta().assetInfo();
     assert(ai.is_dictionary());
-    const Value* name = DictFind(ai, "name");
+    auto name = DictFind(ai, "name");
     assert(name && name->as_string() && *name->as_string() == "Widget");
-    const Value* tags = DictFind(ai, "tags");
+    auto tags = DictFind(ai, "tags");
     assert(tags && tags->as_token_array());
     assert(tags->as_token_array()->size() == 2);
     assert((*tags->as_token_array())[0] == "a");
@@ -171,7 +231,7 @@ int main() {
     const PropMeta* pm = spec->property_meta("radius");
     assert(pm && (pm->authored & PropMeta::kCustomData));
     assert(pm->customData.is_dictionary());
-    const Value* units = DictFind(pm->customData, "units");
+    auto units = DictFind(pm->customData, "units");
     assert(units && units->as_string() && *units->as_string() == "m");
   }
 

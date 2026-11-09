@@ -5,8 +5,11 @@
 
 #include "crate-reader-internal.hh"
 #include "lazy-array.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../strfmt.hh"
+#include "../execution.hh"
+#include "crate-timing.hh"
+#include "../c/lightusd-core-c.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -67,6 +70,7 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
     case CrateTypeId::PayloadListOp:
     case CrateTypeId::TokenListOp:
     case CrateTypeId::StringListOp:
+    case CrateTypeId::Int64ListOp:
       return 1;
     case CrateTypeId::TimeSamples:
       return 32;
@@ -236,7 +240,9 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   if (num_tokens > options_.max_tokens) {
-    AddError("Too many tokens");
+    AddError("Too many tokens: " + std::to_string(num_tokens) + " > " +
+             std::to_string(options_.max_tokens) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -245,7 +251,9 @@ bool CrateReader::Impl::ReadTokens() {
     AddError("Failed to read token compression info");
     return false;
   }
-  if (!CheckByteAllocation(compressed_size, "Compressed token table") ||
+  if (!CheckElementAllocation(num_tokens, TokenPool::span_bytes(),
+                              "Token spans") ||
+      !CheckByteAllocation(compressed_size, "Compressed token table") ||
       !CheckByteAllocation(uncompressed_size, "Uncompressed token table")) {
     return false;
   }
@@ -258,8 +266,9 @@ bool CrateReader::Impl::ReadTokens() {
     return false;
   }
 
-  DecompressResult dr = DecompressCrateBlob(compressed.data(), compressed.size(),
-                                            static_cast<size_t>(uncompressed_size));
+  DecompressResult dr = DecompressCrateBlobExact(
+      compressed.data(), compressed.size(),
+      static_cast<size_t>(uncompressed_size));
   if (!dr.success) {
     AddError("Failed to decompress tokens: " + dr.error);
     return false;
@@ -274,8 +283,11 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   tokens_.reserve(static_cast<size_t>(num_tokens));
-  const char* ptr = reinterpret_cast<const char*>(dr.data.data());
-  const char* end = ptr + dr.data.size();
+  const size_t blob_size = dr.data.size();
+  tokens_.adopt(std::move(dr.data));
+  const char* const base = tokens_.data();
+  const char* ptr = base;
+  const char* end = blob_size ? base + blob_size : base;
 
   while (ptr < end && tokens_.size() < num_tokens) {
     // Bounded scan: a malformed blob whose last token lacks the NUL terminator
@@ -286,7 +298,8 @@ bool CrateReader::Impl::ReadTokens() {
       AddError("Token table not NUL-terminated");
       return false;
     }
-    tokens_.push(ptr, static_cast<size_t>(nul - ptr));
+    tokens_.push(static_cast<size_t>(ptr - base),
+                 static_cast<size_t>(nul - ptr));
     ptr = nul + 1;
   }
 
@@ -324,7 +337,9 @@ bool CrateReader::Impl::ReadStrings() {
   }
 
   if (num_strings > options_.max_strings) {
-    AddError("Too many strings");
+    AddError("Too many strings: " + std::to_string(num_strings) + " > " +
+             std::to_string(options_.max_strings) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_strings, sizeof(uint32_t), "String table")) {
@@ -367,7 +382,9 @@ bool CrateReader::Impl::ReadFields() {
   }
 
   if (num_fields > options_.max_fields) {
-    AddError("Too many fields");
+    AddError("Too many fields: " + std::to_string(num_fields) + " > " +
+             std::to_string(options_.max_fields) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fields, sizeof(CrateField), "Field table") ||
@@ -405,6 +422,9 @@ bool CrateReader::Impl::ReadFields() {
     AddError("Field indices payload size overflow");
     return false;
   }
+  if (!CheckByteAllocation(indices_with_prefix_size, "Field index prefix buffer") ||
+      !CheckIntegerWorkspace(static_cast<size_t>(num_fields), indices_data.data(),
+                             indices_data.size())) return false;
   std::vector<uint8_t> indices_with_prefix(indices_with_prefix_size);
   std::memcpy(indices_with_prefix.data(), &indices_size, 8);
   if (!indices_data.empty()) {
@@ -416,6 +436,8 @@ bool CrateReader::Impl::ReadFields() {
                                                  static_cast<size_t>(num_fields));
   if (!dr.success) {
     // Fall back to legacy format
+    if (!CheckElementAllocation(num_fields, sizeof(uint32_t),
+                                "Legacy field index workspace")) return false;
     dr = DecompressIntegers(indices_with_prefix.data() + 8, indices_with_prefix.size() - 8,
                             static_cast<size_t>(num_fields), false);
     if (!dr.success) {
@@ -457,19 +479,25 @@ bool CrateReader::Impl::ReadFields() {
   // ValueRep[] is normally TfFastCompression/LZ4-compressed bytes. Do not
   // classify by byte count alone: small OpenUSD files can have compressed size
   // equal to the uncompressed `num_fields * 8` length.
-  DecompressResult rdr = DecompressCrateBlob(
-      reps_data.data(), reps_data.size(), field_value_rep_bytes);
-  if (rdr.success && rdr.data.size() >= field_value_rep_bytes) {
-    if (field_value_rep_bytes > 0) {
-      std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
+  // The table sizes were checked against CrateLimits and the allocation
+  // budget above. Decode into the final storage, avoiding an equally large
+  // temporary/copy and the generic blob API's independent 1 GiB ceiling.
+  size_t decoded_size = 0;
+  const char* decode_error = nullptr;
+  const bool decoded = lu_crate_blob_decompress_bounded(
+      reps_data.data(), reps_data.size(),
+      reinterpret_cast<uint8_t*>(value_reps.data()), field_value_rep_bytes,
+      field_value_rep_bytes, &decoded_size, &decode_error) != 0;
+  if (!decoded || decoded_size != field_value_rep_bytes) {
+    if (reps_size == field_value_rep_bytes) {
+      if (field_value_rep_bytes > 0) {
+        std::memcpy(value_reps.data(), reps_data.data(), field_value_rep_bytes);
+      }
+    } else {
+      AddError(std::string("Failed to decompress value reps: ") +
+               (decode_error ? decode_error : "decompressed size mismatch"));
+      return false;
     }
-  } else if (reps_size == field_value_rep_bytes) {
-    if (field_value_rep_bytes > 0) {
-      std::memcpy(value_reps.data(), reps_data.data(), field_value_rep_bytes);
-    }
-  } else {
-    AddError("Failed to decompress value reps");
-    return false;
   }
 
   fields_.resize(static_cast<size_t>(num_fields));
@@ -513,8 +541,13 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
+        // Over-cap arrays are accepted only when they stay lazy with a
+        // file-backed count (uncompressed; see UnpackArrayUncached). A
+        // compressed over-cap array could never be decoded, and dropping it
+        // field by field would silently lose data, so it fails the load here
+        // (raise max_array_elements for large trusted files).
         const bool lazy_over_cap_ok =
-            options_.lazy_arrays &&
+            options_.lazy_arrays && !rep.is_compressed() &&
             CrateArrayTypeCanBeLazy(rep.type_id(), rep.is_compressed());
         if (count > options_.max_array_elements && !lazy_over_cap_ok) {
           AddError("Array ValueRep element count exceeds max_array_elements limit");
@@ -650,7 +683,8 @@ bool CrateReader::Impl::ReadFields() {
             tid == CrateTypeId::ReferenceListOp ||
             tid == CrateTypeId::PayloadListOp ||
             tid == CrateTypeId::TokenListOp ||
-            tid == CrateTypeId::StringListOp;
+            tid == CrateTypeId::StringListOp ||
+            tid == CrateTypeId::Int64ListOp;
         if (list_op) {
           const size_t saved = reader_->position();
           if (!reader_->seek(static_cast<size_t>(off))) {
@@ -660,6 +694,10 @@ bool CrateReader::Impl::ReadFields() {
           uint8_t bits = 0;
           if (!reader_->read_u8(bits)) {
             AddError("Failed to read list-op ValueRep header");
+            return false;
+          }
+          if (tid == CrateTypeId::Int64ListOp && (bits & 0x80u)) {
+            AddError("Unknown Int64 list-op header bits");
             return false;
           }
           if (!reader_->seek(saved)) {
@@ -673,9 +711,14 @@ bool CrateReader::Impl::ReadFields() {
               AddError("List-op ValueRep payload is truncated");
               return false;
             }
-            const uint64_t item_bytes =
-                (tid == CrateTypeId::ReferenceListOp ||
-                 tid == CrateTypeId::PayloadListOp) ? 8u : 4u;
+            const bool arc_items = tid == CrateTypeId::ReferenceListOp ||
+                                   tid == CrateTypeId::PayloadListOp;
+            const bool reference_items = tid == CrateTypeId::ReferenceListOp;
+            const uint64_t arc_prefix_bytes =
+                reference_items || version_.minor >= 8 ? 24u : 8u;
+            const uint64_t item_bytes = arc_items
+                ? arc_prefix_bytes + (reference_items ? 8u : 0u) :
+                (tid == CrateTypeId::Int64ListOp ? 8u : 4u);
             uint64_t pos = static_cast<uint64_t>(off + 1);
             const uint8_t order[] = {0x02, 0x04, 0x20, 0x40, 0x08, 0x10};
             for (uint8_t bit : order) {
@@ -712,7 +755,46 @@ bool CrateReader::Impl::ReadFields() {
                 AddError("List-op ValueRep run is truncated");
                 return false;
               }
-              pos += run_bytes;
+              if (!reference_items) {
+                pos += run_bytes;
+              } else {
+                // Reference items include a variable-size recursive dictionary.
+                // A fixed stride misreads a later bucket's count from inside
+                // the first reference (especially prepend + delete opinions).
+                if (!reader_->seek(static_cast<size_t>(pos + 8u))) return false;
+                for (uint64_t item = 0; item < count; ++item) {
+                  const uint64_t item_start = reader_->position();
+                  if (item_start > file_size - arc_prefix_bytes ||
+                      !reader_->seek(static_cast<size_t>(
+                          item_start + arc_prefix_bytes))) return false;
+                  uint64_t dict_count = 0;
+                  if (!reader_->read_u64(dict_count) ||
+                      dict_count > options_.max_array_elements) {
+                    AddError("Reference customData count is invalid");
+                    return false;
+                  }
+                  for (uint64_t entry = 0; entry < dict_count; ++entry) {
+                    uint32_t key = 0;
+                    if (!reader_->read_u32(key) || key >= string_indices_.size()) {
+                      AddError("Reference customData key index out of range");
+                      return false;
+                    }
+                    const uint64_t value_start = reader_->position();
+                    uint64_t recursive_offset = 0;
+                    if (!reader_->read_u64(recursive_offset) ||
+                        recursive_offset < 8u ||
+                        value_start > file_size - 8u ||
+                        recursive_offset > file_size - 8u - value_start) {
+                      AddError("Reference customData recursive ValueRep is outside file");
+                      return false;
+                    }
+                    if (!reader_->seek(static_cast<size_t>(
+                            value_start + recursive_offset + 8u))) return false;
+                  }
+                }
+                pos = reader_->position();
+                if (!reader_->seek(saved)) return false;
+              }
             }
           }
         }
@@ -742,9 +824,11 @@ bool CrateReader::Impl::ReadFieldsets() {
   }
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
-  // huge allocation from a malformed value (no dedicated max, reuse max_fields).
-  if (num_fieldsets > options_.max_fields) {
-    AddError("Too many fieldset indices");
+  // huge allocation from a malformed value.
+  if (num_fieldsets > options_.max_fieldset_indices) {
+    AddError("Too many fieldset indices: " + std::to_string(num_fieldsets) +
+             " > " + std::to_string(options_.max_fieldset_indices) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
@@ -771,12 +855,17 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
+  if (!CheckIntegerWorkspace(static_cast<size_t>(num_fieldsets),
+                             data.size() >= 8 ? data.data() + 8 : nullptr,
+                             data.size() >= 8 ? data.size() - 8 : 0)) return false;
   fieldset_indices_.resize(static_cast<size_t>(num_fieldsets));
   DecompressResult dr = DecompressCompressedU32(data.data(), data.size(),
                                                  fieldset_indices_.data(),
                                                  static_cast<size_t>(num_fieldsets));
   if (!dr.success) {
     // Legacy fallback: try EncodeIntegers (common-prefix, no LZ4)
+    if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
+                                "Legacy fieldset workspace")) return false;
     dr = DecompressIntegers(data.data(), data.size(),
                             static_cast<size_t>(num_fieldsets), false);
     if (!dr.success) {
@@ -814,7 +903,9 @@ bool CrateReader::Impl::ReadSpecs() {
   }
 
   if (num_specs > options_.max_specs) {
-    AddError("Too many specs");
+    AddError("Too many specs: " + std::to_string(num_specs) + " > " +
+             std::to_string(options_.max_specs) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_specs, sizeof(CrateSpec), "Spec table") ||
@@ -852,7 +943,12 @@ bool CrateReader::Impl::ReadSpecs() {
     }
 
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
+    size_t prefixed_size;
+    if (!safe::add(size_t(8), comp_size, &prefixed_size) ||
+        !CheckByteAllocation(prefixed_size, "Specs compressed input") ||
+        !CheckIntegerWorkspace(count, reader_->current(),
+                               static_cast<size_t>(comp_size))) return false;
+    std::vector<uint8_t> comp_data(prefixed_size);
     std::memcpy(comp_data.data(), &comp_size, 8);
     if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
       AddError("Failed to read specs compressed data");
@@ -864,6 +960,8 @@ bool CrateReader::Impl::ReadSpecs() {
                                                    dst, count);
     if (!dr.success) {
       // Fallback: try legacy EncodeIntegers (common-prefix, no LZ4)
+      if (!CheckElementAllocation(count, sizeof(uint32_t),
+                                  "Legacy specs workspace")) return false;
       dr = DecompressIntegers(comp_data.data(), comp_data.size(), count, false);
       if (!dr.success) {
         AddError("Failed to decompress specs array: " + dr.error);
@@ -969,6 +1067,7 @@ bool CrateReader::Impl::ReadSpecs() {
 }
 
 bool CrateReader::Impl::ReadPaths() {
+  CratePhaseTimer timer(options_.enable_timing, "next_crate_paths");
   const CrateSection* section = toc_.find("PATHS");
   if (!section) {
     AddError("Missing PATHS section");
@@ -988,12 +1087,14 @@ bool CrateReader::Impl::ReadPaths() {
 
   if (num_paths == 0) {
     paths_.resize(1);
-    paths_[0] = "/";
+    paths_.set(0, "/");
     return true;
   }
 
   if (num_paths > options_.max_paths) {
-    AddError("Too many paths");
+    AddError("Too many paths: " + std::to_string(num_paths) + " > " +
+             std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -1005,59 +1106,89 @@ bool CrateReader::Impl::ReadPaths() {
   }
 
   if (num_encoded > options_.max_paths) {
-    AddError("Too many encoded path nodes");
+    AddError("Too many encoded path nodes: " + std::to_string(num_encoded) +
+             " > " + std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
   if (!CheckElementAllocation(num_paths, sizeof(std::string), "Path table")) {
     return false;
   }
-  paths_.resize(static_cast<size_t>(num_paths));
-  if (paths_.size() > 0) {
-    paths_[0] = "/";
-  }
   size_t n = static_cast<size_t>(num_encoded);
 
-  // Read 3 compressed integer arrays (delta+LZ4 format)
-  auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
+  // Read 3 compressed integer arrays (delta+LZ4 format). The three blobs are
+  // read in file order, then decompressed independently (concurrently for
+  // large tables); errors are reported as the sequential read-then-decompress
+  // of each array in turn would report them (the first failure wins).
+  struct CompArray {
+    const char* name = nullptr;
+    uint32_t* dst = nullptr;
+    std::vector<uint8_t> data;  // u64 compressed_size prefix + payload
+    std::string read_error;
+    std::string decode_error;
+    bool read_ok = false;
+  };
+  auto read_comp_blob = [&](CompArray& a) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) {
-      AddError(std::string("Failed to read ") + name + " compressed size");
+      a.read_error = std::string("Failed to read ") + a.name + " compressed size";
       return false;
     }
     // Bound the compressed size against remaining bytes before allocating.
     if (comp_size > reader_->remaining()) {
-      AddError(std::string(name) + " compressed size exceeds remaining data");
+      a.read_error = std::string(a.name) + " compressed size exceeds remaining data";
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
-    std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
-      AddError(std::string("Failed to read ") + name + " compressed data");
+    size_t prefixed_size;
+    if (!safe::add(size_t(8), comp_size, &prefixed_size) ||
+        !CheckByteAllocation(prefixed_size, "Paths compressed input") ||
+        !CheckIntegerWorkspace(n, reader_->current(), static_cast<size_t>(comp_size))) {
+      a.read_error = "Path compressed allocation budget exceeded";
       return false;
     }
-    DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
-                                                   dst, count);
+    a.data.resize(prefixed_size);
+    std::memcpy(a.data.data(), &comp_size, 8);
+    if (!reader_->read(a.data.data() + 8, static_cast<size_t>(comp_size))) {
+      a.read_error = std::string("Failed to read ") + a.name + " compressed data";
+      return false;
+    }
+    a.read_ok = true;
+    return true;
+  };
+  auto decode_comp_blob = [budget = allocation_budget_](CompArray& a, size_t count) {
+    const size_t comp_size = a.data.size() - 8;
+    DecompressResult dr =
+        DecompressCompressedU32(a.data.data(), a.data.size(), a.dst, count);
     if (!dr.success) {
       // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
-      dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
+      size_t legacy_bytes;
+      if (!safe::mul(count, sizeof(uint32_t), &legacy_bytes)) {
+        a.decode_error = "Legacy path workspace size overflow";
+        return;
+      }
+      if (const char* error = budget->Charge(legacy_bytes)) {
+        a.decode_error = std::string("Legacy path workspace") + error;
+        return;
+      }
+      dr = DecompressIntegers(a.data.data() + 8, comp_size, count, false);
       if (!dr.success) {
-        AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
-        return false;
+        a.decode_error = std::string("Failed to decompress ") + a.name + ": " + dr.error;
+        return;
       }
       size_t expected_bytes = 0;
       if (!safe::mul(count, sizeof(uint32_t), &expected_bytes)) {
-        AddError(std::string(name) + " byte size overflow");
-        return false;
+        a.decode_error = std::string(a.name) + " byte size overflow";
+        return;
       }
       if (dr.data.size() < expected_bytes) {
-        AddError(std::string("Decompressed ") + name + " shorter than expected");
-        return false;
+        a.decode_error = std::string("Decompressed ") + a.name + " shorter than expected";
+        return;
       }
-      if (expected_bytes > 0) std::memcpy(dst, dr.data.data(), expected_bytes);
+      if (expected_bytes > 0) std::memcpy(a.dst, dr.data.data(), expected_bytes);
     }
-    return true;
+    std::vector<uint8_t>().swap(a.data);
   };
 
   // `num_encoded` is an independent u64 from the file: it was only checked
@@ -1074,12 +1205,38 @@ bool CrateReader::Impl::ReadPaths() {
   std::vector<uint32_t> element_tokens(n);
   std::vector<uint32_t> jump_raw(n);  // stored as uint32_t, interpreted as int32_t
 
-  if (!read_comp_array(path_indices.data(), n, "path indices") ||
-      !read_comp_array(element_tokens.data(), n, "element tokens") ||
-      !read_comp_array(jump_raw.data(), n, "jump indices")) {
-    return false;
+  CompArray arrays[3];
+  arrays[0].name = "path indices";
+  arrays[0].dst = path_indices.data();
+  arrays[1].name = "element tokens";
+  arrays[1].dst = element_tokens.data();
+  arrays[2].name = "jump indices";
+  arrays[2].dst = jump_raw.data();
+  size_t num_read = 0;
+  while (num_read < 3 && read_comp_blob(arrays[num_read])) ++num_read;
+  bool decoded = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (num_read > 1 && n >= 65536 && ResolveBuildThreads() > 1) {
+    TaskArena& arena = BuildArena();
+    arena.Run(num_read, [&](size_t k) { decode_comp_blob(arrays[k], n); });
+    decoded = true;
+  }
+#endif
+  if (!decoded) {
+    for (size_t k = 0; k < num_read; ++k) decode_comp_blob(arrays[k], n);
+  }
+  for (size_t k = 0; k < 3; ++k) {
+    if (k < num_read && !arrays[k].decode_error.empty()) {
+      AddError(arrays[k].decode_error);
+      return false;
+    }
+    if (!arrays[k].read_ok) {
+      AddError(arrays[k].read_error);
+      return false;
+    }
   }
 
+  timer.lap("decompress");
   std::vector<uint8_t> seen_path_slot(static_cast<size_t>(num_paths), uint8_t{0});
   for (size_t i = 0; i < n; ++i) {
     if (path_indices[i] >= num_paths) {
@@ -1113,6 +1270,7 @@ bool CrateReader::Impl::ReadPaths() {
     }
   }
 
+  timer.lap("validate");
   // Reconstruct paths from the compressed tree by navigating jump offsets.
   //
   // Nodes are emitted in pre-order. jump semantics (matching the writer):
@@ -1121,77 +1279,176 @@ bool CrateReader::Impl::ReadPaths() {
   //   jump == -1: node has a child only (at i+1), no sibling
   //   jump == -2: leaf (no child, no sibling)
   //
-  // The previous decoder kept a flat ancestor stack and popped only ONCE per
-  // leaf, so it could not unwind multiple levels at a subtree boundary — the
-  // stack grew without bound on deep/many-sibling trees, giving O(n^2) memory
-  // (every path got longer) and corrupted/colliding paths. Passing the parent
-  // path down the recursion and following the jump offset to each sibling is
-  // O(num_nodes) and correct.
-  paths_.assign(static_cast<size_t>(num_paths), std::string());
+  // Three passes:
+  //  1. a structural walk (serial) records, per visited node, its parent node
+  //     and visit order -- following the jump offset to each sibling is
+  //     O(num_nodes). It keeps the exact rules of the former recursive
+  //     string-building walk: descend only below max_path_depth, and stop a
+  //     sibling chain at an already-visited node (a malformed jump table can
+  //     make the child pointer (i+1) and a sibling pointer (i+jump) reach the
+  //     same node; `visited` bounds total work to O(n) instead of the
+  //     super-linear re-entry a chain of `jump == 1` nodes would cause);
+  //  2. path lengths in visit order (parent first) and blob offsets;
+  //  3. the fill: each path is written into its own window of one PathPool
+  //     blob -- block-copying the parent's already-written path when it lies
+  //     earlier in the same task, else walking the ancestor chain backward --
+  //     in parallel for large tables. Unvisited nodes keep empty slots.
+  //
+  // A path is "/" for a top-level node whose element is empty or "/", else
+  // "/" + elem under a top-level parent or the root, else parent + "/" + elem;
+  // a property node stores "." + that path (its children, in a malformed
+  // table, still extend the '.'-less form).
+  paths_.resize(static_cast<size_t>(num_paths));  // all slots -> empty path
 
-  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
-    int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
-    is_prop = elem_token < 0;
+  constexpr uint32_t kNoParent = UINT32_MAX;
+  auto element_view = [&](size_t i) -> std::string_view {
+    const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     // Promote to int64 before negating (-INT32_MIN is UB).
-    uint32_t token_idx = is_prop
+    const uint32_t token_idx = elem_token < 0
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    return tokens_.str(token_idx);
+    return tokens_.view(token_idx);
+  };
+  auto is_prop_node = [&](size_t i) -> bool {
+    return static_cast<int32_t>(element_tokens[i]) < 0;
   };
 
-  // Recurse over a sibling chain that all share `parent` (the parent prim path,
-  // without any property '.' prefix). Depth is bounded by max_path_depth.
-  //
-  // A well-formed pre-order tree visits every encoded node exactly once. A
-  // malformed jump table can make the child pointer (i+1) and a sibling pointer
-  // (i+jump) reference the SAME node from different parents, so a node gets
-  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
-  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
-  // bounds total work to O(n): re-entering an already-emitted node stops that
-  // chain (the input is malformed, but we terminate instead of hanging).
   std::vector<uint8_t> visited(n, uint8_t{0});
-  std::function<void(size_t, const std::string&, size_t)> build =
-      [&](size_t i, const std::string& parent, size_t depth) {
-        while (i < n) {
-          if (visited[i]) return;  // node already emitted: malformed, stop
-          visited[i] = uint8_t{1};
-          bool is_prop = false;
-          std::string elem = element_for(i, is_prop);
-          int32_t jump = static_cast<int32_t>(jump_raw[i]);
-
-          bool is_root = parent.empty() && (elem.empty() || elem == "/");
-          std::string prim_path;  // base path (no '.' prefix) for children
-          if (is_root) {
-            prim_path = "/";
-          } else if (parent.empty() || parent == "/") {
-            prim_path = "/" + elem;
-          } else {
-            prim_path = parent + "/" + elem;
-          }
-
-          uint32_t store_idx = path_indices[i];
-          if (store_idx < num_paths) {
-            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
-          }
-
-          const bool has_child = (jump == -1 || jump > 0);
-          const bool has_sibling = (jump == 0 || jump > 0);
-
-          if (has_child && depth < options_.max_path_depth) {
-            build(i + 1, prim_path, depth + 1);
-          }
-          if (!has_sibling) return;
-          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
+  std::vector<uint32_t> parent_of(n, kNoParent);
+  std::vector<uint32_t> order;  // visited nodes, in visit order
+  order.reserve(n);
+  {
+    struct Frame {
+      size_t i;
+      uint32_t parent;
+      size_t depth;
+    };
+    std::vector<Frame> stack;
+    stack.push_back(Frame{0, kNoParent, 0});
+    while (!stack.empty()) {
+      Frame f = stack.back();
+      stack.pop_back();
+      size_t i = f.i;
+      while (i < n) {
+        if (visited[i]) break;  // node already emitted: malformed, stop
+        visited[i] = uint8_t{1};
+        parent_of[i] = f.parent;
+        order.push_back(static_cast<uint32_t>(i));
+        const int32_t jump = static_cast<int32_t>(jump_raw[i]);
+        const bool has_child = (jump == -1 || jump > 0);
+        const bool has_sibling = (jump == 0 || jump > 0);
+        const size_t next = has_sibling
+            ? i + ((jump > 0) ? static_cast<size_t>(jump) : 1)
+            : n;
+        if (has_child && f.depth < options_.max_path_depth) {
+          // Child subtree first (pre-order), then the rest of this chain.
+          if (has_sibling) stack.push_back(Frame{next, f.parent, f.depth});
+          stack.push_back(
+              Frame{i + 1, static_cast<uint32_t>(i), f.depth + 1});
+          break;
         }
-      };
-  build(0, std::string(), 0);
+        i = next;
+      }
+    }
+  }
+
+  timer.lap("walk");
+  // Prim-path length per node (without a property's '.' prefix) and whether
+  // the node is the root "/".
+  std::vector<uint64_t> plen(n, 0);
+  std::vector<uint8_t> rootish(n, uint8_t{0});
+  std::vector<uint64_t> node_off(n, 0);
+  uint64_t total_bytes = 0;
+  path_parent_.assign(static_cast<size_t>(num_paths), UINT32_MAX);
+  for (const uint32_t i : order) {
+    if (parent_of[i] != kNoParent) {
+      path_parent_[path_indices[i]] = path_indices[parent_of[i]];
+    }
+    const std::string_view elem = element_view(i);
+    const uint32_t par = parent_of[i];
+    if (par == kNoParent) {
+      if (elem.empty() || elem == "/") {
+        rootish[i] = uint8_t{1};
+        plen[i] = 1;
+      } else {
+        plen[i] = 1 + elem.size();
+      }
+    } else if (rootish[par]) {
+      plen[i] = 1 + elem.size();
+    } else {
+      plen[i] = plen[par] + 1 + elem.size();
+    }
+    node_off[i] = total_bytes;
+    total_bytes += plen[i] + (is_prop_node(i) ? 1 : 0);
+  }
+  paths_.resize_blob(static_cast<size_t>(total_bytes));
+
+  timer.lap("lengths");
+  // Write node order[k]'s path for k in [begin, end).
+  auto fill_range = [&](size_t begin, size_t end) {
+    for (size_t k = begin; k < end; ++k) {
+      const uint32_t i = order[k];
+      const bool is_prop = is_prop_node(i);
+      char* buf = paths_.blob_at(node_off[i]) + (is_prop ? 1 : 0);
+      if (is_prop) buf[-1] = '.';
+      const uint64_t L = plen[i];
+      if (rootish[i]) {
+        buf[0] = '/';
+      } else {
+        const std::string_view elem = element_view(i);
+        const uint32_t par = parent_of[i];
+        // Parent already written earlier in this range: block-copy it.
+        if (par != kNoParent && !rootish[par] && k > begin &&
+            node_off[par] >= node_off[order[begin]] &&
+            node_off[par] < node_off[i]) {
+          const char* pbuf = paths_.blob_at(node_off[par]) +
+                             (is_prop_node(par) ? 1 : 0);
+          const uint64_t pl = plen[par];
+          std::memcpy(buf, pbuf, static_cast<size_t>(pl));
+          buf[pl] = '/';
+          std::memcpy(buf + pl + 1, elem.data(), elem.size());
+        } else {
+          // Walk the ancestor chain backward.
+          uint64_t pos = L;
+          uint32_t j = i;
+          for (;;) {
+            const std::string_view ej = element_view(j);
+            pos -= ej.size();
+            std::memcpy(buf + pos, ej.data(), ej.size());
+            buf[--pos] = '/';
+            const uint32_t pj = parent_of[j];
+            if (pj == kNoParent || rootish[pj]) break;
+            j = pj;
+          }
+        }
+      }
+      paths_.place(path_indices[i], node_off[i], L + (is_prop ? 1 : 0));
+    }
+  };
+
+  bool filled = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const int nthreads = ResolveBuildThreads();
+  if (nthreads > 1 && order.size() >= 65536) {
+    const size_t task_size = std::max<size_t>(
+        16384, order.size() / (static_cast<size_t>(nthreads) * 4));
+    const size_t ntasks = (order.size() + task_size - 1) / task_size;
+    TaskArena& arena = BuildArena();
+    arena.Run(ntasks, [&](size_t t) {
+      fill_range(t * task_size, std::min(order.size(), (t + 1) * task_size));
+    });
+    filled = true;
+  }
+#endif
+  if (!filled) fill_range(0, order.size());
+  timer.lap("fill");
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {
       AddError("Spec path index out of range");
       return false;
     }
-    if (paths_[spec.path_index.value].empty()) {
+    if (paths_.empty_at(spec.path_index.value)) {
       AddError("Spec path index references an empty path slot");
       return false;
     }

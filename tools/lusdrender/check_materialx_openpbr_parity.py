@@ -229,6 +229,7 @@ def write_displacement_fixture(path: pathlib.Path) -> None:
 (defaultPrim = "World" upAxis = "Y")
 def Xform "World" {
   def Mesh "BentQuad" {
+    uniform token subdivisionScheme = "none"
     uniform bool doubleSided = 1
     point3f[] points = [(-1,-1,0), (0,-1,0), (1,-1,0), (-1,1,0), (0,1,0), (1,1,0)]
     int[] faceVertexCounts = [4,4]
@@ -989,6 +990,20 @@ def main() -> int:
                              ("--pt-samples", "16"))
             if not ok:
                 fail(f"{backend} disappeared during OpenPBR golden validation")
+            # Independent geometric-normal control: six planar +Z panels must
+            # shade the same with explicit normals or with the missing-normal
+            # fallback. normalize(0) previously hid direct light in the golden.
+            if backend == "vkr":
+                control = out_dir / "lobe-explicit-normals.usda"
+                panels = ("PanelBase", "PanelCoat", "PanelTransmission",
+                          "PanelSubsurface", "PanelEmission", "PanelOpacity")
+                control.write_text('#usda 1.0\n(subLayers = [@' + str(lobe_grid) + '@])\nover "World" {\n' +
+                    ''.join(' over "' + panel + '" { uniform token subdivisionScheme = "none"\n normal3f[] normals = [(0,0,1)] (interpolation = "constant")\n }\n' for panel in panels) + '}\n')
+                control_output = out_dir / "lobe-explicit-normals.png"
+                control_log, control_ok = render(binary, control, backend,
+                    control_output, ("--pt-samples", "16"))
+                if not control_ok or normalized_rmse(output, control_output, read_image) > 0.01:
+                    fail("Vulkan missing-normal fallback differs from analytic +Z panel normals", control_log)
             golden_name = ("lusdrender-openpbr-lobes-vkr.png" if backend == "vkr"
                            else "lusdrender-openpbr-lobes-shared-gpu.png")
             golden = golden_dir / golden_name

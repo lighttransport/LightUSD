@@ -111,7 +111,7 @@ bool ReconstructPrim(
   auto TypeHandler = enum_handler::BasisCurvesType;
   auto WrapHandler = enum_handler::BasisCurvesWrap;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
@@ -151,7 +151,7 @@ bool ReconstructPrim(
   (void)references;
   (void)options;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
     return false;
   }

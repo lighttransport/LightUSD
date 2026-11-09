@@ -1,6 +1,6 @@
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
-export function getBackendFromURL(params = new URLSearchParams(window.location.search), fallback = 'legacy') {
+export function getBackendFromURL(params = new URLSearchParams(window.location.search), fallback = 'next') {
   const backend = params.get('backend');
   return (backend === 'next' || backend === 'auto' || backend === 'legacy')
     ? backend
@@ -9,7 +9,7 @@ export function getBackendFromURL(params = new URLSearchParams(window.location.s
 
 export const LOADER_BACKEND_CHOICES = ['legacy', 'next', 'auto'];
 
-export function normalizeBackend(value, fallback = 'legacy') {
+export function normalizeBackend(value, fallback = 'next') {
   return LOADER_BACKEND_CHOICES.includes(value) ? value : fallback;
 }
 
@@ -81,7 +81,7 @@ export function basenameFromUri(uri, fallback = 'scene.usd') {
 }
 
 export function makeStaticNextParseOptions(options = {}) {
-  const backend = options.backend || 'legacy';
+  const backend = options.backend || 'next';
   return {
     ...options,
     backend,
@@ -121,9 +121,9 @@ export async function createConfiguredLightUSDLoader(options = {}) {
   const initOptions = options.initOptions || {
     useZstdCompressedWasm: false,
     useMemory64: false,
-    // Demo and CLI helpers retain their historical legacy default. The
-    // public LightUSDLoader constructor itself is next-first.
-    backend: options.backend || 'legacy'
+    // next is the default product; pass backend: 'legacy' for the legacy
+    // compatibility module during the transition period.
+    backend: options.backend || 'next'
   };
   const skinningOptions = options.skinningOptions || {};
 

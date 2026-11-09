@@ -7,15 +7,21 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "core/minijson.hh"
 #include "image-loader.hh"
+#include "ptex_atlas.hh"   // lusdview::BuildPtexAtlas (Ptex face atlas)
+#include "ptx-loader.hh"
 #include "image-writer.hh"
 #include "next/layer/asset-anchor.hh"   // AssetAnchorPath
 #include "next/eval/value-clip.hh"
+#include "next/eval/xform-eval.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
 #include "next/schema/usd-render.hh"
@@ -29,8 +35,10 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/openpbr-params.hh"
 #include "tydra/texture-util.hh"
+#include "tydra/vol/volume-field.hh"
 #include "usdVol.hh"
 #include "lusdr_context.hh"
+#include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
 
 namespace lusdr {
@@ -88,9 +96,9 @@ std::vector<std::string> ReadTokenArrayNext(
     const lightusd::next::UsdPrim &prim, const char *name) {
   const lightusd::next::Value *v = prim.GetPropertyValue(name);
   if (!v) return {};
-  if (const std::vector<std::string> *arr = v->as_token_array()) return *arr;
-  if (const std::string *tok = v->as_token()) return {*tok};
-  if (const std::string *str = v->as_string()) return {*str};
+  if (const auto arr = v->as_token_array()) return {arr.begin(), arr.end()};
+  if (auto tok = v->as_token()) return {*tok};
+  if (auto str = v->as_string()) return {*str};
   return {};
 }
 
@@ -106,7 +114,7 @@ std::unordered_map<std::string, float> GatherBlendShapeWeightsNext(
     eval.SetTime(time);
     lightusd::next::EvalResult result = eval.Eval(prim, "blendShapeWeights");
     if (!result.success || !result.value.is_array()) return true;
-    const std::vector<float> *arr = result.value.as_float_array();
+    const auto arr = result.value.view().as_float_array();
     if (!arr) return true;
     const size_t n = std::min(names.size(), arr->size());
     for (size_t i = 0; i < n; ++i) weights[names[i]] = (*arr)[i];
@@ -216,7 +224,15 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
                           const std::vector<Texture> *tex_pool = nullptr,
                           float disp_scale = 0.0f,
                           float displacement_tex_scale = 1.0f,
-                          float displacement_tex_bias = 0.0f) {
+                          float displacement_tex_bias = 0.0f,
+                          const lightusd::next::EvalOptions *evaluation = nullptr,
+                          bool opacity_presence = true) {
+  auto readFloatCopy = [&](const lightusd::next::UsdPrim& p, const char* name, double t) {
+    if (!evaluation) return ReadFloatArrayLazy(p, name, t);
+    lightusd::tydra::next::ValueArrayRead<float> values;
+    lightusd::tydra::next::ReadFloatArray(p, name, *evaluation, &values);
+    return std::vector<float>(values.begin(), values.end());
+  };
   // MeshLightAPI: this mesh is an AREA LIGHT, not just emissive geometry. The next
   // loader used to ignore that entirely -- LightCache::mesh was only ever built by
   // the legacy flatten -- so an emissive mesh lit nothing and was seen only by
@@ -254,7 +270,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
               prim.GetPropertyValue("inputs:normalize"))
         if (const bool *b = v->as_bool()) normalize = *b;
       if (normalize) {
-        const std::vector<float> npts_f = ReadFloatArrayLazy(prim, "points", time);
+        const std::vector<float> npts_f = readFloatCopy(prim, "points", time);
         const std::vector<int32_t> ncounts =
             ReadIntArrayLazy(prim, "faceVertexCounts", time);
         const std::vector<int32_t> nidx =
@@ -309,6 +325,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
     out_job_mat->opacity = opacity;
     out_job_mat->opacity_tex_id = opacity_tex.id;
     out_job_mat->opacity_threshold = opacity_threshold;
+    out_job_mat->opacity_presence = opacity_presence;
     out_job_mat->clearcoat = clearcoat;
     out_job_mat->clearcoat_roughness = clearcoat_roughness;
     out_job_mat->clearcoat_tex_id = clearcoat_tex.id;
@@ -342,9 +359,24 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   lightusd::tydra::next::ValueArrayRead<float> points;
   lightusd::tydra::next::ValueArrayRead<int32_t> counts;
   lightusd::tydra::next::ValueArrayRead<int32_t> indices;
-  ReadFloatArrayViewLazy(prim, "points", time, &points);
-  ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
-  ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
+  GeneratedMeshNext generated;
+  const bool analytic = lightusd::tydra::next::IsAnalyticGeomTypeName(
+      prim.GetTypeName());
+  if (analytic) {
+    if (!stage || !GenerateAnalyticMeshNext(*stage, prim, time, &generated)) {
+      stats->skipped_meshes++;
+      return;
+    }
+    points.view = {generated.points.data(), generated.points.size(), false};
+    counts.view = {generated.counts.data(), generated.counts.size(), false};
+    indices.view = {generated.indices.data(), generated.indices.size(), false};
+  } else {
+    if (evaluation) lightusd::tydra::next::ReadFloatArray(
+        prim, "points", *evaluation, &points);
+    else ReadFloatArrayViewLazy(prim, "points", time, &points);
+    ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
+    ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
+  }
   if (points.empty() || counts.empty() || indices.empty()) {
     stats->skipped_meshes++;
     return;
@@ -361,19 +393,42 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       blend_weights ? ComputeBlendShapeOffsetsNext(stage, prim, *blend_weights,
                                                    npts)
                     : std::vector<Vec3>();
+  std::vector<float> morphed_points;
+  if (!blend_offsets.empty()) {
+    morphed_points.resize(points.size());
+    for (size_t i = 0; i < npts; ++i) {
+      morphed_points[3*i] = points[3*i] + blend_offsets[i].x;
+      morphed_points[3*i+1] = points[3*i+1] + blend_offsets[i].y;
+      morphed_points[3*i+2] = points[3*i+2] + blend_offsets[i].z;
+    }
+    points.view = {morphed_points.data(), morphed_points.size(), false};
+  }
+  std::vector<float> skinned_points;
+  std::vector<double> skin_normals;
+  std::string skin_error;
+  if (stage && !lightusd::tydra::next::EvaluateSkinnedPoints(
+          *stage, prim, time, points, &skinned_points, &skin_error,
+          (prim.GetPropertyValue("normals") || prim.GetPropertyValue("primvars:normals")) ? &skin_normals : nullptr)) {
+    std::cerr << "Skinning failed: " << prim.GetPath().str()
+              << ": " << skin_error << "\n";
+    stats->skipped_meshes++;
+    return;
+  }
+  if (!skinned_points.empty())
+    points.view = {skinned_points.data(), skinned_points.size(), false};
   for (size_t i = 0; i < npts; i++) {
     Vec3 p{points[3 * i], points[3 * i + 1], points[3 * i + 2]};
-    if (!blend_offsets.empty()) p = Add(p, blend_offsets[i]);
     wpts[i] = TransformPoint(world, p);
   }
 
   // UV (primvars:st) for the diffuse texture. Stored flat [u0,v0,u1,v1,...].
-  // Interpolation is inferred from sizes: per-point ("vertex"/"varying") when
-  // the UV count matches the point count, otherwise per-face-vertex
-  // ("faceVarying"). primvars:st:indices indirection is honored when present.
-  std::vector<float> st;
-  std::vector<int32_t> st_indices;
-  bool st_facevarying = false;
+  lightusd::next::EvalOptions fallback_evaluation;
+  fallback_evaluation.time = lightusd::next::TimeQuery::Numeric(time);
+  fallback_evaluation.follow_connections = false;
+  const auto& attribute_evaluation = evaluation ? *evaluation : fallback_evaluation;
+  using lightusd::tydra::next::MeshFloatAttribute;
+  using lightusd::tydra::next::ReadMeshFloatAttribute;
+  MeshFloatAttribute st;
   bool have_st = false;
   if ((want_uvs || displacement_tex_id >= 0) &&
       (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
@@ -381,54 +436,41 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
        opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
        clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
        displacement_tex_id >= 0)) {
-    // Pick the UV set. If the bound base-color texture names one (its
-    // UsdPrimvarReader varname), use that so a texture reading a secondary set
-    // (e.g. `uvSet1`) is sampled with it, matching lusdview. Otherwise fall back
-    // to the exporter preference list tydra-next's converter uses.
-    std::string st_name;
-    if (!preferred_uv.empty()) {
-      st = ReadFloatArrayLazy(prim, ("primvars:" + preferred_uv).c_str(), time);
-      if (!st.empty()) st_name = preferred_uv;
+    if (!analytic && !preferred_uv.empty()) have_st = ReadMeshFloatAttribute(
+        prim, "primvars:" + preferred_uv, attribute_evaluation,
+        2, npts, indices.size(), &st);
+    if (!analytic && !have_st) for (const std::string& name :
+        lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
+      if (ReadMeshFloatAttribute(prim, "primvars:" + name, attribute_evaluation,
+          2, npts, indices.size(), &st)) { have_st = true; break; }
     }
-    if (st.empty()) {
-      for (const std::string &name :
-           lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
-        st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
-        if (!st.empty()) {
-          st_name = name;
-          break;
-        }
-      }
-    }
-    if (!st.empty()) {
-      st_indices = ReadIntArrayLazy(
-          prim, ("primvars:" + st_name + ":indices").c_str(), time);
-      const size_t uv_count =
-          st_indices.empty() ? (st.size() / 2) : st_indices.size();
-      // Per-point if it matches the points; per-face-vertex if it matches the
-      // face-vertex stream (== faceVertexIndices length).
-      if (uv_count == npts) {
-        st_facevarying = false;
-        have_st = true;
-      } else if (uv_count == indices.size()) {
-        st_facevarying = true;
-        have_st = true;
-      }
+    if (!have_st && analytic && !generated.uvs.empty()) {
+      st.components = 2;
+      st.values.view = {generated.uvs.data(), generated.uvs.size(), false};
+      st.interpolation = generated.uvs_facevarying ? "faceVarying" : "vertex";
+      have_st = true;
     }
   }
-  // Fetch the UV for face-vertex slot `fv` (position in the face-vertex stream)
-  // whose underlying point index is `pi`. Returns {u,v}.
-  auto uv_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
-    if (!have_st) return {0.0f, 0.0f};
-    size_t s = st_facevarying ? fv : size_t(pi);
-    if (!st_indices.empty()) {
-      if (s >= st_indices.size()) return {0.0f, 0.0f};
-      int32_t idx = st_indices[s];
-      if (idx < 0) return {0.0f, 0.0f};
-      s = size_t(idx);
+  const bool st_facevarying = st.interpolation == "faceVarying" ||
+                             st.interpolation == "uniform";
+  // Uniform attributes need an authored face id. Allocate the small prefix
+  // table only when one is actually used, rather than a per-corner face array.
+  std::vector<size_t> face_offsets;
+  auto face_for_corner = [&](size_t corner) {
+    if (face_offsets.empty()) {
+      face_offsets.push_back(0);
+      for (int32_t count : counts)
+        face_offsets.push_back(face_offsets.back() + size_t(std::max(0, count)));
     }
-    if (s * 2 + 1 >= st.size()) return {0.0f, 0.0f};
-    return {st[s * 2 + 0], st[s * 2 + 1]};
+    const auto upper = std::upper_bound(face_offsets.begin(), face_offsets.end(), corner);
+    return upper == face_offsets.begin() ? SIZE_MAX : size_t(upper - face_offsets.begin() - 1);
+  };
+  auto uv_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
+    if (!have_st || pi < 0) return {0.0f, 0.0f};
+    size_t tuple = 0;
+    const size_t face = st.interpolation == "uniform" ? face_for_corner(fv) : 0;
+    if (!st.TupleIndex(size_t(pi), fv, face, &tuple)) return {0.0f, 0.0f};
+    return {st.values[tuple * 2], st.values[tuple * 2 + 1]};
   };
 
   // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
@@ -557,12 +599,12 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   std::vector<float> dcol, dopac;
   int dc_mode = 0, do_mode = 0;  // 0=const, 1=vertex, 2=faceVarying, 3=uniform
   if (want_colors) {
-    dcol = ReadFloatArrayLazy(prim, "primvars:displayColor", time);
+    dcol = readFloatCopy(prim, "primvars:displayColor", time);
     const size_t nc = dcol.size() / 3;
     if (nc == npts) dc_mode = 1;
     else if (nc == indices.size()) dc_mode = 2;
     else if (nc == counts.size()) dc_mode = 3;
-    dopac = ReadFloatArrayLazy(prim, "primvars:displayOpacity", time);
+    dopac = readFloatCopy(prim, "primvars:displayOpacity", time);
     const size_t no = dopac.size();
     if (no == npts) do_mode = 1;
     else if (no == indices.size()) do_mode = 2;
@@ -585,31 +627,71 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
     }
   };
 
-  // Authored normals for smooth shading (`-smooth`). Stored per corner in the
-  // job's frame (world for flat, prototype-local for instanced — `world` is
-  // identity there), transformed at hit. Falls back to the geometric normal when
-  // absent. Interpolation inferred from size (vertex / faceVarying).
-  std::vector<float> nrm;
-  int nrm_mode = 0;  // 0=none, 1=vertex, 2=faceVarying
-  // Displaced meshes shade with the geometric normal of the deformed surface, so
-  // authored (pre-displacement) normals are ignored -- they no longer match.
+  MeshFloatAttribute normal_attribute;
+  std::vector<float> generated_smooth_normals;
+  bool have_normal_attribute = false;
   if (want_normals && !do_displace) {
-    nrm = ReadFloatArrayLazy(prim, "normals", time);
-    if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
-    const size_t nn = nrm.size() / 3;
-    if (nn == npts) nrm_mode = 1;
-    else if (nn == indices.size()) nrm_mode = 2;
+    have_normal_attribute =
+        lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
+        (ReadMeshFloatAttribute(prim, "primvars:normals", attribute_evaluation,
+                                3, npts, indices.size(), &normal_attribute) ||
+         ReadMeshFloatAttribute(prim, "normals", attribute_evaluation, 3, npts,
+                                indices.size(), &normal_attribute));
+    if (!have_normal_attribute && analytic && !generated.normals.empty()) {
+      normal_attribute.components = 3;
+      normal_attribute.values.view = {generated.normals.data(),
+                                      generated.normals.size(), false};
+      normal_attribute.interpolation =
+          generated.normals_facevarying ? "faceVarying" : "vertex";
+      have_normal_attribute = true;
+    }
   }
-  // World-space normal for face-vertex slot `fv` (point index `pi`); `geom` is the
-  // face's geometric normal (already in the job frame) used as the fallback.
-  auto norm_at = [&](size_t fv, int32_t pi, const Vec3 &geom) -> Vec3 {
-    if (!nrm_mode) return geom;
-    size_t ni = nrm_mode == 1 ? size_t(pi) : fv;
-    if (ni * 3 + 2 >= nrm.size()) return geom;
-    Vec3 ln{nrm[ni * 3 + 0], nrm[ni * 3 + 1], nrm[ni * 3 + 2]};
-    Vec3 wn = TransformVector(world, ln);  // job-frame (world for flat path)
-    float len = Length(wn);
-    return len > 1.0e-12f ? Mul(wn, 1.0f / len) : geom;
+  if (want_normals && !do_displace && !have_normal_attribute &&
+      lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
+    const auto* orientation = prim.GetPropertyValue("orientation");
+    const bool left_handed = orientation && orientation->as_token() &&
+                             *orientation->as_token() == "leftHanded";
+    if (lightusd::tydra::next::ComputeMeshSmoothNormals(
+            points, counts, indices, left_handed, &generated_smooth_normals)) {
+      normal_attribute.components = 3;
+      normal_attribute.interpolation = "vertex";
+      normal_attribute.values.view = {generated_smooth_normals.data(),
+                                      generated_smooth_normals.size(), false};
+      have_normal_attribute = true;
+      skin_normals.clear();  // Generated from posed points, not rest normals.
+    }
+  }
+  matrix4d inverse_normal_world;
+  const bool invertible_normal_world =
+      have_normal_attribute &&
+      lightusd::inverse(world, inverse_normal_world, 1.0e-12);
+  auto norm_at = [&](size_t fv, int32_t pi, const Vec3& geom) -> Vec3 {
+    if (!have_normal_attribute || !invertible_normal_world || pi < 0)
+      return geom;
+    size_t tuple = 0;
+    const size_t face =
+        normal_attribute.interpolation == "uniform" ? face_for_corner(fv) : 0;
+    if (!normal_attribute.TupleIndex(size_t(pi), fv, face, &tuple)) return geom;
+    Vec3 n{normal_attribute.values[tuple * 3],
+           normal_attribute.values[tuple * 3 + 1],
+           normal_attribute.values[tuple * 3 + 2]};
+    if (!skin_normals.empty()) {
+      const double* m = skin_normals.data() + size_t(pi) * 9;
+      n = {float(n.x * m[0] + n.y * m[3] + n.z * m[6]),
+           float(n.x * m[1] + n.y * m[4] + n.z * m[7]),
+           float(n.x * m[2] + n.y * m[5] + n.z * m[8])};
+    }
+    const Vec3 wn{float(n.x * inverse_normal_world.m[0][0] +
+                        n.y * inverse_normal_world.m[0][1] +
+                        n.z * inverse_normal_world.m[0][2]),
+                  float(n.x * inverse_normal_world.m[1][0] +
+                        n.y * inverse_normal_world.m[1][1] +
+                        n.z * inverse_normal_world.m[1][2]),
+                  float(n.x * inverse_normal_world.m[2][0] +
+                        n.y * inverse_normal_world.m[2][1] +
+                        n.z * inverse_normal_world.m[2][2])};
+    const float length = Length(wn);
+    return length > 1.0e-12f ? Mul(wn, 1.0f / length) : geom;
   };
 
   // Reserve from the exact triangle-fan estimate. StreamMeshJobs gives each mesh
@@ -688,6 +770,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   tmpl.opacity_tex_scale = opacity_tex.scale;
   tmpl.opacity_tex_bias = opacity_tex.bias;
   tmpl.opacity_threshold = opacity_threshold;
+  tmpl.opacity_presence = opacity_presence;
   tmpl.clearcoat = clearcoat;
   tmpl.clearcoat_roughness = clearcoat_roughness;
   tmpl.clearcoat_tex_id = clearcoat_tex.id;
@@ -704,6 +787,14 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   tmpl.use_specular_workflow = use_specular_workflow;
   tmpl.purpose_bit = purpose_bit;
 
+  lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
+  lightusd::tydra::next::ReadIntArray(prim, "holeIndices", attribute_evaluation,
+                                      &hole_values);
+  const std::unordered_set<int32_t> holes(hole_values.begin(),
+                                          hole_values.end());
+  const auto* orientation = prim.GetPropertyValue("orientation");
+  const bool left_handed = orientation && orientation->as_token() &&
+                           *orientation->as_token() == "leftHanded";
   const bool have_mask = face_mask && !face_mask->empty();
   size_t cursor = 0;
   size_t face_idx = 0;
@@ -714,21 +805,24 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       continue;
     }
     // GeomSubset job split: this job emits only its own faces.
-    if (have_mask && (face >= face_mask->size() || !(*face_mask)[face])) {
+    if (holes.count(static_cast<int32_t>(face)) ||
+        (have_mask && (face >= face_mask->size() || !(*face_mask)[face]))) {
       cursor += size_t(c);
       continue;
     }
     for (int32_t k = 1; k + 1 < c; k++) {
+      const size_t corner1 = cursor + size_t(left_handed ? k + 1 : k);
+      const size_t corner2 = cursor + size_t(left_handed ? k : k + 1);
       int32_t i0 = indices[cursor + 0];
-      int32_t i1 = indices[cursor + size_t(k)];
-      int32_t i2 = indices[cursor + size_t(k + 1)];
+      int32_t i1 = indices[corner1];
+      int32_t i2 = indices[corner2];
       if (i0 < 0 || i1 < 0 || i2 < 0 || size_t(i0) >= npts ||
           size_t(i1) >= npts || size_t(i2) >= npts) {
         continue;
       }
-      const Vec3 &p0 = wpts[size_t(i0)];
-      const Vec3 &p1 = wpts[size_t(i1)];
-      const Vec3 &p2 = wpts[size_t(i2)];
+      const Vec3& p0 = wpts[size_t(i0)];
+      const Vec3& p1 = wpts[size_t(i1)];
+      const Vec3& p2 = wpts[size_t(i2)];
       Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
       if (Length(n) < 1.0e-12f) continue;
 
@@ -783,8 +877,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
         // Keep tri_uvs parallel to tris (6 floats/tri). uv0=vert0, uv1=vert(k),
         // uv2=vert(k+1) in fan order, matching i0/i1/i2 above.
         auto uv0 = uv_at(cursor + 0, i0);
-        auto uv1 = uv_at(cursor + size_t(k), i1);
-        auto uv2 = uv_at(cursor + size_t(k + 1), i2);
+        auto uv1 = uv_at(corner1, i1);
+        auto uv2 = uv_at(corner2, i2);
         // Bake the UsdTransform2d (if any) into the stored UVs.
         uv_xform.apply(&uv0.first, &uv0.second);
         uv_xform.apply(&uv1.first, &uv1.second);
@@ -797,8 +891,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
         // i0/i1/i2. Constant meshes replicate base_color/opacity at all corners.
         float c0[4], c1[4], c2[4];
         col_at(cursor + 0, i0, face, c0);
-        col_at(cursor + size_t(k), i1, face, c1);
-        col_at(cursor + size_t(k + 1), i2, face, c2);
+        col_at(corner1, i1, face, c1);
+        col_at(corner2, i2, face, c2);
         auto q = [](float x) -> uint8_t {
           x = x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
           return uint8_t(int(x * 255.0f + 0.5f));
@@ -811,8 +905,8 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
       if (want_normals) {
         // Per-corner normals (9 floats/tri), fan order matching i0/i1/i2.
         Vec3 n0 = norm_at(cursor + 0, i0, n);
-        Vec3 n1 = norm_at(cursor + size_t(k), i1, n);
-        Vec3 n2 = norm_at(cursor + size_t(k + 1), i2, n);
+        Vec3 n1 = norm_at(corner1, i1, n);
+        Vec3 n2 = norm_at(corner2, i2, n);
         tri_normals->insert(tri_normals->end(),
                             {n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y,
                              n2.z});
@@ -889,16 +983,8 @@ lightusd::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
 // return the path untouched, preserving the previous behavior.
 std::string AnchorAssetNext(const lightusd::next::UsdPrim &prim,
                             const std::string &path) {
-  if (path.empty() || lightusd::next::AssetResolver::IsAbsolutePath(path) ||
-      path.find("://") != std::string::npos) {
-    return path;
-  }
-  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
-  const uint32_t id = spec ? spec->asset_anchor_id() : 0u;
-  const std::string &dir = lightusd::next::AssetAnchorPath(id);
-  if (dir.empty()) return path;
-  return lightusd::next::AssetResolver::NormalizePath(
-      lightusd::next::AssetResolver::JoinPath(dir, path));
+  const auto* spec = prim.GetPrimSpec();
+  return lightusd::next::ResolveAssetAnchorPath(path, spec ? spec->asset_anchor_id() : 0u);
 }
 
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
@@ -1020,6 +1106,62 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     return id;
   };
 
+  // Ptex (.ptx): a lazy source (container reader + bounded page cache), no
+  // pixels. Only the Vulkan paths consume it: the chunked CPU shader samples it
+  // directly and the descriptor path builds a face atlas on demand
+  // (MakeDrawScene). Other backends keep treating a .ptx as an undecodable image
+  // so their constant fallback is unchanged.
+  const auto ends_with_ptx = [&](const std::string &path) {
+    if (path.size() < 4) return false;
+    std::string ext = path.substr(path.size() - 4);
+    for (char &c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return ext == ".ptx";
+  };
+  if (ends_with_ptx(asset_path) && tc.options && tc.options->vulkan &&
+      !tc.options->no_ptex) {
+    auto sampler = std::make_shared<lusdview::CpuPtexSampler>(
+        size_t(64) * 1024 * 1024);
+    std::shared_ptr<std::vector<uint8_t>> held;
+    std::string ptx_err;
+    bool opened = false;
+    if (std::FILE *probe = std::fopen(asset_path.c_str(), "rb")) {
+      std::fclose(probe);
+      opened = sampler->OpenFile(asset_path, &ptx_err);
+    } else {
+      std::vector<uint8_t> bytes;
+      if (DecoderFor(tc).ReadAssetBytes(asset_path, &bytes)) {
+        held = std::make_shared<std::vector<uint8_t>>(std::move(bytes));
+        opened = sampler->OpenMemory(held->data(), held->size(), &ptx_err);
+      }
+    }
+    int32_t ptex_id = -1;
+    if (opened) {
+      Texture t;
+      t.is_ptex = true;
+      t.ptex_faces = sampler->info().faces;
+      if (tc.options->texture_max_size > 0)
+        t.ptex_max_face_edge = std::min(512u, uint32_t(tc.options->texture_max_size));
+      t.ptex_mip_levels = tc.options->ptex_mip_levels;
+      t.ptex = std::move(sampler);
+      t.ptex_bytes = std::move(held);
+      t.ptex_path = asset_path;
+      t.wrap_s = WrapMode::Clamp;
+      t.wrap_t = WrapMode::Clamp;
+      t.srgb = srgb;
+      t.scale = scale;
+      t.bias = bias;
+      ptex_id = int32_t(tc.textures->size());
+      tc.textures->push_back(std::move(t));
+    } else if (!ptx_err.empty()) {
+      std::cerr << "WARN: Ptex: " << ptx_err << "\n";
+    }
+    tc.by_key[key] = ptex_id;
+    if (ptex_id < 0) {
+      if (tc.missing_textures) (*tc.missing_textures)++;
+      std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+    }
+    return ptex_id;
+  }
   int32_t id = -1;
   if (IsUdimPattern(asset_path)) {
     Texture udim;
@@ -1134,31 +1276,57 @@ bool ReadVec3Value(const lightusd::next::Value &value, Vec3 *out) {
   return false;
 }
 
+// Shared RGB-slot loading keeps emission/specular modifiers identical to
+// diffuse: decode color space first, then apply the authored scale/bias.
+int32_t LoadColorTextureNext(const lightusd::next::UsdPrim& texture,
+                             TextureCache& cache, bool default_srgb = true) {
+  const auto* value = texture.GetPropertyValue("inputs:file");
+  if (!value) return -1;
+  auto asset = value->as_asset_path();
+  if (!asset) asset = value->as_string();
+  if (!asset || asset->empty()) return -1;
+  WrapMode wrap_s = WrapMode::Repeat, wrap_t = WrapMode::Repeat;
+  if (const auto* v = texture.GetPropertyValue("inputs:wrapS"))
+    if (auto token = v->as_token()) wrap_s = ParseWrapMode(*token);
+  if (const auto* v = texture.GetPropertyValue("inputs:wrapT"))
+    if (auto token = v->as_token()) wrap_t = ParseWrapMode(*token);
+  bool srgb = default_srgb;
+  if (const auto* v = texture.GetPropertyValue("inputs:sourceColorSpace"))
+    if (auto token = v->as_token()) {
+      if (*token == "raw" || *token == "linear") srgb = false;
+      else if (*token == "sRGB" || *token == "srgb") srgb = true;
+    }
+  Vec3 scale{1, 1, 1}, bias{0, 0, 0};
+  if (const auto* v = texture.GetPropertyValue("inputs:scale"))
+    ReadVec3Value(*v, &scale);
+  if (const auto* v = texture.GetPropertyValue("inputs:bias"))
+    ReadVec3Value(*v, &bias);
+  return LoadTextureCached(cache, AnchorAssetNext(texture, *asset), wrap_s,
+                           wrap_t, srgb, scale, bias);
+}
+
 // Resolve a scalar PBR input (inputs:roughness / inputs:metallic) that connects
-// to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Loads the raw texture
+// to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Defaults to raw data
 // and records the source channel.
-void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
-                              const lightusd::next::UsdPrim &surf,
-                              const std::string &input, TextureCache &tc,
-                              ScalarTex *out) {
-  const lightusd::next::PrimSpec *spec = surf.GetPrimSpec();
+void ResolveScalarTextureNext(const lightusd::next::Stage& stage,
+                              const lightusd::next::UsdPrim& surf,
+                              const std::string& input, TextureCache& tc,
+                              ScalarTex* out) {
+  const lightusd::next::PrimSpec* spec = surf.GetPrimSpec();
   if (!spec) return;
-  const std::vector<lightusd::next::Path> *c = spec->connection(input);
+  const std::vector<lightusd::next::Path>* c = spec->connection(input);
   if (!c || c->empty()) return;
-  const lightusd::next::Path &target = (*c)[0];
+  const lightusd::next::Path& target = (*c)[0];
   lightusd::next::UsdPrim tex = stage.GetPrimAtPath(target.prim_path());
   if (!tex.IsValid()) return;
   const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file");
   if (!fv) return;
-  const std::string *ap = fv->as_asset_path();
+  auto ap = fv->as_asset_path();
   if (!ap) ap = fv->as_string();
   if (!ap || ap->empty()) return;
-  WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-    if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-    if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-  int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, /*srgb=*/false);
+  // Scalar slots default to raw, but explicit RGB source color space wins.
+  // The channel sampler preserves linear alpha independently of this choice.
+  int32_t id = LoadColorTextureNext(tex, tc, false);
   if (id < 0) return;
   out->id = id;
   const std::string prop = target.property_name();  // e.g. "outputs:g"
@@ -1183,15 +1351,48 @@ void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
   }
 }
 
-// If a UsdUVTexture's inputs:st chain runs through a UsdTransform2d, read its
-// rotation (deg, CCW) / scale / translation. Otherwise returns identity.
-UvXform ResolveUvXform(const lightusd::next::Stage &stage,
-                       const lightusd::next::UsdPrim &uvtex) {
+// Other shading models retain their existing presence-style diagnostic.
+bool ResolveOpacityPresenceNext(const lightusd::next::Stage& stage,
+                                const std::string& material_path) {
+  const auto surface = ConnectedPrimNext(stage, stage.GetPrimAtPath(material_path), "outputs:surface");
+  const auto* id = surface.GetPropertyValue("info:id");
+  if (!id || !id->as_token() || *id->as_token() != "UsdPreviewSurface") return true;
+  const auto* value = surface.GetPropertyValue("inputs:opacityMode");
+  const auto mode = value ? value->as_token() : nullptr;
+  return mode && *mode == "presence";
+}
+
+// Follow a bounded texture coordinate chain to its authored primvar.
+std::string ResolveUvPrimvarNext(const lightusd::next::Stage& stage,
+                                 lightusd::next::UsdPrim node) {
+  for (unsigned depth = 0; node.IsValid() && depth < 32; ++depth) {
+    const auto* id = node.GetPropertyValue("info:id");
+    const auto name = id ? id->as_token() : lightusd::next::StringView();
+    if (name && *name == "UsdPrimvarReader_float2") {
+      const auto* value = node.GetPropertyValue("inputs:varname");
+      if (!value) return {};
+      auto primvar = value->as_token();
+      if (!primvar) primvar = value->as_string();
+      return primvar ? std::string(*primvar) : std::string();
+    }
+    if (name && *name == "UsdUVTexture")
+      node = ConnectedPrimNext(stage, node, "inputs:st");
+    else if (name && *name == "UsdTransform2d")
+      node = ConnectedPrimNext(stage, node, "inputs:in");
+    else
+      return {};
+  }
+  return {};
+}
+
+// Read the rotation, scale and translation of a connected UsdTransform2d.
+UvXform ResolveUvXform(const lightusd::next::Stage& stage,
+                       const lightusd::next::UsdPrim& uvtex) {
   UvXform x;
   lightusd::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
   if (!st.IsValid()) return x;
-  const lightusd::next::Value *idv = st.GetPropertyValue("info:id");
-  const std::string *id = idv ? idv->as_token() : nullptr;
+  const lightusd::next::Value* idv = st.GetPropertyValue("info:id");
+  auto id = idv ? idv->as_token() : nullptr;
   if (!id || *id != "UsdTransform2d") return x;
   float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
   if (const lightusd::next::Value *v = st.GetPropertyValue("inputs:rotation"))
@@ -1347,29 +1548,13 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (const float *f = sc->as_float3())
       if (specular_color) *specular_color = Vec3{f[0], f[1], f[2]};
   if (specular_tex_id) {
-    lightusd::next::UsdPrim stex =
-        ConnectedPrimNext(stage, surf, "inputs:specularColor");
-    if (stex.IsValid()) {
-      if (const lightusd::next::Value *fv =
-              stex.GetPropertyValue("inputs:file")) {
-        const std::string *ap = fv->as_asset_path();
-        if (!ap) ap = fv->as_string();
-        if (ap && !ap->empty()) {
-          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
-            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
-            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-          bool srgb = true;
-          if (const lightusd::next::Value *v =
-                  stex.GetPropertyValue("inputs:sourceColorSpace"))
-            if (const std::string *t = v->as_token()) srgb = (*t != "raw");
-          int32_t id = LoadTextureCached(tc, AnchorAssetNext(stex, *ap), ws, wt, srgb);
-          if (id >= 0) {
-            *specular_tex_id = id;
-            if (specular_color) *specular_color = Vec3{1.0f, 1.0f, 1.0f};
-          }
-        }
+    auto texture=ConnectedPrimNext(stage,surf,"inputs:specularColor");
+    if(texture.IsValid()) {
+      const int32_t id=LoadColorTextureNext(texture,tc);
+      if(id>=0) {
+        *specular_tex_id=id;
+        if(specular_color)*specular_color=Vec3{1,1,1};
+        if(uv_xform && uv_xform->identity)*uv_xform=ResolveUvXform(stage,texture);
       }
     }
   }
@@ -1380,25 +1565,13 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (const float *f = e->as_float3())
       if (emission) *emission = Vec3{f[0], f[1], f[2]};
   if (emission_tex_id) {
-    lightusd::next::UsdPrim etex =
-        ConnectedPrimNext(stage, surf, "inputs:emissiveColor");
-    if (etex.IsValid()) {
-      if (const lightusd::next::Value *fv =
-              etex.GetPropertyValue("inputs:file")) {
-        const std::string *ap = fv->as_asset_path();
-        if (!ap) ap = fv->as_string();
-        if (ap && !ap->empty()) {
-          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
-            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
-            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-          int32_t id = LoadTextureCached(tc, AnchorAssetNext(etex, *ap), ws, wt, /*srgb=*/true);
-          if (id >= 0) {
-            *emission_tex_id = id;
-            if (emission) *emission = Vec3{1.0f, 1.0f, 1.0f};  // texture is the tint
-          }
-        }
+    auto texture=ConnectedPrimNext(stage,surf,"inputs:emissiveColor");
+    if(texture.IsValid()) {
+      const int32_t id=LoadColorTextureNext(texture,tc);
+      if(id>=0) {
+        *emission_tex_id=id;
+        if(emission)*emission=Vec3{1,1,1};
+        if(uv_xform && uv_xform->identity)*uv_xform=ResolveUvXform(stage,texture);
       }
     }
   }
@@ -1415,37 +1588,11 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim tex =
       ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
   if (tex.IsValid()) {
-    if (const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
-      const std::string *ap = fv->as_asset_path();
-      if (!ap) ap = fv->as_string();
-      if (ap && !ap->empty()) {
-        WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-        bool srgb = true;
-        if (const lightusd::next::Value *v =
-                tex.GetPropertyValue("inputs:sourceColorSpace")) {
-          if (const std::string *t = v->as_token()) srgb = (*t != "raw");
-        }
-        // inputs:scale/bias tint the sampled color (default identity).
-        Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
-          ReadVec3Value(*v, &sc);
-        }
-        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
-          ReadVec3Value(*v, &bi);
-        }
-        int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, srgb, sc, bi);
-        if (id >= 0) {
-          *tex_id = id;
-          // A textured surface tints by the texture, not the (often unauthored)
-          // diffuseColor constant. Use white so sampling shows true texels.
-          *base_color = Vec3{1.0f, 1.0f, 1.0f};
-          if (uv_xform) *uv_xform = ResolveUvXform(stage, tex);
-        }
-      }
+    const int32_t id=LoadColorTextureNext(tex,tc);
+    if(id>=0) {
+      *tex_id=id;
+      *base_color=Vec3{1,1,1};
+      if(uv_xform)*uv_xform=ResolveUvXform(stage,tex);
     }
   }
 
@@ -1455,14 +1602,14 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim ntex = ConnectedPrimNext(stage, surf, "inputs:normal");
   if (ntex.IsValid()) {
     if (const lightusd::next::Value *fv = ntex.GetPropertyValue("inputs:file")) {
-      const std::string *ap = fv->as_asset_path();
+      auto ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
         WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapS"))
-          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (auto t = v->as_token()) ws = ParseWrapMode(*t);
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
-          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          if (auto t = v->as_token()) wt = ParseWrapMode(*t);
         Vec3 scale{2.0f, 2.0f, 2.0f}, bias{-1.0f, -1.0f, -1.0f};
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:scale")) {
           ReadVec3Value(*v, &scale);
@@ -1502,6 +1649,9 @@ void ApplyDisplayPrimvarsNext(const lightusd::next::UsdPrim &mesh,
 
 void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   if (!job) return;
+  job->uv_primvar = r.uv_primvar;
+  job->uv_primvar1 = r.uv_primvar1;
+  job->uv_set_bits = r.uv_set_bits;
   job->base_color = r.base_color;
   job->tex_id = r.tex_id;
   job->roughness = r.roughness;
@@ -1518,6 +1668,7 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   job->opacity = r.opacity;
   job->opacity_tex = r.opacity_tex;
   job->opacity_threshold = r.opacity_threshold;
+  job->opacity_presence = r.opacity_presence;
   job->clearcoat = r.clearcoat;
   job->clearcoat_roughness = r.clearcoat_roughness;
   job->clearcoat_tex = r.clearcoat_tex;
@@ -1536,6 +1687,9 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
 
 ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   ResolvedMat r;
+  r.uv_primvar = job.uv_primvar;
+  r.uv_primvar1 = job.uv_primvar1;
+  r.uv_set_bits = job.uv_set_bits;
   r.base_color = job.base_color;
   r.tex_id = job.tex_id;
   r.roughness = job.roughness;
@@ -1552,6 +1706,7 @@ ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   r.opacity = job.opacity;
   r.opacity_tex = job.opacity_tex;
   r.opacity_threshold = job.opacity_threshold;
+  r.opacity_presence = job.opacity_presence;
   r.clearcoat = job.clearcoat;
   r.clearcoat_roughness = job.clearcoat_roughness;
   r.clearcoat_tex = job.clearcoat_tex;
@@ -1585,6 +1740,7 @@ TriMat TriMatFromResolved(const ResolvedMat &r) {
   m.opacity = r.opacity;
   m.opacity_tex_id = r.opacity_tex.id;
   m.opacity_threshold = r.opacity_threshold;
+  m.opacity_presence = r.opacity_presence;
   m.clearcoat = r.clearcoat;
   m.clearcoat_roughness = r.clearcoat_roughness;
   m.clearcoat_tex_id = r.clearcoat_tex.id;
@@ -1835,6 +1991,21 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
   }
 
   using NextMat = lightusd::tydra::next::RenderMaterial;
+  // Record which textured lanes sample a UV primvar other than the material's
+  // primary one. `scratch.textures[i].uv_primvar` is the UsdPrimvarReader
+  // varname for that texture, so the comparison is exact rather than inferred
+  // from image identity. Two sets are representable; a third collapses to the
+  // secondary stream.
+  auto note_uv_set = [&](uint32_t lane, int32_t tydra_tex) {
+    if (tydra_tex < 0 || size_t(tydra_tex) >= scratch.textures.size()) return;
+    const std::string &name = scratch.textures[size_t(tydra_tex)].uv_primvar;
+    if (name.empty() || resolved.uv_primvar.empty() ||
+        name == resolved.uv_primvar) {
+      return;
+    }
+    SetRtTexUvSet(&resolved.uv_set_bits, lane, 1);
+    if (resolved.uv_primvar1.empty()) resolved.uv_primvar1 = name;
+  };
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
       rm.preview_surface) {
     const auto &s = *rm.preview_surface;
@@ -1861,9 +2032,16 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
         resolved.uv_primvar = scratch.textures[size_t(did)].uv_primvar;
       }
     }
-    LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
-                      nullptr, nullptr,
-                      &resolved.emission_tex_id);
+    if (LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
+                          nullptr, nullptr, &resolved.emission_tex_id)) {
+      // A connected color replaces the shader input's fallback; multiplying
+      // the texture by that fallback (usually black) erased CPU emission.
+      resolved.emission=Vec3{1,1,1};
+      if(resolved.tex_id<0) {
+        ApplyRenderTextureUvXform(stage,scratch,s.emissive_color.texture_id,false,&resolved.uv_xform);
+        resolved.uv_primvar=scratch.textures[size_t(s.emissive_color.texture_id)].uv_primvar;
+      }
+    }
     const Vec3 normal_scale{2.0f, 2.0f, 2.0f};
     const Vec3 normal_bias{-1.0f, -1.0f, -1.0f};
     LoadRenderTexture(scratch, s.normal.texture_id, tc, false,
@@ -1871,9 +2049,9 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                       &resolved.normal_tex_id);
     ApplyRenderTextureUvXform(stage, scratch, s.normal.texture_id,
                               true, &resolved.uv_xform);
-    LoadRenderTexture(scratch, s.specular_color.texture_id, tc, true,
-                      nullptr, nullptr,
-                      &resolved.specular_tex_id);
+    if (LoadRenderTexture(scratch, s.specular_color.texture_id, tc, true,
+                          nullptr, nullptr, &resolved.specular_tex_id))
+      resolved.specular_color=Vec3{1,1,1};
     LoadRenderScalarTexture(scratch, s.roughness, tc, false, &resolved.rough_tex);
     LoadRenderScalarTexture(scratch, s.metallic, tc, false, &resolved.metal_tex);
     LoadRenderScalarTexture(scratch, s.occlusion, tc, false, &resolved.occ_tex);
@@ -1884,6 +2062,17 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                             &resolved.clearcoat_rough_tex);
     LoadRenderScalarTexture(scratch, s.displacement, tc, false,
                             &resolved.displacement_tex);
+    note_uv_set(kRtTexUvBase, s.diffuse_color.texture_id);
+    note_uv_set(kRtTexUvSpecular, s.specular_color.texture_id);
+    note_uv_set(kRtTexUvNormal, s.normal.texture_id);
+    note_uv_set(kRtTexUvDisplacement, s.displacement.texture_id);
+    note_uv_set(kRtTexUvRoughness, s.roughness.texture_id);
+    note_uv_set(kRtTexUvMetallic, s.metallic.texture_id);
+    note_uv_set(kRtTexUvEmissive, s.emissive_color.texture_id);
+    note_uv_set(kRtTexUvOcclusion, s.occlusion.texture_id);
+    note_uv_set(kRtTexUvOpacity, s.opacity.texture_id);
+    note_uv_set(kRtTexUvCoatWeight, s.clearcoat.texture_id);
+    note_uv_set(kRtTexUvCoatRoughness, s.clearcoat_roughness.texture_id);
   } else if (rm.shader_type == NextMat::ShaderType::OpenPBR && rm.openpbr) {
     const auto &s = *rm.openpbr;
     resolved.materialx_graph_json = s.nodegraph_json;
@@ -1923,9 +2112,30 @@ bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
                             &resolved.clearcoat_tex);
     LoadRenderScalarTexture(scratch, s.coat_roughness, tc, false,
                             &resolved.clearcoat_rough_tex);
+    note_uv_set(kRtTexUvBase, s.base_color.texture_id);
+    note_uv_set(kRtTexUvNormal, s.normal.texture_id);
+    note_uv_set(kRtTexUvCoatNormal, s.coat_normal.texture_id);
+    note_uv_set(kRtTexUvRoughness, s.base_roughness.texture_id);
+    note_uv_set(kRtTexUvMetallic, s.base_metalness.texture_id);
+    note_uv_set(kRtTexUvEmissive, s.emission_color.texture_id);
+    note_uv_set(kRtTexUvOpacity, s.opacity.texture_id);
+    note_uv_set(kRtTexUvCoatWeight, s.coat_weight.texture_id);
+    note_uv_set(kRtTexUvCoatRoughness, s.coat_roughness.texture_id);
   }
 
-  const float *m = scratch.working_to_display_linear;
+  // Data-only materials (notably opacity-only diagnostics) still choose the
+  // authored UV set. A color texture is not required to drive geometry UVs.
+  if (resolved.tex_id < 0 && resolved.emission_tex_id < 0) {
+    for (size_t texture = 0; texture < scratch.textures.size(); ++texture) {
+      if (scratch.textures[texture].uv_primvar.empty()) continue;
+      resolved.uv_primvar = scratch.textures[texture].uv_primvar;
+      ApplyRenderTextureUvXform(stage, scratch, int32_t(texture), false,
+                                &resolved.uv_xform);
+      break;
+    }
+  }
+
+  const float* m = scratch.working_to_display_linear;
   const auto to_display = [m](const Vec3 &v) {
     return Vec3{m[0] * v.x + m[1] * v.y + m[2] * v.z,
                 m[3] * v.x + m[4] * v.y + m[5] * v.z,
@@ -2098,17 +2308,52 @@ void ResolveMeshMaterialCached(
   }
 
   auto resolve_legacy = [&]() {
-    ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
-                            &job->roughness, &job->metallic, &job->normal_tex_id,
-                            &job->uv_xform, &job->rough_tex, &job->metal_tex,
-                            &job->emission, &job->emission_tex_id, &job->occlusion,
-                            &job->occ_tex, &job->opacity, &job->opacity_tex,
-                            &job->opacity_threshold, &job->clearcoat,
-                            &job->clearcoat_roughness, &job->clearcoat_tex,
-                            &job->clearcoat_rough_tex, &job->specular_color,
-                            &job->specular_tex_id, &job->ior,
-                            &job->use_specular_workflow, &job->vertex_color,
-                            &job->displacement, &job->displacement_tex);
+    ResolveMeshMaterialNext(
+        stage, mesh, tc, &job->base_color, &job->tex_id, &job->roughness,
+        &job->metallic, &job->normal_tex_id, &job->uv_xform, &job->rough_tex,
+        &job->metal_tex, &job->emission, &job->emission_tex_id, &job->occlusion,
+        &job->occ_tex, &job->opacity, &job->opacity_tex,
+        &job->opacity_threshold, &job->clearcoat, &job->clearcoat_roughness,
+        &job->clearcoat_tex, &job->clearcoat_rough_tex, &job->specular_color,
+        &job->specular_tex_id, &job->ior, &job->use_specular_workflow,
+        &job->vertex_color, &job->displacement, &job->displacement_tex);
+    auto material = stage.GetPrimAtPath(key);
+    auto surface = ConnectedPrimNext(stage, material, "outputs:surface");
+    struct LaneUv {
+      uint32_t lane;
+      std::string name;
+    };
+    std::vector<LaneUv> lane_uvs;
+    for (const auto& input :
+         {std::pair<const char*, bool>{"inputs:diffuseColor", job->tex_id >= 0},
+          {"inputs:emissiveColor", job->emission_tex_id >= 0},
+          {"inputs:normal", job->normal_tex_id >= 0},
+          {"inputs:opacity", job->opacity_tex.id >= 0},
+          {"inputs:roughness", job->rough_tex.id >= 0},
+          {"inputs:metallic", job->metal_tex.id >= 0}}) {
+      if (!input.second) continue;
+      const auto texture = ConnectedPrimNext(stage, surface, input.first);
+      const std::string uv = ResolveUvPrimvarNext(stage, texture);
+      if (uv.empty()) continue;
+      if (job->uv_primvar.empty()) {
+        job->uv_primvar = uv;
+        if (job->uv_xform.identity)
+          job->uv_xform = ResolveUvXform(stage, texture);
+      }
+      const uint32_t lane =
+          std::strcmp(input.first, "inputs:diffuseColor") == 0 ? kRtTexUvBase
+          : std::strcmp(input.first, "inputs:emissiveColor") == 0 ? kRtTexUvEmissive
+          : std::strcmp(input.first, "inputs:normal") == 0 ? kRtTexUvNormal
+          : std::strcmp(input.first, "inputs:opacity") == 0 ? kRtTexUvOpacity
+          : std::strcmp(input.first, "inputs:roughness") == 0 ? kRtTexUvRoughness
+          : kRtTexUvMetallic;
+      lane_uvs.push_back({lane, uv});
+    }
+    for (const LaneUv &entry : lane_uvs) {
+      if (entry.name == job->uv_primvar) continue;
+      SetRtTexUvSet(&job->uv_set_bits, entry.lane, 1);
+      if (job->uv_primvar1.empty()) job->uv_primvar1 = entry.name;
+    }
   };
 
   const Options::MaterialResolver mode =
@@ -2148,6 +2393,7 @@ void ResolveMeshMaterialCached(
   }
 
   if (!front_cached && !key.empty()) {
+    job->opacity_presence = ResolveOpacityPresenceNext(stage, key);
     cache.emplace(key, CaptureResolvedFromJob(*job));
   }
 
@@ -2178,6 +2424,7 @@ void ResolveMeshMaterialCached(
     return;
   }
   if (back_degraded && tc.degraded_materials) (*tc.degraded_materials)++;
+  back_job.opacity_presence = ResolveOpacityPresenceNext(stage, back_key);
   ResolvedMat back = CaptureResolvedFromJob(back_job);
   cache.emplace(back_key, back);
   job->back_material = std::make_shared<ResolvedMat>(std::move(back));
@@ -2211,12 +2458,12 @@ void ExpandGeomSubsetJobsNext(const lightusd::next::Stage &stage, double time,
       // elementType defaults to "face"; other element types don't split faces.
       bool is_face = true;
       if (const lightusd::next::Value *et = c.GetPropertyValue("elementType"))
-        if (const std::string *t = et->as_token())
+        if (auto t = et->as_token())
           is_face = t->empty() || *t == "face";
       if (!is_face) continue;
       // Material subsets are familyName "materialBind" (accept unauthored).
       if (const lightusd::next::Value *fn = c.GetPropertyValue("familyName"))
-        if (const std::string *t = fn->as_token())
+        if (auto t = fn->as_token())
           if (!t->empty() && *t != "materialBind") continue;
       // Only subsets that bind a material split faces; an unbound subset keeps
       // falling back to the whole-mesh material (no ancestor walk here -- that
@@ -2300,11 +2547,10 @@ bool PathMatchesMask(const std::string &path,
 // transform varies with time).
 bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim) {
   const lightusd::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
-  const std::vector<std::string> *order =
-      orderv ? orderv->as_token_array() : nullptr;
+  const auto order = orderv ? orderv->as_token_array()
+                            : lightusd::next::StringArrayView();
   if (!order) return false;
-  for (const std::string &raw : *order) {
-    std::string op = raw;
+  for (std::string op : *order) {
     if (op.rfind("!invert!", 0) == 0) op = op.substr(8);
     if (op == "!resetXformStack!") continue;
     if (prim.HasTimeSamples(op)) return true;
@@ -2318,6 +2564,12 @@ bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim) {
 // active.
 bool GeometryPrimHasAnimatedData(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
+  if (lightusd::tydra::next::IsAnalyticGeomTypeName(type)) {
+    for (const char *name : {"size", "radius", "height", "width", "length",
+                             "radiusTop", "radiusBottom"}) {
+      if (prim.HasTimeSamples(name)) return true;
+    }
+  }
   if (type == "Mesh") {
     const std::vector<lightusd::next::Path> *blend_targets =
         prim.GetRelationship("skel:blendShapeTargets");
@@ -2355,9 +2607,9 @@ bool GeometryPrimHasAnimatedData(const lightusd::next::UsdPrim &prim) {
 
 bool IsRenderableGeometryPrim(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
-  return type == "Mesh" || type == "BasisCurves" ||
+  return IsTriangleMeshNext(prim) || type == "BasisCurves" ||
          type == "HermiteCurves" || type == "NurbsCurves" || type == "Points" ||
-         type == "ParticleField3DGaussianSplat" ||
+         type == "ParticleField3DGaussianSplat" || type == "ParticleField" ||
          type == "PointInstancer" || type == "UsdGeomPointInstancer";
 }
 
@@ -2445,7 +2697,7 @@ static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
                                          lightusd::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *out);
+                                         std::vector<MeshJobNext> *out, bool include_curves = false);
 // Shared body behind the public vector collector and the streaming placement
 // collector.
 static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
@@ -2470,7 +2722,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
   // legacy path (BuildLegacyPurposeVisibility) and per UsdGeomImageable. It
   // used to be ignored here, so invisible prims rendered.
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -2484,7 +2736,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") {
         purpose = lightusd::Purpose::Render;
       } else if (*t == "proxy") {
@@ -2523,7 +2775,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
       return;
     }
   }
-  if (prim.GetTypeName() == "Mesh" &&
+  if ((IsTriangleMeshNext(prim) || (sink && IsCurvePrimNext(prim))) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
@@ -2603,7 +2855,7 @@ static void ExpandPointInstancerJobsNext(
     if (!proto_done[pi]) {
       proto_done[pi] = true;
       CollectExpandedProtoJobsNext(stage, proto_prim[pi], purpose, time,
-                                   &proto_jobs[pi]);
+                                   &proto_jobs[pi], sink != nullptr);
     }
     return proto_jobs[pi];
   };
@@ -2655,21 +2907,30 @@ static void ExpandPointInstancerJobsNext(
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
                                          lightusd::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *out) {
+                                         std::vector<MeshJobNext> *out, bool include_curves) {
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
   // A prototype root may itself be a Mesh (a PointInstancer/native prototype can
   // point straight at one); collect it at identity too.
-  if (proto.GetTypeName() == "Mesh") {
+  if (IsTriangleMeshNext(proto) || (include_curves && IsCurvePrimNext(proto))) {
     MeshJobNext j;
     j.prim = proto;
     j.world = matrix4d::identity();
     j.purpose = purpose;
     out->push_back(std::move(j));
   }
-  for (const lightusd::next::UsdPrim &child : proto.GetChildren())
-    CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
-                               kNoMask, out, /*expand_instancers=*/true);
+  if (include_curves) {
+    const RtInstanceSink collect = [&](const lightusd::next::UsdPrim& prim,
+        const matrix4d& world, lightusd::Purpose p) {
+      MeshJobNext job;job.prim=prim;job.world=world;job.purpose=p;out->push_back(std::move(job));
+    };
+    for (const auto& child : proto.GetChildren())
+      CollectRTInstancePlacementsNext(stage,child,matrix4d::identity(),purpose,time,kNoMask,collect,0);
+  } else {
+    for (const lightusd::next::UsdPrim &child : proto.GetChildren())
+      CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
+                                 kNoMask, out, /*expand_instancers=*/true);
+  }
 }
 
 // Expand a scenegraph (instanceable) native instance into world-space MeshJobNext
@@ -2690,7 +2951,7 @@ static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   std::vector<MeshJobNext> proto_jobs;
-  CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
+  CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs, sink != nullptr);
   for (const MeshJobNext &pj : proto_jobs)
     EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * world, pj.purpose);
 }
@@ -2804,12 +3065,40 @@ void ResolveVolumeMaterialNext(const lightusd::next::Stage &stage,
   out->emission_scale = std::max(0.0f, out->emission_scale);
 }
 
-void CollectVolumesNext(const lightusd::next::Stage &stage,
+class SparseFieldSampler final : public VolumeSparseSampler {
+ public:
+  SparseFieldSampler(std::shared_ptr<lightusd::tydra::vol::FieldCache> cache,
+                     lightusd::tydra::vol::ResolvedField field)
+      : cache_(std::move(cache)), field_(std::move(field)) {}
+
+  float Sample(const Vec3 &p) const override {
+    return SampleWithError(p, nullptr);
+  }
+
+  float SampleWithError(const Vec3 &p, std::string *err) const {
+    // Each render worker owns its scratch; the cache's sparse tree and sampler
+    // are immutable after their synchronized initialization.
+    thread_local std::vector<float> values;
+    const double point[3] = {p.x, p.y, p.z};
+    int components = 0;
+    if (!cache_->SampleWorld(field_, point, 1, true, &values, &components, err) ||
+        components != 1 || values.empty()) return NAN;
+    return values[0];
+  }
+
+ private:
+  std::shared_ptr<lightusd::tydra::vol::FieldCache> cache_;
+  lightusd::tydra::vol::ResolvedField field_;
+};
+
+static void CollectVolumesNext(const lightusd::next::Stage &stage,
                         const lightusd::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
                         const std::string &baseDir,
                         std::vector<VolumeData> *out,
-                        size_t max_density_bytes, size_t *density_bytes_used) {
+                        size_t max_density_bytes, size_t *density_bytes_used,
+                        bool sparse_level_sets,
+                        const std::shared_ptr<lightusd::tydra::vol::FieldCache> &cache) {
   if (!prim.IsActive()) return;
   double dmat[16];
   lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
@@ -2822,12 +3111,16 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
     for (const std::string &name : prim.GetRelationshipNames()) {
       if (name == "field:density") has_density_relationship = true;
     }
+    // UsdVol: resolve and decode each `field:<name>` target through the shared
+    // resolver (fieldName / fieldIndex / fieldDataType / fieldClass, plus a
+    // time-sampled filePath), instead of walking the prims and decoding every
+    // grid of the file here.
+    const lightusd::usdVol::VDBReadOptions options;
     for (const std::string &relName : prim.GetRelationshipNames()) {
       if (relName.rfind("field:", 0) != 0) continue;
       // One UsdVol prim is one participating medium, not one medium per field.
       // Decode its density relationship once; auxiliary grids in the same VDB
-      // are attached below. Preserve the old first-field fallback when density
-      // was not authored.
+      // are attached below. Without density, the first usable field is used.
       if (has_density_relationship && relName != "field:density") continue;
       const std::vector<lightusd::next::Path> *targets =
           prim.GetRelationship(relName);
@@ -2835,78 +3128,198 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       lightusd::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
       if (!field) continue;
 
-      const lightusd::next::Value *fp = field.GetPropertyValue("filePath");
-      const std::string *ap = fp ? fp->as_asset_path() : nullptr;
-      if (!ap || ap->empty()) continue;
-      std::string fieldName = relName.substr(std::strlen("field:"));
-      if (const lightusd::next::Value *fn = field.GetPropertyValue("fieldName")) {
-        if (const std::string *tk = fn->as_token()) fieldName = *tk;
-      }
-      std::string vpath = *ap;
+      lightusd::tydra::vol::FieldRequest request;
+      request.binding = relName.substr(std::strlen("field:"));
+      request.field_prim = field.GetPath().str();
+      request.prim_type = field.GetTypeName();
+      const lightusd::next::Value *fp = field.GetValueAtTime("filePath", time);
+      lightusd::next::StringView asset = fp ? fp->as_asset_path() : lightusd::next::StringView();
+      if (!asset) continue;
+      std::string vpath = std::string(asset);
       if (!vpath.empty() &&
           !lightusd::next::AssetResolver::IsAbsolutePath(vpath) &&
           !baseDir.empty()) {
         vpath = baseDir + "/" + vpath;
       }
-      std::vector<lightusd::usdVol::VDBGrid> grids;
-      std::string vw, ve;
-      if (!lightusd::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
-          grids.empty()) {
+      request.file_path = vpath;
+      if (const lightusd::next::Value *fn = field.GetValueAtTime("fieldName", time)) {
+        if (lightusd::next::StringView tk = fn->as_token()) request.field_name = std::string(tk);
+      }
+      if (request.field_name.empty()) {
+        request.field_name = request.binding;
+        request.field_name_defaulted = true;
+      }
+      if (const lightusd::next::Value *fi = field.GetValueAtTime("fieldIndex", time)) {
+        if (const int32_t *index = fi->as_int()) request.field_index = *index;
+      }
+      if (const lightusd::next::Value *dt = field.GetValueAtTime("fieldDataType", time)) {
+        if (lightusd::next::StringView tk = dt->as_token())
+          request.field_data_type = std::string(tk);
+      }
+      if (const lightusd::next::Value *cl = field.GetValueAtTime("fieldClass", time)) {
+        if (lightusd::next::StringView tk = cl->as_token())
+          request.field_class = std::string(tk);
+      }
+      if (const lightusd::next::Value *rh = field.GetValueAtTime("vectorDataRoleHint", time)) {
+        if (lightusd::next::StringView tk = rh->as_token())
+          request.vector_role_hint = std::string(tk);
+      }
+
+      lightusd::tydra::vol::ResolvedField resolved;
+      std::string resolve_err;
+      if (!lightusd::tydra::vol::ResolveWithFirstGridFallback(*cache, request, &resolved,
+                                                              &resolve_err)) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str() << "': " << resolve_err << "\n";
         continue;
       }
-      lightusd::usdVol::VDBGrid *g = nullptr;
-      for (auto &gg : grids)
-        if (gg.name == fieldName) { g = &gg; break; }
-      if (!g) g = &grids[0];
-      if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+      for (const std::string &w : resolved.warnings) std::cerr << "WARN: " << w << "\n";
+      // Keep large scalar level sets sparse for the CPU surface marcher. The
+      // dense path remains in use when the grid fits its existing budget.
+      if (sparse_level_sets && resolved.level_set && resolved.components == 1 &&
+          resolved.has_bounds && max_density_bytes && density_bytes_used) {
+        int dims[3];
+        long double cells = 1;
+        bool valid = true;
+        for (int a = 0; a < 3; ++a) {
+          const int64_t extent = int64_t(resolved.grid.index_max[a]) -
+                                 int64_t(resolved.grid.index_min[a]) + 1;
+          if (extent <= 0 || extent > std::numeric_limits<int>::max()) {
+            valid = false;
+            break;
+          }
+          dims[a] = int(extent);
+          cells *= static_cast<long double>(extent);
+        }
+        const size_t remaining = *density_bytes_used < max_density_bytes
+                                     ? max_density_bytes - *density_bytes_used : 0;
+        if (valid && cells > static_cast<long double>(remaining / sizeof(float))) {
+          double field_world[16];
+          matrix4d world_field, inverse_field;
+          if (!lightusd::next::ComputeWorldTransform(stage, field, field_world, time)) {
+            std::cerr << "WARN: volume '" << prim.GetPath().str()
+                      << "': cannot resolve field transform\n";
+            continue;
+          }
+          world_field = Mat4FromArray(field_world);
+          if (!lightusd::inverse(world_field, inverse_field, 1.0e-12)) {
+            std::cerr << "WARN: volume '" << prim.GetPath().str()
+                      << "': singular field transform\n";
+            continue;
+          }
+          auto sampler = std::make_shared<SparseFieldSampler>(cache, resolved);
+          const Vec3 probe{float(resolved.world_min[0]), float(resolved.world_min[1]),
+                           float(resolved.world_min[2])};
+          std::string sparse_error;
+          if (!std::isfinite(sampler->SampleWithError(probe, &sparse_error))) {
+            std::cerr << "WARN: volume '" << prim.GetPath().str()
+                      << "': cannot initialize sparse level-set sampler"
+                      << (sparse_error.empty() ? "" : ": " + sparse_error) << "\n";
+            continue;
+          }
+          VolumeData vd;
+          vd.sparse_density = std::move(sampler);
+          for (int a = 0; a < 3; ++a) vd.dim[a] = dims[a];
+          vd.bmin = Vec3{float(resolved.world_min[0]), float(resolved.world_min[1]),
+                         float(resolved.world_min[2])};
+          vd.bmax = Vec3{float(resolved.world_max[0]), float(resolved.world_max[1]),
+                         float(resolved.world_max[2])};
+          vd.world = world_field;
+          vd.inv_world = inverse_field;
+          vd.level_set = true;
+          double voxel = std::numeric_limits<double>::infinity();
+          for (int a = 0; a < 3; ++a) {
+            const auto &m = resolved.grid.index_to_world;
+            voxel = std::min(voxel, std::sqrt(m[0][a] * m[0][a] +
+                                              m[1][a] * m[1][a] + m[2][a] * m[2][a]));
+          }
+          vd.voxel_size = float(voxel);
+          if (!std::isfinite(vd.voxel_size) || vd.voxel_size <= 0.0f) {
+            std::cerr << "WARN: volume '" << prim.GetPath().str()
+                      << "': invalid level-set voxel size\n";
+            continue;
+          }
+          ResolveVolumeMaterialNext(stage, prim, &vd);
+          out->push_back(std::move(vd));
+          std::cerr << "volume '" << prim.GetPath().str() << "': using sparse CPU level set\n";
+          if (!has_density_relationship) break;
+          continue;
+        }
+      }
+      // Under a density budget the decode itself is capped (tinyvdb box-filters
+      // by the smallest stride that fits) instead of decoding the full grid
+      // and decimating it afterwards.
+      lightusd::usdVol::VDBReadOptions decode = options;
+      if (max_density_bytes > 0 && density_bytes_used) {
+        const size_t used = *density_bytes_used;
+        const size_t remaining = used < max_density_bytes ? max_density_bytes - used : 0;
+        if (remaining < sizeof(float)) {
+          std::cerr << "WARN: skipping volume '" << prim.GetPath().str()
+                    << "': density budget exhausted\n";
+          continue;
+        }
+        decode.max_voxels = remaining / sizeof(float);
+        decode.downsample = true;
+      }
+      lightusd::usdVol::VDBGrid grid;
+      std::string decode_warn, decode_err;
+      if (!cache->TakeDense(resolved, decode, &grid, &decode_warn, &decode_err) ||
+          grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 || grid.dim[2] <= 0) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str() << "': grid '"
+                  << resolved.grid.name << "' not loaded: "
+                  << (decode_err.empty() ? decode_warn : decode_err) << "\n";
         continue;
+      }
 
       VolumeData vd;
-      vd.dim[0] = g->dim[0];
-      vd.dim[1] = g->dim[1];
-      vd.dim[2] = g->dim[2];
-      for (const auto &aux : grids) {
+      vd.dim[0] = grid.dim[0];
+      vd.dim[1] = grid.dim[1];
+      vd.dim[2] = grid.dim[2];
+      // Auxiliary scalar grids of the same file (temperature / emission).
+      for (const char *aux_name : {"temperature", "emission", "flame", "heat"}) {
         VolumeScalarField *dst = nullptr;
-        if (aux.name == "temperature") {
+        if (std::strcmp(aux_name, "temperature") == 0) {
           dst = &vd.temperature_field;
-        } else if (aux.name == "emission" || aux.name == "flame" ||
-                   aux.name == "heat") {
+        } else {
           dst = &vd.emission_field;
         }
-        if (dst) {
-          dst->data = aux.data;
-          for (int a = 0; a < 3; ++a) dst->dim[a] = aux.dim[a];
-          dst->bmin = Vec3{
-              float(aux.origin[0]) * float(aux.voxel_size[0]) +
-                  float(aux.world_translation[0]),
-              float(aux.origin[1]) * float(aux.voxel_size[1]) +
-                  float(aux.world_translation[1]),
-              float(aux.origin[2]) * float(aux.voxel_size[2]) +
-                  float(aux.world_translation[2])};
-          dst->bmax = Vec3{
-              float(aux.origin[0] + aux.dim[0]) * float(aux.voxel_size[0]) +
-                  float(aux.world_translation[0]),
-              float(aux.origin[1] + aux.dim[1]) * float(aux.voxel_size[1]) +
-                  float(aux.world_translation[1]),
-              float(aux.origin[2] + aux.dim[2]) * float(aux.voxel_size[2]) +
-                  float(aux.world_translation[2])};
-          dst->background = aux.background;
-        }
+        if (dst->data.size()) continue;  // first matching alias wins
+        lightusd::tydra::vol::FieldRequest aux = request;
+        aux.binding = aux_name;
+        aux.field_name = aux_name;
+        aux.field_index = 0;
+        lightusd::tydra::vol::ResolvedField aux_resolved;
+        if (!cache->Resolve(aux, &aux_resolved, nullptr)) continue;
+        // Shaded together with the density: never decoded finer than it.
+        lightusd::usdVol::VDBReadOptions aux_decode = options;
+        aux_decode.max_voxels =
+            size_t(grid.dim[0]) * size_t(grid.dim[1]) * size_t(grid.dim[2]);
+        aux_decode.downsample = true;
+        lightusd::usdVol::VDBGrid aux_grid;
+        if (!cache->TakeDense(aux_resolved, aux_decode, &aux_grid, nullptr, nullptr)) continue;
+        dst->data = std::move(aux_grid.data);
+        for (int a = 0; a < 3; ++a) dst->dim[a] = aux_grid.dim[a];
+        double aux_lo[3], aux_hi[3];
+        lightusd::usdVol::DenseGridBox(aux_grid, aux_lo, aux_hi);
+        dst->bmin = Vec3{float(aux_lo[0]), float(aux_lo[1]), float(aux_lo[2])};
+        dst->bmax = Vec3{float(aux_hi[0]), float(aux_hi[1]), float(aux_hi[2])};
+        dst->background = aux_grid.background;
       }
-      vd.density = std::move(g->data);
-      float lo[3], hi[3];
-      for (int a = 0; a < 3; a++) {
-        lo[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
-                float(g->world_translation[a]);
-        hi[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
-                float(g->world_translation[a]);
+      vd.density = std::move(grid.data);
+      double lo[3], hi[3];
+      if (!lightusd::usdVol::DenseGridBox(grid, lo, hi)) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str()
+                  << "': rotated VDB index map; rendering its axis-aligned bound\n";
       }
-      vd.bmin = Vec3{lo[0], lo[1], lo[2]};
-      vd.bmax = Vec3{hi[0], hi[1], hi[2]};
+      vd.bmin = Vec3{float(lo[0]), float(lo[1]), float(lo[2])};
+      vd.bmax = Vec3{float(hi[0]), float(hi[1]), float(hi[2])};
+      vd.world = world;
+      // UsdVol fieldClass decides the shading: a level set is an isosurface
+      // (sphere traced by the integrator), anything else is fog.
+      vd.level_set = resolved.level_set;
       matrix4d invw;
       if (!lightusd::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
-      vd.background = g->background;
+      vd.background = grid.background;
       ResolveVolumeMaterialNext(stage, prim, &vd);
       if (max_density_bytes > 0 && density_bytes_used) {
         const size_t used = *density_bytes_used;
@@ -2930,12 +3343,24 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
         }
         *density_bytes_used += vd.density.size() * sizeof(float);
       }
+      // After the budget fit: a downsampled grid has coarser voxels, and the
+      // level-set tracer steps by this size.
+      {
+        const Vec3 ext = Sub(vd.bmax, vd.bmin);
+        const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
+        const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
+        const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
+        vd.voxel_size = std::min(ex, std::min(ey, ez));
+      }
       out->push_back(std::move(vd));
+      // Without field:density the first usable field is the medium; the
+      // rest (velocity, temperature, ...) are not densities.
+      if (!has_density_relationship) break;
     }
   }
   for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     CollectVolumesNext(stage, child, world, time, baseDir, out,
-                       max_density_bytes, density_bytes_used);
+                       max_density_bytes, density_bytes_used, sparse_level_sets, cache);
   }
 }
 
@@ -2982,7 +3407,7 @@ bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
       }
       std::string proj = "perspective";
       if (const lightusd::next::Value *v = prim.GetPropertyValue("projection")) {
-        if (const std::string *t = v->as_token()) proj = *t;
+        if (auto t = v->as_token()) proj = *t;
       }
       frame->origin = Vec3{float(world.m[3][0]), float(world.m[3][1]),
                            float(world.m[3][2])};
@@ -2990,8 +3415,10 @@ bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
       frame->up = Normalize(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
       frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
       frame->yfov = 2.0f * std::atan(0.5f * vap / std::max(1.0e-6f, focal));
-      frame->xmag = hap;
-      frame->ymag = vap;
+      frame->xmag = hap * 0.1f;  // USD aperture units are tenths of a scene unit.
+      frame->ymag = vap * 0.1f;
+      frame->shift_x = 2.0f * ReadCamFloatNext(prim,"horizontalApertureOffset",0.0f) / std::max(1.0e-6f,hap);
+      frame->shift_y = 2.0f * ReadCamFloatNext(prim,"verticalApertureOffset",0.0f) / std::max(1.0e-6f,vap);
       frame->znear = std::max(1.0e-5f, znear);
       frame->zfar = std::max(frame->znear, zfar);
       frame->ortho = (proj == "orthographic");
@@ -3230,17 +3657,6 @@ bool IsCurvePrimNext(const lightusd::next::UsdPrim &prim) {
   return t == "BasisCurves" || t == "HermiteCurves" || t == "NurbsCurves";
 }
 
-unsigned HermiteTessellationSegmentsNext() {
-  unsigned segments = 8;
-  if (const char *s = std::getenv("LUSDR_HERMITE_SEGMENTS")) {
-    char *end = nullptr;
-    const unsigned long n = std::strtoul(s, &end, 10);
-    if (end != s && *end == '\0' && n > 0 && n <= 1024)
-      segments = static_cast<unsigned>(n);
-  }
-  return segments;
-}
-
 struct CurvePointViewNext {
   lightusd::tydra::next::ValueArrayRead<float> view;
   // Value clips are materialized here because their temporary Value/ArrayScratch
@@ -3328,12 +3744,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     s.npoints = radii.size();
     return s;
   };
-  size_t chunk_segments = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_CURVE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) chunk_segments = static_cast<size_t>(n);
-  }
+  size_t chunk_segments = ctx.opt.curve_chunk ? ctx.opt.curve_chunk : size_t(262144);
+
   auto build_curve_chunks = [&](const std::vector<float> &pts,
                                 const std::vector<float> &radii,
                                 const std::vector<uint32_t> &strand_first,
@@ -3391,7 +3803,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
         std::cerr << "Failed to build LightRT " << label << " curve chunk ["
                   << chunk.first << ", " << (chunk.first + chunk.count)
                   << "] (err=" << int(lrt_err)
-                  << "). Try LUSDR_CURVE_CHUNK.\n";
+                  << "). Try -curveChunk.\n";
         return false;
       }
       chunks->push_back(std::move(chunk));
@@ -3454,7 +3866,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       AppendHermiteCurveStrands(
           point_source.view.begin(), tangents.begin(),
           point_source.view.size() / 3, counts, widths,
-          HermiteTessellationSegmentsNext(), job.world, &curve_points,
+          ctx.opt.hermite_segments, job.world, &curve_points,
           &curve_radii, &curve_first, &curve_count, &curve_info, &ctx.bounds);
     } else {
       if (hermite && have_tangents && !tangents.empty())
@@ -3492,16 +3904,12 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
     const lightusd::next::ValueClipStageLoader &clip_loader,
-    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    const CameraFrame &camera, const Options &opt,
+    std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors) {
   if (!geos || !base_colors) return false;
-  size_t kChunkTriangles = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && *end == '\0' && n > 0)
-      kChunkTriangles = static_cast<size_t>(n);
-  }
+  const size_t kChunkTriangles = opt.gpu_triangle_chunk;
+
   std::vector<float> positions;
   std::vector<uint32_t> indices;
   positions.reserve(kChunkTriangles * 9);
@@ -3556,7 +3964,7 @@ bool BuildNextFlatCurveMeshes(
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, counts, widths,
-            HermiteTessellationSegmentsNext(), job.world, &curve_points,
+            opt.hermite_segments, job.world, &curve_points,
             &curve_radii, &strand_first, &strand_count, nullptr, nullptr);
       } else {
         AppendLinearCurveStrands(
@@ -3643,18 +4051,10 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
   std::vector<float> normals;
   std::vector<float> major_axes;
   std::vector<TriInfo> chunk_info;
-  size_t budget = 0;
-  if (const char *s = std::getenv("LUSDR_GAUSSIAN_MAX")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) budget = static_cast<size_t>(n);
-  }
-  size_t chunk_size = size_t(262144);
-  if (const char *s = std::getenv("LUSDR_GAUSSIAN_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long n = std::strtoull(s, &end, 10);
-    if (end != s && n > 0) chunk_size = static_cast<size_t>(n);
-  }
+  size_t budget = ctx.opt.gaussian_max;
+
+  const size_t chunk_size = ctx.opt.gaussian_chunk;
+
   lrt_tri_build_options opts;
   std::memset(&opts, 0, sizeof(opts));
   opts.quality = ctx.opt.quality;
@@ -3684,7 +4084,7 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
         std::cerr << "Failed to build LightRT Gaussian ellipse chunk ["
                   << chunk.first << ", " << (chunk.first + count)
                   << "] (err=" << int(e)
-                  << "). Try -maxMem, -mask, or LUSDR_GAUSSIAN_CHUNK.\n";
+                  << "). Try -maxMem, -mask, or -gaussianChunk.\n";
         return false;
       }
     }
@@ -3705,7 +4105,7 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
     lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
     const matrix4d local = Mat4FromArray(dmat);
     const matrix4d world = local * parent;
-    if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+    if (lightusd::next::IsParticleField(prim)) {
       lightusd::next::ParticleFieldData field;
       std::string field_warning;
       if (!lightusd::next::GetParticleFieldData(
@@ -3783,8 +4183,9 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
         const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
         const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
         const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
-        const float rx = std::max(1.0e-6f, 2.0f * sx * Length(nx));
-        const float ry = std::max(1.0e-6f, 2.0f * sy * Length(ny));
+        const float kernel_scale = field.kernel == lightusd::next::ParticleKernel::ConstantSurflet ? 1.0f : 2.0f;
+        const float rx = std::max(1.0e-6f, kernel_scale * sx * Length(nx));
+        const float ry = std::max(1.0e-6f, kernel_scale * sy * Length(ny));
         centers.insert(centers.end(), {c.x, c.y, c.z});
         radii.insert(radii.end(), {rx, ry});
         normals.insert(normals.end(), {nz.x, nz.y, nz.z});
@@ -3854,7 +4255,7 @@ bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk) {
     std::cerr << "Failed to build LightRT deferred Gaussian ellipse chunk ["
               << chunk->first << ", " << (chunk->first + chunk->count)
               << "] (err=" << int(e)
-              << "). Try -maxMem, -mask, or LUSDR_GAUSSIAN_CHUNK.\n";
+              << "). Try -maxMem, -mask, or -gaussianChunk.\n";
     return false;
   }
   std::vector<float>().swap(chunk->centers);
@@ -3899,7 +4300,7 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -3910,7 +4311,7 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
   const matrix4d world = reset ? local : (local * parent_world);
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -4119,7 +4520,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -4131,7 +4532,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -4197,7 +4598,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
     return;
   }
 
-  if (prim.GetTypeName() == "Mesh" &&
+  if (IsTriangleMeshNext(prim) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     MeshJobNext job;
     job.prim = prim;
@@ -4245,7 +4646,7 @@ void CollectProtoMeshNestingRec(
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -4357,7 +4758,7 @@ void CollectProtoJobs(const lightusd::next::Stage &stage,
   // A prototype root is placed at identity (its own transform is replaced by the
   // instance transform), but if the prototype prim IS a Mesh (a PointInstancer
   // prototype can point straight at a Mesh) it must still be collected.
-  if (proto.GetTypeName() == "Mesh") {
+  if (IsTriangleMeshNext(proto)) {
     MeshJobNext job;
     job.prim = proto;
     job.world = matrix4d::identity();
@@ -4379,7 +4780,7 @@ bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
                     const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
-                    Blas *out, Bounds *local,
+                    Blas *out, Bounds *local, const Options &opt,
                     // Sub-BLAS split: a large curve prototype is split into
                     // several disjoint sub-BLAS so their (serial) LBVH collapses
                     // run CONCURRENTLY. The first sub-BLAS fills `out`/`local`;
@@ -4421,7 +4822,7 @@ bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, c, w,
-            HermiteTessellationSegmentsNext(), job.world, &pts, &radii,
+            opt.hermite_segments, job.world, &pts, &radii,
             &first, &count, /*info=*/nullptr, &proto_bounds);
       } else {
         AppendLinearCurveStrands(point_source.view.begin(),
@@ -4563,7 +4964,7 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
                     const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
-                    Blas *out, Bounds *local,
+                    Blas *out, Bounds *local, const Options &opt,
                     std::vector<Blas> *extra_blas = nullptr,
                     std::vector<Bounds> *extra_bounds = nullptr) {
   std::vector<CurveJobNext> curves;
@@ -4579,12 +4980,8 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
   if (extra_blas) {
     // Keep the larger historical prototype default, but let the same knob used
     // by direct curves tighten prototype BLAS residency for constrained hosts.
-    split_segments = size_t(1) << 20;
-    if (const char *s = std::getenv("LUSDR_CURVE_CHUNK")) {
-      char *end = nullptr;
-      const unsigned long long n = std::strtoull(s, &end, 10);
-      if (end != s && n > 0) split_segments = static_cast<size_t>(n);
-    }
+    split_segments = opt.curve_chunk ? opt.curve_chunk : size_t(1) << 20;
+
   }
   std::vector<float> batch_points, batch_radii;
   std::vector<uint32_t> batch_first, batch_count;
@@ -4657,7 +5054,7 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
         AppendHermiteCurveStrands(
             point_source.view.begin(), tangents.begin(),
             point_source.view.size() / 3, counts, widths,
-            HermiteTessellationSegmentsNext(), job.world, &prim_points,
+            opt.hermite_segments, job.world, &prim_points,
             &prim_radii, &prim_first, &prim_count, /*info=*/nullptr,
             &prototype_bounds);
       } else {
@@ -4704,12 +5101,13 @@ bool BuildCurveBlas(const lightusd::next::Stage &stage,
   return true;
 }
 
-// Upper bound on the triangles a mesh job emits: the fan-triangulation count
-// (sum of max(0, c-2) over faceVertexCounts). Invalid/degenerate/purpose-culled
-// triangles only reduce the actual count, so this never under-reserves -- used to
-// reserve the stream output up front so the chunked append never reallocates.
+// Estimate triangles before streaming. Authored meshes use their face counts;
+// common generated shapes have fixed topology. Other analytic shapes reserve
+// their exact per-job output after tessellation, rather than inventing Mesh arrays.
 inline size_t EstimateTrisForJob(const lightusd::next::UsdPrim &prim,
                                  double time) {
+  if (prim.GetTypeName() == "Cube") return 12;
+  if (prim.GetTypeName() == "Sphere") return 5120;  // shared subdivision level 4
   const std::vector<int32_t> counts =
       ReadIntArrayLazy(prim, "faceVertexCounts", time);
   size_t est = 0;
@@ -4744,7 +5142,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     // by the resolved displacement (texture from tex_pool). disp_scale
                     // == 0 disables it (then renders are byte-identical to before).
                     const std::vector<Texture> *tex_pool = nullptr,
-                    float disp_scale = 0.0f) {
+                    float disp_scale = 0.0f,
+                    const lightusd::next::ValueClipStageLoader& clip_loader = {}) {
   const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
@@ -4809,6 +5208,12 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
       // A bad_alloc must be caught INSIDE each worker thread (an exception
       // escaping a std::thread calls std::terminate); it signals the cap was hit.
       auto worker = [&]() {
+        lightusd::next::EvalOptions evaluation;
+        evaluation.time = lightusd::next::TimeQuery::Numeric(time);
+        evaluation.follow_connections = false;
+        evaluation.clip_stage_loader = clip_loader;
+        evaluation.clip_stage_cache =
+            std::make_shared<lightusd::next::ValueClipStageCache>();
         try {
           for (;;) {
             const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
@@ -4835,11 +5240,13 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 indexed ? &jvb : nullptr, job.displacement,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
-                job.displacement_tex.bias);
+                job.displacement_tex.bias, &evaluation, job.opacity_presence);
+            r.mat.capture_prim_id = CapturePrimId(job.prim.GetPath().str());
             r.has_openpbr = job.has_openpbr;
             r.openpbr = job.openpbr;
             if (job.back_material) {
               r.back_mat = TriMatFromResolved(*job.back_material);
+              r.back_mat.capture_prim_id = r.mat.capture_prim_id;
               r.has_back = true;
               if constexpr (std::is_same<typename TVec::value_type,
                                          FlatTri>::value) {
@@ -4948,6 +5355,20 @@ void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
 // instances, builds a two-level BVH (per-prototype BLAS + TLAS) so instanced
 // geometry is stored once; otherwise builds a single flat scene (byte-identical
 // to the historical path).
+static bool HasVolumePrim(const lightusd::next::UsdPrim &prim) {
+  if (!prim.IsActive()) return false;
+  if (prim.GetTypeName() == "Volume") return true;
+  for (const auto &child : prim.GetChildren())
+    if (HasVolumePrim(child)) return true;
+  return false;
+}
+
+static bool HasVolumePrim(const lightusd::next::Stage &stage) {
+  for (const auto &root : stage.GetRootPrims())
+    if (HasVolumePrim(root)) return true;
+  return false;
+}
+
 bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   const Options &opt = ctx.opt;
   ctx.frame_time = time;
@@ -5071,7 +5492,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                         &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
                         /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
                         /*out_indices=*/static_cast<IdxVec *>(nullptr),
-                        &ctx.textures, disp_scale)) {
+                        &ctx.textures, disp_scale, ctx.clip_stage_loader)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -5088,6 +5509,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                              ctx.direct.bez_curves || ctx.direct.has_ellipses();
     if (ctx.tris.empty()) {
       if (have_curves) return true;  // curves-only scene: traced via DirectScene
+      if (HasVolumePrim(ctx.stage)) return true;  // collected after geometry
       std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
       return false;
     }
@@ -5100,12 +5522,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
       return false;
     }
-    size_t chunk_limit = size_t(262144);
-    if (const char *s = std::getenv("LUSDR_TRIANGLE_CHUNK")) {
-      char *end = nullptr;
-      const unsigned long long n = std::strtoull(s, &end, 10);
-      if (end != s && n > 0) chunk_limit = static_cast<size_t>(n);
-    }
+    const size_t chunk_limit = ctx.opt.triangle_chunk;
+
     const auto bvh_t0 = std::chrono::steady_clock::now();
     for (size_t first = 0; first < ctx.tris.size(); first += chunk_limit) {
       const size_t count = std::min(chunk_limit, ctx.tris.size() - first);
@@ -5118,7 +5536,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       if (!chunk.scene) {
         std::cerr << "Failed to build LightRT triangle chunk [" << first << ", "
                   << (first + count) << "] (err=" << int(lrt_err)
-                  << "). Try LUSDR_TRIANGLE_CHUNK.\n";
+                  << "). Try -triangleChunk.\n";
         return false;
       }
       ctx.triangle_chunks.push_back(std::move(chunk));
@@ -5273,7 +5691,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               jobs_have_color(gjobs),
               &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
               /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
-              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f))
+              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f,
+              ctx.clip_stage_loader))
         gstream_ok.store(false, std::memory_order_relaxed);
     }
   };
@@ -5311,7 +5730,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*out_uverts=*/static_cast<FloatVec *>(nullptr),
                                /*out_indices=*/static_cast<IdxVec *>(nullptr),
                                &ctx.textures,
-                               opt.displace ? opt.displace_scale : 0.0f);
+                               opt.displace ? opt.displace_scale : 0.0f,
+                               ctx.clip_stage_loader);
     // The prototype's geometry and material data now live in ctx.blas[b].
     // Do not retain the authored job records while the remaining prototypes
     // build; this is significant for subset-heavy composed scenes.
@@ -5336,7 +5756,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
                         curve_inst.protos[i].purpose, time, build_opts,
                         ctx.clip_stage_loader,
-                        &ctx.blas[b], &local_bounds[b], &extra, &extra_b)) {
+                        &ctx.blas[b], &local_bounds[b], ctx.opt, &extra, &extra_b)) {
       return false;
     }
     curve_proto_blas[i].push_back(uint32_t(b));
@@ -5495,7 +5915,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
 
-  // Phase 5 (opt-in via LIGHTUSD_COHCOLOR): reorder each BLAS's per-corner colors
+  // Phase 5 (opt-in via -coherentColors): reorder each BLAS's per-corner colors
   // from prim_id order into BVH leaf-slot order, so hits within a leaf read
   // adjacent color records instead of scattered ones (the prim_id->slot map is
   // already touched by lrt_tri_get_verts at every hit). Per-BLAS scatter +
@@ -5503,7 +5923,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // Off by default: it adds a build-time scatter pass that isn't worth it for the
   // tiny primary-only preview render, but helps render-heavy (hi-res) use.
   // Byte-identical: same 12 bytes, relocated and read back through the same slot.
-  if (std::getenv("LIGHTUSD_COHCOLOR")) {
+  if (ctx.opt.coherent_colors) {
     const size_t nb = ctx.blas.size();
     std::atomic<size_t> ccur{0};
     auto cworker = [&]() {
@@ -5867,6 +6287,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<CurveInstanceRT>().swap(curve_inst.instances);
 
   if (lrt_insts.empty()) {
+    if (HasVolumePrim(ctx.stage)) return true;
     std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
     return false;
   }
@@ -6070,6 +6491,17 @@ void CollectLightsNext(const lightusd::next::Stage &stage,
         (kind != PreviewLight::Kind::Sphere || radius > 1.0e-5f)) {
       dst.radiance = Mul(dst.radiance, 1.0f / dst.area);
     }
+    // UsdLux DistantLight: unless normalized, `intensity` is the radiance of the
+    // sun disk, so the delivered irradiance is intensity * solid angle of the
+    // cone (angle = full apex angle in degrees, default 0.53). Hydra Storm
+    // applies exactly this factor (hdSt/light.cpp), which turns the 50000
+    // schema fallback into ~3.4. It is only RECORDED here; -distantSolidAngle
+    // applies it, because the default contract treats intensity as irradiance.
+    if (kind == PreviewLight::Kind::Distant && !normalize) {
+      const float angle_deg = ReadCamFloatNext(prim, "inputs:angle", 0.53f);
+      dst.solid_angle_scale =
+          2.0f * kPi * (1.0f - std::cos(angle_deg / 180.0f * kPi * 0.5f));
+    }
     dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
     cache->finite.push_back(std::move(dst));
   }
@@ -6110,6 +6542,7 @@ lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim,
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl) {
   std::string env_path = opt.env_file;
+  lightusd::next::UsdPrim env_dome;
   Vec3 scale{1.0f, 1.0f, 1.0f};
   bool rotated = false;
   bool have_dome = false;  // a DomeLight prim was found (may be textureless)
@@ -6122,15 +6555,16 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
           FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
       if (!dome.IsValid()) continue;
       have_dome = true;
+      env_dome = dome;
       if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
-        const std::string *ap = v->as_asset_path();
+        auto ap = v->as_asset_path();
         if (!ap) ap = v->as_string();
         if (ap) env_path = *ap;
       }
       if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:format")) {
-        const std::string *t = v->as_token();
+        auto t = v->as_token();
         if (!t) t = v->as_string();
         if (t) {
           if (*t == "mirroredBall") probe_format = 2;
@@ -6189,9 +6623,15 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
     env.pixels.assign(size_t(env.width) * size_t(env.height), scale);
   } else {
     std::string path = env_path;
-    if (!lightusd::next::AssetResolver::IsAbsolutePath(path) &&
-        !base_dir.empty()) {
-      path = base_dir + "/" + path;
+    if (!lightusd::next::AssetResolver::IsAbsolutePath(path)) {
+      // Resolve against the layer that authored the dome. The input file may be
+      // a wrapper in a different directory (the validation jobs reference the
+      // converted asset through one), so the scene-file directory is wrong.
+      if (env_dome.IsValid()) path = AnchorAssetNext(env_dome, path);
+      if (!lightusd::next::AssetResolver::IsAbsolutePath(path) &&
+          !base_dir.empty()) {
+        path = base_dir + "/" + path;
+      }
     }
     if (!LoadEnvImageFromFile(path, scale, &env)) return false;
     env = RemapProbeToLatlong(std::move(env), probe_format);
@@ -6201,6 +6641,98 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
   ibl->rx = rx;
   ibl->ry = ry;
   ibl->rz = rz;
+  return true;
+}
+
+// GPU descriptor path: the first DomeLight as an analytic dome entry of the
+// LightCache plus its latlong texture appended to *textures. The CPU path takes
+// the dome as IBL (BuildNextIbl) and must not see this entry, so this is only
+// called by the Vulkan caller. The dome is hidden from camera rays: UsdAppUtils
+// FrameRecorder renders against an explicit backdrop, and a previously absent
+// dome never painted the background here either.
+bool CollectDomeLightForGpu(const lightusd::next::Stage &stage, double time,
+                            LightCache *cache,
+                            std::vector<Texture> *textures) {
+  if (!cache || !textures || cache->has_dome) return false;
+  lightusd::next::UsdPrim dome;
+  matrix4d dome_world = matrix4d::identity();
+  for (const lightusd::next::UsdPrim &root : stage.GetRootPrims()) {
+    dome = FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
+    if (dome.IsValid()) break;
+  }
+  if (!dome.IsValid()) return false;
+  const float intensity = ReadCamFloatNext(dome, "inputs:intensity", 1.0f);
+  const float exposure = ReadCamFloatNext(dome, "inputs:exposure", 0.0f);
+  Vec3 color{1.0f, 1.0f, 1.0f};
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:color"))
+    if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+  const float e = intensity * std::exp2(exposure);
+  PreviewLight light;
+  light.kind = PreviewLight::Kind::Dome;
+  light.radiance = Mul(color, e);
+  light.power = std::max(0.0f, Luminance(light.radiance));
+  light.camera_hidden = true;
+  std::string file;
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:texture:file")) {
+    auto ap = v->as_asset_path();
+    if (!ap) ap = v->as_string();
+    if (ap) file = *ap;
+  }
+  std::string format;
+  if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:texture:format")) {
+    auto t = v->as_token();
+    if (!t) t = v->as_string();
+    if (t) format = *t;
+  }
+  if (!file.empty() && (format.empty() || format == "automatic" || format == "latlong")) {
+    const std::string path = lightusd::next::AssetResolver::IsAbsolutePath(file)
+                                 ? file : AnchorAssetNext(dome, file);
+    auto res = lightusd::image::LoadImageFromFile(path);
+    if (res && res.value().image.bpp == 8 && res.value().image.width > 0 &&
+        res.value().image.height > 0 && res.value().image.channels > 0 &&
+        res.value().image.data.size() >=
+            size_t(res.value().image.width) * size_t(res.value().image.height) *
+                size_t(res.value().image.channels)) {
+      const lightusd::Image &img = res.value().image;
+      Texture tex;
+      tex.width = img.width;
+      tex.height = img.height;
+      tex.channels = img.channels;
+      tex.pixels = img.data;
+      tex.srgb = true;
+      tex.wrap_s = WrapMode::Repeat;
+      tex.wrap_t = WrapMode::Clamp;
+      light.texture_id = int(textures->size());
+      textures->push_back(std::move(tex));
+    } else {
+      std::cerr << "WARN: GPU dome texture not usable (8-bit latlong only): "
+                << path << "\n";
+    }
+  } else if (!file.empty()) {
+    std::cerr << "WARN: GPU dome texture format '" << format
+              << "' unsupported; using a uniform dome\n";
+  }
+  // Dome local axes in world space (normalized rows of the world rotation).
+  Vec3 ax{float(dome_world.m[0][0]), float(dome_world.m[0][1]), float(dome_world.m[0][2])};
+  Vec3 ay{float(dome_world.m[1][0]), float(dome_world.m[1][1]), float(dome_world.m[1][2])};
+  Vec3 az{float(dome_world.m[2][0]), float(dome_world.m[2][1]), float(dome_world.m[2][2])};
+  const float la = Length(ax), lb = Length(ay), lc = Length(az);
+  if (la > 1.0e-8f && lb > 1.0e-8f && lc > 1.0e-8f) {
+    ax = Mul(ax, 1.0f / la);
+    ay = Mul(ay, 1.0f / lb);
+    az = Mul(az, 1.0f / lc);
+    const float dev = std::fabs(ax.x - 1.0f) + std::fabs(ax.y) + std::fabs(ax.z) +
+                      std::fabs(ay.x) + std::fabs(ay.y - 1.0f) + std::fabs(ay.z) +
+                      std::fabs(az.x) + std::fabs(az.y) + std::fabs(az.z - 1.0f);
+    if (dev > 1.0e-6f) {
+      cache->dome_rotated = true;
+      cache->dome_rx = ax;
+      cache->dome_ry = ay;
+      cache->dome_rz = az;
+    }
+  }
+  cache->dome = std::move(light);
+  cache->has_dome = true;
   return true;
 }
 
@@ -6232,8 +6764,16 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
     return false;
   }
   lightusd::next::StageSessionOptions session_options;
+  // The local-file CLI supports ordinary USD layer-relative references,
+  // including sibling directories. Keep its finite load/memory limits while
+  // opting into compatibility resolution; API sessions remain untrusted by
+  // default.
+  session_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
   session_options.compose = true;
+  session_options.composition.load_payloads = true;
+  session_options.composition.error_when_asset_not_found = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
+  session_options.composition.variant_overrides_by_path = opt.preview_variant_overrides;
   // A render mask is also a composition boundary. Loading every payload and
   // filtering its geometry afterwards defeats the memory purpose of -mask on
   // payload-heavy scenes. Keep payloads whose authored prim path intersects a
@@ -6247,7 +6787,11 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
           return PayloadIntersectsMask(prim_path.str(), payload_mask);
         };
   }
-  session_options.max_total_memory = MemBudget::Get().Cap() * 55 / 100;
+  session_options.load.limits.max_resident_bytes =
+      MemBudget::Get().Cap() * 55 / 100;
+  session_options.load.limits.max_input_bytes = session_options.load.limits.max_resident_bytes;
+  session_options.load.limits.max_asset_bytes = session_options.load.limits.max_resident_bytes;
+  session_options.load.limits.max_array_elements = size_t(opt.max_array_elements);
   session_options.cache_retention = lightusd::next::CacheRetention::LayersOnly;
   lightusd::next::StageSession session;
   if (!session.OpenFile(opt.input, session_options)) {
@@ -6267,7 +6811,8 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
     const std::vector<std::string> dependencies = session.GetLayerDependencies();
     const lightusd::next::ResolverConfig resolver_config = session_options.resolver;
     const std::string input = opt.input;
-    *clip_loader = [resolver_config, dependencies, input](
+    const auto clip_limits = session_options.load.limits;
+    *clip_loader = [resolver_config, dependencies, input, clip_limits](
         const std::string &asset, lightusd::next::Stage *clip_stage,
         std::string *clip_warn, std::string *clip_err) {
       if (!clip_stage) return false;
@@ -6297,19 +6842,32 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
         return false;
       }
       lightusd::next::StageSessionOptions clip_options;
+      clip_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
+      clip_options.load.limits = clip_limits;
       clip_options.resolver = resolver_config;
       clip_options.composition.load_payloads = true;
+      clip_options.composition.error_when_asset_not_found = true;
       lightusd::next::StageSession clip_session;
       if (!clip_session.OpenFile(resolved, clip_options)) {
         if (clip_warn) *clip_warn = clip_session.GetWarning();
         if (clip_err) *clip_err = clip_session.GetError();
         return false;
       }
-      *clip_stage = clip_session.TakeStage();
+      auto taken = clip_session.CloseAndTakeStage();
+      if (!taken) {
+        if (clip_err) *clip_err = "clip stage is still retained";
+        return false;
+      }
+      *clip_stage = std::move(*taken);
       return true;
     };
   }
-  *stage = session.TakeStage();
+  auto taken = session.CloseAndTakeStage();
+  if (!taken) {
+    if (err) *err = "stage is still retained";
+    return false;
+  }
+  *stage = std::move(*taken);
   if (warn) *warn = session.GetWarning();
   if (err) err->clear();
   return true;
@@ -6342,6 +6900,17 @@ void AppendCollectionMask(const std::vector<lightusd::next::Path> &includes,
   for (const auto &path : excludes) {
     mask->push_back("!" + path.prim_path().str());
   }
+}
+
+bool CaptureSource(const std::string& source, CaptureAov* aov) {
+  if (source.empty() || source == "Ci" || source == "color") *aov = CaptureAov::Color;
+  else if (source == "depth" || source == "z") *aov = CaptureAov::Depth;
+  else if (source == "worldNormal" || source == "N") *aov = CaptureAov::WorldNormal;
+  else if (source == "geometricNormal") *aov = CaptureAov::GeometricNormal;
+  else if (source == "shadingNormal") *aov = CaptureAov::ShadingNormal;
+  else if (source == "primId") *aov = CaptureAov::PrimId;
+  else return false;
+  return true;
 }
 
 bool ApplyUsdRenderOptions(const lightusd::next::Stage &stage,
@@ -6418,14 +6987,63 @@ bool ApplyUsdRenderOptions(const lightusd::next::Stage &stage,
       RenderVarData var;
       const UsdPrim var_prim = stage.GetPrimAtPath(var_path.prim_path());
       if (!GetRenderVarData(stage, var_prim, &var, opt->timecode)) continue;
-      if (!(var.source_name.empty() || var.source_name == "Ci" ||
-            var.source_name == "color")) {
-        std::cerr << "WARN: RenderVar '" << var_path.str() << "' source '"
-                  << var.source_name << "' is preserved but not emitted\n";
+      if (!opt->aov_explicit && product.ordered_vars.size() == 1) {
+        if (var.source_type != "raw" || !CaptureSource(var.source_name, &opt->aov)) {
+          std::cerr << "Unsupported RenderVar source: " << var.source_name << "\n";
+          return false;
+        }
+      } else if (!opt->aov_explicit && !opt->all_render_products && product.ordered_vars.size() > 1) {
+        std::cerr << "Multiple RenderVars require --all-products or --aov\n";
+        return false;
       }
     }
   }
   return true;
+}
+
+void RefreshVolumesNext(RenderContext &ctx, double time) {
+  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
+  // each volume's world AABB BEFORE resolving the camera, so a volume-only scene
+  // (or one whose volume sits away from the origin, e.g. an explosion sim) is
+  // framed and rendered instead of leaving the auto-camera looking at an empty
+  // origin.
+  ctx.volumes.clear();
+  ctx.bounds = ctx.geometry_bounds;
+  const size_t volume_budget_bytes = std::max<size_t>(
+      size_t(64) << 20,
+      std::min<size_t>(size_t(512) << 20,
+                       MemBudget::Get().Cap() / 16));
+  size_t volume_density_bytes = 0;
+  const bool sparse_cpu = !ctx.opt.vulkan && !ctx.opt.vulkan_rt && !ctx.opt.use_d3d &&
+                          !ctx.opt.hip && !ctx.opt.cuda &&
+                          ctx.opt.volume_level_set == Options::VolumeLevelSet::Surface;
+  size_t cache_budget = 0;
+  if (sparse_cpu && MemBudget::Get().Cap()) {
+    const size_t cap = MemBudget::Get().Cap();
+    const size_t rss = MemBudget::Get().ProcessRSS();
+    const size_t available = cap - std::min(cap, rss);
+    // Reserve room for dense fields and the rest of the render. A nonzero
+    // minimum means an exhausted budget cannot accidentally mean unlimited.
+    const size_t after_dense = available > volume_budget_bytes
+                                   ? available - volume_budget_bytes : 1;
+    cache_budget = std::max<size_t>(1, std::min(cap / 2, after_dense));
+  }
+  auto volume_cache = std::make_shared<lightusd::tydra::vol::FieldCache>(
+      lightusd::tydra::vol::AssetReader{}, cache_budget);
+  for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectVolumesNext(ctx.stage, root, matrix4d::identity(), time,
+                       DirName(ctx.opt.input), &ctx.volumes, volume_budget_bytes,
+                       &volume_density_bytes, sparse_cpu, volume_cache);
+  ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
+  if (!ctx.volumes.empty()) {
+    std::cerr << "rt volumes: " << ctx.volumes.size() << " (dense density "
+              << volume_density_bytes / (1024 * 1024) << "/"
+              << volume_budget_bytes / (1024 * 1024) << " MiB, cache "
+              << volume_cache->bytes_used() / (1024 * 1024);
+    if (cache_budget) std::cerr << "/" << cache_budget / (1024 * 1024);
+    std::cerr << " MiB)\n";
+  }
+
 }
 
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
@@ -6449,6 +7067,8 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
 
   if (!ApplyUsdRenderOptions(ctx.stage, &ctx.opt)) return false;
+  if (ctx.opt.aov == CaptureAov::ShadingNormal || ctx.opt.all_render_products)
+    ctx.opt.smooth = true;
   ctx.width = ctx.opt.width > 0 ? ctx.opt.width : 960;
 
   // The composed stage is the memory baseline; everything our pool allocator
@@ -6472,27 +7092,8 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
                                : ctx.opt.timecode;
   if (!ExtractAndBuildBVH(ctx, init_time)) return false;
 
-  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
-  // each volume's world AABB BEFORE resolving the camera, so a volume-only scene
-  // (or one whose volume sits away from the origin, e.g. an explosion sim) is
-  // framed and rendered instead of leaving the auto-camera looking at an empty
-  // origin.
-  ctx.volumes.clear();
-  const size_t volume_budget_bytes = std::max<size_t>(
-      size_t(64) << 20,
-      std::min<size_t>(size_t(512) << 20,
-                       MemBudget::Get().Cap() / 16));
-  size_t volume_density_bytes = 0;
-  for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims())
-    CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
-                       DirName(ctx.opt.input), &ctx.volumes, volume_budget_bytes,
-                       &volume_density_bytes);
-  ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
-  if (!ctx.volumes.empty()) {
-    std::cerr << "rt volumes: " << ctx.volumes.size() << " (density "
-              << volume_density_bytes / (1024 * 1024) << "/"
-              << volume_budget_bytes / (1024 * 1024) << " MiB)\n";
-  }
+  ctx.geometry_bounds = ctx.bounds;
+  RefreshVolumesNext(ctx, init_time);
 
   ResolveCameraNext(ctx);
   ResolveBackPlateNext(ctx);
@@ -6540,17 +7141,57 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   return true;
 }
 
+// A prim ID names the source mesh, including a shared prototype. Instance
+// placements deliberately share that source ID. Reject collisions/unsupported
+// hit kinds instead of silently labelling them as background.
+static bool WriteCapturePrimMap(const RenderContext& ctx, const std::string& path) {
+  using Json = lightusd::minijson::Value;
+  std::map<uint32_t, std::string> names;
+  bool valid = true;
+  ctx.stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
+    const auto name = prim.GetPath().str();
+    const uint32_t id = CapturePrimId(name);
+    auto found = names.emplace(id, name);
+    if (!found.second && found.first->second != name) valid = false;
+    return true;
+  });
+  auto check = [&](const TriMat& mat) {
+    if (!mat.capture_prim_id || !names.count(mat.capture_prim_id)) valid = false;
+  };
+  for (const auto& mat : ctx.flat_mats) check(mat);
+  for (const auto& b : ctx.blas) for (const auto& mat : b.mat_table) check(mat);
+  if (ctx.stats.curve_strands || !ctx.volumes.empty()) valid = false;
+  if (!valid) {
+    std::cerr << "primId capture requires named source meshes without ID collisions (curves/volumes are unsupported)\n";
+    return false;
+  }
+  Json entries = Json::array();
+  for (const auto& item : names) entries.push_back(Json{{"id", item.first}, {"primPath", item.second}});
+  Json report{{"schemaVersion", 1}, {"background", 0}, {"semantics", "sourcePrim"}, {"prims", entries}};
+  std::ofstream out(path + ".ids.json"); out << report.dump(2) << '\n'; out.close();
+  return bool(out);
+}
+
 // Render the current camera/parameters of `ctx` and write to `path`.
 // Reuses the persistent BVH (no rebuild). Returns the trace time in seconds
 // (or a negative value on write failure).
 double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   ctx.opt.width = ctx.width;
+  std::string budget_error;
+  const uint64_t image_bytes = uint64_t(std::max(0, ctx.width)) * uint64_t(std::max(0, ctx.height)) * 16;
+  if (ctx.width <= 0 || ctx.width > 32768 || ctx.height <= 0 || ctx.height > 32768 ||
+      image_bytes != static_cast<uint64_t>(static_cast<size_t>(image_bytes)) ||
+      MemBudget::Get().WouldExceed(size_t(image_bytes), &budget_error)) {
+    std::cerr << "Capture image dimensions exceed limits: " << budget_error << "\n"; return -1;
+  }
+  if (ctx.opt.aov == CaptureAov::PrimId && !WriteCapturePrimMap(ctx, path)) return -1;
   const auto t0 = std::chrono::steady_clock::now();
   lightusd::Image img = RenderImage(
       ctx.scene, &ctx.direct, ctx.tris, ctx.flat_mats, ctx.lights,
       ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
+      /*tri_uvs1*/ nullptr,
       ctx.use_tlas ? ctx.tlas : nullptr,
       ctx.use_tlas ? &ctx.blas : nullptr,
       ctx.use_tlas ? &ctx.instances : nullptr,
@@ -6561,6 +7202,25 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
       ctx.backplates.empty() ? nullptr : &ctx.backplates);
   const auto t1 = std::chrono::steady_clock::now();
+  if (ctx.opt.aov != CaptureAov::Color) {
+    if (path.size() < 4 || path.substr(path.size() - 4) != ".pfm") {
+      std::cerr << "Data AOV output must use .pfm (raw float32, no color transform)\n";
+      return -1;
+    }
+    std::ofstream out(path, std::ios::binary);
+    out << "PF\n" << img.width << " " << img.height << "\n-1.0\n";
+    for (int y = img.height - 1; y >= 0; --y) for (int x = 0; x < img.width; ++x) {
+      const size_t offset = (size_t(y) * size_t(img.width) + size_t(x)) * 16;
+      for (unsigned c = 0; c < 3; ++c) {
+        uint32_t bits; std::memcpy(&bits, img.data.data() + offset + c * 4, 4);
+        char bytes[4]; for (unsigned b = 0; b < 4; ++b) bytes[b] = char(bits >> (8 * b));
+        out.write(bytes, 4);
+      }
+    }
+    out.close();
+    if (!out) { std::cerr << "Failed to write PFM\n"; return -1; }
+    return std::chrono::duration<double>(t1 - t0).count();
+  }
   lightusd::image::WriteOption wopt;
   wopt.format = lightusd::image::WriteImageFormat::Autodetect;
   auto ret = lightusd::image::WriteImageToFile(path, img, wopt);
@@ -6798,7 +7458,72 @@ static void PrintLoadSummaryNext(const RenderContext &ctx) {
   }
 }
 
+static std::string CaptureSuffix(const std::string& path) {
+  std::string out;
+  // Encode separators too: /A_B and /A/B must not collide.
+  const char* hex = "0123456789ABCDEF";
+  for (unsigned char c : path) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out += char(c);
+    else { out += '_'; out += hex[c >> 4]; out += hex[c & 15]; }
+  }
+  return out;
+}
+
+static double RenderCaptureProducts(RenderContext& ctx, const Options& original, const std::string& output) {
+  if (!original.all_render_products) return RenderFrameTo(ctx, output);
+  using namespace lightusd::next;
+  std::string settings_path = original.render_settings;
+  if (settings_path.empty() && ctx.stage.GetMeta().renderSettingsPrimPath_set)
+    settings_path = ctx.stage.GetMeta().renderSettingsPrimPath;
+  RenderSettingsData settings;
+  if (!GetRenderSettingsData(ctx.stage, ctx.stage.GetPrimAtPath(settings_path), &settings, ctx.frame_time) || settings.products.empty()) {
+    std::cerr << "--all-products requires RenderSettings with products\n"; return -1;
+  }
+  double total = 0;
+  std::set<std::string> output_paths;
+  const size_t dot = output.find_last_of('.');
+  const size_t slash = output.find_last_of("/\\");
+  const std::string prefix = dot == std::string::npos || (slash != std::string::npos && dot < slash)
+      ? output : output.substr(0, dot);
+  for (const auto& path : settings.products) {
+    RenderProductData product;
+    if (!GetRenderProductData(ctx.stage, ctx.stage.GetPrimAtPath(path), &product, ctx.frame_time)) return -1;
+    if (product.product_type != "raster") { std::cerr << "Only raster products are supported\n"; return -1; }
+    Options options = original;
+    options.render_product = path.str();
+    options.timecode = ctx.frame_time;
+    if (!ApplyUsdRenderOptions(ctx.stage, &options)) return -1;
+    std::vector<Path> vars = product.ordered_vars;
+    if (vars.empty()) vars.emplace_back();
+    for (const auto& var_path : vars) {
+      CaptureAov aov = CaptureAov::Color;
+      if (!var_path.empty()) {
+        RenderVarData var;
+        if (!GetRenderVarData(ctx.stage, ctx.stage.GetPrimAtPath(var_path), &var, ctx.frame_time) ||
+            var.source_type != "raw" || !CaptureSource(var.source_name, &aov)) {
+          std::cerr << "Unsupported RenderVar: " << var_path.str() << "\n"; return -1;
+        }
+      }
+      options.aov = aov;
+      ctx.opt = options; ctx.width = options.width;
+      ResolveCameraNext(ctx); ResolveBackPlateNext(ctx);
+      const std::string file = prefix + "." + CaptureSuffix(path.str()) + "." + CaptureSuffix(var_path.str()) +
+          (aov == CaptureAov::Color ? ".png" : ".pfm");
+      if (!output_paths.insert(file).second) { std::cerr << "Duplicate product output path\n"; return -1; }
+      const double seconds = RenderFrameTo(ctx, file);
+      if (seconds < 0) return -1;
+      total += seconds;
+      std::cerr << "product " << path.str() << " var " << var_path.str() << " -> " << file << "\n";
+    }
+  }
+  return total;
+}
+
 int RunRTPreviewNext(const Options &opt) {
+  if (opt.all_render_products && (!opt.render_product.empty() || opt.aov_explicit || opt.rt_lod || opt.lod_stream)) {
+    std::cerr << "--all-products cannot combine a single product/AOV or view-dependent LOD override\n";
+    return EXIT_FAILURE;
+  }
   RenderContext ctx;
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
   PrintLoadSummaryNext(ctx);
@@ -6832,20 +7557,22 @@ int RunRTPreviewNext(const Options &opt) {
     for (double t : times) {
       if (geom_animated) {
         if (!ExtractAndBuildBVH(ctx, t)) return EXIT_FAILURE;
+        ctx.geometry_bounds = ctx.bounds;
       } else {
         ctx.frame_time = t;  // static geometry: keep BVH, animate camera only
       }
+      RefreshVolumesNext(ctx, t);
       ResolveCameraNext(ctx);
       ResolveBackPlateNext(ctx);
       const std::string out = SubstituteFrame(opt.output, std::lround(t));
-      const double secs = RenderFrameTo(ctx, out);
+      const double secs = RenderCaptureProducts(ctx, opt, out);
       if (secs < 0.0) return EXIT_FAILURE;
       std::cerr << "frame " << t << " -> " << out << "  (" << secs << "s)\n";
     }
     return EXIT_SUCCESS;
   }
 
-  const double secs = RenderFrameTo(ctx, opt.output);
+  const double secs = RenderCaptureProducts(ctx, opt, opt.output);
   if (secs < 0.0) return EXIT_FAILURE;
   if (opt.stats) std::cerr << "render seconds: " << secs << "\n";
   return EXIT_SUCCESS;

@@ -1,0 +1,36 @@
+#usda 1.0
+
+def Material "M_UEGraph" (
+    prepend apiSchemas = ["MaterialXConfigAPI", "MaterialUEConfigAPI"]
+) {
+    string config:mtlx:version = "1.39"
+    string config:mtlx:colorspace = "lin_rec709"
+    string config:unreal:version = "1"
+    string config:unreal:engineVersion = "5.8"
+    string config:unreal:sourceAsset = "/Game/Materials/M_UEGraph"
+    string config:unreal:graphAuthority = "materialx+ue"
+    string config:unreal:materialDomain = "Surface"
+    string config:unreal:blendMode = "Opaque"
+    string config:unreal:shadingModels = "DefaultLit"
+    bool config:unreal:twoSided = false
+    float config:unreal:opacityMaskClipValue = 0.333333
+    string config:unreal:propertyArchive = "{\"format\":\"LightUSD.MaterialUE.1\"}"
+    token outputs:surface.connect = </M_UEGraph/OpenPBRSurface.outputs:surface>
+
+    def Shader "OpenPBRSurface" {
+        uniform token info:id = "OpenPBRSurface"
+        token outputs:surface
+    }
+
+    def NodeGraph "UEGraph" {
+        def Shader "Expr_0000_Constant3Vector" {
+            uniform token info:id = "UnrealMaterialExpression.MaterialExpressionConstant3Vector"
+            string unreal:classPath = "/Script/Engine.MaterialExpressionConstant3Vector"
+            string unreal:guid = "00000000-0000-0000-0000-000000000001"
+            int unreal:editorX = -600
+            int unreal:editorY = 0
+            string unreal:propertyArchive = "{\"format\":\"LightUSD.MaterialUE.1\"}"
+            token outputs:out
+        }
+    }
+}

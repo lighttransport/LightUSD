@@ -10,12 +10,14 @@
 
   /// Store data in VALUE section and return its offset.
   /// Returns the offset from the START of the VALUE section.
-  uint64_t StoreValueData(const void* data, size_t size, TypeId type) {
+  /// `tag` marks blob-internal provisional ids (parallel build fix-ups).
+  uint64_t StoreValueData(const void* data, size_t size, TypeId type,
+                          uint8_t tag = kBlobNone) {
     DataBlock block;
     block.type = type;
     block.data.resize(size);
     std::memcpy(block.data.data(), data, size);
-    return InternBlock(std::move(block));
+    return InternBlock(std::move(block), tag);
   }
 
   // Encode a Value into a ValueRep.
@@ -31,7 +33,7 @@
   // Embedded non-inline reps are relocated by _PatchDictBlock once block offsets
   // are known. The block is patched in place, so it must NOT be deduped/shared
   // (push directly, do not InternBlock).
-  ValueRep EncodeDictionary(const Dict& d) {
+  ValueRep EncodeDictionary(DictView  d) {
     std::vector<uint8_t> blk;
     auto put_u64 = [&](uint64_t v) {
       for (int i = 0; i < 8; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
@@ -47,8 +49,10 @@
       put_u64(static_cast<uint64_t>(static_cast<int64_t>(8)));  // recOffset = 8
       put_u64(vr.raw());
     }
-    uint64_t idx = value_data_.size();
-    value_data_.push_back({TypeId::Dictionary, std::move(blk)});
+    // Nested reps above are final offsets when streaming (see PushValueBlock);
+    // staged, they are block indices relocated by _PatchDictBlock.
+    const uint64_t idx = PushValueBlock({TypeId::Dictionary, std::move(blk)},
+                                        kBlobDict);
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
@@ -59,11 +63,42 @@
     const uint64_t nested_raw = nested.raw();
     std::memcpy(block.data(), &recursive_offset, 8);
     std::memcpy(block.data() + 8, &nested_raw, 8);
-    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)});
+    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)},
+                                       kBlobNestedRep);
     return ValueRep::Make(CrateTypeId::UnregisteredValue, index, false, false);
   }
 
-  ValueRep EncodeExtensionField(const TypedExtensionField& field) {
+  ValueRep EncodeExtensionField(const DecodedExtensionField& field) {
+    if (field.int64_list_op) {
+      Int64ListOp op;
+      if (field.int64_list_op->ops.size() == 1) op = field.int64_list_op->ops[0];
+      else { op.bits = 3; op.items[0] = field.value; }
+      if (op.bits & 0x80u) {
+        WSetError("Unknown Int64 list-op header bits");
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      std::vector<uint8_t> raw(1, op.bits);
+      for (size_t r = 0; r < 6; ++r) {
+        if (!(op.bits & kInt64ListOpBits[r])) continue;
+        if (!op.items[r].is_empty() &&
+            (!op.items[r].is_array() || op.items[r].type_id() != TypeId::Int64)) {
+          WSetError("Int64 list-op requires int64 array items");
+          return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+        }
+        const auto items = op.items[r].as_int64_array();
+        const uint64_t count = items ? items->size() : 0;
+        const size_t at = raw.size();
+        if (count > ((std::numeric_limits<size_t>::max)() - at - 8) / 8) {
+          WSetError("Int64 list-op byte size overflow");
+          return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+        }
+        raw.resize(at + 8 + static_cast<size_t>(count) * 8);
+        std::memcpy(raw.data() + at, &count, 8);
+        if (count) std::memcpy(raw.data() + at + 8, items->data(), static_cast<size_t>(count) * 8);
+      }
+      const uint64_t index = InternBlock({TypeId::Int64, std::move(raw)});
+      return ValueRep::Make(CrateTypeId::Int64ListOp, index, false, false);
+    }
     if (!field.unregistered) return EncodeValue(field.value);
     return EncodeUnregisteredValue(
         field.unregistered_source.empty()
@@ -81,7 +116,7 @@
     if (elem_crate == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
     }
-    if (required_version_minor_ < 14) required_version_minor_ = 14;
+    WRequireMinor(14);
     if (edit.ops.empty()) {
       // Identity edit: no out-of-line data.
       return ValueRep::Make(elem_crate, 0, false, false, false,
@@ -198,15 +233,14 @@
     block.data[16] = 0;  // isDense: legacy, always false
     block.embedded_value_rep_offsets.push_back(0);
     block.embedded_value_rep_offsets.push_back(8);
-    const uint64_t idx = value_data_.size();
-    value_data_.push_back(std::move(block));
+    const uint64_t idx = PushValueBlock(std::move(block));
     return ValueRep::Make(elem_crate, idx, false, false, false,
                           /*is_array_edit=*/true);
   }
 
   ValueRep EncodeValue(const Value& val) {
     if (val.is_dictionary()) {
-      const Dict* d = val.as_dictionary();
+      auto d = val.as_dictionary();
       return d ? EncodeDictionary(*d)
                : ValueRep::Make(CrateTypeId::Dictionary, 0, false, false);
     }
@@ -225,14 +259,12 @@
     // This writer emits the uint64 count-header array layout introduced in
     // Crate 0.7. Upgrade an older requested version rather than stamping a
     // pre-0.7 bootstrap onto incompatible array bytes.
-    if (is_array && required_version_minor_ < 7) {
-      required_version_minor_ = 7;
-    }
+    // (WRequireMinor checks the current minimum itself; worker threads must
+    // not read required_version_minor_, which commit stage C updates.)
+    if (is_array) WRequireMinor(7);
 
     // pxr-style write-version upgrade: timecode values require crate 0.9.
-    if (type_id == TypeId::TimeCode && required_version_minor_ < 9) {
-      required_version_minor_ = 9;
-    }
+    if (type_id == TypeId::TimeCode) WRequireMinor(9);
 
     if (crate_type == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, is_array, false);
@@ -244,10 +276,10 @@
     if (is_array && val.is_lazy() && !val.is_dirty()) {
       ValueRep pt;
       if (TryPassThrough(val, &pt)) {
-        ++arrays_passed_through_;
+        WCountPassThrough();
         return pt;
       }
-      ++arrays_reencoded_;  // fell back to full decode + re-encode below
+      WCountReencode();  // fell back to full decode + re-encode below
     }
 
     // Handle inline scalars
@@ -282,7 +314,7 @@
           break;
         }
         case TypeId::Token: {
-          const std::string* s = val.as_token();
+          auto s = val.as_token();
           if (s) { payload = InternToken(*s); can_inline = true; }
           break;
         }
@@ -316,14 +348,14 @@
     // String / AssetPath via string index (not inline; scalars only --
     // string-family ARRAYS are handled in the array section below).
     if (!is_array && type_id == TypeId::String) {
-      const std::string* str = val.as_string();
+      auto str = val.as_string();
       if (str) {
         uint32_t str_idx = InternString(*str);
         return ValueRep::Make(crate_type, str_idx, false, true);
       }
     }
     if (!is_array && type_id == TypeId::AssetPath) {
-      const std::string* str = val.as_asset_path();
+      auto str = val.as_asset_path();
       if (str) {
         // AssetPath: type stays AssetPath; payload is a token index (the path
         // string interned as a token), matching the reader's UnpackAssetPath.
@@ -332,7 +364,7 @@
       }
     }
     if (!is_array && type_id == TypeId::Token) {
-      const std::string* str = val.as_token();
+      auto str = val.as_token();
       if (str) {
         uint32_t tok_idx = InternToken(*str);
         return ValueRep::Make(CrateTypeId::Token, tok_idx, false, true);
@@ -344,11 +376,11 @@
       // pathExpression: pxr writes the expression TEXT as a u32 string
       // index (crate >= 0.10).
       if (type_id == TypeId::PathExpression) {
-        const std::string* str = val.as_string();
+        auto str = val.as_string();
         if (str) {
           uint32_t sidx = InternString(*str);
-          uint64_t data_idx = StoreValueData(&sidx, 4, type_id);
-          if (required_version_minor_ < 10) required_version_minor_ = 10;
+          uint64_t data_idx = StoreValueData(&sidx, 4, type_id, kBlobString4);
+          WRequireMinor(10);
           return ValueRep::Make(CrateTypeId::PathExpression, data_idx, false,
                                 false);
         }
@@ -429,7 +461,9 @@
       size_t elem_size = CrateValueSize(crate_type, false);
       (void)elem_size;
 
-      // Collect array data
+      // Collect array data. `arr_tag` records blob-internal provisional ids
+      // for the parallel build fix-up (token/string index arrays).
+      uint8_t arr_tag = kBlobNone;
       std::vector<uint8_t> arr_data;
       auto resize_counted_payload = [&](uint64_t item_count,
                                         size_t item_size) -> bool {
@@ -437,7 +471,7 @@
         size_t total = 0;
         if (!safe::mul(item_count, item_size, &bytes) ||
             !safe::add(size_t(8), bytes, &total)) {
-          result_.error = "Array payload size overflow";
+          WSetError("Array payload size overflow");
           return false;
         }
         arr_data.resize(total);
@@ -451,7 +485,7 @@
         }
         size_t bytes = 0;
         if (!safe::mul(item_count, item_size, &bytes)) {
-          result_.error = "Array payload size overflow";
+          WSetError("Array payload size overflow");
           return false;
         }
         if (bytes > 0) {
@@ -462,7 +496,7 @@
 
       switch (type_id) {
         case TypeId::Float: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(float))) {
@@ -472,7 +506,7 @@
           break;
         }
         case TypeId::Int: {
-          const std::vector<int32_t>* arr = val.as_int_array();
+          auto arr = val.as_int_array();
           if (arr) {
             count = arr->size();
             if (options_.compress_arrays && count >= 16) {
@@ -486,7 +520,7 @@
                 size_t total_size = 0;
                 if (!safe::add(size_t(8), cr.data.size(), &payload_size) ||
                     !safe::add(size_t(8), payload_size, &total_size)) {
-                  result_.error = "Compressed integer array payload size overflow";
+                  WSetError("Compressed integer array payload size overflow");
                   return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
                 }
                 arr_data.resize(total_size);
@@ -516,7 +550,7 @@
         case TypeId::Normal3f:
         case TypeId::Color3f:
         case TypeId::Texcoord3f: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           if (arr && arr->size() % 3 == 0) {
             count = arr->size() / 3;
             if (!copy_counted_payload(count * uint64_t(3), arr->data(),
@@ -528,7 +562,7 @@
           break;
         }
         case TypeId::Double: {
-          const std::vector<double>* arr = val.as_double_array();
+          auto arr = val.as_double_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(double))) {
@@ -536,7 +570,7 @@
             }
           } else {
             // Fallback: try reading as float array and convert
-            const std::vector<float>* farr = val.as_float_array();
+            auto farr = val.as_float_array();
             if (farr) {
               count = farr->size();
               if (!resize_counted_payload(count, sizeof(double))) {
@@ -549,7 +583,7 @@
           break;
         }
         case TypeId::Int64: {
-          const std::vector<int64_t>* arr = val.as_int64_array();
+          auto arr = val.as_int64_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(int64_t))) {
@@ -559,7 +593,7 @@
           break;
         }
         case TypeId::UInt: {
-          const std::vector<uint32_t>* arr = val.as_uint_array();
+          auto arr = val.as_uint_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(uint32_t))) {
@@ -571,7 +605,7 @@
         case TypeId::UChar: {
           // uchar[]: narrow the widened uint32 storage back to the tightly
           // packed uint8 wire form pxr writes/reads.
-          const std::vector<uint32_t>* arr = val.as_uint_array();
+          auto arr = val.as_uint_array();
           if (arr) {
             std::vector<uint8_t> raw8(arr->size());
             for (size_t k = 0; k < arr->size(); ++k) {
@@ -585,7 +619,7 @@
           break;
         }
         case TypeId::UInt64: {
-          const std::vector<uint64_t>* arr = val.as_uint64_array();
+          auto arr = val.as_uint64_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(uint64_t))) {
@@ -595,7 +629,7 @@
           break;
         }
         case TypeId::Bool: {
-          const std::vector<uint8_t>* arr = val.as_bool_array();
+          auto arr = val.as_bool_array();
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(uint8_t))) {
@@ -605,7 +639,7 @@
           break;
         }
         case TypeId::Token: {
-          const std::vector<std::string>* arr = val.as_token_array();
+          auto arr = val.as_token_array();
           if (arr) {
             count = arr->size();
             // Store token indices
@@ -616,12 +650,15 @@
               uint32_t idx = InternToken((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobTokenVec;
           }
           break;
         }
-        case TypeId::String: {
+        case TypeId::String:
+        case TypeId::PathExpression: {
           // String arrays: uint32 indices into the STRINGS section.
-          const std::vector<std::string>* arr = val.as_token_array();
+          // SdfPathExpression arrays store each expression text the same way.
+          auto arr = val.as_token_array();
           if (arr) {
             count = arr->size();
             if (!resize_counted_payload(count, sizeof(uint32_t))) {
@@ -631,13 +668,14 @@
               uint32_t idx = InternString((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobStringVec;
           }
           break;
         }
         case TypeId::AssetPath: {
           // Asset arrays: uint32 STRING indices (unlike the scalar form, which
           // uses a token index) — matches pxr's VtArray<SdfAssetPath> layout.
-          const std::vector<std::string>* arr = val.as_token_array();
+          auto arr = val.as_token_array();
           if (arr) {
             count = arr->size();
             if (!resize_counted_payload(count, sizeof(uint32_t))) {
@@ -647,6 +685,7 @@
               uint32_t idx = InternString((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobStringVec;
           }
           break;
         }
@@ -655,7 +694,7 @@
         case TypeId::Int4: {
           // Int-vector arrays: flat int32 buffer, raw (pxr stores Vec*i arrays
           // uncompressed).
-          const std::vector<int32_t>* arr = val.as_int_array();
+          auto arr = val.as_int_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -673,7 +712,7 @@
           // UInt-vector arrays share the Vec*i crate encoding (same 32-bit
           // lanes, bit-exact; declared type name restores uintN). Without
           // this case they fell into `default:` and were written as EMPTY.
-          const std::vector<uint32_t>* arr = val.as_uint_array();
+          auto arr = val.as_uint_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -690,7 +729,7 @@
         case TypeId::Quatf: {
           // Internal flat buffer is real-first per element; crate stores
           // imaginary-first. Swizzle each element on write.
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           if (arr && arr->size() % 4 == 0) {
             count = arr->size() / 4;
             if (!resize_counted_payload(arr->size(), sizeof(float))) {
@@ -712,7 +751,7 @@
         case TypeId::Float4:
         case TypeId::Color4f:
         case TypeId::Texcoord2f: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -727,7 +766,7 @@
         case TypeId::Matrix2f:
         case TypeId::Matrix3f:
         case TypeId::Matrix4f: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -744,7 +783,7 @@
           break;
         }
         case TypeId::Quatd: {
-          const std::vector<double>* arr = val.as_double_array();
+          auto arr = val.as_double_array();
           if (arr && arr->size() % 4 == 0) {
             count = arr->size() / 4;
             if (!resize_counted_payload(arr->size(), sizeof(double))) {
@@ -776,7 +815,7 @@
         case TypeId::Matrix2d:
         case TypeId::Matrix3d:
         case TypeId::Matrix4d: {
-          const std::vector<double>* arr = val.as_double_array();
+          auto arr = val.as_double_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -792,7 +831,7 @@
         // for the crate (only reached when the array is materialized, not on the
         // lazy byte-passthrough path).
         case TypeId::Quath: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           if (arr && arr->size() % 4 == 0) {
             count = arr->size() / 4;
             if (!resize_counted_payload(arr->size(), sizeof(uint16_t))) {
@@ -820,7 +859,7 @@
         case TypeId::Color4h:
         case TypeId::Texcoord2h:
         case TypeId::Texcoord3h: {
-          const std::vector<float>* arr = val.as_float_array();
+          auto arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
@@ -851,7 +890,7 @@
         DataBlock block;
         block.type = type_id;
         block.data = std::move(arr_data);
-        uint64_t idx = InternBlock(std::move(block));
+        uint64_t idx = InternBlock(std::move(block), arr_tag);
         // Return non-inline value rep (index will be resolved to offset later)
         return ValueRep::Make(crate_type, idx, true, false, data_compressed);
       }

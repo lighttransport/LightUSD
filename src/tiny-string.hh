@@ -24,20 +24,17 @@
 namespace lightusd {
 
 // default: Up to 1G char
+//
+// Bounded length: never reads past `max_len` bytes (hardening guard against
+// unterminated buffers). Uses strnlen() so the libc vectorised implementation
+// does the scanning - this is called from every tstring_view built from a char*
+// and showed up as >3% of a USDC load as a byte-at-a-time loop.
 static size_t strlen(const char *s, size_t max_len = 1024u*1024u*1024u) {
   if (!s) {
     return 0;
   }
 
-  size_t i = 0;
-  while(i < max_len) {
-    if (s[i] == '\0') {
-      return i;
-    }
-    i++;
-  }
-
-  return i;
+  return ::strnlen(s, max_len);
 }
 
 

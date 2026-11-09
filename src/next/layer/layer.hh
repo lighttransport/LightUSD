@@ -8,16 +8,25 @@
 
 #include "prim-spec.hh"
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <memory>
+#include <map>
 #include <unordered_map>
 
 namespace lightusd {
 namespace next {
+// Runtime ownership for dependencies produced by foreign-format readers.
+// This is not authored USD metadata. Shared immutable bytes survive cache
+// teardown and Layer cloning without copying texture payloads.
+struct ImportedAssets {
+  std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>> by_identifier;
+};
 
 /// Layer metadata
 struct LayerMeta {
+  std::shared_ptr<const ImportedAssets> imported_assets;
   std::string defaultPrim;
   bool defaultPrim_set = false;
   std::string upAxis = "Y";
@@ -56,6 +65,10 @@ struct LayerMeta {
   bool doc_set = false;
   bool comment_set = false;
   bool owner_set = false;
+  bool autoPlay = true;
+  bool autoPlay_set = false;
+  std::string playbackMode;
+  bool playbackMode_set = false;
 
   // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
   std::vector<std::string> rootPrimOrder;
@@ -87,79 +100,14 @@ struct LayerMeta {
   // authored order; the USDA writer re-emits it verbatim.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   // Decodable unregistered USDC fields retained by name and typed value.
-  std::vector<TypedExtensionField> unknownFields;
+  std::vector<DecodedExtensionField> unknownFields;
 
   /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
   /// layer (a sublayer): stage metadata resolves through the whole root
   /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a
   /// flatten engine must gap-fill before dropping the subLayers list. Call
   /// with sublayers strongest-first.
-  void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
-    if (!rootPrimOrder_set &&
-        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
-      rootPrimOrder = weaker.rootPrimOrder;
-      rootPrimOrder_set = true;
-    }
-    if (!defaultPrim_set &&
-        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
-      defaultPrim = weaker.defaultPrim;
-      defaultPrim_set = true;
-    }
-    if (!doc_set && weaker.doc_set) {
-      doc = weaker.doc;
-      doc_set = true;
-    }
-    if (!owner_set && weaker.owner_set) {
-      owner = weaker.owner;
-      owner_set = true;
-    }
-    if (!comment_set && weaker.comment_set) {
-      comment = weaker.comment;
-      comment_set = true;
-    }
-    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
-      colorConfiguration = weaker.colorConfiguration;
-      colorConfiguration_set = true;
-    }
-    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
-      colorManagementSystem = weaker.colorManagementSystem;
-      colorManagementSystem_set = true;
-    }
-    if (!renderSettingsPrimPath_set && weaker.renderSettingsPrimPath_set) {
-      renderSettingsPrimPath = weaker.renderSettingsPrimPath;
-      renderSettingsPrimPath_set = true;
-    }
-    if (!upAxis_set && weaker.upAxis_set) {
-      upAxis = weaker.upAxis;
-      upAxis_set = true;
-    }
-    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
-      metersPerUnit = weaker.metersPerUnit;
-      metersPerUnit_set = true;
-    }
-    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
-      timeCodesPerSecond = weaker.timeCodesPerSecond;
-      timeCodesPerSecond_set = true;
-    }
-    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
-      framesPerSecond = weaker.framesPerSecond;
-      framesPerSecond_set = true;
-    }
-    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
-      kilogramsPerUnit = weaker.kilogramsPerUnit;
-      kilogramsPerUnit_set = true;
-    }
-    if (!startTimeCode_set && weaker.startTimeCode_set) {
-      startTimeCode = weaker.startTimeCode;
-      startTimeCode_set = true;
-    }
-    if (!endTimeCode_set && weaker.endTimeCode_set) {
-      endTimeCode = weaker.endTimeCode;
-      endTimeCode_set = true;
-    }
-    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
-    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
-  }
+  void FillAbsentStageMetaFrom(const LayerMeta& weaker);
 };
 
 /// Layer - owns all PrimSpecs for a USD file
@@ -168,6 +116,22 @@ struct LayerMeta {
 /// - Path-to-index map for O(1) lookup
 /// - Root prims stored by index
 /// - Children stored as indices (no pointer chasing)
+class Layer;
+
+/// On-demand opinion composition for a layer whose prims are a skeleton
+/// (name, path, children) -- the experimental deferred fill
+/// (LIGHTUSD_NEXT_DEFERRED_FILL). Fill(i) composes prim i's opinions into the
+/// layer; Release(i) drops them again (back to the skeleton). Each prim is
+/// filled at most once (its composition sources are freed after the fill).
+class PrimFiller {
+ public:
+  virtual ~PrimFiller() = default;
+  virtual void Fill(Layer& layer, uint32_t index) = 0;
+  virtual void Release(Layer& layer, uint32_t index) = 0;
+  /// Whatever the filler composes from (e.g. the composition cache).
+  std::shared_ptr<void> keepalive;
+};
+
 class Layer {
 public:
   Layer();
@@ -188,6 +152,10 @@ public:
 
   /// Add a new PrimSpec and return its index
   uint32_t add_prim(PrimSpec&& spec);
+  /// Grow the prim array to `count` default-constructed prims (for callers
+  /// that fill prims by index, e.g. the parallel composition walk); existing
+  /// prims are kept. Link children / roots afterwards as usual.
+  void resize_prims(size_t count);
 
   /// Set parent-child relationship
   void set_parent(uint32_t child_index, uint32_t parent_index);
@@ -198,11 +166,32 @@ public:
   /// Finalize layer (build path index, sort properties)
   void finalize();
 
+  /// Free every prim (and the path index); the metadata stays. For a source
+  /// layer no reader will touch again while its owners still hold it.
+  void release_prims();
+
   /// (Re)build only the path->index map from current prim paths. Unlike
   /// finalize() this is not guarded and does not sort properties, so it can be
   /// called mid-mutation (e.g. composition pass 2 needs prim_at_path lookups
   /// before the layer is finalized, and after prims are added/renamed).
   void build_path_index();
+
+  /// Defer the path index: finalize() then leaves it unbuilt and the first
+  /// path lookup (prim_at_path / index_at_path / the mutators) builds it,
+  /// thread-safely. For a composed stage that is only written out, the
+  /// 10M-entry string map is never built. Default off: ordinary layers keep
+  /// the eager index (their lookups run inside parallel compose workers).
+  void set_lazy_path_index(bool lazy) { lazy_path_index_ = lazy; }
+  void set_instance_holder_links(bool enabled) {
+    instance_holder_links_ = enabled;
+  }
+  bool instance_holder_links() const { return instance_holder_links_; }
+
+  /// Deferred-fill hook (see PrimFiller); null for an ordinary layer.
+  PrimFiller* prim_filler() const { return prim_filler_.get(); }
+  void set_prim_filler(std::shared_ptr<PrimFiller> filler) {
+    prim_filler_ = std::move(filler);
+  }
 
   /// Sort prims so every ancestor precedes its descendants and subtrees are
   /// contiguous (lexicographic full-path order). The crate writer's
@@ -210,13 +199,43 @@ public:
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
 
-  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  /// Explicitly bake authored namespace restatements into hierarchy vectors.
+  /// Finalization preserves the original authored vectors for composition.
   void apply_namespace_ordering();
+
+  /// Ordered stage views without mutating authored hierarchy vectors. Scratch
+  /// is used only when a nonempty restatement exists; returned refs otherwise
+  /// point directly at the layer/spec, avoiding an allocation in the common case.
+  const std::vector<uint32_t>& ordered_root_indices(std::vector<uint32_t>* scratch) const;
+  const std::vector<uint32_t>& ordered_child_indices(
+      const PrimSpec& prim, std::vector<uint32_t>* scratch) const;
 
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed
   /// large arrays.
   Layer Clone() const;
+
+  // ============================================================
+  // Parallel-subtree stitch support (USDA parallel prim parse)
+  // ============================================================
+
+  /// Placeholder marker bit: root/child index entries carrying this bit refer
+  /// to a not-yet-stitched worker fragment (low 31 bits = fragment id). Every
+  /// placeholder is resolved by splice_fragments() before finalize.
+  static constexpr uint32_t kPendingIndexBit = 0x80000000u;
+
+  /// Append a pending root marker (fragment id), preserving authored order.
+  void add_root_pending(uint32_t fragment_id);
+
+  /// Move the prims of every fragment into this layer, reproducing the exact
+  /// prim order a serial build would have produced: fragment f's prims are
+  /// placed right before this layer's prim number insert_before[f] (= how many
+  /// prims this layer held when f was dispatched; non-decreasing in f).
+  /// A placeholder expands to ALL of its fragment's roots, in order. All
+  /// indices are rebased and placeholders resolved. Returns false (layer
+  /// contents unspecified — callers discard it) on any inconsistency.
+  bool splice_fragments(const std::vector<Layer*>& fragments,
+                        const std::vector<size_t>& insert_before);
 
   // ============================================================
   // Path-addressed authoring (post-load editing)
@@ -239,6 +258,13 @@ public:
   /// root_indices). Returns false if no prim exists at `path`.
   bool remove_prim_at_path(const std::string& path);
 
+  /// Rename the prim at `path` in place (the last path component becomes
+  /// `new_name`); every descendant path and the path index are rewritten and
+  /// sibling order is kept. Fails for an invalid identifier, a missing prim,
+  /// or a sibling that already uses `new_name`. Paths that other specs author
+  /// (relationship targets, connections, arcs) are not retargeted.
+  bool rename_prim_at_path(const std::string& path, const std::string& new_name);
+
   // ============================================================
   // Access
   // ============================================================
@@ -260,19 +286,17 @@ public:
   PrimSpec* prim_mutable(uint32_t index);
 
   /// Get root prim indices
-  const std::vector<uint32_t>& root_indices() const { return root_indices_; }
+  const std::vector<uint32_t>& root_indices() const;
 
   /// Replace the root prim order (namespace reordering; e.g. the crate reader
   /// restoring authored order from the pseudo-root's primChildren).
-  void set_root_indices(std::vector<uint32_t>&& idx) {
-    root_indices_ = std::move(idx);
-  }
+  void set_root_indices(std::vector<uint32_t>&& idx);
 
   /// Get all prims (flat array)
-  const std::vector<PrimSpec>& prims() const { return prims_; }
+  const std::vector<PrimSpec>& prims() const;
 
   /// Get prim count
-  size_t prim_count() const { return prims_.size(); }
+  size_t prim_count() const;
 
   /// Get children of a prim
   std::vector<const PrimSpec*> children(uint32_t prim_index) const;
@@ -281,18 +305,18 @@ public:
   // Metadata
   // ============================================================
 
-  const LayerMeta& meta() const { return meta_; }
-  LayerMeta& meta() { return meta_; }
+  const LayerMeta& meta() const;
+  LayerMeta& meta();
+  // Runtime source provenance, including empty package root layers. Not USD
+  // metadata and never serialized into authored data.
+  uint32_t source_asset_anchor_id() const { return source_asset_anchor_id_; }
+  void set_source_asset_anchor_id(uint32_t id) { source_asset_anchor_id_ = id; }
 
   /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
   /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
   /// Used for the automatic time scaling between layers authored at
   /// different rates (sublayer/reference arcs).
-  double effective_timeCodesPerSecond() const {
-    if (meta_.timeCodesPerSecond_set) return meta_.timeCodesPerSecond;
-    if (meta_.framesPerSecond_set) return meta_.framesPerSecond;
-    return 24.0;
-  }
+  double effective_timeCodesPerSecond() const;
 
   // ============================================================
   // Memory
@@ -312,11 +336,25 @@ public:
   Stats stats() const;
 
 private:
+  // Build the deferred path index on first use (see set_lazy_path_index).
+  void ensure_path_index() const;
+
   std::vector<PrimSpec> prims_;
   std::vector<uint32_t> root_indices_;
   std::unordered_map<std::string, uint32_t> path_to_index_;
   LayerMeta meta_;
   bool finalized_ = false;
+  bool lazy_path_index_ = false;
+  // Holder-mode instance flattening leaves instance members referencing the
+  // de-instanced holder prim instead of duplicating its subtree. Child
+  // enumeration and proxy lookup expand that link. ExtractedPrototypes keeps
+  // members orphaned on purpose so a writer preserves explicit prototype
+  // references, so this is a per-layer runtime flag, not model metadata.
+  bool instance_holder_links_ = false;
+  uint32_t source_asset_anchor_id_ = 0;
+  // Set by finalize() when the index was deferred; cleared by the build.
+  mutable std::atomic<bool> path_index_dirty_{false};
+  std::shared_ptr<PrimFiller> prim_filler_;
 };
 
 /// Layer builder - helper for constructing layers from parsed data
@@ -350,8 +388,10 @@ public:
   /// Add property to current prim
   void add_property(const std::string& name, Value value, uint16_t flags = 0);
 
-  /// Add time sample to current prim
-  void add_time_sample(const std::string& prop_name, double time, Value value);
+  /// Add time sample to current prim. `dedup=false` skips content-hash dedup
+  /// (deferred-fill values from the batched USDA array parse; see PrimSpec).
+  void add_time_sample(const std::string& prop_name, double time, Value value,
+                       bool dedup = true);
 
   /// Add relationship to current prim
   void add_relationship(const std::string& name, const Path& target);
@@ -365,6 +405,16 @@ public:
 
   /// Finalize the layer
   void finalize();
+
+  /// True if the layer already holds a prim at `path_str` (same lookup
+  /// begin_prim() uses to re-open duplicate siblings).
+  bool contains_path(const std::string& path_str);
+
+  /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
+  /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose
+  /// fragment root is not a real layer root. Empty (default) keeps the normal
+  /// root behavior.
+  void set_path_prefix(std::string prefix);
 
 private:
   /// Index of the prim already at `path_str`, or UINT32_MAX.
@@ -388,6 +438,7 @@ private:
   std::unordered_map<std::string, uint32_t> path_index_;
   size_t indexed_prim_count_ = 0;
   bool path_index_built_ = false;
+  std::string path_prefix_;
 };
 
 }  // namespace next

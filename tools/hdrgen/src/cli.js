@@ -20,11 +20,17 @@ const __dirname = path.dirname(__filename);
 function parseArgs(argv) {
   const args = {
     preset: 'white-furnace',
+    input: null,
     width: 2048,
     height: 1024,
     projection: 'latlong',
     format: 'hdr',
     output: null,
+    importanceMap: null,
+    exrCompression: 'zips',
+    prefilter: null,
+    timeSequence: null,
+    previewHtml: null,
     presetOptions: {},
     rotation: 0,
     intensityScale: 1.0,
@@ -43,6 +49,8 @@ function parseArgs(argv) {
       args.help = true;
     } else if (arg === '-p' || arg === '--preset') {
       args.preset = argv[++i];
+    } else if (arg === '-i' || arg === '--input') {
+      args.input = argv[++i];
     } else if (arg === '-w' || arg === '--width') {
       args.width = parseInt(argv[++i]);
     } else if (arg === '--height') {
@@ -53,6 +61,28 @@ function parseArgs(argv) {
       args.format = argv[++i];
     } else if (arg === '-o' || arg === '--output') {
       args.output = argv[++i];
+    } else if (arg === '--importance-map') {
+      args.importanceMap = argv[++i];
+    } else if (arg === '--exr-compression') {
+      args.exrCompression = argv[++i];
+    } else if (arg === '--prefilter-dir') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.directory = argv[++i];
+    } else if (arg === '--prefilter-size') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.width = parseInt(argv[++i]);
+      args.prefilter.height = Math.max(1, Math.floor(args.prefilter.width / 2));
+    } else if (arg === '--prefilter-levels') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.levels = parseInt(argv[++i]);
+    } else if (arg === '--prefilter-samples') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.samples = parseInt(argv[++i]);
+    } else if (arg === '--time-sequence') {
+      const fields = argv[++i].split(':').map(Number);
+      args.timeSequence = { start: fields[0], end: fields[1], step: fields[2] ?? 1 };
+    } else if (arg === '--preview-html') {
+      args.previewHtml = argv[++i];
     }
     // Transform options
     else if (arg === '--rotation' || arg === '--rotate') {
@@ -77,6 +107,8 @@ function parseArgs(argv) {
       args.presetOptions.sunIntensity = parseFloat(argv[++i]);
     } else if (arg === '--sky-intensity') {
       args.presetOptions.skyIntensity = parseFloat(argv[++i]);
+    } else if (arg === '--ground-intensity') {
+      args.presetOptions.groundIntensity = parseFloat(argv[++i]);
     }
     // Studio options
     else if (arg === '--key-intensity') {
@@ -106,12 +138,21 @@ USAGE:
 
 OPTIONS:
   -h, --help              Show this help message
-  -p, --preset <name>     Preset name (white-furnace, sun-sky, studio) [default: white-furnace]
+  -p, --preset <name>     Preset: white-furnace, sun-sky, sunset, overcast, studio
+  -i, --input <path>      Transform an existing lat-long .hdr or .exr panorama
   -w, --width <px>        Width in pixels [default: 2048]
   --height <px>           Height in pixels [default: 1024]
   --projection <type>     Projection type (latlong, cubemap) [default: latlong]
   -f, --format <fmt>      Output format (hdr, exr, png, bmp, jpg) [default: hdr]
   -o, --output <path>     Output file path [default: output/<preset>_<proj>.<fmt>]
+  --importance-map <path> Write lat-long luminance/solid-angle CDFs as JSON
+  --exr-compression <mode> OpenEXR compression: zips or none [default: zips]
+  --prefilter-dir <path>   Write diffuse/GGX IBL maps and manifest to directory
+  --prefilter-size <px>    Specular level-0 width [default: 64]
+  --prefilter-levels <n>   Number of GGX roughness levels [default: 6]
+  --prefilter-samples <n>  Samples per output texel [default: 64]
+  --time-sequence <a:b:s> Generate inclusive solar-hour range start:end:step
+  --preview-html <path>   Write a self-contained draggable panorama preview
 
 TRANSFORM OPTIONS:
   --rotation <deg>        Rotate environment map (degrees, +CCW) [default: 0]
@@ -130,6 +171,7 @@ SUN & SKY OPTIONS:
   --sun-azimuth <deg>     Sun azimuth angle in degrees [default: 135]
   --sun-intensity <val>   Sun disk intensity [default: 100.0]
   --sky-intensity <val>   Base sky intensity [default: 0.5]
+  --ground-intensity <v>  Overcast lower-hemisphere bounce [default: 0.08]
 
 STUDIO LIGHTING OPTIONS:
   --key-intensity <val>   Key light intensity [default: 50.0]
@@ -165,12 +207,14 @@ EXAMPLES:
 PRESETS:
   white-furnace  - Uniform white environment for energy conservation testing
   sun-sky        - Procedural sky with sun disk and atmospheric gradient
+  sunset         - Warm low sun with a dusk sky gradient
+  overcast       - CIE-style diffuse sky with neutral ground bounce
   studio         - 3-point lighting setup (key, fill, rim lights)
 
 FORMATS:
   HDR Formats:
     hdr          - Radiance RGBE format (.hdr)
-    exr          - OpenEXR format (.exr) [requires external library]
+    exr          - OpenEXR v2 float scanlines (.exr; ZIPS by default)
 
   LDR Formats (with automatic tone mapping):
     png          - PNG format (.png) [uncompressed]
@@ -222,15 +266,18 @@ async function main() {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
+    if (args.importanceMap) {
+      fs.mkdirSync(path.dirname(args.importanceMap), { recursive: true });
+    }
   } catch (err) {
     console.error(`Error creating output directory: ${err.message}`);
     process.exit(1);
   }
 
   try {
-    // Generate environment map
-    HDRGenerator.generate({
+    const generationOptions = {
       preset: args.preset,
+      input: args.input,
       width: args.width,
       height: args.height,
       projection: args.projection,
@@ -239,8 +286,20 @@ async function main() {
       presetOptions: args.presetOptions,
       rotation: args.rotation,
       intensityScale: args.intensityScale,
-      tonemapOptions: args.tonemapOptions
-    });
+      tonemapOptions: args.tonemapOptions,
+      importanceMap: args.importanceMap,
+      exrCompression: args.exrCompression,
+      prefilter: args.prefilter,
+      previewHtml: args.previewHtml
+    };
+    if (args.timeSequence) {
+      HDRGenerator.generateTimeSequence({
+        ...generationOptions,
+        ...args.timeSequence
+      });
+    } else {
+      HDRGenerator.generate(generationOptions);
+    }
 
     console.log('\n✓ Generation complete!');
     console.log(`Output: ${args.output}\n`);

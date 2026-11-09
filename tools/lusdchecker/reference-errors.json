@@ -1,0 +1,351 @@
+{
+  "referenceCommit": "2095fafafd033fa23386d7ec6d58c7cc33974518",
+  "errors": {
+    "usdGeomValidators:EncapsulationChecker.InvalidNestedGprims": {
+      "rules": [
+        "geom.encapsulation.nestedGprim"
+      ],
+      "site": "prim"
+    },
+    "usdGeomValidators:StageMetadataChecker.MissingMetersPerUnitMetadata": {
+      "rules": [
+        "geom.stage.metersPerUnit"
+      ],
+      "site": "layer"
+    },
+    "usdGeomValidators:StageMetadataChecker.MissingUpAxisMetadata": {
+      "rules": [
+        "geom.stage.upAxis"
+      ],
+      "site": "layer"
+    },
+    "usdGeomValidators:SubsetFamilies.InvalidSubsetFamily": {
+      "rules": [
+        "geom.subset.familyOverlap",
+        "geom.subset.familyPartition",
+        "geom.subset.familyType",
+        "geom.subset.indices"
+      ],
+      "site": "subtree"
+    },
+    "usdGeomValidators:SubsetParentIsImageable.NotImageableSubsetParent": {
+      "rules": [
+        "geom.subset.parent"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ArticulationChecker.ArticulationOnStaticBody": {
+      "rules": [
+        "physics.articulation.staticBody"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ArticulationChecker.NestedArticulation": {
+      "rules": [
+        "physics.articulation.nested"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ColliderChecker.ColliderNonUniformScale": {
+      "rules": [
+        "physics.collider.nonUniformScale"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ColliderChecker.ColliderSpherePointsDataMissing": {
+      "rules": [
+        "physics.collider.points"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ColliderChecker.DensityInvalidValues": {
+      "rules": [
+        "physics.density"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ColliderChecker.InertiaInvalidValues": {
+      "rules": [
+        "physics.inertia"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:ColliderChecker.MassInvalidValues": {
+      "rules": [
+        "physics.mass"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:PhysicsJointChecker.JointInvalidPrimRel": {
+      "rules": [
+        "physics.joint.bodyTarget",
+        "physics.joint.body"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:PhysicsJointChecker.JointMultiplePrimsRel": {
+      "rules": [
+        "physics.joint.bodyCount",
+        "physics.joint.body"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.DensityInvalidValues": {
+      "rules": [
+        "physics.density"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.InertiaInvalidValues": {
+      "rules": [
+        "physics.inertia"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.MassInvalidValues": {
+      "rules": [
+        "physics.mass"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.RigidBodyNonInstanceable": {
+      "rules": [
+        "physics.rigidBody.instanceProxy"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.RigidBodyNonXformable": {
+      "rules": [
+        "physics.rigidBody.xformable"
+      ],
+      "site": "prim"
+    },
+    "usdPhysicsValidators:RigidBodyChecker.RigidBodyOrientationScale": {
+      "rules": [
+        "physics.rigidBody.scaleOrientation"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:EncapsulationMaterialValidator.InvalidConnectableInMaterial": {
+      "rules": [
+        "shade.encapsulation.imageableInMaterial",
+        "shade.encapsulation.shaderParent"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:EncapsulationMaterialValidator.InvalidImageableInMaterial": {
+      "rules": [
+        "shade.encapsulation.imageableInMaterial"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:EncapsulationRulesValidator.ConnectableInNonContainer": {
+      "rules": [
+        "shade.encapsulation.shaderParent"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:EncapsulationRulesValidator.InvalidConnectableHierarchy": {
+      "rules": [
+        "shade.encapsulation.shaderParent"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:MaterialBindingApiAppliedValidator.MissingMaterialBindingAPI": {
+      "rules": [
+        "shade.material.bindingAPI"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:MaterialBindingCollectionValidator.InvalidMaterialCollection": {
+      "rules": [
+        "shade.collection.binding"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:MaterialBindingCollectionValidator.InvalidResourcePath": {
+      "rules": [
+        "shade.material.binding",
+        "shade.collection.binding"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:MaterialBindingRelationships.MaterialBindingPropNotARel": {
+      "rules": [
+        "shade.material.binding"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.InvalidFile": {
+      "rules": [
+        "shade.normalMap.file",
+        "core.dependency.unresolvable"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.InvalidShaderPrim": {
+      "rules": [
+        "shade.normalMap.connection"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.InvalidSourceColorSpace": {
+      "rules": [
+        "shade.normalMap.scaleBias"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.NonCompliantBiasAndScale": {
+      "rules": [
+        "shade.normalMap.scaleBias"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.NonCompliantBiasValues": {
+      "rules": [
+        "shade.normalMap.scaleBias"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.NonCompliantScaleValues": {
+      "rules": [
+        "shade.normalMap.scaleBias"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:NormalMapTextureValidator.NonShaderConnection": {
+      "rules": [
+        "shade.normalMap.connection"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.IncompatShaderPropertyWarning": {
+      "rules": [
+        "shade.shader.sourceTypeConflict"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.InvalidImplementationSrc": {
+      "rules": [
+        "shade.shader.implementationSource"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.MismatchedPropertyType": {
+      "rules": [
+        "shade.shader.typeMismatch",
+        "shade.preview.inputType",
+        "shade.primvarReader.result"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.MissingShaderIdInRegistry": {
+      "rules": [
+        "shade.shader.id"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.MissingSourceType": {
+      "rules": [
+        "shade.shader.sourceType"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:ShaderSdrCompliance.MissingSourceTypeInRegistry": {
+      "rules": [
+        "shade.shader.id",
+        "checker.coverage.shader"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:SubsetMaterialBindFamilyName.MissingFamilyNameOnGeomSubset": {
+      "rules": [
+        "shade.subset.materialBindFamily"
+      ],
+      "site": "prim"
+    },
+    "usdShadeValidators:SubsetsMaterialBindFamily.InvalidFamilyType": {
+      "rules": [
+        "shade.subset.materialBindFamily"
+      ],
+      "site": "prim"
+    },
+    "usdSkelValidators:SkelBindingApiAppliedValidator.MissingSkelBindingAPI": {
+      "rules": [
+        "geom.skel.binding.api"
+      ],
+      "site": "prim"
+    },
+    "usdSkelValidators:SkelBindingApiValidator.InvalidSkelBindingAPIApply": {
+      "rules": [
+        "geom.skel.binding.root"
+      ],
+      "site": "prim"
+    },
+    "usdUtilsValidators:FileExtensionValidator.UnsupportedFileExtensionInPackage": {
+      "rules": [
+        "package.entry.extension"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:MissingReferenceValidator.UnresolvableDependency": {
+      "rules": [
+        "core.dependency.unresolvable",
+        "core.composition.error",
+        "package.dependency.missing"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:PackageEncapsulationValidator.AssetNotInPackage": {
+      "rules": [
+        "package.dependency.external"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:PackageEncapsulationValidator.LayerNotInPackage": {
+      "rules": [
+        "package.dependency.external"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:RootPackageValidator.InvalidLayerInPackage": {
+      "rules": [
+        "package.root.first"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:UsdzPackageValidator.ByteMisalignment": {
+      "rules": [
+        "package.entry.alignment"
+      ],
+      "site": "layer"
+    },
+    "usdUtilsValidators:UsdzPackageValidator.CompressionDetected": {
+      "rules": [
+        "package.entry.compression",
+        "package.entry.encryption"
+      ],
+      "site": "layer"
+    },
+    "usdValidation:AttributeTypeMismatch.AttributeTypeMismatch": {
+      "rules": [
+        "core.schema.attributeType",
+        "core.composition.attributeTypeMismatch"
+      ],
+      "site": "prim"
+    },
+    "usdValidation:CompositionErrorTest.CompositionError": {
+      "rules": [
+        "core.composition.error"
+      ],
+      "site": "layer"
+    },
+    "usdValidation:StageMetadataChecker.MissingDefaultPrim": {
+      "rules": [
+        "core.layer.defaultPrim.missing",
+        "core.layer.defaultPrim"
+      ],
+      "site": "layer"
+    }
+  }
+}

@@ -926,13 +926,13 @@ int c_lightusd_animation_get_sampler(const CLightUSDAnimationClip *a,
       !out_n_values || !out_interpolation) return 0;
   if (idx >= RA(a)->samplers.size()) return 0;
   const KeyframeSampler &s = RA(a)->samplers[idx];
-  int interpolation = 0;
+  int interpolation = -1;
   switch (s.interpolation) {
     case AnimationInterpolation::Step:        interpolation = 0; break;
     case AnimationInterpolation::Linear:      interpolation = 1; break;
     case AnimationInterpolation::CubicSpline: interpolation = 2; break;
-    default: return 0;
   }
+  if (interpolation < 0) return 0;
   *out_times  = s.times.empty()  ? nullptr : s.times.data();
   *out_n_times  = static_cast<uint64_t>(s.times.size());
   *out_values = s.values.empty() ? nullptr : s.values.data();

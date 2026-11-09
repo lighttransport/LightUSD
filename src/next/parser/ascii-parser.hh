@@ -7,6 +7,8 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "parse-options.hh"
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
@@ -14,46 +16,20 @@
 namespace lightusd {
 namespace next {
 
+class Lexer;
+struct ArrayEditData;
+
+/// Parse a VtArrayEdit value `edit [ <op>; ... ]` from `lexer` (positioned at
+/// the `edit` keyword). Literals are validated against `elem_type`; returns
+/// the canonical one-line spelling and, when `out_edit` is non-null, the
+/// structured op list.
+bool ParseArrayEditText(Lexer& lexer, TypeId elem_type, std::string* canonical,
+                        ArrayEditData* out_edit, std::string* err);
+
 /// Options for parsing USDA files
-struct ParseOptions {
-  /// Enforce AOUSD Core grammar and fail rather than accepting constructs that
-  /// next cannot interpret conformantly. The default keeps legacy permissive
-  /// ingestion, but lossy constructs are still preserved and diagnosed.
-  bool strict_aousd_conformance = false;
-
-  /// Allow unknown/unrecognized prim types (stored as generic prims)
-  bool allow_unknown_types = true;
-
-  /// Maximum file size to parse (0 = no limit)
-  size_t max_file_size = 0;
-
-  /// Enable USDA array lazy-materialization mode.
-  ///
-  /// When true, numeric/textual array literals may be kept as lazy references
-  /// against a retained input-buffer copy. Values are parsed and decoded on first
-  /// materialization through a lazy `Value::materialize()` path.
-  bool enable_usda_lazy_arrays = false;
-
-  /// Maximum elements accepted for USDA array lazy-materialization (hard cap per
-  /// array). Arrays larger than this are parsed eagerly. 0 means no cap.
-  size_t max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
-
-  /// Maximum nesting depth for prims
-  size_t max_depth = 256;
-
-  /// Worker-thread hint for the parallel large-array parse path (when built with
-  /// LIGHTUSD_ENABLE_THREAD). 0 = auto (min(hardware_concurrency, 8)); 1 =
-  /// serial; >1 = that many workers. Replaces the former LIGHTUSD_NEXT_NUM_THREADS
-  /// env read so the library takes no implicit process-environment input.
-  int num_threads = 0;
-};
+// (moved below includes)
 
 /// Error information from parsing
-struct ParseError {
-  size_t line = 0;
-  size_t column = 0;
-  std::string message;
-};
 
 /// USDA ASCII Parser
 /// Parses USD ASCII format files into a Stage
@@ -103,6 +79,11 @@ public:
 
   /// Get warning messages
   const std::vector<std::string>& GetWarnings() const;
+
+  /// True when the last parse completed on the batched/parallel fast path
+  /// (ParseOptions::async_arrays / parallel_prims) rather than the serial
+  /// parser. Diagnostics/testing only: results are identical either way.
+  bool UsedFastPath() const;
 
 private:
   class Impl;

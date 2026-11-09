@@ -20,8 +20,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   if (!loaded.success) return 0;
 
   lightusd::tydra::next::ConverterConfig config;
-  config.max_render_depth = 64;
-  config.max_render_records = 4096;
+  config.limits.max_namespace_depth = 64;
+  config.limits.max_render_records = 4096;
   config.mesh.sphere_subdivisions = 1;
   config.mesh.compute_tangents = false;
   config.material.load_textures = false;

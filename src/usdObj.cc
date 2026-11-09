@@ -1,277 +1,187 @@
 // SPDX-License-Identifier: MIT
-//
-// Built-in .obj import plugIn.
-// Import only. Writing scene data as .obj is not supported.
-//
-// example usage
-//
-// def "mesh" (
-//   prepend references = @bunny.obj@
-// )
-// {
-//    ...
-// }
-
-#include <string>
-
-#include "lightusd.hh"
-#include "usdGeom.hh"  // GPrim (no longer re-exported by lightusd.hh)
-#include "io-util.hh"
-#include "linear-algebra.hh"
-#include "security-policy.hh"
-#include "safe-arithmetic.hh"
 #include "usdObj.hh"
 
-//#include "math-util.inc"
+#include <algorithm>
+#include <limits>
 
-#ifdef LIGHTUSD_USE_USDOBJ
-
-// Assume implementation is done in external/tiny_obj_loader.cc
-//#define TINYOBJLOADER_IMPLEMENTATION
-#include "external/tiny_obj_loader.h"
-
-#endif
+#include "core/composition-types.hh"
+#include "lightusd.hh"
+#include "core/security-policy.hh"
+#include "tydra/asset-import/import.hh"
+#include "tydra/urdf-to-usd.hh"
+#include "usdGeom.hh"
+#include "usda-writer.hh"
 
 namespace lightusd {
-
 namespace usdObj {
-
 namespace {
-
-
-
+template <class T>
+void Set(GPrim* prim, const char* name, T value,
+         Interpolation interpolation = Interpolation::Constant) {
+  Attribute attr;
+  attr.set_value(std::move(value));
+  attr.metas().set_interpolation_enum(interpolation);
+  prim->props[name] = Property(std::move(attr), false);
 }
-
-bool ReadObjFromFile(const std::string &filepath, lightusd::GPrim *prim, std::string *err)
-{
-#if !defined(LIGHTUSD_USE_USDOBJ)
-  (void)filepath;
-  (void)prim;
-  if (err) {
-    (*err) = "usdObj is disabled in this build.\n";
-  }
-  return false;
-#else
-
-  std::vector<uint8_t> buf;
-  if (!io::ReadWholeFile(&buf, err, filepath,
-                         security_policy::GetMaxAssetReadBytes(),
-                         /* user_ptr */ nullptr)) {
+[[maybe_unused]] bool Geometry(const std::string& text, GPrim* prim,
+                               std::string* err) {
+  if (!prim) {
+    if (err) *err = "OBJ output prim is null";
     return false;
   }
-
-  std::string str(reinterpret_cast<const char *>(buf.data()), buf.size());
-
-  return ReadObjFromString(str, prim, err);
-
-#endif
-
-}
-
-
-bool ReadObjFromString(const std::string &str, lightusd::GPrim *prim, std::string *err)
-{
-#if !defined(LIGHTUSD_USE_USDOBJ)
-  (void)str;
-  (void)prim;
-  if (err) {
-    (*err) = "usdObj is disabled in this build.\n";
+  tydra::import_asset::Options options;
+  options.max_memory = security_policy::GetMaxAssetReadBytes();
+  options.max_input = options.max_memory;
+  tydra::import_asset::Reader reader(options);
+  reader.allow_unanchored = false;
+  tydra::import_asset::OBJ obj;
+  if (!reader.Charge(text.size(), err) ||
+      !tydra::import_asset::ReadOBJ(text, "", reader, false, &obj, err))
+    return false;
+  std::vector<value::point3f> points;
+  std::vector<value::normal3f> normals;
+  std::vector<value::texcoord2f> uv;
+  std::vector<int32_t> counts, indices;
+  bool all_uv = true;
+  int32_t influences = 0;
+  std::vector<int32_t> joint_indices;
+  std::vector<float> joint_weights;
+  for (const auto& mesh : obj.meshes) {
+    if (mesh.type != "Mesh") continue;
+    influences = std::max(influences, mesh.influences);
+    joint_indices.insert(joint_indices.end(), mesh.joint_indices.begin(),
+                         mesh.joint_indices.end());
+    joint_weights.insert(joint_weights.end(), mesh.joint_weights.begin(),
+                         mesh.joint_weights.end());
+    int32_t base = static_cast<int32_t>(points.size());
+    for (size_t i = 0; i < mesh.positions.size(); i += 3)
+      points.push_back(
+          {mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]});
+    for (size_t i = 0; i < mesh.normals.size(); i += 3)
+      normals.push_back(
+          {mesh.normals[i], mesh.normals[i + 1], mesh.normals[i + 2]});
+    for (size_t i = 0; i < mesh.uvs.size(); i += 2)
+      uv.push_back({mesh.uvs[i], mesh.uvs[i + 1]});
+    all_uv &= mesh.uvs.size() == mesh.positions.size() / 3 * 2;
+    counts.insert(counts.end(), mesh.counts.begin(), mesh.counts.end());
+    for (int32_t i : mesh.indices) indices.push_back(base + i);
   }
-  return false;
-#else
-
-  tinyobj::ObjReaderConfig config;
-  // do not triangulate
-  config.triangulate = false;
-
-  tinyobj::ObjReader reader;
-
-  // ignore material
-  const std::string mtl_text;
-
-  bool ret = reader.ParseFromString(str, mtl_text, config);
-
-  if (!ret) {
-    if (err) {
-      (*err) += reader.Warning();
-      (*err) += reader.Error();
-    }
-
+  if (counts.empty()) {
+    if (err) *err = "Geometry-only OBJ API requires polygon faces";
     return false;
   }
-
-  const auto &attrs = reader.GetAttrib();
-
-  Attribute pointsAttr;
-  if ((attrs.vertices.size() % 3) != 0) {
-    if (err) {
-      (*err) += "[usdObj] Invalid vertices data.\n";
-    }
-    return false;
+  if (influences > 0) {
+    Set(prim, "primvars:skel:jointIndices", std::move(joint_indices),
+        Interpolation::Vertex);
+    Set(prim, "primvars:skel:jointWeights", std::move(joint_weights),
+        Interpolation::Vertex);
+    for (const char* name :
+         {"primvars:skel:jointIndices", "primvars:skel:jointWeights"})
+      prim->props[name].attribute().metas().set_elementSize(
+          static_cast<uint32_t>(influences));
+    APISchemas apis = prim->metas().has_apiSchemas()
+                          ? prim->metas().get_apiSchemas()
+                          : APISchemas{};
+    apis.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+    prim->metas().set_apiSchemas(apis);
   }
-
-  // std::vector<float> -> std::vector<value::float3>
-  std::vector<value::float3> pts(attrs.vertices.size() / 3);
-  size_t byte_count;
-  if (!safe::mul(attrs.vertices.size() / 3, size_t(3), &byte_count)) {
-    return false;
-  }
-  if (!safe::mul(byte_count, sizeof(float), &byte_count)) {
-    return false;
-  }
-  memcpy(pts.data(), attrs.vertices.data(), byte_count);
-  primvar::PrimVar ptsVar;
-  ptsVar.set_value(pts);
-  pointsAttr.set_var(std::move(ptsVar));
-  Property pointsProp(pointsAttr, /* custom */false);
-  prim->props.emplace("points", pointsProp);
-
-  const auto &shapes = reader.GetShapes();
-
-  // Combine all shapes into single mesh.
-  std::vector<int32_t> vertexIndices;
-  std::vector<int32_t> vertexCounts;
-
-  // Make normals and texcoords facevarying
-  // TODO: provide indices for each normals and uvs
-  std::vector<value::float2> facevaryingTexcoords;
-  std::vector<value::float3> facevaryingNormals;
-
-  {
-    size_t index_offset = 0;
-
-    for (size_t i = 0; i < shapes.size(); i++) {
-      const tinyobj::shape_t &shape = shapes[i];
-
-      for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
-        size_t num_v = shape.mesh.num_face_vertices[f];
-
-        vertexCounts.push_back(int32_t(num_v));
-
-        if (num_v < 3) {
-          if (err) {
-            (*err) = "Degenerated face found.";
-          }
-          return false;
-        }
-
-        size_t num_fvn = 0;
-        for (size_t v = 0; v < num_v; v++) {
-          tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
-          vertexIndices.push_back(int32_t(idx.vertex_index));
-
-          if (idx.normal_index > -1) {
-            value::float3 normal;
-            normal[0] = attrs.normals[3 * size_t(idx.normal_index) + 0];
-            normal[1] = attrs.normals[3 * size_t(idx.normal_index) + 1];
-            normal[2] = attrs.normals[3 * size_t(idx.normal_index) + 2];
-            facevaryingNormals.push_back(normal);
-            num_fvn++;
-          } else {
-            facevaryingNormals.push_back({0.0f, 0.0f, 0.0f});
-          }
-
-          if (idx.texcoord_index > -1) {
-            value::float2 texcoord;
-            texcoord[0] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 0];
-            texcoord[1] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 1];
-          } else {
-            facevaryingTexcoords.push_back({0.0f, 0.0f});
-          }
-        }
-
-        if (num_fvn == 0) {
-          // No per-vertex normal.
-          // Compute geometric normal from p0, p1, p(N-1)
-          // This won't give correct geometric normal for n-gons(n >= 4)
-          value::float3 p0, p1, p2;
-
-          uint32_t vidx0 = uint32_t(shape.mesh.indices[index_offset + 0].vertex_index);
-          uint32_t vidx1 = uint32_t(shape.mesh.indices[index_offset + 1].vertex_index);
-          uint32_t vidx2 = uint32_t(shape.mesh.indices[index_offset + (num_v - 1)].vertex_index);
-
-          p0[0] = attrs.vertices[3 * vidx0 + 0];
-          p0[1] = attrs.vertices[3 * vidx0 + 1];
-          p0[2] = attrs.vertices[3 * vidx0 + 2];
-
-          p1[0] = attrs.vertices[3 * vidx1 + 0];
-          p1[1] = attrs.vertices[3 * vidx1 + 1];
-          p1[2] = attrs.vertices[3 * vidx1 + 2];
-
-          p2[0] = attrs.vertices[3 * vidx2 + 0];
-          p2[1] = attrs.vertices[3 * vidx2 + 1];
-          p2[2] = attrs.vertices[3 * vidx2 + 2];
-
-          value::float3 n = geometric_normal(p0, p1, p2);
-
-          for (size_t v = 0; v < num_v; v++) {
-            facevaryingNormals.push_back(n);
-          }
-        }
-
-        // TODO: normal, texcoords
-
-        index_offset += num_v;
-      }
-
-
-    }
-
-    // TODO: per-face material?
-  }
-
-  {
-    primvar::PrimVar var;
-    var.set_value(vertexIndices);
-    Attribute attr;
-    attr.set_var(std::move(var));
-    Property prop(attr, false);
-    prim->props.emplace("faceVertexIndices", prop);
-  }
-
-  {
-    primvar::PrimVar var;
-    var.set_value(vertexCounts);
-    Attribute attr;
-    attr.set_var(std::move(var));
-    Property prop(attr, false);
-    prim->props.emplace("faceVertexCounts", prop);
-  }
-
-  {
-    primvar::PrimVar var;
-    var.set_value(facevaryingNormals);
-
-    Attribute normalsAttr;
-    normalsAttr.metas().set_interpolation_enum(Interpolation::FaceVarying);
-    normalsAttr.variability() = Variability::Varying;
-    normalsAttr.set_var(std::move(var));
-    Property prop(normalsAttr, false);
-
-    // Use primvars::normals?
-    prim->props.emplace("primvars::normals", prop);
-  }
-
-  {
-    primvar::PrimVar var;
-    var.set_value(facevaryingTexcoords);
-
-    Attribute texcoordsAttr;
-    texcoordsAttr.metas().set_interpolation_enum(Interpolation::FaceVarying);
-    texcoordsAttr.variability() = Variability::Varying;
-    texcoordsAttr.set_var(std::move(var));
-    Property prop(texcoordsAttr, false);
-
-
-    prim->props.emplace("prmvars:uv", prop);
-  }
-
-  // TODO: read skin weight/indices
-
+  Set(prim, "points", std::move(points));
+  Set(prim, "faceVertexCounts", std::move(counts));
+  Set(prim, "faceVertexIndices", std::move(indices));
+  Set(prim, "normals", std::move(normals), Interpolation::Vertex);
+  if (all_uv)
+    Set(prim, "primvars:st", std::move(uv), Interpolation::Vertex);
+  else
+    prim->props.erase("primvars:st");
+  Set(prim, "subdivisionScheme", value::token("none"));
   return true;
+}
+}  // namespace
+bool ReadObjFromString(const std::string& text, GPrim* prim, std::string* err) {
+#if defined(LIGHTUSD_USE_USDOBJ)
+  return Geometry(text, prim, err);
+#else
+  (void)text;
+  (void)prim;
+  if (err) *err = "usdObj is disabled in this build";
+  return false;
 #endif
 }
+bool ReadObjFromFile(const std::string& file, GPrim* prim, std::string* err) {
+  tydra::import_asset::Options options;
+  options.max_memory = security_policy::GetMaxAssetReadBytes();
+  options.max_input = options.max_memory;
+  tydra::import_asset::Reader reader(options);
+  std::vector<uint8_t> bytes;
+  std::string resolved;
+  if (!reader.Read(file, "", &bytes, &resolved, err)) return false;
+  return ReadObjFromString(
+      std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()),
+      prim, err);
+}
+bool ReadObjStageFromFile(const std::string& file, Stage* stage,
+                          std::string* warn, std::string* err) {
+#if defined(LIGHTUSD_WITH_TYDRA) && defined(LIGHTUSD_USE_USDOBJ)
+  tydra::import_asset::Options options;
+  options.format = "obj";
+  tydra::import_asset::Result result;
+  if (!tydra::import_asset::BuildOBJPayloadFile(file, options, &result, err))
+    return false;
+  std::string converter_warn;
+  bool ok = tydra::ConvertURDFPayloadToUSDStage(result.payload, stage,
+                                                &converter_warn, err);
+  if (warn) *warn = result.warnings + converter_warn;
+  return ok;
+#else
+  (void)file;
+  (void)stage;
+  (void)warn;
+  if (err) *err = "OBJ stage conversion requires usdObj and Tydra";
+  return false;
+#endif
+}
+bool ReadObjStageFromMemory(const std::string& text, const std::string& source,
+                            Stage* stage,
+                            const tydra::import_asset::Options& options,
+                            std::string* warn, std::string* err) {
+#if defined(LIGHTUSD_WITH_TYDRA) && defined(LIGHTUSD_USE_USDOBJ)
+  tydra::import_asset::Result result;
+  if (!tydra::import_asset::BuildOBJPayload(text, source, options, &result,
+                                            err))
+    return false;
+  std::string extra;
+  const bool ok =
+      tydra::ConvertURDFPayloadToUSDStage(result.payload, stage, &extra, err);
+  if (warn) *warn += result.warnings + extra;
+  return ok;
+#else
+  (void)text;
+  (void)source;
+  (void)stage;
+  (void)options;
+  (void)warn;
+  if (err) *err = "OBJ stage conversion requires usdObj and Tydra";
+  return false;
+#endif
+}
+bool ReadObjLayerFromMemory(const std::string& text, const std::string& source,
+                            Layer* layer,
+                            const tydra::import_asset::Options& options,
+                            std::string* warn, std::string* err) {
+  Stage stage;
+  if (!ReadObjStageFromMemory(text, source, &stage, options, warn, err))
+    return false;
+  std::string usda;
+  if (!usda::ExportToUSDAString(stage, &usda, warn, err)) return false;
+  USDLoadOptions load_options;
+  const size_t memory_mib =
+      std::max(size_t(1), options.max_memory / (1024 * 1024));
+  load_options.max_memory_limit_in_mb = static_cast<int32_t>(std::min(
+      memory_mib, static_cast<size_t>((std::numeric_limits<int32_t>::max)())));
+  return LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
+                             usda.size(), source, layer, warn, err,
+                             load_options);
+}
 
-} // namespace usdObj
-
-} // lightusd
+}  // namespace usdObj
+}  // namespace lightusd

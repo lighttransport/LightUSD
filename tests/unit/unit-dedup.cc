@@ -1696,3 +1696,103 @@ void inline_inf_double_test(void) {
              *vn->as<double>() < 0.0);
   TEST_CHECK(vx && vx->as<double>() && *vx->as<double>() == 0.1);
 }
+
+// Variable array size (per-sample element count differs) roundtrip through
+// USDC, exercising the binary `_array_counts` storage. Each frame carries a
+// different length; verify every sample's count and contents survive.
+void dedup_variable_array_size_roundtrip_test(void) {
+  value::TimeSamples ts;
+  std::vector<std::vector<float>> expected;
+  for (int f = 0; f < 12; ++f) {
+    size_t n = (f == 0) ? 0 : (size_t(f) * 3 + (f % 4));
+    std::vector<float> a(n);
+    for (size_t i = 0; i < n; ++i) a[i] = float(f) * 0.5f + float(i);
+    expected.push_back(a);
+    if (n == 0) {
+      ts.add_array_blocked_sample<float>(double(f));
+    } else {
+      ts.add_array_sample<float>(double(f), a.data(), a.size());
+    }
+  }
+
+  const std::vector<float> default_arr = {1.0f, 2.0f};
+  Stage stage = MakeAnimStage("VarArrSize", "float[]", ts, value::Value(default_arr));
+
+  const std::string fn = TempPath("test_var_arr_size.usdc");
+  TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+
+  const value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrSize", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (!rts) return;
+  TEST_CHECK(rts->size() == expected.size());
+  if (rts->size() != expected.size()) return;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    if (expected[i].empty()) {
+      std::vector<float> got;
+      bool blocked = false;
+      const bool ok = rts->get_vector_at<float>(i, &got, &blocked);
+      TEST_CHECK_(blocked, "frame %zu expected blocked/empty", i);
+      (void)ok; (void)got;
+    } else {
+      std::vector<float> got;
+      bool blocked = false;
+      const bool ok = rts->get_vector_at<float>(i, &got, &blocked);
+      TEST_CHECK_(ok && !blocked, "frame %zu read failed", i);
+      TEST_CHECK_(got.size() == expected[i].size(), "frame %zu count %zu vs %zu", i, got.size(), expected[i].size());
+      if (got.size() == expected[i].size()) {
+        for (size_t k = 0; k < got.size(); ++k) TEST_CHECK_(got[k] == expected[i][k], "frame %zu elem %zu", i, k);
+      }
+    }
+  }
+}
+
+// Cross-attribute dedup with variable array sizes: two attributes carry the same
+// per-frame varying lengths -> dedup shrinks file and readback preserves counts.
+void dedup_variable_array_size_cross_attr_test(void) {
+  const int kFrames = 16;
+  auto make_ts = [&]() {
+    value::TimeSamples ts;
+    for (int f = 0; f < kFrames; ++f) {
+      size_t n = (size_t(f) % 5) + 1;  // 1..5, varies per frame but same across attrs
+      std::vector<float> a(n);
+      for (size_t i = 0; i < n; ++i) a[i] = float(f) + float(i) * 0.25f;
+      ts.add_array_sample<float>(double(f), a.data(), a.size());
+    }
+    return ts;
+  };
+
+  Stage stage = MakeMultiAttrAnimStage("VarArrCross", "float[]",
+                                      {make_ts(), make_ts()},
+                                      value::Value(std::vector<float>{0.0f}));
+
+  const std::string f_dedup = TempPath("test_var_arr_cross_dedup.usdc");
+  const std::string f_no = TempPath("test_var_arr_cross_no.usdc");
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+  TEST_CHECK(GetFileSize(f_dedup) < GetFileSize(f_no));
+
+  for (const std::string& fn : {f_dedup, f_no}) {
+    Layer layer;
+    std::string warn, err;
+    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+    for (const char* attr : {"animAttr_0", "animAttr_1"}) {
+      const value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrCross", attr);
+      TEST_CHECK_(rts != nullptr, "%s missing %s", fn.c_str(), attr);
+      if (!rts) continue;
+      TEST_CHECK_(rts->size() == kFrames, "%s %s size", fn.c_str(), attr);
+      if (rts->size() != (size_t)kFrames) continue;
+      for (int f = 0; f < kFrames; ++f) {
+        size_t n = (size_t(f) % 5) + 1;
+        std::vector<float> got;
+        bool blocked = false;
+        const bool ok = rts->get_vector_at<float>(size_t(f), &got, &blocked);
+        TEST_CHECK_(ok && !blocked, "%s %s frame %d", fn.c_str(), attr, f);
+        TEST_CHECK_(got.size() == n, "%s %s frame %d count", fn.c_str(), attr, f);
+      }
+    }
+  }
+}

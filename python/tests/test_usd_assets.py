@@ -131,7 +131,7 @@ def test_usd_assets_load_no_crash():
                 try:
                     arr = prim["points"]
                     a = np.asarray(arr)
-                    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+                    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
                 except Exception as e:
                     failed.append((f, f"zero-copy check failed: {e}"))
                 break
@@ -181,7 +181,7 @@ def test_usd_assets_specific_kitchen_set():
     m = scene.meshes[0]
     if m.points is not None:
         a = np.asarray(m.points)
-        assert a.__array_interface__["data"][0] == m.points.__array_interface__["data"][0]
+        assert np.asarray(a).__array_interface__["data"][0] == np.asarray(m.points).__array_interface__["data"][0]
 
 
 def test_usd_assets_save_roundtrip_tmp(tmp_path):

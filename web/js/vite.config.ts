@@ -50,5 +50,17 @@ export default defineConfig(({ command }) => {
   optimizeDeps: {
     exclude: ['lightusd'],
   },
+  // Lucia's xatlas worker imports the generated ESM WASM factory. IIFE
+  // workers cannot participate in Rollup code-splitting.
+  worker: { format: 'es' },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        validation: path.resolve(__dirname, 'validation.html'),
+        lucia: path.resolve(__dirname, 'lucia-code/index.html'),
+      },
+    },
+  },
   };
 });

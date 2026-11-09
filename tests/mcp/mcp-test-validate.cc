@@ -2,6 +2,7 @@
 #include "acutest.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -209,9 +210,13 @@ def Xform "World"
   // is covered outside base64 data uploads.
   {
     json args, result;
-    args["uri"] = "../models/cube.usdz";
+    const char *fixture_root = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR");
+    args["uri"] = fixture_root && *fixture_root
+        ? std::string(fixture_root) + "/models/cube.usdz"
+        : "../models/cube.usdz";
     args["groups"] = json::array({"all"});
     TEST_CHECK(UsdValidate(ctx, args, result, err));
+    TEST_MSG("%s", err.c_str());
     TEST_CHECK(result["source"] == "uri");
     TEST_CHECK(HasCheckedGroup(result, "core"));
     TEST_CHECK(HasCheckedGroup(result, "geom"));

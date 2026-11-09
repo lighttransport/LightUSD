@@ -1,3 +1,4 @@
+#include "imageio/exr-codec.h"
 // Support files
 //
 // - OpenEXR(through TinyEXR). 16bit and 32bit
@@ -10,7 +11,7 @@
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #if defined(LIGHTUSD_WITH_NANOIMAGE)
 extern "C" {
@@ -142,41 +143,43 @@ extern "C" {
 
 #include "image-loader.hh"
 #include "io-util.hh"
-#if defined(LIGHTUSD_WITH_EXR) && defined(LIGHTUSD_EXR_V3)
-#include "memory-budget.hh"  // bound v3 C EXR decode allocations
-#endif
 
 namespace lightusd {
 namespace image {
 
 namespace {
-std::mutex g_image_loader_mutex;
+// Leaked function-local mutex: a namespace-scope std::mutex needs a global
+// destructor under libc++ (-Wglobal-constructors / -Wexit-time-destructors).
+std::mutex &ImageLoaderMutex() {
+  static std::mutex *mutex = new std::mutex();
+  return *mutex;
+}
 LoadImageDataFunction g_image_loader = nullptr;
 void *g_image_loader_user_data = nullptr;
 GetImageInfoFunction g_image_info_loader = nullptr;
 void *g_image_info_loader_user_data = nullptr;
 
 void GetImageLoader(LoadImageDataFunction *loader, void **user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   *loader = g_image_loader;
   *user_data = g_image_loader_user_data;
 }
 
 void GetImageInfoLoader(GetImageInfoFunction *loader, void **user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   *loader = g_image_info_loader;
   *user_data = g_image_info_loader_user_data;
 }
 }  // namespace
 
 void SetImageLoader(LoadImageDataFunction loader, void *user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   g_image_loader = loader;
   g_image_loader_user_data = user_data;
 }
 
 void SetImageInfoLoader(GetImageInfoFunction loader, void *user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   g_image_info_loader = loader;
   g_image_info_loader_user_data = user_data;
 }
@@ -192,7 +195,17 @@ namespace {
 // We reject anything above this ceiling with a clean error instead. This is a
 // ceiling, not a policy limit: legitimate textures are far smaller (a 16K RGBA8
 // image is 1 GiB; fp32 would be 4 GiB).
-static constexpr size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;  // 2 GiB
+static thread_local size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;
+
+class ScopedDecodeLimit {
+ public:
+  explicit ScopedDecodeLimit(size_t bytes) : previous_(kMaxDecodedImageBytes) {
+    kMaxDecodedImageBytes = std::min(previous_, bytes);
+  }
+  ~ScopedDecodeLimit() { kMaxDecodedImageBytes = previous_; }
+ private:
+  size_t previous_;
+};
 
 // Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
 // overflow on 32-bit platforms. Clamps to SIZE_MAX if the result exceeds it.
@@ -606,6 +619,21 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
                           std::string *warn, std::string *err) {
   (void)warn;
 
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
+  uint32_t width = 0, height = 0, channels = 0;
+  size_t pixels = 0, scratch = 0, encoded_scratch = 0;
+  if (!GetImageInfoSTB(bytes, size, uri, &width, &height, &channels, warn, err) ||
+      !safe::mul(size_t(width), size_t(height), &pixels) ||
+      !safe::mul(pixels, size_t(64), &scratch) ||
+      !safe::mul(size, size_t(2), &encoded_scratch) ||
+      !safe::add(scratch, encoded_scratch, &scratch) || scratch > kMaxDecodedImageBytes) {
+    if (err) *err += "Image decode exceeds memory limit or has an invalid header: " + uri;
+    return false;
+  }
+#else
+  // Without a header reader, decline tightened budgets before pixel decoding.
+  if (kMaxDecodedImageBytes < size_t(2) * 1024 * 1024 * 1024) return false;
+#endif
   char errbuf[256];
   errbuf[0] = 0;
 
@@ -675,6 +703,15 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
   {
     const uint8_t *src = reinterpret_cast<const uint8_t *>(ni_img.data);
     image->data.assign(src, src + ni_img.data_size);
+    // nanoimage retains PNG's network byte order; Image samples use host order.
+    if (image->bpp == 16) {
+      const uint16_t one = 1;
+      uint8_t low = 0;
+      std::memcpy(&low, &one, 1);
+      if (low == 1)
+        for (size_t i = 0; i + 1 < image->data.size(); i += 2)
+          std::swap(image->data[i], image->data[i + 1]);
+    }
   }
   ni_image_free(&ni_img);
 
@@ -685,6 +722,10 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
                            const std::string &uri, uint32_t *width,
                            uint32_t *height, uint32_t *channels,
                            std::string *warn, std::string *err) {
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
+  // Read metadata without allocating a decoded image.
+  return GetImageInfoSTB(bytes, size, uri, width, height, channels, warn, err);
+#else
   // Reuse the decode path for info extraction — nanoimage has no info-only API.
   Image img;
   if (!DecodeImageNanoimage(bytes, size, uri, &img, warn, err)) {
@@ -694,6 +735,7 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
   if (height) *height = uint32_t(img.height);
   if (channels) *channels = uint32_t(img.channels);
   return true;
+#endif
 }
 
 #endif
@@ -706,160 +748,27 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
 // (`((int)(r) >= 0)`) that trips -Wold-style-cast at every expansion site. The
 // macro lives in the external header and must not be edited, so route the check
 // through this static_cast-based helper instead.
-static inline bool ExrOk(exr_result r) { return static_cast<int>(r) >= 0; }
-
-// exr_allocator backed by a MemoryBudgetManager: bounds the total memory the
-// v3 C decoder allocates (reader scratch + planar channel buffers) for a single
-// decode, so a crafted EXR fails cleanly (NULL -> EXR_ERROR_OUT_OF_MEMORY)
-// rather than OOM-aborting. Each block carries a 16-byte size header (the free
-// callback only receives the pointer); the 16-byte offset preserves the
-// 16-byte alignment malloc already provides.
-struct ExrBudgetAllocator {
-  lightusd::MemoryBudgetManager mgr;
-  explicit ExrBudgetAllocator(uint64_t budget) : mgr(budget) {}
-
-#if defined(__clang__) || defined(__GNUC__)
-  __attribute__((malloc, alloc_size(2)))
-#endif
-  static void *Alloc(void *user, size_t size) {
-    auto *self = static_cast<ExrBudgetAllocator *>(user);
-    const size_t kHdr = 16;
-    if (size > SIZE_MAX - kHdr) return nullptr;
-    const size_t total = size + kHdr;
-    if (!self->mgr.Reserve(total)) return nullptr;
-    void *base = std::malloc(total);
-    if (!base) {
-      self->mgr.Release(total);
-      return nullptr;
-    }
-    std::memcpy(base, &total, sizeof(size_t));
-    return static_cast<uint8_t *>(base) + kHdr;
-  }
-  static void Free(void *user, void *ptr) {
-    if (!ptr) return;
-    auto *self = static_cast<ExrBudgetAllocator *>(user);
-    const size_t kHdr = 16;
-    void *base = static_cast<uint8_t *>(ptr) - kHdr;
-    size_t total = 0;
-    std::memcpy(&total, base, sizeof(size_t));
-    self->mgr.Release(total);
-    std::free(base);
-  }
-  exr_allocator handle() {
-    exr_allocator a;
-    a.user = this;
-    a.alloc = &ExrBudgetAllocator::Alloc;
-    a.free = &ExrBudgetAllocator::Free;
-    return a;
-  }
-};
-
-// Locate the standard color channels (R/G/B/A and luminance Y) by name in a
-// v3 exr_part's name-sorted channel list. Returns false if none are present.
-static bool ExrChannelNameIs(const char *name, const char *channel) {
-  if (!name || !channel) return false;
-  const size_t name_len = std::strlen(name);
-  const size_t channel_len = std::strlen(channel);
-  if (name_len < channel_len) return false;
-  if (std::strcmp(name + name_len - channel_len, channel) != 0) return false;
-  return name_len == channel_len || name[name_len - channel_len - 1] == '.';
-}
-
-static bool ExrFindRGBAY(const exr_part *part, int *idxR, int *idxG, int *idxB,
-                         int *idxA, int *idxY) {
-  *idxR = *idxG = *idxB = *idxA = *idxY = -1;
-  for (int c = 0; c < part->header.num_channels; c++) {
-    const char *n = part->header.channels[c].name;
-    if (ExrChannelNameIs(n, "R")) *idxR = c;
-    else if (ExrChannelNameIs(n, "G")) *idxG = c;
-    else if (ExrChannelNameIs(n, "B")) *idxB = c;
-    else if (ExrChannelNameIs(n, "A")) *idxA = c;
-    else if (ExrChannelNameIs(n, "Y")) *idxY = c;
-  }
-  return (*idxR >= 0 || *idxG >= 0 || *idxB >= 0 || *idxY >= 0);
-}
-
-bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
-                    const std::string &uri, Image *image,
-                    std::string *err) {
-  exr_image img;
-  std::memset(&img, 0, sizeof(img));
-  ExrBudgetAllocator budget(kMaxDecodedImageBytes);
-  exr_allocator alloc = budget.handle();
-  exr_result r = exr_load_from_memory(bytes, size, &alloc, &img);
-  if (!ExrOk(r)) {
-    (*err) += "Failed to load EXR image: " + uri + " (" +
-              std::string(exr_result_string(r)) + ")\n";
+static bool DecodeEXRAdapter(const uint8_t* bytes, size_t size,
+    const std::string& uri, Image* image, std::string* err, bool half_only) {
+  lu_exr_result decoded{};
+  if (lu_exr_decode(bytes, size, kMaxDecodedImageBytes, &decoded) != 0) {
+    if (err) *err += "Failed to decode EXR: " + uri;
     return false;
   }
-  if (img.num_parts < 1 || img.parts == nullptr) {
-    exr_image_free(&img);
-    (*err) += "EXR has no image parts: " + uri + "\n";
-    return false;
+  if ((half_only && decoded.bits != 16) ||
+      (!half_only && lu_exr_convert(&decoded, 32, kMaxDecodedImageBytes) != 0)) {
+    std::free(decoded.data); return false;
   }
-  const exr_part *part = &img.parts[0];
-  if (part->is_deep || part->images == nullptr || part->width <= 0 ||
-      part->height <= 0) {
-    exr_image_free(&img);
-    (*err) += "EXR part is deep or empty: " + uri + "\n";
-    return false;
-  }
-
-  int idxR, idxG, idxB, idxA, idxY;
-  if (!ExrFindRGBAY(part, &idxR, &idxG, &idxB, &idxA, &idxY)) {
-    exr_image_free(&img);
-    (*err) += "EXR has no R/G/B/Y channel: " + uri + "\n";
-    return false;
-  }
-
-  size_t npix, total_size;
-  if (!safe::mul(size_t(part->width), size_t(part->height), &npix) ||
-      !safe::mul(npix, size_t(4 * sizeof(float)), &total_size)) {
-    exr_image_free(&img);
-    return false;
-  }
-  if (total_size > kMaxDecodedImageBytes) {
-    exr_image_free(&img);
-    (*err) += "Decoded EXR image exceeds the maximum allowed size for: " + uri + "\n";
-    return false;
-  }
-
-  // Read channel `idx` element `p` as float, honoring its native pixel type.
-  auto getf = [&](int idx, size_t p) -> float {
-    if (idx < 0) return 0.0f;
-    const void *base = part->images[idx];
-    if (!base) return 0.0f;
-    switch (part->header.channels[idx].pixel_type) {
-      case EXR_PIXEL_HALF: {
-        uint16_t h = reinterpret_cast<const uint16_t *>(base)[p];
-        float f;
-        exr_half_to_float(&h, &f, 1);
-        return f;
-      }
-      case EXR_PIXEL_FLOAT:
-        return reinterpret_cast<const float *>(base)[p];
-      case EXR_PIXEL_UINT:
-        return float(reinterpret_cast<const uint32_t *>(base)[p]);
-    }
-    return 0.0f;
-  };
-
-  image->width = part->width;
-  image->height = part->height;
-  image->channels = 4;  // RGBA
-  image->bpp = 32;      // fp32
+  image->width = int(decoded.width); image->height = int(decoded.height);
+  image->channels = int(decoded.channels); image->bpp = int(decoded.bits);
   image->format = Image::PixelFormat::Float;
-  image->data.resize(total_size);
-  float *out = reinterpret_cast<float *>(image->data.data());
-  for (size_t p = 0; p < npix; p++) {
-    out[p * 4 + 0] = idxR >= 0 ? getf(idxR, p) : getf(idxY, p);
-    out[p * 4 + 1] = idxG >= 0 ? getf(idxG, p) : getf(idxY, p);
-    out[p * 4 + 2] = idxB >= 0 ? getf(idxB, p) : getf(idxY, p);
-    out[p * 4 + 3] = idxA >= 0 ? getf(idxA, p) : 1.0f;
-  }
-
-  exr_image_free(&img);
+  image->data.assign(decoded.data, decoded.data + decoded.size);
+  std::free(decoded.data);
   return true;
+}
+bool DecodeImageEXR(const uint8_t* bytes, size_t size,
+    const std::string& uri, Image* image, std::string* err) {
+  return DecodeEXRAdapter(bytes, size, uri, image, err, false);
 }
 
 #else  // legacy v1 backend
@@ -1546,85 +1455,9 @@ LoadImageLayersFromMemory(const uint8_t *addr, size_t sz,
 
 #if defined(LIGHTUSD_WITH_EXR)
 #if defined(LIGHTUSD_EXR_V3)
-bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
-                        const std::string &uri, Image *image,
-                        std::string *err) {
-  (void)uri;
-  (void)err;
-  exr_image img;
-  std::memset(&img, 0, sizeof(img));
-  ExrBudgetAllocator budget(kMaxDecodedImageBytes);
-  exr_allocator alloc = budget.handle();
-  if (!ExrOk(exr_load_from_memory(bytes, size, &alloc, &img))) {
-    return false;  // not EXR / unparseable -> caller falls back
-  }
-  // Contract: single-part scanline only; multipart/tiled/deep -> fp32 path.
-  if (img.num_parts != 1 || img.parts == nullptr) {
-    exr_image_free(&img);
-    return false;
-  }
-  const exr_part *part = &img.parts[0];
-  if (part->is_deep || part->header.part_type != EXR_PART_SCANLINE ||
-      part->images == nullptr || part->width <= 0 || part->height <= 0) {
-    exr_image_free(&img);
-    return false;
-  }
-  // Only take the half path when EVERY channel is stored HALF in the file.
-  if (part->header.num_channels <= 0) {
-    exr_image_free(&img);
-    return false;
-  }
-  for (int c = 0; c < part->header.num_channels; c++) {
-    if (part->header.channels[c].pixel_type != EXR_PIXEL_HALF) {
-      exr_image_free(&img);
-      return false;  // float/uint channels present -> fp32 path
-    }
-  }
-
-  int idxR, idxG, idxB, idxA, idxY;
-  if (!ExrFindRGBAY(part, &idxR, &idxG, &idxB, &idxA, &idxY)) {
-    exr_image_free(&img);
-    return false;  // no standard color channel -> fp32 path
-  }
-
-  size_t npix, total;
-  if (!safe::mul(size_t(part->width), size_t(part->height), &npix) ||
-      !safe::mul(npix, size_t(4 * 2), &total)) {  // RGBA * 2 bytes/half
-    exr_image_free(&img);
-    return false;
-  }
-  if (total > kMaxDecodedImageBytes) {
-    // Oversized: bail so the caller falls back to the fp32 path, which emits a
-    // clean over-size error of its own.
-    exr_image_free(&img);
-    return false;
-  }
-
-  image->width = part->width;
-  image->height = part->height;
-  image->channels = 4;
-  image->bpp = 16;
-  image->format = Image::PixelFormat::Float;
-  image->data.resize(total);
-  uint16_t *out = reinterpret_cast<uint16_t *>(image->data.data());
-
-  auto chan = [&](int idx) -> const uint16_t * {
-    return idx >= 0 ? reinterpret_cast<const uint16_t *>(part->images[idx])
-                    : nullptr;
-  };
-  const uint16_t *R = chan(idxR), *G = chan(idxG), *B = chan(idxB),
-                 *A = chan(idxA), *Y = chan(idxY);
-  const uint16_t kOne = 0x3C00;  // half 1.0
-  const uint16_t kZero = 0x0000;
-  for (size_t p = 0; p < npix; p++) {
-    out[p * 4 + 0] = R ? R[p] : (Y ? Y[p] : kZero);
-    out[p * 4 + 1] = G ? G[p] : (Y ? Y[p] : kZero);
-    out[p * 4 + 2] = B ? B[p] : (Y ? Y[p] : kZero);
-    out[p * 4 + 3] = A ? A[p] : kOne;
-  }
-
-  exr_image_free(&img);
-  return true;
+bool DecodeImageEXRHalf(const uint8_t* bytes, size_t size,
+    const std::string& uri, Image* image, std::string* err) {
+  return DecodeEXRAdapter(bytes, size, uri, image, err, true);
 }
 
 #else  // legacy v1 backend
@@ -1941,6 +1774,20 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     err.clear();
   }
 
+#if defined(LIGHTUSD_EXR_EXTERNAL) || (defined(LIGHTUSD_WITH_EXR) && defined(LIGHTUSD_EXR_V3))
+  if (addr && sz >= 4 && addr[0] == 0x76 && addr[1] == 0x2f && addr[2] == 0x31 && addr[3] == 1) {
+    lu_exr_result decoded{};
+    if (lu_exr_decode(addr, sz, kMaxDecodedImageBytes, &decoded) != 0)
+      return nonstd::make_unexpected("EXR: codec unavailable, malformed image, or resource limit exceeded: " + uri);
+    ret.image.width = int(decoded.width); ret.image.height = int(decoded.height);
+    ret.image.channels = int(decoded.channels); ret.image.bpp = int(decoded.bits);
+    ret.image.format = Image::PixelFormat::Float;
+    ret.image.data.assign(decoded.data, decoded.data + decoded.size);
+    std::free(decoded.data);
+    return std::move(ret);
+  }
+#endif
+
 #if defined(LIGHTUSD_WITH_TEXTOOLS)
   // KTX2 (GPU-compressed / uni). Distinct 12-byte magic, checked first.
   if (IsKTX2FromMemory(addr, sz)) {
@@ -2049,39 +1896,24 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     ret.warning.clear();
   }
 
+#if defined(LIGHTUSD_EXR_EXTERNAL) || (defined(LIGHTUSD_WITH_EXR) && defined(LIGHTUSD_EXR_V3))
+  if (addr && sz >= 4 && addr[0] == 0x76 && addr[1] == 0x2f && addr[2] == 0x31 && addr[3] == 1) {
+    lu_exr_result decoded{};
+    if (lu_exr_info(addr, sz, kMaxDecodedImageBytes, &decoded) != 0)
+      return nonstd::make_unexpected("EXR: codec unavailable, malformed image, or resource limit exceeded: " + uri);
+    ret.width = decoded.width; ret.height = decoded.height; ret.channels = decoded.channels;
+    return std::move(ret);
+  }
+#endif
+
 #if defined(LIGHTUSD_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
 #if defined(LIGHTUSD_EXR_V3)
-    // Parse headers + offset tables only (no pixel decode) for fast info query.
-    ExrBudgetAllocator budget(kMaxDecodedImageBytes);
-    exr_allocator alloc = budget.handle();
-    exr_reader *rd = nullptr;
-    if (!ExrOk(exr_reader_open_memory(addr, sz, &alloc, &rd))) {
-      return nonstd::make_unexpected("Failed to open EXR for info: " + uri + "\n");
-    }
-    if (!ExrOk(exr_reader_parse_header(rd)) ||
-        exr_reader_num_parts(rd) < 1) {
-      exr_reader_close(rd);
-      return nonstd::make_unexpected("Failed to parse EXR header: " + uri + "\n");
-    }
-    const exr_header *h = exr_reader_part_header(rd, 0);
-    if (!h) {
-      exr_reader_close(rd);
-      return nonstd::make_unexpected("EXR has no part header: " + uri + "\n");
-    }
-    const int64_t w =
-        int64_t(h->data_window.max_x) - int64_t(h->data_window.min_x) + 1;
-    const int64_t hgt =
-        int64_t(h->data_window.max_y) - int64_t(h->data_window.min_y) + 1;
-    const int32_t nch = h->num_channels;  // read before closing (h is reader-owned)
-    exr_reader_close(rd);
-    if (w <= 0 || hgt <= 0) {
-      return nonstd::make_unexpected("EXR has an invalid data window: " + uri + "\n");
-    }
-    ret.width = uint32_t(w);
-    ret.height = uint32_t(hgt);
-    ret.channels = uint32_t(nch);
-    return std::move(ret);
+    lu_exr_result info{};
+    if (lu_exr_info(addr, sz, kMaxDecodedImageBytes, &info) != 0)
+      return nonstd::make_unexpected("Failed to parse EXR header: " + uri);
+    ret.width = info.width; ret.height = info.height; ret.channels = info.channels;
+    return ret;
 #else
     EXRVersion version;
     const int version_ret = ParseEXRVersionFromMemory(
@@ -2278,5 +2110,15 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
   return LoadImageFromMemory(data.data(), data.size(), filename);
 }
 
+nonstd::expected<ImageResult, std::string> LoadImageFromMemoryBounded(
+    const uint8_t* bytes, size_t size, const std::string& uri, size_t limit) {
+  ScopedDecodeLimit scoped(limit);
+  return LoadImageFromMemory(bytes, size, uri);
+}
+nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromMemoryBounded(
+    const uint8_t* bytes, size_t size, const std::string& uri, size_t limit) {
+  ScopedDecodeLimit scoped(limit);
+  return GetImageInfoFromMemory(bytes, size, uri);
+}
 }  // namespace image
 }  // namespace lightusd

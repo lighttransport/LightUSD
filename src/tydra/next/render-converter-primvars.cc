@@ -3,7 +3,8 @@
 //
 // Tydra Next - Mesh primvar extraction
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,19 +33,19 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 // every UV/color/normal primvar (40 MB for a 5M-vertex `st` set) on top of the
 // copies the caller already makes.
 uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
-                         const std::vector<float>** view) {
+                         ::lightusd::next::ValueArrayView<const float>* view) {
   if (!v.is_array()) return 0;
   const uint32_t comps =
       static_cast<uint32_t>(GetComponentCount(v.type_id()));
   if (comps == 0) return 0;
-  if (const std::vector<float>* fa = v.as_float_array()) {
+  if (auto fa = v.as_float_array()) {
     *view = fa;
     return comps;
   }
-  if (const std::vector<double>* da = v.as_double_array()) {
+  if (auto da = v.as_double_array()) {
     scratch->reserve(da->size());
     for (double d : *da) scratch->push_back(static_cast<float>(d));
-    *view = scratch;
+    *view = *scratch;
     return comps;
   }
   return 0;
@@ -52,7 +53,9 @@ uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
 
 }  // namespace
 
-bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
+                                                     RenderMesh* mesh,
+                                                     bool custom_only) {
   std::vector<Primvar> primvars = GetPrimvars(prim);
 
   // The primary UV set is the first configured name this mesh actually authors.
@@ -133,8 +136,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
   };
 
   // Expand an indexed primvar to direct form; false on any out-of-range index.
-  auto expand_indexed = [](const std::vector<float>& data, uint32_t comps,
-                           const std::vector<int32_t>& idxs,
+  auto expand_indexed = [](::lightusd::next::ValueArrayView<const float> data, uint32_t comps,
+                           ::lightusd::next::ValueArrayView<const int32_t> idxs,
                            std::vector<float>* out) -> bool {
     const size_t elems = comps ? data.size() / comps : 0;
     out->clear();
@@ -149,7 +152,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
   // Authored `normals` attribute (primvars:normals, handled in the loop
   // below, takes precedence per USD).
-  {
+  if (!custom_only) {
     ValueArrayRead<float> normals;
     if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
         !normals.empty()) {
@@ -165,7 +168,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       const Interpolation ni = ParsePrimvarInterp(interp_tok);
       const size_t elems = normals.view.size / 3;
       if (elems == expected_elems(ni)) {
-        mesh->normals.append(normals.view.data, normals.view.size);
+        mesh->normals.append_exact(normals.view.data, normals.view.size);
         mesh->normals_interp = ni;
       } else {
         AddWarning("Mesh '" + mesh->prim_path +
@@ -183,16 +186,19 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     // check used to sit below, after a full copy of the array had been made.
     if (pv.name.rfind("skel:", 0) == 0) continue;
 
-    std::vector<float> data;
-    const std::vector<float>* fdata = nullptr;
-    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
     const bool is_opacity = (pv.name == "displayOpacity");
     const bool is_normals = (pv.name == "normals");
-    const bool builtin =
-        is_uv0 || is_uv1 || is_color || is_opacity || is_normals;
+    const bool is_tangents = (pv.name == "tangents");
+    const bool builtin = is_uv0 || is_uv1 || is_color || is_opacity ||
+                         is_normals || is_tangents;
+    if (custom_only && builtin) continue;
+
+    std::vector<float> data;
+    ::lightusd::next::ValueArrayView<const float> fdata;
+    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
 
     // Unauthored interpolation defaults to `constant` per the USD spec
     // (pxr UsdGeomPrimvar / legacy GeomPrimvar parity). Unauthored arrays
@@ -210,14 +216,14 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (comps == 0) {
       // Non-float primvar: only representable as a generic int attribute.
       if (builtin) continue;
-      const std::vector<int32_t>* ia = pv.value->as_int_array();
+      auto ia = pv.value->as_int_array();
       if (!ia || ia->empty()) continue;
       VertexAttribute attr;
       attr.name = pv.name;
       attr.format = VertexFormat::Int;
       attr.interpolation = resolve_interp(
           pv.indices().empty() ? ia->size() : pv.indices().size());
-      attr.int_data.append(ia->data(), ia->size());
+      attr.int_data.append_exact(ia->data(), ia->size());
       bool idx_ok = true;
       for (int32_t raw : pv.indices()) {
         if (raw < 0 || static_cast<size_t>(raw) >= ia->size()) {
@@ -245,7 +251,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         continue;
       }
       data = std::move(expanded);
-      fdata = &data;
+      fdata = data;
     }
 
     if (builtin) {
@@ -259,26 +265,47 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         continue;
       }
       if (is_uv0 && comps == 2) {
-        mesh->texcoords_0.append(fdata->data(), fdata->size());
+        mesh->texcoords_0.append_exact(fdata->data(), fdata->size());
         mesh->texcoords_0_interp = interp;
         mesh->texcoords_0_name = pv.name;
       } else if (is_uv1 && comps == 2) {
-        mesh->texcoords_1.append(fdata->data(), fdata->size());
+        mesh->texcoords_1.append_exact(fdata->data(), fdata->size());
         mesh->texcoords_1_interp = interp;
         mesh->texcoords_1_name = pv.name;
       } else if (is_color && (comps == 3 || comps == 4)) {
-        mesh->colors.append(fdata->data(), fdata->size());
+        mesh->colors.append_exact(fdata->data(), fdata->size());
         mesh->colors_interp = interp;
       } else if (is_opacity && comps == 1) {
         // displayOpacity as a render channel (legacy exposes it alongside
         // displayColor; consumers combine it as the vertex-color alpha).
-        mesh->opacities.append(fdata->data(), fdata->size());
+        mesh->opacities.append_exact(fdata->data(), fdata->size());
         mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
-        mesh->normals.append(fdata->data(), fdata->size());
+        mesh->normals.append_exact(fdata->data(), fdata->size());
         mesh->normals_interp = interp;
+      } else if (is_tangents && (comps == 3 || comps == 4)) {
+        // Authored tangent basis (xyz + handedness w). The legacy loader and
+        // the renderers store four components; a three-component primvar gets
+        // a right-handed w=1. Authored tangents win over computed ones, which
+        // only run when this channel is empty.
+        mesh->tangents.clear();
+        if (comps == 4) {
+          mesh->tangents.append_exact(fdata->data(), fdata->size());
+        } else {
+          const size_t elems = fdata->size() / 3;
+          std::vector<float> padded;
+          padded.reserve(elems * 4);
+          for (size_t i = 0; i < elems; ++i) {
+            padded.push_back(fdata->data()[i * 3 + 0]);
+            padded.push_back(fdata->data()[i * 3 + 1]);
+            padded.push_back(fdata->data()[i * 3 + 2]);
+            padded.push_back(1.0f);
+          }
+          mesh->tangents.append_exact(padded.data(), padded.size());
+        }
+        mesh->tangents_interp = interp;
       }
       continue;
     }
@@ -297,7 +324,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         comps != 9 && comps != 16) continue;
     attr.interpolation = resolve_interp(
         pv.indices().empty() ? (fdata->size() / comps) : pv.indices().size());
-    attr.float_data.append(fdata->data(), fdata->size());
+    attr.float_data.append_exact(fdata->data(), fdata->size());
     bool idx_ok = true;
     const size_t elems = fdata->size() / comps;
     for (int32_t raw : pv.indices()) {

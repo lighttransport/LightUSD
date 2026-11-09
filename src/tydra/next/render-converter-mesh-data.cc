@@ -3,7 +3,9 @@
 //
 // Tydra Next - Mesh topology and geometry extraction
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
+#include "render-converter-clip.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,26 +15,11 @@ namespace lightusd { namespace tydra { namespace next {
 using ::lightusd::next::UsdPrim;
 using ::lightusd::next::Value;
 namespace {
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  if (!out) return false;
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !value->as_bool()) return false;
-  *out = *value->as_bool();
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  if (!out) return false;
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value) return false;
-  if (const std::string* token = value->as_token()) { *out = *token; return true; }
-  if (const std::string* text = value->as_string()) { *out = *text; return true; }
-  return false;
-}
 
 }  // namespace
 
-bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
   // Get face vertex counts
   ValueArrayRead<int32_t> face_counts;
   ReadIntArray(prim, "faceVertexCounts", config_.time_code, &face_counts);
@@ -41,7 +28,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
     return false;
   }
 
-  mesh->face_vertex_counts.reserve(face_counts.size());
+  mesh->face_vertex_counts.reserve_exact(face_counts.size());
   for (int32_t c : face_counts) {
     mesh->face_vertex_counts.push_back(static_cast<uint32_t>(c));
   }
@@ -54,17 +41,17 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
     return false;
   }
 
-  mesh->face_vertex_indices.reserve(indices.size());
+  mesh->face_vertex_indices.reserve_exact(indices.size());
   for (int32_t i : indices) {
     mesh->face_vertex_indices.push_back(static_cast<uint32_t>(i));
   }
 
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     mesh->left_handed = (orientation == "leftHanded");
   }
 
-  GetBool(prim, "doubleSided", &mesh->double_sided);
+  GetPropBool(prim, "doubleSided", &mesh->double_sided);
 
   // holeIndices: face indices excluded from rendering.
   {
@@ -80,16 +67,25 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   return true;
 }
 
-bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
-  ReadFloatArray(prim, "points", config_.time_code, &points);
+  ::lightusd::next::EvalOptions evaluation;
+  evaluation.time = ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+  evaluation.follow_connections = false;
+  evaluation.clip_stage_loader = config_.animation.clip_stage_loader;
+  if (!ReadFloatArray(prim, "points", evaluation, &points)) {
+    // Public per-mesh conversion may receive a raw layer, whose descendant
+    // does not carry PCP-injected ancestor clip metadata.
+    ReadFloatArrayFromValueClips(prim, "points", config_.time_code,
+        config_.animation.clip_stage_loader, &points);
+  }
   if (points.empty()) {
     SetLastError("Invalid points data");
     return false;
   }
 
   // Copy directly to chunked array
-  mesh->points.append(points.view.data, points.view.size);
+  mesh->points.append_exact(points.view.data, points.view.size);
 
   // Compute bounding box
   size_t num_points = mesh->point_count();

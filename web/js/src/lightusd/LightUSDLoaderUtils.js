@@ -69,8 +69,28 @@ class TextureLoadingManager {
             this.taskMap.set(key, task);
             this.queue.push(task);
         }
-        task.bindings.push({ material, options });
+        // Multiple map properties may intentionally share one packed source
+        // image (for example roughness=G and metallic=B). Keep the decode task
+        // deduplicated, but retain the destination property per binding.
+        task.bindings.push({ material, mapProperty, options });
         this.total = this.queue.length;
+    }
+
+    /**
+     * Redirect queued texture bindings when a rendering pipeline replaces a
+     * material (for example, to install extended skinning shaders).
+     */
+    rebindMaterial(previousMaterial, replacementMaterial) {
+        if (!previousMaterial || !replacementMaterial || previousMaterial === replacementMaterial) {
+            return;
+        }
+        for (const task of this.queue) {
+            for (const binding of task.bindings) {
+                if (binding.material === previousMaterial) {
+                    binding.material = replacementMaterial;
+                }
+            }
+        }
     }
 
     /**
@@ -123,6 +143,7 @@ class TextureLoadingManager {
         const {
             onProgress = null,
             onTextureLoaded = null,
+            loadTexture = null,
             concurrency = LightUSDLoaderUtils.defaultTextureConcurrency(),
             yieldInterval = 16
         } = options;
@@ -157,7 +178,7 @@ class TextureLoadingManager {
         const pendingTasks = [...this.queue];
         const activeTasks = new Set();
 
-        const loadTexture = async (task) => {
+        const processTextureTask = async (task) => {
             if (this.aborted) return;
 
             task.status = 'loading';
@@ -168,8 +189,9 @@ class TextureLoadingManager {
                     LightUSDLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
-                    promise = LightUSDLoaderUtils.getTextureFromUSD(
-                        usdScene, textureId, mapProperty);
+                    promise = loadTexture
+                        ? loadTexture(textureId, usdScene, mapProperty)
+                        : LightUSDLoaderUtils.getTextureFromUSD(usdScene, textureId, mapProperty);
                     this.promiseCache.set(cacheKey, promise);
                 }
                 const texture = await promise;
@@ -183,19 +205,20 @@ class TextureLoadingManager {
                         texture, mapProperty, authoredColorSpace, colorMetadata);
                     for (const binding of task.bindings) {
                         const { material, options: bindingOptions } = binding;
-                        material[mapProperty] = texture;
-                        installTextureColorTransform(material, mapProperty,
+                        const bindingMapProperty = binding.mapProperty || mapProperty;
+                        material[bindingMapProperty] = texture;
+                        installTextureColorTransform(material, bindingMapProperty,
                             textureColorTransform(authoredColorSpace,
                                 'lin_rec709_scene', colorMetadata));
 
                         // Apply special options (e.g., normal map scale)
-                        if (bindingOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
+                        if (bindingOptions.normalScale !== undefined && bindingMapProperty === 'normalMap' && material.normalScale) {
                             material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
                         }
 
                         material.needsUpdate = true;
                         if (onTextureLoaded) {
-                            onTextureLoaded(material, mapProperty, texture);
+                            onTextureLoaded(material, bindingMapProperty, texture);
                         }
                     }
                     task.status = 'loaded';
@@ -249,7 +272,7 @@ class TextureLoadingManager {
             // Start new tasks up to concurrency limit
             while (pendingTasks.length > 0 && activeTasks.size < concurrency) {
                 const task = pendingTasks.shift();
-                const promise = loadTexture(task).then(() => {
+                const promise = processTextureTask(task).then(() => {
                     activeTasks.delete(promise);
                 });
                 activeTasks.add(promise);
@@ -287,6 +310,12 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
     // Static reference to LightUSD WASM module for EXR fallback
     static _lightusd = null;
+    static _exr = null;
+    static async loadEXRFeature() {
+        const native = this._lightusd;
+        this._exr = native?.loadFeature ? await native.loadFeature('exr') : native;
+        return this._exr;
+    }
 
     // Lazily detected WebGL block-compression target. undefined = not probed,
     // null = no supported target. Tests may temporarily replace the detector.
@@ -363,6 +392,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
      */
     static setLightUSD(lightusd) {
         LightUSDLoaderUtils._lightusd = lightusd;
+        LightUSDLoaderUtils._exr = null;
     }
 
     /**
@@ -835,6 +865,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 return this.loadKTX2Texture(uri, textureId, uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
             } else if (lowerUri.endsWith('.exr')) {
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // EXR: Use EXRLoader
                 return new EXRLoader().loadAsync(uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
@@ -890,6 +921,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
                     // Check if HDR/EXR format - use specialized decoders
                     if (mimeType === 'image/x-exr') {
+                        await LightUSDLoaderUtils.loadEXRFeature();
                         // EXR: Use LightUSD fallback decoder
                         const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
                         if (texture) {
@@ -1249,7 +1281,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             'roughness', 'roughnessTextureId',
             'clearcoat', 'clearcoatTextureId',
             'clearcoatRoughness', 'clearcoatRoughnessTextureId',
-            'opacity', 'opacityTextureId',
+            'opacity', 'opacityTextureId', 'opacityThreshold',
             'ior', 'iorTextureId',
             'normalTextureId',
             'occlusionTextureId',
@@ -1288,6 +1320,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
     //
     static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene, options = {}) {
         const material = new THREE.MeshPhysicalMaterial();
+        material.envMap = options.envMap || null;
+        material.envMapIntensity = options.envMapIntensity ?? 1.0;
+        material.userData.usdPreviewSurface = true;
         const textureManager = options.textureLoadingManager || null;
         const materialName = usdMaterial?.name || usdMaterial?.primName ||
             usdMaterial?.displayName || usdMaterial?.absPath ||
@@ -1382,10 +1417,18 @@ class LightUSDLoaderUtils extends LoaderUtils {
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoat')) {
             material.clearcoat = usdMaterial.clearcoat;
         }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatTextureId')) {
+            material.clearcoat = 1.0;
+            loadOrQueueTexture('clearcoatMap', usdMaterial.clearcoatTextureId);
+        }
 
         material.clearcoatRoughness = 0.0;
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatRoughness')) {
             material.clearcoatRoughness = usdMaterial.clearcoatRoughness;
+        }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatRoughnessTextureId')) {
+            material.clearcoatRoughness = 1.0;
+            loadOrQueueTexture('clearcoatRoughnessMap', usdMaterial.clearcoatRoughnessTextureId);
         }
 
         // Workflow selection
@@ -1402,6 +1445,8 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColorTextureId')) {
+                material.specularColor = new THREE.Color(1, 1, 1);
+                material.specularIntensity = 1.0;
                 loadOrQueueTexture('specularColorMap', usdMaterial.specularColorTextureId);
             }
         } else {
@@ -1410,6 +1455,11 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.metalness = usdMaterial.metallic;
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'metallicTextureId')) {
+                // Three.js multiplies metalnessMap by material.metalness.
+                // USD materials commonly author only the connected texture;
+                // keep that texture's authored values instead of multiplying
+                // them by the MeshPhysicalMaterial default of zero.
+                material.metalness = 1.0;
                 loadOrQueueTexture('metalnessMap', usdMaterial.metallicTextureId);
             }
         }
@@ -1420,6 +1470,10 @@ class LightUSDLoaderUtils extends LoaderUtils {
             material.roughness = usdMaterial.roughness;
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'roughnessTextureId')) {
+            // Likewise, a connected USD roughness map already contains the
+            // scalar roughness values and should not be halved by Three.js's
+            // default scalar of 0.5.
+            material.roughness = 1.0;
             loadOrQueueTexture('roughnessMap', usdMaterial.roughnessTextureId);
         }
 
@@ -1430,6 +1484,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {
+            // Three.js multiplies emissiveMap by the emissive color.
+            material.emissive = new THREE.Color(1, 1, 1);
+            material.emissiveIntensity = 1.0;
             loadOrQueueTexture('emissiveMap', usdMaterial.emissiveColorTextureId);
         }
 
@@ -1441,12 +1498,22 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.transparent = true;
             }
         }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityThreshold')) {
+            material.alphaTest = Math.max(0, Number(usdMaterial.opacityThreshold) || 0);
+        }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityTextureId')) {
+            // Three.js otherwise treats alphaMap as an unused texture until
+            // transparent is enabled.  Set the render state up front so the
+            // first async texture upload is already rendered correctly.
+            material.transparent = true;
+            material.alphaTest = Math.max(material.alphaTest || 0, 0.01);
+            material.depthWrite = false;
             loadOrQueueTexture('alphaMap', usdMaterial.opacityTextureId);
         }
 
         // Ambient Occlusion
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'occlusionTextureId')) {
+            material.aoMapIntensity = 1.0;
             loadOrQueueTexture('aoMap', usdMaterial.occlusionTextureId);
         }
 
@@ -1705,16 +1772,21 @@ class LightUSDLoaderUtils extends LoaderUtils {
             return null;
         }
 
+        // Build views from HEAPU8's buffer: every module exports HEAPU8, while
+        // the next-only module does not export the other typed heaps (and
+        // touching an unexported runtime symbol aborts). Copies own their
+        // data, so a later heap growth cannot invalidate them.
+        const buffer = lightusd.HEAPU8.buffer;
         switch (desc.dtype) {
             case 'f32':
-                return new Float32Array(lightusd.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + length));
+                return new Float32Array(buffer, ptr, length).slice();
             case 'u32':
-                return new Uint32Array(lightusd.HEAPU32.subarray(ptr >> 2, (ptr >> 2) + length));
+                return new Uint32Array(buffer, ptr, length).slice();
             case 'snorm16':
-                return new Int16Array(lightusd.HEAP16.subarray(ptr >> 1, (ptr >> 1) + length));
+                return new Int16Array(buffer, ptr, length).slice();
             case 'snorm8':
             case 'u8':
-                return new Int8Array(lightusd.HEAP8.subarray(ptr, ptr + length));
+                return new Int8Array(buffer, ptr, length).slice();
             default:
                 return null;
         }
@@ -1722,11 +1794,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
     static _canUseMeshPtr() {
         const lightusd = LightUSDLoaderUtils._lightusd;
-        return !!(lightusd &&
-            lightusd.HEAPF32 &&
-            lightusd.HEAPU32 &&
-            lightusd.HEAP16 &&
-            lightusd.HEAP8);
+        return !!(lightusd && lightusd.HEAPU8 && lightusd.HEAPU8.buffer);
     }
 
     static convertUsdMeshPtrToThreeMesh(mesh, options = {}) {
@@ -1769,6 +1837,14 @@ class LightUSDLoaderUtils extends LoaderUtils {
             geometry.computeVertexNormals();
         }
 
+        if (mesh.vertexColors) {
+            const colors = this._copyHeapAttribute(mesh.vertexColors);
+            if (colors) {
+                const normalized = mesh.vertexColors.dtype === 'u8' || mesh.vertexColors.dtype === 'i8';
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3, normalized));
+            }
+        }
+
         if (options.computeMissingTangents &&
             geometry.attributes.uv &&
             geometry.attributes.normal) {
@@ -1809,8 +1885,10 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
         geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
+        // Next-backend meshes can be non-indexed triangle soups, which carry
+        // `faceVertexIndices: null`.
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
-          if (mesh.faceVertexIndices.length >0 ) {
+          if (mesh.faceVertexIndices && mesh.faceVertexIndices.length > 0) {
             const indices = new Uint32Array(mesh.faceVertexIndices);
             // Validate: check for out-of-range indices (common corruption indicator)
             const numVertices = mesh.points.length / 3;
@@ -2074,6 +2152,15 @@ class LightUSDLoaderUtils extends LoaderUtils {
         };
 
         let mtl = null;
+        const displayColorValues = mesh.displayColor && typeof mesh.displayColor.length === 'number' && mesh.displayColor.length >= 3
+            ? Array.from(mesh.displayColor).slice(0, 3).map(Number) : null;
+        const displayColor = displayColorValues?.every(Number.isFinite) ? displayColorValues : null;
+        const applyDisplayColor = (material) => {
+            if (!displayColor || !material?.clone) return material;
+            const result = material.clone();
+            result.color?.setRGB(displayColor[0], displayColor[1], displayColor[2]);
+            return result;
+        };
 
         if (options.overrideMaterial) {
             mtl = defaultMtl || normalMtl
@@ -2105,7 +2192,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
               pbrMaterial.side = THREE.FrontSide;
             }
 
-            mtl = pbrMaterial || defaultMtl || normalMtl;
+            mtl = applyDisplayColor(pbrMaterial || defaultMtl || normalMtl);
         }
 
         // Handle GeomSubsets (per-face materials)
@@ -2134,9 +2221,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
                     if (options._debugState) {
                         options._debugState.subsetMaterialRefs++;
                     }
-                    materials[matIndex] = await getMaterialForId(matId) || mtl;
+                    materials[matIndex] = applyDisplayColor(await getMaterialForId(matId) || mtl);
                 } else {
-                    materials[matIndex] = mtl; // Use default material
+                materials[matIndex] = mtl; // Use default material
                 }
             }
 
@@ -2167,6 +2254,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             if (mesh.materialId !== undefined) {
                 threeMesh.userData.materialId = mesh.materialId;
             }
+            if (displayColor) {
+                threeMesh.userData.luciaDisplayColor = displayColor.slice();
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
@@ -2180,6 +2270,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             const threeMesh = new THREE.Mesh(geometry, mtl);
             if (mesh.materialId !== undefined) {
                 threeMesh.userData.materialId = mesh.materialId;
+            }
+            if (displayColor) {
+                threeMesh.userData.luciaDisplayColor = displayColor.slice();
             }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
@@ -2681,7 +2774,12 @@ class LightUSDLoaderUtils extends LoaderUtils {
             // Yield to browser before heavy mesh setup
             await this.maybeYieldToUI(options._progressState, options);
 
-            const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
+            // A mesh prim the converter produced no render mesh for
+            // (contentId -1, e.g. no drawable geometry) stays an empty group
+            // so its transform and children are kept.
+            const threeMesh = mesh && !mesh.error
+                ? await this.setupMesh(mesh, defaultMtl, usdScene, options)
+                : new THREE.Group();
             node = threeMesh;
 
             // Increment mesh counter after building
@@ -3030,7 +3128,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
      * @returns {THREE.DataTexture|null}
      */
     static decodeEXRFromBuffer(buffer, outputFormat = 'float16') {
-        const result = decodeEXRWithFallback(buffer, LightUSDLoaderUtils._lightusd, {
+        const result = decodeEXRWithFallback(buffer, LightUSDLoaderUtils._exr || LightUSDLoaderUtils._lightusd, {
             outputFormat,
             preferThreeJS: true,
             verbose: false,
@@ -3068,6 +3166,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             let texture = null;
 
             if (lowerUri.endsWith('.exr')) {
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 
@@ -3224,6 +3323,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             const buffer = await response.arrayBuffer();
 
             if (lowerFile.endsWith('.exr')) {
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 

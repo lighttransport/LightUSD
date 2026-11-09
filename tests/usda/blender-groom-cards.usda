@@ -1,0 +1,18 @@
+#usda 1.0
+
+def Xform "GroomCards" {
+    def Mesh "Card_0" {
+        custom bool groom_card = true
+        custom int groom_card_id = 0
+        point3f[] points = [(-0.1, 0, 0), (0.1, 0, 0), (0.1, 0, 1), (-0.1, 0, 1)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, -1, 0)] (
+            interpolation = "uniform"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+}

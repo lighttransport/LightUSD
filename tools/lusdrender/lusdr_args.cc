@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <climits>
+#include <cstdint>
 #include <string>
 
 #include "asset-resolution.hh"
@@ -97,10 +99,35 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " input.usd output.png [options]\n\n"
       << "Options:\n"
       << "  -h, -help              Show this help.\n"
+      << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
+      << "  --preview-kind gaussian|points|volume (default gaussian).\n"
+      << "  --preview-budget-mib N Total renderer cap (default 1/4 VRAM).\n"
+      << "  --preview-resolution N Sampling resolution; auto by default.\n"
+      << "  --preview-lod-pixels N Camera LOD error (default 2 pixels).\n"
+      << "  --preview-no-lod      Load the finest cached representation.\n"
+      << "  --preview-compute auto|cpu|vulkan|cuda  Conversion compute backend.\n"
+      "  --preview-volume-grids  Open an existing UsdVol scene directly.\n"
+          "  --preview-volume-mode surface|medium  Direct-grid rendering mode.\n"
+          "  --preview-volume-cutoff F    Residual transmittance, [0,1] (default 1e-7; 0 disables).\n"
+          "  --preview-volume-steps N     Ray step budget, 1..65536 (default 4096).\n"
+          "  --preview-shadow-steps N     Shadow step budget, 1..65536 (default 1024).\n"
+          "  --preview-volume-step-size F  Step in voxel units, (0,2] (default .5).\n"
+          "  --preview-volume-error F     Relative quadrature error, [0,1] (default .001).\n"
+          "  --preview-volume-bounces N   Scattering orders, 1..256 (default 1).\n"
+          "  --preview-volume-samples N   Paths per pixel, 1..64 (default 2).\n"
+          "  --preview-light-samples N    Textured light samples, 1..64 (default 8).\n"
+          "  --preview-accumulation-frames N  Stable-camera frame cap, 1..4096 (default 64).\n"
+      "  --preview-volume-density/scattering/emission/anisotropy F  Medium controls.\n"
+      "  --preview-volume-headlight / --preview-volume-no-shadows  Lighting controls.\n"
+      << "  --preview-no-source-refine  Keep the initial cached samples.\n"
+      << "  --preview-volume-carrier  Use cached isosurface meshes.\n"
+      << "  --preview-cache-dir DIR --preview-refresh  Cache location/regeneration.\n"
       << "  -w, -width <N>         Output width (default 960).\n"
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
       << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
+      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId> capture (.pfm for data; raw depth/normals also support -vkr)\n"
+      << "  --all-products        Render settings products; output is a filename prefix.\n"
       << "  -renderProduct <path>  Select one product from the settings.\n"
       << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
       << "  -fitScale <value>      Auto-fit camera distance multiplier (default 1.8).\n"
@@ -116,6 +143,9 @@ void PrintUsage(const char *prog) {
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
+      << "  -volumeLevelSet <surface|fog>\n"
+      << "                         Shade UsdVol levelSet fields as an isosurface\n"
+      << "                         (default) or as fog with density = clamp(-sdf).\n"
       << "                         instead of per-face geometric normals.\n"
       << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
       << "                         reference, or the vendored envmap library.\n"
@@ -126,6 +156,10 @@ void PrintUsage(const char *prog) {
       << "  -quality <fast|default|hq>\n"
       << "                         LightRT BVH build quality (default default).\n"
       << "  -threads <N>           LightRT build threads (0 = backend default).\n"
+      << "  -maxMem <GiB>          Finite process/load budget (0 = automatic).\n"
+      << "  -maxArrayElements <N>  Decoded USD array count cap (default 16777216).\n"
+      << "  -diagnosticEmission    Unlit emissive channel diagnostic, sRGB/no tone map\n"
+      << "  -diagnosticMaterial NAME  Resolved native roughness/metallic, sRGB/no tone map\n"
       << "  -subdiv <N>            Subdivision level for Mesh subdivisionScheme\n"
       << "                         catmullClark/loop/bilinear (default 0).\n"
       << "  -complexity <low|medium|high|veryhigh>\n"
@@ -155,6 +189,32 @@ void PrintUsage(const char *prog) {
       << "                         the nearest districts to the camera and promotes\n"
       << "                         them to districtLod=full under a memory budget\n"
       << "                         (the rest stay proxy). Implies -rtPreview/next.\n"
+      << "  -gpuTriangleChunk N    GPU triangle chunk limit (default 262144).\n"
+      << "  -gpuMaterialPathTriangles N  Material path limit (default 1000000).\n"
+      << "  -triangleChunk N       CPU triangle chunk limit (default 262144).\n"
+      << "  -curveChunk N          Curve segments per chunk (automatic by default).\n"
+      << "  -gaussianChunk N       Splats per chunk (default 262144).\n"
+      << "  -gaussianMax N         Explicit diagnostic splat cap (default unlimited).\n"
+      << "  -hermiteSegments N     Hermite tessellation, 1..1024 (default 8).\n"
+      << "  -instChunkTris N       Prototype BLAS limit (default 8388608).\n"
+      << "  -instBatchTris N       Instanced build batch (default 16000000).\n"
+      << "  -instBudget N          Instance placement limit (automatic by default).\n"
+      << "  -forceVkrFallback      Force Vulkan compute fallback.\n"
+      << "  -forceWide             Force wide instancing.\n"
+      << "  -noPtex / -gpuNoDome    Disable Ptex loading / GPU dome.\n"
+      << "  -coherentColors        Store BLAS colors in leaf order.\n"
+      << "  -lightDoubleCount      Enable diagnostic legacy indirect-light counting.\n"
+      << "  -noLightNee            Disable area-light next-event estimation.\n"
+      << "  -ptexProbe FILE        Write per-sample Ptex diagnostics.\n"
+      << "  -ptexMipLevels N       Per-face Ptex atlas mip levels, 1..8 (default 3).\n"
+      << "  -rtDebugAov NAME       Vulkan material-path diagnostic (see README).\n"
+      << "  -vkDumpF32 FILE        Write raw Vulkan float RGBA.\n"
+      << "  -tempDirectory DIR     Directory for generated LOD wrappers.\n"
+      << "  --preview-native-host  Explicitly enable native preview services.\n"
+      << "  --preview-vulkan-library FILE / --preview-cuda-driver-library FILE\n"
+      << "  --preview-cuda-compiler-library FILE  Absolute backend library paths.\n"
+      << "  --preview-software     Select software-only preview compute.\n"
+      << "  --preview-debug-validate / --preview-trace-pipeline  Preview diagnostics.\n"
       << "  -maxVram <GiB>         GPU VRAM budget for -lodStream (0 = 0.5*device).\n"
       << "  -lodDistrictMem <GiB>  Est. host RSS charged per promoted district\n"
       << "                         (cost-model calibration; default 10).\n"
@@ -200,7 +260,20 @@ void PrintUsage(const char *prog) {
       << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -distantSolidAngle    Scale unnormalized DistantLights by their cone's solid\n"
+         "                        angle (UsdLux/Storm semantics; vkr path).\n"
+      << "  -distantScale <F>     Extra factor on -distantSolidAngle lights (default 1).\n"
+      << "  -noLightShadows       Authored distant lights cast no shadows (Storm\n"
+         "                        default; vkr path).\n"
+      << "  -referenceCameraLightAdd Add the reference camera light to the authored\n"
+         "                        lights instead of replacing them (vkr path).\n"
+      << "  -referenceCameraLight Use only UsdAppUtilsFrameRecorder's camera\n"
+      << "                        light (constant attenuation, radiance 1),\n"
+      << "                        ignoring authored lights; for paired\n"
+      << "                        usdrecord beauty captures.\n"
       << "  -vkDevice <N>         Select Vulkan physical-device index (default auto).\n"
+      << "  -curveSegments <1..64> Spline samples per span for instanced GPU tubes (default 8)\n"
+      << "  -vkInstancedStream    Offline instancing with one TLAS slice resident (all placements)\n"
       << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
       << "                        prototype, shared across instances; saves VRAM on\n"
       << "                        instanced scenes). Falls back to flat if no shares.\n"
@@ -247,6 +320,76 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       return argv[++i];
     };
+    // These limits and diagnostics are explicit inputs, never environment reads.
+    size_t* limit = nullptr;
+    if (a == "-gpuTriangleChunk") limit = &opt->gpu_triangle_chunk;
+    if (a == "-gpuMaterialPathTriangles") limit = &opt->gpu_material_path_triangles;
+    if (a == "-triangleChunk") limit = &opt->triangle_chunk;
+    if (a == "-curveChunk") limit = &opt->curve_chunk;
+    if (a == "-gaussianMax") limit = &opt->gaussian_max;
+    if (a == "-gaussianChunk") limit = &opt->gaussian_chunk;
+    if (a == "-instBudget") limit = &opt->inst_budget;
+    if (limit || a == "-hermiteSegments" || a == "-instChunkTris" || a == "-instBatchTris") {
+      const char* value = need_value(a.c_str());
+      char* end = nullptr;
+      errno = 0;
+      const unsigned long long n = value ? std::strtoull(value, &end, 10) : 0;
+      const unsigned long long maximum = limit
+          ? static_cast<unsigned long long>(std::numeric_limits<size_t>::max())
+          : a == "-hermiteSegments" ? 1024ull : UINT32_MAX;
+      if (!value || !std::isdigit(static_cast<unsigned char>(*value)) ||
+          errno == ERANGE || !end || *end || !n || n > maximum) {
+        std::cerr << "Invalid " << a << " (expected a positive count within range).\n";
+        return false;
+      }
+      if (limit) *limit = static_cast<size_t>(n);
+      if (a == "-gpuTriangleChunk") opt->gpu_triangle_chunk_explicit = true;
+      if (a == "-hermiteSegments") opt->hermite_segments = static_cast<unsigned>(n);
+      if (a == "-instChunkTris") opt->inst_chunk_tris = static_cast<uint32_t>(n);
+      if (a == "-instBatchTris") opt->inst_batch_tris = static_cast<uint32_t>(n);
+      continue;
+    }
+    if (a == "-ptexProbe" || a == "-vkDumpF32" || a == "-tempDirectory") {
+      const char* value = need_value(a.c_str());
+      if (!value || !*value) return false;
+      if (a == "-ptexProbe") opt->ptex_probe = value;
+      if (a == "-vkDumpF32") opt->vk_dump_f32 = value;
+      if (a == "-tempDirectory") opt->temp_directory = value;
+      continue;
+    }
+    if (a == "-forceVkrFallback") { opt->force_vkr_fallback = true; continue; }
+    if (a == "-forceWide") { opt->force_wide = true; continue; }
+    if (a == "-gpuNoDome") { opt->gpu_no_dome = true; continue; }
+    if (a == "-noPtex") { opt->no_ptex = true; continue; }
+    if (a == "-ptexMipLevels" || a == "--ptex-mip-levels") {
+      const char *v = need_value(a.c_str());
+      int parsed = 0;
+      if (!v || !ParseIntStrict(v, &parsed) || parsed < 1 || parsed > 8) {
+        std::cerr << "-ptexMipLevels requires an integer in [1, 8].\n";
+        return false;
+      }
+      opt->ptex_mip_levels = static_cast<uint32_t>(parsed);
+      continue;
+    }
+    if (a == "-coherentColors") { opt->coherent_colors = true; continue; }
+    if (a == "-lightDoubleCount") { opt->light_double_count = true; continue; }
+    if (a == "-noLightNee") { opt->light_nee = false; continue; }
+    if (a == "-rtDebugAov") {
+      const char* value = need_value(a.c_str());
+      if (!value) return false;
+      const char* names[] = {"off", "material", "uv", "opacity", "behind_material",
+          "behind_depth", "", "emission", "lit_diffuse", "lit_spec", "route4",
+          "route44", "route4_tex", "ptex", "base", "ptexmip",
+          "ptexuvperpixel", "ptexrect"};
+      bool found = false;
+      for (uint32_t k = 0; k < sizeof(names) / sizeof(names[0]); ++k) {
+        if (*names[k] && std::strcmp(value, names[k]) == 0) {
+          opt->rt_debug_aov = k; found = true; break;
+        }
+      }
+      if (!found) { std::cerr << "Invalid -rtDebugAov\n"; return false; }
+      continue;
+    }
     // NOTE: this ~90-branch else-if chain on CLI flag string `a` was
     // converted to standalone ifs -- same MSVC C1061 ("blocks nested too
     // deeply") risk class already fixed for the same reason elsewhere in
@@ -287,6 +430,24 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       if (!v) return false;
       opt->camera = v;
       opt->camera_explicit = true;
+    }
+    OPT_MATCH(a == "--aov") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      const std::string name(v);
+      if (name == "color") opt->aov = CaptureAov::Color;
+      else if (name == "depth") opt->aov = CaptureAov::Depth;
+      else if (name == "worldNormal") opt->aov = CaptureAov::WorldNormal;
+      else if (name == "geometricNormal") opt->aov = CaptureAov::GeometricNormal;
+      else if (name == "shadingNormal") { opt->aov = CaptureAov::ShadingNormal; opt->smooth = true; }
+      else if (name == "primId") opt->aov = CaptureAov::PrimId;
+      else { std::cerr << "Unknown AOV: " << name << "\n"; return false; }
+      opt->aov_explicit = true;
+      opt->rt_preview = true;
+    }
+    OPT_MATCH(a == "--all-products") {
+      opt->all_render_products = true;
+      opt->rt_preview = true;
     }
     OPT_MATCH(a == "-renderSettings" || a == "--renderSettings") {
       const char *v = need_value(a.c_str());
@@ -396,8 +557,37 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
     }
+    OPT_MATCH(a == "-diagnosticEmission" || a == "--diagnostic-emission") {
+      opt->diagnostic_emission = true;
+    }
+    OPT_MATCH(a == "-diagnosticMaterial" || a == "--diagnostic-material") {
+      const char* value = need_value(a.c_str());
+      if (!value) return false;
+      const std::string name(value);
+      if (name == "roughness")
+        opt->diagnostic_material = MaterialDiagnostic::Roughness;
+      else if (name == "metallic")
+        opt->diagnostic_material = MaterialDiagnostic::Metallic;
+      else {
+        std::cerr << "Material diagnostic must be roughness or metallic.\n";
+        return false;
+      }
+      opt->diagnostic_emission = true;
+    }
     OPT_MATCH(a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    }
+    OPT_MATCH(a == "-volumeLevelSet" || a == "--volume-level-set") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "surface") {
+        opt->volume_level_set = Options::VolumeLevelSet::Surface;
+      } else if (std::string(v) == "fog") {
+        opt->volume_level_set = Options::VolumeLevelSet::Fog;
+      } else {
+        std::cerr << "-volumeLevelSet must be surface or fog.\n";
+        return false;
+      }
     }
     OPT_MATCH(a == "-ibl" || a == "--ibl") {
       const char *v = need_value(a.c_str());
@@ -532,14 +722,32 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-maxMem" || a == "--maxMem") {
       const char *v = need_value(a.c_str());
-      char *end = nullptr;
-      double g = v ? std::strtod(v, &end) : 0.0;
-      if (!v || end == v || g < 0.0) {
+      double g = 0.0;
+      if (!v || !ParseDoubleStrict(v, &g) || g < 0.0) {
         std::cerr << "Invalid -maxMem (expected GiB, e.g. -maxMem 24).\n";
         return false;
       }
       opt->max_mem_gib = g;
       opt->max_mem_explicit = true;
+    }
+    OPT_MATCH(a == "-maxArrayElements") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      errno = 0;
+      const unsigned long long count = v ? std::strtoull(v, &end, 10) : 0;
+      // strtoull spans all size_t values on 64-bit hosts. Only narrower
+      // targets need a separate range check before using the count as a size.
+#if SIZE_MAX < ULLONG_MAX
+      const bool count_too_large = count > std::numeric_limits<size_t>::max();
+#else
+      const bool count_too_large = false;
+#endif
+      if (!v || !std::isdigit(static_cast<unsigned char>(*v)) ||
+          errno == ERANGE || !end || *end || !count || count_too_large) {
+        std::cerr << "Invalid -maxArrayElements (expected a positive element count).\n";
+        return false;
+      }
+      opt->max_array_elements = count;
     }
     OPT_MATCH(a == "-lodStream" || a == "--lodStream") {
       opt->lod_stream = true;
@@ -547,9 +755,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-maxVram" || a == "--maxVram") {
       const char *v = need_value(a.c_str());
-      char *end = nullptr;
-      double g = v ? std::strtod(v, &end) : 0.0;
-      if (!v || end == v || g < 0.0) {
+      double g = 0.0;
+      if (!v || !ParseDoubleStrict(v, &g) || g < 0.0) {
         std::cerr << "Invalid -maxVram (expected GiB, e.g. -maxVram 8).\n";
         return false;
       }
@@ -565,6 +772,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
       opt->rt_lod_frustum_cull = true;
+    }
+    OPT_MATCH(a == "-curveSegments") {
+      const char* v = need_value(a.c_str());
+      if (!v) return false;
+      int segments = 0;
+      if (!ParseIntStrict(v, &segments) || segments < 1 || segments > 64) {
+        std::cerr << "Invalid -curveSegments (expected 1..64).\n";
+        return false;
+      }
+      opt->curve_segments = uint32_t(segments);
+      continue;
     }
     OPT_MATCH(a == "-rtLodFullPx" || a == "--rtLodFullPx") {
       const char *v = need_value(a.c_str());
@@ -741,6 +959,31 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->vulkan = true;
       opt->backend_explicit = true;
     }
+    OPT_MATCH(a == "-distantSolidAngle" || a == "--distantSolidAngle") {
+      opt->distant_solid_angle = true;
+    }
+    OPT_MATCH(a == "-distantScale" || a == "--distantScale") {
+      const char *v = need_value(a.c_str());
+      double parsed = 0.0;
+      if (!v || !ParseDoubleStrict(v, &parsed) || !std::isfinite(parsed) ||
+          parsed < 0.0 || parsed > 1000.0) {
+        std::cerr << "--distantScale requires a number in [0, 1000].\n";
+        return false;
+      }
+      opt->distant_scale = static_cast<float>(parsed);
+    }
+    OPT_MATCH(a == "-noLightShadows" || a == "--noLightShadows") {
+      opt->no_light_shadows = true;
+    }
+    OPT_MATCH(a == "-referenceCameraLightAdd" ||
+              a == "--referenceCameraLightAdd") {
+      opt->reference_camera_light_add = true;
+    }
+    OPT_MATCH(a == "-referenceCameraLight" ||
+              a == "--referenceCameraLight") {
+      opt->reference_camera_light = true;
+      continue;
+    }
     OPT_MATCH(a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
@@ -754,10 +997,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
     }
-    OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced") {
+    OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced" || a == "-vkInstancedStream") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->vulkan_instanced = true;
+      opt->vulkan_instanced_stream = a == "-vkInstancedStream";
       opt->backend_explicit = true;
     }
     OPT_MATCH(a == "-gpuShade" || a == "--gpuShade") {
@@ -784,6 +1028,27 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     OPT_MATCH(a == "-cuda" || a == "--cuda") {
       opt->cuda = true;
       opt->backend_explicit = true;
+    }
+    OPT_MATCH(a == "-displayTransform" || a == "--displayTransform") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      const std::string mode = v;
+      if (mode == "srgb") opt->srgb_display_transform = true;
+      else if (mode == "filmic") opt->srgb_display_transform = false;
+      else {
+        std::cerr << "--displayTransform must be srgb or filmic.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-exposure" || a == "--exposure") {
+      const char *v = need_value(a.c_str());
+      double parsed = 0.0;
+      if (!v || !ParseDoubleStrict(v, &parsed) || !std::isfinite(parsed) ||
+          parsed < -8.0 || parsed > 8.0) {
+        std::cerr << "--exposure requires a number in [-8, 8].\n";
+        return false;
+      }
+      opt->exposure = static_cast<float>(parsed);
     }
     OPT_MATCH(a == "-path-trace" || a == "--path-trace") {
       opt->path_trace = true;
@@ -916,6 +1181,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     PrintUsage(argv[0]);
     return false;
   }
+  if (opt->diagnostic_material != MaterialDiagnostic::None &&
+      opt->aov != CaptureAov::Color) {
+    std::cerr << "-diagnosticMaterial cannot be combined with a data AOV.\n";
+    return false;
+  }
+  if (opt->diagnostic_emission && (opt->cuda || opt->hip || opt->vulkan_instanced || opt->use_d3d || opt->path_trace)) {
+    std::cerr << "-diagnosticEmission supports CPU preview and flat Vulkan primary-ray paths only.\n";
+    return false;
+  }
+  if (opt->diagnostic_emission) opt->gpu_shade = Options::GpuShadeMode::Cpu;
   opt->input = positional[0];
   opt->output = positional.size() > 1 ? positional[1] : std::string();
   if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {

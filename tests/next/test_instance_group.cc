@@ -12,6 +12,17 @@
 
 #include <chrono>
 #include <cstdio>
+
+#if defined(__SANITIZE_THREAD__)
+#define LIGHTUSD_TEST_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define LIGHTUSD_TEST_TSAN 1
+#endif
+#endif
+#ifndef LIGHTUSD_TEST_TSAN
+#define LIGHTUSD_TEST_TSAN 0
+#endif
 #include <iostream>
 #include <memory>
 #include <string>
@@ -22,7 +33,7 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
+#include "next/types/value.hh"
 
 using namespace lightusd::next;
 
@@ -95,7 +106,9 @@ static void test_large_instance_group() {
 
   // Regression gate: the O(N) build is a small fraction of this bound, while an
   // O(N^2) regression at N=40000 (~1.6e9 compares) is many times over it.
-  IG_CHECK(t_build < 6000, "BuildStage too slow (O(N^2) regression?)");
+  // Timing gates are meaningless under TSan's instrumentation overhead.
+  IG_CHECK(LIGHTUSD_TEST_TSAN || t_build < 6000,
+           "BuildStage too slow (O(N^2) regression?)");
 
   std::cout << "  large instance group: N=" << kInstances
             << " BuildStage=" << t_build << "ms total=" << t_total << "ms"

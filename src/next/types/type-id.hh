@@ -172,7 +172,6 @@ size_t GetTypeAlignment(TypeId id);
 bool IsScalarType(TypeId id);
 
 /// Check if a type is a numeric type (can be used in math operations)
-bool IsNumericType(TypeId id);
 
 /// Get the component type of a vector/matrix type
 /// Returns the scalar element type, or Invalid for non-compound types

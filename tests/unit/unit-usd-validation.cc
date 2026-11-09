@@ -1536,8 +1536,8 @@ def MjcTendon "badRoute"
 def MjcTendon "goodRoute"
 {
     rel mjc:path = [</a>, </b>]
-    int[] mjc:path:indices = [0, 1]
-    double[] mjc:path:coef = [1, -0.5]
+    int[] mjc:path:indices = [0, 1, 0]
+    double[] mjc:path:coef = [1, -0.5, 1]
     rel mjc:sideSites = [</s>]
     int[] mjc:sideSites:indices = [0]
 }

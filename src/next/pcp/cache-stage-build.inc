@@ -6,8 +6,9 @@
 
   // --- BuildStage ---------------------------------------------------------
 
-  // `src_path` is where composition opinions are gathered; `out_path` is where
-  // the composed prim is placed (differs when a relocate renames it).
+  // `out_path` is where the composed prim is placed and where its sources are
+  // looked up (the walk keys sources by composed path). `src_path` is unused
+  // by the walk and left empty for children.
   struct BuildStageWork {
     Path src_path;
     Path out_path;
@@ -21,148 +22,109 @@
   mutable uint64_t prof_sources_ns_ = 0;
   mutable uint64_t prof_compose_ns_ = 0;
   mutable uint64_t prof_reg_ns_ = 0;
+  // Walk-only attribution (temporary, LIGHTUSD_NEXT_TIMING): child-name
+  // composition, instance registration + prototype lookup, prim publication and
+  // child-work push.
+  mutable uint64_t prof_childnames_ns_ = 0;
+  mutable uint64_t prof_protomap_ns_ = 0;
+  mutable uint64_t prof_addprim_ns_ = 0;
+  mutable uint64_t prof_push_ns_ = 0;
   mutable uint64_t prof_source_hits_ = 0;
   mutable uint64_t prof_source_misses_ = 0;
   mutable uint64_t prof_structure_nodes_ = 0;
 
+  // Names of the pseudo-root's children, in composed order.
+  std::vector<std::string> ComposeRootNames() const;
   void BuildStage(Layer *out, const BuildStageWork &root_work,
-                  std::string *warn, std::string *err) {
-    using ProfClock = std::chrono::steady_clock;
-    const bool prof = options.enable_timing;
-    std::vector<BuildStageWork> stack;
-    stack.push_back(root_work);
+                  std::string *warn, std::string *err) ;
 
-    while (!stack.empty()) {
-      BuildStageWork w = stack.back();
-      stack.pop_back();
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+  // Deferred (USD-style) opinion fill: the stage's layer keeps a skeleton per
+  // prim and this filler composes opinions on demand (see PrimFiller).
+  class DeferredFiller;
+#endif
 
-      // Namespace-depth backstop: an arc-induced namespace that keeps growing
-      // (e.g. an ancestor cycle a stronger check missed) must surface as an
-      // error, never as C++ stack exhaustion.
-      if (w.depth > options.max_namespace_depth) {
-        AddIssue(ErrorCode::MaxDepthExceeded, w.out_path.str(),
-                 "BuildStage max namespace depth exceeded at: " + w.out_path.str(),
-                 err);
-        continue;
-      }
-      auto ps0 = prof ? ProfClock::now() : ProfClock::time_point{};
-      // Parallel warm keys stack-0 sources directly by the composed path.
-      // Avoid SourcesKey's path-string copy on the overwhelmingly common hit;
-      // retain the full resolver for an unwarmed/mutated miss.
-      const std::vector<Src>* cached_srcs =
-          FindCachedSources(w.src_path.str());
-      if (prof) {
-        if (cached_srcs) {
-          ++prof_source_hits_;
-        } else {
-          ++prof_source_misses_;
-        }
-        ++prof_structure_nodes_;
-      }
-      const std::vector<Src> &srcs = cached_srcs
-                                         ? *cached_srcs
-                                         : SourcesForPath(w.src_path, warn, err);
-      auto ps1 = prof ? ProfClock::now() : ProfClock::time_point{};
-
-      // STRUCTURE PASS: fix this prim's slot, parent, child order and instancing
-      // now, but DEFER opinion composition to the parallel fill below. Child-name
-      // order (ComposeChildNames) and instancing (RegisterInstance) depend only on
-      // `srcs`, never on the prim's own composed opinions, so deferring opinions
-      // does not change the tree the walk produces.
-      PrimSpec spec(w.out_path.name());
-      spec.set_path(w.out_path);
-      std::vector<std::string> children;
-      bool children_filtered = false;
-      // pxr instancing rule: descendants of an instanceable prim compose ONLY
-      // from the instance's key-defining arcs (direct references/payloads and
-      // implied classes) — "overrides on descendent prims are ignored". Local
-      // and ancestral-positional sources still apply to the instance ROOT
-      // itself (property overrides there are allowed), so this prim's own
-      // opinion fill keeps the full source list; only the CHILD derivation is
-      // filtered (recursively, via the pre-seeded source cache below).
-      std::vector<Src> shared_srcs;
-      bool subtree_filtered = false;
-      if (IsInstanceableSources(srcs)) {
-        shared_srcs.reserve(srcs.size());
-        for (const Src &s : srcs) {
-          if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) {
-            shared_srcs.push_back(s);
-          }
-        }
-        if (!shared_srcs.empty()) {
-          subtree_filtered = true;
-          children = ComposeChildNames(shared_srcs);
-          children_filtered = true;
-        }
-      }
-      // Preserve the unfiltered child set when the instanceable source list has
-      // no shareable mapped sources.  In the common non-instanceable case this
-      // also avoids constructing and then potentially replacing the vector.
-      if (!children_filtered) children = ComposeChildNames(srcs);
-      auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
-      if (prof) {
-        prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
-        prof_compose_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps2 - ps1).count();
-      }
-
-      // Instancing: register this prim. If it is an instance (not the prototype
-      // of its group), link it to the prototype and do NOT duplicate its subtree
-      // -- children are provided by the prototype (UsdPrim follows
-      // instance_prototype).
-      auto pr0 = prof ? ProfClock::now() : ProfClock::time_point{};
-      // A deactivated prim composes no subtree and forms NO instance in pxr —
-      // registering it would extract an orphan Flattened_Prototype for
-      // content the flatten output prunes.
-      if (ComposedActive(srcs)) RegisterInstance(w.out_path.str(), srcs);
-      if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
-      bool is_instance = false;
-      {
-        auto pit = prototype_of.find(w.out_path.str());
-        if (pit != prototype_of.end() && pit->second != w.out_path.str()) {
-          spec.meta().instance_prototype() = pit->second;
-          is_instance = true;
-        }
-      }
-
-      uint32_t idx = out->add_prim(std::move(spec));
-      if (w.is_root) {
-        out->add_root(idx);
-      } else {
-        out->set_parent(idx, w.parent_idx);
-      }
-      // Opinions for this slot are filled (in parallel) after the whole walk.
-      fill_.push_back({idx, &srcs});
-
-      if (is_instance) continue;  // prototype provides the subtree
-
-      // A deactivated prim composes NO subtree (pxr prunes children of an
-      // inactive prim; usdcat --flatten drops the prim itself too — the prim
-      // is kept here, with its authored active=false, so stage consumers can
-      // still query IsActive on it).
-      if (!ComposedActive(srcs)) continue;
-
-      // Push children in reverse order so the first child processes first
-      // (preserving the original visitation order). `children` is already the
-      // post-relocation child list: departed names are gone and relocated-in
-      // names are present (ComposeChildNames), and each child's sources resolve
-      // back to its pre-relocation site (DeriveChildSources).
-      if (subtree_filtered) {
-        // Pre-seed each child's composed-namespace source cache with the
-        // filtered derivation so the entire prototype subtree (recursively)
-        // composes shared content only.
-        for (const std::string &cn : children) {
-          const Path child = w.out_path.append_child(cn);
-          const std::string ck = SourcesKey(0, child.str());
-          if (!sources_cache.contains(ck)) {
-            std::vector<Src> base =
-                DeriveChildSources(shared_srcs, cn, child.str(), warn, err);
-            GetOrCreateCachedSources(ck) = ExpandList(base, child.str(), warn, err);
-          }
-        }
-      }
-      for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        const Path child = w.out_path.append_child(*it);
-        stack.push_back({child, child, idx, /*is_root=*/false, w.depth + 1});
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Subtree-parallel structure walk (see ParallelStructureWalk in cache.cc).
+  // One composed prim, computed speculatively off the main thread. Kept
+  // compact (no PrimSpec): the commit only assigns indices; the PrimSpecs are
+  // built in parallel afterwards (MaterializeWalk).
+  struct WalkItem {
+    Path path;
+    const std::vector<Src> *srcs = nullptr;
+    // Instance key when registered (most items are not: a pointer, not an
+    // inline string head, per item).
+    std::unique_ptr<std::string> ikey;
+    uint32_t parent = UINT32_MAX;         // local parent item (MAX: outer)
+    uint32_t end = 0;                     // one past this item's subtree
+    int32_t task = -1;                    // >= 0: placeholder for that task
+    uint32_t depth = 0;
+    uint8_t flags = 0;
+  };
+  enum : uint8_t {
+    kWalkRegistered = 1,    // instanceable + active (+ detect_instances)
+    kWalkSpecInstance = 2,  // walked as an instance (children not expanded)
+    kWalkRoot = 4,
+    kWalkFail = 8,          // depth limit: fail parallel commit, report via fallback
+    kWalkMiss = 16,         // source-cache miss: resolved at commit
+    kWalkSeed = 32,         // prototype child sources unseeded: resolved at
+                            // commit (seeding is a mutation)
+    kWalkIsInstance = 64,   // set by the commit: a (non-prototype) instance
+  };
+  // Parks walk workers at their next prim so the committing thread can do a
+  // serial mutation (see CommitWalk).
+  // Workers count themselves in `running` while walking a task (seq_cst, no
+  // lock); the requester waits until every running worker is parked. A worker
+  // that starts after the request parks at its first checkpoint.
+  struct WalkPause {
+    std::mutex m;
+    std::condition_variable cv;
+    std::atomic<bool> req{false};
+    std::atomic<int> running{0};
+    std::atomic<int> parked{0};
+    void Checkpoint() {
+      if (!req.load(std::memory_order_seq_cst)) return;
+      std::unique_lock<std::mutex> lk(m);
+      parked.fetch_add(1, std::memory_order_seq_cst);
+      cv.notify_all();
+      cv.wait(lk, [&] { return !req.load(std::memory_order_seq_cst); });
+      parked.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    void Enter() {
+      running.fetch_add(1, std::memory_order_seq_cst);
+      Checkpoint();
+    }
+    void Leave() {
+      running.fetch_sub(1, std::memory_order_seq_cst);
+      if (req.load(std::memory_order_seq_cst)) {
+        std::lock_guard<std::mutex> lk(m);
+        cv.notify_all();
       }
     }
-  }
+  };
+  struct WalkCommitCtx;
+  struct WalkClaims;  // first-claim registry of instance keys by DFS rank
+  // Hands a not-yet-walked entry to another thread: returns its task id (the
+  // caller emits a placeholder there) or -1 to walk it here. `rank` is the
+  // entry's DFS rank (see SpeculativeWalk).
+  using WalkDonate =
+      std::function<int32_t(std::vector<BuildStageWork> &&,
+                            const std::vector<uint32_t> &)>;
+  using WalkCanDonate = std::function<bool(const BuildStageWork &)>;
+  void SpeculativeWalk(const BuildStageWork &root,
+                       const std::vector<uint32_t> &rank_prefix,
+                       std::vector<WalkItem> *items,
+                       const WalkCanDonate &can_donate,
+                       const WalkDonate &donate, WalkClaims *claims,
+                       std::unordered_set<std::string> *local_keys,
+                       WalkPause *pause, bool force_root_prototype = false);
+  bool CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent,
+                  const std::vector<uint32_t> &rank_prefix, WalkCommitCtx &ctx);
+  void MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads);
+  // `before_materialize` runs once every prim is committed, before the
+  // PrimSpecs are built (not on a fallback).
+  bool ParallelStructureWalk(Layer *out, const std::vector<std::string> &root_names,
+                             int threads,
+                             const std::function<void()> &before_materialize,
+                             std::string *warn, std::string *err);
+#endif

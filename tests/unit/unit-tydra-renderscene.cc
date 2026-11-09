@@ -14,6 +14,8 @@
 #include "lightusd.hh"
 #include "tydra/color-management.hh"
 #include "tydra/render-data.hh"
+#include "tydra/render-data-mesh-internal.hh"
+#include "tydra/tangent-quantize.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/scene-access.hh"
 #include "usdGeom.hh"
@@ -1463,4 +1465,107 @@ def Mesh "Tri" {
   TEST_MSG("Failed to compute normals for leftHanded mesh");
   TEST_CHECK(lz < -0.5f);
   TEST_MSG("leftHanded mesh: expected -Z normal, got z = %f", double(lz));
+}
+
+void tydra_deferred_packed_normals_test(void) {
+  using namespace lightusd::tydra;
+  using namespace lightusd::tydra::tangent_quantize;
+  const VertexAttributeFormat formats[] = {VertexAttributeFormat::Vec3,
+      VertexAttributeFormat::Char3, VertexAttributeFormat::Short3, VertexAttributeFormat::Uint};
+  for (auto format : formats) {
+    for (bool face_uv : {false, true}) {
+      for (auto method : {MeshConverterConfig::TangentComputationMethod::Lengyel,
+                          MeshConverterConfig::TangentComputationMethod::MikkTSpace,
+                          MeshConverterConfig::TangentComputationMethod::FastMikkTSpace,
+                          MeshConverterConfig::TangentComputationMethod::Hybrid}) {
+      RenderMesh mesh;
+      mesh.points = {{0,0,0}, {1,0,0}, {0,1,0}, {1,1,0}};
+      mesh.usdFaceVertexCounts = {3,3};
+      mesh.usdFaceVertexIndices = {2,0,1,2,1,3};
+      mesh.is_single_indexable = !face_uv;
+      mesh.normals.format = format;
+      mesh.normals.variability = VertexVariability::Vertex;
+      for (int i = 0; i < 4; ++i) {
+        const vec3 normal{0,0,1};
+        const auto n8 = pack_normal_snorm8(0,0,1);
+        const auto n16 = pack_normal_snorm16(0,0,1);
+        const auto n32 = pack_normal_1010102(0,0,1);
+        const void *data = &normal;
+        size_t bytes = sizeof(normal);
+        if (format == VertexAttributeFormat::Char3) { data = &n8; bytes = sizeof(n8); }
+        if (format == VertexAttributeFormat::Short3) { data = &n16; bytes = sizeof(n16); }
+        if (format == VertexAttributeFormat::Uint) { data = &n32; bytes = sizeof(n32); }
+        const auto *begin = static_cast<const uint8_t *>(data);
+        mesh.normals.data.insert(mesh.normals.data.end(), begin, begin + bytes);
+      }
+      auto &uv = mesh.texcoords[0];
+      uv.format = VertexAttributeFormat::Vec2;
+      uv.variability = face_uv ? VertexVariability::FaceVarying : VertexVariability::Vertex;
+      const std::vector<vec2> coords = face_uv
+          ? std::vector<vec2>{{0,1},{0,0},{1,0},{1,0},{0,-1},{1,-1}}
+          : std::vector<vec2>{{0,0},{1,0},{0,1},{1,1}};
+      uv.set_buffer(reinterpret_cast<const uint8_t *>(coords.data()), coords.size() * sizeof(vec2));
+      mesh.tangent_computation_deferred = true;
+      const auto normal_bytes = mesh.normals.data;
+      std::string err;
+      TEST_CHECK(RenderSceneConverter::ComputeDeferredTangents(&mesh,
+          method,
+          MeshConverterConfig::TangentStorageFormat::Packed1010102, &err));
+      TEST_MSG("%s", err.c_str());
+      TEST_CHECK(!mesh.tangent_computation_deferred);
+      TEST_CHECK(mesh.normals.data == normal_bytes);
+      TEST_CHECK(mesh.normals.format == format);
+      TEST_CHECK(mesh.tangents.format == VertexAttributeFormat::Uint);
+      TEST_CHECK(mesh.tangents.vertex_count() == 6);
+      for (size_t i = 0; i < mesh.tangents.vertex_count(); ++i) {
+        PackedTangent1010102 packed;
+        memcpy(&packed, mesh.tangents.data.data() + i * sizeof(packed), sizeof(packed));
+        float x, y, z, w;
+        unpack_tangent_1010102(packed, x, y, z, w);
+        const bool rotated = face_uv && i >= 3;
+        TEST_CHECK(std::fabs(x - (rotated ? 0.0f : 1.0f)) < 0.005f);
+        TEST_CHECK(std::fabs(y - (rotated ? 1.0f : 0.0f)) < 0.005f);
+        TEST_CHECK(std::fabs(z) < 0.005f);
+        TEST_CHECK(w == 1.0f);
+        vec3 normal;
+        TEST_CHECK(ReadNormalForTangent(mesh, i, &normal));
+        TEST_CHECK(std::fabs(normal[2] - 1) < 0.005f);
+      }
+      mesh.tangent_computation_deferred = true;
+      mesh.normals.data.resize(1);
+      TEST_CHECK(!RenderSceneConverter::ComputeDeferredTangents(&mesh,
+          method,
+          MeshConverterConfig::TangentStorageFormat::Packed1010102, &err));
+      TEST_CHECK(mesh.tangent_computation_deferred);
+      }
+    }
+  }
+  // Equal normal/corner counts still require vertex-index remapping.
+  RenderMesh indexed;
+  indexed.usdFaceVertexCounts = {3};
+  indexed.usdFaceVertexIndices = {2,0,1};
+  indexed.tangents.variability = VertexVariability::FaceVarying;
+  const vec3 normals[] = {{0,0,1},{0,1,0},{1,0,0}};
+  indexed.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals), sizeof(normals));
+  vec3 remapped;
+  TEST_CHECK(ReadNormalForTangent(indexed, 0, &remapped));
+  TEST_CHECK(remapped[0] == 1 && remapped[1] == 0 && remapped[2] == 0);
+  indexed.normals.indices = {1,2,0};
+  TEST_CHECK(ReadNormalForTangent(indexed, 0, &remapped));
+  TEST_CHECK(remapped[0] == 0 && remapped[1] == 1 && remapped[2] == 0);
+  indexed.normals.indices[0] = 999;
+  TEST_CHECK(!ReadNormalForTangent(indexed, 0, &remapped));
+  VertexAttribute normal;
+  normal.format = VertexAttributeFormat::Short3;
+  normal.data = {0,0, 0,0, 255,127, 0,0};
+  normal.stride = 8;
+  vec3 decoded;
+  TEST_CHECK(ReadNormalAttribute(normal, 0, &decoded));
+  TEST_CHECK(decoded[2] == 1.0f);
+  TEST_CHECK(!ReadNormalAttribute(normal, 1, &decoded));
+  TEST_CHECK(!ReadNormalAttribute(normal, size_t(-1), &decoded));
+  normal.stride = 1;
+  TEST_CHECK(!ReadNormalAttribute(normal, 0, &decoded));
+  normal.elementSize = 0;
+  TEST_CHECK(!ReadNormalAttribute(normal, 0, &decoded));
 }

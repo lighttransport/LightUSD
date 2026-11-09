@@ -10,5 +10,6 @@ cd ${builddir} && cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DLIGHTUSD_BUILD_TESTS=Off \
   -DLIGHTUSD_BUILD_EXAMPLES=Off \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

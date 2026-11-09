@@ -597,6 +597,10 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Scope");
   // UsdVol / UsdRender placeholder prim types.
   d.insert("Volume");
+  d.insert("VolumeFieldBase");
+  d.insert("FieldBase");
+  d.insert("VolumeFieldAsset");
+  d.insert("FieldAsset");
   d.insert("OpenVDBAsset");
   d.insert("Field3DAsset");
   d.insert("RenderSettings");
@@ -622,6 +626,9 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
 
   // UsdVol
   d.insert("Volume");
+  d.insert("VolumeFieldBase");
+  d.insert("FieldBase");
+  d.insert("VolumeFieldAsset");
   d.insert("FieldAsset");
   d.insert("OpenVDBAsset");
   d.insert("Field3DAsset");
@@ -636,6 +643,7 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
   d.insert("MaterialXConfigAPI");  // usdMtlx: config:mtlx:* on Material
+  d.insert("MaterialUEConfigAPI"); // LightUSD UE material bridge
   d.insert("ColorSpaceAPI");
   d.insert("ColorSpaceDefinitionAPI");
   // CollectionAPI is a supported multiple-apply schema.  The instance name

@@ -4,6 +4,7 @@
 // LightUSD Next - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
+#include "../layer/prim-spec.hh"
 #include "../strfmt.hh"
 #include <cstring>
 #include <algorithm>
@@ -53,11 +54,11 @@ void ReadMatrix4dArray(const UsdPrim& prim, const char* name,
     val = prim.GetPropertyValue(std::string("primvars:skel:") + name);
   }
   if (!val || !val->is_array()) return;
-  if (const std::vector<double>* darray = val->as_double_array()) {
-    *out = *darray;
+  if (auto darray = val->as_double_array()) {
+    out->assign(darray->begin(), darray->end());
     return;
   }
-  if (const std::vector<float>* farray = val->as_float_array()) {
+  if (auto farray = val->as_float_array()) {
     out->resize(farray->size());
     for (size_t i = 0; i < farray->size(); ++i) {
       (*out)[i] = static_cast<double>((*farray)[i]);
@@ -80,8 +81,8 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
       val = prim.GetPropertyValue("joints");
     }
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->joints = *toks;
+      if (auto toks = val->as_token_array()) {
+        out->joints.assign(toks->begin(), toks->end());
       }
     }
   }
@@ -90,8 +91,8 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("jointNames");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->jointNames = *toks;
+      if (auto toks = val->as_token_array()) {
+        out->jointNames.assign(toks->begin(), toks->end());
       }
     }
   }
@@ -108,11 +109,11 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
   if (out->jointNames.empty()) {
     const Value* val = prim.GetPropertyValue("primvars:skel:jointNames");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->jointNames = *toks;
-      } else if (const std::string* s = val->as_string()) {
+      if (auto toks = val->as_token_array()) {
+        out->jointNames.assign(toks->begin(), toks->end());
+      } else if (auto s = val->as_string()) {
         out->jointNames.push_back(*s);
-      } else if (const std::string* tok = val->as_token()) {
+      } else if (auto tok = val->as_token()) {
         out->jointNames.push_back(*tok);
       }
     }
@@ -144,9 +145,9 @@ namespace {
 
 bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr) {
-    *out = *arr;
+    out->assign(arr->begin(), arr->end());
     return true;
   }
   return false;
@@ -160,9 +161,9 @@ bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   // text authors directly. SkelAnimationData keeps that layout; consumers that
   // need xyzw (GPU / three.js quaternion order) swizzle at their own boundary
   // -- tydra-next's AnimationChannel does, for one.
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr) {
-    *out = *arr;
+    out->assign(arr->begin(), arr->end());
     return true;
   }
   return false;
@@ -181,11 +182,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->blendShapes = *toks;
-      } else if (const std::string* s = val->as_string()) {
+      if (auto toks = val->as_token_array()) {
+        out->blendShapes.assign(toks->begin(), toks->end());
+      } else if (auto s = val->as_string()) {
         out->blendShapes.push_back(*s);
-      } else if (const std::string* tok = val->as_token()) {
+      } else if (auto tok = val->as_token()) {
         out->blendShapes.push_back(*tok);
       }
     }
@@ -195,9 +196,9 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     EvalResult result = eval.Eval(prim, "blendShapeWeights");
     if (result.success && result.value.is_array()) {
-      const std::vector<float>* arr = result.value.as_float_array();
+      auto arr = result.value.as_float_array();
       if (arr) {
-        out->blendShapeWeights = *arr;
+        out->blendShapeWeights.assign(arr->begin(), arr->end());
         out->hasBlendShapes = true;
       }
     }
@@ -210,11 +211,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->joints = *toks;
-      } else if (const std::string* s = val->as_string()) {
+      if (auto toks = val->as_token_array()) {
+        out->joints.assign(toks->begin(), toks->end());
+      } else if (auto s = val->as_string()) {
         out->joints.push_back(*s);
-      } else if (const std::string* tok = val->as_token()) {
+      } else if (auto tok = val->as_token()) {
         out->joints.push_back(*tok);
       }
     }
@@ -272,9 +273,9 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("offsets");
     if (val && val->is_array()) {
-      const std::vector<float>* arr = val->as_float_array();
+      auto arr = val->as_float_array();
       if (arr) {
-        out->offsets = *arr;
+        out->offsets.assign(arr->begin(), arr->end());
       }
     }
   }
@@ -283,9 +284,9 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("normalOffsets");
     if (val && val->is_array()) {
-      const std::vector<float>* arr = val->as_float_array();
+      auto arr = val->as_float_array();
       if (arr) {
-        out->normalOffsets = *arr;
+        out->normalOffsets.assign(arr->begin(), arr->end());
         out->hasNormalOffsets = true;
       }
     }
@@ -295,9 +296,9 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("pointIndices");
     if (val && val->is_array()) {
-      const std::vector<int32_t>* arr = val->as_int_array();
+      auto arr = val->as_int_array();
       if (arr) {
-        out->pointIndices = *arr;
+        out->pointIndices.assign(arr->begin(), arr->end());
         out->hasPointIndices = true;
       }
     }
@@ -310,12 +311,12 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
     for (const std::string& property : prim.GetPropertyNames()) {
       if (property.rfind("inbetweens:", 0) != 0) continue;
       const Value* value = prim.GetPropertyValue(property);
-      const std::vector<float>* offsets =
+      auto offsets =
           value && value->is_array() ? value->as_float_array() : nullptr;
       if (!offsets || offsets->empty()) continue;
       BlendShapeData::Inbetween inbetween;
       inbetween.name = property.substr(std::strlen("inbetweens:"));
-      inbetween.offsets = *offsets;
+      inbetween.offsets.assign(offsets->begin(), offsets->end());
       if (const PropMeta* meta = spec->property_meta(property)) {
         if (meta->authored & PropMeta::kWeight) {
           inbetween.weight = static_cast<float>(meta->weight);

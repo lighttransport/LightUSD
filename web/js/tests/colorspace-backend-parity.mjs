@@ -11,7 +11,7 @@ const legacy = await loadWasm(() => import(
 const next = await loadWasm(() => import(
   new URL('../src/lightusd/lightusd_next.js', import.meta.url).href), {
   locateFile: (file) => new URL('../src/lightusd/' + file,
-    import.meta.url).pathname
+    import.meta.url).href
 });
 
 const COLOR_USDA = `#usda 1.0

@@ -74,11 +74,11 @@ def test_array_dtype_variants():
     assert len(f_arr) == 10
     # zero-copy: numpy view shares pointer
     a = np.asarray(f_arr)
-    assert a.__array_interface__["data"][0] == f_arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(f_arr).__array_interface__["data"][0]
     assert a.dtype == np.float32
-    # memoryview is raw bytes, length == nbytes
-    mv = f_arr.memoryview()
-    assert len(mv) == f_arr.nbytes
+    # memoryview carries the immutable typed layout
+    mv = memoryview(f_arr)
+    assert mv.nbytes == f_arr.nbytes
     # tolist / iter / getitem
     assert f_arr[0] == pytest.approx(0.0)
     assert list(f_arr)[1] == pytest.approx(1.0)
@@ -243,7 +243,7 @@ def test_relationship_and_variant_ops():
 def test_stage_composition_and_files(tmp_path):
     # sublayer composition on disk
     base = tmp_path / "base.usda"
-    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1 }\n')
+    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1\n}\n')
     root = tmp_path / "root.usda"
     root.write_text(f'#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\ndef Xform "Root" {{}} \n')
     st = lightusd.load(str(root))
@@ -254,7 +254,8 @@ def test_stage_composition_and_files(tmp_path):
     # variants override
     vroot = tmp_path / "v.usda"
     vroot.write_text('''#usda 1.0
-def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"]) {
+def Xform "R" (variants = { string lod = "high" }
+    prepend variantSets = ["lod"]) {
   variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
 }
 ''')
@@ -315,7 +316,7 @@ def test_tydra_full_scene_and_zero_copy():
     arr = mesh.points
     assert arr is not None
     a = np.asarray(arr)
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     # triangulated indices dtype
     tri = mesh.triangulated_indices
     if tri is not None:
@@ -330,7 +331,7 @@ def test_tydra_full_scene_and_zero_copy():
     assert isinstance(scene.cameras, tuple)
     assert scene.mesh_by_path("/World/M") is not None
     # scene outlives stage (use a valid mesh)
-    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }')
+    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n }\n}')
     sc = tydra.to_render_scene(st2)
     st2.close()
     assert len(sc.meshes) == 1
@@ -361,7 +362,7 @@ def test_synthetic_large_array_performance(capsys):
     a = np.asarray(arr)
     t_view = time.perf_counter() - t0
     # zero-copy: pointer equality
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     assert a.shape == (n, 3)
     # timing prints for manual inspection (pytest -s)
     print(f"[large synthetic] set {t_set:.3f}s export {t_exp:.3f}s load {t_load:.3f}s view {t_view*1e3:.1f}ms n={n}")
@@ -375,6 +376,6 @@ def test_flatten_and_type_helpers():
     assert lightusd.type_from_name("float") != 0
     assert lightusd.type_name(lightusd.type_from_name("float")) == "float"
     # asarray helper
-    st2 = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0)] }')
+    st2 = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0)]\n}')
     arr = st2.prim_at("/M")["points"]
     assert np.allclose(lightusd.asarray(arr), np.array([[0,0,0]], dtype=np.float32))

@@ -1,9 +1,9 @@
 // corpus-parse-test.js — WASM-CLI parse regression over the usd-wg/assets corpus.
 //
 // Loads every .usd/.usda/.usdc/.usdz under the corpus through the WASM module
-// (LightUSDLoaderNative.loadAsLayerFromBinary -> LoadLayerFromMemory: a pure
-// parse, no composition or render-scene conversion — the WASM analogue of the
-// native `lusdcat -l` parse regression), classifies PASS/FAIL, and (optionally)
+// (LayerDocument.load for next, loadAsLayerFromBinary for legacy: a pure parse,
+// no composition or render-scene conversion — the WASM analogue of the native
+// `lusdcat -l` parse regression), classifies PASS/FAIL, and (optionally)
 // gates on a max failure count for use as a regression test.
 //
 // Run:  npm run test:corpus           (vite-node resolves the 'lightusd/' alias)
@@ -74,8 +74,9 @@ async function main() {
   await loader.init({ useMemory64: a.useMemory64 });
   loader.setMaxMemoryLimitMB(2048);
   const native = loader.native_;
-  if (!native || !native.LightUSDLoaderNative) {
-    console.error('WASM module / LightUSDLoaderNative not available.');
+  const layerType = loader.nextOnlyNative_ ? 'LayerDocument' : 'LightUSDLoaderNative';
+  if (!native || typeof native[layerType] !== 'function') {
+    console.error(`WASM module / ${layerType} not available.`);
     process.exit(2);
   }
 
@@ -84,11 +85,18 @@ async function main() {
   const failures = [];
   for (const f of files) {
     const bytes = new Uint8Array(fs.readFileSync(f));
-    const u = new native.LightUSDLoaderNative();
+    const u = new native[layerType]();
     let ok = false, err = '';
     try {
-      ok = u.loadAsLayerFromBinary(bytes, path.basename(f));
-      if (!ok) err = (typeof u.error === 'function') ? u.error() : 'unknown';
+      if (layerType === 'LayerDocument') {
+        const result = u.load(bytes);
+        ok = result.success;
+        if (!ok) err = result.error || 'unknown';
+      } else {
+        u.setMaxMemoryLimitMB(2048);
+        ok = u.loadAsLayerFromBinary(bytes, path.basename(f));
+        if (!ok) err = (typeof u.error === 'function') ? u.error() : 'unknown';
+      }
     } catch (e) {
       ok = false; err = String(e && e.message || e);
     } finally {
@@ -99,7 +107,7 @@ async function main() {
   }
   const sec = ((performance.now() - t0) / 1000).toFixed(1);
 
-  console.log(`\n== WASM corpus parse (loadAsLayerFromBinary) ==`);
+  console.log(`\n== WASM corpus parse (${layerType}) ==`);
   console.log(`  corpus : ${a.assets}`);
   console.log(`  wasm   : ${a.useMemory64 ? 'wasm64' : 'wasm32'}`);
   console.log(`  files  : ${files.length}  PASS ${pass}  FAIL ${fail}  (${sec}s)`);

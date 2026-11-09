@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+if(@LIGHTUSD_NEXT_ENABLE_THREAD@)
+  find_dependency(Threads)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/LightUSDTargets.cmake")
+check_required_components(LightUSD)

@@ -5621,7 +5621,10 @@ static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
 
   bool is_dng_big_endian = false;
 
-  const unsigned short magic = *(reinterpret_cast<const unsigned short*>(mem));
+  // `mem` may be unaligned (e.g. an image inside a USDZ package); read the
+  // byte-symmetric TIFF magic with memcpy instead of a 16-bit dereference.
+  unsigned short magic;
+  memcpy(&magic, mem, sizeof(magic));
 
   if (magic == 0x4949) {
     // might be TIFF(DNG).
@@ -6651,7 +6654,10 @@ bool IsDNGFromMemory(const char* mem, size_t size, std::string* msg) {
     return false;
   }
 
-  const unsigned short magic = *(reinterpret_cast<const unsigned short*>(mem));
+  // `mem` may be unaligned (e.g. an image inside a USDZ package); read the
+  // byte-symmetric TIFF magic with memcpy instead of a 16-bit dereference.
+  unsigned short magic;
+  memcpy(&magic, mem, sizeof(magic));
 
   if (magic == 0x4949) {
     // might be TIFF(DNG).

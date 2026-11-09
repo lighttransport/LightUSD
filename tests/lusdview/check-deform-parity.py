@@ -54,6 +54,9 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
+    # Grid overlays are composited after the depth AOV and follow the posed
+    # scene bounds, so they can differ between CPU/GPU even for identical geometry.
+    # Exclude them from this geometry comparison, just like skeleton helpers.
     # The fixture may not contain the requested camera, in which case lusdview
     # auto-fits. Do not let a previous loader/run's ImGui camera layout change
     # that auto-fit and turn a geometry comparison into a view-state comparison.
@@ -61,9 +64,9 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
         os.remove(os.path.join(os.path.dirname(config), "imgui.ini"))
     except FileNotFoundError:
         pass
-    cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
+    cmd = [binary, loader, "--headless", "--size", "320x320", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--config", config,
-           "--no-skeleton",
+           "--no-skeleton", "--no-grid",
            "--screenshot", out,
            *backend, *extra, scene]
     timeout = float(e.get("LUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
@@ -76,8 +79,16 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
             partial = partial.decode(errors="replace")
         return False, (f"render timed out after {timeout:g}s\n{partial}")
     log = r.stdout.decode(errors="replace")
+    if r.returncode < 0:
+        log += f"\nrender terminated by signal {-r.returncode}"
     return (r.returncode == 0 and os.path.exists(out) and
             os.path.getsize(out) > 0), log
+
+
+def fatal_render_error(log):
+    return any(marker in log for marker in (
+        "terminate called after throwing", "std::bad_alloc", "Segmentation fault",
+        "AddressSanitizer", "render terminated by signal"))
 
 
 def read_luma(path):
@@ -179,6 +190,9 @@ def main():
 
     rest_ok, rest_log = render(binary, scene, rest, rest_t, camera,
                                backend=backend)
+    if not rest_ok and fatal_render_error(rest_log):
+        print("FAIL: rest render aborted\n" + rest_log)
+        return 1
     if not rest_ok or not backend_available(rest_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         if rest_log:
@@ -186,6 +200,9 @@ def main():
         return SKIP
     gpu_ok, gpu_log = render(binary, scene, gpu, pose_t, camera,
                              backend=backend)
+    if not gpu_ok and fatal_render_error(gpu_log):
+        print("FAIL: animated render aborted\n" + gpu_log)
+        return 1
     if not gpu_ok or not backend_available(gpu_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
@@ -195,6 +212,9 @@ def main():
                              backend=backend,
                              extra=["--skinning", "cpu"],
                              env={"LUSDVIEW_NEXT_MORPH_BAKE": "1"})
+    if not cpu_ok and fatal_render_error(cpu_log):
+        print("FAIL: baked render aborted\n" + cpu_log)
+        return 1
     if not cpu_ok or not backend_available(cpu_log):
         print("SKIP: the CPU-bake reference did not render")
         return SKIP

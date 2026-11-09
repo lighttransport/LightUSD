@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-instance-meshes.hh"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -7,10 +8,6 @@
 #include <string>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
-size_t SaturatingMul(size_t a, size_t b) {
-  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) return std::numeric_limits<size_t>::max();
-  return a * b;
-}
 template <typename Chunked>
 
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
@@ -124,7 +121,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
                    std::to_string(draw.instance_index) + "]";
   CopyRenderMeshCommon(src, dst);
 
-  dst->points.reserve(src.points.size());
+  dst->points.reserve_exact(src.points.size());
   for (size_t i = 0; i + 2 < src.points.size(); i += 3) {
     const Float3 p = TransformPoint(draw.transform, src.points[i],
                                     src.points[i + 1], src.points[i + 2]);
@@ -133,7 +130,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
     dst->points.push_back(p.z);
   }
 
-  dst->normals.reserve(src.normals.size());
+  dst->normals.reserve_exact(src.normals.size());
   for (size_t i = 0; i + 2 < src.normals.size(); i += 3) {
     const Float3 n = TransformDirection(draw.transform, src.normals[i],
                                         src.normals[i + 1], src.normals[i + 2]);
@@ -142,7 +139,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
     dst->normals.push_back(n.z);
   }
 
-  dst->tangents.reserve(src.tangents.size());
+  dst->tangents.reserve_exact(src.tangents.size());
   for (size_t i = 0; i + 3 < src.tangents.size(); i += 4) {
     const Float3 t = TransformDirection(draw.transform, src.tangents[i],
                                         src.tangents[i + 1], src.tangents[i + 2]);
@@ -171,7 +168,37 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
 
 }  // namespace
 
-void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
+bool RefreshPointInstanceExpandedMeshes(
+    RenderScene* scene, const std::vector<size_t>& changed_meshes,
+    std::vector<std::string>* refreshed_paths) {
+  if (!scene) return false;
+  bool ok = true;
+  for (RenderPointInstanceDraw& draw : scene->point_instance_draws) {
+    if (draw.mesh_id < 0 || draw.expanded_mesh_id < 0) continue;
+    const size_t source = static_cast<size_t>(draw.mesh_id);
+    const size_t expanded = static_cast<size_t>(draw.expanded_mesh_id);
+    if (source >= scene->meshes.size() || expanded >= scene->meshes.size())
+      continue;
+    bool affected = false;
+    for (size_t index : changed_meshes) {
+      if (index == source) {
+        affected = true;
+        break;
+      }
+    }
+    if (!affected) continue;
+    RenderMesh replacement;
+    if (!CloneMeshForPointInstance(scene->meshes[source], draw, &replacement)) {
+      ok = false;
+      continue;
+    }
+    scene->meshes[expanded] = std::move(replacement);
+    if (refreshed_paths) refreshed_paths->push_back(scene->meshes[expanded].prim_path);
+  }
+  return ok;
+}
+
+void RenderSceneConverter::Impl::DuplicatePointInstanceMeshes(RenderScene* scene) {
   if (!scene) return;
   const size_t draw_count = scene->point_instance_draws.size();
   for (size_t draw_id = 0; draw_id < draw_count; ++draw_id) {

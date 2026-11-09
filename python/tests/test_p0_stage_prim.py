@@ -227,7 +227,7 @@ def test_relationship_and_variants_full():
 def test_load_options_and_is_usd(tmp_path):
     # sublayer composition
     base = tmp_path / "base.usda"
-    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1 }\n')
+    base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1\n}\n')
     root = tmp_path / "root.usda"
     root.write_text('#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\n')
     st = lightusd.load(str(root))
@@ -235,8 +235,9 @@ def test_load_options_and_is_usd(tmp_path):
     # variants override
     vroot = tmp_path / "v.usda"
     vroot.write_text('''#usda 1.0
-def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"]) {
-  variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
+def Xform "R" (variants = { string lod = "high" }
+    prepend variantSets = ["lod"]) {
+  variantSet "lod" = { "high" { float a = 1\n }\n "low" { float a = 2\n } }
 }
 ''')
     assert lightusd.load(str(vroot), variants={"lod": "low"}).prim_at("/R")["a"] == pytest.approx(2.0)
@@ -260,3 +261,120 @@ def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"])
     # so /Base may not be present; just verify load succeeds
     st_nc = lightusd.load(str(root), composed=False)
     assert st_nc is not None
+
+
+def test_native_instance_proxy_paths_and_parents(tmp_path):
+    source = tmp_path / "instances.usda"
+    source.write_text('''#usda 1.0
+    def Xform "Source" {
+        def Xform "Group" {
+            def Mesh "Mesh" { point3f[] points = [(1,2,3)]\n }
+        }
+    }
+    def Xform "A" ( prepend references = </Source>\n instanceable = true ) {}
+    def Xform "B" ( prepend references = </Source>\n instanceable = true ) {}
+    ''')
+    stage = lightusd.load(str(source), preserve_native_instances=True)
+    for name in ("A", "B"):
+        root = stage.prim_at("/" + name)
+        group, = root.children
+        mesh, = group.children
+        assert group.path == f"/{name}/Group"
+        assert mesh.path == f"/{name}/Group/Mesh"
+        assert mesh.parent.path == group.path
+        assert mesh.parent.parent.path == root.path
+        assert stage.prim_at(mesh.path).path == mesh.path
+        assert mesh.attribute("points").resolve(time=0).tolist() == [(1, 2, 3)]
+    stale = stage.prim_at("/B/Group/Mesh")
+    stage.define_prim("/New", "Xform")
+    # Python self-heals surviving handles by their logical path.
+    assert stale.path == "/B/Group/Mesh"
+    assert stage.prim_at("/B/Group/Mesh").path == stale.path
+    stage.remove_prim("/B")
+    with pytest.raises(lightusd.StaleHandleError):
+        _ = stale.path
+
+
+def test_flattened_instance_members_keep_their_subtree(tmp_path):
+    """Default (flattened) loads must expose shared and nested instance content.
+
+    Extracted-prototype flattening rewrites an instance member as
+    `instanceable` + an internal reference to the de-instanced prototype holder
+    and clears `instance_prototype`. Traversal and proxy lookup must still
+    resolve the holder's subtree, otherwise a default load silently drops every
+    shared instance after the first (and every nested one).
+    """
+    flat = tmp_path / "flat_instances.usda"
+    flat.write_text('#usda 1.0\n'
+                    'def Xform "Source" {\n'
+                    '    def Mesh "Mesh" { point3f[] points = [(1,2,3)]\n    }\n'
+                    '}\n'
+                    'def Xform "A" ( prepend references = </Source>\n '
+                    'instanceable = true ) {}\n'
+                    'def Xform "B" ( prepend references = </Source>\n '
+                    'instanceable = true ) {}\n')
+    for native in (False, True):
+        stage = lightusd.load(str(flat), preserve_native_instances=native)
+        meshes = sorted(p.path for p in stage.traverse(all_prims=True)
+                        if "points" in p)
+        assert meshes == ["/A/Mesh", "/B/Mesh", "/Source/Mesh"], (native, meshes)
+        assert stage.prim_at("/B/Mesh").get("points").tolist() == [(1, 2, 3)]
+
+    nested = tmp_path / "nested_instances.usda"
+    nested.write_text('#usda 1.0\n'
+                      'def Xform "Prop" {\n'
+                      '    def Mesh "geom" {\n'
+                      '        point3f[] points = [(0,0,0)]\n'
+                      '    }\n'
+                      '}\n'
+                      'def Xform "Set" {\n'
+                      '    def Xform "PropA" (\n'
+                      '        prepend references = </Prop>\n'
+                      '        instanceable = true\n'
+                      '    ) {}\n'
+                      '    def Xform "PropB" (\n'
+                      '        prepend references = </Prop>\n'
+                      '        instanceable = true\n'
+                      '    ) {}\n'
+                      '    def Xform "PropC" ( prepend references = </Prop> ) {}\n'
+                      '}\n'
+                      'def Xform "Top" (\n'
+                      '    prepend references = </Set>\n'
+                      '    instanceable = true\n'
+                      ') {}\n')
+    expected = ["/Prop/geom", "/Set/PropA/geom", "/Set/PropB/geom",
+                "/Set/PropC/geom", "/Top/PropA/geom", "/Top/PropB/geom",
+                "/Top/PropC/geom"]
+    for native in (False, True):
+        stage = lightusd.load(str(nested), preserve_native_instances=native)
+        meshes = sorted(p.path for p in stage.traverse(all_prims=True)
+                        if "points" in p)
+        assert meshes == expected, (native, meshes)
+        assert stage.prim_at("/Top/PropB/geom").get("points").tolist() == [(0, 0, 0)]
+
+
+def test_leaf_prim_truthiness_is_validity_not_child_count():
+    stage = lightusd.Stage.create()
+    prim = stage.define_prim("/Leaf", "Xform")
+    assert len(prim) == 0
+    assert bool(prim)
+    stage.define_prim("/Sibling", "Xform")
+    assert bool(prim)  # Surviving logical handles self-heal.
+    stage.remove_prim("/Leaf")
+    with pytest.raises(lightusd.StaleHandleError):
+        bool(prim)
+
+
+def test_explicit_default_traversal_prunes_nonparticipating_subtrees():
+    stage = lightusd.loads('''#usda 1.0
+    class Xform "Class" {\n def Mesh "AbstractMesh" {}\n }
+    def Xform "Root" {
+        def Mesh "Visible" {}
+        def Xform "Inactive" (active = false) {\n def Mesh "Hidden" {}\n }
+        over "Undefined" {\n def Mesh "Child" {}\n }
+    }
+    ''')
+    assert [p.path for p in stage.traverse()] == ["/Root", "/Root/Visible"]
+    assert [p.path for p in stage.traverse(all_prims=True)] == [p.path for p in stage]
+    assert stage.prim_at("/Root/Inactive/Hidden").active is False
+    assert stage.prim_at("/Root/Inactive/Hidden").metadata("active") is None

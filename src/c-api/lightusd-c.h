@@ -8,7 +8,8 @@
  * - Every fallible function returns lightusd_status; details via the thread-local
  *   lightusd_last_error(). Results go through out-params.
  * - Owning opaque handles (lightusd_stage, lightusd_value, lightusd_string, lightusd_strlist)
- *   are destroyed exactly once with their lightusd_*_destroy function.
+ *   release each owning reference with their lightusd_*_destroy function.
+ *   Stage references can be shared with lightusd_stage_retain().
  * - lightusd_prim is a small BY-VALUE handle (no allocation, nothing to destroy).
  *   It stays valid until its stage is destroyed or structurally mutated
  *   (define/remove prim); lightusd_stage_generation() lets bindings detect that.
@@ -29,16 +30,25 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "next/c/descriptor.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #ifndef LIGHTUSD_API
+#if defined(_WIN32) && defined(LIGHTUSD_C_BUILD_SHARED)
+#define LIGHTUSD_API __declspec(dllexport)
+#elif defined(_WIN32) && defined(LIGHTUSD_C_USE_SHARED)
+#define LIGHTUSD_API __declspec(dllimport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define LIGHTUSD_API __attribute__((visibility("default")))
+#else
 #define LIGHTUSD_API
 #endif
+#endif
 
-#define LIGHTUSD_API_VERSION_MAJOR 1
+#define LIGHTUSD_API_VERSION_MAJOR 5
 #define LIGHTUSD_API_VERSION_MINOR 0
 #define LIGHTUSD_API_VERSION_PATCH 0
 
@@ -56,6 +66,11 @@ typedef enum lightusd_status {
   LIGHTUSD_ERR_OUT_OF_MEMORY = -6,
   LIGHTUSD_ERR_UNSUPPORTED = -7,
   LIGHTUSD_ERR_COMPOSITION = -8,
+  LIGHTUSD_ERR_RESOURCE_LIMIT = -9,
+  LIGHTUSD_ERR_OVERFLOW = -10,
+  LIGHTUSD_ERR_BUSY = -11,
+  LIGHTUSD_ERR_STALE_REVISION = -12,
+  LIGHTUSD_ERR_CANCELLED = -13,
   LIGHTUSD_ERR_INTERNAL = -99
 } lightusd_status;
 
@@ -78,6 +93,14 @@ typedef struct lightusd_sv {
   const char* data;
   size_t len;
 } lightusd_sv;
+
+/* Copy a borrowed view into caller-owned storage. `required` receives the
+ * exact byte count (excluding any NUL terminator). Pass out=NULL/cap=0 to
+ * query the required size. Source and destination may overlap. A short
+ * destination returns LIGHTUSD_ERR_INVALID_ARG after writing `required`.
+ */
+LIGHTUSD_API lightusd_status lightusd_sv_copy(lightusd_sv view, char* out,
+                                               size_t cap, size_t* required);
 
 /* Owned string / byte buffer. */
 typedef struct lightusd_string lightusd_string;
@@ -159,21 +182,20 @@ enum {
   LIGHTUSD_TYPE_DICTIONARY = 59
 };
 
-/* Storage component type of a lightusd_value_view / buffer. Half-element data is
- * materialized as float32 by the core, so LIGHTUSD_COMP_FLOAT16 never appears in
- * views today (kept for ABI completeness). */
+/* Storage component type of a lightusd_value_view / buffer. Half arrays are
+ * materialized as float32; scalar half values retain float16 storage. */
 typedef enum lightusd_component_type {
-  LIGHTUSD_COMP_NONE = 0, /* no POD buffer (string-family / dictionary / block) */
-  LIGHTUSD_COMP_UINT8 = 1,
-  LIGHTUSD_COMP_INT32 = 2,
-  LIGHTUSD_COMP_UINT32 = 3,
-  LIGHTUSD_COMP_INT64 = 4,
-  LIGHTUSD_COMP_UINT64 = 5,
-  LIGHTUSD_COMP_FLOAT16 = 6,
-  LIGHTUSD_COMP_FLOAT32 = 7,
-  LIGHTUSD_COMP_FLOAT64 = 8,
-  LIGHTUSD_COMP_UINT16 = 9,
-  LIGHTUSD_COMP_INT16 = 10
+  LIGHTUSD_COMP_NONE = LU_COMP_NONE, /* no POD buffer */
+  LIGHTUSD_COMP_UINT8 = LU_COMP_UINT8,
+  LIGHTUSD_COMP_INT32 = LU_COMP_INT32,
+  LIGHTUSD_COMP_UINT32 = LU_COMP_UINT32,
+  LIGHTUSD_COMP_INT64 = LU_COMP_INT64,
+  LIGHTUSD_COMP_UINT64 = LU_COMP_UINT64,
+  LIGHTUSD_COMP_FLOAT16 = LU_COMP_FLOAT16,
+  LIGHTUSD_COMP_FLOAT32 = LU_COMP_FLOAT32,
+  LIGHTUSD_COMP_FLOAT64 = LU_COMP_FLOAT64,
+  LIGHTUSD_COMP_UINT16 = LU_COMP_UINT16,
+  LIGHTUSD_COMP_INT16 = LU_COMP_INT16
 } lightusd_component_type;
 
 LIGHTUSD_API const char* lightusd_type_name(lightusd_type t);
@@ -202,24 +224,51 @@ typedef struct lightusd_value_view {
   size_t count;
   const void* data;
   size_t nbytes;
+  const void* _owner; /* private borrowed C11 value, or NULL for external data */
 } lightusd_value_view;
+
+/* Retained read-only storage. Pins a C11 value without copying its payload;
+ * external render buffers are copied. A pin survives source mutation/closure.
+ * Pin while the borrowed view is valid; destroy each returned pin once. */
+typedef struct lightusd_buffer lightusd_buffer;
+LIGHTUSD_API lightusd_status lightusd_buffer_pin(lightusd_value_view, lightusd_buffer** out);
+LIGHTUSD_API lightusd_value_view lightusd_buffer_get_view(const lightusd_buffer*);
+LIGHTUSD_API void lightusd_buffer_destroy(lightusd_buffer*);
+typedef struct lightusd_abi_info {
+  lu_abi_info core;
+  uint32_t major, value_view_size, value_view_data_offset, value_view_owner_offset;
+} lightusd_abi_info;
+LIGHTUSD_API lightusd_abi_info lightusd_abi_get(void);
+LIGHTUSD_API int lightusd_type_describe(lightusd_type, uint8_t array, lu_type_descriptor*);
+LIGHTUSD_API const lu_component_info* lightusd_component_get(uint8_t storage);
 
 /* Owned value (results of interpolation / eval / metadata queries). */
 typedef struct lightusd_value lightusd_value;
 LIGHTUSD_API void lightusd_value_destroy(lightusd_value* v);
+/* Descriptor-driven numeric ingestion. Callbacks read one flat component at a
+ * time; failure leaves *out NULL and authors nothing. Half arrays are widened
+ * after half quantization. Numeric narrowing is range checked. */
+LIGHTUSD_API lightusd_status lightusd_value_from_numbers(lightusd_type, uint8_t array,
+    size_t count, lu_number_at, void* context, lightusd_value** out);
 /* View into the owned value; lifetime = the lightusd_value's lifetime. */
 LIGHTUSD_API lightusd_status lightusd_value_get_view(const lightusd_value* v,
                                          lightusd_value_view* out);
 LIGHTUSD_API lightusd_status lightusd_value_get_string(const lightusd_value* v, lightusd_sv* out);
 LIGHTUSD_API lightusd_status lightusd_value_get_token_array(const lightusd_value* v,
                                                 lightusd_strlist** out);
+/* Format an owned value using the USDA value syntax. The returned string is
+ * owned by the caller, including for scalar and array values. */
+LIGHTUSD_API lightusd_status lightusd_value_to_usda(const lightusd_value* v,
+                                         lightusd_string** out);
 
 /* Borrowed dictionary cursor (customData / assetInfo / customLayerData). */
 typedef struct lightusd_dict_ref {
-  const void* _dict; /* const next::Dict* */
+  const void* _dict; /* borrowed const lu_value* */
 } lightusd_dict_ref;
 
 LIGHTUSD_API int lightusd_dict_is_valid(lightusd_dict_ref d);
+/* Borrowed cursor; valid while the owned value is alive. Invalid for non-dicts. */
+LIGHTUSD_API lightusd_dict_ref lightusd_value_get_dictionary(const lightusd_value* v);
 LIGHTUSD_API size_t lightusd_dict_size(lightusd_dict_ref d);
 /* Fetch entry i. Any out-param may be NULL. If the entry is itself a
  * dictionary, *subdict becomes valid and *val reports LIGHTUSD_TYPE_DICTIONARY.
@@ -230,12 +279,21 @@ LIGHTUSD_API lightusd_status lightusd_dict_entry(lightusd_dict_ref d, size_t ind
 LIGHTUSD_API lightusd_status lightusd_dict_find(lightusd_dict_ref d, const char* key,
                                     lightusd_value_view* val, lightusd_sv* sval,
                                     lightusd_dict_ref* subdict);
+/* Copy a string-family array entry into an owned list. Failure clears *out. */
+LIGHTUSD_API lightusd_status lightusd_dict_get_token_array(
+    lightusd_dict_ref d, const char* key, lightusd_strlist** out);
 
 /* ============================================================
  * Stage: load / create / save
  * ============================================================ */
 
 typedef struct lightusd_stage lightusd_stage;
+struct lightusd_asset_resolver;
+/* Retain the supplied value's C11 storage in the authored property. */
+LIGHTUSD_API lightusd_status lightusd_attr_set_value(lightusd_stage*, const char* prim_path,
+    const char* name, const lightusd_value*, uint16_t flags);
+LIGHTUSD_API lightusd_status lightusd_attr_set_timesample_value(lightusd_stage*, const char* prim_path,
+    const char* name, double time, const lightusd_value*);
 
 typedef enum lightusd_format {
   LIGHTUSD_FORMAT_AUTO = 0,
@@ -244,26 +302,56 @@ typedef enum lightusd_format {
   LIGHTUSD_FORMAT_USDZ = 3
 } lightusd_format;
 
+typedef enum lightusd_input_policy {
+  LIGHTUSD_INPUT_UNTRUSTED = 0,
+  LIGHTUSD_INPUT_TRUSTED = 1
+} lightusd_input_policy;
+
+#define LIGHTUSD_LIMIT_UNLIMITED UINT64_MAX
+
+/* Optional synchronous parser progress callback. Return zero to cancel. */
+typedef int (*lightusd_load_progress_fn)(void* userdata, const char* phase,
+                                         size_t current, size_t total);
+
 typedef struct lightusd_load_options {
   uint32_t struct_size; /* = sizeof(lightusd_load_options); enables ABI growth */
   uint32_t format;      /* lightusd_format; AUTO sniffs extension + content */
-  uint64_t max_memory;  /* per-input memory cap in bytes; 0 = unlimited */
+  uint32_t input_policy; /* lightusd_input_policy */
+  int32_t max_threads;   /* 0 = bounded auto; 1 = serial; >1 = fixed */
+  uint64_t max_input_bytes;
+  uint64_t max_asset_bytes;
+  uint64_t max_resident_bytes;
+  uint64_t max_array_elements;
+  uint64_t max_archive_entries;
+  uint32_t max_parse_depth;
+  uint32_t max_composition_depth;
+  uint32_t max_namespace_depth;
   uint8_t composed;     /* 1: resolve composition arcs (LoadUSDComposed) */
   uint8_t load_payloads;
   /* USDA array parsing policy */
   uint8_t enable_usda_lazy_arrays; /* 1: enable lazy USDA array materialization */
-  uint8_t _pad_usda[5];
-  uint64_t max_usda_lazy_array_elements; /* 0 = parser disables lazy cap */
-  int32_t usda_num_threads;             /* 0 = auto; 1 = serial */
-  uint8_t _pad_compose[6];
-  uint32_t max_depth; /* composition recursion limit; 0 = default */
-  uint32_t _pad2;
+  /* 1: keep native instance prototypes; 0: flatten to self-contained holders
+   * for export/save round-trips (the default). */
+  uint8_t preserve_native_instances;
+  uint8_t _pad[4];
   /* Variant selection overrides (set name -> variant name), applied on every
    * prim defining that set; stronger than authored selections. Parallel
    * arrays of length variant_override_count. */
   const char* const* variant_sets;
   const char* const* variant_names;
   size_t variant_override_count;
+  lightusd_load_progress_fn progress_callback;
+  void* progress_userdata;
+  /* Optional borrowed resolver for composed loads; it must outlive the load
+   * call. Its active context is snapshotted into a private resolver copy, so
+   * composition workers inherit the context. Requires struct_size to cover
+   * this field. */
+  struct lightusd_asset_resolver* resolver;
+  /* Optional override for USDC crate structural-table caps (tokens, strings,
+   * fields, fieldset indices, specs, paths). Zero keeps the secure defaults;
+   * set a larger value for large trusted datasets. Requires struct_size to
+   * cover this field. */
+  uint64_t max_crate_elements;
 } lightusd_load_options;
 
 LIGHTUSD_API void lightusd_load_options_init(lightusd_load_options* opts);
@@ -278,7 +366,12 @@ LIGHTUSD_API lightusd_status lightusd_stage_load_from_memory(const uint8_t* data
                                                  lightusd_stage** out);
 /* Empty stage ready for authoring. */
 LIGHTUSD_API lightusd_status lightusd_stage_create(lightusd_stage** out);
+/* Retain/release one owning reference. Prim handles and views remain borrowed;
+ * retain the stage while storing them, and release each retained reference. */
+LIGHTUSD_API void lightusd_stage_retain(lightusd_stage* stage);
 LIGHTUSD_API void lightusd_stage_destroy(lightusd_stage* stage);
+/* True for immutable document snapshot views. NULL reports false. */
+LIGHTUSD_API int lightusd_stage_is_read_only(const lightusd_stage* stage);
 
 /* Drain warnings accumulated by load (empty string when none). */
 LIGHTUSD_API lightusd_status lightusd_stage_take_warnings(lightusd_stage* stage,
@@ -298,14 +391,222 @@ LIGHTUSD_API void lightusd_save_options_init(lightusd_save_options* opts);
 LIGHTUSD_API lightusd_status lightusd_stage_save(const lightusd_stage* stage,
                                      const char* filename,
                                      const lightusd_save_options* opts /* nullable */);
+/* Files an importer generated for the stage (MJCF builtin textures), keyed
+ * by the relative path the stage authors. lightusd_stage_save writes them
+ * beside a USDA/USDC layer and packages them into USDZ. Borrowed; valid
+ * while the stage is alive. */
+LIGHTUSD_API size_t lightusd_stage_generated_asset_count(const lightusd_stage* stage);
+LIGHTUSD_API lightusd_status lightusd_stage_generated_asset(const lightusd_stage* stage,
+                                                            size_t index, lightusd_sv* path,
+                                                            const uint8_t** data, size_t* size);
+LIGHTUSD_API lightusd_status lightusd_stage_save_usdz_with_assets(
+    const lightusd_stage* stage, const char* filename,
+    const char* const* asset_names, const uint8_t* const* asset_data,
+    const size_t* asset_sizes, size_t asset_count);
 LIGHTUSD_API lightusd_status lightusd_stage_export_usda(const lightusd_stage* stage,
                                             lightusd_string** out);
 /* Crate bytes; use lightusd_string_view() for (data, len). */
 LIGHTUSD_API lightusd_status lightusd_stage_export_usdc(const lightusd_stage* stage,
                                             lightusd_string** out);
+
 /* Flatten composition into a new single-layer stage. */
 LIGHTUSD_API lightusd_status lightusd_stage_flatten(const lightusd_stage* stage,
                                         lightusd_stage** out);
+/* Explain composed property resolution as an owned JSON document. `time` may
+ * be NaN to request the default time; otherwise it is a numeric time code. */
+LIGHTUSD_API lightusd_status lightusd_stage_explain_property(
+    const lightusd_stage* stage, const char* prim_path, const char* property,
+    double time, lightusd_string** out);
+
+/* Resolver-backed dependency inventory. Memory assets and aliases support
+ * virtual asset namespaces; without registrations the resolver checks files.
+ * An alias asserts that its target resolves, so register readable target bytes
+ * (or use a file target) before collecting dependencies.
+ * Mutations must not run concurrently with dependency collection. The report
+ * is owned JSON; `complete` is zero when dependencies are missing or rejected
+ * by the bounded scan and is independent of the call status. */
+typedef struct lightusd_asset_resolver lightusd_asset_resolver;
+/* Ownership and threading:
+ * - The resolver owns its registrations; destroy it only after every load
+ *   that borrowed it has finished.
+ * - `lightusd_load_options.resolver` is borrowed for the duration of the
+ *   load call.
+ * - Context bindings and scoped caches are per-thread.
+ * - Resolver callbacks may run on composition worker threads, so callback
+ *   state must be thread-safe. Owned registrations release their userdata
+ *   from whichever thread drops the last reference. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create(
+    lightusd_asset_resolver** out);
+LIGHTUSD_API void lightusd_asset_resolver_destroy(lightusd_asset_resolver* resolver);
+/* Enable/disable native filesystem fallback, existence probes and timestamps.
+ * Memory assets and application readers remain available. Change configuration
+ * only between loads, after resolver users have joined. A build without the
+ * native resolver backend rejects requests to enable it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_filesystem_access(
+    lightusd_asset_resolver* resolver, uint8_t enabled);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_memory(
+    lightusd_asset_resolver* resolver, const char* identifier,
+    const uint8_t* data, size_t size);
+/* Remove a previously registered memory asset. Returns NOT_FOUND when the
+ * identifier is not present; aliases to it remain registered and will fail to
+ * read until the target is registered again. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_memory(
+    lightusd_asset_resolver* resolver, const char* identifier);
+/* Memory assets are unlimited by default. A nonzero limit bounds the sum of
+ * registered payload bytes. Registration beyond the limit fails atomically;
+ * changing to a limit below current usage is rejected without mutation. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_memory_limit(
+    lightusd_asset_resolver* resolver, size_t limit_bytes);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_memory_stats(
+    const lightusd_asset_resolver* resolver, size_t* asset_count,
+    size_t* bytes_used, size_t* limit_bytes);
+/* Copy the identifier at a sorted index. The required UTF-8 byte count
+ * excludes a trailing NUL. A null output performs a size query; a short
+ * output returns RESOURCE_LIMIT and leaves the output untouched. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_memory_identifier(
+    const lightusd_asset_resolver* resolver, size_t index, char* out,
+    size_t capacity, size_t* required_size);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_alias(
+    lightusd_asset_resolver* resolver, const char* authored_path,
+    const char* resolved_identifier);
+/* Remove an alias; the authored path then resolves normally again. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unset_alias(
+    lightusd_asset_resolver* resolver, const char* authored_path);
+/* Read asset bytes for an already resolved identifier (a memory asset key, a
+ * scheme identifier, or a filesystem path). A package entry identifier
+ * ("bundle.usdz[entry.usda]") returns the package file's bytes. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_read(
+    const lightusd_asset_resolver* resolver, const char* resolved_identifier,
+    lightusd_string** out);
+/* Resolved asset metadata. The owned strings are released with
+ * lightusd_asset_info_destroy(). Package entries report the entry basename,
+ * the package repository and the package file's timestamp. */
+typedef struct lightusd_asset_info {
+  lightusd_string* resolved_path;
+  lightusd_string* asset_name;
+  lightusd_string* repository_path;
+  uint8_t exists;
+} lightusd_asset_info;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_asset_info(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_asset_info* out);
+LIGHTUSD_API void lightusd_asset_info_destroy(lightusd_asset_info* info);
+/* Modification timestamp of the resolved file (0 when unavailable). */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_modification_timestamp(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, uint64_t* seconds, uint32_t* nanoseconds,
+    uint8_t* valid);
+/* Resolve an authored asset path. `anchor_path` may be null/empty. The owned
+ * `resolved_path` may be empty when the identifier is unresolved. `exists` and
+ * `is_package` are optional. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package);
+/* Resolve a path for creating a new asset (no existence requirement). */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve_for_new_asset(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package);
+/* Stable identifier for an authored path, used for cache/comparison keys.
+ * Unresolved relative paths stay context-dependent instead of collapsing. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_identifier(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** out);
+
+/* Explicit URI scheme handlers. The resolver callback returns a borrowed
+ * NUL-terminated resolved identifier (or NULL/0 to fall through). The optional
+ * reader callback receives the resolved identifier and must return a buffer
+ * allocated with malloc() (or NULL for zero bytes); the resolver frees it. */
+typedef int (*lightusd_scheme_resolver_callback)(
+    void* userdata, const char* identifier, const char* anchor_path,
+    const char* scheme_context, const char** resolved);
+typedef int (*lightusd_scheme_reader_callback)(
+    void* userdata, const char* resolved_identifier, uint8_t** data,
+    size_t* size);
+/* Optional release hook for owned registrations. Called once after the last
+ * in-flight callback finishes and the handler is unregistered/destroyed. It
+ * may run on a worker thread, so it must be thread-safe. */
+typedef void (*lightusd_userdata_destroy_fn)(void* userdata);
+/* Borrowed registration: `userdata` must outlive the registration/resolver.
+ * The resolver invokes callbacks from worker threads, so userdata and callback
+ * state must be thread-safe. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata);
+/* Owned variant: `destroy` releases `userdata` once no callback can use it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme_owned(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme);
+/* Whether a scheme handler is registered (case-insensitive). */
+LIGHTUSD_API int lightusd_asset_resolver_has_scheme(
+    const lightusd_asset_resolver* resolver, const char* scheme);
+
+/* Resolver contexts. The context object owns a copy of its context string and
+ * may be bound to any number of resolvers (bindings are per-thread). */
+typedef struct lightusd_resolver_context lightusd_resolver_context;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_context(
+    const lightusd_asset_resolver* resolver, const char* context_string,
+    lightusd_resolver_context** out);
+LIGHTUSD_API void lightusd_resolver_context_destroy(
+    lightusd_resolver_context* context);
+LIGHTUSD_API lightusd_sv lightusd_resolver_context_string(
+    const lightusd_resolver_context* context);
+/* Set/read a per-scheme context string passed to context-aware scheme
+ * resolvers. An empty context removes the entry. */
+LIGHTUSD_API lightusd_status lightusd_resolver_context_set_scheme(
+    lightusd_resolver_context* context, const char* scheme,
+    const char* scheme_context);
+/* The returned view remains valid until the context is modified or destroyed. */
+LIGHTUSD_API lightusd_sv lightusd_resolver_context_get_scheme(
+    const lightusd_resolver_context* context, const char* scheme);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_bind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data);
+/* Unbind a context. Bindings are per-thread: unbinding from another thread
+ * (or unbinding twice) returns LIGHTUSD_ERR_NOT_FOUND and leaves the original
+ * binding in place. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unbind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_context(
+    const lightusd_asset_resolver* resolver, lightusd_resolver_context** out);
+LIGHTUSD_API int lightusd_asset_resolver_is_context_dependent(
+    const lightusd_asset_resolver* resolver, const char* asset_path);
+
+/* Scoped resolution cache. Create/destroy around a group of resolutions. */
+typedef struct lightusd_resolver_cache_scope lightusd_resolver_cache_scope;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_cache_scope(
+    lightusd_asset_resolver* resolver, lightusd_resolver_cache_scope** out);
+LIGHTUSD_API void lightusd_resolver_cache_scope_destroy(
+    lightusd_resolver_cache_scope* scope);
+
+/* Custom package formats. `resolved` is a NUL-terminated string owned by the
+ * callback and valid only for the duration of the call; the resolver copies
+ * it. Returning 0 falls back to normal package resolution. */
+typedef int (*lightusd_package_resolver_callback)(
+    void* userdata, const char* package_path, const char* asset_path,
+    const char** resolved);
+/* Borrowed registration: `userdata` must outlive the registration/resolver. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_package(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata);
+/* Owned variant: `destroy` releases `userdata` once no callback can use it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_package_owned(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_package(
+    lightusd_asset_resolver* resolver, const char* extension);
+
+LIGHTUSD_API lightusd_status lightusd_dependency_report_json(
+    lightusd_asset_resolver* resolver, const char* root,
+    lightusd_string** out, uint8_t* complete);
 /* Low-memory file->file flatten pipeline (lazy arrays passed through). */
 LIGHTUSD_API lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
                                                const char* out_filename,
@@ -322,6 +623,9 @@ LIGHTUSD_API lightusd_status lightusd_flatten_file_to_usdc(const char* in_filena
  *   "kilogramsPerUnit" (double), "doc" (string), "comment" (string),
  *   "colorConfiguration" (asset), "colorManagementSystem" (token)
  * Get returns LIGHTUSD_ERR_NOT_FOUND for unknown keys. */
+/* True when a supported stage metadata key has an authored opinion in this
+ * view, including an explicit default/empty value. Unknown keys/null return 0. */
+LIGHTUSD_API int lightusd_stage_metadata_is_authored(const lightusd_stage* stage, const char* key);
 LIGHTUSD_API lightusd_status lightusd_stage_get_metadata(const lightusd_stage* stage,
                                              const char* key,
                                              lightusd_value** out);
@@ -355,11 +659,15 @@ LIGHTUSD_API double lightusd_stage_end_timecode(const lightusd_stage* stage);
  * Prim access & traversal
  * ============================================================ */
 
-/* By-value prim handle: mirrors next::UsdPrim. No allocation, no destroy.
+/* Borrowed, generation-checked prim handle. No destroy. Instance-proxy
+ * identity is interned on demand by the owner.
+ * The owner must remain alive. Structural mutation invalidates the handle;
+ * access then returns invalid/empty or LIGHTUSD_ERR_INVALID_ARG.
  * Never touch the members directly. */
 typedef struct lightusd_prim {
-  const void* _spec;
+  const lightusd_stage* _owner;
   const void* _layer;
+  uint64_t _generation;
   uint32_t _index;
   uint32_t _pad;
 } lightusd_prim;
@@ -377,9 +685,24 @@ LIGHTUSD_API size_t lightusd_stage_prim_count(const lightusd_stage* stage);
 LIGHTUSD_API lightusd_sv lightusd_prim_name(lightusd_prim p);
 LIGHTUSD_API lightusd_sv lightusd_prim_type_name(lightusd_prim p);
 LIGHTUSD_API lightusd_sv lightusd_prim_path(lightusd_prim p);
+/* Opaque identity for root-layer geometry resource accounting. Equal nonzero
+ * values identify handles backed by the same root-layer prim spec within the
+ * same stage generation. Zero means the prim is not backed by that layer (or
+ * the handle is invalid). Do not persist across stages or structural edits. */
+LIGHTUSD_API uint64_t lightusd_prim_root_layer_resource_id(lightusd_prim p);
 /* 0 = def, 1 = over, 2 = class */
 LIGHTUSD_API uint8_t lightusd_prim_specifier(lightusd_prim p);
 LIGHTUSD_API int lightusd_prim_is_active(lightusd_prim p);
+/* Effective default traversal predicate: active, loaded, defined and
+ * non-abstract, including ancestor state. Instance proxies retain logical paths. */
+LIGHTUSD_API int lightusd_prim_matches_default_predicate(lightusd_prim p);
+/* Local flags only, for a root-first traversal that prunes rejected ancestors.
+ * Equivalent to the effective predicate when all ancestors already matched;
+ * avoids repeatedly walking the same ancestry for every descendant. */
+LIGHTUSD_API int lightusd_prim_matches_local_default_predicate(lightusd_prim p);
+/* Whether this prim has authored payload arcs in the current stage view.
+ * Resolved composition may consume these arcs. Invalid handles return zero. */
+LIGHTUSD_API int lightusd_prim_has_payload(lightusd_prim p);
 
 LIGHTUSD_API lightusd_prim lightusd_prim_parent(lightusd_prim p);
 LIGHTUSD_API size_t lightusd_prim_child_count(lightusd_prim p);
@@ -401,6 +724,27 @@ enum {
 };
 
 LIGHTUSD_API size_t lightusd_prim_property_count(lightusd_prim p);
+/* Resolved names include inherited and schema-defined properties, in USD
+ * property order. Owned list; failure clears out. Indexed property_count/name
+ * remain authored-slot queries. */
+LIGHTUSD_API lightusd_status lightusd_prim_property_names(lightusd_prim p, lightusd_strlist** out);
+/* Inspect an authored/inherited/schema-fallback default without time sampling
+ * or following connections. Blocks/absent defaults return NOT_FOUND. Arrays
+ * report type/count only (data NULL), avoiding lazy array materialization.
+ * Scalar POD data and optional string-family text are borrowed from the stage
+ * or schema registry. Failure clears both outputs. */
+LIGHTUSD_API lightusd_status lightusd_attr_inspect_default(
+    lightusd_prim p, const char* name, lightusd_value_view* out, lightusd_sv* text);
+/* Reports whether obtaining a packed array buffer requires lazy materialization
+ * or decompression. Arrays already stored in directly borrowable form return 0. */
+LIGHTUSD_API lightusd_status lightusd_attr_would_materialize_array(
+    lightusd_prim p, const char* name, int* out);
+/* Owned resolved default, with the same schema/instance fallback as inspect.
+ * Materializes lazy arrays into the result without changing the stage. No time
+ * sampling or connection following. Blocks/absent defaults return NOT_FOUND;
+ * failed lazy decoding returns INTERNAL. Failure clears out. */
+LIGHTUSD_API lightusd_status lightusd_attr_copy_default(
+    lightusd_prim p, const char* name, lightusd_value** out);
 LIGHTUSD_API lightusd_sv lightusd_prim_property_name(lightusd_prim p, size_t index);
 LIGHTUSD_API uint16_t lightusd_prim_property_flags_at(lightusd_prim p, size_t index);
 LIGHTUSD_API int lightusd_prim_has_property(lightusd_prim p, const char* name);
@@ -437,6 +781,66 @@ LIGHTUSD_API lightusd_sv lightusd_attr_connection(lightusd_prim p, const char* n
 LIGHTUSD_API lightusd_status lightusd_attr_eval(const lightusd_stage* stage, lightusd_prim p,
                                     const char* name, double time,
                                     lightusd_value** out);
+/* Extended evaluation: NaN requests authored default-time evaluation;
+ * interp_mode is 0=held or 1=linear; follow_connections is boolean. */
+LIGHTUSD_API lightusd_status lightusd_attr_eval_ex(
+    const lightusd_stage* stage, lightusd_prim p, const char* name, double time,
+    uint8_t interp_mode, uint8_t follow_connections, lightusd_value** out);
+
+/* Evaluated BackPlateAPI instance. The owning result is independent of stage
+ * lifetime; string views in info remain valid until the result is destroyed.
+ * Evaluation requires finite numeric time and uses the shared schema
+ * implementation without loading images. Invalid arguments return INVALID_ARG;
+ * an unapplied instance returns NOT_FOUND. Both query functions clear out on
+ * failure. Destroy accepts NULL. */
+typedef struct lightusd_backplate lightusd_backplate;
+typedef struct lightusd_backplate_info {
+  lightusd_sv image, alpha_image, depth_image, plate_visibility;
+  float depth_min_offset, depth_normalizing_factor, depth_camera_space_offset;
+  float scale_tweak[2], rotate_xyz_tweak[3], translate_tweak[3];
+  float luma_gain[3], luma_lift[3], luma_gamma[3];
+} lightusd_backplate_info;
+LIGHTUSD_API lightusd_status lightusd_backplate_eval(
+    const lightusd_stage* stage, lightusd_prim prim, const char* instance_name,
+    double time, lightusd_backplate** out);
+LIGHTUSD_API lightusd_status lightusd_backplate_get_info(
+    const lightusd_backplate* plate, lightusd_backplate_info* out);
+LIGHTUSD_API void lightusd_backplate_destroy(lightusd_backplate* plate);
+
+/* Validate and sample a SkelAnimation prim at numeric time, returning its
+ * authored joint count. This uses the same schema evaluation as native next. */
+LIGHTUSD_API lightusd_status lightusd_skel_animation_joint_count_at_time(
+    const lightusd_stage* stage, lightusd_prim p, double time, size_t* out);
+
+/* Owned skeleton pose input. All array and name views borrow from the sample,
+ * which remains valid after its source stage is released. An all-zero animation
+ * handle requests the rest pose; an unresolved animation is also ignored. */
+typedef struct lightusd_skel_sample lightusd_skel_sample;
+typedef struct lightusd_skel_sample_info {
+  size_t joint_count, animation_joint_count;
+  const int32_t* parent_indices;
+  const double* rest_transforms;
+  size_t rest_transform_count;
+  const double* bind_transforms;
+  size_t bind_transform_count;
+  const float* translations;
+  size_t translation_count;
+  const float* rotations;
+  size_t rotation_count;
+  const float* scales;
+  size_t scale_count;
+  uint8_t has_translations, has_rotations, has_scales;
+} lightusd_skel_sample_info;
+LIGHTUSD_API lightusd_status lightusd_skel_sample_create(
+    const lightusd_stage* stage, lightusd_prim skeleton,
+    lightusd_prim animation, double time, lightusd_skel_sample** out);
+LIGHTUSD_API lightusd_status lightusd_skel_sample_get_info(
+    const lightusd_skel_sample* sample, lightusd_skel_sample_info* out);
+LIGHTUSD_API lightusd_status lightusd_skel_sample_joint_name(
+    const lightusd_skel_sample* sample, size_t index, lightusd_sv* out);
+LIGHTUSD_API lightusd_status lightusd_skel_sample_animation_joint_name(
+    const lightusd_skel_sample* sample, size_t index, lightusd_sv* out);
+LIGHTUSD_API void lightusd_skel_sample_destroy(lightusd_skel_sample* sample);
 
 LIGHTUSD_API lightusd_status lightusd_prim_local_transform(lightusd_prim p, double time,
                                                double out16[16]);
@@ -467,12 +871,32 @@ LIGHTUSD_API lightusd_status lightusd_attr_interpolate(lightusd_prim p, const ch
  * Relationships
  * ============================================================ */
 
+/* Includes inherited instance-source relationships, with local opinions taking
+ * precedence. Targets are unforwarded authored paths. Name lists are owned;
+ * target strings borrow the stage. Failure clears names output. */
 LIGHTUSD_API size_t lightusd_prim_relationship_count(lightusd_prim p);
 LIGHTUSD_API lightusd_status lightusd_prim_relationship_names(lightusd_prim p,
                                                   lightusd_strlist** out);
 LIGHTUSD_API int lightusd_prim_has_relationship(lightusd_prim p, const char* name);
 LIGHTUSD_API size_t lightusd_rel_target_count(lightusd_prim p, const char* name);
 LIGHTUSD_API lightusd_sv lightusd_rel_target(lightusd_prim p, const char* name, size_t index);
+/* Resolve an inherited UsdShade binding. Empty purpose uses the
+ * preview-compatible fallback order. The result is an owned path, empty when
+ * unbound. */
+LIGHTUSD_API lightusd_status lightusd_prim_bound_material_path(
+    const lightusd_stage* stage, lightusd_prim prim, const char* purpose,
+    lightusd_string** out);
+enum {
+  LIGHTUSD_MATERIAL_SHADER_SURFACE = 0,
+  LIGHTUSD_MATERIAL_SHADER_DISPLACEMENT = 1,
+  LIGHTUSD_MATERIAL_SHADER_VOLUME = 2
+};
+LIGHTUSD_API lightusd_status lightusd_material_shader_path(
+    const lightusd_stage* stage, lightusd_prim material, uint8_t kind,
+    lightusd_string** out);
+LIGHTUSD_API lightusd_status lightusd_shader_port_value(
+    const lightusd_stage* stage, lightusd_prim shader, const char* input,
+    double time, lightusd_value** out);
 
 /* ============================================================
  * Variants
@@ -484,6 +908,9 @@ LIGHTUSD_API size_t lightusd_variant_count(lightusd_prim p, const char* set_name
 LIGHTUSD_API lightusd_sv lightusd_variant_name(lightusd_prim p, const char* set_name,
                                    size_t index);
 LIGHTUSD_API lightusd_sv lightusd_variant_selection(lightusd_prim p, const char* set_name);
+/* Authored selection keys, including sets without local definitions. Owned list;
+ * failure clears out. Use variant_selection to read each selected value. */
+LIGHTUSD_API lightusd_status lightusd_prim_variant_selection_names(lightusd_prim p, lightusd_strlist** out);
 
 /* ============================================================
  * Prim metadata
@@ -495,9 +922,17 @@ LIGHTUSD_API lightusd_sv lightusd_variant_selection(lightusd_prim p, const char*
  * LIGHTUSD_ERR_NOT_FOUND when unauthored / unknown. */
 LIGHTUSD_API lightusd_status lightusd_prim_get_metadata(lightusd_prim p, const char* key,
                                             lightusd_value** out);
+/* Reports whether a supported prim metadata key has a local authored opinion. */
+LIGHTUSD_API lightusd_status lightusd_prim_metadata_is_authored(
+    lightusd_prim p, const char* key, int* out_authored);
 LIGHTUSD_API lightusd_status lightusd_prim_custom_data(lightusd_prim p, lightusd_dict_ref* out);
 LIGHTUSD_API lightusd_status lightusd_prim_asset_info(lightusd_prim p, lightusd_dict_ref* out);
 LIGHTUSD_API lightusd_sv lightusd_prim_kind(lightusd_prim p);
+/* Prototype-root path for a native scenegraph instance; empty for the
+ * prototype holder and non-instance prims. Borrowed from the owning stage. */
+LIGHTUSD_API lightusd_sv lightusd_prim_instance_prototype_path(lightusd_prim p);
+/* True when this prim authors value-clip dictionary metadata. */
+LIGHTUSD_API int lightusd_prim_has_value_clips(lightusd_prim p);
 
 /* ============================================================
  * Authoring (path-addressed; all take the stage write lock and, when
@@ -510,6 +945,12 @@ LIGHTUSD_API lightusd_status lightusd_stage_define_prim(lightusd_stage* stage, c
                                             uint8_t specifier,
                                             lightusd_prim* out /* nullable */);
 LIGHTUSD_API lightusd_status lightusd_stage_remove_prim(lightusd_stage* stage, const char* path);
+/* Rename the prim at `path` (last component becomes `new_name`); descendants
+ * move with it and sibling order is kept. Authored paths elsewhere
+ * (relationship targets, connections, arcs) are not retargeted. Fails with
+ * LIGHTUSD_ERR_INVALID_ARG for an invalid name or a sibling collision. */
+LIGHTUSD_API lightusd_status lightusd_stage_rename_prim(lightusd_stage* stage, const char* path,
+                                            const char* new_name);
 
 /* Author a full typed value in ONE call.
  * - POD types: `data` points at `count` elements of `type` (count > 1 or
@@ -523,7 +964,7 @@ LIGHTUSD_API lightusd_status lightusd_attr_set(lightusd_stage* stage, const char
 LIGHTUSD_API lightusd_status lightusd_attr_set_token_array(lightusd_stage* stage,
                                                const char* prim_path,
                                                const char* name,
-                                               lightusd_type type, /* TOKEN or STRING */
+                                               lightusd_type type, /* TOKEN, STRING, or ASSET_PATH */
                                                const char* const* items,
                                                size_t count, uint16_t flags);
 LIGHTUSD_API lightusd_status lightusd_attr_set_timesample(lightusd_stage* stage,
@@ -538,6 +979,12 @@ LIGHTUSD_API lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage,
                                             const char* name, const char* key,
                                             lightusd_type type, const void* data,
                                             size_t count);
+/* Declare a typed attribute without a default value (for example a shader
+ * output that is only connected). An existing attribute keeps its value and
+ * takes the type name. */
+LIGHTUSD_API lightusd_status lightusd_attr_declare(lightusd_stage* stage, const char* prim_path,
+                                                   const char* name, const char* type_name,
+                                                   int uniform);
 LIGHTUSD_API lightusd_status lightusd_attr_add_connection(lightusd_stage* stage,
                                               const char* prim_path,
                                               const char* name,
@@ -570,6 +1017,13 @@ enum {
   LIGHTUSD_ARC_SPECIALIZE = 3
 };
 
+/* Authored arcs remaining in this stage view; composition may consume them.
+ * Invalid prims or unknown arc_type return zero. */
+LIGHTUSD_API size_t lightusd_prim_arc_count(lightusd_prim p, uint8_t arc_type);
+/* Borrowed arc text as stored in this view (for example @asset@</Prim>).
+ * Intended for inspection; not a resolved asset path. Invalid/out-of-range is empty. */
+LIGHTUSD_API lightusd_sv lightusd_prim_arc_text(lightusd_prim p, uint8_t arc_type, size_t index);
+
 LIGHTUSD_API lightusd_status lightusd_prim_add_arc(lightusd_stage* stage, const char* prim_path,
                                        uint8_t arc_type,
                                        const char* asset_path,      /* nullable */
@@ -580,6 +1034,12 @@ LIGHTUSD_API lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage,
                                             const char* prim_path,
                                             const char* key, lightusd_type type,
                                             const void* data, size_t count);
+/* key is "apiSchemas", optionally prefixed by a list-op qualifier as in USDA
+ * ("prepend apiSchemas", "append apiSchemas", "delete apiSchemas"); without
+ * one the list is explicit. */
+LIGHTUSD_API lightusd_status lightusd_prim_set_metadata_token_array(
+    lightusd_stage* stage, const char* prim_path, const char* key,
+    const char* const* items, size_t count);
 
 /* Variant authoring. */
 LIGHTUSD_API lightusd_status lightusd_prim_add_variant_set(lightusd_stage* stage,

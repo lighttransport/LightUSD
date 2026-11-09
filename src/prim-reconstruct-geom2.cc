@@ -113,7 +113,7 @@ bool ReconstructPrim<GeomMesh>(
   auto TriangleSubdivisionRuleHandler = enum_handler::TriangleSubdivisionRule;
   auto FamilyTypeHandler = enum_handler::FamilyType;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
     return false;
   }

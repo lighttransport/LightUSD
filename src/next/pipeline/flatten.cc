@@ -3,8 +3,11 @@
 //
 // LightUSD Next - Low-memory flatten pipeline implementation
 
+#include "core/native-io.hh"
 #include "flatten.hh"
+#include "../next-util.hh"
 
+#include <algorithm>
 #include <cstring>
 #include <chrono>
 #include <cctype>
@@ -14,6 +17,10 @@
 
 #include "../layer/layer.hh"
 #include "../pcp/layer-registry.hh"
+#if defined(LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
+#include "../pcp/cache.hh"  // pcp::ComposeStageFromLayer (parallel compose)
+#include "../resolver/asset-resolver.hh"
+#endif
 #include "../reader/usdc-reader.hh"
 #include "../safe-file-size.hh"
 #include "../stage/stage.hh"
@@ -23,7 +30,7 @@
 #if defined(__EMSCRIPTEN__) && defined(LIGHTUSD_FLATTEN_MEMLOG)
 #include <emscripten/heap.h>
 #include "../strfmt.hh"     // AppendUInt
-#include "../../logger.hh"  // LIGHTUSD_LOG_I (only pulled in for this opt-in diag)
+#include "core/logger.hh"  // LIGHTUSD_LOG_I (only pulled in for this opt-in diag)
 #endif
 
 namespace lightusd {
@@ -56,18 +63,6 @@ void FlattenMemLog(const char* stage) {
 #endif
 }
 
-// True if the root layer is self-contained: no sublayers and no per-prim
-// composition arcs (references/payloads/inherits/specializes/variants). Such a
-// root flattens to itself, so the structural clone Compose() would do is pure
-// overhead and can be skipped.
-bool IsSelfContained(const Layer& root) {
-  if (!root.meta().subLayers.empty()) return false;
-  for (const auto& prim : root.prims()) {
-    if (HasCompositionArcs(prim)) return false;
-  }
-  return true;
-}
-
 void CollectReferencedAssets(const Layer& layer, std::vector<std::string>* out) {
   if (!out) return;
   std::set<std::string> unique;
@@ -75,7 +70,7 @@ void CollectReferencedAssets(const Layer& layer, std::vector<std::string>* out) 
     for (const PropSlot& slot : prim.properties().slots()) {
       const Value* value = prim.property_value(slot.name_id);
       if (!value) continue;
-      const std::string* path = value->as_asset_path();
+      auto path = value->as_asset_path();
       if (path && !path->empty()) {
         unique.insert(*path);
       }
@@ -103,7 +98,41 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   std::unique_ptr<Layer> composed;
   const Layer* layer = root;
   const auto compose_begin = Clock::now();
-  if (opts.flatten && !IsSelfContained(*root)) {
+#if defined(LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
+  if (opts.flatten && opts.use_pcp_compose && LayerNeedsComposition(*root)) {
+    // Parallel pcp composition. A non-owning shared_ptr hands the root to pcp
+    // for the call; `root_owner` retains ownership and outlives the write, and
+    // the composed layer's lazy Values carry their own source-buffer keepalive.
+    std::shared_ptr<Layer> root_view(root_owner.get(), [](Layer*) {});
+    AssetResolver fallback_resolver;
+    AssetResolver& res = opts.resolver ? *opts.resolver : fallback_resolver;
+    pcp::CompositionOptions pcp_opts;
+    pcp_opts.num_threads = opts.compose_num_threads;
+    pcp_opts.max_array_elements = opts.composition.max_array_elements;
+    pcp_opts.max_archive_entries = opts.composition.max_archive_entries;
+    pcp_opts.usdc_limits = opts.composition.usdc_limits;
+    // Self-contained flatten (no residual native-instance prototypes).
+    pcp_opts.instance_flatten_mode = pcp::InstanceFlattenMode::Holder;
+    Stage stage;
+    std::string pcp_warn;
+    if (!pcp::ComposeStageFromLayer(root_view, res, &stage,
+                                    opts.root_anchor_path, pcp_opts, &pcp_warn,
+                                    err)) {
+      if (err && err->empty()) *err = "pcp composition failed";
+      return false;
+    }
+    composed = stage.ReleaseRootLayer();
+    if (!composed) {
+      if (err) *err = "pcp composition produced no layer";
+      return false;
+    }
+    if (stats && !pcp_warn.empty()) {
+      stats->composition_errors.push_back(pcp_warn);
+    }
+    layer = composed.get();
+  } else
+#endif
+  if (opts.flatten && LayerNeedsComposition(*root)) {
     Compositor comp;
     comp.SetOptions(opts.composition);
     if (opts.resolver) comp.SetResolver(opts.resolver);
@@ -189,6 +218,8 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
 }
 
 uint64_t FileSizeBytes(const std::string& filename) {
+  if (!::lightusd::NativeIOEnabled()) return 0;
+
   std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f) return 0;
   size_t n = 0;
@@ -196,17 +227,6 @@ uint64_t FileSizeBytes(const std::string& filename) {
   return static_cast<uint64_t>(n);
 }
 
-bool EndsWithNoCase(const std::string& s, const char* suffix) {
-  const size_t n = std::strlen(suffix);
-  if (s.size() < n) return false;
-  const size_t off = s.size() - n;
-  for (size_t i = 0; i < n; ++i) {
-    unsigned char a = static_cast<unsigned char>(s[off + i]);
-    unsigned char b = static_cast<unsigned char>(suffix[i]);
-    if (std::tolower(a) != std::tolower(b)) return false;
-  }
-  return true;
-}
 
 }  // namespace
 
@@ -299,9 +319,14 @@ LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
     }
     pcp::LayerLoadOptions lopts = layer_load_opts;
     if (lopts.max_memory == 0) lopts.max_memory = read_opts.max_memory;
+    if (read_opts.max_array_elements != 0) {
+      lopts.max_array_elements =
+          std::min(lopts.max_array_elements, read_opts.max_array_elements);
+    }
 
-    // A package path reads the package file's bytes; entry selection happens
-    // inside the content-sniffing parser.
+    // Re-resolve so the read can validate the file identity captured for this
+    // path. Package identifiers are split first so the package resolver is not
+    // invoked twice; entry selection still happens in the parser below.
     std::string read_path = resolved_path;
     if (AssetResolver::IsPackagePath(resolved_path)) {
       std::string package_file;
@@ -311,9 +336,16 @@ LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
         read_path = package_file;
       }
     }
-
+    ResolvedAsset asset = resolver->Resolve(read_path, "", false);
+    if (asset.resolved_path.empty()) asset.resolved_path = read_path;
     std::vector<uint8_t> bytes;
-    if (!resolver->ReadAsset(read_path, &bytes, error)) {
+    if (!resolver->ReadAsset(asset, &bytes, error)) {
+      return nullptr;
+    }
+    if (!resolver->FileIdentityUnchanged(asset)) {
+      if (error) {
+        *error += "asset changed while reading: " + resolved_path + "\n";
+      }
       return nullptr;
     }
 
@@ -333,6 +365,10 @@ LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
                      std::string* error) -> std::unique_ptr<Layer> {
     pcp::LayerLoadOptions lopts = layer_load_opts;
     lopts.max_memory = read_opts.max_memory;
+    if (read_opts.max_array_elements != 0) {
+      lopts.max_array_elements =
+          std::min(lopts.max_array_elements, read_opts.max_array_elements);
+    }
     std::string warn;
     std::shared_ptr<Layer> loaded =
         pcp::LoadLayerFromFile(resolved_path, &warn, error, lopts);
@@ -371,6 +407,9 @@ bool FlattenUSDMemoryImpl(const std::string& key, std::string&& data,
   lopts.max_memory = opts.composition.max_layer_memory;
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
+  lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =
@@ -409,6 +448,9 @@ bool FlattenUSDMemoryImplNonOwned(const std::string& key, const uint8_t* data,
   lopts.max_memory = opts.composition.max_layer_memory;
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
+  lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =
@@ -474,6 +516,9 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
     pcp::LayerLoadOptions layer_load_opts;
     layer_load_opts.max_memory = opts.read.max_memory;
     layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
+    layer_load_opts.max_array_elements = opts.composition.max_array_elements;
+    layer_load_opts.usdc_limits = opts.composition.usdc_limits;
+    layer_load_opts.max_archive_entries = opts.composition.max_archive_entries;
     layer_load_opts.parse_num_threads =
         opts.composition.usda_parse_options.num_threads;
     effective.layer_loader = MakeFileSystemLayerLoader(opts.read, layer_load_opts);
@@ -495,6 +540,9 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
   lopts.max_memory = opts.composition.max_layer_memory;
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
+  lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =
@@ -528,6 +576,9 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
     pcp::LayerLoadOptions layer_load_opts;
     layer_load_opts.max_memory = opts.read.max_memory;
     layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
+    layer_load_opts.max_array_elements = opts.composition.max_array_elements;
+    layer_load_opts.usdc_limits = opts.composition.usdc_limits;
+    layer_load_opts.max_archive_entries = opts.composition.max_archive_entries;
     layer_load_opts.parse_num_threads =
         opts.composition.usda_parse_options.num_threads;
     effective.layer_loader = MakeFileSystemLayerLoader(opts.read, layer_load_opts);
@@ -549,6 +600,9 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
   lopts.max_memory = opts.composition.max_layer_memory;
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
+  lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =

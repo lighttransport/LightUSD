@@ -4,16 +4,26 @@
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
+layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
+// LUSDVIEW_STATIC_BATCH: variant for merged static batches (world-baked,
+// unskinned, unmorphed). Those four streams were still fetched for every vertex
+// even though the shader could only ever multiply them by zero -- 52 B/vertex of
+// dead weight that made the static pass memory-bound on large scenes. Dropping
+// the inputs (and the deform include) lets the input assembler skip them; the
+// pipeline keeps the bindings, which cost nothing when unused.
+#ifndef LUSDVIEW_STATIC_BATCH
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
-layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
+#ifndef LUSDVIEW_SKIN_ONLY
 layout(location = 7) in float aMorphInfl; // blendshape influence (world units)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 = none
+#endif
 
 // Blendshape morph + linear-blend skinning (sets 1,2,7,8,9 + fetchBone /
 // morphChanId / applyMorphSkin); shared with the GPU-tessellation vertex stage.
 #include "deform.glsl"
+#endif
 
 // Coarse displacement height map (red channel), sampled in the vertex stage. The
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
@@ -44,6 +54,8 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 shadowViewProj;
   vec4 pointShadowLight;
   mat4 pointShadowViewProj[6];
+  vec4 clippingPlanes[8];
+  ivec4 clippingInfo;
 } fr;
 struct MaterialTexParam {
   vec4 baseUv0; vec4 baseUv1;
@@ -125,8 +137,16 @@ layout(location = 7) out vec4 vColor;          // displayColor.rgb + displayOpac
 void main() {
   // Blendshape morph (before skin) + linear-blend skin -> object-space pos/nrm.
   vec3 pos, nrm;
+#ifdef LUSDVIEW_STATIC_BATCH
+  pos = aPos;
+  nrm = aNormal;
+#elif defined(LUSDVIEW_SKIN_ONLY)
+  applyMorphSkin(aPos, aNormal, uvec2(0), aJoint, aWeight, aInfluence,
+                 pos, nrm);
+#else
   applyMorphSkin(aPos, aNormal, aMorphOffsetCount, aJoint, aWeight, aInfluence,
                  pos, nrm);
+#endif
   // Coarse displacement: offset along the (object-space) normal by the height map's
   // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
   // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
@@ -164,12 +184,17 @@ void main() {
   // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
   vDomJoint = -1;
   vDomWeight = 0.0;
+  vMorphInfl = 0.0;
+#ifndef LUSDVIEW_STATIC_BATCH
   if (aWeight.x > vDomWeight) { vDomWeight = aWeight.x; vDomJoint = int(aJoint.x); }
   if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
   if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
   if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
-  vUV1 = aUV1;
+#ifndef LUSDVIEW_SKIN_ONLY
   vMorphInfl = aMorphInfl;
+#endif
+#endif
+  vUV1 = aUV1;
   // Per-vertex displayColor (USD primvars:displayColor, vertex interp). The GL
   // backend multiplies it into the base color (attrib 9); parity requires the
   // same here. Gated on pc.ids.w bit 32 -- meshes without color see white.

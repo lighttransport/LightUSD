@@ -30,6 +30,10 @@ struct PrintOptions {
 
   /// Use compact format (single line arrays)
   bool compact = false;
+
+  /// Canonicalize dictionary key order (including nested dictionaries).
+  /// Reference-item identity uses this; ordinary metadata keeps authored order.
+  bool sort_dictionary_keys = true;  // pxr VtDictionary is a std::map: keys print sorted
 };
 
 /// Print a Value to string (USDA format)
@@ -52,18 +56,16 @@ void PrintValue(StreamWriter& out, const Value& value,
 size_t ArrayElementCount(const Value& value);
 
 /// True if `value` is an array whose element TYPE supports range formatting
-/// (int/uint/int64/uint64 or any float/double vector/matrix component type) and
+/// (numeric scalar/vector/matrix or string/token/asset/path-expression) and
 /// is not truncated by `opts` -- regardless of lazy/borrow state. A chunkable-type
 /// array that is not directly borrowable can still be range-formatted after being
 /// materialized into an owned buffer (see Value::materialized_copy).
 bool IsChunkableType(const Value& value, const PrintOptions& opts);
 
-/// True if `value` is a large numeric array that can be formatted in independent
-/// element-range chunks with zero-copy borrows: a non-lazy POD numeric array
-/// (int/uint/int64/uint64 or any float/double vector/matrix component type) that
-/// is not truncated by `opts`. The parallel writer uses this to split one giant
-/// array across worker threads. Lazy arrays are excluded (a per-chunk borrow
-/// could re-decode), as are token/string/bool/asset arrays.
+/// True if `value` supports independent element ranges without materializing:
+/// an owned chunkable array, or a directly borrowable lazy numeric array, with
+/// no truncation. Lazy compressed/string arrays require one shared decoded
+/// buffer before splitting; a per-chunk decode would duplicate that work.
 bool IsChunkableArray(const Value& value, const PrintOptions& opts);
 
 /// Format USD elements [elem_lo, elem_hi) of array `value` into `os`.

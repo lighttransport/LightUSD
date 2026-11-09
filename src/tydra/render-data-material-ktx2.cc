@@ -42,12 +42,12 @@
 #include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 #include "materialx-to-json.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 //
 #include "common-macros.inc"

@@ -71,7 +71,7 @@ bool ReconstructShader<MtlxAutodeskStandardSurface>(
   (void)options;
   (void)warn;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
@@ -204,7 +204,7 @@ bool ReconstructShader<MtlxOpenPBRSurface>(
   (void)options;
   (void)warn;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
@@ -351,7 +351,7 @@ bool ReconstructShader<OpenPBRSurface>(
   (void)options;
   (void)warn;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   // OpenPBR's canonical opacity input is `geometry_opacity`, but many USD assets

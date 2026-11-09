@@ -34,10 +34,18 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Setup Emscripten SDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          ./emsdk/emsdk install 4.0.14
+          ./emsdk/emsdk activate 4.0.14
+
       - name: Build Pages site
         working-directory: ${{ github.workspace }}/web/demo
         run: |
+          source ../../emsdk/emsdk_env.sh
           bun install
+          bun run prepare:openchess
           cd ../..
           bash web/site/build-pages.sh
 

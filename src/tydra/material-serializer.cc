@@ -570,7 +570,8 @@ nonstd::expected<std::string, std::string> serializeLight(
 
       case RenderLight::Type::Geometry:
         json << "\"geometryMeshId\": " << light.geometry_mesh_id << ",";
-        json << "\"materialSyncMode\": \"" << light.material_sync_mode << "\"";
+        json << "\"materialSyncMode\": \"" << light.material_sync_mode << "\",";
+        json << "\"geometryTargetPath\": \"" << light.geometry_target_path << "\"";
 
         // Include mesh info if renderScene is provided
         if (renderScene && light.geometry_mesh_id >= 0 &&

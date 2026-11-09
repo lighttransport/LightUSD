@@ -58,6 +58,7 @@ function parseArgs(argv) {
     const val = () => argv[++i];
     switch (k) {
       case '--next-usdcat': a.nextUsdcat = val(); break;
+      case '--lusdcat': a.nextUsdcat = val(); break;  // unified name
       case '--usdcat': a.usdcat = val(); break;
       case '--suite-root': a.suiteRoot = val(); break;
       case '--xfail': a.xfail = val(); break;
@@ -67,7 +68,7 @@ function parseArgs(argv) {
       case '--timeout': a.timeout = parseInt(val(), 10); break;
       case '--verbose': a.verbose = true; break;
       case '-h': case '--help':
-        console.log('Usage: node tests/next/run-next-pxr-flatten-diff.mjs --next-usdcat PATH ' +
+        console.log('Usage: node tests/next/run-next-pxr-flatten-diff.mjs --lusdcat PATH ' +
           '[--usdcat PATH] [--suite-root DIR] [--xfail FILE] [--report-only] [--jobs N] ' +
           '[--float-tolerance F] [--timeout MS] [--verbose]');
         process.exit(0);
@@ -78,7 +79,7 @@ function parseArgs(argv) {
     }
   }
   if (!a.nextUsdcat) {
-    console.error('--next-usdcat is required');
+    console.error('--lusdcat is required (legacy alias: --next-usdcat)');
     process.exit(2);
   }
   return a;
@@ -273,6 +274,10 @@ async function main() {
     console.log(`note: ${counts.xpass} xfail-listed input(s) now pass — prune them from ${path.relative(repoRoot, a.xfail)}`);
   }
 
+  if (counts['pxr-error'] + counts.skip === inputs.length) {
+    console.error('OpenUSD could not read any selected input; no reference comparisons ran.');
+    process.exit(2);
+  }
   if (failures.length > 0 && !a.reportOnly) process.exit(1);
 }
 

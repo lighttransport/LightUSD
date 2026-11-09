@@ -34,5 +34,9 @@ void usdc_reader_multiple_prims_roundtrip_test(void);
 
 // Error Handling
 void usdc_reader_truncated_input_test(void);
+void usdc_reader_layer_memory_limit_test(void);
+void usdc_reader_truncated_array_test(void);
 void usdc_reader_corrupt_header_test(void);
 void usdc_reader_corrupt_body_test(void);
+
+void usdc_reader_collection_binding_roundtrip_test(void);

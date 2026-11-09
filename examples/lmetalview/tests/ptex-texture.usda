@@ -1,0 +1,59 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "lmetalview Ptex test: four constant-color faces in a synthetic .ptx."
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Mesh "Grid" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        float3[] extent = [(-1, 0, -1), (1, 0, 1)]
+        int[] faceVertexCounts = [4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 4, 3, 1, 2, 5, 4, 3, 4, 7, 6, 4, 5, 8, 7]
+        point3f[] points = [(-1, 0, -1), (0, 0, -1), (1, 0, -1), (-1, 0, 0), (0, 0, 0), (1, 0, 0), (-1, 0, 1), (0, 0, 1), (1, 0, 1)]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        rel material:binding = </Root/Material>
+    }
+
+    def Material "Material"
+    {
+        token outputs:surface.connect = </Root/Material/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </Root/Material/Ptex.outputs:rgb>
+            float inputs:metallic = 0.0
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+
+        def Shader "Ptex"
+        {
+            uniform token info:id = "HwPtexTexture_1"
+            asset inputs:file = @textures/ptex_faces.ptx@
+            float2 inputs:st.connect = </Root/Material/St.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "St"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+}

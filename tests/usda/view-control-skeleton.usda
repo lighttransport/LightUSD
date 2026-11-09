@@ -1,0 +1,57 @@
+#usda 1.0
+(
+    defaultPrim = "Rig"
+    upAxis = "Y"
+    startTimeCode = 1
+    endTimeCode = 12
+    timeCodesPerSecond = 24
+)
+def SkelRoot "Rig"
+{
+    def Skeleton "Skeleton" (prepend apiSchemas = ["SkelBindingAPI"])
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        uniform token[] joints = ["root", "root/tip"]
+        uniform matrix4d[] bindTransforms = [
+            ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+            ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,2,0,1))
+        ]
+        uniform matrix4d[] restTransforms = [
+            ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+            ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,2,0,1))
+        ]
+        rel skel:animationSource = </Rig/Animation>
+        def Mesh "Skin" (prepend apiSchemas = ["SkelBindingAPI"])
+        {
+            point3f[] points = [(-0.25,0,0),(0.25,0,0),(-0.25,2,0),(0.25,2,0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0,1,3,2]
+            uniform token subdivisionScheme = "none"
+            bool doubleSided = true
+            color3f[] primvars:displayColor = [(0.2,0.5,0.8)]
+            int[] primvars:skel:jointIndices = [0,0,1,1] (elementSize = 1
+                interpolation = "vertex")
+            float[] primvars:skel:jointWeights = [1,1,1,1] (elementSize = 1
+                interpolation = "vertex")
+            matrix4d primvars:skel:geomBindTransform = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
+            rel skel:skeleton = </Rig/Skeleton>
+        }
+        def Cube "ChildGeometry"
+        {
+            double size = 0.5
+            double3 xformOp:translate = (1, 1, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+    def SkelAnimation "Animation"
+    {
+        uniform token[] joints = ["root", "root/tip"]
+        float3[] translations.timeSamples = {
+            1: [(0,0,0),(0,2,0)],
+            12: [(0,0,0),(0,2.3,0)]
+        }
+        quatf[] rotations = [(1,0,0,0),(1,0,0,0)]
+        half3[] scales = [(1,1,1),(1,1,1)]
+    }
+}

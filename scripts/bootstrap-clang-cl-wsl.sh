@@ -11,5 +11,6 @@ cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE="cmake/clang-cl-msvc-wsl.cmake" \
   -DMSVC_BASE:FILEPATH="/mnt/d/VC/Tools/MSVC/14.26.28801/" \
   -DWINSDK_BASE="/mnt/d/winsdk/10/" \
   -DWINSDK_VER="10.0.18362.0" \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

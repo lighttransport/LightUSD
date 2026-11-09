@@ -10,15 +10,16 @@
 # A roundtrip PASSes when the kinematic structure is preserved:
 #   forward "links"  == return "bodies"   AND   forward "joints" == return "joints"
 # Mesh visual geometry is summarized and reported but is not part of the
-# kinematic pass/fail assertion. The return leg preserves render meshes when
-# available and uses a placeholder OBJ only when a render-only conversion
-# warning prevents extraction.
+# kinematic pass/fail assertion. This structural sweep writes small placeholder
+# OBJ files so the closure remains re-parseable without render extraction.
+# Use --real-meshes to exercise the full render-mesh return path.
 #
 # Usage:
 #   web/js/run-mjcf-roundtrip.sh                  # curated representative set
 #   web/js/run-mjcf-roundtrip.sh --all            # sweep every menagerie robot
 #   web/js/run-mjcf-roundtrip.sh path/to/a.xml b.xml ...
 #   web/js/run-mjcf-roundtrip.sh --closure        # also re-parse emitted MJCF
+#   web/js/run-mjcf-roundtrip.sh --real-meshes     # export full render meshes
 #   web/js/run-mjcf-roundtrip.sh --menagerie <dir> [options]
 #
 # Env:
@@ -39,6 +40,7 @@ REV="$SCRIPT_DIR/cli/usd-to-mjcf.js"
 
 CLOSURE=0
 SWEEP=0
+REAL_MESHES=0
 EXPLICIT=()
 JSON_OUT=""
 MAX_USDC_MB="${MAX_USDC_MB:-2048}"
@@ -68,6 +70,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --all) SWEEP=1; shift ;;
     --closure) CLOSURE=1; shift ;;
+    --real-meshes) REAL_MESHES=1; shift ;;
     --menagerie-dir|--menagerie)
       MENAGERIE_DIR="$2"; shift 2 ;;
     --max-usdc-mb)
@@ -210,7 +213,9 @@ run_one() {
 
   # Return: USD -> MJCF
   local rout rrc rline B J2 V2 C2
-  rout="$(node "$REV" "$usd" -o "$out_mjcf" 2>&1)"
+  local mesh_args=(--placeholder-meshes)
+  [ "$REAL_MESHES" -eq 1 ] && mesh_args=()
+  rout="$(node "$REV" "$usd" -o "$out_mjcf" "${mesh_args[@]}" 2>&1)"
   rrc=$?
   if [ $rrc -ne 0 ]; then
     printf '%-26s %-22s %58s\n' "$sub" "$name" "REV-ERROR"

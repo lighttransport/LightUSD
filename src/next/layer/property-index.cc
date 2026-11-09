@@ -22,33 +22,45 @@ PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
-const char* PropertyNameKey(const void* context, size_t index, size_t* length) {
-  const auto& names = *static_cast<const std::deque<std::string>*>(context);
-  if (index >= names.size()) return nullptr;
-  const std::string_view name = names[index];
-  *length = name.size();
-  return name.data();
+const char* SnapshotNameKey(const void* context, size_t index, size_t* length) {
+  const auto& by_id = *static_cast<const std::vector<const std::string*>*>(context);
+  if (index >= by_id.size()) return nullptr;
+  *length = by_id[index]->size();
+  return by_id[index]->data();
 }
 }  // namespace
 
-PropNameId PropNameTable::find_live(std::string_view name) const {
-  // Empty string_view may have a null data pointer; empty names are still keys.
-  const size_t id = name_to_id_.find(name.empty() ? "" : name.data(), name.size(),
-                                   PropertyNameKey, &names_);
+PropNameId PropNameTable::SnapshotFind(const GrowthSnapshot& snap,
+                                       std::string_view name) {
+  const size_t id = snap.index.find(name.empty() ? "" : name.data(),
+                                    name.size(), SnapshotNameKey, &snap.by_id);
   if (id < UINT32_MAX) return PropNameId{static_cast<uint32_t>(id)};
-  // The index is optional acceleration. An allocation failure must not lose
-  // an interned name or give it a second ID on a subsequent lookup.
-  if (name_to_id_.size() != names_.size()) {
-    for (size_t i = 0; i < names_.size(); ++i) {
-      if (names_[i] == name) return PropNameId{static_cast<uint32_t>(i)};
-    }
-  }
   return PropNameId{};
 }
 
+void PropNameTable::publish_growth_snapshot_locked() {
+  if (names_.size() == snapshot_count_) return;
+  std::unique_ptr<GrowthSnapshot> snap(new GrowthSnapshot());
+  snap->by_id.reserve(names_.size());
+  for (const std::string& name : names_) snap->by_id.push_back(&name);
+  // An index allocation failure only leaves the snapshot unpublished: the
+  // locked path stays authoritative.
+  if (!snap->index.rebuild(snap->by_id.size(), SnapshotNameKey, &snap->by_id)) {
+    return;
+  }
+  snapshot_count_ = names_.size();
+  snapshot_ptr_.store(snap.get(), std::memory_order_release);
+  snapshots_.push_back(std::move(snap));
+}
 
-#if defined(LIGHTUSD_ENABLE_THREAD)
+void PropNameTable::publish_snapshot() {
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+  publish_growth_snapshot_locked();
+}
+
 namespace {
 // Order the snapshot by the pointed-to name.
 struct FrozenLess {
@@ -100,16 +112,17 @@ bool PropNameTable::is_frozen() const {
 void PropNameTable::freeze() {}
 void PropNameTable::unfreeze() {}
 bool PropNameTable::is_frozen() const { return false; }
+void PropNameTable::publish_snapshot() {}
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
-  const std::string_view view(name.data(), name.size());
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  const std::string_view view(name.data(), name.size());
   // Frozen fast path: the common compose-time intern is a HIT (every property
   // name was interned at parse), so answer it lock-free from the snapshot.
-  // A MISS falls through to the locked path below and inserts into the live
-  // map — which the snapshot does not alias, so lock-free readers are
-  // untouched and the snapshot stays valid (just missing this one name).
+  // A MISS falls through to the locked path and inserts into the live map --
+  // which the snapshot does not alias, so lock-free readers are untouched and
+  // the snapshot stays valid (just missing this one name).
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), view,
                                FrozenLess{});
@@ -117,24 +130,22 @@ PropNameId PropNameTable::intern(const std::string& name) {
       return PropNameId{it->second};
     }
   }
-  {
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-    const PropNameId hit = find_live(view);
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    const PropNameId hit = SnapshotFind(*snap, view);
     if (hit.is_valid()) return hit;
   }
-  std::unique_lock<std::shared_mutex> wlk(mu_);
+  // Locked intern; on a fresh insert, refresh the growth snapshot under the
+  // exclusive lock once the table has grown by half (at least 64 names).
+  return intern_locked(name, [](void* self) {
+    auto* t = static_cast<PropNameTable*>(self);
+    if (t->names_.size() - t->snapshot_count_ >=
+        std::max<size_t>(64, t->snapshot_count_ / 2)) {
+      t->publish_growth_snapshot_locked();
+    }
+  }, this);
+#else
+  return intern_locked(name);
 #endif
-  // Recheck under the exclusive lock; another thread may have interned it.
-  const PropNameId hit = find_live(view);
-  if (hit.is_valid()) return hit;
-  if (names_.size() >= UINT32_MAX) return PropNameId{};
-  const uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  if (name_to_id_.size() + 1 == names_.size())
-    name_to_id_.insert(id, PropertyNameKey, &names_);
-  else
-    name_to_id_.rebuild(names_.size(), PropertyNameKey, &names_);
-  return PropNameId{id};
 }
 
 PropNameId PropNameTable::intern(const char* name) {
@@ -149,6 +160,9 @@ std::string_view PropNameTable::get(PropNameId id) const {
   // another thread interns concurrently.
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     if (id.id < idx->by_id.size()) return *idx->by_id[id.id];
+  }
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    if (id.id < snap->by_id.size()) return *snap->by_id[id.id];
   }
   {
     // Shared lock: a concurrent intern() on another thread may push_back names_
@@ -174,6 +188,10 @@ PropNameId PropNameTable::find(std::string_view name) const {
     if (it != idx->by_name.end() && *it->first == name) {
       return PropNameId{it->second};
     }
+  }
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    const PropNameId hit = SnapshotFind(*snap, name);
+    if (hit.is_valid()) return hit;
   }
   std::shared_lock<std::shared_mutex> rlk(mu_);
   return find_live(name);
@@ -384,11 +402,16 @@ void PropIndex::add(PropSlot slot) {
 const PropSlot* PropIndex::find(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
 
-  if (sorted_) {
-    // Binary search
-    auto it = std::lower_bound(slots_.begin(), slots_.end(), name_id,
-        [](const PropSlot& slot, PropNameId id) {
-          return slot.name_id < id;
+  // Small (or unsorted) indices: a linear id scan beats resolving names.
+  constexpr size_t kLinearScanMax = 8;
+  if (sorted_ && slots_.size() > kLinearScanMax) {
+    // Slots are sorted by NAME (see sort()), not by the raw PropNameId, so
+    // binary-search by the target's name (get() is O(1)).
+    const PropNameTable& table = GetPropNameTable();
+    const std::string_view target = table.get(name_id);
+    auto it = std::lower_bound(slots_.begin(), slots_.end(), target,
+        [&table](const PropSlot& slot, std::string_view name) {
+          return table.get(slot.name_id) < name;
         });
     if (it != slots_.end() && it->name_id == name_id) {
       return &(*it);
@@ -437,12 +460,53 @@ bool PropIndex::remove(PropNameId name_id) {
 }
 
 void PropIndex::sort() {
-  std::sort(slots_.begin(), slots_.end(),
-      [](const PropSlot& a, const PropSlot& b) {
-        return a.name_id < b.name_id;
-      });
+  // add() clears sorted_ and remove() preserves the order, so an index that is
+  // still marked sorted needs no work (loaders pre-sort per prim in parallel
+  // before Layer::finalize() sweeps every prim).
+  if (sorted_) return;
+  // Sort by property NAME, not by PropNameId. The id is a global interning
+  // index whose assignment order is nondeterministic across runs (property
+  // names are interned concurrently while layers load in parallel), so an
+  // id-ordered slot list would make every consumer of slots() order
+  // nondeterministic -- most visibly the USDC writer, whose `properties`
+  // field, spec-emit order and value-block layout all follow this order (the
+  // USDA writer already sorts by name). Name order is canonical and stable.
+  // Names are resolved once per slot, not per comparison.
+  if (slots_.size() > 1) {
+    const PropNameTable& table = GetPropNameTable();
+    std::vector<std::pair<std::string_view, PropSlot>> keyed;
+    keyed.reserve(slots_.size());
+    for (const PropSlot& slot : slots_) {
+      keyed.emplace_back(table.get(slot.name_id), slot);
+    }
+    std::sort(keyed.begin(), keyed.end(),
+              [](const std::pair<std::string_view, PropSlot>& a,
+                 const std::pair<std::string_view, PropSlot>& b) {
+                return a.first < b.first;
+              });
+    for (size_t i = 0; i < keyed.size(); ++i) slots_[i] = keyed[i].second;
+  }
   sorted_ = true;
 }
+
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+bool PropNameId::is_valid() const { return id != UINT32_MAX; }
+bool PropSlot::is_custom() const { return flags & kFlagCustom; }
+bool PropSlot::is_uniform() const { return flags & kFlagUniform; }
+bool PropSlot::is_time_sampled() const { return flags & kFlagTimeSampled; }
+bool PropSlot::is_connection() const { return flags & kFlagConnection; }
+bool PropSlot::is_relationship() const { return flags & kFlagRelationship; }
+bool PropSlot::is_array() const { return flags & kFlagArray; }
+bool PropSlot::variability_authored() const {
+    return flags & kFlagVariabilityAuthored;
+  }
+bool PropSlot::is_varying() const { return flags & kFlagVarying; }
+const std::vector<PropSlot>& PropIndex::slots() const { return slots_; }
+size_t PropIndex::size() const { return slots_.size(); }
+bool PropIndex::is_sorted() const { return sorted_; }
 
 }  // namespace next
 }  // namespace lightusd

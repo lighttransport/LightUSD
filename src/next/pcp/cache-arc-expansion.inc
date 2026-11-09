@@ -65,13 +65,14 @@
   // authored at a WEAKER site and only known once the whole prim expanded —
   // can be grafted afterwards at their recorded strength position.)
   void ApplyVariantOption(const Src &src, const ExpansionFrame *frame,
-                          const std::string &set_name, const VariantData *vd,
+                          const std::string &set_name, const PrimVariantData *vd,
                           const PrimSpec &owner, int vdepth,
                           const std::string &layer_id,
                           std::vector<Src> *out, std::vector<Src> *spec_out,
                           std::map<std::string, std::string> *sels,
                           const ArcChain &chain, std::string *warn,
-                          std::string *err);
+                          std::string *err,
+                          const std::string &selection_prefix = std::string());
 
   // Does `path` land in namespace edited by `stack`'s relocates? Source-side
   // hits are PROHIBITED arc targets (pxr: cannot address pre-relocation
@@ -104,7 +105,9 @@
                   std::vector<Src> *out, std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const ArcChain &chain, std::string *warn,
-                  std::string *err);
+                  std::string *err,
+                  void (*before_references)(void*) = nullptr,
+                  void* before_references_data = nullptr);
 
   std::vector<Src> ExpandList(const std::vector<Src> &base,
                               const std::string &root_prim_path,
@@ -184,7 +187,7 @@
   // relocation source). EXCLUDE the arrival's OWN source (composing the arrival
   // OF that same relocate legitimately pulls this content). Salted (not dropped)
   // so it stays traversable.
-  bool FlowsThroughRelocateSource(const Src &c,
+  bool FlowsThroughRelocateSource(const Src &c, uint32_t relocating_stack,
                                   const StackRelocates::Arrival &arrival) const;
 
   std::vector<Src> SourcesForRelocatedContent(

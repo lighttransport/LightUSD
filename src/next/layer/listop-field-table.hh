@@ -26,33 +26,33 @@ struct StringListOpFieldDef {
   const char* name;
 
   /// The field's authored list-op, NORMALIZED: fields that can carry an
-  /// authored opinion outside StringListOpEdits (apiSchemas' legacy
+  /// authored opinion outside StringListOps (apiSchemas' legacy
   /// qualifier + applied vector) are converted to an equivalent edit.
   /// `authored == false` means the spec has no mergeable op for this field.
-  StringListOpEdits (*normalized_edits)(const PrimSpecMeta& meta);
+  StringListOps (*normalized_edits)(const PrimMetadata& meta);
 
   /// Names implied by the field's backing storage on this spec (the applied
   /// apiSchemas vector, clips dictionary keys, variantSets declarations).
   /// These join the weaker base list before a stronger op resolves over it.
-  std::vector<std::string> (*local_names)(const PrimSpecMeta& meta);
+  std::vector<std::string> (*local_names)(const PrimMetadata& meta);
 
-  StringListOpEdits& (*edits_mut)(PrimSpecMeta& meta);
+  StringListOps& (*edits_mut)(PrimMetadata& meta);
 
   /// Field-specific post steps (null when unneeded). `post_resolve` runs
   /// after a stronger op resolved over the weaker list (apiSchemas: publish
   /// the resolved vector + clear the legacy qualifier); `post_fill` runs
   /// after fill-absent copied a weaker authored op (apiSchemas: copy the
   /// applied vector + qualifier).
-  void (*post_resolve)(PrimSpecMeta& target,
+  void (*post_resolve)(PrimMetadata& target,
                        const std::vector<std::string>& resolved);
-  void (*post_fill)(PrimSpecMeta& target, const PrimSpecMeta& source);
+  void (*post_fill)(PrimMetadata& target, const PrimMetadata& source);
 };
 
 namespace listop_field_detail {
 
-inline StringListOpEdits ApiSchemasNormalizedEdits(const PrimSpecMeta& meta) {
+inline StringListOps ApiSchemasNormalizedEdits(const PrimMetadata& meta) {
   if (meta.apiSchemaEdits().authored) return meta.apiSchemaEdits();
-  StringListOpEdits edits;
+  StringListOps edits;
   const std::string& qualifier = meta.apiSchemasQualifier();
   // A BARE authored list (empty qualifier) is an EXPLICIT op (pxr round-trips
   // bare authoring as explicit): it replaces weaker opinions outright.
@@ -78,23 +78,23 @@ inline StringListOpEdits ApiSchemasNormalizedEdits(const PrimSpecMeta& meta) {
   return edits;
 }
 
-inline std::vector<std::string> ApiSchemasLocalNames(const PrimSpecMeta& meta) {
+inline std::vector<std::string> ApiSchemasLocalNames(const PrimMetadata& meta) {
   return meta.apiSchemas();
 }
 
-inline StringListOpEdits& ApiSchemasEditsMut(PrimSpecMeta& meta) {
+inline StringListOps& ApiSchemasEditsMut(PrimMetadata& meta) {
   return meta.apiSchemaEdits();
 }
 
-inline void ApiSchemasPostResolve(PrimSpecMeta& target,
+inline void ApiSchemasPostResolve(PrimMetadata& target,
                                   const std::vector<std::string>& resolved) {
   target.apiSchemas() = resolved;
   target.setApiSchemasAuthored();
   target.apiSchemasQualifier().clear();
 }
 
-inline void ApiSchemasPostFill(PrimSpecMeta& target,
-                               const PrimSpecMeta& source) {
+inline void ApiSchemasPostFill(PrimMetadata& target,
+                               const PrimMetadata& source) {
   if (target.apiSchemas().empty()) {
     target.apiSchemas() = source.apiSchemas();
     target.setApiSchemasAuthored();
@@ -104,16 +104,16 @@ inline void ApiSchemasPostFill(PrimSpecMeta& target,
   }
 }
 
-inline StringListOpEdits VariantSetNamesNormalizedEdits(
-    const PrimSpecMeta& meta) {
+inline StringListOps VariantSetNamesNormalizedEdits(
+    const PrimMetadata& meta) {
   return meta.variantSetNameEdits().authored ? meta.variantSetNameEdits()
-                                             : StringListOpEdits();
+                                             : StringListOps();
 }
 
 inline std::vector<std::string> VariantSetNamesLocalNames(
-    const PrimSpecMeta& meta) {
+    const PrimMetadata& meta) {
   std::vector<std::string> names;
-  for (const VariantSetData& vs : meta.variantSets()) {
+  for (const PrimVariantSetData& vs : meta.variantSets()) {
     if (std::find(names.begin(), names.end(), vs.name) == names.end()) {
       names.push_back(vs.name);
     }
@@ -121,18 +121,18 @@ inline std::vector<std::string> VariantSetNamesLocalNames(
   return names;
 }
 
-inline StringListOpEdits& VariantSetNamesEditsMut(PrimSpecMeta& meta) {
+inline StringListOps& VariantSetNamesEditsMut(PrimMetadata& meta) {
   return meta.variantSetNameEdits();
 }
 
-inline StringListOpEdits ClipSetsNormalizedEdits(const PrimSpecMeta& meta) {
+inline StringListOps ClipSetsNormalizedEdits(const PrimMetadata& meta) {
   return meta.clipSetEdits().authored ? meta.clipSetEdits()
-                                      : StringListOpEdits();
+                                      : StringListOps();
 }
 
-inline std::vector<std::string> ClipSetsLocalNames(const PrimSpecMeta& meta) {
+inline std::vector<std::string> ClipSetsLocalNames(const PrimMetadata& meta) {
   std::vector<std::string> names;
-  if (const Dict* d = meta.clips().as_dictionary()) {
+  if (auto d = meta.clips().as_dictionary()) {
     for (const auto& entry : d->entries()) names.push_back(entry.first);
   }
   // Dictionary storage order is not strength order; name order is the
@@ -141,7 +141,7 @@ inline std::vector<std::string> ClipSetsLocalNames(const PrimSpecMeta& meta) {
   return names;
 }
 
-inline StringListOpEdits& ClipSetsEditsMut(PrimSpecMeta& meta) {
+inline StringListOps& ClipSetsEditsMut(PrimMetadata& meta) {
   return meta.clipSetEdits();
 }
 
@@ -168,13 +168,13 @@ inline const StringListOpFieldDef* GetStringListOpFieldTable(size_t* count) {
 ///   and store the result as an explicit op.
 /// - target has no opinion: fill-absent — copy the weaker authored op.
 inline void MergeWeakerStringListOpField(const StringListOpFieldDef& def,
-                                         const PrimSpecMeta& source,
-                                         PrimSpecMeta& target) {
-  const StringListOpEdits source_edits = def.normalized_edits(source);
+                                         const PrimMetadata& source,
+                                         PrimMetadata& target) {
+  const StringListOps source_edits = def.normalized_edits(source);
   // Nothing weaker to merge: keep the target's authored representation
   // untouched (avoids converting a lone opinion to explicit form).
   if (!source_edits.authored && def.local_names(source).empty()) return;
-  const StringListOpEdits target_edits = def.normalized_edits(target);
+  const StringListOps target_edits = def.normalized_edits(target);
 
   if (target_edits.authored) {
     // Weaker effective list: the source's op applied over its own storage
@@ -189,8 +189,8 @@ inline void MergeWeakerStringListOpField(const StringListOpFieldDef& def,
       }
     }
     std::vector<std::string> resolved = ApplyStringListOp(target_edits, base);
-    StringListOpEdits& dst = def.edits_mut(target);
-    dst = StringListOpEdits();
+    StringListOps& dst = def.edits_mut(target);
+    dst = StringListOps();
     dst.authored = true;
     dst.is_explicit = true;
     dst.explicit_items = resolved;

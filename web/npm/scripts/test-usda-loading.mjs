@@ -98,7 +98,9 @@ let loader;
 async function initLoader() {
   const mod = await import(path.join(distDir, 'LightUSDLoader.js'));
   loader = new mod.LightUSDLoader();
-  await loader.init();
+  // This corpus pins legacy parser leniency and its compatibility API.
+  // The next product and independent feature modules are checked by validate.
+  await loader.init({backend: 'legacy'});
 }
 
 /** Parse-only: uses loadAsLayerFromBinary (no Tydra conversion). */
@@ -107,7 +109,9 @@ function parseAsLayer(filePath, fileName) {
   const usd = new loader.native_.LightUSDLoaderNative();
   const ok = usd.loadAsLayerFromBinary(data, fileName);
   if (!ok) {
-    throw new Error(`Failed to parse ${fileName}: ${usd.error()}`);
+    const error = usd.error();
+    usd.delete();
+    throw new Error(`Failed to parse ${fileName}: ${error}`);
   }
   return usd;
 }
@@ -118,7 +122,9 @@ function loadFull(filePath, fileName) {
   const usd = new loader.native_.LightUSDLoaderNative();
   const ok = usd.loadFromBinary(data, fileName);
   if (!ok) {
-    throw new Error(`Failed to load ${fileName}: ${usd.error()}`);
+    const error = usd.error();
+    usd.delete();
+    throw new Error(`Failed to load ${fileName}: ${error}`);
   }
   return usd;
 }
@@ -139,6 +145,7 @@ describe('USDA loading (WASM)', { timeout: 120_000 }, () => {
       it(`parse: ${rel}`, () => {
         const usd = parseAsLayer(absPath, rel);
         assert.ok(usd, `parser returned a USD object for ${rel}`);
+        usd.delete();
       });
     }
   });
@@ -153,6 +160,7 @@ describe('USDA loading (WASM)', { timeout: 120_000 }, () => {
 
         const nMeshes = usd.numMeshes();
         assert.ok(nMeshes > 0, `render scene has at least one mesh for ${name} (got ${nMeshes})`);
+        usd.delete();
       });
     }
   });

@@ -6,6 +6,7 @@
 // group toggling controls which rules run.
 
 #include "next/validation/usd-validation.hh"
+#include "next/validation/validation-context.hh"
 #include "next/pcp/layer-registry.hh"
 
 #include <cstring>
@@ -258,6 +259,170 @@ def Xform "Root" (
   CHECK(Validate(usda, ValidationOptions(), &result), "parses");
   CHECK(CountErrors(result, "core.composition.reference") >= 1,
         "invalid reference primPath flagged");
+}
+
+static void test_population_order_names() {
+  std::cout << "[population order names]\n";
+  Layer layer;
+  layer.meta().rootPrimOrder = {"Missing", "é", "", "Root/Child", "ns:Root"};
+  layer.meta().rootPrimOrder_set = true;
+  PrimSpec prim("Root", "Xform");
+  prim.set_path(Path("/Root"));
+  prim.meta().editPrimOrder() = {"Missing", "é", "child.name", "ns:Child"};
+  prim.meta().editPropertyOrder() = {"missing", "primvars:color", "é:valeur",
+                                     "a::b", "a.b", ""};
+  const uint32_t index = layer.add_prim(std::move(prim));
+  layer.add_root(index);
+  layer.finalize();
+  const auto result = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountWarnings(result, "core.layer.primOrder") == 3,
+        "root order validates names while allowing speculative Unicode names");
+  CHECK(CountWarnings(result, "core.prim.primOrder") == 2,
+        "child order rejects paths and namespace separators");
+  CHECK(CountWarnings(result, "core.prim.propertyOrder") == 3,
+        "property order permits namespaces but rejects malformed names");
+  CHECK(CountErrors(result, "core.layer.primOrder") == 0 &&
+        CountErrors(result, "core.prim.primOrder") == 0 &&
+        CountErrors(result, "core.prim.propertyOrder") == 0,
+        "order name recommendations are warnings");
+  CHECK(GetValidationRuleMetadata("core.prim.propertyOrder").category == "recommendation",
+        "order name recommendation is not promoted to a normative constraint");
+  CHECK(layer.meta().rootPrimOrder.size() == 5 &&
+        layer.prim(index)->meta().propertyOrder().size() == 6,
+        "validation preserves authored order opinions");
+  ValidationOptions disabled;
+  disabled.core = false;
+  CHECK(ValidateLayerAgainstAOUSDCore(layer, disabled).issues.empty(),
+        "core group toggle disables layer and prim order recommendations");
+}
+
+static void test_layer_relocate_validation() {
+  std::cout << "[layer relocate validation]\n";
+  Layer layer;
+  layer.meta().relocates = {{"/P/A", "/P/A"}, {"/P/B", "/P/C"},
+      {"/P/B", "/P/D"}, {"/P.attr", "/P/E"}, {"/P/F", "/"}};
+  layer.meta().relocates_set = true;
+  const auto invalid = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(invalid, "core.layer.layerRelocates.identity") == 1,
+        "layer relocate identity is validated");
+  CHECK(CountErrors(invalid, "core.layer.layerRelocates.source") == 2,
+        "layer relocate property source and duplicate source are validated");
+  CHECK(CountErrors(invalid, "core.layer.layerRelocates.target") == 1,
+        "pseudo-root relocate target is rejected");
+  bool at_layer = true;
+  for (const auto& issue : invalid.issues) {
+    if (issue.rule_id.find("core.layer.layerRelocates.") == 0)
+      at_layer = at_layer && issue.location == "<layer>";
+  }
+  CHECK(at_layer, "layer relocate findings report the layer location");
+  CHECK(layer.meta().relocates.size() == 5,
+        "relocate validation preserves invalid authored entries");
+  layer.meta().relocates = {{"/P/A", "/Moved"}, {"/P/B", ""}};
+  const auto controls = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(controls, "core.layer.layerRelocates.target") == 0,
+        "root-prim targets and empty deletion targets remain accepted");
+  ValidationOptions disabled;
+  disabled.core = false;
+  CHECK(ValidateLayerAgainstAOUSDCore(layer, disabled).issues.empty(),
+        "core validation group toggle controls layer metadata checks");
+}
+
+static void test_relocate_component_rules() {
+  using Entries = std::vector<std::pair<std::string, std::string>>;
+  struct Case { const char* rule; Entries entries; };
+  const std::vector<Case> cases = {
+      {"root", {{"/P", "/Moved"}}},
+      {"root", {{"/P/A", "/"}}},
+      {"ancestor", {{"/P/A/B", "/P/A"}}},
+      {"targetUnderSource", {{"/P/A", "/P/A/B"}}},
+      {"duplicateSource", {{"/P/A", "/P/X"}, {"/P/A", "/P/Y"}}},
+      {"duplicateTarget", {{"/P/A", "/P/X"}, {"/P/B", "/P/X"}}},
+      {"nestedSource", {{"/P/A", "/P/X"}, {"/P/A/B", "/P/Y"}}},
+      {"targetIsSource", {{"/P/A", "/P/B"}, {"/P/B", "/P/C"}}},
+      {"targetUnderOtherSource", {{"/P/A", "/P/X"}, {"/P/B", "/P/A/C"}}},
+  };
+  for (bool on_prim : {false, true}) {
+    for (const auto& item : cases) {
+      Layer layer;
+      if (on_prim) {
+        PrimSpec prim("P", "Xform");
+        prim.set_path(Path("/P"));
+        prim.meta().relocates() = item.entries;
+        const auto index = layer.add_prim(std::move(prim));
+        layer.add_root(index);
+        layer.finalize();
+      } else {
+        layer.meta().relocates = item.entries;
+        layer.meta().relocates_set = true;
+      }
+      const std::string rule = std::string("core.layer.layerRelocates.") + item.rule;
+      const auto result = ValidateLayerAgainstAOUSDCore(layer);
+      CHECK(CountErrors(result, rule) == 1, rule + " checks local authored entries");
+      bool located = false;
+      for (const auto& issue : result.issues)
+        if (issue.rule_id == rule)
+          located = issue.location == (on_prim ? "/P" : "<layer>");
+      CHECK(located, "relocate component rule preserves its authored location");
+    }
+  }
+  const std::vector<Entries> controls = {
+      {{"/P/A", "/Moved"}},
+      {{"/P/A", ""}, {"/P/B", ""}},
+      {{"/P/A", "/P/X"}, {"/P/AB", "/P/XY"}},
+      {{"/P/A", "/P/X"}, {"/P/X/B", "/P/X/C"}},
+  };
+  for (const auto& entries : controls) {
+    Layer layer;
+    layer.meta().relocates = entries;
+    const auto result = ValidateLayerAgainstAOUSDCore(layer);
+    size_t errors = 0;
+    for (const auto& issue : result.issues)
+      if (issue.rule_id.find("core.layer.layerRelocates.") == 0 &&
+          issue.severity == USDValidationSeverity::Error) ++errors;
+    CHECK(errors == 0, "root targets, multiple deletes and relocated namespaces are valid controls");
+  }
+  const auto root = GetValidationRuleMetadata("core.layer.layerRelocates.root");
+  CHECK(root.category == "normative" && root.lean_ref == "UsdSpec.Relocates.OkRootOpenUsd",
+        "normative root-source errors retain the explicit root-target compatibility predicate");
+  CHECK(GetValidationRuleMetadata("core.layer.layerRelocates.targetIsSource").category == "compatibility",
+        "cross-entry policy is not presented as literal per-entry semantics");
+  CHECK(GetValidationRuleMetadata("core.layer.layerRelocates.ancestor").lean_ref == "UsdSpec.Relocates.OkAncestor",
+        "ancestor rule reflects its component instead of the whole relocates checker");
+  Layer filtered;
+  filtered.meta().relocates = {{"/P", "/Moved"}, {"/Q/A", "/Q/B"}, {"/Q/B", "/Q/C"}};
+  ValidationOptions normative;
+  normative.normative_only = true;
+  const auto literal = ValidateLayerAgainstAOUSDCore(filtered, normative);
+  CHECK(CountErrors(literal, "core.layer.layerRelocates.root") == 1 &&
+        CountErrors(literal, "core.layer.layerRelocates.targetIsSource") == 0,
+        "normative-only mode retains source-root errors and excludes compatibility-only conflicts");
+}
+
+static void test_relocate_anchored_validation() {
+  Layer layer;
+  layer.meta().relocates = {{"P/A", "P/B"}, {"P/C", ""}};
+  PrimSpec parent("P", "Xform");
+  parent.set_path(Path("/P"));
+  const auto parent_index = layer.add_prim(std::move(parent));
+  layer.add_root(parent_index);
+  PrimSpec prim("Sub", "Xform");
+  prim.set_path(Path("/P/Sub"));
+  prim.meta().relocates() = {{"../A", "../B"}};
+  const auto index = layer.add_prim(std::move(prim));
+  layer.set_parent(index, parent_index);
+  layer.prim(parent_index)->add_child_index(index);
+  layer.finalize();
+  auto result = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(result, "core.layer.layerRelocates.source") == 0 &&
+        CountErrors(result, "core.layer.layerRelocates.target") == 0,
+        "relative relocates validate in their layer/prim namespace");
+  CHECK(layer.meta().relocates[0].first == "P/A" &&
+        layer.prim(index)->meta().relocates()[0].first == "../A",
+        "anchored validation does not mutate authored metadata");
+  layer.meta().relocates = {{"/P/A", "../Gone"}};
+  result = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(result, "core.layer.layerRelocates.target") == 1,
+        "above-root relative target is invalid rather than deletion");
 }
 
 static void test_layer_offset_rules() {
@@ -843,6 +1008,153 @@ static void test_parse_failure() {
   CHECK(!err.empty(), "parse error message reported");
 }
 
+static void test_listop_rules() {
+  std::cout << "[core.listop.*]\n";
+  const std::string usda = R"(#usda 1.0
+
+class "Base"
+{
+}
+
+def Xform "Proto"
+{
+}
+
+def Xform "Root" (
+    add references = [</Proto>, </Proto>]
+    prepend inherits = [</Base>, </Base>]
+    reorder apiSchemas = ["MaterialBindingAPI"]
+    prepend apiSchemas = ["MaterialBindingAPI", "CollectionAPI:a", "CollectionAPI:a"]
+)
+{
+    rel targets = [</Proto>, </Proto>]
+    float inputs:a = 1
+    float inputs:b = 2
+    float inputs:a.connect = [</Root.inputs:b>, </Root.inputs:b>]
+}
+)";
+  USDValidationResult result;
+  CHECK(Validate(usda, ValidationOptions(), &result), "parses");
+  // references(added), inherits(prepended), apiSchemas(prepended),
+  // relationship(explicit), connection(explicit): one error each.
+  CHECK(CountErrors(result, "core.listop.duplicateItems") == 5,
+        "repeated items in every list-op sequence flagged once each");
+  CHECK(CountWarnings(result, "core.listop.deprecatedAdd") == 1,
+        "deprecated `add` warns");
+  CHECK(CountWarnings(result, "core.listop.deprecatedReorder") == 1,
+        "deprecated `reorder` warns");
+  if (CountErrors(result, "core.listop.duplicateItems") != 5) DumpIssues(result);
+
+  const std::string clean = R"(#usda 1.0
+
+def Xform "Root" (
+    prepend references = [</A>, </B>]
+    append apiSchemas = ["MaterialBindingAPI"]
+    delete apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel targets = [</Root>]
+}
+def Xform "A" {}
+def Xform "B" {}
+)";
+  USDValidationResult ok;
+  CHECK(Validate(clean, ValidationOptions(), &ok), "clean parses");
+  CHECK(CountErrors(ok, "core.listop.duplicateItems") == 0 &&
+            CountWarnings(ok, "core.listop.deprecatedAdd") == 0 &&
+            CountWarnings(ok, "core.listop.deprecatedReorder") == 0,
+        "same item across different sequences is allowed; no false positives");
+}
+
+static void test_dict_duplicate_key() {
+  std::cout << "[core.dict.duplicateKey]\n";
+  const std::string usda = R"(#usda 1.0
+(
+    customLayerData = {
+        string tool = "a"
+        string tool = "b"
+    }
+)
+
+def Xform "Root" (
+    customData = {
+        string a = "x"
+        dictionary nested = {
+            int k = 1
+            int k = 2
+        }
+    }
+)
+{
+    float v = 1 (
+        customData = { int once = 1 }
+    )
+}
+)";
+  USDValidationResult result;
+  std::string warn, err;
+  const bool ok = ValidateUSDFromMemoryAgainstAOUSDCore(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "input.usda", ValidationOptions(), &result, &warn, &err);
+  CHECK(ok, "parses (duplicate keys collapse to the last value)");
+  CHECK(warn.find("[core.dict.duplicateKey]") != std::string::npos,
+        "parser reports the duplicate key as a tagged warning");
+  CHECK(CountErrors(result, "core.dict.duplicateKey") == 2,
+        "layer-level and nested prim-level duplicate keys flagged");
+  if (CountErrors(result, "core.dict.duplicateKey") != 2) DumpIssues(result);
+  bool located = false;
+  for (const auto &issue : result.issues)
+    if (issue.rule_id == "core.dict.duplicateKey" &&
+        issue.location.rfind("<parser>:", 0) == 0 &&
+        issue.message.find("`k`") != std::string::npos)
+      located = true;
+  CHECK(located, "duplicate key issue carries the parser line and key");
+}
+
+static void test_schema_family_rules() {
+  std::cout << "[core.schema.familyVersion]\n";
+  const std::string usda = R"(#usda 1.0
+
+def Xform "Root" (
+    prepend apiSchemas = ["MaterialBindingAPI", "Schéma_1", "CollectionAPI:a"]
+)
+{
+}
+
+def Xform_2 "Versioned"
+{
+}
+)";
+  USDValidationResult result;
+  CHECK(Validate(usda, ValidationOptions(), &result), "parses");
+  CHECK(CountErrors(result, "core.schema.familyVersion") == 1,
+        "non-ASCII apiSchemas entry flagged; versioned typeName accepted");
+  if (CountErrors(result, "core.schema.familyVersion") != 1) DumpIssues(result);
+
+  Layer layer;
+  PrimSpec prim("Root", "9Xform");
+  prim.set_path(Path("/Root"));
+  const uint32_t index = layer.add_prim(std::move(prim));
+  layer.add_root(index);
+  layer.finalize();
+  const USDValidationResult typed = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(typed, "core.schema.familyVersion") == 1,
+        "typeName starting with a digit flagged");
+
+  const auto meta = GetValidationRuleMetadata("core.schema.familyVersion");
+  CHECK(meta.category == "normative" &&
+            meta.lean_ref == "UsdSpec.Schema.parseFamilyVersion",
+        "rule metadata carries category and Lean reference");
+  CHECK(GetValidationRuleMetadata("core.layer.subLayerOffset").lean_ref ==
+            "UsdSpec.LayerOffset.valid",
+        "subLayerOffset reflects UsdSpec.LayerOffset.valid");
+  CHECK(GetValidationRuleMetadata("core.prim.name").lean_ref.empty(),
+        "rules without a formal counterpart have an empty lean_ref");
+  CHECK(GetValidationRuleMetadata("core.prim.name").specification.find(
+            "core/1.1.0/") != std::string::npos,
+        "normative citation targets core 1.1.0");
+}
+
 static void test_report_formatting() {
   std::cout << "[report formatting]\n";
   const std::string usda = R"(#usda 1.0
@@ -866,6 +1178,32 @@ def Xform "Root"
       GetValidationGroupNames(result.checked_groups);
   CHECK(groups.size() == 1 && groups[0] == "core",
         "default options report core group only");
+}
+
+static void test_drive_instance_dofs() {
+  ValidationOptions options;
+  options.physics = true;
+  for (const std::string dof : {"linear", "angular", "transX", "rotZ"}) {
+    const std::string text = "#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsDriveAPI:" +
+        dof + "\"]) {\n float drive:" + dof + ":physics:stiffness = 1\n}\n";
+    USDValidationResult result;
+    CHECK(Validate(text, options, &result), "drive DOF snippet parses");
+    CHECK(CountErrors(result, "physics.drive.dof") == 0,
+          "valid DriveAPI instance accepted: " + dof);
+  }
+  for (const std::string dof : {"distance", "invalid"}) {
+    const std::string text = "#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsDriveAPI:" +
+        dof + "\"]) {\n float drive:" + dof + ":physics:stiffness = 1\n}\n";
+    USDValidationResult result;
+    CHECK(Validate(text, options, &result), "invalid drive snippet still parses");
+    CHECK(CountErrors(result, "physics.drive.dof") >= 2,
+          "invalid DriveAPI schema and property are rejected: " + dof);
+  }
+  USDValidationResult result;
+  CHECK(Validate("#usda 1.0\ndef PhysicsJoint \"Joint\" (prepend apiSchemas = [\"PhysicsLimitAPI:distance\"]) {\n float limit:distance:physics:high = 1\n}\n", options, &result),
+        "distance limit snippet parses");
+  CHECK(CountErrors(result, "physics.limit.dof") == 0,
+        "distance remains a valid LimitAPI instance");
 }
 
 int main() {
@@ -897,6 +1235,10 @@ int main() {
   test_empty_over_and_variant_selection();
   test_reference_arc_rules();
   test_layer_offset_rules();
+  test_population_order_names();
+  test_layer_relocate_validation();
+  test_relocate_component_rules();
+  test_relocate_anchored_validation();
   test_geom_group_toggle();
   test_geom_primitive_and_subset();
   test_shade_rules();
@@ -904,10 +1246,14 @@ int main() {
   test_materialx_rules();
   test_lux_rules();
   test_physics_rules();
+  test_drive_instance_dofs();
   test_prim_name_and_kind();
   test_arkit_rules();
   test_parse_failure();
   test_vol_render_rules();
+  test_listop_rules();
+  test_dict_duplicate_key();
+  test_schema_family_rules();
   test_report_formatting();
 
   if (g_fail) {

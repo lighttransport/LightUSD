@@ -49,6 +49,7 @@ constexpr auto kShader = "Shader";
 constexpr auto kNodeGraph = "NodeGraph";
 constexpr auto kShaderNode = "ShaderNode";
 constexpr auto kMaterialXConfigAPI = "MaterialXConfigAPI";
+constexpr auto kMaterialUEConfigAPI = "MaterialUEConfigAPI";
 
 constexpr auto kShaderInfoId = "info:id";
 
@@ -132,6 +133,22 @@ struct MaterialXConfigAPI {
   TypedAttributeWithFallback<std::string> mtlx_sourceUri{""}; // "string config:mtlx:sourceUri"
 };
 
+// LightUSD's Unreal Engine material bridge configuration.  The canonical
+// shading network remains ordinary UsdShade/MaterialX; these fields identify
+// the optional UE-preservation layer and its versioned graph payload.
+struct MaterialUEConfigAPI {
+  TypedAttributeWithFallback<std::string> version{"1"};
+  TypedAttributeWithFallback<std::string> engineVersion{""};
+  TypedAttributeWithFallback<std::string> sourceAsset{""};
+  TypedAttributeWithFallback<std::string> graphAuthority{"materialx+ue"};
+  TypedAttributeWithFallback<std::string> materialDomain{"Surface"};
+  TypedAttributeWithFallback<std::string> blendMode{"Opaque"};
+  TypedAttributeWithFallback<std::string> shadingModels{""};
+  TypedAttributeWithFallback<bool> twoSided{false};
+  TypedAttributeWithFallback<float> opacityMaskClipValue{0.333333f};
+  TypedAttributeWithFallback<std::string> propertyArchive{""};
+};
+
 struct Material : UsdShadePrim {
 
   ///
@@ -145,6 +162,9 @@ struct Material : UsdShadePrim {
 
   // Optional MaterialXConfigAPI
   nonstd::optional<MaterialXConfigAPI> materialXConfig;
+
+  // Optional LightUSD Unreal material preservation layer.
+  nonstd::optional<MaterialUEConfigAPI> materialUEConfig;
 
 };
 
@@ -436,6 +456,18 @@ struct Shader : UsdShadePrim {
 
   std::string info_id;  // ShaderNode type.
 
+  // Authored variability of `info:id`. UsdShade declares it `uniform token`;
+  // the schema default is kept so programmatically built shaders write the
+  // qualifier pxr expects, while a layer that authored it varying keeps that
+  // (pxr stores, and prints, exactly what the layer said).
+  bool info_id_uniform{true};
+
+  // `info:id` present in the layer, possibly with no value (Omniverse MDL
+  // shaders declare it and supply the identity through
+  // `info:implementationSource`). The declaration itself is an authored
+  // opinion, so it has to be written back even when the value is empty.
+  bool info_id_authored{false};
+
   // Holds the concrete ShaderNode (UsdPreviewSurface, UsdUVTexture,
   // UsdPrimvarReader_*, OpenPBRSurface, MaterialX nodes, etc.)
   // stored as value::Value for type-erased polymorphism.
@@ -497,6 +529,9 @@ DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
 
 DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
                   TYPE_ID_MATERIALX_CONFIG_API, 1);
+
+DEFINE_TYPE_TRAIT(MaterialUEConfigAPI, kMaterialUEConfigAPI,
+                  TYPE_ID_MATERIALX_CONFIG_API + 1, 1);
 
 // TypeTraits for SourceColorSpace enum
 template <>

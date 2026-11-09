@@ -19,6 +19,12 @@
 namespace lightusd {
 namespace next {
 
+/// Minimum destination buffer size for dtos_to() (and any raw dtoa buffer).
+/// The zmij SIMD fast path writes 8/16-byte chunks that can run past the
+/// logical end of the shortest string, so callers must provide this much slack
+/// even though no formatted value is ever this long.
+static constexpr std::size_t kDtoaBufSize = 48;
+
 /// Shortest round-trippable decimal string for a float / double (OpenUSD
 /// notation). Used by the USDA value printer.
 std::string dtos(float v);
@@ -39,11 +45,18 @@ size_t htos_to(char* dst, uint16_t bits);
 void htos_append(std::string& out, uint16_t bits);
 
 /// Same as dtos(), but formats into a caller-provided buffer and returns the
-/// byte count (no std::string at all). `dst` capacity must be >= 24 (float) /
-/// >= 32 (double). Byte-identical to dtos(); used by the value printer to format
-/// a scalar and append it to the chunk buffer in a single copy.
+/// byte count (no std::string at all). `dst` capacity must be >= kDtoaBufSize
+/// (the zmij SIMD fast path overshoots the logical end; see kDtoaBufSize).
+/// Byte-identical to dtos(); used by the value printer to format a scalar
+/// directly into its chunk buffer.
 size_t dtos_to(char* dst, float v);
 size_t dtos_to(char* dst, double v);
+
+/// Reference formatter: the scalar dragonbox renderer only (no zmij fast path).
+/// dtos_to() is required to be byte-identical to this for every input; exposed
+/// solely so tests / fuzzers can check that equivalence. Same buffer contract.
+size_t dtos_to_reference(char* dst, float v);
+size_t dtos_to_reference(char* dst, double v);
 
 /// Freestanding `printf("%.*g", precision, v)` formatter (no libc / no locale):
 /// round to `precision` significant digits, choose fixed vs scientific by the %g

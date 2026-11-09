@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "render-converter-assembly.hh"
 #include <limits>
+#include <unordered_set>
+#include <vector>
 namespace lightusd { namespace tydra { namespace next {
 void AssignNodeDataId(RenderScene* scene,
                       const std::string& prim_path,
@@ -124,7 +126,6 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
 }
 
 namespace {
-bool WouldOverflowSizeMul(size_t a, size_t b) { return a != 0 && b > std::numeric_limits<size_t>::max() / a; }
 Matrix4 MulMatrix4(const Matrix4& a, const Matrix4& b) {
   Matrix4 r;
   for (int i = 0; i < 4; ++i) {
@@ -149,15 +150,38 @@ void CollectMeshIdsUnderNode(const RenderScene& scene,
     return;
   }
 
-  const SceneNode& node = scene.nodes[static_cast<size_t>(node_id)];
-  const Matrix4 relative = MulMatrix4(node.local_transform, parent_relative);
-  if (node.type == NodeType::Mesh && node.data_id >= 0) {
-    out_ids->push_back(node.data_id);
-    out_transforms->push_back(relative);
-  }
+  // Iterative pre-order traversal. A malformed/cyclic node graph must not
+  // recurse forever or exhaust the native stack; the visited set also makes a
+  // shared subtree contribute each mesh only once.
+  struct PendingNode {
+    int32_t node_id;
+    Matrix4 parent;
+  };
+  std::vector<PendingNode> stack;
+  std::unordered_set<int32_t> visited;
+  stack.push_back(PendingNode{node_id, parent_relative});
 
-  for (int32_t child_id : node.children) {
-    CollectMeshIdsUnderNode(scene, child_id, relative, out_ids, out_transforms);
+  while (!stack.empty()) {
+    const PendingNode pending = stack.back();
+    stack.pop_back();
+    if (pending.node_id < 0 ||
+        static_cast<size_t>(pending.node_id) >= scene.nodes.size()) {
+      continue;
+    }
+    if (!visited.insert(pending.node_id).second) continue;
+
+    const SceneNode& node = scene.nodes[static_cast<size_t>(pending.node_id)];
+    const Matrix4 relative = MulMatrix4(node.local_transform, pending.parent);
+    if (node.type == NodeType::Mesh && node.data_id >= 0) {
+      out_ids->push_back(node.data_id);
+      out_transforms->push_back(relative);
+    }
+
+    // Push in reverse so the pop order matches the recursive ascending-child
+    // order (prototype mesh/draw order is observable).
+    for (auto it = node.children.rbegin(); it != node.children.rend(); ++it) {
+      stack.push_back(PendingNode{*it, relative});
+    }
   }
 }
 
@@ -197,6 +221,10 @@ void AppendPointInstanceDrawsImpl(int32_t instancer_id,
   if (!instancer->valid) return;
 
   const size_t instance_count = instancer->instance_count();
+  // Draw expansion consumes the source arrays. Compact-only instancers have
+  // proto_indices empty but report a nonzero compact instance count; they must
+  // not be indexed as if the source arrays were retained.
+  if (instancer->proto_indices.size() < instance_count) return;
 
   // Reserve up front: a RenderPointInstanceDraw is ~84 bytes (mostly a
   // Matrix4), so 1M instances grow ~84 MB by geometric doubling -- a ~1.5x
@@ -221,13 +249,13 @@ void AppendPointInstanceDrawsImpl(int32_t instancer_id,
   }
 
   for (size_t instance_index = 0; instance_index < instance_count; ++instance_index) {
-    if (!instancer->instance_visible.empty() &&
+    if (instance_index < instancer->instance_visible.size() &&
         !instancer->instance_visible[instance_index]) {
       continue;
     }
     const int32_t proto_index = instancer->proto_indices[instance_index];
     if (proto_index < 0 ||
-        static_cast<size_t>(proto_index + 1) >=
+        static_cast<size_t>(proto_index) + 1 >=
             instancer->prototype_mesh_offsets.size()) {
       continue;
     }

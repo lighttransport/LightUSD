@@ -13,12 +13,20 @@
 namespace lusdview {
 namespace {
 
+constexpr size_t kPackedMaterialSampleCount = 13;
+constexpr size_t kPackedMaterialSampleMetaWidth = 8;
+
 struct PackedMaterial {
   std::array<float, kLightRtOpenPBRFloats> lightRt{};
   std::array<float, kRtMaterialTextureParamFloats> rtTextures{};
   std::array<float, kRasterMaterialTextureParamFloats> rasterTextures{};
   std::array<float, 23> scalars{};
   std::array<int, 14> textureIds{};
+  // Descriptor selection depends on the sampling intent, not only the image
+  // id. In particular, one ORM image may be sampled with different wrap,
+  // channel, or colorspace settings by two material inputs.
+  std::array<int, kPackedMaterialSampleCount * kPackedMaterialSampleMetaWidth>
+      sampleMeta{};
   std::array<int, kRasterMaterialGraphImageCount> graphTextureIds{};
   std::array<float, kRtMaterialGraphFloats> graph{};
   int alphaMode{0};
@@ -26,6 +34,18 @@ struct PackedMaterial {
   uint32_t flags{0};
   bool finite{true};
 };
+
+void PackSampleMeta(const DrawTexSampleCPU& sample, int textureId,
+                    int* dst) {
+  dst[0] = textureId;
+  dst[1] = sample.channel;
+  dst[2] = sample.uvSet;
+  dst[3] = static_cast<int>(sample.wrapS);
+  dst[4] = static_cast<int>(sample.wrapT);
+  dst[5] = static_cast<int>(sample.colorSpace);
+  dst[6] = sample.isUdim ? 1 : 0;
+  dst[7] = sample.isPtex ? 1 : 0;
+}
 
 float NormalizeFloat(float value, bool* finite) {
   if (!std::isfinite(value)) *finite = false;
@@ -60,6 +80,27 @@ PackedMaterial Pack(const DrawMaterialCPU& material) {
       material.coatWeightTex, material.coatColorTex,
       material.coatRoughnessTex, material.coatNormalTex,
       material.displacementTex};
+  const std::array<const DrawTexSampleCPU*, kPackedMaterialSampleCount> samples = {
+      &material.baseColorSample,      &material.metallicSample,
+      &material.roughnessSample,      &material.normalSample,
+      &material.coatNormalSample,     &material.emissiveSample,
+      &material.opacitySample,        &material.occlusionSample,
+      &material.specularColorSample,  &material.coatWeightSample,
+      &material.coatColorSample,      &material.coatRoughnessSample,
+      &material.displacementSample};
+  const std::array<int, kPackedMaterialSampleCount> sampleTextureIds = {
+      material.baseColorTex,      material.metallicTex,
+      material.roughnessTex,      material.normalTex,
+      material.coatNormalTex,     material.emissiveTex,
+      material.opacityTex,        material.occlusionTex,
+      material.specularColorTex,  material.coatWeightTex,
+      material.coatColorTex,      material.coatRoughnessTex,
+      material.displacementTex};
+  for (size_t i = 0; i < samples.size(); ++i) {
+    PackSampleMeta(*samples[i], sampleTextureIds[i],
+                   packed.sampleMeta.data() +
+                       i * kPackedMaterialSampleMetaWidth);
+  }
   packed.graphTextureIds.fill(-1);
   size_t graphTextureCount = 0;
   for (const MaterialXGraphNodeCPU& node : material.materialXGraph.nodes) {
@@ -113,6 +154,7 @@ uint64_t DrawMaterialRenderHash(const DrawMaterialCPU& material) {
                    sizeof(packed.rasterTextures));
   hash = HashBytes(hash, packed.scalars.data(), sizeof(packed.scalars));
   hash = HashBytes(hash, packed.textureIds.data(), sizeof(packed.textureIds));
+  hash = HashBytes(hash, packed.sampleMeta.data(), sizeof(packed.sampleMeta));
   hash = HashBytes(hash, packed.graphTextureIds.data(),
                    sizeof(packed.graphTextureIds));
   hash = HashBytes(hash, packed.graph.data(), sizeof(packed.graph));
@@ -129,6 +171,7 @@ bool DrawMaterialsRenderEquivalent(const DrawMaterialCPU& a,
   return pa.lightRt == pb.lightRt && pa.rtTextures == pb.rtTextures &&
          pa.rasterTextures == pb.rasterTextures && pa.scalars == pb.scalars &&
          pa.textureIds == pb.textureIds &&
+         pa.sampleMeta == pb.sampleMeta &&
          pa.graphTextureIds == pb.graphTextureIds && pa.graph == pb.graph &&
          pa.alphaMode == pb.alphaMode && pa.alphaCutoff == pb.alphaCutoff &&
          pa.flags == pb.flags;

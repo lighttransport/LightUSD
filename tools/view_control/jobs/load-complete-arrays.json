@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "warmups": 1,
+  "repetitions": 5,
+  "sdk_env": {
+    "PYTHONPATH": "/mnt/nvme02/work/OpenUSD/dist-v26.11/lib/python3.11/site-packages",
+    "LD_LIBRARY_PATH": "/mnt/nvme02/work/OpenUSD/dist-v26.11/lib:/mnt/nvme02/work/OpenUSD/deps/inst/lib"
+  },
+  "cases": [
+    {
+      "id": "rigged-simple",
+      "path": "/mnt/nvme02/work/usd/assets/test_assets/USDZ/RiggedSimple/RiggedSimple.usdz",
+      "time": 25.5
+    },
+    {
+      "id": "caldera-restaurant",
+      "path": "/mnt/nvme02/data/caldera/map_source/prefabs/br/wz_vg/mp_wz_island/commercial/restaurant_01.usd",
+      "time": 0
+    },
+    {
+      "id": "alab-original",
+      "path": "/mnt/nvme02/data/alab/usd/_merged_ALab/entry.usda",
+      "time": 1004
+    },
+    {
+      "id": "island-original",
+      "path": "/mnt/nvme02/data/island/usd/island.usda",
+      "time": 0,
+      "max_array_elements": 67108864
+    }
+  ]
+}

@@ -1,5 +1,4 @@
 #usda 1.0
-# XDIFF: legacy prints explicit-empty inherits as [] where pxr keeps None
 def Xform "A" (
     inherits = None
 )

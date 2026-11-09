@@ -29,30 +29,13 @@
 
 #include "image-types.hh"
 #include "image-writer.hh"  // image::PngEncoder / WriteOption
+// Resize filter + ResizeImage live in their own header so consumers that do not
+// need the PNG encoder can skip image-writer.hh (and the legacy value-type
+// layer it reaches) entirely.
+#include "resize-image.hh"
 
 namespace lightusd {
 namespace tydra {
-
-///
-/// Resize filter selection.
-/// Auto   : sRGB-aware resize when the source image colorspace looks like sRGB,
-///          linear otherwise.
-/// Linear : always resize in linear space (use for data maps: normal, ORM, ...).
-/// SRGB   : always sRGB-aware resize (use for color/albedo textures).
-///
-enum class ResizeFilter { Auto, Linear, SRGB };
-
-///
-/// Resize an 8-bit `Image` to (dstWidth, dstHeight).
-///
-/// Only 8-bit per channel images are supported (bpp == 8), 1-4 channels.
-/// The output preserves channels/format/colorspace of the source.
-///
-/// @return true on success. `err` is filled on failure.
-///
-bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
-                 ResizeFilter filter = ResizeFilter::Auto,
-                 std::string *err = nullptr);
 
 ///
 /// Source for one output channel when repacking textures.

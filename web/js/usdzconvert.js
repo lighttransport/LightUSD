@@ -55,6 +55,14 @@ container.innerHTML = `
         <option value="srgb">sRGB — force linear-light (WASM)</option>
       </select>
 
+      <label>UDIM baking</label>
+      <select id="udimBake"><option value="off">Off</option><option value="grid">Grid stitch</option><option value="dense">Dense packing</option></select>
+      <label>UDIM tile limit</label><input id="udimMaxTiles" type="number" min="1" max="8999" value="100">
+      <label>Atlas edge limit</label><input id="udimMaxAtlasSize" type="number" min="1" max="32768" value="8192">
+      <label>Bake memory (MiB)</label><input id="udimMemoryMiB" type="number" min="1" max="2047" value="512">
+      <label>Crossing faces</label><select id="udimCrossTile"><option value="reject">Reject</option><option value="split">Split</option></select>
+      <label>Dense gutter (px)</label><input id="udimDensePadding" type="number" min="0" max="1024" value="2">
+      <label>Subdivision level</label><input id="udimSubdivisionLevel" type="number" min="1" max="8" value="2">
       <label>Texture format</label>
       <select id="textureFormat" style="padding:4px;width:120px"
         title="Keep = preserve source format (incl. EXR). EXR keeps HDR; PNG/JPEG tone-map EXR to LDR.">
@@ -72,9 +80,10 @@ container.innerHTML = `
 
       <label>Flatten pipeline</label>
       <select id="pipeline" style="padding:4px;width:160px"
-        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory root flattener for supported USDC inputs.">
+        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory flattener. Next-only rewrites one root layer with asset passthrough using the smaller WASM module.">
         <option value="legacy">Legacy</option>
         <option value="next">Next (low memory)</option>
+        <option value="next-only">Next-only (single layer; no flatten)</option>
         <option value="stream">Stream</option>
         <option value="stream-next">Stream + Next</option>
       </select>
@@ -332,7 +341,7 @@ function updateProgress(info = {}) {
   els.progressPercent.textContent = `${rounded}%`;
   els.progressStage.textContent = PROGRESS_LABELS[stage] || stage;
   els.progressDetails.textContent = info.message || info.path || '';
-  if (stage === 'textures') updateTextureProgress(current, total, info.path || info.message || '');
+  if (stage === 'textures' || stage === 'udim') updateTextureProgress(current, total, info.path || info.message || '');
 }
 
 function downloadBlob(blob, filename) {
@@ -472,6 +481,19 @@ els.btnClear.addEventListener('click', clearFiles);
 els.nameSuffix.addEventListener('input', refreshNamePreview);
 els.nameCustom.addEventListener('input', refreshNamePreview);
 els.rootSelect.addEventListener('change', () => { invalidateResult(); refreshNamePreview(); });
+let flattenBeforeNextOnly = null;
+els.pipeline.addEventListener('change', () => {
+  if (els.pipeline.value === 'next-only') {
+    flattenBeforeNextOnly = els.flatten.checked;
+    els.flatten.checked = false;
+    els.flatten.disabled = true;
+  } else if (flattenBeforeNextOnly !== null) {
+    els.flatten.checked = flattenBeforeNextOnly;
+    els.flatten.disabled = false;
+    flattenBeforeNextOnly = null;
+  }
+  invalidateResult();
+});
 
 // Drag & drop (supports folders via webkitGetAsEntry).
 ['dragenter', 'dragover'].forEach(ev =>
@@ -530,7 +552,8 @@ function uploadedSizeSum(predicate) {
 
 function shouldAutoStreamForWasmCap(opts, rootPath) {
   const cap = Number(opts.wasmHeapLimitBytes || 0);
-  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next') return null;
+  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next' ||
+      opts.pipeline === 'next-only') return null;
   if (!opts.flatten) return null;
   if (!rootPath || /\.usdz$/i.test(rootPath)) return null;
   if ((opts.targetTextureBytes || 0) > 0) return null;
@@ -711,6 +734,13 @@ els.btnConvert.addEventListener('click', async () => {
       String(textureFormat).toLowerCase() !== 'keep' || targetTextureBytes > 0;
     const opts = {
       rootPath,
+      udimBake: document.getElementById('udimBake').value,
+      udimMaxTiles: Number(document.getElementById('udimMaxTiles').value),
+      udimMaxAtlasSize: Number(document.getElementById('udimMaxAtlasSize').value),
+      udimMemoryBudgetBytes: Number(document.getElementById('udimMemoryMiB').value) * 1048576,
+      udimCrossTile: document.getElementById('udimCrossTile').value,
+      udimDensePadding: Number(document.getElementById('udimDensePadding').value),
+      udimSubdivisionLevel: Number(document.getElementById('udimSubdivisionLevel').value),
       maxTextureSize,
       resizeColorspace: els.resizeColorspace.value,
       targetTextureBytes,

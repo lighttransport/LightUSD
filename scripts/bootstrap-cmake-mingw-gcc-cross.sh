@@ -12,6 +12,7 @@ mkdir ${builddir}
 cd ${builddir} && cmake \
   -DCMAKE_TOOLCHAIN_FILE=${curdir}/cmake/mingw64-cross.cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 
 cd ${curdir}

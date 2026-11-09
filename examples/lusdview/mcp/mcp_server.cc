@@ -50,6 +50,15 @@ MCPServer::~MCPServer() { stop(); }
 
 json MCPServer::buildToolsList() const {
   json tools = json::array();
+  tools.push_back(tool("compare_panel", "Open the native paired-view comparison panel or save its composited window to the controller directory.",
+      {{"op", strProp("open, status or window_capture")}, {"mode", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
+       {"window_size", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2}}}}));
+  tools.push_back(tool("inspect_prim", "Paginated native next-stage property diagnostics, relationship targets and attribute connections. Array defaults report type/count without materialization.",
+      {{"path", strProp("Absolute prim path")}, {"offset", {{"type", "integer"}, {"minimum", 0}}},
+       {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 256}}}}, json::array({"path"})));
+  tools.push_back(tool("frame_barrier", "Retain the next submitted non-threaded mono raster frame and its full native state. Retrieve its pixels with screenshot {barrier:token}.",
+      {{"token", strProp("Unique request token, maximum 128 bytes")}, {"cancel", {{"type", "boolean"}}}}, json::array({"token"})));
+  tools.push_back(tool("view_state", "Read the linked-view camera, purpose, selection and scene snapshot.", json::object()));
   tools.push_back(tool("load_usd", "Load a USD path or inline USDA text into "
                                    "the viewer (async; poll get_scene_info).",
                        {{"path", strProp("Path to a USD file")},
@@ -79,8 +88,10 @@ json MCPServer::buildToolsList() const {
       "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
       "| bookmark_save {slot} | bookmark_load {slot} | focus_dof {focus the "
       "thin lens on the picked/selected object} | set "
-      "{absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | focus_dof | set")},
+      "{absolute target[3],yaw,pitch,distance}; get reads the full camera snapshot; "
+      "set_camera {camera} applies a rigid pose/projection snapshot.",
+      {{"camera", {{"type", "object"}, {"description", "Camera snapshot returned by op=get"}}},
+       {"op", strProp("get | set_camera | orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | focus_dof | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
@@ -100,10 +111,11 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "input",
       "Synthesize a keyboard key as if pressed in the viewport. "
-      "key=v (cycle wireframe: off/wire/wire+shade) | w/s (forward/backward) | "
+      "key=v (cycle wireframe: off/wire/wire+shade) | x (toggle wireframe x-ray) | "
+      "w/s (forward/backward) | "
       "f or a (frame all) | i (show selected only) | u (show all) | "
       "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
-      {{"key", strProp("v | w | s | f | a | i | u | 0 | 1 | 3 | 5 | 7")}},
+      {{"key", strProp("v | x | w | s | f | a | i | u | 0 | 1 | 3 | 5 | 7")}},
       json::array({"key"})));
   tools.push_back(tool(
       "mouse",
@@ -130,6 +142,15 @@ json MCPServer::buildToolsList() const {
        {"y1", numProp("optional opposite region corner y")},
        {"select", {{"type", "boolean"}, {"description", "update viewer selection (default true)"}}}},
       json::array({"x", "y"})));
+  tools.push_back(tool(
+      "select",
+      "Read or change the viewer's prim selection. op=list returns the current "
+      "selection; set/add/remove change it by prim path; group selects every "
+      "renderable prim at or below path (hierarchy group selection); clear "
+      "empties it.",
+      {{"op", strProp("list | set | add | remove | group | clear")},
+       {"path", strProp("prim path (set/add/remove/group)")}},
+      json::array({"op"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
   tools.push_back(tool(
@@ -141,10 +162,16 @@ json MCPServer::buildToolsList() const {
                   {"items", {{"type", "string"}}},
                   {"description", "Deferred-payload prim paths (omit = all)"}}}}));
   tools.push_back(tool(
+      "reload_layer",
+      "Re-read the root layer or one resolved path from get_scene_info's "
+      "layer_dependencies, recompose the retained next Stage, and apply a "
+      "transactional incremental renderer update. Omit path to reload the root.",
+      {{"path", strProp("resolved dependency-layer path (omit = root layer)")}}));
+  tools.push_back(tool(
       "timeline",
-      "Control animation playback. op=play | pause | stop (reset to start) | "
+      "Control animation playback. op=get | play | pause | stop (reset to start) | "
       "seek {time}. Returns the playback state (playing, time, start, end, fps).",
-      {{"op", strProp("play | pause | stop | seek")},
+      {{"op", strProp("get | play | pause | stop | seek")},
        {"time", numProp("target time code (seek)")}},
       json::array({"op"})));
   tools.push_back(tool(
@@ -154,7 +181,9 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "render_settings",
       "Query or set resettable per-capture options without restarting lusdview.",
-      {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
+      {{"guide", {{"type", "boolean"}}}, {"proxy", {{"type", "boolean"}}},
+       {"render", {{"type", "boolean"}}}, {"background", strProp("black | white")},
+       {"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
        {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
        {"transparency", strProp("auto | weighted | sorted; weighted warms asynchronously on Vulkan")},
        {"adaptive_quality", {{"type", "boolean"}, {"description", "enable adaptive Vulkan quality"}}},
@@ -213,7 +242,8 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "vchar_debug",
       "Select a virtual-human diagnostic view and skeleton overlay.",
-      {{"mode", strProp("shaded | skin-weights | blend-influence | normals | tangents")},
+      {{"skeleton", {{"type", "boolean"}, {"description", "Skeleton overlay visibility"}}},
+       {"mode", strProp("shaded | skin-weights | blend-influence | normals | tangents")},
        {"skeleton", {{"type", "boolean"}}}}));
   tools.push_back(tool(
       "autorigger_inspect",
@@ -394,10 +424,14 @@ void MCPServer::drain() {
         payload = host_->mcpMouse(cmd->args, err);
       } else if (t == "pick") {
         payload = host_->mcpPick(cmd->args, err);
+      } else if (t == "select") {
+        payload = host_->mcpSelect(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {
         payload = host_->mcpLoadPayloads(cmd->args, err);
+      } else if (t == "reload_layer") {
+        payload = host_->mcpReloadLayer(cmd->args, err);
       } else if (t == "timeline") {
         payload = host_->mcpTimeline(cmd->args, err);
       } else if (t == "skinning") {

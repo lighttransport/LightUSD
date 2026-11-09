@@ -1,0 +1,70 @@
+[
+  {
+    "legacyMethod": "applyVariantSelection",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "setVariantOverride",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeInherits",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composePayload",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeReferences",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeSublayers",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "addSublayer",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeVariants",
+    "nextSurface": "NextFlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  }
+]

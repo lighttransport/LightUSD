@@ -1,0 +1,1616 @@
+// SPDX-License-Identifier: Apache-2.0
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { compileGraph, literal, GraphError, contextWGSL } from '../src/webgpu-mtlx/graph.js';
+import { packScene, syntheticScene } from '../src/webgpu-mtlx/scene.js';
+import { encodeEXR } from '../src/webgpu-mtlx/capture.js';
+import { packImages, imageWGSLCompact } from '../src/webgpu-mtlx/textures.js';
+import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
+import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
+import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
+import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
+import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages, collectMaterialXNodes, expandMaterialXFrameFilename } from '../src/webgpu-mtlx/resources.js';
+import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
+import { mayEmit } from '../src/webgpu-mtlx/emission.js';
+import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
+import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
+import { parseIES, iesTiltReference } from '../src/webgpu-mtlx/ies.js';
+import { triangleMaterialIds, materialImageKeys, materialMeasuredProfileKeys, materialUVIndex, materialGeompropName, materialGeompropNames, decodeCustomPrimvar } from '../src/webgpu-mtlx/usd-scene.js';
+const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+
+test('USD mesh submeshes preserve per-face material bindings', () => {
+  assert.deepEqual(triangleMaterialIds(18, 2, [
+    { start: 0, count: 6, materialId: 4 },
+    { start: 6, count: 3, materialId: 1 }
+  ]), [4, 4, 1, 2, 2, 2]);
+  assert.throws(() => triangleMaterialIds(6, 0, [{ start: 0, count: 6, materialId: 1 }, { start: 3, count: 3, materialId: 2 }]), /overlapping/);
+  assert.throws(() => triangleMaterialIds(6, 0, [{ start: 1, count: 3, materialId: 1 }]), /invalid/);
+});
+test('custom primvars preserve expanded uniform and face-varying streams', () => {
+  const item = (interpolation, values) => ({ type: 'float3[]', interpolation, value: { type: 'float3[]', value: values } });
+  assert.deepEqual(Array.from(decodeCustomPrimvar(item('uniform', [[1, 2, 3], [4, 5, 6]]), 2)), [1, 2, 3, 1, 4, 5, 6, 1]);
+  assert.deepEqual(Array.from(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0], [0, 1, 0], [0, 0, 1]]), 3)), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1]);
+  assert.equal(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0]]), 3), null);
+  const typed = (type, values) => ({ type: `${type}[]`, interpolation: 'vertex', value: { type: `${type}[]`, value: values } });
+  assert.deepEqual(Array.from(decodeCustomPrimvar(typed('double3', [[1, 2, 3]]), 1)), [1, 2, 3, 1]);
+  assert.deepEqual(Array.from(decodeCustomPrimvar(typed('int', [7, 8]), 2)), [7, 0, 0, 1, 8, 0, 0, 1]);
+});
+
+test('USD texture provenance keeps anchors and rejects ambiguous source layers', () => {
+  const snapshot = value => ({ prims: [{ path: '/Shader', properties: { 'inputs:file': { type: 'asset', value } } }] });
+  const sources = new USDTextureSources(), context = { propertyPath: '/Remapped.inputs:file', colorspace: 'acescg' };
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/layers/a.usda');
+  const key = sources.resolveAsset('../maps/color.exr', context);
+  assert.equal(sources.requests.get(key).url, 'https://example.test/maps/color.exr');
+  const rawKey = sources.resolveAsset('../maps/color.exr', { ...context, colorspace: 'raw' });
+  assert.notEqual(rawKey, key);
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/layers/b.usda');
+  assert.equal(sources.resolveAsset('../maps/color.exr', context), key);
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/nested/layers/c.usda');
+  assert.throws(() => sources.resolveAsset('../maps/color.exr', context), /ambiguous/);
+  assert.throws(() => sources.resolveAsset('missing.exr', context), /no source-layer/);
+  for (const asset of ['https://other.test/image.exr', 'a[image.exr]', 'file:///image.exr']) {
+    sources.register(snapshot(asset), 'https://example.test/root.usda');
+    assert.throws(() => sources.resolveAsset(asset, context), /unsupported/);
+  }
+  const udim = 'textures/look.<UDIM>.exr';
+  sources.register(snapshot(udim), 'https://example.test/root.usda');
+  const udimKey = sources.resolveAsset(udim, context);
+  assert.equal(sources.requests.get(udimKey).udim, true);
+  assert.equal(sources.requests.get(udimKey).sources[0].source, 'https://example.test/root.usda');
+  sources.register({ assetPaths: [{ propertyPath: '/Override.inputs:file', authored: './override.exr' }] }, 'https://example.test/layer.usda');
+  const override = sources.resolveAsset('./override.exr', context);
+  assert.equal(sources.requests.get(override).url, 'https://example.test/override.exr');
+});
+
+test('authored MaterialX image discovery covers translated texture node families', () => {
+  const keys = materialImageKeys({ nodes: [
+    { category: 'UsdUVTexture', inputs: { file: { type: 'filename', value: 'albedo' } } },
+    { category: 'gltf_image', inputs: { file: { type: 'filename', value: 'gltf-albedo' } } },
+    { category: 'gltf_normalmap', inputs: { file: { type: 'filename', value: 'gltf-normal' } } },
+    { category: 'triplanarprojection', inputs: {
+      filex: { type: 'filename', value: 'x' }, filey: { type: 'filename', value: 'y' }, filez: { type: 'filename', value: 'z' }
+    } },
+    { category: 'image', inputs: { file: { type: 'string', value: 'not-a-filename' } } }
+  ] });
+  assert.deepEqual(keys.sort(), ['albedo', 'gltf-albedo', 'gltf-normal', 'x', 'y', 'z']);
+});
+
+test('standard and OpenPBR terminal aliases preserve authored graph inputs', () => {
+  const standard = { nodes: [
+    { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+      base_color: { type: 'color3', value: [.2,.3,.4] }, metalness: { type: 'float', value: .5 },
+      specular_color: { type: 'color3', value: [1, .8, .7] }, specular_IOR: { type: 'float', value: 1.7 },
+      specular_roughness: { type: 'float', value: .2 }, emission: { type: 'float', value: 0 }
+    } }
+  ] };
+  assert.match(compileGraph(standard, { material: true }).body,/withSpecularColorTint/);
+  const baseOff = compileGraph({ nodes: [{ name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+    base: { type: 'float', value: 0 }, base_color: { type: 'color3', value: [.8,.2,.1] }
+  } }] }, { material: true });
+  assert.match(baseOff.body,/\(vec3f\(0\.8,0\.2,0\.1\)\s*\*\s*vec3f\(0\.0\)\)/);
+  const preview=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{diffuseColor:{type:'color3',value:[.8,.2,.1]},metallic:{type:'float',value:.7},roughness:{type:'float',value:.25},clearcoat:{type:'float',value:.4},opacity:{type:'float',value:.8},normal:{type:'vector3',value:[0,0,1]}}}]},{material:true});
+  assert.match(preview.body,/materialFromClosure/); assert.match(preview.body,/nativeDielectric/); assert.match(preview.body,/closureLayer/); assert.match(preview.body,/mxNormalmap\(\(vec3f\(0\.0,0\.0,1\.0\)\*0\.5\+vec3f\(0\.5\)\)/); assert.match(preview.body,/withSpecularColorMode/);
+  const previewGeometry=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{diffuseColor:{type:'color3',value:[.8,.2,.1]}}}]},{material:true});
+  assert.match(previewGeometry.body,/materialFromClosure\(.*ctx\.normal/);
+  const specularWorkflow=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{useSpecularWorkflow:{type:'boolean',value:true},diffuseColor:{type:'color3',value:[.6,.4,.2]},specularColor:{type:'color3',value:[.1,.2,.3]}}}]},{material:true});
+  assert.match(specularWorkflow.body,/vec3f\(0\.1,0\.2,0\.3\),true/);
+  assert.throws(()=>compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{displacement:{type:'float',value:1}}}]},{material:true}),/displacement/);
+  const unlit=compileGraph({nodes:[{name:'u',category:'surface_unlit',type:'surfaceshader',inputs:{emission:{type:'float',value:2},emission_color:{type:'color3',value:[1,.5,0]},transmission:{type:'float',value:.25},opacity:{type:'float',value:.8}}}]},{material:true});
+  assert.match(unlit.body,/materialFromClosure/); assert.match(unlit.body,/vec3f\(1\.0,0\.5,0\.0\)\*max/); assert.match(unlit.body,/nativeDielectric/);
+  const open = { nodes: [{ name: 'surface', category: 'open_pbr_surface', type: 'surfaceshader', inputs: {
+    base_weight: { type: 'float', value: 1 }, base_color: { type: 'color3', value: [.2,.3,.4] },
+    specular_weight: { type: 'float', value: 1 }, specular_ior: { type: 'float', value: 1.5 },
+    specular_roughness_anisotropy: { type: 'float', value: 0 }, emission_luminance: { type: 'float', value: 0 },
+    geometry_opacity: { type: 'float', value: 1 }, subsurface_weight: { type: 'float', value: .4 },
+    subsurface_radius: { type: 'color3', value: [1, .5, .25] }, subsurface_scale: { type: 'float', value: 2 },
+    subsurface_anisotropy: { type: 'float', value: .35 }
+  } }] };
+  const openBody = compileGraph(open, { material: true }).body;
+  assert.match(openBody, /nativeSubsurface\(.*\*max\(0\.0,2\.0\).*0\.35/);
+  const standardSubsurface = structuredClone(standard);
+  standardSubsurface.nodes[0].inputs.subsurface = { type: 'float', value: .4 };
+  standardSubsurface.nodes[0].inputs.subsurface_anisotropy = { type: 'float', value: -.25 };
+  assert.match(compileGraph(standardSubsurface, { material: true }).body, /nativeSubsurface\(.*-0\.25/);
+  const coated = structuredClone(standard); coated.nodes[0].inputs.coat = { type: 'float', value: .2 };
+  assert.match(compileGraph(coated, { material: true }).body, /closureLayer/);
+});
+
+test('MaterialX unit annotations are validated and preserved', () => {
+  const rotate = { nodes: [{ name: 'r', category: 'rotate2d', type: 'vector2', inputs: {
+    in: { type: 'vector2', value: [1, 0] }, amount: { type: 'float', value: 90, unit: 'degree' }
+  } }] };
+  assert.doesNotThrow(() => compileGraph(rotate));
+  const radians = structuredClone(rotate); radians.nodes[0].inputs.amount = { type: 'float', value: Math.PI / 2, unit: 'radian' };
+  assert.match(compileGraph(radians).body, /57\.29577951308232/);
+  const bad = structuredClone(rotate); bad.nodes[0].inputs.amount.unit = 'furlong';
+  assert.throws(() => compileGraph(bad), /unsupported MaterialX unit/);
+  assert.match(compileGraph({nodes:[{name:'r',category:'rotate2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]}}}]}).body,/0\.0 \* 0\.017453292519943295/);
+});
+
+test('MaterialX version gate accepts 1.39 documents and rejects newer semantics', () => {
+  const node = { name: 'v', category: 'constant', type: 'float', inputs: { value: { type: 'float', value: 1 } } };
+  assert.doesNotThrow(() => compileGraph({ version: '1.39', nodes: [node] }));
+  assert.doesNotThrow(() => compileGraph({ version: '1.39.5', nodes: [node] }));
+  assert.throws(() => compileGraph({ version: '1.40', nodes: [node] }), /unsupported MaterialX version/);
+});
+test('MaterialX percent units normalize authored factors', () => {
+  const doc = { nodes: [{ name: 'v', category: 'constant', type: 'float', inputs: { value: { type: 'float', value: 25, unit: 'percent' } } }] };
+  assert.match(compileGraph(doc).body, /0\.25/);
+  const color = { nodes: [{ name: 'v', category: 'constant', type: 'color3', inputs: { value: { type: 'color3', value: [25, 50, 100], unit: 'percent' } } }] };
+  assert.match(compileGraph(color).body, /vec3f\(0\.25,0\.5,1\.0\)/);
+});
+
+test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
+  const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
+  const snapshot = { version: 1, prims: [
+    { path: '/M', type: 'Material', properties: { 'outputs:mtlx:surface': p('token', undefined, ['/M/G.outputs:surface']) } },
+    { path: '/M/G', type: 'NodeGraph', properties: { 'outputs:surface': p('token', undefined, ['/M/S.outputs:out']), 'inputs:color': p('color3f', [.2,.4,.6]) } },
+    { path: '/M/S', type: 'Shader', properties: { 'info:id': p('token', 'ND_standard_surface_surfaceshader'), 'inputs:base_color': p('color3f', [1,0,0], ['/M/G.inputs:color']), 'outputs:out': p('token') } }
+  ] };
+  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } }, ND_displacement_float: { node: 'displacement', inputs: { displacement: { type: 'float' }, scale: { type: 'float' } }, outputs: { out: { type: 'displacementshader' } } }, ND_surfacematerial: { node: 'surfacematerial', inputs: { surfaceshader: { type: 'surfaceshader' }, backsurfaceshader: { type: 'surfaceshader' }, displacementshader: { type: 'displacementshader' } }, outputs: { out: { type: 'material' } } }, ND_volumematerial: { node: 'volumematerial', inputs: { volumeshader: { type: 'volumeshader' } }, outputs: { out: { type: 'material' } } }, ND_volume_volumeshader: { node: 'volume', inputs: { vdf: { type: 'VDF' }, edf: { type: 'EDF' } }, outputs: { out: { type: 'volumeshader' } } }, ND_anisotropic_vdf: { node: 'anisotropic_vdf', inputs: { absorption: { type: 'color3' }, scattering: { type: 'color3' }, anisotropy: { type: 'float' } }, outputs: { out: { type: 'VDF' } } } } };
+  const doc = materialXFromUSD(snapshot, '/M', { library });
+  assert.equal(doc.nodes.length, 1);
+  assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6], colorspace: 'lin_rec709' });
+  assert.doesNotThrow(() => compileGraph(doc, { material: true }));
+  const genericTerminal = structuredClone(snapshot);
+  genericTerminal.prims[0].properties['outputs:surface'] = genericTerminal.prims[0].properties['outputs:mtlx:surface'];
+  delete genericTerminal.prims[0].properties['outputs:mtlx:surface'];
+  assert.equal(materialXFromUSD(genericTerminal, '/M', { library }).nodes.length, 1);
+  const changed = () => structuredClone(snapshot);
+  let bad = changed(); bad.prims[1].properties['inputs:color'].connections = ['/M/S.inputs:base_color'];
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /cycle/);
+  bad = changed(); bad.prims[1].properties['inputs:color'].timeSampled = true;
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /time-sampled/);
+  bad = changed(); bad.prims[1].properties['inputs:color'].type = 'float';
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /type mismatch/);
+  assert.throws(() => materialXFromUSD(snapshot, '/M'), /missing exact/);
+  bad = changed(); bad.prims.push(bad.prims[0]);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /duplicate/);
+  bad = changed(); bad.prims[2].properties['inputs:unknown'] = p('float', 1);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /absent from NodeDef/);
+  bad = changed(); bad.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/S.outputs:out']);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /output mismatch/);
+  const displaced = changed(); displaced.prims.push({ path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .25), 'inputs:scale': p('float', 2), 'outputs:out': p('token') } }); displaced.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/D.outputs:out']);
+  const displacementDoc = materialXFromUSD(displaced, '/M', { library });
+  assert.equal(displacementDoc.displacementOutput.type, 'displacementshader');
+  assert.match(compileGraph(displacementDoc, { output: displacementDoc.displacementOutput }).body, /0\.25/);
+  const volume = changed(); volume.prims.push({ path: '/M/V', type: 'Shader', properties: { 'info:id': p('token', 'ND_volume_volumeshader'), 'inputs:vdf': p('token', undefined, ['/M/VDF.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/VDF', type: 'Shader', properties: { 'info:id': p('token', 'ND_anisotropic_vdf'), 'inputs:absorption': p('color3f', [.1,.2,.3]), 'inputs:scattering': p('color3f', [.4,.5,.6]), 'inputs:anisotropy': p('float', .2), 'outputs:out': p('token') } }); volume.prims[0].properties['outputs:volume'] = p('token', undefined, ['/M/V.outputs:out']);
+  const volumeDoc = materialXFromUSD(volume, '/M', { library });
+  assert.match(volumeDoc.mediumOutput.nodename, /usd_/);
+  assert.match(compileGraph(volumeDoc, { output: volumeDoc.mediumOutput }).body, /Medium/);
+  const volumeWrapped = changed(); volumeWrapped.prims.push({ path: '/M/VM', type: 'Shader', properties: { 'info:id': p('token', 'ND_volumematerial'), 'inputs:volumeshader': p('token', undefined, ['/M/V.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/V', type: 'Shader', properties: { 'info:id': p('token', 'ND_volume_volumeshader'), 'inputs:vdf': p('token', undefined, ['/M/VDF.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/VDF', type: 'Shader', properties: { 'info:id': p('token', 'ND_anisotropic_vdf'), 'inputs:absorption': p('color3f', [.1,.2,.3]), 'inputs:scattering': p('color3f', [.4,.5,.6]), 'inputs:anisotropy': p('float', .2), 'outputs:out': p('token') } }); volumeWrapped.prims[0].properties['outputs:volume'] = p('token', undefined, ['/M/VM.outputs:out']);
+  assert.match(materialXFromUSD(volumeWrapped, '/M', { library }).mediumOutput.nodename, /usd_/);
+  const volumeOnly = structuredClone(volumeWrapped); delete volumeOnly.prims[0].properties['outputs:mtlx:surface'];
+  const volumeOnlyDoc = materialXFromUSD(volumeOnly, '/M', { library });
+  assert.match(volumeOnlyDoc.output.nodename, /usd_volume_surface/); assert.match(compileGraph(volumeOnlyDoc, { material: true }).body, /closureInterior/); assert.match(shaderSource([volumeOnlyDoc], {}), /fn medium0/);
+  const wrapped = changed(); wrapped.prims.push({ path: '/M/SM', type: 'Shader', properties: { 'info:id': p('token', 'ND_surfacematerial'), 'inputs:surfaceshader': p('token', undefined, ['/M/S.outputs:out']), 'inputs:displacementshader': p('token', undefined, ['/M/D.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .1), 'outputs:out': p('token') } }); wrapped.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/SM.outputs:out']);
+  const wrappedDoc = materialXFromUSD(wrapped, '/M', { library });
+  assert.equal(wrappedDoc.displacementOutput.type, 'displacementshader');
+  const previewDisplaced = changed();
+  previewDisplaced.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/PS.outputs:out']);
+  previewDisplaced.prims.push({ path: '/M/PS', type: 'Shader', properties: {
+    'info:id': p('token', 'ND_preview_surface'), 'inputs:displacement': p('float', .35), 'outputs:out': p('token')
+  } });
+  const previewDisplacementLibrary = { definitions: {
+    ...library.definitions,
+    ND_preview_surface: { node: 'UsdPreviewSurface', inputs: { displacement: { type: 'float' } }, outputs: { out: { type: 'surfaceshader' } } }
+  } };
+  const previewDisplacementDoc = materialXFromUSD(previewDisplaced, '/M', { library: previewDisplacementLibrary });
+  assert.equal(previewDisplacementDoc.displacementOutput.type, 'displacementshader');
+  assert.equal(previewDisplacementDoc.nodes.find(node => node.category === 'UsdPreviewSurface').inputs.displacement, undefined);
+  assert.match(compileGraph(previewDisplacementDoc, { output: previewDisplacementDoc.displacementOutput }).body, /0\.35/);
+  const previewConnected = structuredClone(previewDisplaced);
+  previewConnected.prims.find(prim => prim.path === '/M/PS').properties['inputs:displacement'] = p('float', .2, ['/M/H.outputs:out']);
+  previewConnected.prims.push({ path: '/M/H', type: 'Shader', properties: {
+    'info:id': p('token', 'ND_height'), 'inputs:value': p('float', .7), 'outputs:out': p('token')
+  } });
+  const previewConnectedLibrary = { definitions: {
+    ...previewDisplacementLibrary.definitions,
+    ND_height: { node: 'constant', inputs: { value: { type: 'float' } }, outputs: { out: { type: 'float' } } }
+  } };
+  const previewConnectedDoc = materialXFromUSD(previewConnected, '/M', { library: previewConnectedLibrary });
+  assert.equal(previewConnectedDoc.displacementOutput.type, 'displacementshader');
+  assert.match(compileGraph(previewConnectedDoc, { output: previewConnectedDoc.displacementOutput }).body, /0\.7/);
+  const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
+  assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
+  colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';
+  // Destination metadata must not recolor a connected source value.
+  colored.prims[2].properties['inputs:base_color'].colorSpace = 'data';
+  assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'srgb_texture');
+  colored.prims[1].properties['inputs:color'].colorSpace = 'custom_unknown';
+  assert.throws(() => materialXFromUSD(colored, '/M', { library }), /unsupported USD color/);
+});
+test('USD graph translation accepts common USD numeric aliases', () => {
+  const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
+  const snapshot = { version: 1, prims: [
+    { path: '/M', type: 'Material', properties: { 'outputs:surface': p('token', undefined, ['/S.outputs:out']) } },
+    { path: '/S', type: 'Shader', properties: { 'info:id': p('token', 'custom_surface'), 'inputs:amount': p('double', 1.25), 'inputs:direction': p('double3', [1, 2, 3]), 'inputs:tint': p('color3h', [.2, .3, .4]), 'outputs:out': p('token') } }
+  ] };
+  const library = { definitions: { custom_surface: { node: 'custom_surface', inputs: { amount: { type: 'float' }, direction: { type: 'vector3' }, tint: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  const doc = materialXFromUSD(snapshot, '/M', { library });
+  assert.deepEqual(doc.nodes[0].inputs.amount, { type: 'float', value: 1.25 });
+  assert.deepEqual(doc.nodes[0].inputs.direction, { type: 'vector3', value: [1, 2, 3] });
+  assert.deepEqual(doc.nodes[0].inputs.tint, { type: 'color3', value: [.2, .3, .4], colorspace: 'lin_rec709' });
+});
+
+test('USD graph asset resolution requires explicit source-aware ownership', () => {
+  const p = (type, value, connections = []) => ({ type, value, connections, timeSampled: false });
+  const snapshot = { version: 1, prims: [
+    { path: '/M', type: 'Material', properties: { 'outputs:mtlx:surface': p('token', undefined, ['/S.outputs:out']) } },
+    { path: '/S', type: 'Shader', properties: { 'info:id': p('token', 'custom_surface'), 'inputs:file': p('asset', '../maps/image.exr'), 'outputs:out': p('token') } }
+  ] };
+  const library = { definitions: { custom_surface: { node: 'custom_surface', inputs: { file: { type: 'filename' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  assert.throws(() => materialXFromUSD(snapshot, '/M', { library }), /source-layer-aware/);
+  const doc = materialXFromUSD(snapshot, '/M', { library, resolveAsset(value, context) {
+    assert.equal(value, '../maps/image.exr'); assert.equal(context.propertyPath, '/S.inputs:file');
+    assert.equal(context.colorspace, 'lin_rec709');
+    return 'resolved-resource';
+  } });
+  assert.equal(doc.nodes[0].inputs.file.value, 'resolved-resource');
+  assert.throws(() => materialXFromUSD(snapshot, '/M', { library, resolveAsset: () => Promise.resolve('key') }), /nonempty resource key/);
+});
+test('layered medium bounds follow interior dependencies, not unrelated surface nodes',()=>{
+  const doc={nodes:[
+    {name:'position',category:'position',type:'vector3'},
+    {name:'color',category:'convert',type:'color3',inputs:{in:{nodename:'position'}}},
+    {name:'diffuse',category:'oren_nayar_diffuse_bsdf',type:'BSDF',inputs:{color:{nodename:'color'}}},
+    {name:'medium',category:'anisotropic_vdf',type:'VDF',inputs:{scattering:{type:'color3',value:[1,1,1]}}},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'diffuse'},base:{nodename:'medium'}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'layer'}}}
+  ]};
+  assert.equal(compileGraph(doc,{material:true}).hasInterior,true);shaderSource([doc]);
+  doc.nodes[3].inputs.scattering={nodename:'color'};
+  assert.throws(()=>shaderSource([doc]),/layered media require/);
+  doc.mediumMajorant=5;shaderSource([doc]);
+});
+test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
+  const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*156+27],0);
+  scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*156+55]>0);
+  assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
+  const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
+});
+test('authored literal colors inherit source colorspace and preserve alpha',()=>{
+  const doc={colorspace:'srgb_texture',nodes:[constant('color',[.5,.5,.5,.25],'color4')]};
+  assert.match(compileGraph(doc).body,/0.21404114048223255/);assert.match(compileGraph(doc).body,/,0.25\)/);
+  doc.colorspace='unknown';assert.throws(()=>compileGraph(doc),/Unsupported color space/);
+});
+test('NodeDef overload resolution uses authored input types',()=>{
+  const definitions=Object.fromEntries(['float','vector3'].map(type=>[type,{name:type,node:'add',inputs:{in1:{type:'vector3'},in2:{type}},outputs:{out:{type:'vector3'}}}]));
+  const doc={definitions,nodes:[{name:'sum',type:'vector3',category:'add',inputs:{in1:{type:'vector3',value:[1,2,3]},in2:{type:'float',value:2}}}]};
+  assert.match(compileGraph(doc).body,/vec3f\(2.0\)/);
+});
+test('USD rect lights preserve world-space area, radiance and negative-Z orientation',()=>{
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const light={type:'rect',width:2,height:3,intensity:12,exposure:1,normalize:true,color:[1,.5,.25],transform:[2,0,0,0,0,3,0,0,0,0,1,0,1,2,3,1]};
+  const r=appendRectLights(scene,[light]);
+  assert.equal(r.provenance.rectLights[0].worldArea,36);
+  assert.deepEqual(r.provenance.rectLights[0].radiance,[2/3,1/3,1/6]);
+  assert.equal(r.lighting.areaLights.length,1);assert.deepEqual(r.lighting.areaLights[0].position,[1,2,3]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredAreaDirect/);
+  assert.equal(r.normals[2],-1);assert.equal(r.positions[2],3);assert.equal(scene.positions.length,0);
+  assert.equal(r.materials[0].twoSidedEmission,false);
+  assert.throws(()=>appendRectLights(scene,[{...light,textureFile:'light.exr'}]),/Unsupported/);
+  assert.throws(()=>appendRectLights(scene,[{...light,width:0}]),/Invalid/);
+});
+test('authored distant lights preserve direction and radiance', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'distant',direction:[0,0,2],intensity:4,exposure:1,color:[1,.5,.25]}]);
+  assert.deepEqual(r.lighting.directional.direction,[0,0,-1]);
+  assert.deepEqual(r.lighting.directional.radiance,[8,4,2]);
+  assert.equal(r.lighting.directionalLights.length,1);
+  assert.equal(r.provenance.rectLights.length,0);
+  const multiple=appendRectLights(scene,[{type:'distant',direction:[0,0,1],intensity:2},{type:'distant',direction:[1,0,0],intensity:3,color:[.5,1,1]}]);
+  assert.equal(multiple.lighting.directionalLights.length,2);
+  assert.deepEqual(multiple.lighting.directionalLights[1].direction,[-1,0,0]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},multiple.lighting),/directionalCount\(\)->u32\{return 2u/);
+});
+test('textureless authored domes contribute environment radiance', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'dome',intensity:2,exposure:1,color:[.5,.25,.125]}]);
+  assert.deepEqual(r.lighting.environment,[2,1,.5]);
+  assert.deepEqual(r.provenance.domeLights[0].radiance,[2,1,.5]);
+  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureFile:'env.exr'}]),/Textured/);
+});
+test('decoded authored dome textures feed latlong environment sampling', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const image={width:2,height:1,data:new Float32Array([1,0,0,1,0,1,0,1]),colorspace:'lin_rec709'};
+  const r=appendRectLights(scene,[{type:'dome',textureFile:'env.exr',textureImage:image,intensity:2,color:[.5,1,1]}]);
+  assert.equal(r.lighting.environmentTexture.width,2);
+  assert.deepEqual(r.lighting.environmentTexture.scale,[1,2,2]);
+  const source=shaderSource(syntheticScene('default').materials,{},r.lighting);
+  assert.match(source,/imageSample\(0u,vec2u\(2u,1u\)/);assert.match(source,/\*vec3f\(1\.0,2\.0,2\.0\)/);
+  const udimImage={width:4,height:2,data:new Float32Array(4*2*4).fill(1),colorspace:'lin_rec709',udim:{columns:2,rows:1}};
+  const udimLights=appendRectLights(scene,[{type:'dome',textureFile:'env.<UDIM>.exr',textureImage:udimImage}]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},udimLights.lighting),/imageSampleUDIM\(0u,vec2u\(4u,2u\),/);
+  const mixed=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',intensity:2,color:[.5,.25,.125]}]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},mixed.lighting),/\+vec3f\(1\.0,0\.5,0\.25\)/);
+  const multiple=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:image,intensity:2,color:[.5,1,1]}]);
+  assert.deepEqual(multiple.lighting.environmentTexture.scale,[1,1,1]);
+  assert.deepEqual(Array.from(multiple.lighting.environmentTexture.data.slice(0,4)),[2,0,0,1]);
+  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:{...image,width:1}}]),/matching dimensions/);
+});
+test('authored point lights become bounded emissive geometry', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'point',position:[1,2,3],radius:.5,intensity:4,exposure:0,color:[1,.5,.25]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.indices.length,24);assert.equal(r.materialIds.length,8);
+  assert.deepEqual(r.provenance.pointLights[0].position,[1,2,3]);
+  assert.deepEqual(r.lighting.pointLights[0].position,[1,2,3]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredPointDirect/);
+  assert.equal(r.materials[0].twoSidedEmission,true);
+  assert.throws(()=>appendRectLights(scene,[{type:'point',position:[0,0,0],radius:0}]),/radius must be positive/);
+  const transformed=appendRectLights(scene,[{type:'sphere',transform:[1,0,0,0,0,1,0,0,0,0,1,0,-2,4,6,1],radius:.25}]);
+  assert.deepEqual(transformed.provenance.pointLights[0].position,[-2,4,6]);
+});
+test('authored sphere lights preserve finite emitter geometry', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'sphere',position:[-1,0,2],radius:1,intensity:2,color:[.2,.4,.8]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.provenance.pointLights[0].type,'sphere');
+  assert.equal(r.provenance.pointLights[0].worldArea,4*Math.sqrt(3));
+});
+test('authored disk lights preserve transformed area emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,color:[1,.5,.25],transform:[1,0,0,0,0,1,0,0,0,0,1,0,2,3,4,1]}]);
+  assert.equal(r.positions.length,51);assert.equal(r.indices.length,48);assert.equal(r.provenance.diskLights.length,1);
+  const polygonArea=8*4*Math.sin(Math.PI/8);
+  assert.ok(Math.abs(r.provenance.diskLights[0].worldArea-polygonArea)<1e-6);assert.equal(r.positions[2],4);
+  const zScaled=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,transform:[1,0,0,0,0,1,0,0,0,0,4,0,0,0,0,1]}]);
+  assert.ok(Math.abs(zScaled.provenance.diskLights[0].worldArea-polygonArea)<1e-6);
+});
+test('authored cylinder lights preserve transformed side emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'cylinder',radius:1,length:2,intensity:3,normalize:true,color:[1,.5,.25],transform:[2,0,0,0,0,3,0,0,0,0,1,0,4,5,6,1]}]);
+  assert.equal(r.positions.length,24*2*3);assert.equal(r.indices.length,24*6);assert.equal(r.materialIds.length,48);
+  assert.equal(r.provenance.cylinderLights.length,1);assert.equal(r.lighting.areaLights[0].shape,'cylinder');
+  assert.ok(Math.abs(r.provenance.cylinderLights[0].worldArea-2*Math.PI*1*2*2.5)<0.5);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredAreaDirect/);
+  assert.equal(r.materials[0].twoSidedEmission,false);
+  assert.throws(()=>appendRectLights(scene,[{type:'cylinder',radius:0,length:1}]),/Invalid cylinder/);
+});
+test('shaped sphere lights preserve spot cone emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'spot',angle:Math.PI/3,shapingConeSoftness:.25,intensity:2,color:[1,.5,.25],transform:[1,0,0,0,0,1,0,0,0,0,1,0,1,2,3,1]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.indices.length,24);assert.equal(r.provenance.pointLights[0].type,'spot');
+  assert.deepEqual(r.provenance.pointLights[0].coneDirection,[0,0,-1]);
+  assert.equal(r.materials[0].nodes[0].category,'conical_edf');
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/coneWeight/);
+  assert.throws(()=>appendRectLights(scene,[{type:'spot',angle:0,transform:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]),/Invalid spot light cone/);
+});
+test('geometry lights duplicate bounded target mesh emission', () => {
+  const scene={positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,1,0,0,1],indices:[0,1,2],materialIds:[0],materials:[{nodes:[{name:'surface',category:'surface',type:'surfaceshader',inputs:{}}]}],authored:{bindings:[{path:'/Target',vertexOffset:0,vertexCount:3,indexOffset:0,indexCount:3}]} };
+  const result=appendRectLights(scene,[{type:'Geometry',absPath:'/Light',properties:{geometryTargetPath:'/Target',materialSyncMode:'materialGlowTintsLight'},intensity:4,exposure:1,color:[1,.5,.25],normalize:true}]);
+  assert.equal(result.positions.length,18); assert.equal(result.indices.length,6); assert.equal(result.materialIds.length,2);
+  assert.equal(result.lighting.areaLights[0].shape,'geometry'); assert.equal(result.provenance.geometryLights[0].targetPath,'/Target');
+  assert.match(shaderSource(result.materials,{},result.lighting),/authoredAreaDirect/);
+  assert.throws(()=>appendRectLights(scene,[{type:'geometry',geometryTargetPath:'/Missing'}]),/bounded mesh target binding/);
+});
+test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
+  const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
+  assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
+  await assert.rejects(fetchResource('test',{fetcher,maxBytes:3}),/budget/);
+  await assert.rejects(fetchResource('test',{fetcher:async()=>new Response('',{status:404})}),/HTTP 404/);
+});
+test('resource discovery traverses nested MaterialX nodegraphs', () => {
+  const nodes = collectMaterialXNodes({ nodes: [{ category: 'constant' }], graphs: { outer: { nodes: [], graphs: { inner: { nodes: [{ category: 'image' }] } } } } });
+  assert.deepEqual(nodes.map(node => node.category), ['constant', 'image']);
+});
+test('MaterialX frame filename patterns expand with bounded padding', () => {
+  assert.equal(expandMaterialXFrameFilename('albedo.####.exr', 7), 'albedo.0007.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.%04d.exr', 12), 'albedo.0012.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.<FRAME>.exr', 3), 'albedo.3.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.exr', 3), null);
+  assert.throws(() => expandMaterialXFrameFilename('albedo.####.exr', 1.5), /integer/);
+});
+test('EXR resource preflight bounds allocation and decode preserves bottom-up rows',async()=>{
+  const bytes=encodeEXR(1,2,new Float32Array([1,2,3,1,4,5,6,1]));
+  assert.deepEqual(inspectEXR(bytes),{width:1,height:2});
+  assert.throws(()=>inspectEXR(bytes,1),/budget/);
+  assert.throws(()=>inspectEXR(bytes.subarray(0,20)),/EXR/);
+  const image=await decodeImage(bytes,{filename:'test.exr',colorspace:'raw'});
+  assert.deepEqual(Array.from(image.data),[4,5,6,1,1,2,3,1]);
+  await assert.rejects(decodeImage(bytes,{filename:'test.exr',maxPixels:1}),/budget/);
+  const reduced=await decodeImage(bytes,{filename:'test.exr',maxPixels:1,allowDownsample:true});
+  assert.deepEqual([reduced.width,reduced.height,reduced.resizedFrom.width,reduced.resizedFrom.height],[1,1,1,2]);
+  assert.ok(reduced.data.every(Number.isFinite));
+});
+
+test('oversized uncompressed EXR uses scanline reduction without full-resolution allocation', async () => {
+  const rgba = new Float32Array([
+    1,0,0,1, 3,0,0,1, 5,0,0,1, 7,0,0,1,
+    9,0,0,1, 11,0,0,1, 13,0,0,1, 15,0,0,1
+  ]);
+  const bytes = encodeEXR(4, 2, rgba);
+  const image = await decodeImage(bytes, { filename: 'large.exr', maxPixels: 4, allowDownsample: true });
+  assert.deepEqual({ width: image.width, height: image.height, resizedFrom: image.resizedFrom }, { width: 2, height: 1, resizedFrom: { width: 4, height: 2 } });
+  assert.ok(Math.abs(image.data[0] - 6) < 1e-5);
+  assert.ok(Math.abs(image.data[4] - 10) < 1e-5);
+  assert.equal(image.data[3], 1);
+  const acescg = await decodeImage(encodeEXR(4, 2, rgba, { colorspace: 'lin_ap1_scene' }), { filename: 'large.exr', maxPixels: 4, allowDownsample: true });
+  assert.equal(acescg.colorspace, 'acescg');
+});
+
+test('UDIM tiles pack into a bounded atlas and emit tile-aware sampling', () => {
+  const tile = (id, value) => ({ id, image: { width: 1, height: 1, data: new Float32Array([value, 0, 0, 1]), colorspace: 'raw' } });
+  const atlas = atlasUDIMImages([tile(1001, .25), tile(1012, .75)]);
+  assert.deepEqual({ width: atlas.width, height: atlas.height, columns: atlas.udim.columns, rows: atlas.udim.rows }, { width: 2, height: 2, columns: 2, rows: 2 });
+  assert.equal(atlas.data[0], .25);
+  assert.equal(atlas.data[12], .75);
+  const packed = packImages([atlas]);
+  const compiled = compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'udim' } } }] }, { imageDescriptors: { udim: { ...packed.descriptors[0], colorspace: 'raw' } } });
+  assert.match(compiled.body, /imageSampleUDIM/);
+});
+
+test('EXR authored color-space metadata is read from the header, never filename', () => {
+  const bytes = encodeEXR(1, 1, new Float32Array([1, 2, 3, 1]), { colorspace: 'lin_ap1_scene' });
+  assert.equal(inspectEXRHeader(bytes).colorSpace, 'lin_ap1_scene');
+  assert.deepEqual(inspectEXR(bytes), { width: 1, height: 1 });
+  assert.throws(() => encodeEXR(1, 1, new Float32Array([1,2,3,1]), { colorspace: 'bad\nspace' }), /metadata/);
+});
+test('EXR color-space aliases normalize before image packing', async () => {
+  const bytes = encodeEXR(1, 1, new Float32Array([1, 0, 0, 1]), { colorspace: 'lin_ap1_scene' });
+  const image = await decodeImage(bytes, { filename: 'metadata.exr' });
+  assert.equal(image.colorspace, 'acescg');
+  const packed = packImages([image]);
+  assert.ok(Number.isFinite(packed.data[0]));
+});
+test('ACEScg image conversion matches pinned MaterialX matrix without alpha or gamut clipping',()=>{
+  const image=packImages([{width:1,height:1,colorspace:'acescg',data:[1,0,0,.3]}]);
+  const expected=[1.705050992658,-.130256417507,-.024003356805,.3];
+  expected.forEach((v,i)=>assert.ok(Math.abs(image.data[i]-v)<1e-7));
+});
+test('closure composition preserves lobe bounds and interior ownership',()=>{
+  const leaf={name:'leaf',category:'oren_nayar_diffuse_bsdf',type:'BSDF'};
+  const nodes=[leaf];
+  let previous='leaf';
+  for(let i=1;i<=16;i++) {
+    nodes.push({name:`sum${i}`,category:'add',type:'BSDF',inputs:{in1:{nodename:previous},in2:{nodename:'leaf'}}});
+    previous=`sum${i}`;
+    if(i<16) assert.match(compileGraph({nodes}).body,/closureAdd/);
+  }
+  assert.throws(()=>compileGraph({nodes}),/exceeds 16 lobes/);
+  const layered=[leaf,{name:'medium',category:'anisotropic_vdf',type:'VDF'},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'medium'}}}];
+  assert.match(compileGraph({nodes:layered}).body,/closureInterior/);
+  layered.push({name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'leaf'}}});
+  assert.match(compileGraph({nodes:layered}).body,/closureAddPreservingInterior/);
+  const mixed={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'mix',category:'mix',type:'BSDF',inputs:{bg:{nodename:'leaf'},fg:{nodename:'other'},mix:{type:'float',value:.25}}}]};
+  assert.match(compileGraph(mixed).body,/closureMix\(.*0\.25/);
+  const switched={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'switch',category:'switch',type:'BSDF',inputs:{which:{type:'float',value:1},in1:{nodename:'leaf'},in2:{nodename:'other'}}}]};
+  assert.match(compileGraph(switched).body,/closureSelect/);
+  const selected={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'select',category:'select',type:'BSDF',inputs:{condition:{type:'boolean',value:true},truevalue:{nodename:'leaf'},falsevalue:{nodename:'other'}}}]};
+  assert.match(compileGraph(selected).body,/closureSelect/);
+  const conflicting={nodes:[...layered.slice(0, 3),{name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'layer'}}}]};
+  assert.throws(()=>compileGraph(conflicting),/cannot combine two interior-bearing closures/);
+  const unsupportedLayer={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'other'}}}]};
+  assert.match(compileGraph(unsupportedLayer).body,/closureLayer/);
+  const nestedLayer={nodes:[...unsupportedLayer.nodes,
+    {name:'outer',category:'layer',type:'BSDF',inputs:{top:{nodename:'layer'},base:{nodename:'leaf'}}}]};
+  assert.match(compileGraph(nestedLayer).body,/closureLayer\(n\d+,n\d+\)/);
+  const emptyLayer={nodes:[leaf,{name:'empty',category:'constant',type:'BSDF',inputs:{value:{type:'BSDF',value:''}}},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'empty'}}}]};
+  assert.match(compileGraph(emptyLayer).body,/nativeDiffuse/);
+});
+test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
+  for(const preset of ['native-copper','native-glass']) {
+    const resources={};const source=shaderSource(syntheticScene(preset).materials,resources);
+    assert.equal(resources.requiresPhysical,true);assert.match(source,/surfaceEmission/);
+    const previewSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:false});
+    assert.doesNotMatch(previewSource,/tracePhysical/);
+    assert.match(shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true}),/tracePhysical/);
+    const physicalSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true,physicalOnly:true});
+    assert.match(physicalSource,/tracePhysical/); assert.doesNotMatch(physicalSource,/rasterVertex/);
+    const compactSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true,physicalOnly:true,physicalKernel:'compact'});
+    assert.match(compactSource,/tracePhysical/); assert.match(compactSource,/closureSample/);
+    assert.doesNotMatch(compactSource,/finishPath/); assert.doesNotMatch(compactSource,/for\s*\(var step=0u/);
+  }
+  const doc=syntheticScene('native-glass').materials[1];
+  doc.nodes[0].inputs.scatter_mode={nodename:'dynamic_mode'};
+  assert.throws(()=>compileGraph(doc,{material:true}),/connected scatter_mode/);
+  doc.nodes[0].inputs.scatter_mode={value:'RT'};
+  doc.nodes[0].inputs.thinfilm_thickness={type:'float',value:100};
+  assert.match(compileGraph(doc,{material:true}).body,/withThinFilm/);
+  const volume=syntheticScene('sss').materials[1];volume.mediumMajorant=-1;
+  assert.throws(()=>shaderSource([volume]),/majorant/);
+  const hair=syntheticScene('hair').materials[1];
+  assert.match(compileGraph(hair,{material:true}).body,/nativeHair/);
+  assert.match(shaderSource([hair]),/nativeHair/);
+  const oren={nodes:[{name:'o',category:'oren_nayar_diffuse_bsdf',type:'BSDF',inputs:{roughness:{type:'float',value:.4}}}]};
+  assert.match(compileGraph(oren,{material:true}).body,/nativeDiffuse/);
+  oren.nodes[0].inputs.energy_compensation={type:'boolean',value:true};
+  assert.throws(()=>compileGraph(oren,{material:true}),/energy-compensated Oren-Nayar/);
+  const dielectricTangent={nodes:[{name:'d',category:'dielectric_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
+  assert.doesNotThrow(()=>compileGraph(dielectricTangent,{material:true}));
+  const hairTangent={nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
+  assert.doesNotThrow(()=>compileGraph(hairTangent,{material:true}));
+  const generalized={nodes:[{name:'g',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]}}}]};
+  for (const [name,input,pattern] of [
+    ['retroreflective',{type:'boolean',value:true},/retroreflection/],
+    ['distribution',{type:'string',value:'beckmann'},/distribution/],
+    ['scatter_mode',{type:'string',value:'RT'},/scatter_mode/],
+    ['tangent',{type:'vector3',value:[1,0,0]},/tangent/]
+  ]) {
+    generalized.nodes[0].inputs[name]=input;
+    if (name === 'tangent') assert.doesNotThrow(()=>compileGraph(generalized,{material:true}));
+    else assert.throws(()=>compileGraph(generalized,{material:true}),pattern);
+    delete generalized.nodes[0].inputs[name];
+  }
+  const tangentSurface={nodes:[{name:'d',category:'dielectric_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'d'}}}],output:{nodename:'s'}};
+  assert.match(shaderSource([tangentSurface]),/surfaceEmission\(.*vec3f\(1\.0,0\.0,0\.0\)/);
+  const authoredNormal={type:'vector3',value:[0,1,0]};
+  generalized.nodes[0].inputs.thinfilm_thickness={type:'float',value:180};
+  generalized.nodes[0].inputs.thinfilm_ior={type:'float',value:1.4};
+  assert.match(compileGraph(generalized,{material:true}).body,/nativeGeneralizedSchlick\(.*180\.0,1\.4\)/);
+  const generalizedFilmSurface={nodes:[generalized.nodes[0],{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'g'}}}],output:{nodename:'s'}};
+  assert.match(shaderSource([generalizedFilmSurface]),/generalizedSchlickFresnel/);
+  delete generalized.nodes[0].inputs.thinfilm_thickness;
+  delete generalized.nodes[0].inputs.thinfilm_ior;
+  generalized.nodes[0].inputs.normal=authoredNormal;
+  const generalizedSurface={nodes:[generalized.nodes[0],{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'g'}}}],output:{nodename:'s'}};
+  assert.match(compileGraph(generalizedSurface,{material:true}).body,/surfaceEmission\(n\d+,vec3f\(0\),clamp\(1\.0,0\.0,1\.0\),0u,vec3f\(0\.0,1\.0,0\.0\)/);
+  const subsurfaceNormal={nodes:[{name:'s',category:'subsurface_bsdf',type:'BSDF',inputs:{normal:authoredNormal}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}};
+  assert.match(compileGraph(subsurfaceNormal,{material:true}).body,/surfaceEmission\(n\d+,vec3f\(0\),clamp\(1\.0,0\.0,1\.0\),0u,vec3f\(0\.0,1\.0,0\.0\)/);
+  const translucent=compileGraph({nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}}]});
+  assert.match(translucent.body,/nativeTranslucent\(vec3f\(0\.7,0\.5,0\.3\),0\.65\)/);
+  assert.match(shaderSource([{nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'t'}}}],output:{nodename:'s'}}]),/m\.kind==7u/);
+  const film=syntheticScene().materials[1];
+  film.nodes[0].inputs.thin_film_thickness={type:'float',value:180};
+  film.nodes[0].inputs.thin_film_IOR={type:'float',value:1.4};
+  assert.match(compileGraph(film,{material:true}).body,/180\.0/);
+  assert.match(shaderSource([film]),/thinFilmFresnel/);
+  const subsurface=syntheticScene('subsurface').materials[1];
+  assert.match(compileGraph(subsurface,{material:true}).body,/materialFromClosure/);
+  assert.match(compileGraph(subsurface,{material:true}).body,/nativeSubsurface/);
+  assert.match(shaderSource([subsurface]),/closureMix/);
+  const subsurfaceNode={nodes:[{name:'s',category:'subsurface_bsdf',type:'BSDF',inputs:{radius:{type:'color3',value:[1,.35,.15]}}}]};
+  assert.match(compileGraph(subsurfaceNode).body,/vec3f\(1\.0,0\.35,0\.15\)/);
+  subsurfaceNode.nodes[0].inputs.anisotropy={type:'float',value:.2};
+  assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface\(.*0\.2/);
+  delete subsurfaceNode.nodes[0].inputs.anisotropy;
+  subsurfaceNode.nodes[0].inputs.normal={type:'vector3',value:[0,1,0]};
+  assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface/);
+  subsurfaceNode.nodes[0].inputs.tangent={type:'vector3',value:[1,0,0]};
+  assert.doesNotThrow(()=>compileGraph(subsurfaceNode));
+  const normal=syntheticScene('normalmap').materials[1];
+  assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
+  assert.match(shaderSource([normal]),/surface\.normal/);
+  assert.match(shaderSource([normal]),/var n=safeNormal\(surface\.normal/);
+  assert.match(shaderSource([normal]),/transportFrame\(ctx\.normal,surface\.tangent,surface\.bitangent\)/);
+  assert.match(shaderSource([normal]),/dot\(cross\(n,t\),bitangent\)>=0\.0/);
+  const imageNormal=syntheticScene('normalmap-image').materials[1];
+  const imageResources={};
+  assert.match(shaderSource([imageNormal],imageResources),/imageSample\(0u/);
+  assert.match(compileGraph(imageNormal,{material:true,imageDescriptors:{normalTex:{offset:0,width:2,height:2,levels:1,colorspace:'raw'}}}).body,/mxNormalmap\(n0/);
+  assert.equal(imageResources.imageData.length,20);
+  const colorNormal={nodes:[{name:'normal',category:'normalmap',type:'vector3',inputs:{in:{type:'color3',value:[.65,.45,.95]},scale:{type:'float',value:1}}}]};
+  assert.match(compileGraph(colorNormal).body,/mxNormalmap\(vec3f/);
+  const openNormal=syntheticScene('open-pbr-normal').materials[1];
+  assert.match(compileGraph(openNormal,{material:true}).body,/geometry_normal|normalize\(vec3f/);
+  const opacity=syntheticScene('opacity').materials[1];
+  assert.match(shaderSource([opacity]),/surface\.opacity/);
+  assert.match(shaderSource([opacity]),/directionalRadianceAt\(directionalIndex\)\*clamp\(surface\.opacity/);
+  assert.match(shaderSource([opacity]),/let opacity=clamp\(surface\.opacity/);
+  assert.match(shaderSource([opacity]),/random\(rng\)>opacity/);
+  const bump=syntheticScene('bump').materials[1];
+  assert.match(compileGraph(bump,{material:true}).body,/mxBumpGradient/);
+  assert.match(shaderSource([bump]),/mxBumpGradient/);
+  assert.equal(syntheticScene('displacement').displacementRefinement,2);
+  const ops=syntheticScene('ops').materials[1];
+  const opsBody=compileGraph(ops,{material:true}).body;
+  assert.match(opsBody,/mat2x2f/);
+  assert.match(opsBody,/sign\(/);
+  assert.match(opsBody,/select\(/);
+  assert.match(opsBody,/vec3f\(n/);
+  const advanced=syntheticScene('ops-advanced').materials[1];
+  const advancedBody=compileGraph(advanced,{material:true}).body;
+  assert.match(advancedBody,/vec3f\(n0,0\.0\)/);
+  assert.match(advancedBody,/vec2f\(n1\[1\],n1\[0\]\)/);
+  assert.match(advancedBody,/cross\(/);
+  assert.match(advancedBody,/dot\(/);
+  assert.match(advancedBody,/pow\(/);
+  const layeredScene=syntheticScene('layered').materials[1];
+  assert.match(compileGraph(layeredScene,{material:true}).body,/closureInterior/);
+  const edf=syntheticScene('edf').materials[1];
+  assert.match(compileGraph(edf,{material:true}).body,/surfaceEmission/);
+  assert.match(compileGraph(edf,{material:true}).body,/vec3f\(2\.5,0\.8,0\.15\)/);
+  const nativeFilm=syntheticScene('native-film').materials[1];
+  assert.match(compileGraph(nativeFilm,{material:true}).body,/withThinFilm/);
+  assert.match(shaderSource([nativeFilm]),/thinFilmFresnelLambda/);
+  assert.match(shaderSource([nativeFilm]),/wavelength>0\.0/);
+  const conductorFilm={nodes:[{name:'film',category:'conductor_bsdf',type:'BSDF',inputs:{thinfilm_thickness:{type:'float',value:120},thinfilm_IOR:{type:'float',value:1.4}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'film'}}}]};
+  assert.match(compileGraph(conductorFilm,{material:true}).body,/withThinFilm/);
+  const metricFilm=structuredClone(conductorFilm); metricFilm.nodes[0].inputs.thinfilm_thickness={type:'float',value:.12,unit:'micrometer'};
+  assert.match(compileGraph(metricFilm,{material:true}).body,/\*1000/);
+  const stdlibFilm=structuredClone(conductorFilm); stdlibFilm.nodes[0].inputs.thinfilm_thickness={type:'float',value:.12,unit:'micron'};
+  assert.match(compileGraph(stdlibFilm,{material:true}).body,/\*1000/);
+  const coat=syntheticScene('coat').materials[1];
+  assert.match(compileGraph(coat,{material:true}).body,/closureLayer/);
+  assert.match(shaderSource([coat]),/closureLayer/);
+  const sheen=syntheticScene('sheen').materials[1];
+  assert.match(compileGraph(sheen,{material:true}).body,/nativeSheen/);
+  assert.match(compileGraph(sheen,{material:true}).body,/0\.38/);
+  assert.match(shaderSource([sheen]),/nativeSheen/);
+  const directSheen={nodes:[{name:'s',category:'sheen_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.8,.7,.6]},weight:{type:'float',value:.75},roughness:{type:'float',value:.4}}}]};
+  assert.match(compileGraph(directSheen).body,/nativeSheen/);
+  assert.match(shaderSource([{nodes:[...directSheen.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]),/m\.kind==8u/);
+  const zeltner={...directSheen,nodes:[{...directSheen.nodes[0],inputs:{...directSheen.nodes[0].inputs,mode:{type:'string',value:'zeltner'}}}]};
+  const zeltnerSource=shaderSource([{nodes:[...zeltner.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]);
+  assert.match(zeltnerSource,/sheenZeltnerBRDF/); assert.match(zeltnerSource,/sheenZeltnerDirAlbedo/);
+  assert.match(zeltnerSource,/sheenZeltnerSample/); assert.match(zeltnerSource,/sheenZeltnerPDF/);
+  const thin=syntheticScene('thin-walled').materials[1];
+  assert.match(compileGraph(thin,{material:true}).body,/select\(0u,1u,true\)/);
+  assert.match(shaderSource([thin]),/thinWalled/);
+  assert.match(shaderSource([thin]),/refract\(-wo,n/);
+  const depth=syntheticScene('transmission-depth').materials[1];
+  assert.match(compileGraph(depth,{material:true}).body,/withTransmission/);
+  assert.match(shaderSource([depth]),/transmissionAttenuation/);
+  const schlick=syntheticScene('generalized-schlick').materials[1];
+  assert.match(compileGraph(schlick,{material:true}).body,/nativeGeneralizedSchlick/);
+  assert.match(shaderSource([schlick]),/generalizedSchlickFresnel/);
+  assert.match(shaderSource([schlick]),/schlickColor82/);
+  assert.match(shaderSource([schlick]),/mxPow6/);
+  const openPbrWeight=syntheticScene('open-pbr-weight').materials[1];
+  assert.match(compileGraph(openPbrWeight,{material:true}).body,/0\.35/);
+  assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecular/);
+  assert.match(shaderSource([openPbrWeight]),/vec3f\(0\.35/);
+  assert.match(shaderSource([openPbrWeight]),/clamp\(m\.weight\*mix/);
+  assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecularColor/);
+  const openPbrFilm=syntheticScene('open-pbr-film').materials[1];
+  assert.match(compileGraph(openPbrFilm,{material:true}).body,/220\.0/);
+  assert.match(shaderSource([openPbrFilm]),/thinFilmFresnel/);
+  const diffuseRoughness = { nodes: [{ name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+    base_color: { type: 'color3', value: [.4, .2, .1] }, diffuse_roughness: { type: 'float', value: .72 }
+  } }] };
+  assert.match(compileGraph(diffuseRoughness,{material:true}).body,/0\.72/);
+});
+test('authored BSDF normals propagate through surface terminals', () => {
+  const doc={nodes:[
+    {name:'b',category:'dielectric_bsdf',type:'BSDF',inputs:{normal:{type:'vector3',value:[0,1,0]},ior:{type:'float',value:1.5}}},
+    {name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'b'}}}
+  ],output:{nodename:'s'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(.*vec3f\(0\.0,1\.0,0\.0\)/);
+});
+test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',()=>{
+  const burley=compileGraph({nodes:[{name:'b',category:'burley_diffuse_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.5,.4,.3]},roughness:{type:'float',value:.2}}}]});
+  assert.match(burley.body,/nativeBurley/);
+  const hair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tint_R:{type:'color3',value:[.8,.7,.6]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});
+  assert.match(hair.body,/nativeHair/); assert.match(hair.body,/\.x/);
+  const authoredHair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{ior:{type:'float',value:1.45},absorption_coefficient:{type:'vector3',value:[.2,.4,.8]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});
+  assert.match(authoredHair.body,/exp\(-vec3f\(0\.2,0\.4,0\.8\)\)/);
+  assert.match(authoredHair.body,/1\.45/);
+  const hairAbsorption=compileGraph({nodes:[{name:'a',category:'chiang_hair_absorption_from_color',type:'vector3',inputs:{color:{type:'color3',value:[.6,.3,.1]},azimuthal_roughness:{type:'float',value:.2}}}]});
+  assert.match(hairAbsorption.body,/log\(min\(max\(vec3f\(0\.6,0\.3,0\.1\)/);
+  const deon=compileGraph({nodes:[{name:'a',category:'deon_hair_absorption_from_melanin',type:'vector3',inputs:{melanin_concentration:{type:'float',value:.4},melanin_redness:{type:'float',value:.25}}}]});
+  assert.match(deon.body,/log\(max\(1\.0-0\.4/);
+  const hairRoughness={nodes:[{name:'r',category:'chiang_hair_roughness',type:'multioutput',outputs:{roughness_R:{type:'vector2'},roughness_TT:{type:'vector2'},roughness_TRT:{type:'vector2'}},inputs:{longitudinal:{type:'float',value:.2},azimuthal:{type:'float',value:.3}}}]};
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_R'}}).body,/vec2f\(/);
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TT'}}).body,/0\.5\*0\.5/);
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TRT'}}).body,/2\.0\*2\.0/);
+  const medium=compileGraph({nodes:[{name:'m',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'vector3',value:[.1,.2,.3]}}}]});
+  assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0,vec3f\(0\)\)/);
+});
+test('pinned blur node preserves the documented stdlib pass-through implementation',()=>{
+  const blur={nodes:[{name:'b',category:'blur',type:'float',inputs:{in:{type:'float',value:.375},size:{type:'float',value:4},filtertype:{type:'string',value:'gaussian'}}}]};
+  const compiled=compileGraph(blur);
+  assert.match(compiled.body,/let n0: f32 = 0\.375/);
+  assert.equal(compiled.expression,'n0');
+  const color3=compileGraph({nodes:[{name:'b',category:'blur',type:'color3',inputs:{in:{type:'color3',value:[.1,.2,.3]},size:{type:'float',value:2}}}]});
+  assert.match(color3.body,/vec3f\(0\.1,0\.2,0\.3\)/);
+  const color4=compileGraph({nodes:[{name:'b',category:'blur',type:'color4',inputs:{in:{type:'color4',value:[.1,.2,.3,.4]},size:{type:'float',value:2}}}]});
+  assert.match(color4.body,/vec4f\(0\.1,0\.2,0\.3,0\.4\)/);
+  assert.throws(()=>compileGraph({...blur,nodes:[{...blur.nodes[0],inputs:{...blur.nodes[0].inputs,filtertype:{type:'string',value:'triangle'}}}]}),/filtertype/);
+});
+test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
+  const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
+  const r=refineDisplacementScene(scene,2);assert.equal(r.indices.length,48);assert.equal(r.materialIds.length,16);assert.ok(r.positions.every(v=>v>=0&&v<=1));
+  assert.ok(r.normals.every(Number.isFinite));
+  for(let i=0;i<r.normals.length;i+=3)assert.ok(Math.abs(Math.hypot(r.normals[i],r.normals[i+1],r.normals[i+2])-1)<1e-5);
+  assert.throws(()=>refineDisplacementScene(scene,5,1),/budget/);
+});
+test('CIE table agrees with official column-sum validation', () => {
+  assert.equal(cieXYZ.length,471);
+  [106.865469489595,106.8569171011719,106.892251278636].forEach((expected,k)=>assert.ok(Math.abs(cieXYZ.reduce((sum,row)=>sum+row[k],0)-expected)<1e-9));
+});
+test('measured spectra validate ordering, coverage and interpolate linearly', () => {
+  const p=validateSpectrum([[360,1.6],[830,1.4]],{ior:true});assert.equal(sampleSpectrum(p,595),1.5);assert.equal(sampleSpectrum(p,350),0);
+  assert.throws(()=>validateSpectrum([[400,1.5],[700,1.4]],{ior:true}),/cover/);
+  assert.throws(()=>validateSpectrum([[400,1],[400,2]]),/unordered/);
+  assert.throws(()=>validateSpectrum([[400,1],[700,-1]]),/Invalid/);
+});
+test('image packing linearizes before mip filtering and preserves alpha', () => {
+  const packed = packImages([{ width: 3, height: 1, colorspace: 'srgb_texture', data: [0,0,0,.2, .5,.5,.5,.4, 1,1,1,.6] }]);
+  assert.deepEqual(packed.descriptors, [{ offset: 0, width: 3, height: 1, levels: 2 }]);
+  assert.ok(Math.abs(packed.data[4] - .21404114) < 1e-6);
+  assert.ok(Math.abs(packed.data[12] - (1 + .21404114) / 3) < 1e-6);
+  assert.ok(Math.abs(packed.data[15] - .4) < 1e-6);
+});
+test('image packing can bounded-box downsample before GPU mip allocation', () => {
+  const data = new Float32Array(4 * 2 * 4); for (let i = 0; i < data.length; i += 4) { data[i] = 1; data[i + 3] = 1; }
+  const packed = packImages([{ width: 4, height: 2, data }], { maxDimension: 2, maxBytes: 1024 });
+  assert.deepEqual(packed.descriptors[0].resizedFrom, [4, 2]);
+  assert.equal(packed.descriptors[0].width, 2); assert.equal(packed.descriptors[0].height, 1);
+  assert.equal(packed.data[0], 1); assert.equal(packed.data[3], 1);
+  assert.throws(() => packImages([{ width: 4, height: 2, data }], { maxDimension: 2, maxBytes: 15 }), /budget/);
+});
+test('image packing preserves bounded decoded frame sequences', () => {
+  const frame = value => ({ width: 1, height: 1, colorspace: 'raw', data: [value, 0, 0, 1] });
+  const packed = packImages([{ frames: [frame(.2), frame(.8)] }]);
+  assert.equal(packed.descriptors.length, 1);
+  assert.equal(packed.descriptors[0].frames.length, 2);
+  assert.deepEqual(packed.descriptors[0].frames.map(f => f.offset), [0, 1]);
+  assert.ok(Math.abs(packed.data[0] - .2) < 1e-6 && Math.abs(packed.data[4] - .8) < 1e-6);
+  assert.throws(() => packImages([{ frames: [frame(.2), { ...frame(.8), width: 2, data: [0,0,0,1,0,0,0,1] }] }]), /matching dimensions/);
+});
+test('image packing preserves bounded decoded image layers', () => {
+  const layer = value => ({ width: 1, height: 1, data: [value, 0, 0, 1], colorspace: 'raw' });
+  const packed = packImages([{ ...layer(.2), layers: [layer(.8)] }]);
+  assert.equal(packed.descriptors[0].layers.length, 2);
+  assert.deepEqual(packed.descriptors[0].layers.map(d => d.offset), [0, 1]);
+  const compiled = compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'layered' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { layered: packed.descriptors[0] } });
+  assert.match(compiled.body, /select\(/);
+  const dynamic = compileGraph({ nodes: [
+    { name: 'selector', category: 'constant', type: 'integer', inputs: { value: { type: 'integer', value: 1 } } },
+    { name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'layered' }, layer: { nodename: 'selector' } } }
+  ], output: { nodename: 'tex' } }, { imageDescriptors: { layered: packed.descriptors[0] } });
+  assert.match(dynamic.body, /select\(/);
+  const flat = packImages([layer(.2)]).descriptors[0];
+  assert.throws(() => compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'flat' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { flat } }), /decoded layered image/);
+  assert.throws(() => packImages([{ ...layer(.2), frames: [layer(.4)], layers: [layer(.8)] }]), /combine layers and frames/);
+});
+test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
+  const image = { width: 1, height: 1, data: [0,0,0,1] };
+  assert.throws(() => packImages([image], { maxBytes: 15 }), /budget/);
+  assert.throws(() => packImages([{ ...image, width: .5 }]), /dimensions/);
+  assert.throws(() => packImages([{ ...image, data: [1e100,0,0,1] }]), /non-finite/);
+  assert.throws(() => packImages([{ ...image, colorspace: 'unknown' }]), /colorspace/);
+});
+test('image packing supports half-float storage without changing texel descriptors', () => {
+  const image = { width: 1, height: 1, data: [0.25, 0.5, 0.75, 1], colorspace: 'raw' };
+  const packed = packImages([image], { compact: true, maxBytes: 8 });
+  assert.ok(packed.data instanceof Uint32Array);
+  assert.equal(packed.data.byteLength, 8);
+  assert.deepEqual(packed.descriptors[0], { offset: 0, width: 1, height: 1, levels: 1 });
+  assert.match(imageWGSLCompact, /array<vec2u>/);
+  assert.match(imageWGSLCompact, /unpack2x16float/);
+});
+test('image graph resource resolution and unsupported filtering diagnostics', () => {
+  const doc = syntheticScene().materials[1];
+  const image = { name: 'image', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'test' } } };
+  doc.nodes[0].inputs.base_color = { nodename: 'image' }; doc.nodes.unshift(image);
+  assert.throws(() => shaderSource([doc]), /missing decoded image/);
+  doc.images = { test: { width: 1, height: 1, data: [1,0,0,1] } };
+  const resources = {}; assert.match(shaderSource([doc], resources), /imageSample\(0u/); assert.equal(resources.imageData.length, 4);
+  const compactResources = {}; assert.match(shaderSource([doc], compactResources, {}, { compact: true }), /array<vec2u>/); assert.equal(compactResources.imageData.byteLength, 8);
+  image.colorspace = 'lin_ap1_scene'; doc.images.test.colorspace = 'acescg';
+  assert.match(shaderSource([doc], {}), /imageSample\(0u/);
+  image.inputs.filtertype = { value: 'cubic' }; assert.match(shaderSource([doc]), /imageSampleCubic\(0u/);
+  image.inputs.file.value = ''; assert.match(shaderSource([doc]), /vec3f\(0.0,0.0,0.0\)/);
+});
+test('image sequence controls do not silently fall back to frame zero', () => {
+  const document = { nodes: [{ name: 'img', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'albedo' }, frameoffset: { nodename: 'time' } } }] };
+  assert.throws(() => compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1 } } }), /frameoffset/);
+  document.nodes[0].inputs.frameoffset = { type: 'integer', value: 0 };
+  document.nodes[0].inputs.frameendaction = { type: 'string', value: 'periodic' };
+  assert.throws(() => compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1 } } }), /frameendaction/);
+  document.nodes[0].inputs.frameoffset = { type: 'float', value: 1 };
+  document.nodes[0].inputs.framerange = { type: 'vector2', value: [10, 11] };
+  document.nodes[0].inputs.frameendaction = { type: 'string', value: 'cycle' };
+  const sequence = compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1, frames: [
+    { offset: 0, width: 1, height: 1, levels: 1 }, { offset: 1, width: 1, height: 1, levels: 1 }
+  ] } } });
+  assert.match(sequence.body, /imageSequenceIndex\(ctx\.frame,vec2f\(10\.0,11\.0\)\.x,vec2f\(10\.0,11\.0\)\.y,1\.0,2u,1u\)/);
+  assert.match(sequence.body, /select\(imageSample\(0u/);
+  assert.match(sequence.body, /imageSample\(1u/);
+});
+test('gltf_image preserves authored UV transforms and factor modulation', () => {
+  const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const doc = { nodes: [{ name: 'tex', category: 'gltf_image', type: 'color4', inputs: {
+    file: { type: 'filename', value: 'tex' }, factor: { type: 'color4', value: [.5, 1, 1, 1] },
+    pivot: { type: 'vector2', value: [0, 1] }, scale: { type: 'vector2', value: [2, 2] }, rotate: { type: 'float', value: 15 }, offset: { type: 'vector2', value: [.1, .2] }
+  } }] };
+  const compiled = compileGraph(doc, { imageDescriptors: descriptor });
+  assert.match(compiled.body, /imageSample\(/);
+  assert.match(compiled.body, /mat2x2f\(cos\(-/);
+  assert.match(compiled.body, /\)\*vec2f\(2\.0,2\.0\)/);
+  assert.match(compiled.body, /vec2f\(0\.1,0\.2\)\.x,-vec2f\(0\.1,0\.2\)\.y/);
+  assert.match(compiled.body, /length\(ctx\.uvDx\*vec2f\(2\.0,2\.0\)\*\(vec2f\(1\.0\)\*abs\(vec2f\(2\.0,2\.0\)\)\)\)/);
+  assert.match(compiled.body, /vec4f\(0\.5,1\.0,1\.0,1\.0\)/);
+});
+test('gltf_normalmap samples the authored tangent space image', () => {
+  const descriptor = { normal: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const doc = { nodes: [{ name: 'normal', category: 'gltf_normalmap', type: 'vector3', inputs: {
+    file: { type: 'filename', value: 'normal' }, texcoord: { type: 'vector2', value: [.25, .5] },
+    pivot: { type: 'vector2', value: [0, 1] }, scale: { type: 'vector2', value: [2, 2] }, rotate: { type: 'float', value: 15 }, offset: { type: 'vector2', value: [.1, .2] }
+  } }] };
+  const compiled = compileGraph(doc, { imageDescriptors: descriptor });
+  assert.match(compiled.body, /imageSample\(/);
+  assert.match(compiled.body, /mxNormalmap\(/);
+  assert.match(compiled.body, /mat2x2f\(cos\(-/);
+  assert.match(compiled.body, /length\(ctx\.uvDx\*vec2f\(2\.0,2\.0\)\*abs\(vec2f\(2\.0,2\.0\)\)\)/);
+});
+test('gltf_colorimage preserves RGB and alpha outputs', () => {
+  const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const node = { name: 'color', category: 'gltf_colorimage', nodedef: 'ND_gltf_colorimage', type: 'multioutput', outputs: { outcolor: { type: 'color3' }, outa: { type: 'float' } }, inputs: {
+    file: { type: 'filename', value: 'tex' }, color: { type: 'color4', value: [.8, 1, 1, 1] }, geomcolor: { type: 'color4', value: [1, 1, 1, .5] }
+  } };
+  const doc = { nodes: [node] };
+  const library = { definitions: { ND_gltf_colorimage: { node: 'gltf_colorimage', inputs: node.inputs, outputs: node.outputs } } };
+  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outcolor' }, imageDescriptors: descriptor, library }).body, /imageSample\(/);
+  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outa' }, imageDescriptors: descriptor, library }).body, /\.a/);
+});
+test('gltf texture utility nodes preserve authored channel mappings', () => {
+  const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const thickness = { name: 'thickness', category: 'gltf_iridescence_thickness', type: 'float', inputs: {
+    file: { type: 'filename', value: 'tex' }, thicknessMin: { type: 'float', value: 100 }, thicknessMax: { type: 'float', value: 400 }
+  } };
+  const compiledThickness = compileGraph({ nodes: [thickness] }, { imageDescriptors: descriptor });
+  assert.match(compiledThickness.body, /mix\(100\.0,400\.0,clamp\(gltfit\d+_n0\.g/);
+  const anisotropy = { name: 'anisotropy', category: 'gltf_anisotropy_image', type: 'multioutput', outputs: { anisotropy_strength_out: { type: 'float' }, anisotropy_rotation_out: { type: 'float' } }, inputs: {
+    file: { type: 'filename', value: 'tex' }, anisotropy_strength: { type: 'float', value: .5 }, anisotropy_rotation: { type: 'float', value: .25 }
+  } };
+  const anisotropyDoc = { nodes: [anisotropy] };
+  assert.match(compileGraph(anisotropyDoc, { output: { nodename: 'anisotropy', output: 'anisotropy_strength_out' }, imageDescriptors: descriptor }).body, /0\.5\*gltfani\d+_n0\.b/);
+  assert.match(compileGraph(anisotropyDoc, { output: { nodename: 'anisotropy', output: 'anisotropy_rotation_out' }, imageDescriptors: descriptor }).body, /atan2\(gltfani\d+_n0\.g\*2\.0-1\.0,gltfani\d+_n0\.r\*2\.0-1\.0\)/);
+});
+test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () => {
+  const doc={images:{tex:{width:2,height:2,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tex',category:'UsdUVTexture',type:'multioutput',outputs:{rgb:{type:'color3'},r:{type:'float'}},inputs:{file:{type:'filename',value:'tex'},st:{type:'vector2',value:[.25,.5]},fallback:{type:'color4',value:[.1,.2,.3,1]},scale:{type:'color4',value:[2,2,2,1]},bias:{type:'color4',value:[.1,0,0,0]}}}]};
+  const descriptor={tex:{offset:0,width:2,height:2,levels:1,colorspace:'raw'}};
+  const rgb=compileGraph(doc,{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor});
+  assert.match(rgb.body,/ctx\.uv/); assert.match(rgb.body,/\*vec4f\(2\.0,2\.0,2\.0,1\.0\)\+vec4f\(0\.1,0\.0,0\.0,0\.0\)/);
+  const red=compileGraph(doc,{output:{nodename:'tex',output:'r'},imageDescriptors:descriptor}); assert.match(red.body,/\)\.r/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,sourceColorSpace:{type:'string',value:'srgb_texture'}}}]},{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor}),/sourceColorSpace differs/);
+});
+test('USD primvar readers and transform2d resolve standard geometry inputs', () => {
+  const uv=compileGraph({nodes:[{name:'u',category:'UsdPrimvarReader',type:'vector2',inputs:{varname:{type:'string',value:'st'},fallback:{type:'vector2',value:[.2,.3]}}}]});
+  assert.match(uv.body,/ctx\.uv/);
+  const color=compileGraph({nodes:[{name:'c',category:'UsdPrimvarReader',type:'color3',inputs:{varname:{type:'string',value:'displayColor'},fallback:{type:'color3',value:[.2,.3,.4]}}}]});
+  assert.match(color.body,/ctx\.geomcolor\.rgb/);
+  const opacity=compileGraph({nodes:[{name:'a',category:'UsdPrimvarReader',type:'float',inputs:{varname:{type:'string',value:'displayOpacity'},fallback:{type:'float',value:.25}}}]});
+  assert.match(opacity.body,/ctx\.geomcolor\.a/);
+  const transformed=compileGraph({nodes:[{name:'t',category:'UsdTransform2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]},scale:{type:'vector2',value:[2,1]},rotation:{type:'float',value:90},translation:{type:'vector2',value:[.1,.2]}}}]});
+  assert.match(transformed.body,/mat2x2f\(cos\(/); assert.match(transformed.body,/vec2f\(0\.1,0\.2\)/);
+  const uv1=compileGraph({nodes:[{name:'u',category:'UsdPrimvarReader',type:'vector2',inputs:{varname:{type:'string',value:'uvSet1'}}}]},{uvIndex:1});
+  assert.match(uv1.body,/ctx\.uv/); assert.equal(materialUVIndex({nodes:[{category:'texcoord',inputs:{index:{value:1}}}]}),1);
+  assert.throws(()=>compileGraph({nodes:[{name:'u',category:'texcoord',type:'vector2',inputs:{index:{type:'integer',value:1}}}]},{uvIndex:0}),/does not match/);
+});
+test('packed scene selects authored material UV slots per triangle', () => {
+  const scene={positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,0,0,0,0],uvSets:[[0,0,0,0,0,0],[.2,.3,.4,.5,.6,.7]],indices:[0,1,2],materialIds:[1],materials:[{nodes:[]}, {nodes:[],uvIndex:1}]};
+  const packed=packScene(scene);
+  assert.ok(Math.abs(packed.triangleData[8] - .2) < 1e-6 && Math.abs(packed.triangleData[9] - .3) < 1e-6);
+  const tangentPacked=packScene({...scene,tangents:[1,0,0,-1,1,0,0,-1,1,0,0,-1]});
+  assert.deepEqual(Array.from(tangentPacked.triangleData.slice(16,20)),[1,0,0,-1]);
+  const geompropPacked=packScene({...scene,materials:[{nodes:[]},{nodes:[],uvIndex:1,geompropName:'temperature'}],geompropSets:{temperature:[2,0,0,1,3,0,0,1,4,0,0,1]}});
+  assert.deepEqual(Array.from(geompropPacked.triangleData.slice(20,24)),[2,0,0,1]);
+});
+test('triplanarprojection blends three typed image planes by normal weights', () => {
+  const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
+  const doc={nodes:[{name:'tri',category:'triplanarprojection',type:'color3',inputs:{filex:{type:'filename',value:'x'},filey:{type:'filename',value:'y'},filez:{type:'filename',value:'z'},normal:{type:'vector3',value:[1,0,0]},filtertype:{type:'string',value:'linear'}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.equal((source.body.match(/imageSample\(/g)||[]).length,3); assert.match(source.body,/imageSample\(0u[^\n]*log2\(/); assert.match(source.body,/ctx\.dpdu\*ctx\.uvDx\.x\+ctx\.dpdv\*ctx\.uvDx\.y/); assert.match(source.body,/safeNormal\(vec3f\(1\.0,0\.0,0\.0\),vec3f\(0\.0,0\.0,1\.0\)\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filez:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],colorspace:'acescg'}]},{imageDescriptors:descriptor}),/filex colorspace/);
+});
+test('finite typed literals cannot inject shader code', () => {
+  assert.equal(literal('color3', [1, 0.25, 0]), 'vec3f(1.0,0.25,0.0)');
+  for (const v of [NaN, Infinity, '1.0); return;', [1, 2]]) assert.throws(() => literal('float', v), GraphError);
+  assert.throws(() => literal('integer', 1.5)); assert.throws(() => literal('boolean', 'yes'));
+});
+test('shared dependency emitted once and deterministic', () => {
+  const doc = { nodes: [constant('a', 2), { name: 'sum', category: 'add', type: 'float', inputs: { in1: { nodename: 'a' }, in2: { nodename: 'a' } } }] };
+  const a = compileGraph(doc); assert.equal(a.body.split('\n').length, 2); assert.deepEqual(a, compileGraph(doc));
+});
+test('screen and difference compositing nodes preserve numeric types', () => {
+  const doc={nodes:[
+    {name:'a',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.2,.4,.6]}}},
+    {name:'b',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.1,.3,.5]}}},
+    {name:'screen',category:'screen',type:'color3',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'out',category:'difference',type:'color3',inputs:{in1:{nodename:'screen'},in2:{nodename:'b'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/vec3f\(1\.0\)-\(vec3f\(1\.0\)-n0\)/); assert.match(source.body,/abs\(/);
+});
+test('MaterialX compositing nodes preserve typed blend controls and alpha coverage', () => {
+  const burn=compileGraph({nodes:[{name:'b',category:'burn',type:'color3',inputs:{fg:{type:'color3',value:[.25,.5,.75]},bg:{type:'color3',value:[.8,.6,.4]},mix:{type:'float',value:.5}}}]});
+  assert.match(burn.body,/mix\(vec3f\(0\.8,0\.6,0\.4\)/); assert.match(burn.body,/max\(vec3f\(0\.25,0\.5,0\.75\),vec3f\(1e-6\)\)/);
+  const overlay=compileGraph({nodes:[{name:'o',category:'overlay',type:'float',inputs:{fg:{type:'float',value:.25},bg:{type:'float',value:.75}}}]});
+  assert.match(overlay.body,/select\(2\.0\*/); assert.match(overlay.body,/1\.0-2\.0/);
+  const disjoint=compileGraph({nodes:[{name:'d',category:'disjointover',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.7]},bg:{type:'color4',value:[0,1,0,.6]}}}]});
+  assert.match(disjoint.body,/min\(.*\.a\+.*\.a,1\.0\)/); assert.match(disjoint.body,/max\(.*\.a,1e-6\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'d',category:'disjointover',type:'color3',inputs:{}}]}),/requires color4/);
+  assert.throws(()=>compileGraph({nodes:[{name:'b',category:'burn',type:'vector3',inputs:{}}]}),/requires float\/color3\/color4/);
+});
+test('MaterialX alpha compositing and mask nodes preserve Porter-Duff channels', () => {
+  const over=compileGraph({nodes:[{name:'o',category:'over',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(over.body,/vec4f\(/); assert.match(over.body,/\.rgb\+.*\.rgb\*\(1\.0-.*\.a\)/); assert.match(over.body,/\.a\+.*\.a\*\(1\.0-.*\.a\)/);
+  const masked=compileGraph({nodes:[{name:'m',category:'mask',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(masked.body,/\.rgb\*.*\.a/); assert.match(masked.body,/\.a\*.*\.a/);
+  const matte=compileGraph({nodes:[{name:'m',category:'matte',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(matte.body,/\.rgb\*.*\.a\+.*\.rgb\*\(1\.0-.*\.a\)/);
+  const inside=compileGraph({nodes:[{name:'i',category:'inside',type:'color3',inputs:{in:{type:'color3',value:[1,.5,0]},mask:{type:'float',value:.25}}}]});
+  assert.match(inside.body,/vec3f\(1\.0,0\.5,0\.0\)\*vec3f\(0\.25\)/);
+  const outside=compileGraph({nodes:[{name:'o',category:'outside',type:'float',inputs:{in:{type:'float',value:.8},mask:{type:'float',value:.25}}}]});
+  assert.match(outside.body,/0\.8\*f32\(\(1\.0-0\.25\)\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'i',category:'inside',type:'vector2',inputs:{}}]}),/requires float\/color3\/color4/);
+});
+test('boolean logic nodes enforce boolean ports', () => {
+  const doc={nodes:[
+    {name:'a',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},
+    {name:'b',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:false}}},
+    {name:'and',category:'and',type:'boolean',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'not',category:'not',type:'boolean',inputs:{in:{nodename:'and'}}},
+    {name:'out',category:'xor',type:'boolean',inputs:{in1:{nodename:'not'},in2:{nodename:'b'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/&&/); assert.match(source.body,/!/); assert.match(source.body,/!=/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[2],type:'float'}]}),/and requires boolean inputs/);
+});
+test('vector reflection, refraction and distance nodes compile with typed ports', () => {
+  const doc={nodes:[
+    {name:'in',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},
+    {name:'normal',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,1]}}},
+    {name:'r',category:'reflect',type:'vector3',inputs:{in:{nodename:'in'},normal:{nodename:'normal'}}},
+    {name:'t',category:'refract',type:'vector3',inputs:{in:{nodename:'in'},normal:{nodename:'normal'},ior:{type:'float',value:1.5}}},
+    {name:'d',category:'distance',type:'float',inputs:{in1:{nodename:'r'},in2:{nodename:'t'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/reflect\(/); assert.match(source.body,/refract\(/); assert.match(source.body,/distance\(/);
+});
+test('fresnel and facing-ratio nodes compile with safe vector normalization', () => {
+  const doc={nodes:[
+    {name:'direction',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},
+    {name:'normal',category:'normal',type:'vector3',inputs:{}},
+    {name:'f',category:'fresnel',type:'float',inputs:{in:{nodename:'direction'},normal:{nodename:'normal'},ior:{type:'float',value:1.5}}},
+    {name:'face',category:'facing_ratio',type:'float',inputs:{in:{nodename:'direction'},normal:{nodename:'normal'},exponent:{type:'float',value:2}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'f'},in2:{nodename:'face'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/pow\(\(1\.5-1\.0\)/); assert.match(source.body,/normalize\(n1\)/);
+});
+test('normalize uses finite fallbacks for vector widths', () => {
+  const v2=compileGraph({nodes:[{name:'n',category:'normalize',type:'vector2',inputs:{in:{type:'vector2',value:[0,0]}}}]});
+  assert.match(v2.body,/mxSafeNormalize2\(vec2f\(0\.0,0\.0\),vec2f\(0\.0,1\.0\)\)/);
+  const v4=compileGraph({nodes:[{name:'n',category:'normalize',type:'vector4',inputs:{in:{type:'vector4',value:[1,2,3,4]}}}]});
+  assert.match(v4.body,/mxSafeNormalize4/); assert.match(contextWGSL,/fn mxSafeNormalize4/);
+  assert.throws(()=>compileGraph({nodes:[{name:'n',category:'normalize',type:'float',inputs:{in:{type:'float',value:1}}}]}),/requires a vector/);
+});
+test('reorder remaps typed channels with the same bounds as swizzle', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'reorder',type:'color3',inputs:{in:{type:'color4',value:[.1,.2,.3,.4]},channels:{type:'string',value:'bgr'}}}]});
+  assert.match(source.body,/vec3f\(vec4f\(0\.1,0\.2,0\.3,0\.4\)\[2\],vec4f\(0\.1,0\.2,0\.3,0\.4\)\[1\],vec4f\(0\.1,0\.2,0\.3,0\.4\)\[0\]\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'reorder',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]},channels:{type:'string',value:'rgba'}}}]}),/invalid channels/);
+});
+test('luminance and average nodes preserve explicit component semantics', () => {
+  const doc={nodes:[
+    {name:'color',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,.5,0]}}},
+    {name:'lum',category:'luminance',type:'float',inputs:{in:{nodename:'color'}}},
+    {name:'avg',category:'average',type:'float',inputs:{in:{nodename:'color'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'lum'},in2:{nodename:'avg'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/0\.2126,0\.7152,0\.0722/); assert.match(source.body,/0\.3333333333/);
+});
+test('RGB/HSV conversion nodes emit bounded color conversion helpers', () => {
+  const doc={nodes:[
+    {name:'rgb',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.2,.4,.8]}}},
+    {name:'hsv',category:'rgbtohsv',type:'color3',inputs:{in:{nodename:'rgb'}}},
+    {name:'out',category:'hsvtorgb',type:'color3',inputs:{in:{nodename:'hsv'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/mxHsvToRgb/);
+});
+test('color utility nodes compile with typed alpha and HSV controls', () => {
+  const doc={nodes:[
+    {name:'rgba',category:'constant',type:'color4',inputs:{value:{type:'color4',value:[.2,.4,.6,.5]}}},
+    {name:'premult',category:'premult',type:'color4',inputs:{in:{nodename:'rgba'}}},
+    {name:'unpremult',category:'unpremult',type:'color4',inputs:{in:{nodename:'premult'}}},
+    {name:'hsv',category:'hsvadjust',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]},amount:{type:'vector3',value:[.25,.8,1.2]}}},
+    {name:'out',category:'contrast',type:'color3',inputs:{in:{nodename:'hsv'},amount:{type:'float',value:1.1},pivot:{type:'float',value:.5}}}
+  ]};
+  const alpha=compileGraph({nodes:doc.nodes.slice(0,3)}); assert.match(alpha.body,/vec4f\(n0\.rgb\*n0\.a,n0\.a\)/); assert.match(alpha.body,/max\(n1\.a,1e-6\)/);
+  const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/fract/); assert.match(source.body,/1\.1/);
+  const color4=compileGraph({nodes:[{name:'hsv',category:'hsvadjust',type:'color4',inputs:{in:{type:'color4',value:[1,0,0,.25]},amount:{type:'vector3',value:[0,1,1]}}}]});
+  assert.match(color4.body,/vec4f\(mxHsvToRgb/); assert.match(color4.body,/\.a/);
+  const saturated=compileGraph({nodes:[{name:'s',category:'saturate',type:'color4',inputs:{in:{type:'color4',value:[1,.2,.1,.4]},amount:{type:'float',value:0},lumacoeffs:{type:'color3',value:[.2,.7,.1]}}}]});
+  assert.match(saturated.body,/mix\(vec3f\(dot\(/); assert.match(saturated.body,/\.a/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[2],type:'color3'}]}),/unpremult output must be color4/);
+});
+test('common trigonometric and angle-unit nodes map to WGSL math', () => {
+  const doc={nodes:[
+    {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:45}}},
+    {name:'r',category:'radians',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'a',category:'atan',type:'float',inputs:{in:{nodename:'r'}}},
+    {name:'l',category:'log10',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'e',category:'exp2',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'sum',category:'add',type:'float',inputs:{in1:{nodename:'a'},in2:{nodename:'l'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'sum'},in2:{nodename:'e'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/log\(n0\)\*0\.4342944819032518/); assert.match(source.body,/exp2\(n0\)/);
+});
+test('exponential and hyperbolic math nodes map to WGSL overloads', () => {
+  const source=compileGraph({nodes:[
+    {name:'e',category:'exp10',type:'vector3',inputs:{in:{type:'vector3',value:[1,2,3]}}},
+    {name:'h',category:'sinh',type:'vector3',inputs:{in:{nodename:'e'}}},
+    {name:'l',category:'log2',type:'vector3',inputs:{in:{nodename:'h'}}},
+    {name:'out',category:'tanh',type:'vector3',inputs:{in:{nodename:'l'}}}
+  ]});
+  assert.match(source.body,/pow\(vec3f\(10\.0\),vec3f\(1\.0,2\.0,3\.0\)\)/); assert.match(source.body,/sinh\(/); assert.match(source.body,/log2\(/); assert.match(source.body,/tanh\(/);
+});
+test('safepower preserves the sign of negative bases', () => {
+  const source=compileGraph({nodes:[{name:'p',category:'safepower',type:'float',inputs:{in1:{type:'float',value:-2},in2:{type:'float',value:3}}}]});
+  assert.match(source.body,/sign\(-2\.0\)\*pow\(abs\(-2\.0\),3\.0\)/);
+});
+test('place2d applies pivot, inverse scale, degree rotation and offset', () => {
+  const source=compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{texcoord:{type:'vector2',value:[1,0]},pivot:{type:'vector2',value:[.5,.5]},scale:{type:'vector2',value:[2,2]},rotate:{type:'float',value:90},offset:{type:'vector2',value:[.1,.2]}}}]});
+  assert.match(source.body,/mat2x2f\(cos\(/); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/vec2f\(0\.1,0\.2\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'p',category:'place2d',type:'color3',inputs:{}}]}),/place2d output must be vector2/);
+  assert.match(compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{}}]}).body,/ctx\.uv/);
+});
+test('geompropvalue maps standard authored geometry properties with typed fallbacks', () => {
+  const uv=compileGraph({nodes:[{name:'uv',category:'geompropvalue',type:'vector2',inputs:{geomprop:{type:'string',value:'st'}}}]});
+  assert.equal(uv.expression,'n0'); assert.match(uv.body,/ctx\.uv/);
+  const normal=compileGraph({nodes:[{name:'n',category:'geompropvalue',type:'vector3',inputs:{geomprop:{type:'string',value:'N'}}}]});
+  assert.match(normal.body,/ctx\.normal/);
+  const fallback=compileGraph({nodes:[{name:'x',category:'geompropvalue',type:'color3',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'color3',value:[.2,.3,.4]}}}]});
+  assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
+});
+test('custom geometry properties select one bounded authored channel', () => {
+  const document = { nodes: [{ name: 'temperature', category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperature' }, default: { type: 'float', value: .25 } } }], output: { nodename: 'temperature' } };
+  assert.equal(materialGeompropName(document), 'temperature');
+  assert.match(compileGraph(document, { geompropName: 'temperature' }).body, /ctx\.geomprop/);
+  const nested = { nodes: [], graphs: { network: { nodes: [{ category: 'geompropvalue', type: 'vector4', inputs: { geomprop: { type: 'string', value: 'weights' } } }] } } };
+  assert.equal(materialGeompropName(nested), 'weights');
+  const color4 = { nodes: [{ name: 'mask', category: 'geompropvalue', type: 'color4', inputs: { geomprop: { type: 'string', value: 'mask' }, default: { type: 'color4', value: [0, 0, 0, 1] } } }], output: { nodename: 'mask' } };
+  assert.match(compileGraph(color4, { geompropName: 'mask' }).body, /ctx\.geomprop\.rgba/);
+  const multiGeomprop = {nodes:[{name:'a',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'temperature'}}},{name:'b',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'mask'}}}]};
+  assert.match(compileGraph(multiGeomprop,{output:{nodename:'a'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop\.r/);
+  assert.match(compileGraph(multiGeomprop,{output:{nodename:'b'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop1\.r/);
+  const extendedNames=Array.from({length:8},(_,i)=>`weight${i}`);
+  const extended={nodes:[{name:'w',category:'geompropvalue',type:'vector4',inputs:{geomprop:{type:'string',value:'weight7'}}}],output:{nodename:'w'}};
+  assert.match(compileGraph(extended,{geompropNames:extendedNames}).body,/ctx\.geomprop7\.rgba/);
+  assert.deepEqual(materialGeompropNames(multiGeomprop), ['temperature','mask']);
+  assert.deepEqual(materialGeompropNames({ nodes: [
+    { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureA' } } },
+    { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureB' } } }
+  ] }), ['temperatureA', 'temperatureB']);
+});
+test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
+  const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{viewdirection:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},faceforward:{type:'boolean',value:true},invert:{type:'boolean',value:true}}}]});
+  assert.match(facing.body,/abs\(dot\(/); assert.match(facing.body,/1\.0-select\(/);
+  const uniform=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'vector3',inputs:{geomprop:{type:'string',value:'P'}}}]});
+  assert.match(uniform.body,/ctx\.position/);
+  const fallback=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'float',value:.25}}}]});
+  assert.match(fallback.body,/0\.25/);
+  assert.throws(()=>compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'N'}}}]}),/has type vector3/);
+  const color=compileGraph({nodes:[{name:'c',category:'geomcolor',type:'color4',inputs:{index:{type:'integer',value:0}}}]});
+  assert.match(color.body,/ctx\.geomcolor/); assert.throws(()=>compileGraph({nodes:[{name:'c',category:'geomcolor',type:'color3',inputs:{index:{type:'integer',value:1}}}]}),/primary geometry color/);
+  const displayColor=compileGraph({nodes:[{name:'c',category:'geompropvalue',type:'color3',inputs:{geomprop:{type:'string',value:'displayColor'}}}]});
+  assert.match(displayColor.body,/ctx\.geomcolor\.rgb/);
+  const displayOpacity=compileGraph({nodes:[{name:'a',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'displayOpacity'}}}]});
+  assert.match(displayOpacity.body,/ctx\.geomcolor\.a/);
+});
+test('viewdirection exposes the normalized outgoing shading direction', () => {
+  const source=compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'world'}}}]});
+  assert.match(source.expression,/^n\d+$/);
+  assert.match(source.body,/ctx\.viewdir/);
+  assert.throws(()=>compileGraph({nodes:[{name:'v',category:'viewdirection',type:'float',inputs:{}}]}),/output must be vector3/);
+  assert.throws(()=>compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'tangent'}}}]}),/world-space/);
+});
+test('rotate3d uses a normalized axis and degree-valued Rodrigues rotation', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'rotate3d',type:'vector3',inputs:{in:{type:'vector3',value:[1,0,0]},axis:{type:'vector3',value:[0,0,1]},amount:{type:'float',value:90}}}]});
+  assert.match(source.body,/safeNormal\(vec3f\(0\.0,0\.0,1\.0\)/);
+  assert.match(source.body,/cross\(/); assert.match(source.body,/0\.017453292519943295/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'rotate3d',type:'color3',inputs:{}}]}),/rotate3d output must be vector3/);
+});
+test('core math nodes honor MaterialX default bounds and amounts', () => {
+  const doc={nodes:[
+    {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:.25}}},
+    {name:'clamp',category:'clamp',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'smooth',category:'smoothstep',type:'float',inputs:{in:{nodename:'clamp'}}},
+    {name:'invert',category:'invert',type:'float',inputs:{in:{nodename:'smooth'}}},
+    {name:'out',category:'mix',type:'float',inputs:{bg:{nodename:'invert'},fg:{nodename:'x'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/clamp\(n0,0\.0,1\.0\)/); assert.match(source.body,/smoothstep\(0\.0,1\.0/); assert.match(source.body,/mix\(n3,n0,0\.0\)/);
+});
+test('ramp4 evaluates four corners with bilinear interpolation', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'ramp4',type:'color3',inputs:{texcoord:{type:'vector2',value:[.25,.75]},valuetl:{type:'color3',value:[1,0,0]},valuetr:{type:'color3',value:[0,1,0]},valuebl:{type:'color3',value:[0,0,1]},valuebr:{type:'color3',value:[1,1,1]}}}]});
+  assert.match(source.body,/mix\(mix\(vec3f\(0\.0,0\.0,1\.0\),vec3f\(1\.0,1\.0,1\.0\),vec2f\(0\.25,0\.75\)\.x\),mix/);
+  assert.match(compileGraph({nodes:[{name:'r',category:'ramp4',type:'float',inputs:{valuetl:{type:'float',value:0},valuetr:{type:'float',value:1},valuebl:{type:'float',value:1},valuebr:{type:'float',value:0}}}]}).body,/ctx\.uv/);
+});
+test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
+  const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
+  const source=compileGraph(doc); assert.match(source.body,/mxAcescgToLinRec709/); assert.match(contextWGSL,/1\.705050992658/);
+});
+test('linear Rec.709 to ACEScg conversion exposes the inverse matrix', () => {
+  const doc={nodes:[{name:'lin',category:'lin_rec709_to_acescg',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
+  const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToAcescg/); assert.match(contextWGSL,/(?:0)?\.613097402401/);
+});
+test('sRGB transfer nodes preserve the signed piecewise transfer', () => {
+  const doc={nodes:[
+    {name:'lin',category:'lin_rec709_to_srgb',type:'color3',inputs:{in:{type:'color3',value:[.18,-.01,.8]}}},
+    {name:'out',category:'srgb_to_lin_rec709',type:'color3',inputs:{in:{nodename:'lin'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToSrgb/); assert.match(source.body,/mxSrgbToLinRec709/); assert.match(contextWGSL,/(?:0)?\.0031308/);
+});
+test('MaterialX cmlib gamma and texture transforms preserve color4 alpha', () => {
+  const gamma=compileGraph({nodes:[{name:'g',category:'g22_rec709_to_lin_rec709',type:'color4',inputs:{in:{type:'color4',value:[.25,.5,.75,.4]}}}]});
+  assert.match(gamma.body,/pow\(max\(vec4f\(0\.25,0\.5,0\.75,0\.4\)\.rgb,vec3f\(0\.0\)\),vec3f\(2\.2\)\)/); assert.match(gamma.body,/\.a/);
+  const display=compileGraph({nodes:[{name:'d',category:'rec709_display_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(display.body,/vec3f\(2\.4\)/);
+  const texture=compileGraph({nodes:[{name:'s',category:'srgb_texture_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(texture.body,/mxSrgbToLinRec709/);
+  const ap1=compileGraph({nodes:[{name:'a',category:'g22_ap1_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(ap1.body,/mxAcescgToLinRec709/); assert.match(ap1.body,/vec3f\(2\.2\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'g',category:'g18_rec709_to_lin_rec709',type:'float',inputs:{}}]}),/output must be color3\/color4/);
+});
+test('MaterialX cmlib Adobe RGB and Display P3 transforms use pinned matrices', () => {
+  const adobe=compileGraph({nodes:[{name:'a',category:'adobergb_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(adobe.body,/2\.19921875/); assert.match(adobe.body,/1\.39835574/);
+  const linearAdobe=compileGraph({nodes:[{name:'a',category:'lin_adobergb_to_lin_rec709',type:'color4',inputs:{in:{type:'color4',value:[.25,.5,.75,.4]}}}]});
+  assert.match(linearAdobe.body,/1\.39835574/); assert.match(linearAdobe.body,/\.a/);
+  const p3=compileGraph({nodes:[{name:'p',category:'srgb_displayp3_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(p3.body,/mxSrgbToLinRec709/); assert.match(p3.body,/1\.22493029/);
+  const linearP3=compileGraph({nodes:[{name:'p',category:'lin_displayp3_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(linearP3.body,/1\.22493029/); assert.doesNotMatch(linearP3.body,/mxSrgbToLinRec709/);
+});
+test('matrix utility nodes preserve typed dimensions and vector columns', () => {
+  const matrix={type:'matrix33',value:[1,0,0,0,2,0,0,0,3]};
+  const transpose=compileGraph({nodes:[{name:'t',category:'transpose',type:'matrix33',inputs:{in:matrix}}]});
+  assert.match(transpose.body,/transpose\(mat3x3f\(/);
+  const determinant=compileGraph({nodes:[{name:'d',category:'determinant',type:'float',inputs:{in:matrix}}]});
+  assert.match(determinant.body,/determinant\(mat3x3f\(/);
+  const inverse=compileGraph({nodes:[{name:'i',category:'invertmatrix',type:'matrix33',inputs:{in:matrix}}]});
+  assert.match(inverse.body,/inverse\(mat3x3f\(/);
+  const create=compileGraph({nodes:[{name:'m',category:'creatematrix',type:'matrix44',inputs:{in1:{type:'vector3',value:[1,0,0]},in2:{type:'vector3',value:[0,1,0]},in3:{type:'vector3',value:[0,0,1]},in4:{type:'vector3',value:[2,3,4]}}}]});
+  assert.match(create.body,/mat4x4f\(vec4f\(vec3f\(1\.0,0\.0,0\.0\),0\.0\)/); assert.match(create.body,/vec4f\(vec3f\(2\.0,3\.0,4\.0\),1\.0\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'d',category:'determinant',type:'float',inputs:{in:{type:'vector3',value:[1,2,3]}}}]}),/matrix33\/matrix44/);
+});
+test('select node enforces boolean condition and matching branch types', () => {
+  const doc={nodes:[
+    {name:'condition',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},
+    {name:'yes',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,0,0]}}},
+    {name:'no',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[0,0,1]}}},
+    {name:'out',category:'select',type:'color3',inputs:{condition:{nodename:'condition'},truevalue:{nodename:'yes'},falsevalue:{nodename:'no'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/select\(n2,n1,n0\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[...doc.nodes.slice(0,-1),{...doc.nodes.at(-1),type:'float'}]}),/select branches/);
+});
+test('procedural noise nodes compile deterministic bounded WGSL helpers', () => {
+  const doc={nodes:[
+    {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
+    {name:'n2',category:'noise2d',type:'float',inputs:{in:{nodename:'uv'}}},
+    {name:'p',category:'position',type:'vector3',inputs:{}},
+    {name:'n3',category:'noise3d',type:'float',inputs:{in:{nodename:'p'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'n2'},in2:{nodename:'n3'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxNoise2/); assert.match(source.body,/mxNoise3/); assert.match(contextWGSL,/mxHash3/);
+});
+test('noise controls affect the coordinate and output without silent octave loss', () => {
+  const source=compileGraph({nodes:[{name:'n',category:'noise2d',type:'float',inputs:{in:{type:'vector2',value:[.25,.5]},scale:{type:'float',value:2},amplitude:{type:'float',value:.75},pivot:{type:'float',value:.2}}}]});
+  assert.match(source.body,/mxNoise2\(vec2f\(0\.25,0\.5\)\*2\.0\)/);
+  assert.match(source.body,/\*0\.75\+0\.2/);
+  assert.throws(()=>compileGraph({nodes:[{name:'n',category:'noise3d',type:'float',inputs:{in:{type:'vector3',value:[0,0,0]},octaves:{type:'integer',value:3}}}]}),/octaves/);
+});
+test('fractal noise emits bounded fBm helpers with authored controls', () => {
+  const source=compileGraph({nodes:[{name:'f',category:'fractal2d',type:'color3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},amplitude:{type:'color3',value:[1,.5,.25]},octaves:{type:'integer',value:4},lacunarity:{type:'float',value:2},diminish:{type:'float',value:.5}}}]});
+  assert.match(source.body,/mxFractal2\(vec2f\(0\.1,0\.2\),4i,2\.0,0\.5\)/); assert.match(source.body,/vec3f\(1\.0,0\.5,0\.25\)/);
+  const source3=compileGraph({nodes:[{name:'f',category:'fractal3d',type:'float',inputs:{texcoord:{type:'vector3',value:[0,0,0]}}}]});
+  assert.match(source3.body,/mxFractal3/); assert.match(contextWGSL,/for\(var i=0i;i<8i/);
+});
+test('Worley noise nodes provide bounded distance and hash channels', () => {
+  const a=compileGraph({nodes:[{name:'w',category:'worleynoise2d',type:'vector3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},jitter:{type:'float',value:.8},style:{type:'integer',value:0}}}]});
+  assert.match(a.body,/mxWorley2\(vec2f\(0\.1,0\.2\),0\.8,0i\)/); assert.match(contextWGSL,/for\(var y=-1i/);
+  const b=compileGraph({nodes:[{name:'w',category:'worleynoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]}}}]});
+  assert.match(b.body,/mxWorley3/); assert.throws(()=>compileGraph({nodes:[{name:'w',category:'worleynoise2d',type:'color3',inputs:{}}]}),/supports float/);
+});
+test('latlongimage maps view direction to periodic longitude and clamped latitude', () => {
+  const doc={images:{env:{width:4,height:2,data:[1,1,1,1],colorspace:'raw'}},nodes:[{name:'e',category:'latlongimage',type:'color3',inputs:{file:{type:'filename',value:'env'},viewdir:{type:'vector3',value:[1,0,0]},rotation:{type:'float',value:90},default:{type:'color3',value:[.1,.2,.3]}}}]};
+  const source=compileGraph(doc,{imageDescriptors:{env:{offset:0,width:4,height:2,levels:3,colorspace:'raw'}}});
+  assert.match(source.body,/atan2\(safeNormal\(vec3f\(1\.0,0\.0,0\.0\)/); assert.match(source.body,/vec2u\(2u,1u\)/); assert.match(source.body,/imageSample\(0u,vec2u\(4u,2u\),3u/); assert.match(source.body,/log2\(max\(1\.0,max\(length\(ctx\.uvDx/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],type:'float'}]},{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}}),/output must be color3/);
+});
+test('latlongimage selects decoded image layers with static or connected indices', () => {
+  const layer = value => ({ width: 1, height: 1, data: [value, 0, 0, 1], colorspace: 'raw' });
+  const packed = packImages([{ ...layer(.2), layers: [layer(.8)] }]);
+  const options = { imageDescriptors: { env: packed.descriptors[0] } };
+  const staticLayer = compileGraph({ nodes: [{ name: 'e', category: 'latlongimage', type: 'color3', inputs: { file: { type: 'filename', value: 'env' }, layer: { type: 'integer', value: 1 } } }] }, options);
+  assert.match(staticLayer.body, /select\(/);
+  const dynamicLayer = compileGraph({ nodes: [
+    { name: 'selector', category: 'constant', type: 'integer', inputs: { value: { type: 'integer', value: 1 } } },
+    { name: 'e', category: 'latlongimage', type: 'color3', inputs: { file: { type: 'filename', value: 'env' }, layer: { nodename: 'selector' } } }
+  ], output: { nodename: 'e' } }, options);
+  assert.match(dynamicLayer.body, /select\(/);
+  const flat = packImages([layer(.2)]).descriptors[0];
+  assert.throws(() => compileGraph({ nodes: [{ name: 'e', category: 'latlongimage', type: 'color3', inputs: { file: { type: 'filename', value: 'flat' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { flat } }), /decoded layered image/);
+});
+test('splitlr and splittb select typed matte values from UV coordinates', () => {
+  const lr=compileGraph({nodes:[{name:'s',category:'splitlr',type:'color3',inputs:{valuel:{type:'color3',value:[1,0,0]},valuer:{type:'color3',value:[0,1,0]},center:{type:'float',value:.4},texcoord:{type:'vector2',value:[.2,.5]}}}]});
+  assert.match(lr.body,/select\(vec3f\(0\.0,1\.0,0\.0\),vec3f\(1\.0,0\.0,0\.0\),vec2f\(0\.2,0\.5\)\.x<0\.4\)/);
+  const tb=compileGraph({nodes:[{name:'s',category:'splittb',type:'float',inputs:{valuet:{type:'float',value:1},valueb:{type:'float',value:2},texcoord:{type:'vector2',value:[.2,.8]}}}]});
+  assert.match(tb.body,/\.y>=0\.5/);
+});
+test('ramp and ramp_gradient compile static control points and interpolation modes', () => {
+  const gradient=compileGraph({nodes:[{name:'g',category:'ramp_gradient',type:'color4',inputs:{x:{type:'float',value:.25},interval1:{type:'float',value:0},interval2:{type:'float',value:1},color1:{type:'color4',value:[0,0,0,1]},color2:{type:'color4',value:[1,0,0,1]},interpolation:{type:'integer',value:1}}}]});
+  assert.match(gradient.body,/smoothstep/);
+  const ramp=compileGraph({nodes:[{name:'r',category:'ramp',type:'color4',inputs:{texcoord:{type:'vector2',value:[.75,.5]},num_intervals:{type:'integer',value:3},interval1:{type:'float',value:0},color1:{type:'color4',value:[0,0,0,1]},interval2:{type:'float',value:.5},color2:{type:'color4',value:[1,0,0,1]},interval3:{type:'float',value:1},color3:{type:'color4',value:[1,1,1,1]}}}]});
+  assert.match(ramp.body,/select\(/); assert.match(ramp.body,/vec2f\(0\.75,0\.5\)\.x/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'ramp',type:'color3',inputs:{}}]}),/ramp output must be color4/);
+});
+test('ramplr and ramptb interpolate typed values along the requested UV axis', () => {
+  const lr=compileGraph({nodes:[{name:'r',category:'ramplr',type:'color3',inputs:{valuel:{type:'color3',value:[1,0,0]},valuer:{type:'color3',value:[0,1,0]},texcoord:{type:'vector2',value:[.25,.8]}}}]});
+  assert.match(lr.body,/mix\(vec3f\(1\.0,0\.0,0\.0\),vec3f\(0\.0,1\.0,0\.0\),vec2f\(0\.25,0\.8\)\.x\)/);
+  const tb=compileGraph({nodes:[{name:'r',category:'ramptb',type:'float',inputs:{valuet:{type:'float',value:1},valueb:{type:'float',value:0},texcoord:{type:'vector2',value:[.25,.8]}}}]});
+  assert.match(tb.body,/mix\(0\.0,1\.0,vec2f\(0\.25,0\.8\)\.y\)/);
+});
+test('checkerboard applies UV tiling/offset and alternates typed colors', () => {
+  const source=compileGraph({nodes:[{name:'c',category:'checkerboard',type:'color3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},uvtiling:{type:'vector2',value:[4,4]},uvoffset:{type:'vector2',value:[.25,0]},color1:{type:'color3',value:[1,0,0]},color2:{type:'color3',value:[0,0,1]}}}]});
+  assert.match(source.body,/floor\(\(vec2f\(0\.1,0\.2\)\*vec2f\(4\.0,4\.0\)\+vec2f\(0\.25,0\.0\)\)\.x\)/); assert.match(source.body,/select\(vec3f\(0\.0,0\.0,1\.0\)/);
+});
+test('circle and line procedural masks use bounded UV distance tests', () => {
+  const circle=compileGraph({nodes:[{name:'c',category:'circle',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
+  assert.match(circle.body,/distance\(vec2f\(0\.5,0\.5\),vec2f\(0\.5,0\.5\)\)<=max/);
+  const line=compileGraph({nodes:[{name:'l',category:'line',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},point1:{type:'vector2',value:[0,0]},point2:{type:'vector2',value:[1,1]},radius:{type:'float',value:.1}}}]});
+  assert.match(line.body,/clamp\(dot\(/);
+});
+test('grid and crosshatch patterns apply typed tiling, offset, thickness and staggering', () => {
+  const grid=compileGraph({nodes:[{name:'g',category:'grid',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},uvtiling:{type:'vector2',value:[4,4]},thickness:{type:'float',value:.1},staggered:{type:'boolean',value:true}}}]});
+  assert.match(grid.body,/fract\(/); assert.match(grid.body,/vec3f\(/);
+  const cross=compileGraph({nodes:[{name:'c',category:'crosshatch',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},thickness:{type:'float',value:.05}}}]});
+  assert.match(cross.body,/max\(/); assert.match(cross.body,/fract\(/);
+});
+test('tiledcircles generates cell-local circle masks with authored size', () => {
+  const source=compileGraph({nodes:[{name:'c',category:'tiledcircles',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},uvtiling:{type:'vector2',value:[2,3]},size:{type:'float',value:.6},staggered:{type:'boolean',value:true}}}]});
+  assert.match(source.body,/fract\(/); assert.match(source.body,/length\(/); assert.match(source.body,/vec3f\(/);
+});
+test('randomfloat hashes input and seed within authored bounds', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'randomfloat',type:'float',inputs:{in:{type:'float',value:2},min:{type:'float',value:-1},max:{type:'float',value:3},seed:{type:'integer',value:7}}}]});
+  assert.match(source.body,/mix\(-1\.0,3\.0,mxHash2\(vec2f\(2\.0,f32\(7i\)\)\)\)/);
+  assert.match(contextWGSL,/fn mxHash2/);
+});
+test('randomcolor derives bounded HSV channels from input and seed', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'randomcolor',type:'color3',inputs:{in:{type:'float',value:2},huelow:{type:'float',value:.1},huehigh:{type:'float',value:.4},seed:{type:'integer',value:7},brightnesshigh:{type:'float',value:.8}}}]});
+  assert.match(source.body,/mxHsvToRgb/); assert.match(source.body,/mxHash3\(vec3f\(2\.0,f32\(7i\),17\.0\)\)/);
+});
+test('unified noise dispatches typed noise families and output remapping', () => {
+  const source=compileGraph({nodes:[{name:'u',category:'unifiednoise2d',type:'float',inputs:{texcoord:{type:'vector2',value:[.1,.2]},freq:{type:'vector2',value:[2,3]},type:{type:'integer',value:3},octaves:{type:'integer',value:4},outmin:{type:'float',value:-1},outmax:{type:'float',value:2}}}]});
+  assert.match(source.body,/mxFractal2/); assert.match(source.body,/clamp\(/); assert.match(source.body,/select\(/);
+  const source3=compileGraph({nodes:[{name:'u',category:'unifiednoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]},type:{type:'integer',value:2}}}]});
+  assert.match(source3.body,/mxWorley3/);
+});
+test('bump derivatives reevaluate shared height graphs in isolated contexts', () => {
+  const nodes=[
+    {name:'uv',category:'texcoord',type:'vector2'},
+    {name:'h',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
+    {name:'b',category:'bump',type:'vector3',inputs:{height:{nodename:'h'}}},
+  ];
+  const result=compileGraph({nodes});
+  assert.equal((result.body.match(/mxOffsetContext\(/g)||[]).length,4);
+  for(const m of result.body.matchAll(/let (bumpCtx\d+)=/g))assert.ok(result.body.includes(`${m[1]}.uv`));
+  assert.match(result.body,/ctx.tangent,ctx.bitangent/);
+  const encoded=compileGraph({nodes:[...nodes.slice(0,2),{name:'encoded',category:'heighttonormal',type:'vector3',inputs:{in:{nodename:'h'}}}]});
+  assert.match(encoded.body,/mxHeightToNormal/);
+  assert.doesNotMatch(encoded.body,/mxBumpGradient/);
+});
+
+test('stdlib utility aliases, blackbody and bump compile with bounded controls', () => {
+  const plus=compileGraph({nodes:[{name:'p',category:'plus',type:'float',inputs:{fg:{type:'float',value:.25},bg:{type:'float',value:.5}}}]});
+  assert.match(plus.body,/mix\(0\.5,\(0\.5\+0\.25\),1\.0\)/);
+  const fract=compileGraph({nodes:[{name:'f',category:'fract',type:'vector3',inputs:{in:{type:'vector3',value:[-1.25,.25,2.5]}}}]});
+  assert.match(fract.body,/fract\(/);
+  const blackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{temperature:{type:'float',value:3200}}}]});
+  assert.match(blackbody.body,/mxBlackbody\(3200\.0\)/);
+  const defaultBlackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{}}]});
+  assert.match(defaultBlackbody.body,/mxBlackbody\(5000\.0\)/);
+  const bump=compileGraph({nodes:[{name:'b',category:'bump',type:'vector3',inputs:{height:{type:'float',value:.2},scale:{type:'float',value:1.5}}}]});
+  assert.match(bump.body,/mxBumpGradient/);
+});
+test('stdlib color correction and switch preserve typed authored controls', () => {
+  const color=compileGraph({nodes:[{name:'c',category:'colorcorrect',type:'color3',inputs:{in:{type:'color3',value:[.2,.4,.8]},hue:{type:'float',value:.1},gamma:{type:'float',value:2},exposure:{type:'float',value:1}}}]});
+  assert.match(color.body,/mxRgbToHsv/); assert.match(color.body,/exp2\(/); assert.match(color.body,/pow\(/);
+  const selected=compileGraph({nodes:[{name:'s',category:'switch',type:'float',inputs:{in1:{type:'float',value:1},in2:{type:'float',value:2},in10:{type:'float',value:10},which:{type:'float',value:1}}}]});
+  assert.match(selected.body,/>=1\.0/); assert.match(selected.body,/10\.0/);
+});
+test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughness', () => {
+  const outputs={ior:{type:'color3'},extinction:{type:'color3'}};
+  const ior=compileGraph({nodes:[{name:'a',category:'artistic_ior',type:'multioutput',outputs,inputs:{reflectivity:{type:'color3',value:[.9,.5,.2]},edge_color:{type:'color3',value:[1,.8,.4]}}}]},{output:{nodename:'a',output:'ior'}});
+  assert.match(ior.body,/mix\(/); assert.match(ior.body,/sqrt\(/);
+  const extinction=compileGraph({nodes:[{name:'a',category:'artistic_ior',type:'multioutput',outputs,inputs:{}}]},{output:{nodename:'a',output:'extinction'}});
+  assert.match(extinction.body,/max\(/); assert.match(extinction.body,/sqrt\(/);
+  const rough=compileGraph({nodes:[{name:'r',category:'roughness_anisotropy',type:'vector2',inputs:{roughness:{type:'float',value:.4},anisotropy:{type:'float',value:.5}}}]});
+  assert.match(rough.body,/min\(/); assert.match(rough.body,/vec2f/);
+  const gloss=compileGraph({nodes:[{name:'g',category:'glossiness_anisotropy',type:'vector2',inputs:{glossiness:{type:'float',value:.8},anisotropy:{type:'float',value:-.25}}}]});
+  assert.match(gloss.body,/1\.0-0\.8/);
+  const dual=compileGraph({nodes:[{name:'d',category:'roughness_dual',type:'vector2',inputs:{roughness:{type:'vector2',value:[.4,-1]}}}]});
+  assert.match(dual.body,/select\(.*\.y,.*\.x,.*\.y<0\.0\)/); assert.match(dual.body,/clamp\(vec2f/);
+  const gooch=compileGraph({nodes:[{name:'g',category:'gooch_shade',type:'color3',inputs:{warm_color:{type:'color3',value:[.8,.8,.7]},cool_color:{type:'color3',value:[.3,.3,.8]},light_direction:{type:'vector3',value:[1,-.5,-.5]},shininess:{type:'float',value:32}}}]});
+  assert.match(gooch.body,/ctx\.normal/); assert.match(gooch.body,/ctx\.viewdir/); assert.match(gooch.body,/mix\(/); assert.match(gooch.body,/pow\(/);
+  const clover=compileGraph({nodes:[{name:'c',category:'cloverleaf',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
+  assert.match(clover.body,/distance\(/); assert.match(clover.body,/min\(/);
+  const hexagon=compileGraph({nodes:[{name:'h',category:'hexagon',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
+  assert.match(hexagon.body,/dot\(/); assert.match(hexagon.body,/sign\(/); assert.match(hexagon.body,/clamp\(/);
+  const tiled=compileGraph({nodes:[{name:'tc',category:'tiledcloverleafs',type:'color3',inputs:{texcoord:{type:'vector2',value:[.25,.25]},uvtiling:{type:'vector2',value:[2,2]},size:{type:'float',value:.4},staggered:{type:'boolean',value:true}}}]});
+  assert.match(tiled.body,/fract\(/); assert.match(tiled.body,/vec3f\(/);
+  const tiledHex=compileGraph({nodes:[{name:'th',category:'tiledhexagons',type:'color3',inputs:{uvtiling:{type:'vector2',value:[3,2]},size:{type:'float',value:.6}}}]});
+  assert.match(tiledHex.body,/dot\(/); assert.match(tiledHex.body,/sign\(/);
+});
+test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
+  const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});
+  assert.match(normal.body,/vec3f\(0\.0,0\.0,1\.0\)/);
+  assert.doesNotMatch(normal.body,/safeNormal|normalize/);
+  const point=compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{in:{type:'vector3',value:[1,2,3]},fromspace:{type:'string',value:''},tospace:{type:'string',value:'world'}}}]});
+  assert.match(point.body,/vec3f\(1\.0,2\.0,3\.0\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{fromspace:{type:'string',value:'object'},tospace:{type:'string',value:'world'}}}]}),/non-world/);
+  const wave=compileGraph({nodes:[{name:'w',category:'trianglewave',type:'float',inputs:{in:{type:'float',value:1.25}}}]});
+  assert.match(wave.body,/0\.5-abs\(fract\(abs/);
+});
+test('cell-noise nodes hash integer cells without interpolation', () => {
+  const doc={nodes:[
+    {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
+    {name:'c2',category:'cellnoise2d',type:'float',inputs:{in:{nodename:'uv'}}},
+    {name:'p',category:'position',type:'vector3',inputs:{}},
+    {name:'c3',category:'cellnoise3d',type:'float',inputs:{in:{nodename:'p'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'c2'},in2:{nodename:'c3'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxHash2\(floor/); assert.match(source.body,/mxHash3\(floor/);
+});
+test('tiledimage compiles validated single-tile, real-world-size, and UDIM paths', () => {
+  const doc={images:{tile:{width:1,height:1,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tile',category:'tiledimage',type:'color3',inputs:{file:{type:'filename',value:'tile'},uvtiling:{type:'vector2',value:[1,1]}}}]};
+  const descriptor={tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}};
+  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.match(source.body,/imageSample\(0u/);
+  const tiled=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor});
+  assert.match(tiled.body,/ctx\.uv\*\(vec2f\(2\.0,1\.0\)\*vec2f\(1\.0\)\)/);
+  assert.match(tiled.body,/ctx\.uvDx\*vec2f\(1\.0,1\.0\)\*\(vec2f\(2\.0,1\.0\)\*vec2f\(1\.0\)\)/);
+  const offset=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvoffset:{type:'vector2',value:[.25,.5]}}}]},{imageDescriptors:descriptor});
+  assert.match(offset.body,/ctx\.uv\*\(vec2f\(1\.0,1\.0\)\*vec2f\(1\.0\)\)\)-vec2f\(0\.25,0\.5\)/);
+  const real=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]},realworldtilesize:{type:'vector2',value:[1,1]}}}]},{imageDescriptors:descriptor});
+  assert.match(real.body,/vec2f\(2\.0,1\.0\)/);
+  const udimDescriptor={tile:{offset:0,width:2,height:1,levels:2,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udim=compileGraph(doc,{imageDescriptors:udimDescriptor});
+  assert.match(udim.body,/imageSampleUDIM\(0u/); assert.match(udim.body,/vec2u\(2u,1u\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/paired static/);
+});
+test('hextiledimage preserves pinned hex-tile controls and derivative sampling', () => {
+  const descriptor={tile:{offset:0,width:4,height:4,levels:3,colorspace:'raw'}};
+  const doc={nodes:[{name:'hex',category:'hextiledimage',type:'color4',inputs:{file:{type:'filename',value:'tile'},rotation:{type:'float',value:.8},falloff:{type:'float',value:.7}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor});
+  assert.match(source.body,/imageHextile\(0u/); assert.match(source.body,/ctx\.uvDx/); assert.match(source.body,/0\.8/);
+  const color3=compileGraph({...doc,nodes:[{...doc.nodes[0],type:'color3',inputs:{...doc.nodes[0].inputs,default:{type:'color3',value:[.1,.2,.3]}}}]},{imageDescriptors:descriptor});
+  assert.match(color3.body,/imageHextile\(0u/);
+  const udim={tile:{offset:0,width:8,height:4,levels:4,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udimSource=compileGraph(doc,{imageDescriptors:udim});
+  assert.match(udimSource.body,/imageHextileUDIM\(0u/); assert.match(udimSource.body,/vec2u\(2u,1u\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,file:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
+});
+test('hextilednormalmap preserves tangent rotation, flip and gradient blending', () => {
+  const descriptor={normal:{offset:0,width:4,height:4,levels:3,colorspace:'raw'}};
+  const doc={nodes:[{name:'normal',category:'hextilednormalmap',type:'vector3',inputs:{file:{type:'filename',value:'normal'},flip_g:{type:'boolean',value:true},strength:{type:'float',value:.8}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor});
+  assert.match(source.body,/imageHextileNormal\(0u/); assert.match(source.body,/ctx\.tangent/); assert.match(source.body,/0\.8/);
+  const udim={normal:{offset:0,width:8,height:4,levels:4,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udimSource=compileGraph(doc,{imageDescriptors:udim});
+  assert.match(udimSource.body,/imageHextileNormalUDIM\(0u/); assert.match(udimSource.body,/vec2u\(2u,1u\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
+});
+test('flake2d and flake3d expose pinned multi outputs', () => {
+  const outputs={id:{type:'integer'},rand:{type:'float'},presence:{type:'float'},flakenormal:{type:'vector3'}};
+  const flake2={nodes:[{name:'f',category:'flake2d',type:'multioutput',outputs,inputs:{size:{type:'float',value:.02},roughness:{type:'float',value:.15},coverage:{type:'float',value:.7}}}]};
+  for(const output of ['id','rand','presence','flakenormal']) {
+    const source=compileGraph(flake2,{output:{nodename:'f',output}}); assert.match(source.body,/mxFlake\(/); assert.match(source.body,new RegExp(`\.${output}`));
+  }
+  const flake3={nodes:[{name:'f',category:'flake3d',type:'multioutput',outputs,inputs:{position:{type:'vector3',value:[.1,.2,.3]}}}]};
+  assert.match(compileGraph(flake3,{output:{nodename:'f',output:'flakenormal'}}).body,/vec3f\(0\.1,0\.2,0\.3\)/);
+});
+test('conical EDF preserves its bounded angular emission profile', () => {
+  const doc={nodes:[
+    {name:'edf',category:'conical_edf',type:'EDF',inputs:{color:{type:'color3',value:[2,1,.5]},normal:{type:'vector3',value:[0,1,0]},inner_angle:{type:'float',value:45},outer_angle:{type:'float',value:75}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/cos\(radians\(max\(.*\)\)\*0\.5\)/);
+  const shader=shaderSource([doc],{});
+  assert.match(shader,/emissionFactor\(surface,-d\)/); assert.match(shader,/emissionOuterCos>=m\.emissionInnerCos/);
+});
+test('measured EDF parses bounded LM-63 profiles and reaches emission transport', () => {
+  const ies = `IESNA:LM-63-2002\n[TILT=NONE]\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 50 0`;
+  const profile = parseIES(ies);
+  assert.deepEqual(profile.samples, [[0, 1], [90, .5], [180, 0]]);
+  const azimuthal = parseIES(`IESNA:LM-63-2002\nTILT=NONE\n1 1000 1 3 2 1 1 1 1 1 1 1 1\n0 90 180\n0 180\n100 50 0 0 50 100`);
+  assert.deepEqual(azimuthal.horizontalAngles, [0, 180]); assert.deepEqual(azimuthal.values, [1, .5, 0, 0, .5, 1]);
+  const tilted = parseIES(`IESNA:LM-63-2002\nTILT=INCLUDE\n2\n0 180\n1 .5\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 100 100`);
+  assert.deepEqual(tilted.samples, [[0, 1], [90, .75], [180, .5]]);
+  const external=`IESNA:LM-63-2002\nTILT=tilt.dat\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 100 100`;
+  assert.equal(iesTiltReference(external),'tilt.dat');
+  const externalProfile=parseIES(external,{externalTilt:'2\n0 180\n1 .5'});
+  assert.deepEqual(externalProfile.samples, [[0, 1], [90, .75], [180, .5]]);
+  assert.throws(()=>parseIES(external),/requires tilt\.dat/);
+  const doc={measuredProfiles:{ies:azimuthal},nodes:[
+    {name:'edf',category:'measured_edf',type:'EDF',inputs:{file:{type:'filename',value:'ies'},normal:{type:'vector3',value:[0,1,0]}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const graph=compileGraph(doc,{material:true});
+  assert.match(graph.body,/surfaceEmission\(/); assert.match(graph.body,/,1u\)/);
+  const source=shaderSource([doc],{}); assert.match(source,/measuredProfile/); assert.match(source,/emissionProfile/); assert.match(source,/atan2\(py,px\)/);
+  assert.deepEqual(materialMeasuredProfileKeys(doc), ['ies']);
+  assert.deepEqual(materialImageKeys(doc), []);
+});
+test('MaterialX light and volume constructors preserve typed outputs', () => {
+  const light = compileGraph({ nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [2, 1, .5] } } },
+    { name: 'light', category: 'light', type: 'lightshader', inputs: { edf: { nodename: 'edf' }, intensity: { type: 'float', value: 2 }, exposure: { type: 'float', value: 1 } } }
+  ] }, { output: { nodename: 'light' } });
+  assert.equal(light.type, 'lightshader'); assert.match(light.body, /max\(0\.0,2\.0\).*pow\(2\.0,1\.0\)/);
+  const volume = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { type: 'EDF', value: '' } } }
+  ] }, { output: { nodename: 'volume' } });
+  assert.equal(volume.type, 'volumeshader'); assert.match(volume.body, /mediumWithEmission/); assert.equal(volume.volumeEmission, false);
+  const emitted = compileGraph({ nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, 1, 1] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { edf: { nodename: 'edf' } } }
+  ] }, { output: { nodename: 'volume' } });
+  assert.equal(emitted.volumeEmission, true); assert.match(emitted.body, /mediumWithEmission/);
+  const material = { nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, .5, .25] } } },
+    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { edf: { nodename: 'edf' } } },
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .1, .1] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { nodename: 'edf' } } }
+  ], output: { nodename: 'surface' }, mediumOutput: { nodename: 'volume' } };
+  assert.match(shaderSource([material], {}), /mediumWithEmission/);
+});
+test('MaterialX point, directional, and spot lights preserve authored parameters', () => {
+  const point = compileGraph({ nodes: [{ name: 'light', category: 'point_light', type: 'lightshader', inputs: {
+    position: { type: 'vector3', value: [1, 2, 3] }, color: { type: 'color3', value: [2, 1, .5] },
+    intensity: { type: 'float', value: 4 }, decay_rate: { type: 'float', value: 1 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(point.type, 'lightshader'); assert.equal(point.lightInfo.kind, 'point');
+  assert.match(point.lightInfo.position, /vec3f\(1\.0,2\.0,3\.0\)/); assert.match(point.body, /max\(0\.0,4\.0\)/);
+  const directional = compileGraph({ nodes: [{ name: 'light', category: 'directional_light', type: 'lightshader', inputs: {
+    direction: { type: 'vector3', value: [0, -1, 0] }, color: { type: 'color3', value: [1, .8, .6] }, intensity: { type: 'float', value: 2 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(directional.lightInfo.kind, 'directional'); assert.match(directional.lightInfo.direction, /vec3f\(0\.0,-1\.0,0\.0\)/);
+  const spot = compileGraph({ nodes: [{ name: 'light', category: 'spot_light', type: 'lightshader', inputs: {
+    position: { type: 'vector3', value: [0, 1, 2] }, direction: { type: 'vector3', value: [0, -1, 0] },
+    color: { type: 'color3', value: [1, 1, 1] }, inner_angle: { type: 'float', value: 15 }, outer_angle: { type: 'float', value: 30 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(spot.lightInfo.kind, 'spot'); assert.match(spot.lightInfo.innerAngle, /15\.0/); assert.match(spot.lightInfo.outerAngle, /30\.0/);
+  assert.throws(() => compileGraph({ nodes: [{ name: 'light', category: 'point_light', type: 'lightshader', inputs: {
+    color: { type: 'color3', value: [1, 1, 1] }
+  } }] }, { output: { nodename: 'light' } }), /missing input/);
+});
+test('VDF add and mix compose medium coefficients', () => {
+  const doc={nodes:[
+    {name:'a',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'color3',value:[.1,.2,.3]}}},
+    {name:'b',category:'anisotropic_vdf',type:'VDF',inputs:{scattering:{type:'color3',value:[.4,.5,.6]},anisotropy:{type:'float',value:.4}}},
+    {name:'sum',category:'add',type:'VDF',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'blend',category:'mix',type:'VDF',inputs:{bg:{nodename:'a'},fg:{nodename:'b'},mix:{type:'float',value:.25}}},
+    {name:'scaled',category:'multiply',type:'VDF',inputs:{in1:{nodename:'blend'},in2:{type:'color3',value:[.5,.6,.7]}}},
+    {name:'selected',category:'select',type:'VDF',inputs:{condition:{type:'boolean',value:true},truevalue:{nodename:'scaled'},falsevalue:{nodename:'a'}}},
+    {name:'switched',category:'switch',type:'VDF',inputs:{which:{type:'float',value:1},in1:{nodename:'a'},in2:{nodename:'scaled'}}}
+  ]};
+  assert.match(compileGraph(doc,{output:{nodename:'sum'}}).body,/mediumBlend\(n0,n1/);
+  assert.match(compileGraph(doc,{output:{nodename:'blend'}}).body,/mediumBlend\(n0,n1/);
+  assert.match(compileGraph(doc,{output:{nodename:'scaled'}}).body,/mediumScale\(n2,vec3f\(0\.5,0\.6,0\.7\)\)/);
+  assert.match(compileGraph(doc,{output:{nodename:'selected'}}).body,/mediumSelect\(n0,n3/);
+  assert.match(compileGraph(doc,{output:{nodename:'switched'}}).body,/mediumSelect\(n0,mediumSelect\(n3/);
+});
+test('MaterialX volumematerial forwards its typed volume shader', () => {
+  const empty = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' } } },
+    { name: 'material', category: 'volumematerial', type: 'material', inputs: { volumeshader: { nodename: 'volume' } } }
+  ] }, { output: { nodename: 'material' } });
+  assert.equal(empty.type, 'volumeshader'); assert.match(empty.body, /Medium\(/);
+  const emitted = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, .5, .25] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { nodename: 'edf' } } },
+    { name: 'material', category: 'volumematerial', type: 'material', inputs: { volumeshader: { nodename: 'volume' } } }
+  ] }, { output: { nodename: 'material' } });
+  assert.equal(emitted.type, 'volumeshader'); assert.match(emitted.body, /mediumWithEmission/); assert.equal(emitted.volumeEmission, true);
+});
+test('subsurface BSDF preserves bounded anisotropy', () => {
+  const doc={nodes:[{name:'sss',category:'subsurface_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.8,.3,.1]},radius:{type:'color3',value:[1,.5,.25]},anisotropy:{type:'float',value:.6}}}],output:{nodename:'sss'}};
+  const graph=compileGraph(doc,{output:{nodename:'sss'}});
+  assert.match(graph.body,/nativeSubsurface/); assert.match(graph.body,/0\.6/);
+  const material={nodes:[{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'sss'}}},...doc.nodes],output:{nodename:'surface'}};
+  assert.match(shaderSource([material],{}),/m\.anisotropy/);
+});
+test('subsurface BSDF accepts albedo and scaled radius aliases', () => {
+  const doc={nodes:[{name:'sss',category:'subsurface_bsdf',type:'BSDF',inputs:{albedo:{type:'color3',value:[.7,.2,.1]},radius:{type:'color3',value:[2,.5,.25]},scale:{type:'float',value:.25}}}],output:{nodename:'sss'}};
+  const graph=compileGraph(doc,{output:{nodename:'sss'}});
+  assert.match(graph.body,/nativeSubsurface\(vec3f\(0\.7,0\.2,0\.1\)/);
+  assert.match(graph.body,/vec3f\(2\.0,0\.5,0\.25\)\*max\(0\.0,0\.25\)/);
+});
+test('generalized Schlick EDF preserves directional color controls', () => {
+  const doc={nodes:[
+    {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  assert.match(source.body,/3\.0/); assert.match(shaderSource([doc],{}),/emissionSchlick/);
+});
+test('generalized Schlick preserves a measured EDF profile', () => {
+  const profile = { samples: [[0, 1], [90, .5], [180, 0]], verticalAngles: [0, 90, 180], horizontalAngles: [0], values: [1, .5, 0] };
+  const doc={measuredProfiles:{ies:profile},nodes:[
+    {name:'measured',category:'measured_edf',type:'EDF',inputs:{file:{type:'filename',value:'ies'},normal:{type:'vector3',value:[0,1,0]}}},
+    {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{nodename:'measured'},exponent:{type:'float',value:2}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const graph=compileGraph(doc,{material:true,measuredProfileIds:{ies:3}});
+  assert.match(graph.body, /surfaceEmission/); assert.match(shaderSource([doc],{}), /case 1u/); assert.match(shaderSource([doc],{}), /emissionProfile/);
+});
+test('path shading carries a bounded UV ray footprint for image mips', () => {
+  const source = shaderSource(syntheticScene('ops').materials, {});
+  assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/); assert.match(source, /rayCone/); assert.match(source, /previous\.y=min/); assert.match(source, /animation:vec4f/); assert.match(source, /cfg\.animation\.x/); assert.match(source, /cfg\.animation\.y/);
+  assert.match(source, /iorsHi/); assert.match(source, /mediaHi/); assert.match(source, /depth>=7u/);
+});
+test('volume transport includes direct HG light estimation at scattering events', () => {
+  const source=shaderSource(syntheticScene('sss').materials, {});
+  assert.match(source,/hgPhase\(dot\(-p\.direction\.xyz,light\)/);
+  assert.match(source,/p\.beta\.xyz\*tr\*hgPhase/);
+  assert.match(source,/envColor\*\(4\.0\*PI\)/);
+  assert.match(source,/let tr=exp\(-sigmaT\*shadow\.t\)/);
+  assert.match(source,/triangles\[shadow\.id\]\.a\.uv\.z\)==mediumId\(&p,mediumDepth\)-1u/);
+  assert.match(source,/medium\.emission\*\(vec3f\(1\)-tr\)/);
+});
+test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
+  assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);
+  assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'missing' } } }] }), /unknown node/);
+  assert.throws(() => compileGraph({ nodes: [constant('x', [1, 2, 3], 'color3'), { name: 'y', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /expected float/);
+  assert.throws(() => compileGraph({ nodes: [constant('x', 1), constant('x', 2)] }), /x/);
+  assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'arbitrary', type: 'float' }] }), /not implemented/);
+});
+test('compound NodeDef inputs bind separately for each instance', () => {
+  const doc = { definitions: { ND_double: { name: 'ND_double', node: 'double', outputs: { out: { type: 'float' } }, inputs: { x: { type: 'float', value: 2 } } } }, graphs: { impl: { name: 'impl', nodedef: 'ND_double', inputs: {}, outputs: { out: { nodename: 'sum' } }, nodes: [{ name: 'sum', category: 'add', type: 'float', inputs: { in1: { interfacename: 'x' }, in2: { interfacename: 'x' } } }] } }, nodes: [
+    { name: 'a', category: 'double', type: 'float', nodedef: 'ND_double', inputs: { x: { type: 'float', value: 3 } } },
+    { name: 'b', category: 'double', type: 'float', nodedef: 'ND_double', inputs: { x: { type: 'float', value: 4 } } },
+    { name: 'out', category: 'add', type: 'float', inputs: { in1: { nodename: 'a' }, in2: { nodename: 'b' } } },
+  ] };
+  const compiled = compileGraph(doc); assert.match(compiled.body, /3.0 \+ 3.0/); assert.match(compiled.body, /4.0 \+ 4.0/);
+});
+test('graph output cycle fails', () => {
+  assert.throws(() => compileGraph({ nodes: [], graphs: { g: { name: 'g', nodes: [], outputs: { out: { nodegraph: 'g', output: 'out' } } } } }, { output: { nodegraph: 'g', output: 'out' } }), /cycle/);
+});
+test('prototype names do not resolve as definitions or graphs', () => {
+  assert.throws(() => compileGraph({ nodes: [{ name: 'x', nodedef: 'constructor', category: 'constant', type: 'float' }] }), /unknown NodeDef/);
+  assert.throws(() => compileGraph({ nodes: [] }, { output: { nodegraph: '__proto__' } }), /unknown graph/);
+});
+test('unsupported physical features never silently become opaque defaults', () => {
+  const doc = syntheticScene().materials[1]; doc.nodes[0].inputs.transmission = { type: 'float', value: 1 };
+  assert.match(compileGraph(doc, { material: true }).body, /Material/);
+  delete doc.nodes[0].inputs.transmission; doc.nodes[0].inputs.subsurface = { type: 'float', value: 0.5 };
+  assert.match(compileGraph(doc, { material: true }).body, /materialFromClosure/);
+});
+test('BVH escape links progress, leaves cover every triangle exactly once', () => {
+  const scene = syntheticScene('graph'), packed = packScene(scene); let leaves = 0;
+  for (let i = 0; i < packed.nodeCount; i++) {
+    const n = packed.nodeData.subarray(i * 12, i * 12 + 12);
+    assert.ok(n[8] > i && n[8] <= packed.nodeCount); leaves += n[7];
+    for (let k = 0; k < 3; k++) assert.ok(n[k] <= n[k + 4]);
+  }
+  assert.equal(leaves, scene.indices.length / 3);
+  assert.equal(packed.triangleData.length, leaves * 156);
+  const colored={...scene,colors:new Array(scene.positions.length/3*4).fill(0).map((v,i)=>i%4===0?1:i%4===3?1:0)};
+  assert.deepEqual(Array.from(packScene(colored).triangleData.slice(12,16)),[1,0,0,1]);
+});
+test('scene resource limits and indices validated before GPU allocation', () => {
+  const scene = syntheticScene(); assert.throws(() => packScene(scene, { maxTriangles: 1 }), /budget/);
+  scene.indices[0] = -1; assert.throws(() => packScene(scene), /index/);
+});
+test('EXR float roundtrip through independent Three.js decoder', async () => {
+  const { EXRLoader } = await import('three/addons/loaders/EXRLoader.js');
+  const { FloatType } = await import('three');
+  const pixels = new Float32Array([0.25, 2, 32, 1, 0, 0.5, 1, 1]);
+  const encoded = encodeEXR(2, 1, pixels); assert.equal(new DataView(encoded.buffer).getInt32(0, true), 20000630);
+  const decoded = new EXRLoader().setDataType(FloatType).parse(encoded.buffer);
+  assert.equal(decoded.width, 2); assert.equal(decoded.height, 1); assert.deepEqual([...decoded.data], [...pixels]);
+});
+
+test('spectral EXR declares XYZ channels and preserves component order',()=>{
+  const bytes=encodeEXR(1,1,new Float32Array([.25,2,32,1]),{channels:['X','Y','Z']}),view=new DataView(bytes.buffer);let offset=8;
+  const z=()=>{const start=offset;while(bytes[offset]!==0)offset++;return new TextDecoder().decode(bytes.subarray(start,offset++));};
+  let channels=[];
+  while(bytes[offset]!==0){const name=z();z();const size=view.getUint32(offset,true);offset+=4;const end=offset+size;if(name==='channels'){while(bytes[offset]!==0){channels.push(z());assert.equal(view.getUint32(offset,true),2);offset+=16;}}offset=end;}
+  offset++;assert.deepEqual(channels,['X','Y','Z']);const row=Number(view.getBigUint64(offset,true));assert.equal(view.getUint32(row+4,true),12);
+  assert.deepEqual([0,1,2].map(i=>view.getFloat32(row+8+i*4,true)),[.25,2,32]);
+});

@@ -3,6 +3,7 @@
  */
 
 #include "py-internal.h"
+#include "lightusd-import-c.h"
 
 /* Defined in py-module.c */
 PyObject* lightusd_wrap_stage(lightusd_state* st, lightusd_stage* stage);
@@ -57,17 +58,21 @@ static PyObject* StageIter_next(PyObject* self) {
                     "Stage was structurally modified during traversal");
     return NULL;
   }
-  if (it->top == 0) return NULL; /* StopIteration */
-  lightusd_prim prim = it->stack[--it->top];
-  /* push children in reverse so traversal is preorder, left-to-right */
-  size_t n = lightusd_prim_child_count(prim);
-  for (size_t i = n; i > 0; --i) {
-    lightusd_prim child = lightusd_prim_child(prim, i - 1);
-    if (lightusd_prim_is_valid(child)) {
-      if (stageiter_push(it, child) != 0) return NULL;
+  while (it->top != 0) {
+    lightusd_prim prim = it->stack[--it->top];
+    if (it->default_predicate &&
+        !lightusd_prim_matches_local_default_predicate(prim)) continue;
+    /* A rejected ancestor prunes its subtree, matching default USD traversal. */
+    size_t n = lightusd_prim_child_count(prim);
+    for (size_t i = n; i > 0; --i) {
+      lightusd_prim child = lightusd_prim_child(prim, i - 1);
+      if (lightusd_prim_is_valid(child)) {
+        if (stageiter_push(it, child) != 0) return NULL;
+      }
     }
+    return lightusd_wrap_prim(st, it->stage, prim);
   }
-  return lightusd_wrap_prim(st, it->stage, prim);
+  return NULL; /* StopIteration */
 }
 
 static PyObject* StageIter_iter(PyObject* self) {
@@ -94,7 +99,7 @@ static PyType_Spec StageIter_spec = {
 };
 
 /* Create a DFS iterator over the stage (roots) or a prim's subtree. */
-static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj) {
+static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj, int default_predicate) {
   lightusd_stage* stage = lightusd_stage_handle(stage_obj);
   if (!stage) {
     PyErr_SetString(st->UsdError, "Stage is closed");
@@ -109,6 +114,7 @@ static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj) {
   it->top = 0;
   it->cap = 0;
   it->gen = lightusd_stage_generation(stage);
+  it->default_predicate = default_predicate;
   size_t n = lightusd_stage_root_prim_count(stage);
   for (size_t i = n; i > 0; --i) {
     lightusd_prim root = lightusd_stage_root_prim(stage, i - 1);
@@ -246,7 +252,17 @@ static Py_ssize_t Stage_length(PyObject* self) {
 static PyObject* Stage_iter(PyObject* self) {
   lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  return stage_iter_new(st, self);
+  return stage_iter_new(st, self, 0);
+}
+
+static PyObject* Stage_traverse(PyObject* self, PyObject* args, PyObject* kwargs) {
+  static char* kwlist[] = {"all_prims", NULL};
+  int all_prims = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$p:traverse", kwlist,
+                                   &all_prims)) return NULL;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  return stage_iter_new(st, self, !all_prims);
 }
 
 static PyObject* Stage_get_root_prims(PyObject* self, void* closure) {
@@ -293,7 +309,7 @@ static PyObject* Stage_prims_of_type(PyObject* self, PyObject* args) {
 
   PyObject* list = PyList_New(0);
   if (!list) return NULL;
-  PyObject* iter = stage_iter_new(st, self);
+  PyObject* iter = stage_iter_new(st, self, 0);
   if (!iter) {
     Py_DECREF(list);
     return NULL;
@@ -492,6 +508,17 @@ static PyObject* Stage_warnings(PyObject* self, PyObject* noargs) {
   return res;
 }
 
+static PyObject* Stage_import_report(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  lightusd_string* report = NULL;
+  lightusd_status status = lightusd_stage_import_report(stage, &report);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "import_report");
+  return lightusd_import_report_object(report);
+}
+
 /* ---- authoring ---- */
 
 static PyObject* Stage_define_prim(PyObject* self, PyObject* args,
@@ -591,6 +618,122 @@ static PyObject* Stage_save(PyObject* self, PyObject* args, PyObject* kwargs) {
   Py_RETURN_NONE;
 }
 
+static PyObject* Stage_save_usdz(PyObject* self, PyObject* args,
+                                 PyObject* kwargs) {
+  static char* kwlist[] = {"path", "assets", NULL};
+  const char* path;
+  PyObject* assets_obj = Py_None;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|O:save_usdz", kwlist,
+                                   &path, &assets_obj)) return NULL;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  PyObject* items = NULL;
+  Py_ssize_t count = 0;
+  if (assets_obj != Py_None) {
+    if (!PyDict_Check(assets_obj)) {
+      PyErr_SetString(PyExc_TypeError, "assets must be a dict of path: bytes");
+      return NULL;
+    }
+    count = PyDict_Size(assets_obj);
+    items = PyDict_Items(assets_obj);
+    if (!items) return NULL;
+  }
+  const char** names = (const char**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*names));
+  const uint8_t** data = (const uint8_t**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*data));
+  size_t* sizes = (size_t*)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*sizes));
+  PyObject** name_refs = (PyObject**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*name_refs));
+  if (!names || !data || !sizes || !name_refs) {
+    Py_XDECREF(items);
+    PyMem_Free(names); PyMem_Free(data); PyMem_Free(sizes); PyMem_Free(name_refs);
+    return PyErr_NoMemory();
+  }
+  int ok = 1;
+  for (Py_ssize_t i = 0; i < count; ++i) {
+    PyObject* pair = PyList_GetItem(items, i);
+    PyObject* name = PyTuple_GetItem(pair, 0);
+    PyObject* bytes = PyTuple_GetItem(pair, 1);
+    if (!PyUnicode_Check(name) || !PyBytes_Check(bytes)) {
+      PyErr_SetString(PyExc_TypeError, "USDZ assets require str keys and bytes values");
+      ok = 0;
+      break;
+    }
+    name_refs[i] = PyUnicode_AsUTF8String(name);
+    if (!name_refs[i]) { ok = 0; break; }
+    names[i] = PyBytes_AsString(name_refs[i]);
+    char* raw = NULL;
+    Py_ssize_t raw_size = 0;
+    if (PyBytes_AsStringAndSize(bytes, &raw, &raw_size) != 0) { ok = 0; break; }
+    data[i] = (const uint8_t*)raw;
+    sizes[i] = (size_t)raw_size;
+  }
+  lightusd_status status = LIGHTUSD_ERR_INVALID_ARG;
+  if (ok) {
+    Py_BEGIN_ALLOW_THREADS
+    status = lightusd_stage_save_usdz_with_assets(
+        stage, path, names, data, sizes, (size_t)count);
+    Py_END_ALLOW_THREADS
+  }
+  Py_XDECREF(items);
+  for (Py_ssize_t i = 0; i < count; ++i) Py_XDECREF(name_refs[i]);
+  PyMem_Free(names); PyMem_Free(data); PyMem_Free(sizes); PyMem_Free(name_refs);
+  if (!ok) return NULL;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, path);
+  Py_RETURN_NONE;
+}
+
+static PyObject* Stage_add_generated_asset(PyObject* self, PyObject* args) {
+  const char* path;
+  Py_buffer data = {0};
+  if (!PyArg_ParseTuple(args, "sy*:add_generated_asset", &path, &data)) return NULL;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) {
+    PyBuffer_Release(&data);
+    return NULL;
+  }
+  lightusd_status status =
+      lightusd_stage_add_generated_asset(stage, path, (const uint8_t*)data.buf, (size_t)data.len);
+  PyBuffer_Release(&data);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "add_generated_asset");
+  Py_RETURN_NONE;
+}
+
+static PyObject* Stage_generated_assets(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  PyObject* out = PyDict_New();
+  if (!out) return NULL;
+  const size_t count = lightusd_stage_generated_asset_count(stage);
+  for (size_t i = 0; i < count; ++i) {
+    lightusd_sv path;
+    const uint8_t* data;
+    size_t size;
+    lightusd_status status = lightusd_stage_generated_asset(stage, i, &path, &data, &size);
+    if (status != LIGHTUSD_OK) {
+      Py_DECREF(out);
+      return lightusd_raise(st, status, "generated_assets");
+    }
+    PyObject* key = lightusd_sv_to_str(path);
+    PyObject* value = PyBytes_FromStringAndSize((const char*)data, (Py_ssize_t)size);
+    if (!key || !value || PyDict_SetItem(out, key, value) < 0) {
+      Py_XDECREF(key);
+      Py_XDECREF(value);
+      Py_DECREF(out);
+      return NULL;
+    }
+    Py_DECREF(key);
+    Py_DECREF(value);
+  }
+  return out;
+}
+
 static PyObject* Stage_export_usda(PyObject* self, PyObject* noargs) {
   (void)noargs;
   lightusd_stage* stage;
@@ -647,6 +790,11 @@ static PyObject* Stage_repr(PyObject* self) {
 }
 
 static PyMethodDef Stage_methods[] = {
+    {"traverse", (PyCFunction)(void (*)(void))Stage_traverse,
+     METH_VARARGS | METH_KEYWORDS,
+     "traverse(*, all_prims=False) -> iterator\n"
+     "Visit active, loaded, defined, non-abstract logical prims including native "
+     "instance proxies; all_prims=True preserves unfiltered iteration."},
     {"create", Stage_create, METH_NOARGS | METH_CLASS,
      "Create an empty stage for authoring."},
     {"close", Stage_close, METH_NOARGS,
@@ -670,6 +818,8 @@ static PyMethodDef Stage_methods[] = {
      "add_sublayer(asset_path)"},
     {"warnings", Stage_warnings, METH_NOARGS,
      "Drain accumulated load warnings."},
+    {"import_report", Stage_import_report, METH_NOARGS,
+     "Return a copy of the native import report (empty for USD-only loads)."},
     {"define_prim", (PyCFunction)(void (*)(void))Stage_define_prim,
      METH_VARARGS | METH_KEYWORDS,
      "define_prim(path, type_name=None, *, specifier='def') -> Prim"},
@@ -679,6 +829,14 @@ static PyMethodDef Stage_methods[] = {
     {"save", (PyCFunction)(void (*)(void))Stage_save,
      METH_VARARGS | METH_KEYWORDS,
      "save(path, *, format=None)\nWrite USDA/USDC/USDZ (by extension)."},
+    {"save_usdz", (PyCFunction)(void (*)(void))Stage_save_usdz,
+     METH_VARARGS | METH_KEYWORDS,
+     "save_usdz(path, assets=None)\nWrite a USDZ with package assets."},
+    {"generated_assets", Stage_generated_assets, METH_NOARGS,
+     "generated_assets() -> dict[str, bytes] of importer-generated files"},
+    {"add_generated_asset", Stage_add_generated_asset, METH_VARARGS,
+     "add_generated_asset(path, data)\nAttach a file the stage references by a "
+     "relative path; saves write it beside the layer and USDZ packages it."},
     {"export_usda", Stage_export_usda, METH_NOARGS,
      "Serialize to a USDA string."},
     {"export_usdc", Stage_export_usdc, METH_NOARGS,

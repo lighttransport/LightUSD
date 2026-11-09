@@ -29,7 +29,12 @@ static void parse_usdc(const uint8_t *data, size_t size)
   lightusd::usdc::USDCReader reader(&sr, config);
 
   bool ret = reader.ReadUSDC();
-  (void)ret;
+  if (ret) {
+    // Crate fields/sections alone do not decode all authored values. Exercise
+    // stage reconstruction too, including array storage and property payloads.
+    lightusd::Stage stage;
+    (void)reader.ReconstructStage(&stage);
+  }
 
   return;
 }

@@ -14,6 +14,7 @@
 #include "next/layer/layer.hh"
 #include "next/layer/prim-spec.hh"
 #include "next/layer/property-index.hh"
+#include "next/schema/schema-registry.hh"
 
 using namespace lightusd::next;
 
@@ -584,9 +585,176 @@ void test_define_prim_name_validation() {
   std::cout << "  define_prim name validation: PASSED" << std::endl;
 }
 
+void test_layer_metadata_memory_usage() {
+  Layer layer;
+  const size_t empty_bytes = layer.memory_usage();
+  Dict nested;
+  nested.set("text", Value(std::string(384u * 1024u, 'm')));
+  nested.set("samples", Value::MakeDoubleArray(std::vector<double>(16384, 0.0)));
+  layer.meta().customLayerData = Value::MakeDictionary(std::move(nested));
+  layer.meta().rootPrimOrder.emplace_back(64u * 1024u, 'r');
+  DecodedExtensionField extension;
+  extension.name = "largeExtension";
+  extension.value = Value(std::string(64u * 1024u, 'e'));
+  layer.meta().unknownFields.push_back(std::move(extension));
+  assert(layer.memory_usage() >= empty_bytes + 600u * 1024u &&
+         "layer metadata payloads must count toward the import/export budget");
+}
+
+void test_prim_metadata_memory_usage() {
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.add_property("weight", Value(1.0f));
+  builder.end_prim();
+  builder.finalize();
+  PrimSpec* prim = layer.prim(0);
+  assert(prim);
+  const size_t empty_bytes = layer.memory_usage();
+  Dict property_data;
+  property_data.set("samples",
+      Value::MakeDoubleArray(std::vector<double>(32768, 0.0)));
+  PropMeta& property_meta = prim->ensure_property_meta("weight");
+  property_meta.customData = Value::MakeDictionary(std::move(property_data));
+  prim->meta().doc() = std::string(256u * 1024u, 'd');
+  prim->meta().unknownMeta().emplace_back("pipelineTag",
+      std::string(64u * 1024u, 'u'));
+  assert(layer.memory_usage() >= empty_bytes + 550u * 1024u &&
+         "prim/property cold metadata must count toward the layer budget");
+  const size_t before_variant = layer.memory_usage();
+  PrimVariantData option;
+  option.name = "longOption";
+  option.doc = std::string(96u * 1024u, 'v');
+  PrimVariantSetData set;
+  set.name = "detail";
+  set.variants.push_back(std::move(option));
+  prim->meta().variantSets().push_back(std::move(set));
+  assert(layer.memory_usage() >= before_variant + 96u * 1024u &&
+         "variant option metadata must count toward the layer budget");
+  auto content = std::make_shared<Layer>();
+  content->meta().doc = std::string(256u * 1024u, 'c');
+  const size_t before_content = layer.memory_usage();
+  prim->meta().variantSets().front().variants.front().content = content;
+  const size_t with_content = layer.memory_usage();
+  assert(with_content >= before_content + 256u * 1024u &&
+         "retained variant content Layer must count toward the budget");
+  PrimVariantData shared_option;
+  shared_option.name = "sharedContent";
+  shared_option.content = content;
+  prim->meta().variantSets().front().variants.push_back(
+      std::move(shared_option));
+  assert(layer.memory_usage() < with_content + 128u * 1024u &&
+         "shared variant content Layer must not be charged twice");
+}
+
+void test_time_samples_variable_array() {
+  std::cout << "Testing variable-size time samples..." << std::endl;
+  PrimSpec prim("varArrPrim", "Mesh");
+  PropNameTable& table = GetPropNameTable();
+  PropNameId points_id = table.intern("points");
+
+  for (int f = 0; f < 6; ++f) {
+    size_t n = (size_t(f) % 4) + 1;
+    std::vector<float> data(n * 3);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = float(f) + float(i) * 0.1f;
+    prim.add_time_sample(points_id, double(f), Value::MakeFloat3Array(data));
+  }
+  // repeated equal arrays to exercise dedup
+  std::vector<float> shared = {9,9,9, 8,8,8, 7,7,7};
+  prim.add_time_sample(points_id, 6.0, Value::MakeFloat3Array(shared));
+  prim.add_time_sample(points_id, 7.0, Value::MakeFloat3Array(shared));
+
+  const auto* samples = prim.time_samples(points_id);
+  assert(samples != nullptr);
+  assert(samples->size() == 8);
+
+  auto stats = prim.time_sample_stats();
+  assert(stats.total_samples == 8);
+  // 6 variable + 2 shared -> 7 unique (one dedup)
+  assert(stats.dedup_count >= 1);
+
+  // read back lengths
+  for (int f = 0; f < 6; ++f) {
+    const Value* v = prim.time_sample_value((*samples)[f].second);
+    assert(v != nullptr);
+    size_t n = (size_t(f) % 4) + 1;
+    // float3 array -> n elements
+    assert(v->array_size() == n);
+  }
+  std::cout << "  Variable-size time samples: PASSED" << std::endl;
+}
+
+
+
+
+
+void test_schema_registry_new_schemas() {
+  std::cout << "Testing schema registry new schemas..." << std::endl;
+  const auto& reg = GetSchemaRegistry();
+  assert(reg.IsKnownSchema("GenerativeProcedural"));
+  assert(reg.IsKnownSchema("Backdrop"));
+  assert(reg.IsKnownSchema("NodeGraphNodeAPI"));
+  assert(reg.IsKnownSchema("SceneGraphPrimAPI"));
+  assert(reg.IsKnownSchema("AccessibilityAPI"));
+  assert(reg.IsKnownSchema("ClipsAPI"));
+  assert(reg.IsKnownSchema("CollectionAPI"));
+  assert(reg.IsKnownSchema("MaterialBindingAPI"));
+  assert(reg.IsKnownSchema("LightListAPI"));
+  assert(reg.InheritsFrom("GenerativeProcedural", "Boundable"));
+  assert(reg.InheritsFrom("Backdrop", "Typed"));
+  assert(reg.InheritsFrom("ClipsAPI", "Typed"));
+  std::cout << "  schema registry new schemas: PASSED" << std::endl;
+}
+void test_lazy_path_index_materialization_epoch() {
+  Layer layer;
+  layer.set_lazy_path_index(true);
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.begin_prim("Mesh", "Mesh");
+  builder.end_prim();
+  builder.end_prim();
+  builder.finalize();
+  const size_t before_bytes = layer.memory_usage();
+  const size_t before_epoch = lu_storage_materialization_epoch();
+  assert(before_epoch != 0);
+  assert(layer.prim_at_path("/Root/Mesh"));
+  const size_t after_epoch = lu_storage_materialization_epoch();
+  assert(after_epoch == before_epoch + 1);
+  assert(layer.memory_usage() > before_bytes);
+  assert(layer.prim_at_path("/Root"));
+  assert(lu_storage_materialization_epoch() == after_epoch);
+}
+
+void test_authored_property_order_survives_lookup_sort_and_clone() {
+  PrimSpec prim("P");
+  prim.add_property("z", Value(int32_t(1)));
+  prim.add_relationship("r", Path("/Target"));
+  prim.add_property("a", Value(int32_t(2)));
+  prim.set_relationship_targets("s", {});
+  const std::vector<std::string> original{"z", "r", "a", "s"};
+  prim.finalize_properties();
+  assert(prim.authored_property_names() == original);
+  assert(prim.property("a"));
+  PrimSpec copy = prim.Clone();
+  assert(copy.authored_property_names() == original);
+  assert(copy.remove_property("z"));
+  assert(copy.remove_relationship("r"));
+  copy.add_property("z", Value(int32_t(3)));
+  copy.set_relationship_targets("r", {});
+  copy.finalize_properties();
+  assert((copy.authored_property_names() == std::vector<std::string>{"a", "s", "z", "r"}));
+  assert(prim.authored_property_names() == original);
+  PrimSpec attributes("Attributes");
+  attributes.add_property("z", Value(int32_t(1)));
+  attributes.add_property("a", Value(int32_t(2)));
+  attributes.finalize_properties();
+  assert((attributes.authored_property_names() == std::vector<std::string>{"z", "a"}));
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
+  test_authored_property_order_survives_lookup_sort_and_clone();
   test_prop_name_table();
 #if defined(LIGHTUSD_ENABLE_THREAD)
   test_frozen_string_view_lookup_is_safe();
@@ -595,11 +763,16 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_lazy_path_index_materialization_epoch();
   test_finalize_does_not_allocate_cold_prim_metadata();
   test_layer_sort_rebuilds_hierarchy();
   test_metadata();
+  test_layer_metadata_memory_usage();
+  test_prim_metadata_memory_usage();
   test_interpolation();
   test_time_samples();
+  test_schema_registry_new_schemas();
+  test_time_samples_variable_array();
   test_relationships();
   test_path_authoring();
   test_define_prim_name_validation();

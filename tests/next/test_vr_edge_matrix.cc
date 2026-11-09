@@ -24,7 +24,6 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
 
 using namespace lightusd::next;
 
@@ -60,23 +59,23 @@ const std::vector<Expectation> kExpectations = {
 bool FlattenNext(const Value& v, size_t want, std::vector<double>* out) {
   out->clear();
   if (v.is_array()) {
-    if (const auto* fa = v.as_float_array()) {
+    if (auto fa = v.as_float_array()) {
       for (float f : *fa) out->push_back(double(f));
       return true;
     }
-    if (const auto* da = v.as_double_array()) {
+    if (auto da = v.as_double_array()) {
       for (double d : *da) out->push_back(d);
       return true;
     }
-    if (const auto* ia = v.as_int_array()) {
+    if (auto ia = v.as_int_array()) {
       for (int32_t i : *ia) out->push_back(double(i));
       return true;
     }
-    if (const auto* i64a = v.as_int64_array()) {
+    if (auto i64a = v.as_int64_array()) {
       for (int64_t i : *i64a) out->push_back(double(i));
       return true;
     }
-    if (const auto* ua = v.as_uint_array()) {
+    if (auto ua = v.as_uint_array()) {
       for (uint32_t u : *ua) out->push_back(double(u));
       return true;
     }
@@ -218,7 +217,7 @@ int main(int argc, char** argv) {
       continue;
     }
     if (e.kind == 2) {
-      const std::string* s = r.value.as_string();
+      auto s = r.value.as_string();
       if (!s) s = r.value.as_token();
       if (!s || *s != e.str) fail("string mismatch");
       continue;

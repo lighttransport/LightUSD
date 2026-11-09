@@ -11,7 +11,7 @@ documents live in [archive/](archive/).
   variants; LIVRPS correctness analysis vs OpenUSD PCP.
 - [pcp.md](pcp.md) — Composition-graph (PCP / DAG engine) API reference,
   OpenUSD and AOUSD alignment.
-- [instancing.md](instancing.md) — OpenUSD instancing model, the Moana Island
+- [instancing.md](instancing.md) — OpenUSD instancing model, the Moana reference scene
   instancing structure, and LightUSD's instancing state + scaling plan.
 - [timesamples.md](timesamples.md) — Time-sampled attribute evaluation,
   interpolation, and value deduplication.
@@ -45,7 +45,13 @@ documents live in [archive/](archive/).
 
 ## Rendering, GPU, and Assets
 
+- [workflow-tools.md](workflow-tools.md) — Dependency reports, property traces, checker baselines/SARIF, recursive diff, static GLB and CPU capture workflows.
+
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
+- [lmetalview](../examples/lmetalview/README.md) — native macOS Swift + Metal
+  Quick Look-style viewer (`next` product only).
+- [ld3d12view](../examples/ld3d12view/README.md) — native Windows Direct3D 12
+  viewer on the lmetalview core and lightui (`next` product only).
 - [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).
 - [lusdrender.md](lusdrender.md) — `lusdrender` GPU backend testing.
@@ -65,10 +71,13 @@ documents live in [archive/](archive/).
 
 - [memory-and-performance.md](memory-and-performance.md) — Memory profile and
   performance notes (parsing stages, Tydra conversion, config options).
-- [benchmarks.md](benchmarks.md) — Renderer benchmarks: Moana Island
+- [benchmarks.md](benchmarks.md) — Renderer benchmarks: Moana reference scene
   per-element and mid-scale scenes (Kitchen_set, Moore Lane).
-- [large-scene.md](large-scene.md) — Loading 10-20 GB production scenes (Island,
-  ALab, Caldera) within a bounded RAM budget, incl. validated VRAM-fit configs.
+- [large-scene.md](large-scene.md) — Loading 10-20 GB production scenes (reference scene,
+  ALab, benchmark scene) within a bounded RAM budget, incl. validated VRAM-fit configs.
+- [large-scene-vs-openusd.md](large-scene-vs-openusd.md) — benchmark scene compose/write
+  benchmark against OpenUSD v26.11.1 (build recipe, phase tables, USDA
+  newline-after-prim-spec finding).
 - [sanitizers.md](sanitizers.md) — ASan/TSan build and run notes.
 - [datarace.md](datarace.md) — Thread-safety and data-race notes.
 - [refactor-next.md](refactor-next.md) — `src/next` optimization & hardening
@@ -97,3 +106,36 @@ documents live in [archive/](archive/).
 
 - [tydra-animation-spec-en.md](tydra-animation-spec-en.md) — Tydra animation
   specification.
+
+## Renderer validation reports
+
+- [Lean 4 formal verification of the AOUSD Core Spec v1.1.0](validation/lean-verification-2026-11-06.md)
+  (now in the `usdspec-conformance` repo: `verif/lean`, reflection vectors, spec issue drafts `issues/aousd/08`-`21`).
+- [Current dataset gap closure ledger](validation/gap-closure-status.md) and
+  [resumed implementation report](validation/session-resumed-2026-11-03.md).
+- [Complete matching-work load time and RSS](validation/load-performance-resumed-2026-11-03.md).
+- [Extended USD-assets, empty-view controls and analytic sphere checks](validation/usd-assets-extended-2026-11-03.md).
+- [Final USD-assets sampled diagnostic refresh](validation/usd-assets-native-parameters-2026-11-03.md).
+- [OpenUSD staging allocation defect and bounded control](validation/openusd-staging-buffer-2026-11-03.md).
+- [Storm Island zero-frame: AMD GPU device reset from over-capacity instancers](validation/storm-instancer-gpu-reset-2026-11-05.md).
+- [Island resource-closed subset validation](validation/island-subset-population-2026-11-03.md).
+- [Normal AOV interpretation control](validation/normal-aov-contract-2026-11-03.md).
+- [Original-source native roughness/metallic checks](validation/roughness-native-parameters-2026-11-03.md).
+- [Explicit contact-response controls](validation/physics-contact-response-2026-11-03.md).
+- [Optimized PTex reference and generated-fixture controls](validation/island-ptex-release-control-2026-11-03.md).
+- [Caldera AMD geometry and performance](validation/caldera-amd-2026-11-02.md).
+- [USD-WG assets: sampled animation times and shading AOVs](validation/usd-assets-amd-2026-11-02.md).
+- [Headless validation job configuration](../tools/view_control/HEADLESS.md#json-validation-jobs-assets-animation-times-and-shading-aovs).
+- [ALab original-source shot and Remi refresh](validation/alab-original-2026-11-03.md); [earlier diagnostic controls](validation/alab-2026-11-02.md).
+- [Disney Island full scene and terrain subsets](validation/island-2026-11-02.md).
+- [MuJoCo Menagerie conversion, rendering and after-load physics](validation/menagerie-2026-11-02.md).
+
+- [Island bounded mesh repeatability](validation/island-mesh-repeatability-2026-11-03.md).
+- [Island independent PTex decoding](validation/island-ptex-2026-11-03.md).
+- [Physics consumer defects and analytic dynamics](validation/physics-gap-investigation-2026-11-03.md).
+
+- [Bounded original Island meshes and curves](validation/island-curves-2026-11-03.md)
+
+- [Original Caldera and rigged AMD geometry acceptance](validation/geometry-acceptance-2026-11-03.md)
+
+- [Dataset gap implementation and audit (2026-11-03)](validation/session-final-2026-11-03.md)

@@ -17,7 +17,11 @@
 #include <limits>
 #include <string>
 #include <vector>
+#if (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__)
+#include <sys/mman.h>
+#endif
 
+#include "next/c/lightusd-core-c.h"
 #include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
@@ -74,6 +78,109 @@ static bool RejectsCompressedHugeBlob() {
   return !ok;
 }
 
+static bool RejectsOversizedInteger64Workspace() {
+  uint8_t src[8] = {0};
+  uint64_t dst[1] = {0};
+  const size_t count =
+      (std::numeric_limits<size_t>::max)() / sizeof(uint32_t) + 1;
+  return lu_crate_decode_integers64(src, sizeof(src), dst, count) == 0;
+}
+
+static bool ExactCrateBlobSize() {
+  const uint8_t raw[5] = {'a', 'b', 'c', 'd', 'e'};
+  const CompressResult compressed = CompressCrateBlob(raw, sizeof(raw));
+  if (!compressed.success) return false;
+  const DecompressResult exact = DecompressCrateBlobExact(
+      compressed.data.data(), compressed.data.size(), sizeof(raw));
+  if (!exact.success || exact.data.size() != sizeof(raw) ||
+      std::memcmp(exact.data.data(), raw, sizeof(raw)) != 0) {
+    return false;
+  }
+  const DecompressResult short_result = DecompressCrateBlobExact(
+      compressed.data.data(), compressed.data.size(), sizeof(raw) + 1);
+  if (short_result.success) return false;
+  // The default API is exact too; the explicit Upto variant is the one that
+  // accepts a decoded length below the capacity.
+  if (DecompressCrateBlob(compressed.data.data(), compressed.data.size(),
+                          sizeof(raw) + 1)
+          .success) {
+    return false;
+  }
+  const DecompressResult upto = DecompressCrateBlobUpto(
+      compressed.data.data(), compressed.data.size(), sizeof(raw) + 1);
+  return upto.success && upto.data.size() == sizeof(raw);
+}
+
+static bool RejectsTruncatedIntegerEncoding() {
+  uint32_t dst[2] = {0, 0};
+  // Declares a four-byte common prefix but carries only one byte.
+  const uint8_t truncated_prefix[2] = {4, 1};
+  if (lu_crate_decode_integers(truncated_prefix, sizeof(truncated_prefix),
+                               dst, 1)) {
+    return false;
+  }
+  // Declares a three-byte suffix but carries no suffix bytes.
+  const uint8_t truncated_suffix[2] = {0, 3};
+  return lu_crate_decode_integers(truncated_suffix, sizeof(truncated_suffix),
+                                  dst, 1) == 0;
+}
+
+static void TestBudgetedCrateBlob() {
+  const uint8_t raw[] = {'a', 'b', 'c', 'd', 'e'};
+  const auto compressed = CompressCrateBlob(raw, sizeof(raw));
+  assert(compressed.success && compressed.data.front() == 0);
+  uint8_t output[10] = {};
+  size_t decoded = 99;
+  const char* error = nullptr;
+  assert(!lu_crate_blob_decompress_bounded(
+      compressed.data.data(), compressed.data.size(), output, sizeof(output),
+      sizeof(output) - 1, &decoded, &error));
+  assert(decoded == 0 && error);
+
+  // A two-block frame exercises the separate per-block LZ4 capacities and
+  // truncated headers without needing a multi-gigabyte compressed input.
+  std::vector<uint8_t> frame(1, 2);
+  const int32_t block_size = static_cast<int32_t>(compressed.data.size() - 1);
+  for (int i = 0; i < 2; ++i) {
+    const size_t begin = frame.size();
+    frame.resize(begin + sizeof(block_size));
+    std::memcpy(frame.data() + begin, &block_size, sizeof(block_size));
+    frame.insert(frame.end(), compressed.data.begin() + 1, compressed.data.end());
+  }
+  assert(lu_crate_blob_decompress_bounded(
+      frame.data(), frame.size(), output, sizeof(output), sizeof(output),
+      &decoded, &error));
+  assert(decoded == 10 && !std::memcmp(output, raw, 5) &&
+         !std::memcmp(output + 5, raw, 5));
+  assert(!lu_crate_blob_decompress_bounded(
+      frame.data(), frame.size(), output, 9, 9, &decoded, &error));
+  frame.resize(1 + sizeof(block_size) + static_cast<size_t>(block_size) + 2);
+  assert(!lu_crate_blob_decompress_bounded(
+      frame.data(), frame.size(), output, sizeof(output), sizeof(output),
+      &decoded, &error));
+
+#if (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__)
+  if (sizeof(size_t) > 4) {
+    // Reserve address space, touching only one page. This catches the former
+    // 1 GiB rejection and a negative int destination-capacity cast above 2 GiB
+    // without committing gigabytes of test memory.
+    const size_t capacity = (size_t(1) << 31) + 4096;
+    void* mapping = mmap(nullptr, capacity, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    assert(mapping != MAP_FAILED);
+    auto* dst = static_cast<uint8_t*>(mapping);
+    assert(!lu_crate_blob_decompress(
+        compressed.data.data(), compressed.data.size(), dst, capacity,
+        &decoded, &error));  // ordinary API keeps its default cap
+    assert(lu_crate_blob_decompress_bounded(
+        compressed.data.data(), compressed.data.size(), dst, capacity, capacity,
+        &decoded, &error));
+    assert(decoded == sizeof(raw) && !std::memcmp(dst, raw, sizeof(raw)));
+    assert(munmap(mapping, capacity) == 0);
+  }
+#endif
+}
+
 static void PutU64(std::string& buf, uint64_t v) {
   for (int i = 0; i < 8; ++i) {
     buf.push_back(static_cast<char>((v >> (i * 8)) & 0xffu));
@@ -95,6 +202,10 @@ int main() {
   assert(RejectsHugeArray(CrateTypeId::Token));     // 4 B index/elem
   assert(RejectsRaisedLimitOverflowCount());
   assert(RejectsCompressedHugeBlob());
+  assert(RejectsOversizedInteger64Workspace());
+  assert(RejectsTruncatedIntegerEncoding());
+  assert(ExactCrateBlobSize());
+  TestBudgetedCrateBlob();
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):
@@ -141,7 +252,7 @@ int main() {
     bool ok = DecodeCrateArray(buf.data(), buf.size(), raw_rep, tokens,
                                1024ull * 1024 * 1024, &out);
     assert(ok);
-    const std::vector<uint8_t>* arr = out.as_bool_array();
+    auto arr = out.as_bool_array();
     assert(arr && arr->size() == 3);
     assert((*arr)[0] == 0);
     assert((*arr)[1] == 1);
@@ -178,7 +289,7 @@ int main() {
 
       Value compressed_bool;
       assert(decode(CrateTypeId::Bool, &compressed_bool));
-      const std::vector<uint8_t>* compressed_arr =
+      auto compressed_arr =
           compressed_bool.as_bool_array();
       assert(compressed_arr && compressed_arr->size() == lanes.size());
       for (size_t i = 0; i < lanes.size(); ++i) {
@@ -187,7 +298,7 @@ int main() {
 
       Value compressed_int;
       assert(decode(CrateTypeId::Int, &compressed_int));
-      const std::vector<int32_t>* ints = compressed_int.as_int_array();
+      auto ints = compressed_int.as_int_array();
       assert(ints && ints->size() == lanes.size());
       for (size_t i = 0; i < lanes.size(); ++i) {
         assert((*ints)[i] == static_cast<int32_t>(lanes[i]));

@@ -1,5 +1,7 @@
+#include "core/native-io.hh"
 #include "usdz-reader.hh"
 #include "../safe-file-size.hh"
+#include "../c/lightusd-core-c.h"
 #include <cstring>
 #include <algorithm>
 #include <cctype>
@@ -47,14 +49,8 @@ static bool URLDecode(std::string *s) {
   for (size_t i = 0; i < s->size(); i++) {
     if ((*s)[i] == '%') {
       if (i + 2 >= s->size()) return false;
-      auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        return -1;
-      };
-      int hi = hex((*s)[i + 1]);
-      int lo = hex((*s)[i + 2]);
+            int hi = lu_lex_hex_val((*s)[i + 1]);
+      int lo = lu_lex_hex_val((*s)[i + 2]);
       if (hi < 0 || lo < 0) return false;
       out.push_back(static_cast<char>((hi << 4) | lo));
       i += 2;
@@ -103,6 +99,8 @@ bool IsSafeEntryName(const std::string& name) {
 
 bool USDZReader::OpenFile(const std::string& filename,
                           const USDZReadOptions& options) {
+  if (!::lightusd::NativeIOAvailable(&error_)) return false;
+
   error_.clear();
   entries_.clear();
   data_ = nullptr;

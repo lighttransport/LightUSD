@@ -6,7 +6,16 @@ This document outlines the design for raytracing-optimized data structures in th
 
 **Author:** Design Document
 **Date:** 2025-11-28
-**Status:** Draft
+**Status:** Archived implementation sketch. Do not extend this parallel scene
+model for production rendering; the active path converts Tydra `RenderScene`
+into the shared LightRT host scene used by `lusdview` and `lusdrender`.
+
+The data declarations in `raytracing-data.hh/.cc` exist, including scene bounds
+and validation, but `RaytracingSceneConverter` and its BVH builder remain
+placeholders. Completing them would duplicate the maintained RenderScene,
+`rt_scene_build`, and LightRT paths. They remain source-compatible experimental
+types until a consumer demonstrates a requirement that the active pipeline
+cannot satisfy.
 
 ---
 
@@ -537,32 +546,31 @@ Stage → RenderSceneConverter → RenderScene
 
 ---
 
-## 5. Implementation Plan
+## 5. Historical Implementation Plan
 
 ### Phase 1: Core Data Structures
-- [ ] Implement `RTGeometry`, `RTMaterial`, `RTLight` structs
-- [ ] Implement `RTInstance` and `RTCamera` structs
-- [ ] Implement `RaytracingScene` class
-- [ ] Add to `src/tydra/raytracing-data.hh`
+- [x] Implement `RTGeometry`, `RTMaterial`, `RTLight` structs
+- [x] Implement `RTInstance` and `RTCamera` structs
+- [x] Implement `RaytracingScene` class
+- [x] Add to `src/tydra/raytracing-data.hh`
 
 ### Phase 2: Converter
-- [ ] Implement `RaytracingSceneConverter` class
-- [ ] Mesh conversion (flatten, triangulate, extract attributes)
-- [ ] Material conversion (map UsdPreviewSurface → RTMaterial)
-- [ ] Light conversion (extract light sources, build sampling data)
-- [ ] Add to `src/tydra/raytracing-data.cc`
+
+Superseded by `RenderSceneConverter` plus the shared LightRT host-scene build.
+The placeholder `RaytracingSceneConverter` is retained for source compatibility;
+new mesh, material, and light conversion work belongs in the active shared path.
 
 ### Phase 3: Acceleration Structure
-- [ ] Implement abstract `RTAccelerationStructure` interface
-- [ ] Add BVH builder (or integrate Embree)
-- [ ] Implement scene bounds calculation
-- [ ] Add to `src/tydra/raytracing-accel.hh/cc`
+
+- [x] Retain the experimental `RTAccelerationStructure` carrier and scene bounds.
+- [x] Build production CPU/GPU acceleration structures through LightRT.
 
 ### Phase 4: Testing & Optimization
-- [ ] Unit tests for conversion
-- [ ] Validate with existing USD models
-- [ ] Performance benchmarks (memory, conversion time)
-- [ ] Documentation and examples
+
+Production conversion, validation, rendering, and performance coverage lives in
+the `lusdview`, `lusdrender`, and Tydra `RenderScene` tests. A separate test and
+example matrix for the placeholder converter would create a second behavioral
+contract and is intentionally not planned.
 
 ---
 

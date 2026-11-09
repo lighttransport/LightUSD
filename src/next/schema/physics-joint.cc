@@ -22,11 +22,11 @@ static bool GetStringOrToken(const UsdPrim& prim, const std::string& prop_name,
   if (!out) return false;
   const Value* val = prim.GetPropertyValue(prop_name);
   if (!val) return false;
-  if (const std::string* s = val->as_string()) {
+  if (auto s = val->as_string()) {
     *out = *s;
     return true;
   }
-  if (const std::string* tok = val->as_token()) {
+  if (auto tok = val->as_token()) {
     *out = *tok;
     return true;
   }

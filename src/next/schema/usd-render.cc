@@ -21,8 +21,8 @@ void CopyTokenArray(const AttributeEval& eval, const UsdPrim& prim,
                     const char* name, std::vector<std::string>* out) {
   const EvalResult result = eval.Eval(prim, name);
   if (result.success) {
-    if (const std::vector<std::string>* values = result.value.as_token_array()) {
-      *out = *values;
+    if (auto values = result.value.as_token_array()) {
+      out->assign(values->begin(), values->end());
     }
   }
 }

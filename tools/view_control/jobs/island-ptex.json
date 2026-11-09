@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "reference": "OpenPtex v2.4.3, source 4aa2c35f9f25f025014fbbbf41cef669881b4172; system zlib; record actual build profile",
+  "files": [
+    "isBeach/Color/seaweed0016_geo.ptx",
+    "isBeach/Color/archiveRock0007_geo.ptx",
+    "isBeach/Color/beach_geo.ptx",
+    "isBeach/Displacement/beach_geo.ptx",
+    "isBayCedarA1/Color/trunk_base_geo.ptx",
+    "isBayCedarA1/Displacement/trunk_base_geo.ptx"
+  ]
+}

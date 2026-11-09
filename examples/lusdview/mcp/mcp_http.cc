@@ -2,6 +2,8 @@
 // HTTP transport for the MCP server (civetweb raw C API). One JSON-RPC response
 // per POST (minimal "Streamable HTTP"; no SSE / server-initiated messages).
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 
 #include "external/civetweb/civetweb.h"
@@ -15,11 +17,27 @@ int MCPServer::HttpHandler(mg_connection* conn, void* user) {
   const mg_request_info* ri = mg_get_request_info(conn);
   const char* method = ri && ri->request_method ? ri->request_method : "";
 
+  if (!self->httpToken_.empty()) {
+    const char* auth = mg_get_header(conn, "Authorization");
+    const std::string expected = "Bearer " + self->httpToken_;
+    const std::string supplied = auth ? auth : "";
+    unsigned difference = static_cast<unsigned>(supplied.size() != expected.size());
+    for (size_t i = 0; i < expected.size(); ++i)
+      difference |= static_cast<unsigned>(expected[i] ^ (i < supplied.size() ? supplied[i] : 0));
+    if (difference) {
+      mg_printf(conn, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+      return 401;
+    }
+  }
   if (std::strcmp(method, "POST") == 0) {
     std::string body;
     char buf[2048];
     int n;
     while ((n = mg_read(conn, buf, sizeof(buf))) > 0) {
+      if (body.size() + static_cast<size_t>(n) > 32u * 1024u * 1024u) {
+        mg_printf(conn, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\n\r\n");
+        return 413;
+      }
       body.append(buf, static_cast<size_t>(n));
     }
     const std::string resp = self->dispatchLine(body);  // marshals to main thread
@@ -55,6 +73,14 @@ int MCPServer::HttpHandler(mg_connection* conn, void* user) {
 
 bool MCPServer::startHttp(const std::string& hostname, int port) {
   if (httpCtx_) return true;
+  httpToken_.clear();
+  if (const char* tokenPath = std::getenv("LUSDVIEW_MCP_TOKEN_FILE")) {
+    std::ifstream tokenFile(tokenPath);
+    if (!std::getline(tokenFile, httpToken_) || httpToken_.size() < 16 || httpToken_.size() > 4096) {
+      LOGE("MCP token file is unreadable or invalid");
+      return false;
+    }
+  }
   const std::string ports = hostname.empty()
                                 ? std::to_string(port)
                                 : hostname + ":" + std::to_string(port);

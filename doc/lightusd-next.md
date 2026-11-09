@@ -3,6 +3,25 @@
 This note explains the "next" stack in LightUSD and how it is used by the web
 `usdzconvert` pipeline.
 
+Property metadata round trips preserve authored empty `allowedTokens` arrays
+and unknown USDA property metadata through USDC unregistered values. The writer
+test generates an attribute/relationship matrix for empty lists, dictionaries,
+strings, and authored default scalars.
+
+Tydra Next exposes `RenderScene::conversion_diagnostics` with preserved
+unsupported, approximated, and failed dispositions. `StreamConvertResult`
+also retains diagnostics produced after the scene catalog was emitted.
+`ConverterConfig::strict_conversion` requires warning-free full conversion;
+this includes resolver and colorspace warnings, so it is deliberately stricter
+than merely rejecting shader approximations. The default remains permissive.
+The C API exposes `lightusd_render_config_set_strict` and conversion diagnostic
+count/get functions without changing the render-config layout. Light-filter
+fallbacks remain inert even when their source authors a nonzero intensity.
+
+The WASM `LayerDocument.setAttribute(path, name, type, value, isArray, options)`
+accepts optional `{uniform, custom}` boolean flags. Existing calls retain their
+custom-attribute default; explicit flags support schema-authored attributes.
+
 ## Terminology
 
 LightUSD currently has two USD implementations:
@@ -60,7 +79,7 @@ int main() {
   std::string err;
 
   lightusd::next::LoadUSDOptions opts;
-  opts.max_memory = 1024ull * 1024ull * 1024ull;
+  opts.limits.max_resident_bytes = 1024ull * 1024ull * 1024ull;
 
   if (!lightusd::next::LoadUSDComposed("scene.usdc", &stage, opts, &warn, &err)) {
     // handle err
@@ -98,18 +117,53 @@ if (!edit) return 1;
 lightusd::next::StageSnapshot current = edit.snapshot;
 ```
 
+All public next loaders default to `InputPolicy::Untrusted` and finite
+`ResourceLimits`. Zero-valued limits are rejected. Trusted applications that
+deliberately need no shared load/session/render ceiling must opt in with
+`InputPolicy::Trusted` and `ResourceLimits::Unlimited()`; lower-level
+format-specific structural guards remain in force unless separately raised.
+
 Variant overrides are scoped by prim path, so identically named variant sets on
 different prims do not interfere. Diagnostics and deferred-payload state remain
 available on the session after each rebuild. Successful edits atomically publish
 a monotonically revisioned, immutable `StageSnapshot` and a typed
 `StageChangeSet`; retained older snapshots remain coherent. `ReloadLayer()`
 re-reads an edited dependency and publishes the resulting stage transactionally.
+`GetLastChangeSet()` lets retained consumers recover the change record paired
+with the current snapshot after an asynchronous edit completes.
+`AppendStageChangeSet()` combines consecutive edit records into one revision
+range, ORing per-prim flags and deduplicating property names; a revision gap
+forces the aggregate to full-resync.
 Array-backed geometry remains copy-on-write across snapshots.
+Concurrent snapshot reads are supported with one serialized writer. Mutations
+attempted reentrantly from progress, preview, or render-sink callbacks fail with
+`OperationStatus::Busy`. `CloseAndTakeStage()` transfers without cloning only
+after all published snapshots have been released.
 
 Persistent render consumers can feed those snapshots and change sets to
 `tydra::next::RenderSession`. Its `SceneUpdateSink` transaction reports stable
 resource IDs plus typed removals/upserts, allowing a renderer to retain GPU
-resources across payload, variant, and layer edits.
+resources across payload, variant, and layer edits. Geometry-only topology and
+primvar changes clone the retained catalog with copy-on-write chunk storage and
+reconvert only the named meshes; unchanged mesh allocations remain shared with
+the previous snapshot. `Prepare()`/`PrepareInitialize()` complete conversion and
+allocation without publishing or invoking the destination sink. `Commit()` may
+then run on the render thread; it publishes only after `SceneUpdateSink::EndUpdate`
+succeeds, calls `AbortUpdate` on rejection, and rejects candidates whose base
+revision became stale. A rejected candidate remains retryable, while `Abort()`
+explicitly discards it. The existing `Initialize()` and `Apply()` calls are
+compatibility wrappers around this two-phase protocol.
+
+The session converts at `ConverterConfig::time_code` until `SetTimeCode()`
+changes it. A changed time marks the next update as a full resync: time samples
+can move any prim, and UsdVol volume material constants (density, scattering,
+emission) are read at that time too, so an update with an empty change set still
+re-converts the scene instead of taking the no-op or mesh-patch shortcut. The C
+API mirrors this as `lightusd_render_session_set_time_code` /
+`lightusd_render_session_time_code`, and the C++ facade as
+`RenderSession::set_time_code()` / `time_code()`.
+older immutable render snapshots. Broader resync, material, hierarchy, light,
+camera, and animation changes currently take the full conversion path.
 
 ## next-io
 
@@ -178,6 +232,11 @@ with lossy assumptions.
 
 ## Application Defaults
 
+- `lusdcat`: the `next` CLI is the default `lusdcat` for native builds. The
+  former `next_usdcat` executable is now built as `lusdcat`, and
+  `next_usdcat` remains a CMake target alias for regression scripts. Select
+  the legacy CLI with `-DLIGHTUSD_NATIVE_PRODUCT=legacy` (deprecated).
+  `LIGHTUSD_NEXT_BUILD_TOOLS=OFF` disables the next CLI when it is not wanted.
 - `lusdview`: next-core and tydra-next are used by default. Use
   `--legacy-load` only for compatibility investigation. `--next` remains an
   accepted no-op for existing scripts.

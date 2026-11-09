@@ -18,7 +18,7 @@ bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name)
 }
 
 bool AsciiParser::Impl::ParseVariantSetBodyInto(
-    const std::string& variant_set_name, std::vector<VariantSetData>& target,
+    const std::string& variant_set_name, std::vector<PrimVariantSetData>& target,
     int depth) {
   if (depth > 64) {
     AddError("variantSet nesting too deep");
@@ -30,7 +30,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
     return false;
   }
 
-  VariantSetData* vs_data = nullptr;
+  PrimVariantSetData* vs_data = nullptr;
   for (auto& vs : target) {
     if (vs.name == variant_set_name) {
       vs_data = &vs;
@@ -44,7 +44,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
   }
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
-    VariantData variant;
+    PrimVariantData variant;
     if (!ParseVariantOption(&variant, depth)) {
       return false;
     }
@@ -54,7 +54,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
   return Match(TokenType::CloseBrace);
 }
 
-bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
+bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
   if (!out) return false;
 
   if (!lexer_->expect(TokenType::String, out->name)) {
@@ -77,10 +77,14 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       // `reorder` is a no-op on the flat list.
       enum class ArcOp { Bare, Prepend, Append, Delete, Reorder } arc_op =
           ArcOp::Bare;
+      bool add_spelling = false;
       if (Match(TokenType::Prepend)) {
         arc_op = ArcOp::Prepend;
-      } else if (Match(TokenType::Append) || Match(TokenType::Add)) {
+      } else if (Match(TokenType::Append)) {
         arc_op = ArcOp::Append;
+      } else if (Match(TokenType::Add)) {
+        arc_op = ArcOp::Append;
+        add_spelling = true;
       } else if (Match(TokenType::Delete)) {
         arc_op = ArcOp::Delete;
       } else if (Match(TokenType::Reorder)) {
@@ -225,13 +229,13 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             std::string qual_prefix;
             switch (arc_op) {
               case ArcOp::Prepend: qual_prefix = "prepend "; break;
-              case ArcOp::Append: qual_prefix = "append "; break;
+              case ArcOp::Append: qual_prefix = add_spelling ? "add " : "append "; break;
               case ArcOp::Delete: qual_prefix = "delete "; break;
               case ArcOp::Reorder: qual_prefix = "reorder "; break;
               default: break;
             }
-            out->unknownMeta.emplace_back(
-                qual_prefix + key, std::string(base + vstart, vend - vstart));
+            StoreRawMetadataOpinion(&out->unknownMeta, qual_prefix + key,
+                                    std::string(base + vstart, vend - vstart));
           }
         }
       }
@@ -271,6 +275,10 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       lexer_->next();
       std::string rel_name;
       if (!ParseNamespacedName(&rel_name, "relationship name")) break;
+      if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), rel_name) ==
+          out->authoredPropertyNames.end())
+        out->authoredPropertyNames.push_back(rel_name);
       SkipPropertyMetadata();
       if (Match(TokenType::Equals)) {
         if (Check(TokenType::None)) {
@@ -308,7 +316,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
                tok.type == TokenType::Identifier) {
       uint16_t vflags = 0;
       while (true) {
-        TokenType tt = lexer_->peek().type;
+        TokenType tt = lexer_->peek_view().type;
         if (tt == TokenType::Custom) {
           vflags |= PropSlot::kFlagCustom;
           lexer_->next();
@@ -332,6 +340,10 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           AddError("Failed to parse relationship name in variant option");
           return false;
         }
+        if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), rel_name) ==
+          out->authoredPropertyNames.end())
+          out->authoredPropertyNames.push_back(rel_name);
         SkipPropertyMetadata();
         if (Match(TokenType::Equals)) {
           if (Check(TokenType::None)) {
@@ -373,6 +385,10 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       if (is_array) vflags |= PropSlot::kFlagArray;
       std::string prop_name;
       if (!ParseNamespacedName(&prop_name, "attribute name")) break;
+      if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), prop_name) ==
+          out->authoredPropertyNames.end())
+        out->authoredPropertyNames.push_back(prop_name);
       SkipPropertyMetadata();
       if (Check(TokenType::Dot)) {
         lexer_->next();
@@ -536,7 +552,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
   // sets parsed from the body.
   out->variantSelections = pending_selections;
   for (const auto& sel : pending_selections) {
-    for (VariantSetData& nvs : out->variantSets) {
+    for (PrimVariantSetData& nvs : out->variantSets) {
       if (nvs.name == sel.first) {
         nvs.selected = sel.second;
         break;

@@ -577,6 +577,12 @@ enum TypeId {
   TYPE_ID_FIELD_ASSET,
   TYPE_ID_OPENVDB_ASSET,
   TYPE_ID_FIELD3D_ASSET,
+  // UsdVol field base schemas: VolumeFieldBase is the current Xformable root
+  // of field prims, FieldBase its deprecated spelling; VolumeFieldAsset is the
+  // file-backed field base that FieldAsset (deprecated) shares.
+  TYPE_ID_VOLUME_FIELD_BASE,
+  TYPE_ID_FIELD_BASE,
+  TYPE_ID_VOLUME_FIELD_ASSET,
   TYPE_ID_VOL_END,
 
   // Types for usdRender

@@ -13,7 +13,7 @@ rm -rf build
 echo "1. Standard WASM32 build (2GB memory limit default)"
 echo "---------------------------------------------------"
 mkdir build-wasm32
-emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=OFF -Bbuild-wasm32
+emcmake cmake -DLIGHTUSD_WASM_PRODUCT=legacy -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=OFF -Bbuild-wasm32
 echo "Build command: emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=OFF -Bbuild-wasm32"
 echo "Memory default: 2GB (2048 MB)"
 echo
@@ -21,7 +21,7 @@ echo
 echo "2. WASM64/MEMORY64 build (8GB memory limit default)"
 echo "---------------------------------------------------"
 mkdir build-wasm64
-emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=ON -Bbuild-wasm64
+emcmake cmake -DLIGHTUSD_WASM_PRODUCT=legacy -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=ON -Bbuild-wasm64
 echo "Build command: emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=ON -Bbuild-wasm64"
 echo "Memory default: 8GB (8192 MB)"
 echo

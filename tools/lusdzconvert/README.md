@@ -9,7 +9,9 @@ Capabilities:
   USDZ (AOUSD Core Spec §17: uncompressed zip, 64-byte aligned, root layer first),
   then validates the result with `ValidateUSDZ`.
 - **Flat USDC / USDA output** — write a single flattened binary or ASCII file
-  (textures stay as external references) with `--outputFormat usdc` or `--outputFormat usda`.
+  with `--outputFormat usdc` or `--outputFormat usda`. Textures retain their
+  original bytes and format as external references; resolved filesystem paths
+  are rebased to the output layer's directory.
 - **Composition flatten** — resolves sublayers / references / payloads / variants
   (LIVRPS) into a single flattened stage before writing.
 - **Texture resize** — caps each texture's longest edge.
@@ -22,11 +24,17 @@ Capabilities:
 ## Build
 
 ```bash
-cmake -B build -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON \
+cmake -S . -B build_ninja/legacy-convert -G Ninja \
+      -DLIGHTUSD_NATIVE_PRODUCT=legacy \
+      -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON \
       -DLIGHTUSD_WITH_FPNGE=ON -DLIGHTUSD_FPNGE_SIMD=avx2
-cmake --build build -j16
-# binary: build/tools/lusdzconvert/lusdzconvert
+cmake --build build_ninja/legacy-convert --target lusdzconvert -j16
+# binary: build_ninja/legacy-convert/tools/lusdzconvert/lusdzconvert
 ```
+
+The native converter currently uses the legacy API and requires the explicit
+product selection above. The default next product supports the JavaScript
+`usdzconvert` path through the next WASM module.
 
 `LIGHTUSD_FPNGE_SIMD` selects the fpnge code path at compile time:
 `avx2` (default), `sse41`, `sse2`, or `scalar`. fpnge upstream requires SSE4.1
@@ -67,6 +75,55 @@ but root-layer discovery itself is not recursive.
 | `-fitStrategy <size\|quality>` | Lever to meet the budget: reduce dimensions (`size`) or transcode to JPEG + lower quality (`quality`) |
 | `-fitMinTextureSize <N>` | Smallest longest-edge allowed by the size search (default 64) |
 | `-fitMinQuality <1-100>` | Lowest JPEG quality allowed by the quality search (default 30) |
+
+### Bake UDIMs into one texture
+
+`--bake-udim grid` stitches tiles in their UDIM positions and inserts a
+`UsdTransform2d` after the existing UV input. It preserves mesh topology and
+supports non-flattened layers, including variant contents. `--bake-udim dense`
+packs sorted tile IDs into a compact atlas with gutters and a reserved blank
+cell, then authors separate face-varying UVs for each texture layout. Original
+UVs and other texture consumers remain intact. Dense mode requires flattened
+native output.
+
+```sh
+lusdzconvert scene.usda scene.usdz --bake-udim grid --udim-max-tiles 32
+lusdzconvert scene.usda scene.usdz --bake-udim dense --udim-cross-tile split
+lusdzconvert scene.usda baked.usda --outputFormat usda --bake-udim dense
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--bake-udim off\|grid\|dense` | `off` | Enable stitching or compact packing |
+| `--udim-max-tiles N` | `100` | Maximum resolved tiles per texture layout; excess fails |
+| `--udim-max-atlas-size N` | `8192` | Maximum atlas edge in pixels |
+| `--udim-memory-budget SIZE` | `512MB` | Bake working-memory cap; accepts bytes, MB, or GB |
+| `--udim-cross-tile reject\|split` | `reject` | Dense faces crossing tile edges fail or are clipped |
+| `--udim-dense-padding N` | `2` | Dense gutter width in pixels |
+| `--udim-subdivision-level N` | `2` | Subdivision levels before dense UV remapping |
+
+Tile discovery accepts `<UDIM>`, `%04d`, and `%(UDIM)d` patterns and IDs
+1001–9999. The tile limit applies to the union of IDs for an animated texture
+file, so all frames share one layout. Missing cells are transparent. Tiles are
+never silently omitted to meet a limit. Source resolution is retained unless
+`-resizeTextures` requests a cap; an oversized atlas or insufficient working
+memory fails explicitly. Integer tiles produce PNG8/PNG16; floating-point
+tiles produce EXR. JPEG requires an explicit texture-format request and fails
+when it would discard 16-bit or floating-point precision.
+
+Dense splitting preserves winding, material subsets, compatible numeric and
+string/token primvars, authored deformation samples, skin weights, and sparse
+blendshape/in-between offsets. Subdivision is evaluated with its authored
+scheme and boundary/crease rules. Internal prototype consumers retain their
+instance transforms. Discrete primvars require equal contributors. Changing
+topology, changing joint ownership, moving UVs that change tile ownership or
+clipping topology, and animated UV-transform networks fail explicitly.
+
+USDZ embeds generated textures. Flat USDA/USDC writes content-named sidecars in
+`<output filename>_textures/` and publishes the root only after the sidecars
+succeed; conflicting existing files fail without replacing the previous root.
+The JS API and CLI expose the same controls; see
+[JavaScript UDIM baking](../../web/js/docs/udim-baking.md).
 
 ### Fit textures to a size budget
 
@@ -131,7 +188,7 @@ lusdzconvert in.usdz out.usdz -textureFormat png -pngEncoder fpnge
   merging them) is **not** performed in this version — repack is exposed as a
   standalone texture operation. Resize / re-encode / path-normalization in the
   conversion pipeline preserve the existing shader graph.
-- EXR/16-bit textures are passed through unchanged (no resize/transcode), and
+- Outside UDIM baking, EXR/16-bit textures are passed through unchanged (no resize/transcode), and
   are counted as fixed overhead against a `-targetTextureSize` budget.
 - `-targetTextureSize` budgets the **sum of texture bytes**; the final `.usdz`
   is slightly larger (USDC layer + zip overhead).

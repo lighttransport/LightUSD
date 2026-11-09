@@ -7,7 +7,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
-#include "../parser/ascii-parser.hh"
+#include "../parser/parse-options.hh"
 #include <string>
 
 namespace lightusd {
@@ -49,7 +49,6 @@ LoadResult LoadUSDAFromStringOwned(std::string&& data,
                                    const LoadOptions& options = {});
 
 /// Quick check if a file appears to be USDA format (checks magic bytes)
-bool IsUSDAFile(const char* filename);
 
 }  // namespace next
 }  // namespace lightusd

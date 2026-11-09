@@ -4,8 +4,10 @@
 // Collection API and path-expression based light-link resolution.
 
 #include "render-converter-light-linking.hh"
+#include "render-converter-prop-read.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "render-data.hh"
-#include "core/path-expression-eval.hh"
+#include "next/core/path-expression-eval.hh"
 #include "next/stage/stage.hh"
 
 #include <algorithm>
@@ -21,27 +23,7 @@ using ::lightusd::next::UsdPrim;
 using ::lightusd::next::Value;
 namespace {
 
-bool GetBool(const UsdPrim& prim, const std::string& name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) {
-    *out = *result;
-    return true;
-  }
-  if (const std::string* result = value->as_string()) {
-    *out = *result;
-    return true;
-  }
-  return false;
-}
 
 // Mesh paths sorted lexicographically, built ONCE per ResolveLightLinking call
 // and shared by every light and both link kinds.
@@ -179,7 +161,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
   const Value* value = owner.GetPropertyValue(property_name);
   if (!value ||
       value->type_id() != ::lightusd::next::TypeId::PathExpression) return false;
-  const std::string* text = value->as_string();
+  auto text = value->as_string();
   if (!text) return false;
   ParsedPathExpression expression = ParsedPathExpression::Parse(*text);
   if (!expression.valid()) return false;
@@ -202,7 +184,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
         "collection:" + ref.name + ":membershipExpression");
     if (!ref_value || ref_value->type_id() !=
                           ::lightusd::next::TypeId::PathExpression) return nullptr;
-    const std::string* ref_text = ref_value->as_string();
+    auto ref_text = ref_value->as_string();
     if (!ref_text) return nullptr;
     std::string qualified = *ref_text;
     const std::string replacement = "%" + owner_path + ":";
@@ -251,9 +233,9 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   if (!includes && !excludes) return;  // unauthored -> links all
 
   bool include_root = false;
-  GetBool(prim, base + "includeRoot", &include_root);
+  GetPropBool(prim, base + "includeRoot", &include_root);
   std::string rule = "expandPrims";
-  GetToken(prim, base + "expansionRule", &rule);
+  GetPropToken(prim, base + "expansionRule", &rule);
   const bool explicit_only = (rule == "explicitOnly");
   const std::string& owner_path = prim.GetPath().str();
 

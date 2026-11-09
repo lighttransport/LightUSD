@@ -1,0 +1,35 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "lmetalview animation test: a distant light rotating around Y."
+    endTimeCode = 48
+    startTimeCode = 0
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def DistantLight "Key"
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:intensity.timeSamples = {
+            0: 0.5,
+            48: 4,
+        }
+        double3 xformOp:rotateXYZ.timeSamples = {
+            0: (0, 0, 0),
+            48: (0, 90, 0),
+        }
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def Mesh "Cube"
+    {
+        uniform bool doubleSided = 0
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 7, 6, 5, 0, 4, 5, 1, 1, 5, 6, 2, 2, 6, 7, 3, 3, 7, 4, 0]
+        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, 0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, 0.5, -0.5)]
+    }
+}

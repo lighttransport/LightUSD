@@ -2,6 +2,7 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "usd-semantics.hh"
+#include "../layer/prim-spec.hh"
 
 #include "../eval/attribute-eval.hh"
 #include "../prim/identifier.hh"
@@ -29,9 +30,9 @@ bool GetSemanticsLabels(const Stage& stage, const UsdPrim& prim,
   eval.SetTime(time);
   const EvalResult value = eval.Eval(prim, "semantics:labels:" + instance_name);
   if (!value.success) return true;
-  const std::vector<std::string>* labels = value.value.as_token_array();
+  auto labels = value.value.as_token_array();
   if (!labels) return false;
-  *out = *labels;
+  out->assign(labels->begin(), labels->end());
   return true;
 }
 

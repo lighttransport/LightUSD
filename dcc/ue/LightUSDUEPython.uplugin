@@ -1,0 +1,18 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "LightUSD UE Python Bridge",
+  "Description": "Python-first LightUSD bridge for Unreal Editor.",
+  "Category": "Importers",
+  "CreatedBy": "Light Transport Entertainment Inc.",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    { "Name": "LightUSDUEPython", "Type": "Editor", "LoadingPhase": "Default" }
+  ],
+  "Plugins": [
+    { "Name": "PythonScriptPlugin", "Enabled": true }
+  ]
+}

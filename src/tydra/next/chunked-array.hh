@@ -32,8 +32,16 @@ class ChunkedArray {
   ChunkedArray() : storage_(sizeof(T), alignof(T), kElementsPerChunk) {}
   ChunkedArray(ChunkedArray&&) noexcept = default;
   ChunkedArray& operator=(ChunkedArray&&) noexcept = default;
-  ChunkedArray(const ChunkedArray&) = delete;
-  ChunkedArray& operator=(const ChunkedArray&) = delete;
+  // Copies are cheap copy-on-write views. This makes retained RenderScene
+  // catalogs practical to clone for a transactional incremental update while
+  // keeping unchanged geometry chunks physically shared.
+  ChunkedArray(const ChunkedArray& other) : ChunkedArray() {
+    share_from(other);
+  }
+  ChunkedArray& operator=(const ChunkedArray& other) {
+    share_from(other);
+    return *this;
+  }
 
   void share_from(const ChunkedArray& other) {
     if (this == &other) return;
@@ -47,9 +55,36 @@ class ChunkedArray {
     maybe_shared_ = false;
     return true;
   }
+  // Reserve a known final element count without allocating a full-size tail.
+  // Subsequent growth is supported, but may expand that tail first.
+  bool reserve_exact(size_t n) {
+    if (!storage_.reserve_exact(n)) return false;
+    maybe_shared_ = false;
+    return true;
+  }
   bool resize(size_t n) {
     if (!storage_.resize(n)) return false;
     maybe_shared_ = false;
+    return true;
+  }
+  bool resize_exact(size_t n) {
+    if (!storage_.resize_exact(n)) return false;
+    maybe_shared_ = false;
+    return true;
+  }
+  bool resize_exact(size_t n, const T& value) {
+    const T fill = value;
+    const size_t previous = size();
+    if (!resize_exact(n)) return false;
+    size_t i = previous;
+    while (i < n) {
+      const size_t offset = i % kElementsPerChunk;
+      const size_t space = kElementsPerChunk - offset;
+      const size_t count = n - i < space ? n - i : space;
+      T* dest = const_cast<T*>(chunk_data(i / kElementsPerChunk)) + offset;
+      for (size_t j = 0; j < count; ++j) dest[j] = fill;
+      i += count;
+    }
     return true;
   }
   bool resize(size_t n, const T& value) {
@@ -97,6 +132,10 @@ class ChunkedArray {
     if (count) maybe_shared_ = false;
     return true;
   }
+  bool append_exact(const T* data, size_t count) {
+    if (empty() && count && !reserve_exact(count)) return false;
+    return append(data, count);
+  }
   bool alloc_failed() const { return storage_.alloc_failed(); }
   void clear() { storage_.clear(); }
   void shrink_to_fit() { storage_.shrink_to_fit(); }
@@ -138,6 +177,13 @@ class ChunkedArray {
   }
   bool copy_to(T* dest) const { return storage_.copy_to(dest, size()); }
   bool copy_to(T* dest, size_t count) const { return storage_.copy_to(dest, count); }
+  // Copy to a caller-owned byte buffer, including unaligned FFI destinations.
+  // Check capacity before touching it; the storage copies whole chunks using
+  // memcpy rather than indexing each element through the chunk table.
+  bool copy_bytes_to(void* dest, size_t capacity_bytes) const {
+    if (size() > capacity_bytes / sizeof(T)) return false;
+    return storage_.copy_to(dest, size());
+  }
   std::vector<T> flatten() const {
     std::vector<T> result(size());
     copy_to(result.data());

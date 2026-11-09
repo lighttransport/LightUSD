@@ -5,7 +5,12 @@
 
 #include "variant-holders.hh"
 
+#include <algorithm>
 #include <string>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 #include <vector>
 
 namespace lightusd {
@@ -50,7 +55,9 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
       dst->add_property_slot(slot.name_id,
                              static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = src.property_type_name(pname)) {
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      dst->set_property_type_name(slot.name_id, TypeNameId{slot.type_name_id});
+    } else if (const std::string* tn = src.property_type_name(slot.name_id)) {
       dst->set_property_type_name(pname, *tn);
     }
     if (const PropMeta* pm = src.property_meta(slot.name_id)) {
@@ -84,7 +91,7 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
     dst->set_type_name(src.type_name());
   }
   // Prim metadata the option's "__self__" root may carry.
-  const PrimSpecMeta& sm = src.meta();
+  const PrimMetadata& sm = src.meta();
   if (!sm.kind().empty()) dst->meta().kind() = sm.kind();
   if (!sm.apiSchemas().empty()) dst->meta().apiSchemas() = sm.apiSchemas();
   if (sm.customData().is_dictionary()) {
@@ -92,11 +99,11 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   }
 }
 
-// Build one "{set=variant}" holder prim from inline VariantData and append it
+// Build one "{set=variant}" holder prim from inline PrimVariantData and append it
 // (plus any content subtree prims) to `out`. Returns the holder's prim index.
 uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
                              const std::string& set_name,
-                             const VariantData& vd) {
+                             const PrimVariantData& vd) {
   const std::string hp = HolderPath(owner_path, set_name, vd.name);
   PrimSpec holder("{" + set_name + "=" + vd.name + "}");
   holder.set_path(Path(hp));
@@ -116,6 +123,7 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
       holder.set_relationship_flags(rel.first, fit->second);
     }
   }
+  holder.set_authored_property_names(vd.property_names());
   holder.meta().active = vd.active;
   holder.meta().hidden = vd.hidden;
   if (!vd.active || vd.active_authored) holder.meta().active_authored = true;
@@ -178,13 +186,13 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
 
 bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
   if (IsBracketedName(prim.name())) return false;
-  for (const VariantSetData& vs : prim.meta().variantSets()) {
-    for (const VariantData& vd : vs.variants) {
+  for (const PrimVariantSetData& vs : prim.meta().variantSets()) {
+    for (const PrimVariantData& vd : vs.variants) {
       if (!layer.prim_at_path(HolderPath(prim.path().str(), vs.name,
                                          vd.name))) {
         return true;
       }
-      // Holder exists but the inline VariantData carries opinions of its own
+      // Holder exists but the inline PrimVariantData carries opinions of its own
       // (MergeVariantData pattern): materialization must run so those merge
       // into the existing holder rather than being dropped.
       if (!vd.properties.empty() || !vd.relationships.empty() || vd.content) {
@@ -198,7 +206,32 @@ bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
 }  // namespace
 
 bool LayerNeedsVariantHolders(const Layer& layer) {
-  for (const PrimSpec& prim : layer.prims()) {
+  const auto& prims = layer.prims();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Every write asks this up front; on a composed 10 M-prim stage the serial
+  // scan stood alone between the compose and the write. Slices stop once any
+  // prim needs holders (prim_at_path builds the lazy index thread-safely).
+  const size_t n = prims.size();
+  const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+  const size_t T = n >= 262144 ? std::min<size_t>(hw, 16) : 1;
+  if (T > 1) {
+    std::atomic<bool> found{false};
+    std::vector<std::thread> pool;
+    pool.reserve(T);
+    for (size_t t = 0; t < T; ++t) {
+      pool.emplace_back([&, t] {
+        for (size_t i = n * t / T, hi = n * (t + 1) / T;
+             i < hi && !found.load(std::memory_order_relaxed); ++i) {
+          if (PrimNeedsHolders(layer, prims[i]))
+            found.store(true, std::memory_order_relaxed);
+        }
+      });
+    }
+    for (std::thread& th : pool) th.join();
+    return found.load();
+  }
+#endif
+  for (const PrimSpec& prim : prims) {
     if (PrimNeedsHolders(layer, prim)) return true;
   }
   return false;
@@ -214,11 +247,11 @@ Layer MaterializeVariantHolders(const Layer& layer) {
     const std::string owner_path = out.prim(static_cast<uint32_t>(i))
                                        ->path()
                                        .str();
-    const std::vector<VariantSetData> sets =
+    const std::vector<PrimVariantSetData> sets =
         out.prim(static_cast<uint32_t>(i))->meta().variantSets();
     if (sets.empty()) continue;
 
-    for (const VariantSetData& vs : sets) {
+    for (const PrimVariantSetData& vs : sets) {
       // "{set=}" VariantSet declaration spec (pxr enumerates variantChildren
       // from it). Create it when any option holder is being synthesized.
       const std::string decl_path = HolderPath(owner_path, vs.name, "");
@@ -227,13 +260,13 @@ Layer MaterializeVariantHolders(const Layer& layer) {
       if (!IsValidVariantIdentifier(vs.name, /*allow_empty=*/false)) {
         continue;  // would corrupt bracket path parsing; refuse to embed
       }
-      for (const VariantData& vd : vs.variants) {
+      for (const PrimVariantData& vd : vs.variants) {
         if (!IsValidVariantIdentifier(vd.name, /*allow_empty=*/false)) {
           continue;
         }
         const std::string hp = HolderPath(owner_path, vs.name, vd.name);
         if (PrimSpec* existing = out.prim_at_path_mutable(hp)) {
-          // Holder already present (crate-read layer). Inline VariantData may
+          // Holder already present (crate-read layer). Inline PrimVariantData may
           // still carry opinions the holder lacks (MergeVariantData pattern:
           // declared-empty holder in a stronger layer + content merged in
           // from a weaker one) — upsert those instead of dropping them.

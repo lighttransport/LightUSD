@@ -21,14 +21,13 @@
 #include "usd-to-json.hh"
 #include "usd-dump.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 #include "crate-dump.hh"
 #include "usdc-reader.hh"
 #include "usdc-writer.hh"
 #include "usda-writer.hh"
 #include "usd-validation.hh"
 
-#include "tydra/scene-access.hh"
 #include "variant-format.hh"
 #include "comp-graph-dump.hh"
 
@@ -142,6 +141,28 @@ static bool ContainsAny(const std::string &s,
     }
   }
   return false;
+}
+
+static void PrintMeshPrims(const lightusd::Stage &stage) {
+  std::vector<std::pair<const lightusd::Prim *, std::string>> pending;
+  for (auto it = stage.root_prims().rbegin();
+       it != stage.root_prims().rend(); ++it) {
+    pending.emplace_back(&*it, "");
+  }
+  while (!pending.empty()) {
+    auto current = std::move(pending.back());
+    pending.pop_back();
+    const auto name = current.first->element_name();
+    const std::string path = current.second + "/" +
+                             std::string(name.data(), name.size());
+    if (current.first->type_name() == "Mesh") {
+      std::cout << "Prim : " << path << "\n";
+    }
+    const auto &children = current.first->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      pending.emplace_back(&*it, path);
+    }
+  }
 }
 
 template <typename T>
@@ -963,6 +984,7 @@ void print_help() {
   std::cout << "Inspect options (YAML-like tree output):\n";
   std::cout << "  --inspect           Inspect Layer structure (YAML-like output)\n";
   std::cout << "  --inspect-json      Inspect Layer structure (JSON output)\n";
+  std::cout << "  --explain /Prim.attr  Explain property sources (with --json/--time)\n";
   std::cout << "  --mesh-subset-report\n";
   std::cout << "                      Report mesh child GeomSubset/material binding state\n";
   std::cout << "                      to find typeless or incomplete subset children\n";
@@ -1019,7 +1041,10 @@ void print_help() {
 #endif
 #endif
 
+int ExplainProperty(int argc, char** argv);
 int main(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i)
+    if (std::string(argv[i]) == "--explain") return ExplainProperty(argc, argv);
   // Set 32GB virtual memory limit to prevent OOM / memory thrashing
 #if !defined(_WIN32) && !defined(LUSDCAT_NO_AS_LIMIT)
   {
@@ -2160,15 +2185,7 @@ int main(int argc, char **argv) {
     }
     phase_mark("write-output");
 
-    using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
-    MeshMap meshmap;
-
-    lightusd::tydra::ListPrims(comp_stage, meshmap);
-
-    for (const auto &item : meshmap) {
-
-      std::cout << "Prim : " << item.first << "\n";
-    }
+    PrintMeshPrims(comp_stage);
     phase_mark("list-prims(tail)");
 
   } else {

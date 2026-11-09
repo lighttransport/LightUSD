@@ -12,7 +12,7 @@ dynamic = ["version"]
 description = "Lightweight, dependency-free USD/USDA/USDC/USDZ loader + Tydra render-scene access, with NumPy-friendly zero-copy arrays (CPython abi3 + free-threaded wheels)."
 readme = "python/README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Syoyo Fujita", email = "syoyo@lighttransport.com" },
     { name = "Light Transport Entertainment, Inc.", email = "syoyo@lighttransport.com" },
@@ -27,7 +27,6 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -58,10 +57,10 @@ version_file = "python/lightusd/_version.py"
 # cibuildwheel configuration
 # --------------------------------------------------------------------------
 # Two wheels per platform:
-#   cp310-abi3 : Py_LIMITED_API=0x030A0000, covers CPython >= 3.10
+#   cp311-abi3 : Py_LIMITED_API=0x030B0000, covers CPython >= 3.11
 #   cp314t     : free-threaded CPython 3.14 (non-limited; Py_mod_gil declared)
 [tool.cibuildwheel]
-build = ["cp310-*", "cp314t-*"]
+build = ["cp311-*", "cp314t-*"]
 enable = ["cpython-freethreading"]
 # No PyPy; lightusd is CPython-only.
 skip = [

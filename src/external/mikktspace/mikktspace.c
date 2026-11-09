@@ -21,6 +21,9 @@
  *  3. This notice may not be removed or altered from any source distribution.
  */
 
+/* LightUSD modification: define the zero-count seed rotation without a
+ * shift by the width of unsigned int (UBSan regression). */
+
 #include <assert.h>
 #include <stdio.h>
 #include <math.h>
@@ -1452,7 +1455,7 @@ static void QuickSort(int* pSortBuffer, int iLeft, int iRight, unsigned int uSee
 
 	// Random
 	unsigned int t=uSeed&31;
-	t=(uSeed<<t)|(uSeed>>(32-t));
+	t=(uSeed<<t)|(uSeed>>((32-t)&31));
 	uSeed=uSeed+t+3;
 	// Random end
 
@@ -1659,7 +1662,7 @@ static void QuickSortEdges(SEdge * pSortBuffer, int iLeft, int iRight, const int
 
 	// Random
 	t=uSeed&31;
-	t=(uSeed<<t)|(uSeed>>(32-t));
+	t=(uSeed<<t)|(uSeed>>((32-t)&31));
 	uSeed=uSeed+t+3;
 	// Random end
 

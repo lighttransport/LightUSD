@@ -15,7 +15,7 @@ MJCF  ──cli/urdf-to-usd.js──▶  USD (PhysicsScene + Mjc* + Newton* sche
 | --- | --- |
 | `cli/urdf-to-usd.js` | Forward leg. Parses URDF **or** MJCF (`--input-format mjcf`), registers mesh geometry via `setVisualMesh`/`setCollisionMesh` (binary, by `meshRef`), calls `createURDFPhysicsScene`, then exports USDA/USDC/USDZ. |
 | `cli/usd-to-mjcf.js` | Return leg. Loads a USD stage, calls `extractPhysicsSceneJSON` for structure + `getMesh()` for real vertex data, rebuilds the kinematic tree, and emits MJCF with real `.obj` meshes. |
-| `run-mjcf-roundtrip.sh` | Focused runner. Drives both legs over the pinned [`mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) dataset and compares the body/joint counts that survived the trip. |
+| `run-mjcf-roundtrip.sh` | Focused runner. Drives both legs over the pinned [`mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) dataset and compares the body/joint counts that survived the trip. It uses small placeholder meshes for fast structural closure; `--real-meshes` restores full mesh export. |
 | `tests/screenshot-urdf-batch.mjs` | **Visual** verification. Drives the real `urdf.html` web demo in headless Chrome (Puppeteer): index assets, import MJCF (source view), click *URDF/MJCF → USD* (converted view), screenshot the split-view comparison per robot. |
 | `tests/screenshot-offscreen-batch.mjs` | **Worker visual** verification. Uploads each converted USD to `offscreengl.html`, checks the OffscreenCanvas Worker protocol, and captures the canvas. |
 
@@ -127,6 +127,9 @@ cd web/js
 
 # Also re-parse each emitted MJCF back through the forward leg (full closure):
 ./run-mjcf-roundtrip.sh --closure
+
+# Exercise full render-mesh return/export when needed:
+./run-mjcf-roundtrip.sh --real-meshes
 ```
 
 Environment overrides: `MUJOCO_MENAGERIE` or `MENAGERIE_DIR` (default `./mujoco_menagerie`
@@ -142,7 +145,13 @@ universal_robots_ur5e      ur5e                      7→7    6→6  20→20    
 
 A roundtrip **PASSes** when the kinematic structure is preserved:
 `forward links == return bodies` **and** `forward joints == return joints`.
-With `--closure`, the emitted MJCF is also re-parsed and its counts must match.
+With `--closure`, the emitted MJCF is also re-parsed and its body/joint counts
+must match.
+The runner writes placeholder OBJ meshes by default because geometry contents
+are not part of these structural assertions. The return CLI still exports real
+meshes by default, and `--real-meshes` enables that path in the runner.
+The browser checks render the original forward USD, so they still exercise its
+full authored geometry.
 
 ## What round-trips, and what does not
 

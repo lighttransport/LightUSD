@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -332,19 +333,24 @@ bool FiniteColor(const Vec3 &v) {
 Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
                         const Vec3 &wo, const Vec3 &wi,
                         const Vec3 &radiance, const Options &opt,
-                        const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
+                        const lightusd::tydra::LightRtOpenPBRParams *openpbr,
+                        Vec3 *diffuse_out = nullptr) {
   const float ndotl = std::max(0.0f, Dot(normal, wi));
   if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
   if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
-    return Mul(Mul(tri.base_color, radiance), ndotl);
+    const Vec3 full = Mul(Mul(tri.base_color, radiance), ndotl);
+    if (diffuse_out) *diffuse_out = full;
+    return full;
   }
   OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
   float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
-  return Vec3{brdf.x * radiance.x * ndotl,
-              brdf.y * radiance.y * ndotl,
-              brdf.z * radiance.z * ndotl};
+  v3 fd, fs;
+  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &fd, &fs,
+                  &pdf);
+  const Vec3 diffuse = Mul(Mul(FromMtlxV3(fd), radiance), ndotl);
+  const Vec3 specular = Mul(Mul(FromMtlxV3(fs), radiance), ndotl);
+  if (diffuse_out) *diffuse_out = diffuse;
+  return Add(diffuse, specular);
 }
 
 // ---------------------------------------------------------------------------
@@ -764,7 +770,8 @@ inline Vec3 EnvDir(const IblCache &ibl, const Vec3 &d) {
 inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
                              uint8_t ch, float u, float v, float lod,
                              float scale = 1.0f, float bias = 0.0f) {
-  if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
+  if (id < 0 || size_t(id) >= textures.size())
+    return std::numeric_limits<float>::quiet_NaN();
   return textures[size_t(id)].sample_channel(u, v, lod, int(ch)) * scale + bias;
 }
 
@@ -778,7 +785,8 @@ inline float SampleScalarTexAniso(const std::vector<Texture> &textures,
                                   bool have_fp, float dudx, float dvdx,
                                   float dudy, float dvdy, int max_aniso,
                                   float scale = 1.0f, float bias = 0.0f) {
-  if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
+  if (id < 0 || size_t(id) >= textures.size())
+    return std::numeric_limits<float>::quiet_NaN();
   const Texture &tx = textures[size_t(id)];
   const float raw = have_fp ? tx.sample_channel_aniso(u, v, dudx, dvdx, dudy,
                                                       dvdy, max_aniso, int(ch))
@@ -867,7 +875,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
-                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr) {
+                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr,
+                    Vec3* geometric_normal, Vec3* shading_normal) {
   if (out_openpbr) *out_openpbr = nullptr;
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
@@ -900,13 +909,15 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     out->p1 = wp1;
     out->p2 = wp2;
     out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+    if (geometric_normal) *geometric_normal = out->n;
+    if (shading_normal) *shading_normal = out->n;
     return true;
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
   const TriStore &ts = b.tris[size_t(th.prim_id)];
   TriInfo lt;
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
-  // Phase 5: when colors were reordered into leaf-slot order (LIGHTUSD_COHCOLOR), the
+  // Phase 5: when colors were reordered into leaf-slot order (-coherentColors), the
   // hit indexes by the leaf slot (cache-coherent) instead of prim_id; otherwise
   // the prim_id-ordered array is used. Same 12 bytes either way.
   const uint8_t *cc = nullptr;
@@ -958,6 +969,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   out->p1 = wp1;
   out->p2 = wp2;
   out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+  if (geometric_normal) *geometric_normal = out->n;
   // Smooth shading: interpolate per-corner authored normals (local) and transform
   // by the instance, falling back to the geometric normal above.
   if (size_t(th.prim_id) * 9 + 8 < b.tri_normals.size()) {
@@ -966,9 +978,10 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     Vec3 ln{w0 * nn[0] + w1 * nn[3] + w2 * nn[6],
             w0 * nn[1] + w1 * nn[4] + w2 * nn[7],
             w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
-    Vec3 wn = TransformDirO2W(inst.o2w, ln);
+    Vec3 wn = TransformNormalO2W(inst.o2w, ln);
     if (Length(wn) > 1.0e-12f) out->n = Normalize(wn);
   }
+  if (shading_normal) *shading_normal = out->n;
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
@@ -1002,20 +1015,21 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.rough_tex_scale,
                                        lt.rough_tex_bias);
-        if (r >= 0.0f) out->roughness = ClampFloat(r, 0.0f, 1.0f);
+        if (std::isfinite(r)) out->roughness = ClampFloat(r, 0.0f, 1.0f);
       }
       if (lt.metal_tex_id >= 0) {
         float m = SampleScalarTexAniso(*textures, lt.metal_tex_id, lt.metal_ch, u,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.metal_tex_scale,
                                        lt.metal_tex_bias);
-        if (m >= 0.0f) out->metallic = ClampFloat(m, 0.0f, 1.0f);
+        if (std::isfinite(m)) out->metallic = ClampFloat(m, 0.0f, 1.0f);
       }
       if (lt.emission_tex_id >= 0 &&
           size_t(lt.emission_tex_id) < textures->size()) {
         const Texture &et = (*textures)[size_t(lt.emission_tex_id)];
         Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
                          : et.sample(u, v, 0.0f);
+        e=et.apply_value_transform(e);
         out->emission = Vec3{lt.emission.x * e.x, lt.emission.y * e.y,
                              lt.emission.z * e.z};
       }
@@ -1024,6 +1038,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         const Texture &st = (*textures)[size_t(lt.specular_tex_id)];
         Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
                          : st.sample(u, v, 0.0f);
+        s=st.apply_value_transform(s);
         out->specular_color = Vec3{lt.specular_color.x * s.x,
                                    lt.specular_color.y * s.y,
                                    lt.specular_color.z * s.z};
@@ -1033,7 +1048,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        have_fp, dudx, dvdx, dudy, dvdy,
                                        kMaxAniso, lt.occ_tex_scale,
                                        lt.occ_tex_bias);
-        if (o >= 0.0f) out->occlusion = ClampFloat(o, 0.0f, 1.0f);
+        if (std::isfinite(o)) out->occlusion = ClampFloat(o, 0.0f, 1.0f);
       }
       if (lt.opacity_tex_id >= 0) {
         float a = SampleScalarTexAniso(*textures, lt.opacity_tex_id,
@@ -1041,7 +1056,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                        dudy, dvdy, kMaxAniso,
                                        lt.opacity_tex_scale,
                                        lt.opacity_tex_bias);
-        if (a >= 0.0f) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
+        if (std::isfinite(a)) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
       }
       if (lt.clearcoat_tex_id >= 0) {
         float clearcoat_val = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
@@ -1049,7 +1064,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                          dudy, dvdy, kMaxAniso,
                                          lt.clearcoat_tex_scale,
                                          lt.clearcoat_tex_bias);
-        if (clearcoat_val >= 0.0f) out->clearcoat = ClampFloat(clearcoat_val, 0.0f, 1.0f);
+        if (std::isfinite(clearcoat_val)) out->clearcoat = ClampFloat(clearcoat_val, 0.0f, 1.0f);
       }
       if (lt.clearcoat_rough_tex_id >= 0) {
         float cr = SampleScalarTexAniso(*textures, lt.clearcoat_rough_tex_id,
@@ -1057,7 +1072,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                         dudx, dvdx, dudy, dvdy, kMaxAniso,
                                         lt.clearcoat_rough_tex_scale,
                                         lt.clearcoat_rough_tex_bias);
-        if (cr >= 0.0f) out->clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+        if (std::isfinite(cr)) out->clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
@@ -1084,6 +1099,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
            const std::vector<Texture> *textures,
            const std::vector<float> *tri_uvs,
+           const std::vector<float> *tri_uvs1,
            const lrt_tlas *tlas,
            const std::vector<Blas> *blas,
            const std::vector<InstanceRT> *instances,
@@ -1094,7 +1110,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                *openpbr_mats,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
-           float *primary_hit_t) {
+           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1109,12 +1125,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
+  Vec3 hit_geometric_normal{0, 0, 0}, hit_shading_normal{0, 0, 0};
   const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
-                       &hit_tri, &hit_openpbr)) {
+                       &hit_tri, &hit_openpbr, &hit_geometric_normal, &hit_shading_normal)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -1150,6 +1167,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       hit_tri.p1 = ft.p1;
       hit_tri.p2 = ft.p2;
       hit_tri.n = ft.n;
+      hit_geometric_normal = ft.n;
       hit_tri.purpose_bit = ft.purpose_bit;
       // Per-corner displayColor/displayOpacity (RGBA), barycentric-interpolated.
       if (tri_colors && size_t(hit.prim_id) * 12 + 11 < tri_colors->size()) {
@@ -1171,6 +1189,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
         if (Length(sn) > 1.0e-12f) hit_tri.n = Normalize(sn);
       }
+      hit_shading_normal = hit_tri.n;
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
@@ -1182,97 +1201,154 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const size_t base = size_t(hit.prim_id) * 6;
         if (base + 5 < tri_uvs->size()) {
           const float w1 = hit.u, w2 = hit.v, w0 = 1.0f - w1 - w2;
-          const float *uv = &(*tri_uvs)[base];
-          float u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
-          float v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
-          float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
-          const bool have_fp = ComputeUVFootprint(
-              ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
-              hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
-              &dudy, &dvdy);
-          if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
-            const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
-            Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : dt.sample(u, v, 0.0f);
-            t = Vec3{t.x * dt.scale.x + dt.bias.x, t.y * dt.scale.y + dt.bias.y,
-                     t.z * dt.scale.z + dt.bias.z};
-            hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
-                                      hit_tri.base_color.y * t.y,
-                                      hit_tri.base_color.z * t.z};
+          // One interpolated UV sample per stream, each with its own ray
+          // differential footprint. A lane selects stream 0 or 1 through
+          // TriMat::uv_lane_slot, so two textures can read two UV sets.
+          struct UvSample {
+            float u{0.0f}, v{0.0f};
+            float dudx{0.0f}, dvdx{0.0f}, dudy{0.0f}, dvdy{0.0f};
+            bool have_fp{false};
+            const float *corners{nullptr};
+          };
+          auto sample_stream = [&](const std::vector<float> *stream) {
+            UvSample out;
+            if (!stream || base + 5 >= stream->size()) return out;
+            const float *uv = &(*stream)[base];
+            out.corners = uv;
+            out.u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
+            out.v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
+            out.have_fp = ComputeUVFootprint(
+                ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
+                hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &out.dudx,
+                &out.dvdx, &out.dudy, &out.dvdy);
+            return out;
+          };
+          const UvSample uv0 = sample_stream(tri_uvs);
+          const UvSample uv1 = sample_stream(tri_uvs1);
+          auto lane = [&](uint32_t id) -> const UvSample & {
+            return (uv1.corners && UvLaneSlot(hit_tri.uv_lane_slot, id) == 1)
+                       ? uv1 : uv0;
+          };
+          {
+            const UvSample &s = lane(kUvLaneDiffuse);
+            if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
+              const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
+              Vec3 t = s.have_fp ? dt.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : dt.sample(s.u, s.v, 0.0f);
+              t = Vec3{t.x * dt.scale.x + dt.bias.x,
+                       t.y * dt.scale.y + dt.bias.y,
+                       t.z * dt.scale.z + dt.bias.z};
+              hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
+                                        hit_tri.base_color.y * t.y,
+                                        hit_tri.base_color.z * t.z};
+            }
           }
-          if (hit_tri.rough_tex_id >= 0) {
-            float r = SampleScalarTexAniso(
-                *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.rough_tex_scale,
-                hit_tri.rough_tex_bias);
-            if (r >= 0.0f) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneRough);
+            if (hit_tri.rough_tex_id >= 0) {
+              float r = SampleScalarTexAniso(
+                  *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.rough_tex_scale, hit_tri.rough_tex_bias);
+              if (std::isfinite(r)) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.metal_tex_id >= 0) {
-            float m = SampleScalarTexAniso(
-                *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.metal_tex_scale,
-                hit_tri.metal_tex_bias);
-            if (m >= 0.0f) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneMetal);
+            if (hit_tri.metal_tex_id >= 0) {
+              float m = SampleScalarTexAniso(
+                  *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.metal_tex_scale, hit_tri.metal_tex_bias);
+              if (std::isfinite(m)) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.emission_tex_id >= 0 &&
-              size_t(hit_tri.emission_tex_id) < textures->size()) {
-            const Texture &et = (*textures)[size_t(hit_tri.emission_tex_id)];
-            Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : et.sample(u, v, 0.0f);
-            hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
-                                    hit_tri.emission.y * e.y,
-                                    hit_tri.emission.z * e.z};
+          {
+            const UvSample &s = lane(kUvLaneEmissive);
+            if (hit_tri.emission_tex_id >= 0 &&
+                size_t(hit_tri.emission_tex_id) < textures->size()) {
+              const Texture &et = (*textures)[size_t(hit_tri.emission_tex_id)];
+              Vec3 e = s.have_fp ? et.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : et.sample(s.u, s.v, 0.0f);
+              e = et.apply_value_transform(e);
+              hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
+                                      hit_tri.emission.y * e.y,
+                                      hit_tri.emission.z * e.z};
+            }
           }
-          if (hit_tri.specular_tex_id >= 0 &&
-              size_t(hit_tri.specular_tex_id) < textures->size()) {
-            const Texture &st = (*textures)[size_t(hit_tri.specular_tex_id)];
-            Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                               kMaxAniso)
-                             : st.sample(u, v, 0.0f);
-            hit_tri.specular_color = Vec3{hit_tri.specular_color.x * s.x,
-                                          hit_tri.specular_color.y * s.y,
-                                          hit_tri.specular_color.z * s.z};
+          {
+            const UvSample &s = lane(kUvLaneSpecular);
+            if (hit_tri.specular_tex_id >= 0 &&
+                size_t(hit_tri.specular_tex_id) < textures->size()) {
+              const Texture &st = (*textures)[size_t(hit_tri.specular_tex_id)];
+              Vec3 v = s.have_fp ? st.sample_aniso(s.u, s.v, s.dudx, s.dvdx,
+                                                   s.dudy, s.dvdy, kMaxAniso)
+                                 : st.sample(s.u, s.v, 0.0f);
+              v = st.apply_value_transform(v);
+              hit_tri.specular_color = Vec3{hit_tri.specular_color.x * v.x,
+                                            hit_tri.specular_color.y * v.y,
+                                            hit_tri.specular_color.z * v.z};
+            }
           }
-          if (hit_tri.occ_tex_id >= 0) {
-            float o = SampleScalarTexAniso(
-                *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.occ_tex_scale,
-                hit_tri.occ_tex_bias);
-            if (o >= 0.0f) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneOcc);
+            if (hit_tri.occ_tex_id >= 0) {
+              float o = SampleScalarTexAniso(
+                  *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, s.u, s.v,
+                  s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.occ_tex_scale, hit_tri.occ_tex_bias);
+              if (std::isfinite(o)) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.opacity_tex_id >= 0) {
-            float a = SampleScalarTexAniso(
-                *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
-                hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
-            if (a >= 0.0f) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneOpacity);
+            if (hit_tri.opacity_tex_id >= 0) {
+              float a = SampleScalarTexAniso(
+                  *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, s.u,
+                  s.v, s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
+              if (std::isfinite(a)) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.clearcoat_tex_id >= 0) {
-            float cc = SampleScalarTexAniso(
-                *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
-                hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
-            if (cc >= 0.0f) hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneClearcoat);
+            if (hit_tri.clearcoat_tex_id >= 0) {
+              float cc = SampleScalarTexAniso(
+                  *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, s.u,
+                  s.v, s.have_fp, s.dudx, s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
+              if (std::isfinite(cc))
+                hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.clearcoat_rough_tex_id >= 0) {
-            float cr = SampleScalarTexAniso(
-                *textures, hit_tri.clearcoat_rough_tex_id,
-                hit_tri.clearcoat_rough_ch, u, v, have_fp, dudx, dvdx, dudy,
-                dvdy, kMaxAniso, hit_tri.clearcoat_rough_tex_scale,
-                hit_tri.clearcoat_rough_tex_bias);
-            if (cr >= 0.0f)
-              hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+          {
+            const UvSample &s = lane(kUvLaneClearcoatRough);
+            if (hit_tri.clearcoat_rough_tex_id >= 0) {
+              float cr = SampleScalarTexAniso(
+                  *textures, hit_tri.clearcoat_rough_tex_id,
+                  hit_tri.clearcoat_rough_ch, s.u, s.v, s.have_fp, s.dudx,
+                  s.dvdx, s.dudy, s.dvdy, kMaxAniso,
+                  hit_tri.clearcoat_rough_tex_scale,
+                  hit_tri.clearcoat_rough_tex_bias);
+              if (std::isfinite(cr))
+                hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
+            }
           }
-          if (hit_tri.normal_tex_id >= 0 &&
-              size_t(hit_tri.normal_tex_id) < textures->size()) {
-            const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
-            Vec3 Nt = SampleTangentNormalAniso(nt, u, v, have_fp, dudx, dvdx,
-                                               dudy, dvdy, kMaxAniso);
-            hit_tri.n = PerturbNormalStorm(hit_tri.p0, hit_tri.p1, hit_tri.p2,
-                                           hit_tri.n, uv[0], uv[1], uv[2], uv[3],
-                                           uv[4], uv[5], Nt);
+          {
+            const UvSample &s = lane(kUvLaneNormal);
+            if (hit_tri.normal_tex_id >= 0 &&
+                size_t(hit_tri.normal_tex_id) < textures->size()) {
+              const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
+              Vec3 Nt = SampleTangentNormalAniso(nt, s.u, s.v, s.have_fp, s.dudx,
+                                                 s.dvdx, s.dudy, s.dvdy,
+                                                 kMaxAniso);
+              hit_tri.n = PerturbNormalStorm(
+                  hit_tri.p0, hit_tri.p1, hit_tri.p2, hit_tri.n, s.corners[0],
+                  s.corners[1], s.corners[2], s.corners[3], s.corners[4],
+                  s.corners[5], Nt);
+            }
           }
         }
       }
@@ -1287,17 +1363,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
-  // Escape hatch for A/B-ing the double-count fix (and for bisecting a render
-  // change): LUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior, where an
-  // indirect bounce re-gathered the dome and the analytic mesh lights on top of
-  // the direct lighting that already delivered them.
-  static const bool kDoubleCount = [] {
-    const char *e = std::getenv("LUSDR_LIGHT_DOUBLE_COUNT");
-    return e && std::atoi(e) == 1;
-  }();
-  const bool gathered_directly = indirect && !kDoubleCount;
+  const bool gathered_directly = indirect && !opt.light_double_count;
   if (!tri_hit && !direct_hit.hit) {
     if (primary_hit_t) *primary_hit_t = camera.zfar;
+    if (opt.aov != CaptureAov::Color) return Vec3{0, 0, 0};
     // An escaping BSDF bounce must not bring the ENVIRONMENT back with it: the
     // surface that spawned it already integrated the dome over this very lobe
     // (the split-sum IBL term, or the flat dome term), so returning it here
@@ -1316,6 +1385,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (direct_hit.hit) {
     hit_t = direct_hit.t;
     tri.n = direct_hit.n;
+    hit_geometric_normal = hit_shading_normal = direct_hit.n;
     tri.base_color = direct_hit.base_color;
     tri.emission = direct_hit.emission;
   } else {
@@ -1323,6 +1393,60 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
+  if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
+  if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
+  if (opt.aov == CaptureAov::GeometricNormal) return Normalize(hit_geometric_normal);
+  if (opt.aov == CaptureAov::ShadingNormal) return Normalize(hit_shading_normal);
+  if (opt.aov == CaptureAov::PrimId) {
+    const float id = float(tri.capture_prim_id);
+    return Vec3{id, id, id};
+  }
+  const Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
+  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
+  // lies behind it (continuation ray; bounded recursion). Opaque hits (default
+  // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
+  auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
+    if (tri.opacity >= 0.999f) return col;
+    if (depth >= (opt.diagnostic_emission ? 15 : 4)) {
+      if (opt.diagnostic_emission && diagnostic_exhausted)
+        diagnostic_exhausted->store(true, std::memory_order_relaxed);
+      return col;
+    }
+    const float a = std::max(0.0f, tri.opacity);
+    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                               std::fabs(p.z));
+    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+    const Vec3 behind_org = Add(p, Mul(ray_dir, eps));
+    CameraFrame behind_camera = camera;
+    behind_camera.znear = eps;
+    behind_camera.zfar = std::max(0.0f, camera.zfar - hit_t - eps);
+    const Vec3 behind =
+        Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
+              ray_dir, textures, tri_uvs, tri_uvs1, tlas, blas, instances, rd,
+              depth + 1,
+              tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
+              nullptr, diagnostic_exhausted);
+    return Add(Mul(col, a), Mul(behind, 1.0f - a));
+  };
+  if (opt.diagnostic_emission) {
+    Vec3 diagnostic = tri.emission;
+    if (opt.diagnostic_material != MaterialDiagnostic::None) {
+      const float value = opt.diagnostic_material == MaterialDiagnostic::Roughness
+          ? tri.roughness : tri.metallic;
+      diagnostic = Vec3{value, value, value};
+    }
+    // Transparent PreviewSurface retains emission at full weight. Presence
+    // attenuates it, while cutout masks both modes identically.
+    const Vec3 blended = apply_opacity(diagnostic);
+    if (!tri.opacity_presence && tri.opacity_threshold <= 0.0f)
+      return Add(blended, Mul(diagnostic, 1.0f - std::clamp(tri.opacity, 0.0f, 1.0f)));
+    return blended;
+  }
+  // Converted particle previews bake surface color rather than illumination.
+  // Keep their camera light independent of the original scene's light powers.
+  if(opt.scene_preview_albedo && direct_hit.hit) {
+    return Mul(tri.base_color,.25f+.75f*std::abs(Dot(Normalize(tri.n),Normalize(ray_dir))));
+  }
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {
@@ -1330,12 +1454,18 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 : Occluded(scene, tris, op, on, ol, omax, direct,
                            opt.purpose_mask, triangle_chunks);
   };
-  Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
   Vec3 n = tri.n;
   if (Dot(n, ray_dir) > 0.0f) {
     n = Mul(n, -1.0f);
   }
   Vec3 view = Normalize(Mul(ray_dir, -1.0f));
+  // UsdPreviewSurface opacityMode. "transparent" (the default) reduces only the
+  // diffuse/subsurface contribution and alpha-blends that part with what lies
+  // behind, while the specular stays at full weight; "presence"/cutout keep the
+  // whole-shade coverage blend. Track the diffuse sum separately for that split.
+  const bool transparent_opacity =
+      !tri.opacity_presence && tri.opacity_threshold <= 0.0f;
+  Vec3 c_diffuse{0.0f, 0.0f, 0.0f};
   // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
   // An indirect bounce that lands on an analytic mesh light must not pick up its
   // emission: the shading point it came from already received that light through
@@ -1343,7 +1473,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   const Vec3 emitted = (gathered_directly && tri.area_light)
                            ? Vec3{0.0f, 0.0f, 0.0f}
                            : tri.emission;
-  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), emitted);
+  const Vec3 ambient_diffuse =
+      Mul(tri.base_color, opt.ambient * tri.occlusion);
+  Vec3 c = Add(ambient_diffuse, emitted);
+  c_diffuse = Add(c_diffuse, ambient_diffuse);
   if (ibl && ibl->valid) {
     Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
@@ -1383,6 +1516,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         opt.material_shading == Options::MaterialShading::LightRtBsdf
             ? EvalMaterialIblDiffuse(tri, n, view, diffuse, opt, tri_openpbr)
             : Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
+    c_diffuse = Add(c_diffuse, diff);
     c = Add(c, Add(diff, spec));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
     // its own (usually low) roughness, layered on top and weighted by the coat
@@ -1397,39 +1531,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       c = Add(c, Mul(cc_env, cc_spec * tri.clearcoat));
     }
   } else if (lights.has_dome) {
-    c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
+    const Vec3 dome_diffuse = Mul(Mul(tri.base_color, lights.env_color), 0.25f);
+    c_diffuse = Add(c_diffuse, dome_diffuse);
+    c = Add(c, dome_diffuse);
   }
-  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
-  // lies behind it (continuation ray; bounded recursion). Opaque hits (default
-  // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
-  auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
-    if (tri.opacity >= 0.999f || depth >= 4) return col;
-    const float a = std::max(0.0f, tri.opacity);
-    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
-                               std::fabs(p.z));
-    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
-    const Vec3 behind_org = Add(p, Mul(ray_dir, eps));
-    CameraFrame behind_camera = camera;
-    behind_camera.znear = eps;
-    const Vec3 behind =
-        Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
-              ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
-              tri_colors, tri_normals, openpbr_mats, indirect);
-    return Add(Mul(col, a), Mul(behind, 1.0f - a));
-  };
   // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
   // in lightrt-bsdf mode -- the legacy shading path has no BSDF pdf to weigh
   // against, so MIS is not even defined there, and its look must not change.
   const bool bsdf_mode =
       (opt.material_shading == Options::MaterialShading::LightRtBsdf);
-  // Escape hatch for A/B-ing the estimator (and for bisecting a render change):
-  // LUSDR_LIGHT_NEE=0 puts every light back on the punctual path.
-  static const bool kNeeEnabled = [] {
-    const char *e = std::getenv("LUSDR_LIGHT_NEE");
-    return !(e && std::atoi(e) == 0);
-  }();
   auto is_area_sampled = [&](const PreviewLight &light) -> bool {
-    if (!kNeeEnabled || !bsdf_mode) return false;
+    if (!opt.light_nee || !bsdf_mode) return false;
     switch (light.kind) {
       case PreviewLight::Kind::Sphere:
         return light.radius > 1.0e-5f &&
@@ -1497,10 +1609,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     bounce_rd.valid = false;
     float bounce_hit_t = bounce_camera.zfar;
     Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
-                        opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
-                        instances, bounce_rd, depth + 1, tri_colors,
+                        opt, bounce_org, wi, textures, tri_uvs, tri_uvs1, tlas,
+                        blas, instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
-                        triangle_chunks, &bounce_hit_t);
+                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
     // Beer-Lambert extinction over the actual continuation-ray distance instead
     // of tinting only at the interface; this makes thick glass absorb more than
@@ -1542,10 +1654,14 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         (!opt.shadows ||
          !occluded(p, n, l,
                    std::max(0.0f, Length(Sub(camera.origin, p)) - 1.0e-3f)))) {
+      Vec3 direct_diffuse;
       c = Add(c, EvalMaterialDirect(tri, n, view, l, Vec3{1.0f, 1.0f, 1.0f},
-                                    opt, tri_openpbr));
+                                    opt, tri_openpbr, &direct_diffuse));
+      c_diffuse = Add(c_diffuse, direct_diffuse);
     }
     c = Add(c, sample_bsdf_bounce());
+    if (transparent_opacity)
+      return Add(Sub(c, c_diffuse), apply_opacity(c_diffuse));
     return apply_opacity(c);
   }
   // NEE: sample a point on the light, weigh the estimate against the chance the
@@ -1574,12 +1690,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     OpenPBRParams params = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
     float pdf_b = 0.0f;
-    v3 f = bsdf_eval(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
-                     &pdf_b);
-    const Vec3 brdf = FromMtlxV3(f);
+    v3 fd, fs;
+    bsdf_eval_lobes(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
+                    &fd, &fs, &pdf_b);
+    const Vec3 diffuse = FromMtlxV3(fd);
+    const Vec3 brdf = Add(diffuse, FromMtlxV3(fs));
     if (!FiniteColor(brdf)) return;
     const float w = bsdf_partner_runs ? PowerHeuristic(ls.pdf, pdf_b) : 1.0f;
     const float k = w * ndotl / ls.pdf;
+    c_diffuse = Add(c_diffuse, Vec3{diffuse.x * ls.radiance.x * k,
+                                    diffuse.y * ls.radiance.y * k,
+                                    diffuse.z * ls.radiance.z * k});
     c = Add(c, Vec3{brdf.x * ls.radiance.x * k, brdf.y * ls.radiance.y * k,
                     brdf.z * ls.radiance.z * k});
   };
@@ -1620,8 +1741,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     if (opt.shadows && light.shadow_enable && occluded(p, n, l, max_t)) {
       return;
     }
+    Vec3 direct_diffuse;
     c = Add(c, EvalMaterialDirect(tri, n, view, l, radiance, opt,
-                                  tri_openpbr));
+                                  tri_openpbr, &direct_diffuse));
+    c_diffuse = Add(c_diffuse, direct_diffuse);
   };
   for (const PreviewLight &light : lights.finite) {
     eval_light(light);
@@ -1642,6 +1765,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray), bounded recursion. Opaque hits (the
   // default opacity 1.0) skip this entirely, so opaque renders are unchanged.
+  // "transparent" opacityMode blends only the diffuse half and keeps the
+  // specular at full weight.
+  if (transparent_opacity)
+    return Add(Sub(c, c_diffuse), apply_opacity(c_diffuse));
   return apply_opacity(c);
 }
 
@@ -1657,8 +1784,8 @@ uint8_t ToSRGB8(float linear) {
 
 void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
              Vec3 *org, Vec3 *dir) {
-  float px = 2.0f * sx - 1.0f;
-  float py = 1.0f - 2.0f * sy;
+  float px = 2.0f * sx - 1.0f + camera.shift_x;
+  float py = 1.0f - 2.0f * sy + camera.shift_y;
   if (camera.ortho) {
     float xmag = camera.xmag;
     float ymag = camera.ymag;
@@ -1700,21 +1827,32 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     if (f.buffer_id < 0 || size_t(f.buffer_id) >= scene.buffers.size()) continue;
     const auto &buf = scene.buffers[size_t(f.buffer_id)];
     const size_t n = size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
-    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+    if (n == 0) continue;
 
     VolumeData vd;
     vd.dim[0] = f.dim[0];
     vd.dim[1] = f.dim[1];
     vd.dim[2] = f.dim[2];
-    vd.density.resize(n);
-    std::memcpy(vd.density.data(), buf.data.data(), n * sizeof(float));
+    // Vector fields are shaded through their magnitude (the integrator reads
+    // one scalar per cell).
+    if (!lightusd::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
     vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
     vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
+    vd.world = v.world_matrix;
     matrix4d invw;
     if (!lightusd::inverse(v.world_matrix, invw, 1.0e-12)) {
       invw = matrix4d::identity();
     }
     vd.inv_world = invw;
+    {
+      const Vec3 ext = Sub(vd.bmax, vd.bmin);
+      const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
+      const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
+      const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
+      vd.voxel_size = std::min(ex, std::min(ey, ez));
+    }
+    // UsdVol fieldClass decides the shading: a level set is an isosurface.
+    vd.level_set = f.level_set;
     vd.density_scale = v.density_scale;
     vd.albedo = Vec3{v.albedo[0], v.albedo[1], v.albedo[2]};
     vd.emission = Vec3{v.emission_color[0] * v.emission_scale,
@@ -1728,7 +1866,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
       const auto &abuf = scene.buffers[size_t(aux.buffer_id)];
       const size_t an = size_t(aux.dim[0]) * size_t(aux.dim[1]) *
                         size_t(aux.dim[2]);
-      if (an == 0 || abuf.data.size() < an * sizeof(float)) continue;
+      if (an == 0) continue;
       VolumeScalarField *dst_field = nullptr;
       if (aux.field_name == "temperature") {
         dst_field = &vd.temperature_field;
@@ -1737,8 +1875,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
         dst_field = &vd.emission_field;
       }
       if (dst_field) {
-        dst_field->data.resize(an);
-        std::memcpy(dst_field->data.data(), abuf.data.data(), an * sizeof(float));
+        if (!lightusd::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
         for (int a = 0; a < 3; ++a) {
           dst_field->dim[a] = aux.dim[a];
         }
@@ -1750,41 +1887,6 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     out.push_back(std::move(vd));
   }
   return out;
-}
-
-// Trilinear scalar-field sample at an object-space point. Auxiliary fields
-// deliberately use the density lattice (validated while building VolumeData).
-static float SampleVolumeField(const std::vector<float> &field,
-                               const int dim[3], const Vec3 &bmin,
-                               const Vec3 &bmax, const Vec3 &p) {
-  const float ex = bmax.x - bmin.x;
-  const float ey = bmax.y - bmin.y;
-  const float ez = bmax.z - bmin.z;
-  if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
-  // fractional voxel index, voxel-center convention.
-  float gx = (p.x - bmin.x) / ex * float(dim[0]) - 0.5f;
-  float gy = (p.y - bmin.y) / ey * float(dim[1]) - 0.5f;
-  float gz = (p.z - bmin.z) / ez * float(dim[2]) - 0.5f;
-  int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
-  float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
-  auto fetch = [&](int x, int y, int z) -> float {
-    if (x < 0) x = 0; else if (x >= dim[0]) x = dim[0] - 1;
-    if (y < 0) y = 0; else if (y >= dim[1]) y = dim[1] - 1;
-    if (z < 0) z = 0; else if (z >= dim[2]) z = dim[2] - 1;
-    return field[size_t(x) + size_t(dim[0]) *
-                                  (size_t(y) + size_t(dim[1]) * size_t(z))];
-  };
-  float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
-  float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
-  float c01 = fetch(x0, y0, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0, z0 + 1) * fx;
-  float c11 = fetch(x0, y0 + 1, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0 + 1) * fx;
-  float c0 = c00 * (1 - fy) + c10 * fy;
-  float c1 = c01 * (1 - fy) + c11 * fy;
-  return c0 * (1 - fz) + c1 * fz;
-}
-
-static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
-  return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
 }
 
 // Fast blackbody approximation in linear-ish RGB. VDB fire fields are often
@@ -1834,10 +1936,126 @@ static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
   return true;
 }
 
+// --- Level sets (UsdVol fieldClass == "levelSet") -------------------------
+// The field holds signed distances in world units (negative inside), so it is
+// shaded as an isosurface: sphere-trace to the first zero crossing, take the
+// normal from the distance gradient and shade it as a matte surface with the
+// scene's punctual lights. Fog fields keep the emission/absorption raymarch.
+// Volume surfaces do not receive shadow rays or indirect light (documented
+// limit of this preview path), and they replace the background only when they
+// are in front of the scene geometry along the primary ray.
+
+static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
+                                 const Vec3 &d, float t0, float t1,
+                                 float *t_hit) {
+  if (!t_hit) return false;
+  const float dir_len = Length(d);
+  if (!std::isfinite(dir_len) || dir_len <= 1.0e-9f) return false;
+  // t is the world-ray parameter, while the field and voxel size are in
+  // object space. Convert all object-space distances to ray parameters.
+  const float min_step = std::max(1.0e-6f, vd.voxel_size * 0.25f) / dir_len;
+  // Capping the sphere-trace step degrades to a fine march when the stored
+  // values are not world-unit distances (a mis-scaled SDF then still finds
+  // the crossing instead of stepping over it).
+  const float max_step = std::max(min_step, vd.voxel_size * 4.0f / dir_len);
+  auto sample_at = [&](float t) {
+    return SampleVolumeDensity(vd, Add(o, Mul(d, t)));
+  };
+  float t_prev = t0;
+  float v_prev = sample_at(t_prev);
+  // The first sign change along the ray is the outermost surface, whatever the
+  // stored sign convention (narrow-band level sets store a positive value
+  // inside the solid's core, so "negative" is not the whole interior).
+  const bool entry_negative = v_prev < 0.0f;
+  auto other_side = [&](float v) { return (v < 0.0f) != entry_negative; };
+  const int max_steps = 4096;
+  for (int i = 0; i < max_steps; ++i) {
+    const float step = std::max(
+        min_step,
+        std::min(max_step, std::fabs(v_prev) / dir_len * 0.8f));
+    const float t_next = std::min(t_prev + step, t1);
+    const float v_next = sample_at(t_next);
+    if (other_side(v_next)) {
+      float lo = t_prev, hi = t_next;
+      for (int k = 0; k < 16; ++k) {
+        const float mid = 0.5f * (lo + hi);
+        if (other_side(sample_at(mid))) {
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+      *t_hit = hi;
+      return true;
+    }
+    if (t_next >= t1) return false;
+    t_prev = t_next;
+    v_prev = v_next;
+  }
+  return false;
+}
+
+// Central-difference gradient of the stored field at an object-space point,
+// in object-space units.
+static Vec3 LevelSetObjectGradient(const VolumeData &vd, const Vec3 &p) {
+  const float h = std::max(1.0e-6f, vd.voxel_size * 0.5f);
+  const Vec3 dx{h, 0.0f, 0.0f}, dy{0.0f, h, 0.0f}, dz{0.0f, 0.0f, h};
+  const Vec3 g{
+      SampleVolumeDensity(vd, Add(p, dx)) - SampleVolumeDensity(vd, Sub(p, dx)),
+      SampleVolumeDensity(vd, Add(p, dy)) - SampleVolumeDensity(vd, Sub(p, dy)),
+      SampleVolumeDensity(vd, Add(p, dz)) - SampleVolumeDensity(vd, Sub(p, dz))};
+  return Mul(g, 1.0f / (2.0f * h));
+}
+
+static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
+                                 const Vec3 &n, const LightCache &lights,
+                                 float ambient) {
+  Vec3 c = Mul(vd.albedo, ambient);
+  auto add_light = [&](const PreviewLight &light) {
+    Vec3 radiance = light.radiance;
+    Vec3 l;
+    if (light.kind == PreviewLight::Kind::Distant) {
+      l = Normalize(Mul(light.direction, -1.0f));
+    } else {
+      const Vec3 d = Sub(light.position, p);
+      const float dist = Length(d);
+      if (dist <= 1.0e-6f) return;
+      l = Mul(d, 1.0f / dist);
+      if (light.kind == PreviewLight::Kind::Mesh ||
+          light.kind == PreviewLight::Kind::Rect ||
+          light.kind == PreviewLight::Kind::Disk ||
+          light.kind == PreviewLight::Kind::Cylinder) {
+        const float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
+        if (emit_cos <= 0.0f) return;
+        radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
+      } else if (light.kind == PreviewLight::Kind::Sphere &&
+                 light.radius > 1.0e-5f) {
+        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
+      }
+      radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
+    }
+    const float ndotl = Dot(n, l);
+    if (ndotl <= 0.0f) return;
+    c = Add(c, Vec3{vd.albedo.x * radiance.x * ndotl,
+                    vd.albedo.y * radiance.y * ndotl,
+                    vd.albedo.z * radiance.z * ndotl});
+  };
+  for (const PreviewLight &light : lights.finite) add_light(light);
+  for (const PreviewLight &light : lights.mesh) add_light(light);
+  // The volume material's emission, as in the fog path (already scaled by
+  // emission_scale when the volume was built).
+  return Add(c, vd.emission);
+}
+
 // Composite all volumes along the world-space primary ray over `bg`.
+// `scene_hit` is the world-space distance to the primary geometry hit (or the
+// far plane); a level-set surface behind it does not replace the geometry.
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
-                      const Vec3 &wdir, Vec3 bg) {
+                      const Vec3 &wdir, Vec3 bg, const LightCache &lights,
+                      float ambient, float scene_hit,
+                      Options::VolumeLevelSet level_set_shading) {
   Vec3 result = bg;
+  float nearest_surface = scene_hit;
   for (const VolumeData &vd : vols) {
     // World -> object space.
     Vec3 o = TransformPoint(vd.inv_world, worg);
@@ -1846,6 +2064,25 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &t0, &t1)) continue;
     if (t0 < 0.0f) t0 = 0.0f;
     if (t1 <= t0) continue;
+
+    if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) {
+      float hit = 0.0f;
+      if (!TraceLevelSetSurface(vd, o, d, t0, t1, &hit)) continue;
+      // o + d * hit is the inverse transform of worg + wdir * hit, so
+      // `hit` already uses the same world-ray parameter as scene_hit.
+      if (hit >= nearest_surface) continue;  // geometry or a volume is in front
+      const Vec3 p_obj = Add(o, Mul(d, hit));
+      const Vec3 n_obj = LevelSetObjectGradient(vd, p_obj);
+      Vec3 n = Length(n_obj) > 1.0e-8f
+                   ? TransformNormal(vd.inv_world, n_obj)
+                   : Normalize(Mul(wdir, -1.0f));
+      if (Dot(n, wdir) > 0.0f) n = Mul(n, -1.0f);
+      result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p_obj), n,
+                                    lights, ambient);
+      nearest_surface = hit;
+      continue;
+    }
+
 
     const float ex = vd.bmax.x - vd.bmin.x;
     const float ey = vd.bmax.y - vd.bmin.y;
@@ -1864,7 +2101,12 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     float t = t0;
     for (int i = 0; i < max_steps && t < t1; i++, t += step) {
       Vec3 p = Add(o, Mul(d, t + 0.5f * step));
-      float dens = (SampleVolumeDensity(vd, p) - vd.background) * vd.density_scale;
+      const float raw = SampleVolumeDensity(vd, p);
+      // A level set marched as fog: the stored distance becomes a density
+      // inside the surface (clamp(-sdf)); other fields keep their density.
+      float dens = vd.level_set
+                       ? std::max(0.0f, -raw) * vd.density_scale
+                       : (raw - vd.background) * vd.density_scale;
       if (dens > 1.0e-5f) {
         float a = 1.0f - std::exp(-dens * step);
         Vec3 emit = vd.emission;
@@ -1947,6 +2189,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             int height,
                             const std::vector<Texture> *textures,
                             const std::vector<float> *tri_uvs,
+                            const std::vector<float> *tri_uvs1,
                             const lrt_tlas *tlas,
                             const std::vector<Blas> *blas,
                             const std::vector<InstanceRT> *instances,
@@ -1961,16 +2204,18 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   img.width = opt.width;
   img.height = height;
   img.channels = 4;
-  img.bpp = 8;
-  img.format = lightusd::Image::PixelFormat::UInt;
-  img.data.resize(size_t(img.width) * size_t(img.height) * 4);
+  const bool data_aov = opt.aov != CaptureAov::Color;
+  img.bpp = data_aov ? 32 : 8;
+  img.format = data_aov ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (data_aov ? 4 : 1));
   float aspect = float(img.width) / float(img.height);
   // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)
   // low-discrepancy sequence (PixelJitter). This supersedes the old
   // ceil(sqrt(N))^2 regular grid, which both rounded the sample count up to a
   // square and aliased against regular geometry/texture patterns; Halton spreads
   // the same N samples evenly while staying fully deterministic in `s`.
-  int spp = std::max(1, opt.samples);
+  int spp = data_aov ? 1 : std::max(1, opt.samples);
+  std::atomic<bool> diagnostic_exhausted{false};
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
@@ -1994,12 +2239,19 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                   &rd.dy);
           rd.valid = true;
-          float primary_hit_t = camera.zfar;
-          Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
-                            org, dir, textures, tri_uvs, tlas, blas, instances,
-                            rd, 0, tri_colors, tri_normals, openpbr_mats,
-                            false, triangle_chunks, &primary_hit_t);
-          if (backplates) {
+          CameraFrame ray_camera=camera;
+          if (!camera.ortho) {
+            const float cosine=std::max(1.0e-6f,Dot(camera.forward,dir));
+            ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
+          }
+          float primary_hit_t = ray_camera.zfar;
+          Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, ray_camera, opt,
+                            org, dir, textures, tri_uvs, tri_uvs1, tlas, blas,
+                            instances, rd, 0, tri_colors, tri_normals,
+                            openpbr_mats,
+                            false, triangle_chunks, &primary_hit_t,
+                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr);
+          if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;
               Vec3 plate_color;
@@ -2018,16 +2270,23 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
               }
             }
           }
-          if (volumes && !volumes->empty()) {
-            surf = CompositeVolumes(*volumes, org, dir, surf);
+          if (!data_aov && !opt.diagnostic_emission && volumes && !volumes->empty()) {
+            surf = CompositeVolumes(*volumes, org, dir, surf, lights,
+                                    opt.ambient, primary_hit_t,
+                                    opt.volume_level_set);
           }
           color = Add(color, surf);
         }
         color = Mul(color, 1.0f / float(spp));
         size_t ofs = (size_t(y) * size_t(img.width) + size_t(x)) * 4;
-        img.data[ofs + 0] = ToSRGB8(color.x);
-        img.data[ofs + 1] = ToSRGB8(color.y);
-        img.data[ofs + 2] = ToSRGB8(color.z);
+        if (data_aov) {
+          const float values[4] = {color.x, color.y, color.z, 1.f};
+          std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
+          continue;
+        }
+        img.data[ofs + 0] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.x):ToSRGB8(color.x);
+        img.data[ofs + 1] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.y):ToSRGB8(color.y);
+        img.data[ofs + 2] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.z):ToSRGB8(color.z);
         img.data[ofs + 3] = 255;
       }
     }
@@ -2048,6 +2307,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
       pool.emplace_back(render_rows, y0, y1);
     }
     for (std::thread &th : pool) th.join();
+  }
+  if (diagnostic_exhausted.load(std::memory_order_relaxed)) {
+    std::cerr << "CPU material diagnostic exceeds the maximum 16 transparency layers.\n";
+    return {};
   }
   return img;
 }

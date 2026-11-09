@@ -50,11 +50,21 @@ Use `-rss_limit_mb=8192`(or more if you encounter oom and have enough memory) to
 $ ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 ```
 
+The legacy `usdcparser_fuzzmain.cc` harness calls `ReconstructStage` after a
+successful crate read, so it exercises decoded values and array ownership as
+well as binary sections/fields. Its seed bytes must omit the eight-byte
+`PXR-USDC` magic, which the harness prepends. The legacy USDA harness likewise
+prepends its USDA header. Use a copied corpus for mutation runs so generated
+inputs remain outside the source fixture directories.
+
 ## src/next harnesses
 
-The `next` module has four of its own libFuzzer harnesses -- `next_usdc`
-(crate reader), `next_usda` (ASCII parser), `next_compose` (composition), and
-`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips).
+The `next` module has five of its own libFuzzer harnesses -- `next_usdc`
+(crate reader), `next_usda` (ASCII parser), `next_compose` (composition),
+`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips), and
+`next_dtoa` (USDA float formatter: zmij fast path vs dragonbox reference,
+buffer overshoot, round-trip; the input bytes are the float/double bit
+patterns, so no seed corpus is needed).
 They are built from `src/next`, not from the top-level project, and are off by
 default because they require clang:
 
@@ -75,6 +85,18 @@ cmake -S src/next -B build-fuzz -G Ninja \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build-fuzz --target fuzz_minijson -j
 build-fuzz/fuzz_minijson -runs=1000 tests/fuzzer/minijson-seeds
+```
+
+`fuzz_next_import` covers native OBJ, URDF and MJCF import through the C
+import API (parsers, MJCF `replicate`/cable `composite`/`flexcomp` expansion
+and the USD writer, in the `newton` and `legacy` profiles) and the COLLADA
+reader. The first input byte selects the format (`& 3`: OBJ, URDF, MJCF,
+COLLADA) and profile (`& 4`: legacy); inputs have no anchor, so referenced
+files are not opened:
+
+```sh
+cmake --build build-fuzz --target fuzz_next_import -j
+build-fuzz/fuzz_next_import -fork=4 -max_len=16384 corpus tests/fuzzer/next_import_seeds
 ```
 
 For containerized runs where LeakSanitizer is unavailable, use

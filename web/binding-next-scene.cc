@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include "next/layer/prim-spec.hh"
 #include "binding-next-scene.hh"
+#include "next/schema/color-space.hh"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -22,7 +24,7 @@ minijson::Value JSONNumber(double value) {
   return std::isfinite(value) ? minijson::Value(value) : minijson::Value();
 }
 }
-lightusd::minijson::Value NextValueJSON(const tn::Value& value) {
+lightusd::minijson::Value NextValueJSON(tn::ValueView value) {
   if (const bool* v = value.as_bool()) return *v;
   if (const int32_t* v = value.as_int()) return *v;
   if (const uint32_t* v = value.as_uint()) return *v;
@@ -31,49 +33,61 @@ lightusd::minijson::Value NextValueJSON(const tn::Value& value) {
   if (const uint8_t* v = value.as_uchar()) return *v;
   if (const float* v = value.as_float()) return JSONNumber(*v);
   if (const double* v = value.as_double()) return JSONNumber(*v);
-  if (const std::string* v = value.as_string()) return *v;
-  if (const std::string* v = value.as_token()) return *v;
-  if (const std::string* v = value.as_asset_path()) return *v;
-  if (const std::vector<float>* v = value.as_float_array()) {
+  if (auto v = value.as_string()) return std::string(*v);
+  if (auto v = value.as_token()) return std::string(*v);
+  if (auto v = value.as_asset_path()) return std::string(*v);
+  if (auto dictionary = value.as_dictionary()) {
+    lightusd::minijson::Value out = lightusd::minijson::Value::object();
+    for (const auto& entry : dictionary->entries())
+      out[entry.first] = NextValueJSON(entry.second);
+    return out;
+  }
+  if (auto v = value.as_bool_array()) {
+    lightusd::minijson::Value out = lightusd::minijson::Value::array();
+    out.reserve(v->size());
+    for (uint8_t element : *v) out.push_back(element != 0);
+    return out;
+  }
+  if (auto v = value.as_float_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(JSONNumber(element));
     return out;
   }
-  if (const std::vector<double>* v = value.as_double_array()) {
+  if (auto v = value.as_double_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(JSONNumber(element));
     return out;
   }
-  if (const std::vector<int32_t>* v = value.as_int_array()) {
+  if (auto v = value.as_int_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(element);
     return out;
   }
-  if (const std::vector<int64_t>* v = value.as_int64_array()) {
+  if (auto v = value.as_int64_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(element);
     return out;
   }
-  if (const std::vector<uint32_t>* v = value.as_uint_array()) {
+  if (auto v = value.as_uint_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(element);
     return out;
   }
-  if (const std::vector<uint64_t>* v = value.as_uint64_array()) {
+  if (auto v = value.as_uint64_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
     for (const auto& element : *v) out.push_back(element);
     return out;
   }
-  if (const std::vector<std::string>* v = value.as_token_array()) {
+  if (auto v = value.as_token_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());
-    for (const auto& element : *v) out.push_back(element);
+    for (const auto& element : *v) out.push_back(std::string(element));
     return out;
   }
 
@@ -207,8 +221,8 @@ std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
     if (!tn::IsShader(node)) continue;
     std::string node_id;
     if (const tn::Value* value = node.GetPropertyValue("info:id")) {
-      if (const std::string* token = value->as_token()) node_id = *token;
-      else if (const std::string* str = value->as_string()) node_id = *str;
+      if (auto token = value->as_token()) node_id = *token;
+      else if (auto str = value->as_string()) node_id = *str;
     }
     lightusd::minijson::Value node_json;
     node_json["name"] = node.GetName();
@@ -287,7 +301,7 @@ std::string CanonicalMaterialGraph(const tn::Stage& stage,
     out->append(reinterpret_cast<const char*>(&size), sizeof(size));
     out->append(value);
   };
-  auto append_value = [&](std::string* out, const tn::Value& value) {
+  auto append_value = [&](std::string* out, tn::ValueView value) {
     const uint16_t type = static_cast<uint16_t>(value.type_id());
     out->append(reinterpret_cast<const char*>(&type), sizeof(type));
     append(out, tn::PrintValue(value));
@@ -476,7 +490,7 @@ void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Valu
     item["relationships"][name] = std::move(paths);
   }
   if (const tn::Value* purpose = prim.GetPropertyValue("purpose")) {
-    if (const std::string* token = purpose->as_token()) item["purpose"] = *token;
+    if (auto token = purpose->as_token()) item["purpose"] = *token;
   }
   if (const tn::Value* matrix = prim.GetPropertyValue("xformOp:transform")) {
     item["matrix"] = NextValueJSON(*matrix);

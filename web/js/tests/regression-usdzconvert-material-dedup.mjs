@@ -56,12 +56,14 @@ async function test(name, fn) {
 }
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
+// Combined product: legacy LightUSDLoaderNative plus the next core.
+const glue = wasm64 ? '../src/lightusd/lightusd_combined_64.js'
+                    : '../src/lightusd/lightusd_combined.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
 const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
 const nextNative = await loadWasm(
   () => import(new URL(nextGlue, import.meta.url).href),
-  { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).pathname }
+  { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).href }
 );
 
 function makePngTexture() {
@@ -477,6 +479,22 @@ await test('next materials preserve opacity maps without double-applying RGBA al
   }, {}, manager, false);
   assert.deepEqual(queued, [['map', 'color.png'], ['alphaMap', 'mask.png']],
     'a distinct opacity texture should be queued as alphaMap');
+});
+
+await test('next connected emissive textures replace black PreviewSurface fallbacks', () => {
+  const queued = [];
+  const material = createNextMaterial({
+    material: { emissive: [0, 0, 0] },
+    texturePaths: { emissive: 'emissive.png' },
+  }, {}, {
+    queueTexture(_material, property, _adapter, assetPath) {
+      queued.push([property, assetPath]);
+    },
+  }, false);
+  assert.equal(material.emissive.getHex(), 0xffffff,
+    'Three.js must multiply a connected emissive texture by white');
+  assert.equal(material.emissiveIntensity, 1);
+  assert.deepEqual(queued, [['emissiveMap', 'emissive.png']]);
 });
 
 await test('next textures preserve authored USD wrap modes', () => {

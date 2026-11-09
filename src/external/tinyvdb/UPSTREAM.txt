@@ -1,0 +1,49 @@
+Upstream: https://github.com/syoyo/tinyvdb
+Commit:   e52e6bb969c71f8dc0325ea5972ddc32cd213b61 (branch main; includes
+          portable flood-fill popcount, Windows inline fixes, and portable
+          sparse-mesher bit scans)
+Files:    the src/ subset needed by tvdb_mesh_to_level_set,
+          tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
+          tvdb_grid_volume_to_mesh, the volume access used by usdVol
+          (tvdb_read_grid, tinyvdb_volume, tvdb_grid_to_nanovdb) and the I/O:
+          tinyvdb_io.h (+ tinyvdb_io.c wrapper, lightusd's own), checked,
+          mc_tri_table, mesh, mesh_conversion(.inl), ops.h, ray.h, sdf_tree,
+          sparse, sparse_tools, sparse_tree, stats.h, tetmesh, tet_refine,
+          tet_graded, thread,
+          to_nanovdb (+ third_party/nanovdb/PNanoVDB.h, Apache-2.0, OpenVDB
+          contributors), tree, tree_internal, volume, winding, tvdb_memory,
+          lifecycle; and
+          gpu_compute(.h, .c, _internal.h), nanovdb_device.h (+ generated string),
+          built only with
+          LIGHTUSD_TINYVDB_GPU.
+Local:    CPU SDF allocation-aware entry points are local: tinyvdb_work.h plus
+          mesh/BVH, mesh_conversion, winding, sparse_tools, sparse_tree and tree
+          helpers pass an operation allocator through all generation scratch and
+          retained output. Old entry points preserve default allocation. The new
+          callbacks track their own block sizes (scratch frees/reallocs may pass
+          zero for the previous size); the allocator must outlive owning outputs.
+          Bounded sorts use deterministic in-place heapsort. grid_destroy_owned
+          now uses the grid's allocator for its descriptor as well as its tree.
+          Local tet-quality/balance changes are not yet upstreamed.
+          tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.h
+          adapts includes to ../miniz.h, ../../lz4/lz4.h and ../zstd.h.
+          tinyvdb_sparse_tools.c also carries LightUSD commit dad7e2b7's CPU
+          mesher optimization: detect shell isovalue crossings while gathering
+          the shell, avoiding a redundant full-box scan. tinyvdb_tetmesh.c
+          parallelizes stuffing over z slabs for pools with multiple workers;
+          each slab uses compact local maps and the final merge follows the
+          original z/y/x traversal, preserving byte-identical output. Its
+          multi-worker warp now uses ordered corner/center wavefronts over
+          increasing coordinate sums, preserving serial neighbor dependencies
+          and byte-identical output across worker counts.
+          tinyvdb_sparse_tools.c's parallel classification saturates its
+          shared scan cap (tool_scan_guard) instead of wrapping 32 * max_cells
+          on 32-bit targets, and its merge admits exactly 32 * max_cells scans
+          like the serial path.
+Update:   Vendored upstream source files now match main at e52e6bb, except
+          for the LightUSD I/O adaptations and CPU changes described above.
+          The upstream delta since 9217101 adds portable popcount/ctz helpers
+          and compiler-specific NanoVDB force-inline handling. The selected
+          source closure is unchanged, so cmake/lightusd-tinyvdb.cmake needs no
+          source-list update. Recheck the dependency closure when syncing later
+          revisions (link a probe calling the entry points above).

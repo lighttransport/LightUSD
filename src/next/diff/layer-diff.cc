@@ -4,12 +4,9 @@
 // LightUSD Next - Layer / PrimSpec diff (see layer-diff.hh).
 
 #include "layer-diff.hh"
+#include "layer-diff-internal.hh"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <map>
 #include <set>
 #include <sstream>
@@ -34,9 +31,19 @@
 namespace lightusd {
 namespace next {
 
+namespace diff_detail {
+std::string JoinPrimPath(const std::string &parent, const std::string &child) {
+  if (parent.empty() || parent == "/") {
+    return "/" + child;
+  }
+  return parent + "/" + child;
+}
+
+}  // namespace diff_detail
+
 namespace {
 
-constexpr uint32_t kMaxTraversalDepth = 1024;
+using namespace diff_detail;
 
 std::string TruncateForDiff(const std::string &s) {
   // Retain enough of each value that the differing region survives for the
@@ -48,12 +55,6 @@ std::string TruncateForDiff(const std::string &s) {
   return s.substr(0, kMaxDiffValueChars) + "...";
 }
 
-std::string JoinPrimPath(const std::string &parent, const std::string &child) {
-  if (parent.empty() || parent == "/") {
-    return "/" + child;
-  }
-  return parent + "/" + child;
-}
 
 std::string JoinPathList(const std::vector<Path> &paths) {
   std::stringstream ss;
@@ -66,362 +67,6 @@ std::string JoinPathList(const std::vector<Path> &paths) {
   }
   ss << "]";
   return ss.str();
-}
-
-// ---------------------------------------------------------------------------
-// Fuzzy asset-path equivalence (mirrors legacy tydra behavior).
-// ---------------------------------------------------------------------------
-
-std::string NormalizeAssetPathForDiff(std::string path) {
-  std::replace(path.begin(), path.end(), '\\', '/');
-  while (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
-    path.erase(0, 2);
-  }
-  while (path.size() > 1 && path.back() == '/') {
-    path.pop_back();
-  }
-  return path;
-}
-
-std::string AssetPathLeafForDiff(const std::string &path) {
-  const size_t slash = path.find_last_of('/');
-  if (slash == std::string::npos) {
-    return path;
-  }
-  return path.substr(slash + 1);
-}
-
-bool HasPathComponentSuffix(const std::string &path,
-                            const std::string &suffix) {
-  if (path == suffix) {
-    return true;
-  }
-  if (path.size() <= suffix.size()) {
-    return false;
-  }
-  const size_t offset = path.size() - suffix.size();
-  return path.compare(offset, suffix.size(), suffix) == 0 &&
-         path[offset - 1] == '/';
-}
-
-bool AssetPathStringsEquivalentForDiff(const std::string &lhs_path,
-                                       const std::string &rhs_path) {
-  const std::string lhs = NormalizeAssetPathForDiff(lhs_path);
-  const std::string rhs = NormalizeAssetPathForDiff(rhs_path);
-  if (lhs == rhs) {
-    return true;
-  }
-  if (HasPathComponentSuffix(lhs, rhs) || HasPathComponentSuffix(rhs, lhs)) {
-    return true;
-  }
-
-  const std::string lhs_leaf = AssetPathLeafForDiff(lhs);
-  const std::string rhs_leaf = AssetPathLeafForDiff(rhs);
-  return !lhs_leaf.empty() && lhs_leaf == rhs_leaf;
-}
-
-// ---------------------------------------------------------------------------
-// ULP / eps tolerant scalar comparison.
-// ---------------------------------------------------------------------------
-
-float HalfBitsToFloat(uint16_t h) {
-  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
-  uint32_t exp = (h >> 10) & 0x1Fu;
-  uint32_t man = h & 0x3FFu;
-  uint32_t bits;
-  if (exp == 0) {
-    if (man == 0) {
-      bits = sign;  // +-0
-    } else {
-      // Subnormal half -> normalized float.
-      exp = 127 - 15 + 1;
-      while (!(man & 0x400u)) {
-        man <<= 1;
-        --exp;
-      }
-      man &= 0x3FFu;
-      bits = sign | (exp << 23) | (man << 13);
-    }
-  } else if (exp == 31) {
-    bits = sign | 0x7F800000u | (man << 13);  // inf / nan
-  } else {
-    bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
-  }
-  float out;
-  std::memcpy(&out, &bits, sizeof(out));
-  return out;
-}
-
-bool UlpsEqual(float a, float b, uint32_t maxUlps) {
-  if (std::isnan(a) || std::isnan(b)) {
-    return false;
-  }
-  int32_t ia, ib;
-  std::memcpy(&ia, &a, sizeof(ia));
-  std::memcpy(&ib, &b, sizeof(ib));
-  // Map to a lexicographically ordered (sign-magnitude -> two's-complement)
-  // space so ULP distance is a simple subtraction across the 0 boundary.
-  const int64_t oa = (ia < 0) ? (int64_t(INT32_MIN) - ia) : int64_t(ia);
-  const int64_t ob = (ib < 0) ? (int64_t(INT32_MIN) - ib) : int64_t(ib);
-  const int64_t d = (oa > ob) ? (oa - ob) : (ob - oa);
-  return d <= int64_t(maxUlps);
-}
-
-bool UlpsEqual(double a, double b, uint64_t maxUlps) {
-  if (std::isnan(a) || std::isnan(b)) {
-    return false;
-  }
-  int64_t ia, ib;
-  std::memcpy(&ia, &a, sizeof(ia));
-  std::memcpy(&ib, &b, sizeof(ib));
-  const uint64_t oa =
-      (ia < 0) ? (0x8000000000000000ull - uint64_t(ia)) : (uint64_t(ia) + 0x8000000000000000ull);
-  const uint64_t ob =
-      (ib < 0) ? (0x8000000000000000ull - uint64_t(ib)) : (uint64_t(ib) + 0x8000000000000000ull);
-  const uint64_t d = (oa > ob) ? (oa - ob) : (ob - oa);
-  return d <= maxUlps;
-}
-
-bool ScalarAlmostEqual(float a, float b, const DiffOptions &o) {
-  if (a == b) return true;  // fast path (also inf==inf, +0==-0)
-  if (o.absEps >= 0.0 &&
-      std::fabs(double(a) - double(b)) <= o.absEps) {
-    return true;
-  }
-  return UlpsEqual(a, b, o.floatUlps);
-}
-
-bool ScalarAlmostEqual(double a, double b, const DiffOptions &o) {
-  if (a == b) return true;
-  if (o.absEps >= 0.0 && std::fabs(a - b) <= o.absEps) return true;
-  return UlpsEqual(a, b, o.doubleUlps);
-}
-
-// ---------------------------------------------------------------------------
-// Tolerant Value comparison.
-// ---------------------------------------------------------------------------
-
-bool ValuesEquivalentForDiff(const Value &lhs, const Value &rhs,
-                             const DiffOptions &opts, int depth);
-
-// Dictionary compare (order-insensitive over keys). Records changed keys
-// (+added / -removed / ~modified) into `changed` if non-null; otherwise
-// returns early on the first difference.
-bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
-                  int depth, std::vector<std::string> *changed) {
-  static const Dict kEmpty;
-  const Dict &l = lhs ? *lhs : kEmpty;
-  const Dict &r = rhs ? *rhs : kEmpty;
-  if (depth > int(kMaxTraversalDepth)) {
-    if (changed) changed->push_back("<too-deep>");
-    return false;
-  }
-  bool equal = true;
-  for (const auto &kv : l.entries()) {
-    const Value *rv = r.find(kv.first);
-    if (!rv) {
-      equal = false;
-      if (changed) changed->push_back("-" + kv.first); else return false;
-    } else if (!ValuesEquivalentForDiff(kv.second, *rv, opts, depth + 1)) {
-      equal = false;
-      if (changed) changed->push_back("~" + kv.first); else return false;
-    }
-  }
-  for (const auto &kv : r.entries()) {
-    if (!l.find(kv.first)) {
-      equal = false;
-      if (changed) changed->push_back("+" + kv.first); else return false;
-    }
-  }
-  return equal;
-}
-
-// Dictionary-valued metadata Values (empty Value == unauthored == empty dict).
-// True when two dictionaries share a key whose value is a dictionary on one
-// side and a scalar on the other (recursively) — the "dictionary type
-// conflict" differential: composition would keep the stronger opinion and
-// silently shadow the weaker subtree.
-bool DictsHaveTypeConflict(const Value &l, const Value &r) {
-  const Dict *ld = l.as_dictionary();
-  const Dict *rd = r.as_dictionary();
-  if (!ld || !rd) return false;
-  for (const auto &e : ld->entries()) {
-    const Value *o = rd->find(e.first);
-    if (!o) continue;
-    if (e.second.is_dictionary() != o->is_dictionary()) return true;
-    if (e.second.is_dictionary() && DictsHaveTypeConflict(e.second, *o)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool CompareDictValues(const Value &lhs, const Value &rhs,
-                       const DiffOptions &opts,
-                       std::vector<std::string> *changed) {
-  const Dict *ld = lhs.is_dictionary() ? lhs.as_dictionary() : nullptr;
-  const Dict *rd = rhs.is_dictionary() ? rhs.as_dictionary() : nullptr;
-  return CompareDicts(ld, rd, opts, 0, changed);
-}
-
-// Numeric component kind of a (possibly role-typed) scalar/vector/matrix type.
-// Returns Invalid component for non-float-backed types.
-TypeId FloatingComponentType(TypeId id) {
-  switch (id) {
-    case TypeId::Half:
-      return TypeId::Half;
-    case TypeId::Float:
-      return TypeId::Float;
-    case TypeId::Double:
-    case TypeId::TimeCode:
-      return TypeId::Double;
-    default: {
-      const TypeId comp = GetComponentType(id);
-      if (comp == TypeId::Half || comp == TypeId::Float ||
-          comp == TypeId::Double) {
-        return comp;
-      }
-      return TypeId::Invalid;
-    }
-  }
-}
-
-size_t FloatingComponentCount(TypeId id) {
-  if (id == TypeId::TimeCode) return 1;
-  return GetComponentCount(id);
-}
-
-// Tolerant compare of non-array float-backed POD values (scalar / vecN / quat /
-// matrix, incl. role types). Sets `handled=true` when the LHS is such a type.
-bool NumericPodAlmostEqual(const Value &l, const Value &r,
-                           const DiffOptions &o, bool &handled) {
-  handled = false;
-  const TypeId lcomp = FloatingComponentType(l.type_id());
-  if (lcomp == TypeId::Invalid) {
-    return false;
-  }
-  handled = true;
-  const TypeId rcomp = FloatingComponentType(r.type_id());
-  const size_t lcount = FloatingComponentCount(l.type_id());
-  const size_t rcount = FloatingComponentCount(r.type_id());
-  if (rcomp != lcomp || lcount == 0 || lcount != rcount) {
-    return false;
-  }
-  size_t lsize = 0, rsize = 0;
-  const uint8_t *lb = l.raw_bytes(&lsize);
-  const uint8_t *rb = r.raw_bytes(&rsize);
-  if (!lb || !rb) {
-    return lb == rb;
-  }
-  if (lcomp == TypeId::Float) {
-    if (lsize < lcount * sizeof(float) || rsize < rcount * sizeof(float)) {
-      return false;
-    }
-    for (size_t i = 0; i < lcount; ++i) {
-      float a, b;
-      std::memcpy(&a, lb + i * sizeof(float), sizeof(float));
-      std::memcpy(&b, rb + i * sizeof(float), sizeof(float));
-      if (!ScalarAlmostEqual(a, b, o)) return false;
-    }
-    return true;
-  }
-  if (lcomp == TypeId::Double) {
-    if (lsize < lcount * sizeof(double) || rsize < rcount * sizeof(double)) {
-      return false;
-    }
-    for (size_t i = 0; i < lcount; ++i) {
-      double a, b;
-      std::memcpy(&a, lb + i * sizeof(double), sizeof(double));
-      std::memcpy(&b, rb + i * sizeof(double), sizeof(double));
-      if (!ScalarAlmostEqual(a, b, o)) return false;
-    }
-    return true;
-  }
-  // Half: compare in float space.
-  if (lsize < lcount * sizeof(uint16_t) || rsize < rcount * sizeof(uint16_t)) {
-    return false;
-  }
-  for (size_t i = 0; i < lcount; ++i) {
-    uint16_t ha, hb;
-    std::memcpy(&ha, lb + i * sizeof(uint16_t), sizeof(uint16_t));
-    std::memcpy(&hb, rb + i * sizeof(uint16_t), sizeof(uint16_t));
-    if (ha == hb) continue;  // bitwise-equal half
-    if (!ScalarAlmostEqual(HalfBitsToFloat(ha), HalfBitsToFloat(hb), o)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Tolerant compare of float/double-backed arrays (flat component buffers; half
-// element types materialize into float buffers). Sets `handled=true` when the
-// LHS is such an array.
-bool NumericArrayAlmostEqual(const Value &l, const Value &r,
-                             const DiffOptions &o, bool &handled) {
-  handled = false;
-  if (const std::vector<float> *lf = l.as_float_array()) {
-    handled = true;
-    const std::vector<float> *rf = r.as_float_array();
-    if (!rf || rf->size() != lf->size()) return false;
-    for (size_t i = 0; i < lf->size(); ++i) {
-      if (!ScalarAlmostEqual((*lf)[i], (*rf)[i], o)) return false;
-    }
-    return true;
-  }
-  if (const std::vector<double> *ld = l.as_double_array()) {
-    handled = true;
-    const std::vector<double> *rd = r.as_double_array();
-    if (!rd || rd->size() != ld->size()) return false;
-    for (size_t i = 0; i < ld->size(); ++i) {
-      if (!ScalarAlmostEqual((*ld)[i], (*rd)[i], o)) return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-bool ValuesEquivalentForDiff(const Value &lhs, const Value &rhs,
-                             const DiffOptions &opts, int depth = 0) {
-  if (depth > int(kMaxTraversalDepth)) {
-    return false;
-  }
-
-  // Authored blocks (`= None`) and empties compare structurally.
-  if (lhs.is_block() != rhs.is_block()) return false;
-  if (lhs.is_block()) return true;
-  if (lhs.is_empty() != rhs.is_empty()) return false;
-  if (lhs.is_empty()) return true;
-
-  // 1. AssetPath fuzzy equivalence (path suffix / leaf), scalar only.
-  if (opts.fuzzyAssetPaths && !lhs.is_array() && !rhs.is_array()) {
-    const std::string *la = lhs.as_asset_path();
-    const std::string *ra = rhs.as_asset_path();
-    if (la && ra) {
-      return AssetPathStringsEquivalentForDiff(*la, *ra);
-    }
-  }
-
-  // 2. Nested dictionary (customData / assetInfo / ... leaves).
-  if (lhs.is_dictionary() && rhs.is_dictionary()) {
-    return CompareDicts(lhs.as_dictionary(), rhs.as_dictionary(), opts,
-                        depth + 1, nullptr);
-  }
-
-  if (lhs.is_array() != rhs.is_array()) return false;
-
-  // 3. Numeric float-backed -> ULP / eps.
-  bool handled = false;
-  if (lhs.is_array()) {
-    const bool eq = NumericArrayAlmostEqual(lhs, rhs, opts, handled);
-    if (handled) return eq;
-  } else {
-    const bool eq = NumericPodAlmostEqual(lhs, rhs, opts, handled);
-    if (handled) return eq;
-  }
-
-  // 4. Everything else (int/uint/bool/token/string arrays and scalars) ->
-  //    exact compare.
-  return lhs == rhs;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,10 +119,11 @@ std::string StrListToStr(const std::vector<std::string> &v) {
   return ss.str();
 }
 
-std::string ArcEditToStr(const ArcEdit &e) {
+std::string ArcEditToStr(const ArcListOp &e) {
   if (!e.authored) return "<none>";
   std::stringstream ss;
   ss << (e.is_explicit ? "explicit" : "listop");
+  if (e.is_value_block) ss << " valueBlock";
   ss << " add" << StrListToStr(e.added);
   ss << " prepend" << StrListToStr(e.prepended);
   ss << " append" << StrListToStr(e.appended);
@@ -621,13 +267,13 @@ std::string FormatPropertyForDiff(const PrimSpec &ps, const std::string &name,
 // Per-property metadata (PropMeta) comparison.
 // ---------------------------------------------------------------------------
 
-bool ExtensionFieldsEqual(const std::vector<TypedExtensionField>& lhs,
-                          const std::vector<TypedExtensionField>& rhs,
+bool ExtensionFieldsEqual(const std::vector<DecodedExtensionField>& lhs,
+                          const std::vector<DecodedExtensionField>& rhs,
                           const DiffOptions& opts) {
   if (lhs.size() != rhs.size()) return false;
-  for (const TypedExtensionField& field : lhs) {
+  for (const DecodedExtensionField& field : lhs) {
     const auto it = std::find_if(
-        rhs.begin(), rhs.end(), [&](const TypedExtensionField& candidate) {
+        rhs.begin(), rhs.end(), [&](const DecodedExtensionField& candidate) {
           return candidate.name == field.name;
         });
     if (it == rhs.end() || it->unregistered != field.unregistered ||
@@ -761,8 +407,8 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     if (!tEqual) note("targets");
 
     // Authored list-op edits.
-    static const ArcEdit kNoEdit;
-    auto edit_of = [&](const PrimSpec &ps) -> const ArcEdit & {
+    static const ArcListOp kNoEdit;
+    auto edit_of = [&](const PrimSpec &ps) -> const ArcListOp & {
       const auto &edits = ps.relationship_edits();
       auto it = edits.find(name);
       return (it == edits.end()) ? kNoEdit : it->second;
@@ -792,9 +438,9 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     }
     if (!cEqual) note("connections");
   }
-  static const ArcEdit kNoConnectionEdit;
-  const ArcEdit* lce = lp.connection_edit(name);
-  const ArcEdit* rce = rp.connection_edit(name);
+  static const ArcListOp kNoConnectionEdit;
+  const ArcListOp* lce = lp.connection_edit(name);
+  const ArcListOp* rce = rp.connection_edit(name);
   if (ArcEditToStr(lce ? *lce : kNoConnectionEdit) !=
       ArcEditToStr(rce ? *rce : kNoConnectionEdit)) {
     note("connectionListOp");
@@ -868,12 +514,12 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
 // "variantSets:<set>/<option>:<field>" tag.
 // ---------------------------------------------------------------------------
 
-bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
                         const DiffOptions &opts, std::string *reason,
                         int depth);
 
-bool VariantSetsEqual(const std::vector<VariantSetData> &l,
-                      const std::vector<VariantSetData> &r,
+bool VariantSetsEqual(const std::vector<PrimVariantSetData> &l,
+                      const std::vector<PrimVariantSetData> &r,
                       const DiffOptions &opts, std::string *reason,
                       int depth = 0) {
   auto fail = [&](const std::string &r_) {
@@ -882,9 +528,9 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
   };
   if (depth > 64) return true;  // matches the parser's nesting cap
   if (l.size() != r.size()) return fail("variantSets:count");
-  for (const VariantSetData &ls : l) {
-    const VariantSetData *rs = nullptr;
-    for (const VariantSetData &cand : r) {
+  for (const PrimVariantSetData &ls : l) {
+    const PrimVariantSetData *rs = nullptr;
+    for (const PrimVariantSetData &cand : r) {
       if (cand.name == ls.name) {
         rs = &cand;
         break;
@@ -897,9 +543,9 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
     if (ls.variants.size() != rs->variants.size()) {
       return fail("variantSets:" + ls.name + ":options");
     }
-    for (const VariantData &lv : ls.variants) {
-      const VariantData *rv = nullptr;
-      for (const VariantData &cand : rs->variants) {
+    for (const PrimVariantData &lv : ls.variants) {
+      const PrimVariantData *rv = nullptr;
+      for (const PrimVariantData &cand : rs->variants) {
         if (cand.name == lv.name) {
           rv = &cand;
           break;
@@ -916,7 +562,7 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
   return true;
 }
 
-bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
                         const DiffOptions &opts, std::string *reason,
                         int depth) {
   auto fail = [&](const char *r_) {
@@ -986,7 +632,7 @@ bool VariantOptionEqual(const VariantData &l, const VariantData &r,
 // PrimSpec own-field comparison (specifier / typeName / metadata).
 // ---------------------------------------------------------------------------
 
-bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
+bool ComparePrimMeta(const PrimMetadata &l, const PrimMetadata &r,
                      const DiffOptions &opts,
                      std::vector<std::string> *reasons) {
   bool equal = true;
@@ -1006,12 +652,12 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   }
 
   // Composition arcs: inline vectors + authored list-op qualifiers.
-  static const ArcListOpEdits kNoEdits;
-  const ArcListOpEdits &le = l.arc_edits() ? *l.arc_edits() : kNoEdits;
-  const ArcListOpEdits &re = r.arc_edits() ? *r.arc_edits() : kNoEdits;
+  static const ArcListOps kNoEdits;
+  const ArcListOps &le = l.arc_edits() ? *l.arc_edits() : kNoEdits;
+  const ArcListOps &re = r.arc_edits() ? *r.arc_edits() : kNoEdits;
   auto cmp_arc = [&](const std::vector<std::string> &a,
-                     const std::vector<std::string> &b, const ArcEdit &ea,
-                     const ArcEdit &eb, const char *field) {
+                     const std::vector<std::string> &b, const ArcListOp &ea,
+                     const ArcListOp &eb, const char *field) {
     if (a != b || ArcEditToStr(ea) != ArcEditToStr(eb)) {
       note(field);
     }
@@ -1035,8 +681,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       if (reasons) reasons->push_back("meta:" + vreason);
     }
   }
-  const StringListOpEdits& lv = l.variantSetNameEdits();
-  const StringListOpEdits& rv = r.variantSetNameEdits();
+  const StringListOps& lv = l.variantSetNameEdits();
+  const StringListOps& rv = r.variantSetNameEdits();
   if (lv.authored != rv.authored || lv.is_explicit != rv.is_explicit ||
       lv.explicit_items != rv.explicit_items || lv.added != rv.added ||
       lv.prepended != rv.prepended || lv.appended != rv.appended ||
@@ -1069,8 +715,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       l.apiSchemasQualifier() != r.apiSchemasQualifier()) {
     note("meta:apiSchemas");
   }
-  const StringListOpEdits& la = l.apiSchemaEdits();
-  const StringListOpEdits& ra = r.apiSchemaEdits();
+  const StringListOps& la = l.apiSchemaEdits();
+  const StringListOps& ra = r.apiSchemaEdits();
   if (la.authored != ra.authored || la.is_explicit != ra.is_explicit ||
       la.explicit_items != ra.explicit_items || la.added != ra.added ||
       la.prepended != ra.prepended || la.appended != ra.appended ||
@@ -1098,8 +744,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   if (!ExtensionFieldsEqual(l.unknownFields(), r.unknownFields(), opts)) {
     note("meta:extensionFields");
   }
-  const StringListOpEdits& lc = l.clipSetEdits();
-  const StringListOpEdits& rc = r.clipSetEdits();
+  const StringListOps& lc = l.clipSetEdits();
+  const StringListOps& rc = r.clipSetEdits();
   if (lc.authored != rc.authored || lc.is_explicit != rc.is_explicit ||
       lc.explicit_items != rc.explicit_items || lc.added != rc.added ||
       lc.prepended != rc.prepended || lc.appended != rc.appended ||
@@ -1392,28 +1038,6 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
   return out.changed();
 }
 
-std::string EscapeJSON(const std::string &str) {
-  std::string result;
-  for (char c : str) {
-    switch (c) {
-      case '"': result += "\\\""; break;
-      case '\\': result += "\\\\"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(c) < 0x20) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\u%04x", c & 0xff);
-          result += buf;
-        } else {
-          result += c;
-        }
-        break;
-    }
-  }
-  return result;
-}
 
 }  // namespace
 
@@ -1421,28 +1045,6 @@ std::string EscapeJSON(const std::string &str) {
 // Public API.
 // ---------------------------------------------------------------------------
 
-std::pair<std::string, std::string> CenterValuePairForDiff(
-    const std::string &lhs, const std::string &rhs, size_t window) {
-  if (lhs.size() <= window && rhs.size() <= window) {
-    return {lhs, rhs};
-  }
-  // First differing byte offset.
-  size_t d = 0;
-  const size_t n = std::min(lhs.size(), rhs.size());
-  while (d < n && lhs[d] == rhs[d]) ++d;
-  // Keep ~1/3 of the window as leading context before the difference.
-  const size_t lead = window / 3;
-  const size_t start = (d > lead) ? (d - lead) : 0;
-  auto clip = [&](const std::string &s) -> std::string {
-    std::string out;
-    if (start > 0) out += "\xE2\x80\xA6";  // UTF-8 ellipsis
-    const size_t end = std::min(s.size(), start + window);
-    if (start < s.size()) out += s.substr(start, end - start);
-    if (end < s.size()) out += "\xE2\x80\xA6";
-    return out;
-  };
-  return {clip(lhs), clip(rhs)};
-}
 
 void Diff(const Layer &lhs, const Layer &rhs,
           std::unordered_map<std::string, PrimSpecDiff> &psDiffs,
@@ -1500,240 +1102,6 @@ void Diff(const Layer &lhs, const Layer &rhs,
   }
 }
 
-std::string DiffToText(const Layer &lhs, const Layer &rhs,
-                       const std::string &lhs_name,
-                       const std::string &rhs_name, const DiffOptions &opts) {
-  std::unordered_map<std::string, PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, PropDiff> propDiffs;
-  LayerMetaDiff layerMetaDiff;
-
-  Diff(lhs, rhs, psDiffs, propDiffs, opts, &layerMetaDiff);
-
-  auto joinReasons = [](const std::vector<std::string> &reasons) {
-    std::stringstream r;
-    for (size_t i = 0; i < reasons.size(); ++i) {
-      if (i) r << ", ";
-      r << reasons[i];
-    }
-    return r.str();
-  };
-
-  bool any = false;
-  std::stringstream ss;
-  ss << "--- " << lhs_name << "\n";
-  ss << "+++ " << rhs_name << "\n";
-
-  // Stage (layer) metadata differences.
-  if (layerMetaDiff.changed()) {
-    any = true;
-    ss << "~ <stage metadata> (Stage metadata modified: "
-       << joinReasons(layerMetaDiff.changedFields) << ")\n";
-    for (const auto &d : layerMetaDiff.details) {
-      ss << "  - " << d.name << ": " << d.lhs << "\n";
-      ss << "  + " << d.name << ": " << d.rhs << "\n";
-    }
-  }
-
-  // Sort paths for consistent output.
-  std::set<std::string> sortedPaths;
-  for (const auto &entry : psDiffs) sortedPaths.insert(entry.first);
-  for (const auto &entry : propDiffs) sortedPaths.insert(entry.first);
-
-  for (const std::string &path : sortedPaths) {
-    auto psIt = psDiffs.find(path);
-    if (psIt != psDiffs.end()) {
-      const PrimSpecDiff &psDiff = psIt->second;
-
-      for (const std::string &name : psDiff.deletedPS) {
-        any = true;
-        ss << "- " << JoinPrimPath(path, name) << " (PrimSpec deleted)\n";
-      }
-      for (const std::string &name : psDiff.addedPS) {
-        any = true;
-        ss << "+ " << JoinPrimPath(path, name) << " (PrimSpec added)\n";
-      }
-      // Prefer modifiedDetails (carry reasons); fall back to modifiedPS.
-      if (!psDiff.modifiedDetails.empty()) {
-        for (const ModifiedPrimSpec &m : psDiff.modifiedDetails) {
-          any = true;
-          ss << "~ " << JoinPrimPath(path, m.name) << " (PrimSpec modified";
-          if (!m.reasons.empty()) ss << ": " << joinReasons(m.reasons);
-          ss << ")\n";
-        }
-      } else {
-        for (const std::string &name : psDiff.modifiedPS) {
-          any = true;
-          ss << "~ " << JoinPrimPath(path, name) << " (PrimSpec modified)\n";
-        }
-      }
-    }
-
-    auto propIt = propDiffs.find(path);
-    if (propIt != propDiffs.end()) {
-      const PropDiff &propDiff = propIt->second;
-
-      for (const std::string &name : propDiff.deletedProps) {
-        any = true;
-        ss << "- " << path << "." << name << " (Property deleted)\n";
-      }
-      for (const std::string &name : propDiff.addedProps) {
-        any = true;
-        ss << "+ " << path << "." << name << " (Property added)\n";
-      }
-      for (const PropDiff::ModifiedProp &modified :
-           propDiff.modifiedPropDetails) {
-        any = true;
-        ss << "~ " << path << "." << modified.name << " (Property modified";
-        if (!modified.reasons.empty()) {
-          ss << ": " << joinReasons(modified.reasons);
-        }
-        ss << ")\n";
-        // Center long values on the first difference so a shared prefix (e.g.
-        // asset paths) does not hide what actually changed.
-        auto pr = CenterValuePairForDiff(modified.lhs, modified.rhs);
-        ss << "  - " << pr.first << "\n";
-        ss << "  + " << pr.second << "\n";
-      }
-    }
-  }
-
-  if (!any) {
-    return "No differences found.\n";
-  }
-
-  return ss.str();
-}
-
-std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
-                       const std::string &lhs_name,
-                       const std::string &rhs_name, const DiffOptions &opts) {
-  std::unordered_map<std::string, PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, PropDiff> propDiffs;
-  LayerMetaDiff layerMetaDiff;
-
-  Diff(lhs, rhs, psDiffs, propDiffs, opts, &layerMetaDiff);
-
-  auto emitStrArray = [](std::stringstream &o,
-                         const std::vector<std::string> &v) {
-    o << "[";
-    for (size_t i = 0; i < v.size(); ++i) {
-      if (i > 0) o << ", ";
-      o << "\"" << EscapeJSON(v[i]) << "\"";
-    }
-    o << "]";
-  };
-
-  // Deterministic key order.
-  std::vector<std::string> psKeys, propKeys;
-  psKeys.reserve(psDiffs.size());
-  propKeys.reserve(propDiffs.size());
-  for (const auto &e : psDiffs) psKeys.push_back(e.first);
-  for (const auto &e : propDiffs) propKeys.push_back(e.first);
-  std::sort(psKeys.begin(), psKeys.end());
-  std::sort(propKeys.begin(), propKeys.end());
-
-  std::stringstream ss;
-  ss << "{\n";
-  ss << "  \"comparison\": {\n";
-  ss << "    \"left\": \"" << EscapeJSON(lhs_name) << "\",\n";
-  ss << "    \"right\": \"" << EscapeJSON(rhs_name) << "\"\n";
-  ss << "  },\n";
-
-  // PrimSpec differences.
-  ss << "  \"primspec_diffs\": {\n";
-  bool firstPrimDiff = true;
-  for (const std::string &path : psKeys) {
-    const PrimSpecDiff &diff = psDiffs[path];
-    if (!firstPrimDiff) ss << ",\n";
-    firstPrimDiff = false;
-
-    ss << "    \"" << EscapeJSON(path) << "\": {\n";
-
-    ss << "      \"added\": ";
-    emitStrArray(ss, diff.addedPS);
-    ss << ",\n";
-
-    ss << "      \"deleted\": ";
-    emitStrArray(ss, diff.deletedPS);
-    ss << ",\n";
-
-    ss << "      \"modified\": ";
-    emitStrArray(ss, diff.modifiedPS);
-    ss << ",\n";
-
-    ss << "      \"modified_details\": [";
-    for (size_t i = 0; i < diff.modifiedDetails.size(); ++i) {
-      if (i > 0) ss << ", ";
-      ss << "{\"name\":\"" << EscapeJSON(diff.modifiedDetails[i].name)
-         << "\", \"reasons\":";
-      emitStrArray(ss, diff.modifiedDetails[i].reasons);
-      ss << "}";
-    }
-    ss << "]\n";
-
-    ss << "    }";
-  }
-  ss << "\n  },\n";
-
-  // Property differences.
-  ss << "  \"property_diffs\": {\n";
-  bool firstPropDiff = true;
-  for (const std::string &path : propKeys) {
-    const PropDiff &diff = propDiffs[path];
-    if (!firstPropDiff) ss << ",\n";
-    firstPropDiff = false;
-
-    ss << "    \"" << EscapeJSON(path) << "\": {\n";
-
-    ss << "      \"added\": ";
-    emitStrArray(ss, diff.addedProps);
-    ss << ",\n";
-
-    ss << "      \"deleted\": ";
-    emitStrArray(ss, diff.deletedProps);
-    ss << ",\n";
-
-    ss << "      \"modified\": ";
-    emitStrArray(ss, diff.modifiedProps);
-    ss << ",\n";
-
-    ss << "      \"modified_details\": [";
-    for (size_t i = 0; i < diff.modifiedPropDetails.size(); ++i) {
-      if (i > 0) ss << ", ";
-      const PropDiff::ModifiedProp &modified = diff.modifiedPropDetails[i];
-      ss << "{\"name\":\"" << EscapeJSON(modified.name)
-         << "\", \"left\":\"" << EscapeJSON(modified.lhs)
-         << "\", \"right\":\"" << EscapeJSON(modified.rhs)
-         << "\", \"reasons\":";
-      emitStrArray(ss, modified.reasons);
-      ss << "}";
-    }
-    ss << "]\n";
-
-    ss << "    }";
-  }
-  ss << "\n  },\n";
-
-  // Stage / layer metadata differences.
-  ss << "  \"layer_meta_diff\": {\n";
-  ss << "    \"changed\": ";
-  emitStrArray(ss, layerMetaDiff.changedFields);
-  ss << ",\n";
-  ss << "    \"details\": [";
-  for (size_t i = 0; i < layerMetaDiff.details.size(); ++i) {
-    if (i > 0) ss << ", ";
-    const PropDiff::ModifiedProp &d = layerMetaDiff.details[i];
-    ss << "{\"name\":\"" << EscapeJSON(d.name)
-       << "\", \"left\":\"" << EscapeJSON(d.lhs)
-       << "\", \"right\":\"" << EscapeJSON(d.rhs) << "\"}";
-  }
-  ss << "]\n";
-  ss << "  }\n";
-
-  ss << "}\n";
-
-  return ss.str();
-}
 
 }  // namespace next
 }  // namespace lightusd

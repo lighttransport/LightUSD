@@ -1,0 +1,2628 @@
+{
+  "engines": {
+    "mujoco": {
+      "commit": "a892750516336d8358949f4518fcc4fbbd85beae",
+      "version": "3.16.0"
+    },
+    "newton-usd-schemas": {
+      "commit": "38ed9588943dda2eccb42d837ec56abd7030b42d",
+      "version": "0.6.0"
+    }
+  },
+  "formatVersion": 1,
+  "schemaCount": 41,
+  "schemas": [
+    {
+      "domain": "mjcPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "MjcActuator",
+      "properties": [
+        {
+          "fallback": "-1",
+          "kind": "attribute",
+          "name": "mjc:actDim",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:actEarly",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:actLimited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actRange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actRange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]",
+          "kind": "attribute",
+          "name": "mjc:biasPrm",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "affine",
+            "muscle",
+            "user"
+          ],
+          "fallback": "\"none\"",
+          "kind": "attribute",
+          "name": "mjc:biasType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:crankLength",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:ctrlLimited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:ctrlRange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:ctrlRange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]",
+          "kind": "attribute",
+          "name": "mjc:dynPrm",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "integrator",
+            "filter",
+            "filterexact",
+            "muscle",
+            "user"
+          ],
+          "fallback": "\"none\"",
+          "kind": "attribute",
+          "name": "mjc:dynType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:forceLimited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:forceRange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:forceRange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]",
+          "kind": "attribute",
+          "name": "mjc:gainPrm",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "fixed",
+            "affine",
+            "muscle",
+            "user"
+          ],
+          "fallback": "\"fixed\"",
+          "kind": "attribute",
+          "name": "mjc:gainType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[1, 0, 0, 0, 0, 0]",
+          "kind": "attribute",
+          "name": "mjc:gear",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:inheritRange",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:jointInParent",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:lengthRange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:lengthRange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:refSite",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:sliderSite",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:target",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonCollisionAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcCollisionAPI",
+      "properties": [
+        {
+          "fallback": "3",
+          "kind": "attribute",
+          "name": "mjc:condim",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:gap",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:margin",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:priority",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:shellinertia",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimp",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "mjc:solmix",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solref",
+          "type": "double[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcEqualityAPI",
+      "properties": [
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimp",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solref",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:target",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "MjcEqualityAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcEqualityConnectAPI",
+      "properties": [],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonMimicAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcEqualityJointAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:coef0",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "mjc:coef1",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:coef2",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:coef3",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:coef4",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2]",
+          "kind": "attribute",
+          "name": "mjc:solimp",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1]",
+          "kind": "attribute",
+          "name": "mjc:solref",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:target",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "MjcEqualityAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcEqualityWeldAPI",
+      "properties": [
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "mjc:torqueScale",
+          "type": "float",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcImageableAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonJointAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcJointAPI",
+      "properties": [
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrclimited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrcrange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrcrange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "mjc:actuatorgravcomp",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:armature",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:damping",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:frictionloss",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:margin",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:ref",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimpfriction",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimplimit",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solreffriction",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solreflimit",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0, 0]",
+          "kind": "attribute",
+          "name": "mjc:springdamper",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:springref",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:stiffness",
+          "type": "double",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "domain": "mjcPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "MjcKeyframe",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "mjc:act",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "mjc:ctrl",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "mjc:mpos",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "mjc:mquat",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "mjc:qpos",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "mjc:qvel",
+          "type": "double[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonMaterialAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcMaterialAPI",
+      "properties": [
+        {
+          "fallback": "0.0001",
+          "kind": "attribute",
+          "name": "mjc:rollingfriction",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.005",
+          "kind": "attribute",
+          "name": "mjc:torsionalfriction",
+          "type": "double",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonMeshCollisionAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcMeshCollisionAPI",
+      "properties": [
+        {
+          "allowedTokens": [
+            "legacy",
+            "convex",
+            "exact",
+            "shell"
+          ],
+          "fallback": "\"legacy\"",
+          "kind": "attribute",
+          "name": "mjc:inertia",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-1",
+          "kind": "attribute",
+          "name": "mjc:maxhullvert",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSceneAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcSceneAPI",
+      "properties": [
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:compiler:alignFree",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "degree",
+            "radian"
+          ],
+          "fallback": "\"degree\"",
+          "kind": "attribute",
+          "name": "mjc:compiler:angle",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:compiler:autoLimits",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:compiler:balanceInertia",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:compiler:boundInertia",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:compiler:boundMass",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:compiler:fitAABB",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:compiler:fuseStatic",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:compiler:inertiaFromGeom",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "5",
+          "kind": "attribute",
+          "name": "mjc:compiler:inertiaGroupRange:max",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:compiler:inertiaGroupRange:min",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:compiler:saveInertial",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "mjc:compiler:setTotalMass",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:compiler:useThread",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:actuation",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:autoreset",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:clampctrl",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:constraint",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:contact",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:damper",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:flag:energy",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:equality",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:eulerdamp",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:filterparent",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:frictionloss",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:flag:fwdinv",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:gravity",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:flag:invdiscrete",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:island",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:limit",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:midphase",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:multiccd",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:nativeccd",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "False",
+          "kind": "attribute",
+          "name": "mjc:flag:override",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:refsafe",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:sensor",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:spring",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "True",
+          "kind": "attribute",
+          "name": "mjc:flag:warmstart",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:option:actuatorgroupdisable",
+          "type": "int[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "35",
+          "kind": "attribute",
+          "name": "mjc:option:ccd_iterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-06",
+          "kind": "attribute",
+          "name": "mjc:option:ccd_tolerance",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "pyramidal",
+            "elliptic"
+          ],
+          "fallback": "\"pyramidal\"",
+          "kind": "attribute",
+          "name": "mjc:option:cone",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:option:density",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "mjc:option:impratio",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "euler",
+            "rk4",
+            "implicit",
+            "implicitfast"
+          ],
+          "fallback": "\"euler\"",
+          "kind": "attribute",
+          "name": "mjc:option:integrator",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "100",
+          "kind": "attribute",
+          "name": "mjc:option:iterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "auto",
+            "dense",
+            "sparse"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:option:jacobian",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "50",
+          "kind": "attribute",
+          "name": "mjc:option:ls_iterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.01",
+          "kind": "attribute",
+          "name": "mjc:option:ls_tolerance",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(0.0, -0.5, 0.0)",
+          "kind": "attribute",
+          "name": "mjc:option:magnetic",
+          "type": "double3",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:option:noslip_iterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-06",
+          "kind": "attribute",
+          "name": "mjc:option:noslip_tolerance",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[1.0, 1.0, 0.005, 0.0001, 0.0001]",
+          "kind": "attribute",
+          "name": "mjc:option:o_friction",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:option:o_margin",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:option:o_solimp",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:option:o_solref",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "40",
+          "kind": "attribute",
+          "name": "mjc:option:sdf_initpoints",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "10",
+          "kind": "attribute",
+          "name": "mjc:option:sdf_iterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "pgs",
+            "cg",
+            "newton"
+          ],
+          "fallback": "\"newton\"",
+          "kind": "attribute",
+          "name": "mjc:option:solver",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.002",
+          "kind": "attribute",
+          "name": "mjc:option:timestep",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-08",
+          "kind": "attribute",
+          "name": "mjc:option:tolerance",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:option:viscosity",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "mjc:option:wind",
+          "type": "double3",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSiteAPI"
+      ],
+      "domain": "mjcPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "MjcSiteAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "domain": "mjcPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "MjcTendon",
+      "properties": [
+        {
+          "allowedTokens": [
+            "false",
+            "true",
+            "auto"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrclimited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrcrange:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:actuatorfrcrange:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:armature",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:damping",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:frictionloss",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:group",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "auto",
+            "true",
+            "false"
+          ],
+          "fallback": "\"auto\"",
+          "kind": "attribute",
+          "name": "mjc:limited",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:margin",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:path",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:path:coef",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:path:divisors",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:path:indices",
+          "type": "int[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:path:segments",
+          "type": "int[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:range:max",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mjc:range:min",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(0.5, 0.5, 0.5, 1.0)",
+          "kind": "attribute",
+          "name": "mjc:rgba",
+          "type": "color4f",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "mjc:sideSites",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "mjc:sideSites:indices",
+          "type": "int[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimpfriction",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.9, 0.95, 0.001, 0.5, 2.0]",
+          "kind": "attribute",
+          "name": "mjc:solimplimit",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solreffriction",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[0.02, 1.0]",
+          "kind": "attribute",
+          "name": "mjc:solreflimit",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[-1, -1]",
+          "kind": "attribute",
+          "name": "mjc:springlength",
+          "type": "double[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "mjc:stiffness",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "spatial",
+            "fixed"
+          ],
+          "fallback": "\"spatial\"",
+          "kind": "attribute",
+          "name": "mjc:type",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.003",
+          "kind": "attribute",
+          "name": "mjc:width",
+          "type": "double",
+          "variability": "uniform"
+        }
+      ],
+      "source": "src/experimental/usd/mjcPhysics/schema.usda"
+    },
+    {
+      "domain": "newtonPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "NewtonActuator",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "newton:targets",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonActuatorClampingBaseAPI",
+      "properties": [],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonActuatorControlBaseAPI",
+      "properties": [],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonActuatorDelayAPI",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "newton:delaySteps",
+          "type": "int",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsArticulationRootAPI"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonArticulationRootAPI",
+      "properties": [
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:jointsAddMobility",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:selfCollisionEnabled",
+          "type": "bool",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsCollisionAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Gprim"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonCollisionAPI",
+      "properties": [
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:contactGap",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:contactMargin",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsMaterialAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Material"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonCurvesDeformableMaterialAPI",
+      "properties": [
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:curvesBendDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:curvesShearDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:curvesStretchDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:curvesTwistDamping",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorClampingBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonDCMotorClampingAPI",
+      "properties": [
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:maxMotorEffort",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:saturationEffort",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:velocityLimit",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "PhysicsJoint"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonJointAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:armature",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:damping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:friction",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:limitDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:limitStiffness",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:velocityLimit",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSceneAPI"
+      ],
+      "canOnlyApplyTo": [
+        "PhysicsScene"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonKaminoSceneAPI",
+      "properties": [
+        {
+          "fallback": "0.01",
+          "kind": "attribute",
+          "name": "newton:kamino:constraints:alpha",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.01",
+          "kind": "attribute",
+          "name": "newton:kamino:constraints:beta",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.01",
+          "kind": "attribute",
+          "name": "newton:kamino:constraints:gamma",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:kamino:constraints:usePreconditioning",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "twopi",
+            "continuous"
+          ],
+          "fallback": "\"twopi\"",
+          "kind": "attribute",
+          "name": "newton:kamino:jointCorrection",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-6",
+          "kind": "attribute",
+          "name": "newton:kamino:padmm:complementarityTolerance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-6",
+          "kind": "attribute",
+          "name": "newton:kamino:padmm:dualTolerance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-6",
+          "kind": "attribute",
+          "name": "newton:kamino:padmm:primalTolerance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:kamino:padmm:useAcceleration",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "internal",
+            "containers"
+          ],
+          "fallback": "\"containers\"",
+          "kind": "attribute",
+          "name": "newton:kamino:padmm:warmstarting",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsMaterialAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Material"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMPMMaterialAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:dilatancy",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:elasticDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:hardening",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "newton:mpm:hardeningRate",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "newton:mpm:initialPlasticVolumeStrain",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "newton:mpm:internalFriction",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.3",
+          "kind": "attribute",
+          "name": "newton:mpm:poissonsRatio",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "newton:mpm:softeningRate",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:tensileYieldRatio",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:viscosity",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:mpm:yieldPressure",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:yieldStress",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:mpm:youngsModulus",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSceneAPI"
+      ],
+      "canOnlyApplyTo": [
+        "PhysicsScene"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMPMSceneAPI",
+      "properties": [
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:mpm:airDrag",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "2",
+          "kind": "attribute",
+          "name": "newton:mpm:colliderBasisOrder",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "linear",
+            "trilinear",
+            "bspline",
+            "serendipity",
+            "particle"
+          ],
+          "fallback": "\"serendipity\"",
+          "kind": "attribute",
+          "name": "newton:mpm:colliderBasisType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:mpm:colliderDiscontinuousBasis",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:criticalFraction",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:gridPadding",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "sparse",
+            "dense",
+            "fixed"
+          ],
+          "fallback": "\"sparse\"",
+          "kind": "attribute",
+          "name": "newton:mpm:gridType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "pic",
+            "gimp"
+          ],
+          "fallback": "\"pic\"",
+          "kind": "attribute",
+          "name": "newton:mpm:integrationScheme",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-1",
+          "kind": "attribute",
+          "name": "newton:mpm:maxActiveCellCount",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "auto",
+            "gauss-seidel",
+            "gauss-seidel-soa",
+            "gauss-seidel-batched",
+            "jacobi",
+            "conjugate-gradient",
+            "conjugate-residual",
+            "generalized-minimal-residual"
+          ],
+          "fallback": "[\"auto\"]",
+          "kind": "attribute",
+          "name": "newton:mpm:rheologySolvers",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:mpm:strainBasisOrder",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "linear",
+            "trilinear",
+            "particle"
+          ],
+          "fallback": "\"linear\"",
+          "kind": "attribute",
+          "name": "newton:mpm:strainBasisType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:mpm:strainDiscontinuousBasis",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1e-4",
+          "kind": "attribute",
+          "name": "newton:mpm:tolerance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "apic",
+            "pic"
+          ],
+          "fallback": "\"apic\"",
+          "kind": "attribute",
+          "name": "newton:mpm:transferScheme",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "newton:mpm:velocityBasisOrder",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "trilinear",
+            "bspline"
+          ],
+          "fallback": "\"trilinear\"",
+          "kind": "attribute",
+          "name": "newton:mpm:velocityBasisType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:mpm:voxelSize",
+          "type": "float",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsMassAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Xformable"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMassAPI",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "newton:inertia",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "solid",
+            "shell"
+          ],
+          "fallback": "\"solid\"",
+          "kind": "attribute",
+          "name": "newton:massModel",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:shellThickness",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "PhysicsMaterialAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Material"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMaterialAPI",
+      "properties": [
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:contactAdhesion",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:contactDamping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:contactFrictionGain",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:contactStiffness",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0001",
+          "kind": "attribute",
+          "name": "newton:rollingFriction",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.005",
+          "kind": "attribute",
+          "name": "newton:torsionalFriction",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorClampingBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMaxEffortClampingAPI",
+      "properties": [
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:maxEffort",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonCollisionAPI",
+        "PhysicsMeshCollisionAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Mesh"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMeshCollisionAPI",
+      "properties": [
+        {
+          "fallback": "-1",
+          "kind": "attribute",
+          "name": "newton:maxHullVertices",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "PhysicsJoint"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonMimicAPI",
+      "properties": [
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:mimicCoef0",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "newton:mimicCoef1",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:mimicEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "newton:mimicJoint",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorControlBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonNeuralControlAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "newton:modelPath",
+          "type": "asset",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorControlBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonPDControlAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:constEffort",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:kd",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:kp",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorControlBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonPIDControlAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:constEffort",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "newton:integralMax",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:kd",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:ki",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "newton:kp",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "Points"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonPointsDeformableSimAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "physics:masses",
+          "type": "float[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonActuatorClampingBaseAPI"
+      ],
+      "canOnlyApplyTo": [
+        "NewtonActuator"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonPositionBasedClampingAPI",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "newton:lookupEfforts",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "newton:lookupPositions",
+          "type": "float[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonCollisionAPI"
+      ],
+      "canOnlyApplyTo": [
+        "Gprim"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonSDFCollisionAPI",
+      "properties": [
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:hydroelasticEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1e10",
+          "kind": "attribute",
+          "name": "newton:hydroelasticStiffness",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "64",
+          "kind": "attribute",
+          "name": "newton:sdfMaxResolution",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-0.1",
+          "kind": "attribute",
+          "name": "newton:sdfNarrowBandInner",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.1",
+          "kind": "attribute",
+          "name": "newton:sdfNarrowBandOuter",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:sdfPadding",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "newton:sdfTargetVoxelSize",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "uint8",
+            "uint16",
+            "float32"
+          ],
+          "fallback": "\"uint16\"",
+          "kind": "attribute",
+          "name": "newton:sdfTextureFormat",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "PhysicsScene"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonSceneAPI",
+      "properties": [
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:gravityEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-1",
+          "kind": "attribute",
+          "name": "newton:maxSolverIterations",
+          "type": "int",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1000",
+          "kind": "attribute",
+          "name": "newton:timeStepsPerSecond",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "canOnlyApplyTo": [
+        "Gprim"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonSiteAPI",
+      "properties": [],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSceneAPI"
+      ],
+      "canOnlyApplyTo": [
+        "PhysicsScene"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonVbdSceneAPI",
+      "properties": [
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:vbd:rigid:contactHistory",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:vbd:rigid:jointAngularDamping",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "100000.0",
+          "kind": "attribute",
+          "name": "newton:vbd:rigid:jointAngularStiffness",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:vbd:rigid:jointLinearDamping",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "100000.0",
+          "kind": "attribute",
+          "name": "newton:vbd:rigid:jointLinearStiffness",
+          "type": "float",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    },
+    {
+      "builtinAPISchemas": [
+        "NewtonSceneAPI"
+      ],
+      "canOnlyApplyTo": [
+        "PhysicsScene"
+      ],
+      "domain": "newtonPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NewtonXpbdSceneAPI",
+      "properties": [
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:xpbd:angularDamping",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:xpbd:jointAngularCompliance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.4",
+          "kind": "attribute",
+          "name": "newton:xpbd:jointAngularRelaxation",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "newton:xpbd:jointLinearCompliance",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.7",
+          "kind": "attribute",
+          "name": "newton:xpbd:jointLinearRelaxation",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "newton:xpbd:restitutionEnabled",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "newton:xpbd:rigidContactConWeighting",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.8",
+          "kind": "attribute",
+          "name": "newton:xpbd:rigidContactRelaxation",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.9",
+          "kind": "attribute",
+          "name": "newton:xpbd:softBodyRelaxation",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0.9",
+          "kind": "attribute",
+          "name": "newton:xpbd:softContactRelaxation",
+          "type": "float",
+          "variability": "uniform"
+        }
+      ],
+      "source": "newton_usd_schemas/generatedSchema.usda"
+    }
+  ]
+}

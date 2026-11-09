@@ -5,6 +5,7 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js'
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js'
+import { buildNextThreeNode, isNextScene } from 'lightusd/NextRenderSceneUtils.js'
 
 const gui = new GUI();
 
@@ -198,11 +199,33 @@ async function loadScenes() {
   var offset = -(usd_scenes.length-1) * 1.5;
   for (const usd_scene of usd_scenes) {
 
-    const usdRootNode = usd_scene.getDefaultRootNode();
+    let threeNode;
+    if (isNextScene(usd_scene)) {
+      // next (default) scenes carry next render records; build them with the
+      // next scene builder and apply the shared environment map.
+      const built = buildNextThreeNode(usd_scene, { skipTextures: false, lazyTextures: true });
+      threeNode = built.node;
+      threeNode.traverse((obj) => {
+        if (!obj.isMesh) return;
+        for (const mat of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+          if (!mat) continue;
+          mat.envMap = options.envMap;
+          mat.envMapIntensity = options.envMapIntensity;
+          mat.needsUpdate = true;
+        }
+      });
+      if (built.textureManager && built.textureManager.total > 0) {
+        built.textureManager.startLoading({
+          onTextureLoaded: (material) => { material.needsUpdate = true; }
+        });
+      }
+    } else {
+      const usdRootNode = usd_scene.getDefaultRootNode();
+      threeNode = LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    }
 
-    const threeNode = LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
-
-    if (usd_scene.getURI().includes('UsdCookie')) {
+    const uri = usd_scene.getURI ? usd_scene.getURI() : (usd_scene.filename || '');
+    if (uri.includes('UsdCookie')) {
       // Add exra scaling
       threeNode.scale.x *= 2.5;
       threeNode.scale.y *= 2.5;

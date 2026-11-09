@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include <ostream>  // operator<<(std::ostream&, const Path&) below; MSVC's
-                    // <string> does not complete std::basic_ostream
+#include <iosfwd>
 #include <string>
 #include <vector>
 
@@ -37,7 +36,7 @@ public:
   // ============================================================
 
   /// Check if path is empty
-  bool empty() const { return path_.empty(); }
+  bool empty() const;
 
   /// Check if this is an absolute path (starts with '/')
   bool is_absolute() const;
@@ -60,8 +59,8 @@ public:
   static Path Parse(const std::string& path_str);
 
   /// Get the full path string
-  const std::string& str() const { return path_; }
-  const char* c_str() const { return path_.c_str(); }
+  const std::string& str() const;
+  const char* c_str() const;
 
   // ============================================================
   // Path components
@@ -88,6 +87,9 @@ public:
 
   /// Append a child path element
   Path append_child(const std::string& child_name) const;
+  /// append_child for a name already known to be a valid identifier (a spec
+  /// name read from a layer): skips the per-character validation.
+  Path append_child_unchecked(const std::string& child_name) const;
 
   /// Append a property
   Path append_property(const std::string& property_name) const;
@@ -118,9 +120,7 @@ private:
 };
 
 /// Stream output for debugging
-inline std::ostream& operator<<(std::ostream& os, const Path& path) {
-  return os << path.str();
-}
+std::ostream& operator<<(std::ostream& os, const Path& path);
 
 }  // namespace next
 }  // namespace lightusd

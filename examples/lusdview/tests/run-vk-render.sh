@@ -139,6 +139,45 @@ def Xform "World"
 }
 USD
 
+# Custom primvars cross the public render API before being flattened by the
+# viewer. Exercise scalar float/int storage and the vector lane used by common
+# rest-position primvars. Container-sized byte arithmetic used to reject these
+# small buffers and silently discard the entire mesh.
+CUSTOM_PRIMVARS_ASSET="$TMP/custom_primvars.usda"
+cat > "$CUSTOM_PRIMVARS_ASSET" <<'USD'
+#usda 1.0
+def Xform "World"
+{
+    def Mesh "Float"
+    {
+        point3f[] points = [(-2, 0, 0), (-1, 0, 0), (-1.5, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        float[] primvars:temperature = [10, 20, 30] (interpolation = "vertex")
+    }
+    def Mesh "Int"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0.5, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        int[] primvars:label = [1, 2, 3] (interpolation = "vertex")
+    }
+    def Mesh "Rest"
+    {
+        point3f[] points = [(0, -2, 0), (1, -2, 0), (0.5, -1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        float3[] primvars:rest = [(0, -2, 0), (1, -2, 0), (0.5, -1, 0)] (
+            interpolation = "vertex"
+        )
+        int[] primvars:rest:indices = None
+    }
+}
+USD
+
 run_lusdview() {
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=5s "$LUSDVIEW_RENDER_TIMEOUT" "$LUSDVIEW" \
@@ -228,28 +267,33 @@ run_asset_pass() {
   local log
   log="$(run_lusdview --headless "$@" --frames 4 --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
-  if ! echo "$log" | grep -q "render stats"; then
+  if ! grep -q "render stats" <<< "$log"; then
     echo "SKIP: Vulkan backend unavailable in this environment ($label)"
     return $SKIP
   fi
   if [ "$label" = rt ] &&
-     ! echo "$log" | grep -Eq "caps: v1 .*rt=hardware"; then
+     ! grep -Eq "caps: v1 .*rt=hardware" <<< "$log"; then
     echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
     return $SKIP
   fi
-  if echo "$log" | grep -q "load failed" ||
-     ! echo "$log" | grep -Eq 'drawn tris [1-9][0-9]*'; then
+  if grep -q "load failed" <<< "$log" ||
+     ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log"; then
     echo "FAIL: $label produced no renderable triangles"
+    return 1
+  fi
+  if [ "$label" = custom-primvars ] &&
+     ! grep -Eq 'loaded .*: 3 mesh\(es\), 3 tri\(s\)' <<< "$log"; then
+    echo "FAIL: custom float/int/vector primvars did not retain all meshes"
     return 1
   fi
   if [ "$label" = "profile" ]; then
     # --max-gpu-mem is DERIVED from the device's VRAM (half of it, floor 8 GiB),
     # so assert that a positive budget was resolved, not a number that only holds
     # on a 16 GiB card.
-    for expected in "large-scene-profile instance-heavy resolved" "backend=vk" \
+    for expected in "large-scene-profile instance-heavy resolved" "backend=vulkan" \
                     "--next=on" "--raster-lod=on" "--rt-lod=on" \
                     "--max-gpu-mem=[1-9][0-9]*\.[0-9]"; do
-      if ! echo "$log" | grep -Eq -- "$expected"; then
+      if ! grep -Eq -- "$expected" <<< "$log"; then
         echo "FAIL: profile pass did not apply expected default: $expected"
         return 1
       fi
@@ -257,12 +301,12 @@ run_asset_pass() {
   elif [ "$label" = "profile-final" ]; then
     for expected in "large-scene-profile instance-heavy resolved" \
                     "--rt-lod=off"; do
-      if ! echo "$log" | grep -Eq -- "$expected"; then
+      if ! grep -Eq -- "$expected" <<< "$log"; then
         echo "FAIL: final path tracing retained implicit RT LOD: $expected"
         return 1
       fi
     done
-    if echo "$log" | grep -Eq '\[rt-lod\].*proxy=[1-9]'; then
+    if grep -Eq '\[rt-lod\].*proxy=[1-9]' <<< "$log"; then
       echo "FAIL: final path tracing rendered an implicit bounding-box proxy"
       return 1
     fi
@@ -332,6 +376,11 @@ rc=$?
 # camera-dependent white boxes in a final render.
 run_pass profile-final --large-scene-profile instance-heavy --path-trace \
   --pt-quality final --pt-samples 1
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+
+run_asset_pass custom-primvars "$CUSTOM_PRIMVARS_ASSET" --backend vk
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc

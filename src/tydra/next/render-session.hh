@@ -4,18 +4,33 @@
 // Persistent, revisioned next::Stage -> Tydra render update conversion.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-#include "render-converter.hh"
+#include "next/operation-status.hh"
 #include "next/stage/change-set.hh"
 
 namespace lightusd {
 namespace tydra {
 namespace next {
+
+struct ConverterConfig;
+class RenderScene;
+struct SceneNode;
+struct RenderMesh;
+struct RenderPoints;
+struct RenderCurves;
+struct RenderPointInstancer;
+struct RenderMaterial;
+struct RenderTexture;
+struct TextureImage;
+struct RenderLight;
+struct RenderCamera;
+struct AnimationClip;
+struct Skeleton;
 
 using RenderId = uint64_t;
 constexpr RenderId kInvalidRenderId = 0;
@@ -70,6 +85,8 @@ class SceneUpdateSink {
 
 struct RenderUpdateResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   bool cancelled = false;
   uint64_t revision = 0;
   size_t upsert_count = 0;
@@ -86,10 +103,46 @@ struct RenderUpdateResult {
   explicit operator bool() const { return success; }
 };
 
+struct RenderSceneSnapshot {
+  uint64_t revision = 0;
+  std::shared_ptr<const RenderScene> scene;
+
+  explicit operator bool() const { return static_cast<bool>(scene); }
+  const RenderScene* operator->() const { return scene.get(); }
+  const RenderScene& operator*() const { return *scene; }
+};
+
+/// Move-only candidate produced by RenderSession::Prepare(). Conversion and
+/// allocation are complete, but neither the sink nor the published session
+/// revision has been changed. Destroying or aborting a candidate is a no-op.
+class PreparedRenderUpdate {
+ public:
+  PreparedRenderUpdate();
+  ~PreparedRenderUpdate();
+  PreparedRenderUpdate(PreparedRenderUpdate&&) noexcept;
+  PreparedRenderUpdate& operator=(PreparedRenderUpdate&&) noexcept;
+  PreparedRenderUpdate(const PreparedRenderUpdate&) = delete;
+  PreparedRenderUpdate& operator=(const PreparedRenderUpdate&) = delete;
+
+  explicit operator bool() const;
+  uint64_t base_revision() const;
+  uint64_t new_revision() const;
+  // Borrowed candidate data; valid until this update is committed or aborted.
+  const RenderScene* scene() const;
+  std::shared_ptr<const RenderScene> scene_owner() const;
+  const std::vector<std::string>* warnings() const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  friend class RenderSession;
+};
+
 /// Owns stable resource IDs and the last committed retained RenderScene.
 class RenderSession {
  public:
-  explicit RenderSession(const ConverterConfig& config = {});
+  RenderSession();
+  explicit RenderSession(const ConverterConfig& config);
   ~RenderSession();
   RenderSession(RenderSession&&) noexcept;
   RenderSession& operator=(RenderSession&&) noexcept;
@@ -103,8 +156,35 @@ class RenderSession {
                            const ::lightusd::next::StageChangeSet& changes,
                            SceneUpdateSink* sink);
 
+  /// Convert and allocate a candidate without invoking the sink or publishing
+  /// it. Commit may run later on the render thread. A candidate becomes stale
+  /// if another update commits first.
+  RenderUpdateResult Prepare(
+      const ::lightusd::next::StageSnapshot& snapshot,
+      const ::lightusd::next::StageChangeSet& changes,
+      PreparedRenderUpdate* prepared);
+  RenderUpdateResult PrepareInitialize(
+      const ::lightusd::next::StageSnapshot& snapshot,
+      PreparedRenderUpdate* prepared);
+  /// Emit a prepared candidate to the sink and publish it only after EndUpdate
+  /// succeeds. Failure calls AbortUpdate and preserves the old revision/scene.
+  RenderUpdateResult Commit(PreparedRenderUpdate&& prepared,
+                            SceneUpdateSink* sink);
+  void Abort(PreparedRenderUpdate* prepared);
+
+  /// Time code the next Apply/Prepare converts at (scalar time-sampled
+  /// attributes, shader ports, transforms and volume material constants).
+  /// Setting a new time marks the update as a full resync: every resource is
+  /// re-converted so an Apply with an empty change set still re-evaluates the
+  /// scene, volumes included. The constructor takes the initial time code from
+  /// ConverterConfig::time_code.
+  void SetTimeCode(double time_code);
+  double GetTimeCode() const;
+
+  RenderSceneSnapshot GetSnapshot() const;
   uint64_t revision() const;
-  const RenderScene* scene() const;
+  /// Return the stable ID for a committed resource key, or kInvalidRenderId.
+  RenderId ResourceId(RenderResourceKind kind, const std::string& key) const;
   void Reset();
 
  private:

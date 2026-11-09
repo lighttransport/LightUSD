@@ -16,12 +16,43 @@ const REPO_ROOT = path.resolve(WEB_JS_DIR, '../..');
 const NODE = process.execPath;
 
 const NODE_TESTS = [
+  ['WebGPU MaterialX graph and scene', 'tests/webgpu-mtlx.test.mjs'],
+  ['WebGPU MaterialX USD graph snapshot', 'tests/webgpu-mtlx-usd-graph.mjs'],
   ['usdzconvert helpers', 'tests/test-usdzconvert.js'],
   ['combined RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
   ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
+  ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
+  ['next HTTP texture alias dedup', 'tests/next-http-texture-alias.test.mjs'],
+  ['next asset alias composition', 'tests/next-asset-alias-compose.test.mjs'],
+  ['next independent feature modules', 'tests/next-features.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
+  ['next mesh budget cache', 'tests/next-mesh-budget-cache.test.mjs'],
+  ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
+  ['next material format parity', 'tests/material-format-parity.test.mjs'],
+  ['next WASM parity gap matrix', 'tests/next-wasm-parity-matrix.test.mjs'],
+  ['next flatten workflow parity map', 'tests/next-flatten-parity.test.mjs'],
+  ['next composition workflow parity map', 'tests/next-composition-parity.test.mjs'],
+  ['next loading workflow parity map', 'tests/next-loading-parity.test.mjs'],
+  ['next layer export workflow parity map', 'tests/next-layer-export-parity.test.mjs'],
+  ['next lusdchecker', 'tests/next-checker.test.mjs'],
+  ['next validation parity', 'tests/next-validation-parity.test.mjs'],
+  ['next layer-to-render parity', 'tests/next-layer-render-parity.test.mjs'],
+  ['next mesh ownership parity map', 'tests/next-mesh-access-parity.test.mjs'],
+  ['next asset-store parity matrix', 'tests/next-asset-store-parity.test.mjs'],
+  ['next asset cache/streaming behavior parity', 'tests/next-asset-cache-behavior-parity.test.mjs'],
+  ['next loader configuration behavior parity', 'tests/next-loader-config-behavior-parity.test.mjs'],
+  ['next load diagnostics behavior parity', 'tests/next-load-diagnostics-behavior-parity.test.mjs'],
+  ['next loading behavior parity', 'tests/next-loading-behavior-parity.test.mjs'],
+  ['next render-scene behavior parity', 'tests/next-render-scene-behavior-parity.test.mjs'],
+  ['next composition behavior parity', 'tests/next-composition-behavior-parity.test.mjs'],
+  ['next layer export behavior parity', 'tests/next-layer-export-behavior-parity.test.mjs'],
+  ['next flatten behavior parity', 'tests/next-flatten-behavior-parity.test.mjs'],
+  ['next schema/image utility behavior parity', 'tests/next-schema-utilities-behavior-parity.test.mjs'],
+  ['next allocation-failure gate', 'tests/next-allocation-failure.test.mjs'],
+  ['next volume query contract', 'tests/next-volume-query-contract.test.mjs'],
+  ['next MCP server module', 'tests/next-mcp-server.test.mjs'],
   ['variant selection overloads', 'tests/apply-variant-selection-overload.test.mjs'],
   ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],
@@ -30,7 +61,18 @@ const NODE_TESTS = [
   ['texture compression loader', 'tests/loader-utils-texture-compression.mjs'],
   ['Basis/KTX2 loader', 'tests/loader-utils-basis-ktx2.mjs'],
   ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],
+  ['LightRT BVH occlusion WASM ABI', 'tests/lightrt-wasm.mjs'],
+  ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
+  ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
+  ['Lucia UDIM workflow', 'lucia-code/tests/udim-workflow.test.mjs'],
+  ['Lucia scene activity gate', 'lucia-code/tests/activity-gate.test.mjs'],
+  ['Lucia source deltas and asset snapshots', 'lucia-code/tests/source-delta.test.mjs'],
+  ['Lucia geometry and dependency fidelity', 'lucia-code/tests/fidelity.test.mjs'],
+  ['Lucia persistent project storage', 'lucia-code/tests/project-storage.test.mjs'],
+  ['Lucia composition and authoring integration', 'lucia-code/tests/workflow-depth.test.mjs'],
+  ['Lucia validation failures', 'lucia-code/tests/validation.test.mjs'],
   ['texture memory budget', 'tests/texture-memory-budget.test.mjs'],
+  ['UDIM baking', 'tests/udim-bake.test.mjs'],
   ['MaterialX JSON regression', 'tests/materialx-json-regression.js'],
   ['USD skeleton animation', 'tests/usdskel-animation-test.js'],
 ];
@@ -63,8 +105,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     profile: 'full',
     menagerie: process.env.MENAGERIE_DIR || process.env.MUJOCO_MENAGERIE ||
       path.join(WEB_JS_DIR, '.cache', 'mujoco_menagerie'),
-    out: process.env.LIGHTUSD_REGRESSION_OUT ||
-      path.join(WEB_JS_DIR, '.regression', `run-${process.pid}`),
+    out: process.env.LIGHTUSD_REGRESSION_OUT || null,
     browserMode: 'auto',
     keepOutput: false,
   };
@@ -219,6 +260,13 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('Independent features in browser and Worker', NODE,
+    ['tests/next-features-browser.test.mjs'], {}));
+  results.push(await run('USD validation demos', NODE,
+    ['tests/validation-browser.test.mjs'], {}));
+  results.push(await run('UDIM browser and Worker baking', NODE,
+    ['tests/udim-bake-browser.test.mjs'], {}));
+  if (!results.at(-1).ok) return;
   if (!fs.existsSync(opts.menagerie)) {
     results.push({
       label: 'Browser dataset setup', ok: false, code: 2,
@@ -271,6 +319,13 @@ async function runBrowserTests(results, opts) {
 
 async function main() {
   const opts = parseArgs();
+  if (!opts.out) {
+    const parent = path.join(WEB_JS_DIR, '.regression');
+    fs.mkdirSync(parent, { recursive: true });
+    // Separate containers can share a PID and the same workspace. A unique
+    // directory prevents one successful gate from deleting another's output.
+    opts.out = fs.mkdtempSync(path.join(parent, 'run-'));
+  }
   fs.mkdirSync(opts.out, { recursive: true });
   const results = [];
 

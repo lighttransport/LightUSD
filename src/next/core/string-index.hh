@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #pragma once
 #include <cstddef>
+#include "../c/string-index.h"
 
 namespace lightusd {
 namespace next {
@@ -21,7 +22,7 @@ class StringIndex {
   StringIndex(StringIndex&& other) noexcept;
   StringIndex& operator=(StringIndex&& other) noexcept;
 
-  size_t size() const { return count_; }
+  size_t size() const { return index_.count; }
   size_t find(const char* key, size_t length, Key keys, const void* context) const;
   // Failure leaves the index unchanged. The caller owns error propagation or
   // a correct unindexed fallback. Duplicate keys keep their first position.
@@ -29,11 +30,7 @@ class StringIndex {
   bool rebuild(size_t count, Key keys, const void* context);
 
  private:
-  size_t* slots_ = nullptr;  // index + 1; zero is empty
-  size_t capacity_ = 0;
-  size_t count_ = 0;
-  bool reserve(size_t count, Key keys, const void* context);
-  void insert_reserved(size_t index, Key keys, const void* context);
+  lu_string_index index_{};
 };
 
 }  // namespace detail

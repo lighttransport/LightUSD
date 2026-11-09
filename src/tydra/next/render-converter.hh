@@ -11,19 +11,19 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <memory>
+#include <vector>
 
 #include "render-data.hh"
-#include "render-extract.hh"
-#include "scene-access.hh"
-#include "next/stage/stage.hh"
 #include "next/execution.hh"
-#if defined(LIGHTUSD_ENABLE_THREAD)
-#include "tsa-mutex.hh"
-#endif
+#include "next/operation-status.hh"
+#include "next/resource-limits.hh"
 
 namespace lightusd {
 namespace next {
 class AssetResolver;
+class Stage;
+class UsdPrim;
 }  // namespace next
 }  // namespace lightusd
 
@@ -31,18 +31,8 @@ namespace lightusd {
 namespace tydra {
 namespace next {
 
-#if defined(LIGHTUSD_ENABLE_THREAD)
-using ConverterStateMutex = ::lightusd::Mutex;
-using ConverterStateLock = ::lightusd::MutexLockGuard;
-#else
-// The converter is fully serial when threading is disabled. Keep its state
-// lock ABI-free in that configuration so no mutex/thread implementation is
-// pulled into single-threaded or WASM builds.
-struct ConverterStateMutex {};
-struct ConverterStateLock {
-  explicit ConverterStateLock(ConverterStateMutex&) {}
-};
-#endif
+using ::lightusd::next::Stage;
+using ::lightusd::next::UsdPrim;
 
 //
 // Conversion configuration
@@ -96,6 +86,7 @@ struct MeshConfig {
   // point and renormalizes them, matching the legacy converter contract.
   bool enable_bone_reduction = false;
   uint32_t target_bone_count = 4;
+  bool round_bone_count = false;
 
   // Memory optimization
   bool use_chunked_arrays = true;
@@ -107,6 +98,10 @@ struct MeshConfig {
   // Bulk arrays are released incrementally during conversion so the peak does
   // not include both the Stage and a second complete copy of every mesh.
   bool retain_geometry = true;
+
+  // Retain only authored custom primvars when geometry is rebuilt lazily by
+  // the consumer. Builtin UV/color/normal arrays remain excluded.
+  bool retain_custom_primvars = false;
 
   // Metadata-only consumers may still need the converter's robust polygon
   // triangulation without retaining authored points and vertex attributes.
@@ -124,6 +119,9 @@ struct MaterialConfig {
   // Texture loading
   bool load_textures = true;
   bool allow_missing_textures = true;
+  // Pack decoded UDIM tiles into a single atlas instead of retaining sparse
+  // per-tile records. Disabled by default for the editor-oriented next path.
+  bool combine_udim_tiles = false;
 
   // Assign a generated default PreviewSurface material to meshes/curves that
   // have no authored material binding (legacy assign_default_material parity).
@@ -173,6 +171,10 @@ struct AnimationConfig {
   // supplied by the application so the converter remains filesystem- and
   // archive-agnostic.
   bool bake_value_clips = true;
+  float value_clip_sample_rate = 0.0f;
+  bool value_clip_use_time_range = false;
+  double value_clip_start_time = 0.0;
+  double value_clip_end_time = 0.0;
   // Enable animation extraction. Disable this for static-scene pipelines to
   // avoid per-prim time-sample scans when animations are not needed.
   bool enabled = true;
@@ -181,9 +183,6 @@ struct AnimationConfig {
       std::string* warn, std::string* err)>;
   ClipStageLoader clip_stage_loader;
 
-  // Maximum number of samples generated for a clip set. The authored stage
-  // timeCodesPerSecond is used as the sampling rate.
-  uint32_t max_value_clip_samples = 10000;
 };
 
 struct ConverterConfig {
@@ -193,23 +192,11 @@ struct ConverterConfig {
   PointInstancerConfig point_instancer;
   AnimationConfig animation;
 
-  // Defensive namespace limits for composed/programmatically-created stages.
-  // Zero disables the corresponding limit; depth defaults to the core's
-  // 256-level safety ceiling.
-  size_t max_render_depth = 256;
-  size_t max_render_records = 0;
+  // Shared finite resource ceilings. Zero-valued fields are invalid; use
+  // ResourceLimits::Unlimited() only for an intentional trusted opt-out.
+  ::lightusd::next::ResourceLimits limits;
 
-  // Worker threads for the per-record conversion batches (mesh/points/
-  // curves/cameras/skeletons/lights/point_instancers). 0 = auto
-  // (std::thread::hardware_concurrency(), capped at 16). 1 forces fully
-  // serial conversion -- useful for deterministic/single-threaded test
-  // builds or to cap CPU usage in a server context; WASM/single-thread
-  // targets should set this to 1 explicitly rather than relying on
-  // hardware_concurrency() (which may over-report on some runtimes).
-  size_t max_worker_threads = 0;
-
-  // Unified execution policy. max_threads == -1 preserves
-  // max_worker_threads above; otherwise 0=auto, 1=serial, >1=fixed.
+  // Unified execution policy: 0=bounded auto, 1=serial, >1=fixed.
   ::lightusd::next::ExecutionOptions execution;
 
   // Time code for evaluation
@@ -233,6 +220,11 @@ struct ConverterConfig {
   // stops conversion before the next large attribute is materialized.
   using CancelCallback = std::function<bool()>;
   CancelCallback cancel_callback;
+
+  // Require warning-free conversion. This rejects unsupported renderables,
+  // fallback materials, approximation warnings and failed conversions. It is
+  // intentionally conservative and also rejects resolver/color warnings.
+  bool strict_conversion = false;
 };
 
 /// Fail-closed render-conversion preset. A zero memory limit clamps to one byte
@@ -246,6 +238,8 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory);
 
 struct ConvertResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   std::string error;
   std::vector<std::string> warnings;
 
@@ -270,9 +264,12 @@ struct GeometryInfo {
 
 struct StreamConvertResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   bool cancelled = false;
   std::string error;
   std::vector<std::string> warnings;
+  std::vector<ConversionDiagnostic> conversion_diagnostics;
   size_t mesh_count = 0;
   size_t point_count = 0;
   size_t curve_count = 0;
@@ -340,7 +337,8 @@ class RenderSceneConverter {
   bool ConvertMaterial(const ::lightusd::next::Stage& stage,
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene);
-  bool ConvertLight(const UsdPrim& prim, RenderLight* out);
+  bool ConvertLight(const ::lightusd::next::Stage& stage,
+                    const UsdPrim& prim, RenderLight* out);
   bool ConvertCamera(const ::lightusd::next::Stage& stage,
                      const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
@@ -356,155 +354,17 @@ class RenderSceneConverter {
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
 
   // Get last error
-  std::string GetLastError() const {
-    ConverterStateLock lk(state_mu_);
-    return last_error_;
-  }
+  std::string GetLastError() const;
+
+  /// Time code used by every conversion (time-sampled attributes, shader
+  /// ports, transforms and volume material constants). Changing it affects the
+  /// next Convert/ConvertToSink; nothing already converted is re-evaluated.
+  void SetTimeCode(double time_code);
+  double GetTimeCode() const;
 
  private:
-  // Build scene hierarchy
-  void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
-  void ExtractPhysicsAnnotations(const ::lightusd::next::Stage& stage,
-                                 RenderScene* scene);
-  void AssignMaterialBindings(const ::lightusd::next::Stage& stage,
-                              RenderScene* scene);
-  void AssignMeshMaterialBinding(const ::lightusd::next::Stage& stage,
-                                 const RenderScene& scene,
-                                 RenderMesh* mesh);
-
-  /// Lazily create the shared default material (MaterialConfig::
-  /// assign_default_material); returns its id.
-  int32_t GetOrCreateDefaultMaterial(RenderScene* scene);
-  void AssignPointInstanceDrawMaterials(RenderScene* scene);
-  void DuplicatePointInstanceMeshes(RenderScene* scene);
-
-  // Extract mesh data directly into chunked arrays
-  bool ConvertGeomPrimitive(const UsdPrim& prim, RenderMesh* out);
-  bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
-  bool ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh);
-  /// Drop faces with out-of-range (or negative) indices and truncate counts
-  /// that overrun the index buffer; appends a warning when anything changed.
-  void SanitizeMeshTopology(RenderMesh* mesh);
-  bool ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh);
-
-  // Triangulation
-  bool TriangulateFan(const uint32_t* face_vertex_counts, size_t face_count,
-                      const uint32_t* indices, size_t index_count,
-                      UInt32Chunked* out_indices);
-
-  // Normal computation
-  bool ComputeVertexNormals(RenderMesh* mesh);
-  /// Tangent frame (xyzw, w=handedness) from triangulated topology, normals,
-  /// and UVs. Emits vertex tangents for vertex-varying inputs and faceVarying
-  /// tangents when seams/mirrors require per-corner data.
-  bool ComputeVertexTangents(RenderMesh* mesh);
-
-  /// Resolve an authored asset path against the directory of the LAYER THAT
-  /// AUTHORED IT (`asset_anchor_id`, carried through composition -- see
-  /// next/layer/asset-anchor.hh), falling back to `config_.asset_base_dir` when
-  /// the prim has no anchor. Anchoring at the stage root instead would break any
-  /// scene whose look layers reach their textures with `../..`.
-  std::string ResolveAssetPath(const std::string& file,
-                               uint32_t asset_anchor_id = 0) const;
-  /// The anchor stamped on `prim`'s spec (0 when it has none).
-  static uint32_t AssetAnchorOf(const ::lightusd::next::UsdPrim& prim);
-  /// Find-or-create an image record for `file`; returns its id (-1 on empty).
-  int32_t ResolveImageId(RenderScene* scene, const std::string& file,
-                         ColorSpace color_space, uint32_t asset_anchor_id = 0);
-  int32_t FindCachedImageId(RenderScene* scene, const std::string& resolved,
-                            ColorSpace color_space);
-  void RememberImageId(RenderScene* scene, const std::string& resolved,
-                       ColorSpace color_space, int32_t id);
-  void ResetImageIdCache();
-
-  /// O(1) image dedup, replacing the linear scan over scene->images that both
-  /// dedup sites used (O(n^2) with a long-path string compare per step).
-  static std::string ImageKey(const std::string& resolved_path, ColorSpace cs);
-  int32_t FindImageId(const RenderScene* scene,
-                      const std::string& resolved_path, ColorSpace cs);
-  void RememberImageId(const RenderScene* scene,
-                       const std::string& resolved_path, ColorSpace cs,
-                       int32_t id);
-  std::unordered_map<std::string, int32_t> image_id_by_key_;
-  /// Scene the rendering color config has already been resolved into; the
-  /// result is stage/config-invariant, so it must not be recomputed per
-  /// material.
-  const RenderScene* color_config_scene_ = nullptr;
-
-  /// Cumulative (RSS-based) memory guard for the expensive phases; the
-  /// converter's other limits are all per-prim and cannot see a scene of many
-  /// small meshes summing past the cap. Latches once tripped so the rest of
-  /// the conversion degrades consistently rather than thrashing.
-  bool BudgetWouldExceed(size_t estimate, const char* phase);
-  void ResetOperationState();
-  size_t budget_accounted_bytes_ = 0;
-  size_t budget_pending_bytes_ = 0;
-  size_t budget_check_counter_ = 0;
-  bool budget_exceeded_ = false;
-
-  // Material extraction
-  bool ExtractPreviewSurface(const ::lightusd::next::Stage& stage,
-                             const UsdPrim& shader_prim,
-                             PreviewSurfaceShader* out,
-                             RenderScene* scene);
-  bool ExtractStandardSurfaceAsOpenPBR(const ::lightusd::next::Stage& stage,
-                                       const ::lightusd::next::UsdPrim& shader_prim,
-                                       OpenPBRSurfaceShader* out,
-                                       RenderScene* scene);
-  bool ExtractOpenPBRSurface(const ::lightusd::next::Stage& stage,
-                             const UsdPrim& shader_prim,
-                             OpenPBRSurfaceShader* out,
-                             RenderScene* scene);
-  bool ExtractShaderParam(const ::lightusd::next::Stage& stage,
-                          const UsdPrim& shader_prim,
-                          const std::string& param_name,
-                          ShaderParam* out,
-                          RenderScene* scene);
-
-  ConverterConfig config_;
-  std::string last_error_;
-  std::vector<std::string> warnings_;
-  // Guards last_error_, warnings_ and the BudgetWouldExceed bookkeeping
-  // (budget_*_ below) for the parallel per-record conversion phases (meshes
-  // today; see the mesh-conversion loop in Convert()). No-op cost on the
-  // serial phases that still call SetLastError()/AddWarning()/
-  // BudgetWouldExceed() from the main thread only.
-  mutable ConverterStateMutex state_mu_;
-  void AddWarning(std::string msg);
-  void SetLastError(std::string msg);
-  const RenderScene* image_cache_scene_ = nullptr;
-  // Keep only a compact path hash in the transient dedup index.  The
-  // resolved path is already retained by RenderScene::images; duplicating it
-  // here would turn a CPU optimization into a sizeable memory tax for scenes
-  // with many textures.  FindCachedImageId verifies candidates to make hash
-  // collisions harmless.
-  std::unordered_multimap<uint64_t, int32_t> image_id_cache_;
-
-  // Set (RAII, see MaterialLocalScope in render-converter.cc) around a
-  // parallel materials-batch worker's ConvertMaterial() call. That call is
-  // given a per-worker LOCAL scratch RenderScene (not the shared result
-  // scene), so FindCachedImageId/RememberImageId must not touch the shared
-  // image_id_cache_/image_cache_scene_ above -- multiple workers would race
-  // on them. While set, those two methods fall back to a plain scan of the
-  // (small, freshly-empty-per-material) local scratch's own images list, and
-  // the color-config memo block in ConvertMaterial is skipped entirely (the
-  // caller pre-seeds the scratch scene's working_color_space from the
-  // already-resolved result.scene value instead). A serial merge pass then
-  // dedups/appends each worker's local images/textures into the shared scene
-  // and remaps every ShaderParam::texture_id, so output is byte-identical to
-  // the fully-serial conversion. thread_local, not a member: each worker
-  // thread needs its own scope independent of which RenderSceneConverter
-  // instance it's calling into.
-  static thread_local bool tl_material_local_scope_;
-
-  // RAII scope for tl_material_local_scope_ (nested so its ctor/dtor can
-  // touch the private flag above; a class local to a .cc member function
-  // body does NOT get implicit access to its enclosing class's private
-  // members, so this can't just live next to its one call site).
-  struct MaterialLocalScope {
-    MaterialLocalScope() { tl_material_local_scope_ = true; }
-    ~MaterialLocalScope() { tl_material_local_scope_ = false; }
-  };
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 //

@@ -85,8 +85,22 @@ ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 ```
 
 Environment overrides: `LIGHTUSD_PY_LIMITED_API=0` (force a non-abi3 dev
-build), `LIGHTUSD_CMAKE_ARGS` (extra CMake args),
-`LIGHTUSD_TEST_ASSETS` (pytest asset dir).
+build), `LIGHTUSD_PY_ENABLE_THREAD=0` (compile next and Tydra-next without
+optional worker-thread paths), `LIGHTUSD_PY_BUILD_DIR` (CMake build directory),
+`LIGHTUSD_CMAKE_ARGS` (extra CMake args), and `LIGHTUSD_TEST_ASSETS` (pytest
+asset dir). Thread-disabled builds use `build_py_ext_next_nothread/` by default
+so they cannot accidentally reuse threaded static archives.
+
+To validate the serial configuration explicitly:
+
+```bash
+LIGHTUSD_PY_ENABLE_THREAD=0 python setup.py build_ext --inplace
+python -m pytest python/tests -q
+```
+
+Disabling worker threads does not weaken the synchronization used by the C API
+or free-threaded CPython. It only removes the parallel parser/composition/render
+workers; public behavior and wheel ABI are unchanged.
 
 Wheels are built by `.github/workflows/wheels.yml` with cibuildwheel (v3.x,
 `enable = ["cpython-freethreading"]`); configuration lives in
@@ -100,3 +114,12 @@ language (Rust/C#/Deno/...): opaque owning handles + by-value `lightusd_prim`
 handles, thread-local `lightusd_last_error()`, zero-copy `lightusd_value_view` /
 `lightusd_buffer_view` views, batched authoring calls. Smoke-tested from pure C
 by `tests/c-api/test_lightusd_c.c` (ctest: `next_test_c_api`).
+
+The current C ABI is version 2. Load and render option structs carry explicit
+finite byte/count/depth limits; initialize them with
+`lightusd_load_options_init()` / `lightusd_render_config_init()`. Zero limits
+are invalid, while `LIGHTUSD_LIMIT_UNLIMITED` is the explicit trusted opt-out
+for 64-bit byte/count fields. Format-specific structural guards still apply.
+Version 2 also defines typed resource, overflow, busy, and stale-revision
+status values; load and render entry points distinguish resource/overflow
+failures from generic parse/conversion failures.

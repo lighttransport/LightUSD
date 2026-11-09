@@ -16,10 +16,13 @@ set(LUSDVIEW_SHADER_EMBED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/embedded)
 # Core raster and environment shader headers are mandatory for the Vulkan backend.
 set(_required_spv
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_vert.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_static_vert.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_skin_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_oit_simple_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_vert.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/wire_inst_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/environment_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/environment_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/line_vert.spv.h
@@ -158,8 +161,12 @@ if(LUSDVIEW_TEXTURE_GLSLANG)
           ${PROJECT_SOURCE_DIR}/tools/lusdview-texture-bench/hip_processor.hip)
       target_include_directories(lusdview_texture_hip_plugin PRIVATE
           ${PROJECT_SOURCE_DIR}/tools/lusdview-texture-bench)
+      set(_lusdview_hip_architectures "${CMAKE_HIP_ARCHITECTURES}")
+      if(NOT _lusdview_hip_architectures)
+        set(_lusdview_hip_architectures native)
+      endif()
       set_target_properties(lusdview_texture_hip_plugin PROPERTIES
-          HIP_ARCHITECTURES "native"
+          HIP_ARCHITECTURES "${_lusdview_hip_architectures}"
           PREFIX "")
     endif()
     set_source_files_properties(

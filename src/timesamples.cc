@@ -509,6 +509,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _type_id(other._type_id),
       _element_size(other._element_size),
       _dirty(other._dirty),
+      _has_error(other._has_error),
       _is_array(other._is_array),
       _authored(other._authored),
       _samples_ready(other._samples_ready.load()) {
@@ -516,6 +517,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
   other._type_id = 0;
   other._element_size = 0;
   other._dirty = false;
+  other._has_error = false;
   other._is_array = false;
   other._authored = false;
   other._samples_ready.store(false);
@@ -533,6 +535,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _type_id = other._type_id;
     _element_size = other._element_size;
     _dirty = other._dirty;
+    _has_error = other._has_error;
     _is_array = other._is_array;
     _authored = other._authored;
     _value_group_counter = other._value_group_counter;
@@ -542,6 +545,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     other._type_id = 0;
     other._element_size = 0;
     other._dirty = false;
+    other._has_error = false;
     other._is_array = false;
     other._authored = false;
     other._samples_ready.store(false);
@@ -561,6 +565,7 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _type_id(other._type_id),
       _element_size(other._element_size),
       _dirty(other._dirty),
+      _has_error(other._has_error),
       _is_array(other._is_array),
       _authored(other._authored),
       _samples_ready(other._samples_ready.load()) {
@@ -578,6 +583,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _type_id = other._type_id;
     _element_size = other._element_size;
     _dirty = other._dirty;
+    _has_error = other._has_error;
     _is_array = other._is_array;
     _authored = other._authored;
     _value_group_counter = other._value_group_counter;

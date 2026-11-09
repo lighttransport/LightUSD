@@ -130,6 +130,9 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
   dst[0] = static_cast<float>(count);
   for (int i = 0; i < kRtMaterialGraphOutputCount; ++i)
     dst[1 + i] = static_cast<float>(graph.output[i]);
+  // Header float 50 is the reserved lane; the vkr shader reads it to pick the
+  // tangent basis for the normal route.
+  dst[50] = static_cast<float>(graph.normal_uv_set);
   for (size_t i = 0; i < count; ++i) {
     const MaterialXGraphNodeCPU& node = graph.nodes[i];
     const size_t base = kRtMaterialGraphHeaderFloats +

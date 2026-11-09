@@ -2,6 +2,7 @@
 // Copyright 2026 Light Transport Entertainment Inc.
 #pragma once
 #include "usd-validation.hh"
+#include "validation-context.hh"
 #include <array>
 #include <set>
 #include <unordered_map>
@@ -9,6 +10,9 @@
 namespace lightusd {
 namespace next {
 namespace validation_detail {
+
+inline constexpr const char *kLayerLocation = "<layer>";
+inline constexpr const char *kSpecVersion = "AOUSD Core Spec v1.1.0 (2026-08-13)";
 
 struct AppliedSchema {
   std::string name;
@@ -91,7 +95,7 @@ void ValidateQuaternionProperty(const PrimSpec &ps,
                                 const std::string &prop_name,
                                 const std::string &rule_id,
                                 const std::string &prim_location,
-                                USDValidationResult *result);
+                                USDValidationResult *result, bool allow_zero = false);
 void ValidateNumericArrayLengthProperty(const PrimSpec &ps,
                                         const std::string &prop_name,
                                         size_t expected,
@@ -278,7 +282,7 @@ void ValidateGeomPoints(const PrimSpec &ps, const std::string &prim_location,
 void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
 void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
-                    USDValidationResult *result);
+                    const PrimTypeByPath &prim_types, USDValidationResult *result);
 void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
 void ValidateParticleField(
@@ -407,16 +411,16 @@ void ValidatePreliminaryPhysics(const PrimSpec &ps,
                                 const std::string &prim_location,
                                 const PrimTypeByPath &prim_types,
                                 USDValidationResult *result);
-bool GetMetaDouble(const Dict &dict, const std::string &key, double *out);
-bool GetMetaAssetPath(const Dict &dict, const std::string &key,
+bool GetMetaDouble(DictView dict, const std::string &key, double *out);
+bool GetMetaAssetPath(DictView dict, const std::string &key,
                       std::string *out);
-bool GetMetaString(const Dict &dict, const std::string &key,
+bool GetMetaString(DictView dict, const std::string &key,
                    std::string *out);
-bool GetMetaStringArray(const Dict &dict, const std::string &key,
+bool GetMetaStringArray(DictView dict, const std::string &key,
                         std::vector<std::string> *out);
-bool GetMetaDouble2Array(const Dict &dict, const std::string &key,
+bool GetMetaDouble2Array(DictView dict, const std::string &key,
                          std::vector<std::array<double, 2>> *out);
-void ValidateDictionaryKeys(const Dict &dict, const std::string &rule_id,
+void ValidateDictionaryKeys(DictView dict, const std::string &rule_id,
                             const std::string &location,
                             USDValidationResult *result);
 void ValidateDictValue(const Value &v, const std::string &rule_id,
@@ -425,7 +429,7 @@ void ValidateDictValue(const Value &v, const std::string &rule_id,
 bool HasCompositionArc(const PrimSpec &ps);
 bool IsOverride(const PrimSpec &ps);
 std::vector<std::string> GatherArcStrings(const std::vector<std::string> &inline_items,
-                                          const ArcEdit *edit);
+                                          const ArcListOp *edit);
 bool ParseFiniteLayerOffsetNumber(const char *begin, const char *end,
                                   double *out);
 bool ParseRawLayerOffset(const std::string &text, double *offset,
@@ -447,12 +451,27 @@ void ValidatePathArcString(const std::string &arc_str,
 void ValidateVariantSetsAndSelections(const PrimSpec &ps,
                                       const std::string &prim_location,
                                       USDValidationResult *result);
+// Population order names are recommendations; absent children are permitted.
+void ValidateNameOrder(const std::vector<std::string> &names, bool properties,
+                       const std::string &rule, const std::string &location,
+                       USDValidationResult *result);
+void ValidateRelocates(const std::vector<std::pair<std::string, std::string>> &entries,
+                       const std::string &location, const std::string &anchor,
+                       USDValidationResult *result);
 void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
                        USDValidationResult *result);
 void ValidateCompositionMetadata(const PrimSpec &ps,
                                  const std::string &prim_location,
                                  const PrimSpecifierByPath &prim_specifiers,
                                  USDValidationResult *result);
+// core.listop.duplicateItems / core.listop.deprecatedAdd /
+// core.listop.deprecatedReorder over every list-op field of a PrimSpec.
+void ValidateListOpFields(const PrimSpec &ps, const std::string &prim_location,
+                          USDValidationResult *result);
+// core.schema.familyVersion for a schema name (typeName / apiSchemas entry).
+void ValidateSchemaNameGrammar(const std::string &name, const char *what,
+                               const std::string &location,
+                               USDValidationResult *result);
 std::vector<AppliedSchema> CollectAppliedSchemas(const PrimSpec &ps);
 std::set<std::string> CollectAppliedCollectionInstances(
     const std::vector<AppliedSchema> &schemas);
@@ -461,7 +480,8 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                                 USDValidationResult *result);
 void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
-                          USDValidationResult *result);
+                          USDValidationResult *result,
+                          const ValidationRegistry &registry);
 void ValidateMaterialXReferenceConventions(const PrimSpec &ps,
                                            const std::string &prim_location,
                                            USDValidationResult *result);
@@ -471,7 +491,7 @@ void ValidateClipPairArray(const std::vector<std::array<double, 2>> &pairs,
                            const std::string &field_name,
                            USDValidationResult *result);
 void ValidateClipSetMetadata(const std::string &clip_set_name,
-                             const Dict &clip_set,
+                             DictView clip_set,
                              const std::string &prim_location,
                              USDValidationResult *result);
 void ValidateClipsMetadata(const PrimSpec &ps,
@@ -545,7 +565,6 @@ bool IsDecodableButNonPortableTextureExtension(const std::string &ext);
 bool IsEightBitTextureExtension(const std::string &ext);
 bool IsArkitLayerExtension(const std::string &ext);
 bool IsArkitShaderId(const std::string &shader_id);
-bool IsBuiltinRegistryShaderId(const std::string &shader_id);
 bool ValueToFloat4(const Value &v, std::array<double, 4> *out);
 bool GetFloat4Property(const PrimSpec &ps, const std::string &name,
                        std::array<double, 4> *out);

@@ -197,7 +197,6 @@ layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; def
 layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
 layout(location = 9) in vec4 aColor;  // displayColor.rgb + displayOpacity (default 1)
-
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
 uniform mat3 uNormalMatrix;
@@ -345,6 +344,9 @@ in float vDomWeight;
 in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 in float vMorphInfl;     // blendshape influence (world units)
 
+uniform int uClippingPlaneCount;
+uniform vec4 uClippingPlanes[8];
+
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
 uniform float uMetallic;
@@ -392,6 +394,7 @@ uniform float uTransmission;
 uniform vec3 uTransmissionColor;
 uniform float uTransmissionDepth;
 uniform vec3 uTransmissionScatter;
+uniform float uTransmissionScatterAnisotropy;
 uniform float uVolumeDensity;
 uniform vec3 uVolumeAlbedo;
 uniform vec3 uVolumeEmission;
@@ -424,14 +427,12 @@ uniform float uThinFilmWeight;
 uniform float uThinFilmThickness;
 uniform float uThinFilmIor;
 // Native OpenGL MaterialX graph path. The node table mirrors lusdview's
-// bounded runtime IR; graphs with UDIMs or more than eight resident images
-// remain on the existing semantic/baked fallback path.
+// bounded runtime IR. UDIM graph images reuse the semantic UDIM array routes
+// when the source image is one of the material's resident semantic textures;
+// unsupported graph-only UDIM sources use the deterministic fallback.
 uniform bool uGraphUsable;
 uniform int uGraphNodeCount;
-uniform ivec4 uGraphOutputs0; // base, metallic, roughness, opacity
-uniform ivec2 uGraphOutputs1; // emission, normal
-uniform ivec2 uGraphOutputs2; // subsurface weight, subsurface color
-uniform int uGraphOutputs3; // subsurface radius
+uniform int uGraphOutputs[49]; // canonical OpenPBR route -> node index
 uniform vec4 uGraphNode0[64]; // op, input0, input1, input2
 uniform vec4 uGraphNode1[64];
 uniform vec4 uGraphNode2[64];
@@ -442,10 +443,10 @@ uniform sampler2D uGraphTex0;
 uniform sampler2D uGraphTex1;
 uniform sampler2D uGraphTex2;
 uniform sampler2D uGraphTex3;
-uniform sampler2D uGraphTex4;
-uniform sampler2D uGraphTex5;
-uniform sampler2D uGraphTex6;
-uniform sampler2D uGraphTex7;
+// GL 3.3 guarantees only 16 fragment samplers and common software drivers
+// expose 32. Four ordinary graph images leave enough headroom for the
+// semantic/UDIM/Ptex bindings; Vulkan retains the full eight-image budget.
+uniform int uGraphUdimRoutes[8]; // local graph image -> semantic UDIM route
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
@@ -461,6 +462,10 @@ uniform vec4 uLightPositionType[kMaxRasterLights];
 uniform vec4 uLightDirectionAngle[kMaxRasterLights];
 uniform vec4 uLightColorDiffuse[kMaxRasterLights];
 uniform vec4 uLightSpecularShape[kMaxRasterLights];
+uniform vec4 uLightAreaParams[kMaxRasterLights];
+uniform vec4 uLightIesAxisX[kMaxRasterLights];
+uniform vec4 uLightIesAxisY[kMaxRasterLights];
+uniform vec4 uLightIesProfile[kMaxRasterLights * 6];
 
 // DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
 // floor when present).
@@ -666,37 +671,43 @@ vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
 }
 
 vec4 sampleGraphImage(int slot, vec2 uv, vec4 missing) {
+    if (slot < 0 || slot >= 4) return missing;
     if (slot == 0) return texture(uGraphTex0, uv);
     if (slot == 1) return texture(uGraphTex1, uv);
     if (slot == 2) return texture(uGraphTex2, uv);
     if (slot == 3) return texture(uGraphTex3, uv);
-    if (slot == 4) return texture(uGraphTex4, uv);
-    if (slot == 5) return texture(uGraphTex5, uv);
-    if (slot == 6) return texture(uGraphTex6, uv);
-    if (slot == 7) return texture(uGraphTex7, uv);
     return missing;
 }
 
+vec4 sampleGraphImageUdim(int slot, float row, vec2 uv, vec4 missing) {
+    if (slot < 0 || slot >= 8 || row < 0.0) return missing;
+    int route = uGraphUdimRoutes[slot];
+    return route >= 0 ? sampleRoutedUdim(route, int(row + 0.5), uv, missing)
+                      : missing;
+}
+
+int graphOutput(int route) {
+    if (route < 0 || route >= 49) return -1;
+    return uGraphOutputs[route];
+}
+
 bool hasGraphRoute(int route) {
-    if (!uGraphUsable || route < 0 || route > 8) return false;
-    int wanted = route < 4 ? uGraphOutputs0[route] :
-                 (route < 6 ? (route == 4 ? uGraphOutputs1.x : uGraphOutputs1.y)
-                            : (route < 8 ? (route == 6 ? uGraphOutputs2.x : uGraphOutputs2.y)
-                                         : uGraphOutputs3));
+    if (!uGraphUsable || route < 0 || route >= 49) return false;
+    int wanted = graphOutput(route);
     return wanted >= 0 && wanted < uGraphNodeCount;
 }
 
-vec4 evalMaterialXGraph(int route, vec2 uv) {
-    if (!hasGraphRoute(route)) return vec4(0.0);
-    int wanted = route < 4 ? uGraphOutputs0[route] :
-                 (route < 6 ? (route == 4 ? uGraphOutputs1.x : uGraphOutputs1.y)
-                            : (route < 8 ? (route == 6 ? uGraphOutputs2.x : uGraphOutputs2.y)
-                                         : uGraphOutputs3));
+vec4 gGraphResults[49];
+
+void evalMaterialXGraph(vec2 uv) {
+    for (int route = 0; route < 49; ++route) gGraphResults[route] = vec4(0.0);
+    if (!uGraphUsable || uGraphNodeCount <= 0) return;
     vec4 values[64];
     for (int i = 0; i < 64; ++i) values[i] = vec4(0.0);
-    for (int pass = 0; pass < 64; ++pass) {
-        for (int i = 0; i < 64; ++i) {
-            if (i >= uGraphNodeCount) continue;
+    // CompileMaterialXGraphRuntime stores dependencies before consumers, so
+    // one bounded pass replaces the old 64-pass fixed-point interpreter.
+    for (int i = 0; i < 64; ++i) {
+            if (i >= uGraphNodeCount) break;
             int op = int(uGraphNode0[i].x + 0.5);
             int ia = int(uGraphNode0[i].y + (uGraphNode0[i].y < 0.0 ? -0.5 : 0.5));
             int ib = int(uGraphNode0[i].z + (uGraphNode0[i].z < 0.0 ? -0.5 : 0.5));
@@ -714,8 +725,15 @@ vec4 evalMaterialXGraph(int route, vec2 uv) {
                 else if (ui == 2) guv = c.xy;
                 guv = guv * uGraphNode4[i].yz +
                       vec2(uGraphNode4[i].w, uGraphNode5[i].x);
-                values[i] = sampleGraphImage(int(uGraphNode4[i].x + (uGraphNode4[i].x < 0.0 ? -0.5 : 0.5)),
-                                              guv, value);
+                float encodedSlot = uGraphNode4[i].x;
+                if (encodedSlot < 0.0) {
+                    int slot = int(-encodedSlot - 0.5);
+                    values[i] = sampleGraphImageUdim(slot, uGraphNode5[i].z,
+                                                     guv, value);
+                } else {
+                    values[i] = sampleGraphImage(int(encodedSlot + 0.5),
+                                                 guv, value);
+                }
             } else if (op == 3) values[i] = vec4(normalize(a.xyz * 2.0 - 1.0) * 0.5 + 0.5, a.w);
             else if (op == 4) values[i] = a + b;
             else if (op == 5) values[i] = a - b;
@@ -775,9 +793,12 @@ vec4 evalMaterialXGraph(int route, vec2 uv) {
                                       t.x * sin(a2) + t.y * cos(a2)), a.zw);
             }
             else values[i] = value;
-        }
     }
-    return values[wanted];
+    for (int route = 0; route < 49; ++route) {
+        int wanted = graphOutput(route);
+        if (wanted >= 0 && wanted < uGraphNodeCount)
+            gGraphResults[route] = values[wanted];
+    }
 }
 
 vec2 ptexUv(sampler2D tex, vec2 uv, vec2 grid) {
@@ -811,12 +832,14 @@ vec3 linearToSrgb(vec3 c) {
 // Specular F0 (T12), matching the Vulkan mesh.frag: specular workflow ->
 // specularColor; else the dielectric reflectance from ior lerped to base by
 // metalness. ior 1.5 (the default) gives exactly 0.04.
-vec3 computeF0(vec3 base, float metallic) {
-    if (uUseSpecularWorkflow != 0) return uSpecularColor;
-    float ior = max(1.0, uIor);
+vec3 computeF0(vec3 base, float metallic, vec3 specularColor,
+               float iorInput, int useSpecularWorkflow,
+               int openPbrSpecularModel) {
+    if (useSpecularWorkflow != 0) return specularColor;
+    float ior = max(1.0, iorInput);
     float d = (ior - 1.0) / (ior + 1.0);
     vec3 dielectric = vec3(d * d);
-    if (uOpenPbrSpecularModel != 0) dielectric *= uSpecularColor;
+    if (openPbrSpecularModel != 0) dielectric *= specularColor;
     return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
 }
 
@@ -854,11 +877,12 @@ vec3 fresnelSchlick(float VoH, vec3 f0) {
 // Compact thin-film approximation for the raster preview.  It preserves the
 // authored base F0 at zero thickness and adds the familiar view-dependent
 // spectral shift without requiring a second shader variant or an LUT.
-vec3 applyThinFilm(vec3 f0, float cosTheta) {
-    float w = clamp(uThinFilmWeight, 0.0, 1.0);
-    if (w <= 0.0 || uThinFilmThickness <= 0.0) return f0;
-    float eta = max(uThinFilmIor, 1.0);
-    float phase = 6.28318530718 * eta * uThinFilmThickness *
+vec3 applyThinFilm(vec3 f0, float cosTheta, float filmWeight,
+                   float filmThickness, float filmIor) {
+    float w = clamp(filmWeight, 0.0, 1.0);
+    if (w <= 0.0 || filmThickness <= 0.0) return f0;
+    float eta = max(filmIor, 1.0);
+    float phase = 6.28318530718 * eta * filmThickness *
                   (1.0 - clamp(cosTheta, 0.0, 1.0));
     vec3 film = 0.5 + 0.5 * cos(phase * vec3(1.0, 1.17, 1.35) +
                                 vec3(0.0, 2.1, 4.2));
@@ -944,7 +968,12 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
 }
 
 void main() {
-    vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
+    for (int i = 0; i < uClippingPlaneCount; ++i) {
+        if (dot(vec4(vWorldPos, 1.0), uClippingPlanes[i]) < 0.0) discard;
+    }
+    vec3 displayColor = vColor.rgb;
+    float displayOpacity = vColor.a;
+    vec3 baseColor = uBaseColor * displayColor;  // displayColor defaults to white
     // base_weight is an OpenPBR input. UsdPreviewSurface has no equivalent and
     // must retain its full diffuse contribution; its shared CPU payload leaves
     // the OpenPBR-only field at zero.
@@ -954,22 +983,60 @@ void main() {
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
-    float volumeOpacity = clamp(1.0 - exp(-max(uVolumeDensity, 0.0) * 0.1),
-                                0.0, 1.0);
-    baseColor = mix(baseColor, baseColor * uVolumeAlbedo, volumeOpacity);
-    emissive += uVolumeEmission * max(uVolumeEmissionScale, 0.0) * volumeOpacity;
-    float opacity = clamp(uAlpha * vColor.a, 0.0, 1.0);
-    vec4 graphBase = evalMaterialXGraph(0, uUvSet.x == 1 ? vUV1 : vUV);
-    vec4 graphMetal = evalMaterialXGraph(1, uUvSet.y == 1 ? vUV1 : vUV);
-    vec4 graphRough = evalMaterialXGraph(
-        2, uRoughnessUvSet == 1 ? vUV1 : vUV);
-    vec4 graphOpacity = evalMaterialXGraph(
-        3, uOpacityUvSet == 1 ? vUV1 : vUV);
-    vec4 graphEmission = evalMaterialXGraph(4, uUvSet.w == 1 ? vUV1 : vUV);
-    vec4 graphNormal = evalMaterialXGraph(5, uUvSet.z == 1 ? vUV1 : vUV);
-    vec4 graphSubsurface = evalMaterialXGraph(6, vUV);
-    vec4 graphSubsurfaceColor = evalMaterialXGraph(7, vUV);
-    vec4 graphSubsurfaceRadius = evalMaterialXGraph(8, vUV);
+    float volumeDensity = uVolumeDensity;
+    vec3 volumeAlbedo = uVolumeAlbedo;
+    vec3 volumeEmission = uVolumeEmission;
+    float volumeEmissionScale = uVolumeEmissionScale;
+    float opacity = clamp(uAlpha * displayOpacity, 0.0, 1.0);
+    // The graph interpreter is dependency-first and produces every route in
+    // one pass. This is intentionally called once even when only the six
+    // legacy semantic lanes are used; it keeps advanced OpenPBR routes on the
+    // same precedence and fallback rules as Vulkan.
+    evalMaterialXGraph(vUV);
+    vec4 graphBase = gGraphResults[0];
+    vec4 graphMetal = gGraphResults[1];
+    vec4 graphRough = gGraphResults[2];
+    vec4 graphOpacity = gGraphResults[3];
+    vec4 graphEmission = gGraphResults[4];
+    vec4 graphNormal = gGraphResults[5];
+    vec4 graphSubsurface = gGraphResults[6];
+    vec4 graphSubsurfaceColor = gGraphResults[7];
+    vec4 graphSubsurfaceRadius = gGraphResults[8];
+    float specularWeight = uSpecularWeight;
+    vec3 specularColor = uSpecularColor;
+    float specularIor = uIor;
+    float diffuseRoughness = uDiffuseRoughness;
+    float transmissionWeight = uTransmission;
+    vec3 transmissionColor = uTransmissionColor;
+    float transmissionDepth = uTransmissionDepth;
+    vec3 transmissionScatter = uTransmissionScatter;
+    float transmissionScatterAnisotropy = uTransmissionScatterAnisotropy;
+    float subsurfaceScale = uSubsurfaceScale;
+    float subsurfaceAnisotropy = uSubsurfaceAnisotropy;
+    float subsurfaceScatterAnisotropy = uSubsurfaceScatterAnisotropy;
+    float coatWeight = uCoatWeight;
+    vec3 coatColor = uCoatColor;
+    float coatRoughness = uCoatRoughness;
+    float coatIor = uCoatIor;
+    float sheenWeight = uSheenWeight;
+    vec3 sheenColor = uSheenColor;
+    float sheenRoughness = uSheenRoughness;
+    float thinFilmWeight = uThinFilmWeight;
+    float thinFilmThickness = uThinFilmThickness;
+    float thinFilmIor = uThinFilmIor;
+    float specularAnisotropy = uSpecularAnisotropy;
+    float specularRotation = uSpecularRotation;
+    float specularRoughnessAnisotropy = uSpecularRoughnessAnisotropy;
+    float transmissionDispersion = uTransmissionDispersion;
+    float transmissionDispersionAbbeNumber = uTransmissionDispersionAbbeNumber;
+    float transmissionDispersionScale = uTransmissionDispersionScale;
+    float coatAnisotropy = uCoatAnisotropy;
+    float coatRotation = uCoatRotation;
+    float coatRoughnessAnisotropy = uCoatRoughnessAnisotropy;
+    float coatAffectColor = uCoatAffectColor;
+    float coatAffectRoughness = uCoatAffectRoughness;
+    float coatDarkening = uCoatDarkening;
+    float emissionLuminance = 1.0;
     float subsurfaceWeight = clamp(uSubsurface, 0.0, 1.0);
     vec3 subsurfaceColor = uSubsurfaceColor;
     if (hasGraphRoute(6)) subsurfaceWeight = clamp(graphSubsurface.x, 0.0, 1.0);
@@ -978,7 +1045,51 @@ void main() {
     if (hasGraphRoute(8)) subsurfaceRadius = max(dot(graphSubsurfaceRadius.rgb,
                                                      vec3(0.2126, 0.7152, 0.0722)), 0.0);
 
-    if (hasGraphRoute(0)) baseColor = graphBase.rgb * vColor.rgb;
+    // Advanced OpenPBR routes are resolved here once for both the direct-light
+    // and IBL paths. A graph route is authoritative over the packed constant;
+    // the CPU bridge disables routes that require a deterministic fallback.
+    if (hasGraphRoute(9)) specularWeight = clamp(gGraphResults[9].x, 0.0, 1.0);
+    if (hasGraphRoute(10)) specularColor = max(gGraphResults[10].rgb, vec3(0.0));
+    if (hasGraphRoute(11)) transmissionWeight = clamp(gGraphResults[11].x, 0.0, 1.0);
+    if (hasGraphRoute(12)) transmissionColor = max(gGraphResults[12].rgb, vec3(0.0));
+    if (hasGraphRoute(13)) coatWeight = clamp(gGraphResults[13].x, 0.0, 1.0);
+    if (hasGraphRoute(14)) coatColor = max(gGraphResults[14].rgb, vec3(0.0));
+    if (hasGraphRoute(15)) coatRoughness = clamp(gGraphResults[15].x, 0.02, 1.0);
+    if (hasGraphRoute(16)) sheenWeight = clamp(gGraphResults[16].x, 0.0, 1.0);
+    if (hasGraphRoute(17)) sheenColor = max(gGraphResults[17].rgb, vec3(0.0));
+    if (hasGraphRoute(18)) sheenRoughness = clamp(gGraphResults[18].x, 0.02, 1.0);
+    if (hasGraphRoute(19)) specularIor = max(gGraphResults[19].x, 1.0);
+    if (hasGraphRoute(20)) baseWeight = clamp(gGraphResults[20].x, 0.0, 1.0);
+    if (hasGraphRoute(21)) diffuseRoughness = clamp(gGraphResults[21].x, 0.0, 1.0);
+    if (hasGraphRoute(22)) transmissionScatter = max(gGraphResults[22].rgb, vec3(0.0));
+    if (hasGraphRoute(23)) transmissionDepth = max(gGraphResults[23].x, 0.0);
+    if (hasGraphRoute(24)) transmissionScatterAnisotropy = clamp(gGraphResults[24].x, -1.0, 1.0);
+    if (hasGraphRoute(25)) subsurfaceScale = max(gGraphResults[25].x, 0.0);
+    if (hasGraphRoute(26)) subsurfaceAnisotropy = clamp(gGraphResults[26].x, -1.0, 1.0);
+    if (hasGraphRoute(27)) coatIor = max(gGraphResults[27].x, 1.0);
+    if (hasGraphRoute(28)) thinFilmWeight = clamp(gGraphResults[28].x, 0.0, 1.0);
+    if (hasGraphRoute(29)) thinFilmThickness = max(gGraphResults[29].x, 0.0);
+    if (hasGraphRoute(30)) thinFilmIor = max(gGraphResults[30].x, 1.0);
+    if (hasGraphRoute(31)) specularAnisotropy = clamp(gGraphResults[31].x, -1.0, 1.0);
+    if (hasGraphRoute(32)) specularRotation = gGraphResults[32].x;
+    if (hasGraphRoute(33)) specularRoughnessAnisotropy = clamp(gGraphResults[33].x, -1.0, 1.0);
+    if (hasGraphRoute(34)) transmissionDispersion = max(gGraphResults[34].x, 0.0);
+    if (hasGraphRoute(35)) transmissionDispersionAbbeNumber = max(gGraphResults[35].x, 0.0);
+    if (hasGraphRoute(36)) transmissionDispersionScale = max(gGraphResults[36].x, 0.0);
+    if (hasGraphRoute(37)) coatAnisotropy = clamp(gGraphResults[37].x, -1.0, 1.0);
+    if (hasGraphRoute(38)) coatRotation = gGraphResults[38].x;
+    if (hasGraphRoute(39)) coatRoughnessAnisotropy = clamp(gGraphResults[39].x, -1.0, 1.0);
+    if (hasGraphRoute(40)) volumeDensity = max(gGraphResults[40].x, 0.0);
+    if (hasGraphRoute(41)) volumeAlbedo = max(gGraphResults[41].rgb, vec3(0.0));
+    if (hasGraphRoute(42)) volumeEmission = max(gGraphResults[42].rgb, vec3(0.0));
+    if (hasGraphRoute(43)) volumeEmissionScale = max(gGraphResults[43].x, 0.0);
+    if (hasGraphRoute(44)) emissionLuminance = max(gGraphResults[44].x, 0.0);
+    if (hasGraphRoute(45)) coatAffectColor = clamp(gGraphResults[45].x, 0.0, 1.0);
+    if (hasGraphRoute(46)) coatAffectRoughness = clamp(gGraphResults[46].x, 0.0, 1.0);
+    if (hasGraphRoute(47)) coatDarkening = clamp(gGraphResults[47].x, 0.0, 1.0);
+    if (hasGraphRoute(48)) subsurfaceScatterAnisotropy = clamp(gGraphResults[48].x, -1.0, 1.0);
+
+    if (hasGraphRoute(0)) baseColor = graphBase.rgb * displayColor;
     if (!hasGraphRoute(0) && uHasBaseColorTex) {
         vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
         if (uBasePtex && uHasFaceId) {
@@ -1035,6 +1146,11 @@ void main() {
                          : texture(uEmissiveTex, uv);
         emissive *= (texel * uEmissiveTexScale + uEmissiveTexBias).rgb;
     }
+    float volumeOpacity = clamp(1.0 - exp(-max(volumeDensity, 0.0) * 0.1),
+                                0.0, 1.0);
+    baseColor = mix(baseColor, baseColor * volumeAlbedo, volumeOpacity);
+    emissive = emissive * emissionLuminance +
+               volumeEmission * volumeEmissionScale * volumeOpacity;
 
     vec3 N = uGeometricNormal
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
@@ -1099,7 +1215,7 @@ void main() {
         vec3 b = normalize(cross(N, t)) * (rr < 0.0 ? -1.0 : 1.0);
         coatN = normalize(mat3(t, b, N) * tn);
     }
-    if (hasGraphRoute(3)) opacity = clamp(uAlpha * graphOpacity.x * vColor.a, 0.0, 1.0);
+    if (hasGraphRoute(3)) opacity = clamp(uAlpha * graphOpacity.x * displayOpacity, 0.0, 1.0);
     if (!hasGraphRoute(3) && uHasOpacityTex) {
         vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
                           uOpacityUv0, uOpacityUv1);
@@ -1134,7 +1250,7 @@ void main() {
             return;
         }
         if (uRenderMode == 5) { fragColor = vec4(fract(vUV), 0.0, 1.0); return; }      // uv set 0
-        if (uRenderMode == 7) { fragColor = vec4(baseColor, 1.0); return; }            // albedo (unlit)
+        if (uRenderMode == 7) { fragColor = vec4(baseColor, 1.0); return; }     // albedo (unlit)
         if (uRenderMode == 8) {                                                        // facing
             fragColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
             return;
@@ -1211,7 +1327,6 @@ void main() {
         }
         if (uRenderMode == 26) { fragColor = vec4(idColor(-1), 1.0); return; }  // instance id: non-instanced -> gray
     }
-
     vec3 V = normalize(uCameraPos - vWorldPos);
 
     // Real-time Cook-Torrance preview. Face two-sided shading normals toward the
@@ -1223,16 +1338,17 @@ void main() {
     tangent = normalize(tangent - Nf * dot(tangent, Nf));
     if (dot(tangent, tangent) < 1e-8) tangent = normalize(cross(Nf, vec3(0.0, 1.0, 0.0)));
     vec3 bitangent = normalize(cross(Nf, tangent));
-    float tangentAngle = radians(uSpecularRotation);
+    float tangentAngle = radians(specularRotation);
     vec3 rotatedTangent = tangent * cos(tangentAngle) +
                           bitangent * sin(tangentAngle);
     vec3 rotatedBitangent = normalize(cross(Nf, rotatedTangent));
     float NoV = max(dot(Nf, V), 1e-4);
     float met = clamp(metallic, 0.0, 1.0);
     float rgh = clamp(roughness +
-                      0.25 * clamp(uDiffuseRoughness, 0.0, 1.0) * (1.0 - met),
+                      0.25 * clamp(diffuseRoughness, 0.0, 1.0) * (1.0 - met),
                       0.02, 1.0);
-    vec3 F0 = computeF0(baseColor, met);
+    vec3 F0 = computeF0(baseColor, met, specularColor, specularIor,
+                        uUseSpecularWorkflow, uOpenPbrSpecularModel);
     if (uUseSpecularWorkflow != 0 || uOpenPbrSpecularModel != 0) {
         F0 *= sampleCoatColor(uSpecularColorTex, uHasSpecularColorTex,
                               uAdvancedTexIsUdim.x, uAdvancedUdimRoutes.x,
@@ -1241,13 +1357,15 @@ void main() {
                               uSpecularColorUvSet, uSpecularColorScale,
                               uSpecularColorBias, uSpecularColorPtexGrid);
     }
-    F0 = applyThinFilm(F0, NoV);
+    F0 = applyThinFilm(F0, NoV, thinFilmWeight, thinFilmThickness,
+                       thinFilmIor);
     if (uRenderMode == 39) { fragColor = vec4(F0, 1.0); return; }
     if (uRenderMode == 40) {
-        float d = (max(uIor, 1.0) - 1.0) / (max(uIor, 1.0) + 1.0);
+        float d = (max(specularIor, 1.0) - 1.0) /
+                  (max(specularIor, 1.0) + 1.0);
         fragColor = vec4(vec3(d * d), 1.0); return;
     }
-    float cw = clamp(uCoatWeight *
+    float cw = clamp(coatWeight *
                      sampleCoatScalar(uCoatWeightTex, uHasCoatWeightTex,
                                       uAdvancedTexIsUdim.y,
                                       uAdvancedUdimRoutes.y,
@@ -1257,7 +1375,7 @@ void main() {
                                       uCoatWeightScale, uCoatWeightBias,
                                       uCoatWeightPtexGrid),
                      0.0, 1.0);
-    float cr = clamp(uCoatRoughness *
+    float cr = clamp(coatRoughness *
                      sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
                                       uAdvancedTexIsUdim.w,
                                       uAdvancedUdimRoutes.w,
@@ -1269,8 +1387,8 @@ void main() {
                                       uCoatRoughnessPtexGrid),
                      0.02, 1.0);
     cr = mix(cr, clamp(roughness, 0.02, 1.0),
-             clamp(uCoatAffectRoughness, 0.0, 1.0));
-    vec3 sampledCoatTint = uCoatColor * sampleCoatColor(
+             clamp(coatAffectRoughness, 0.0, 1.0));
+    vec3 sampledCoatTint = coatColor * sampleCoatColor(
         uCoatColorTex, uHasCoatColorTex, uAdvancedTexIsUdim.z,
         uAdvancedUdimRoutes.z, uAdvancedUdimSlots.z, uCoatColorUv0,
         uCoatColorUv1, uCoatColorUvSet, uCoatColorScale, uCoatColorBias,
@@ -1282,8 +1400,8 @@ void main() {
     if (uRenderMode == 37) { fragColor = vec4(sampledCoatTint, 1.0); return; }
     if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }
     vec3 coatTint = mix(vec3(1.0), sampledCoatTint,
-                        clamp(uCoatAffectColor, 0.0, 1.0));
-    float ci = max(uCoatIor, 1.0);
+                        clamp(coatAffectColor, 0.0, 1.0));
+    float ci = max(coatIor, 1.0);
     float cd = (ci - 1.0) / (ci + 1.0);
     vec3 direct = vec3(0.0);
     for (int li = 0; li < kMaxRasterLights; ++li) {
@@ -1294,12 +1412,37 @@ void main() {
         vec4 lc = uLightColorDiffuse[li];
         vec4 ss = uLightSpecularShape[li];
         int lightType = int(pt.w + 0.5);
+        int sampleCount = (lightType == 2 || lightType == 3 ||
+                           lightType == 4 || lightType == 7 ||
+                           lightType == 8) ? 8 : 1;
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 samplePos = pt.xyz;
+        int sampleBase = sampleIndex * 3;
+        if (lightType == 7) {
+            samplePos = vec3(
+                uLightIesProfile[li * 6 + sampleBase / 4][sampleBase % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 1) / 4][(sampleBase + 1) % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 2) / 4][(sampleBase + 2) % 4]);
+        } else if (lightType == 3 || lightType == 8) {
+            float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+            float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (sx * uLightAreaParams[li].y) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sy * uLightAreaParams[li].z);
+        } else if (lightType == 2 || lightType == 4) {
+            float angle = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (cos(angle) * 0.5 * uLightAreaParams[li].x) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sin(angle) * 0.5 * uLightAreaParams[li].x);
+        }
         vec3 L;
         float attenuation = 1.0;
         if (lightType == 5) {
             L = normalize(da.xyz);
         } else {
-            vec3 toLight = pt.xyz - vWorldPos;
+            vec3 toLight = samplePos - vWorldPos;
             float dist2 = max(dot(toLight, toLight), 1e-6);
             L = toLight * inversesqrt(dist2);
             attenuation = 1.0 / dist2;
@@ -1322,10 +1465,10 @@ void main() {
         vec3 F = fresnelSchlick(VoH, F0);
         float D = distributionAnisotropicGGX(
             NoH, dot(H, rotatedTangent), dot(H, rotatedBitangent), rgh,
-            uSpecularAnisotropy + uSpecularRoughnessAnisotropy * 0.5);
+            specularAnisotropy + specularRoughnessAnisotropy * 0.5);
         float G = geometrySchlickGGX(NoV, rgh) *
                   geometrySchlickGGX(NoL, rgh);
-        vec3 specular = D * G * F * clamp(uSpecularWeight, 0.0, 1.0) /
+        vec3 specular = D * G * F * clamp(specularWeight, 0.0, 1.0) /
                         max(4.0 * NoV * NoL, 1e-5);
         vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor *
                        baseWeight / kPi;
@@ -1333,18 +1476,18 @@ void main() {
         // grazing angles.  This Charlie-like approximation is intentionally
         // bounded so it can be layered with the existing GGX response.
         float sheenGrazing = pow(1.0 - max(NoL, 0.0), 5.0);
-        vec3 sheen = uSheenColor * clamp(uSheenWeight, 0.0, 1.0) *
-                      (0.5 + 0.5 * clamp(uSheenRoughness, 0.0, 1.0)) *
+        vec3 sheen = sheenColor * clamp(sheenWeight, 0.0, 1.0) *
+                      (0.5 + 0.5 * clamp(sheenRoughness, 0.0, 1.0)) *
                       sheenGrazing / kPi;
         // Subsurface is represented as wrapped diffuse plus a back-lighting
         // term.  Radius/anisotropy remain available to the path tracer; the
         // GL preview keeps the perceptual response stable across mesh scale.
-        float wrap = clamp(uSubsurface, 0.0, 1.0) *
-                     (0.5 + 0.25 * abs(clamp(uSubsurfaceAnisotropy, -1.0, 1.0)) +
-                      0.25 * abs(clamp(uSubsurfaceScatterAnisotropy, -1.0, 1.0)));
+        float wrap = clamp(subsurfaceWeight, 0.0, 1.0) *
+                     (0.5 + 0.25 * abs(clamp(subsurfaceAnisotropy, -1.0, 1.0)) +
+                      0.25 * abs(clamp(subsurfaceScatterAnisotropy, -1.0, 1.0)));
         float wrappedNoL = clamp((dot(Nf, L) + wrap) / (1.0 + wrap), 0.0, 1.0);
-        float radiusGain = clamp(sqrt(max(uSubsurfaceScale *
-                                          uSubsurfaceRadius * subsurfaceRadius, 0.0)) * 8.0,
+        float radiusGain = clamp(sqrt(max(subsurfaceScale *
+                                          subsurfaceRadius * subsurfaceRadius, 0.0)) * 8.0,
                                  0.0, 1.0);
         float diffusionShape = mix(wrappedNoL + backNoL * 0.35,
                                    0.5 + 0.5 * sqrt(max(NoL, 0.0)),
@@ -1353,43 +1496,44 @@ void main() {
                           diffusionShape / kPi;
         // Single-bounce transmission/backlighting.  It complements alpha
         // blending and remains visible for opaque thin-sheet OpenPBR assets.
-        vec3 transmissionMedium = exp(-max(uTransmissionScatter, vec3(0.0)) *
-                                      max(uTransmissionDepth, 0.0));
-        float abbeScale = uTransmissionDispersionAbbeNumber > 0.0
-                              ? 1.0 + 20.0 / max(uTransmissionDispersionAbbeNumber, 1.0)
+        vec3 transmissionMedium = exp(-max(transmissionScatter, vec3(0.0)) *
+                                      max(transmissionDepth, 0.0));
+        float abbeScale = transmissionDispersionAbbeNumber > 0.0
+                              ? 1.0 + 20.0 / max(transmissionDispersionAbbeNumber, 1.0)
                               : 1.0;
-        float dispersion = clamp(uTransmissionDispersion *
-                                 uTransmissionDispersionScale * abbeScale,
+        float dispersion = clamp(transmissionDispersion *
+                                 transmissionDispersionScale * abbeScale,
                                  0.0, 1.0);
         vec3 dispersionTint = vec3(1.0 + 0.35 * dispersion,
                                     1.0,
                                     1.0 - 0.25 * dispersion);
-        vec3 transmitted = uTransmissionColor * dispersionTint * transmissionMedium *
-                           clamp(uTransmission, 0.0, 1.0) * backNoL *
+        vec3 transmitted = transmissionColor * dispersionTint * transmissionMedium *
+                           clamp(transmissionWeight, 0.0, 1.0) * backNoL *
                            (1.0 - met) / kPi;
         float coatNoL = max(dot(coatNf, L), 0.0);
         float coatNoV = max(dot(coatNf, V), 1e-4);
         float coatNoH = max(dot(coatNf, H), 0.0);
         vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
-        float coatAngle = radians(uCoatRotation);
+        float coatAngle = radians(coatRotation);
         vec3 coatT = tangent * cos(coatAngle) + bitangent * sin(coatAngle);
         vec3 coatB = normalize(cross(coatNf, coatT));
         float coatD = distributionAnisotropicGGX(
             coatNoH, dot(H, coatT), dot(H, coatB),
-            cr * (1.0 + 0.25 * uCoatRoughnessAnisotropy), uCoatAnisotropy);
-        float coatRgh = cr * (1.0 + 0.25 * uCoatRoughnessAnisotropy);
+            cr * (1.0 + 0.25 * coatRoughnessAnisotropy), coatAnisotropy);
+        float coatRgh = cr * (1.0 + 0.25 * coatRoughnessAnisotropy);
         float coatG = geometrySchlickGGX(coatNoV, coatRgh) *
                       geometrySchlickGGX(coatNoL, coatRgh);
         vec3 coatSpec = coatD * coatG * coatF /
                         max(4.0 * coatNoV * coatNoL, 1e-5);
         vec3 baseBrdf = (diffuse + sheen + subsurface) *
-                        (1.0 - clamp(uCoatDarkening, 0.0, 1.0) * cw) * lc.w +
+                        (1.0 - clamp(coatDarkening, 0.0, 1.0) * cw) * lc.w +
                         specular * (vec3(1.0) - coatF * cw) * ss.x;
         vec3 coatBrdf = coatSpec * coatTint * cw * ss.x;
         float visibility = (li == uShadowLightSlot)
                                ? sampleShadow(vWorldPos, Nf, L) : 1.0;
         direct += (baseBrdf * NoL + coatBrdf * coatNoL + transmitted) * lc.rgb *
-                  (attenuation * shape * visibility);
+                  (attenuation * shape * visibility) / float(sampleCount);
+        }
     }
     // Scenes without authored direct lights retain the readable preview key.
     if (uLightCount == 0) {
@@ -1404,14 +1548,14 @@ void main() {
         vec3 F = fresnelSchlick(VoH, F0);
         vec3 specular = distributionAnisotropicGGX(
                          NoH, dot(H, rotatedTangent), dot(H, rotatedBitangent),
-                         rgh, uSpecularAnisotropy +
-                         uSpecularRoughnessAnisotropy * 0.5) *
+                         rgh, specularAnisotropy +
+                         specularRoughnessAnisotropy * 0.5) *
                         geometrySchlickGGX(NoV, rgh) *
                         geometrySchlickGGX(NoL, rgh) * F /
                         max(4.0 * NoV * NoL, 1e-5);
         vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor *
                        baseWeight / kPi;
-        specular *= clamp(uSpecularWeight, 0.0, 1.0);
+        specular *= clamp(specularWeight, 0.0, 1.0);
         direct = (diffuse + specular) * lightColor * NoL;
     }
 
@@ -1449,29 +1593,29 @@ void main() {
     // Keep the advanced lobes visible in the ambient-only preview as well.
     // With an IBL, transmission uses a refracted environment sample; without
     // one, the neutral floor still receives a bounded colored contribution.
-    float lobeWeight = clamp(uTransmission, 0.0, 1.0) * (1.0 - met);
+    float lobeWeight = clamp(transmissionWeight, 0.0, 1.0) * (1.0 - met);
     if (uHasIbl && lobeWeight > 0.0) {
-        vec3 T = refract(-V, Nf, 1.0 / max(uIor, 1.001));
+        vec3 T = refract(-V, Nf, 1.0 / max(specularIor, 1.001));
         vec3 transmittedIbl = textureLod(uPrefilteredMap,
                                          normalize(T),
                                          rgh * float(uPrefilteredLods - 1)).rgb;
-        vec3 medium = exp(-max(uTransmissionScatter, vec3(0.0)) *
-                          max(uTransmissionDepth, 0.0));
-        float dispersion = clamp(uTransmissionDispersion *
-                                 uTransmissionDispersionScale, 0.0, 1.0);
+        vec3 medium = exp(-max(transmissionScatter, vec3(0.0)) *
+                          max(transmissionDepth, 0.0));
+        float dispersion = clamp(transmissionDispersion *
+                                 transmissionDispersionScale, 0.0, 1.0);
         vec3 dispersionTint = vec3(1.0 + 0.35 * dispersion,
                                     1.0,
                                     1.0 - 0.25 * dispersion);
-        ambient += transmittedIbl * uTransmissionColor * dispersionTint * medium * lobeWeight *
+        ambient += transmittedIbl * transmissionColor * dispersionTint * medium * lobeWeight *
                    uIblColor;
     } else {
-        vec3 medium = exp(-max(uTransmissionScatter, vec3(0.0)) *
-                          max(uTransmissionDepth, 0.0));
-        ambient += uTransmissionColor * medium * lobeWeight * 0.04;
+        vec3 medium = exp(-max(transmissionScatter, vec3(0.0)) *
+                          max(transmissionDepth, 0.0));
+        ambient += transmissionColor * medium * lobeWeight * 0.04;
     }
-    ambient += uSubsurfaceColor * clamp(uSubsurface, 0.0, 1.0) *
+    ambient += subsurfaceColor * clamp(subsurfaceWeight, 0.0, 1.0) *
                (uHasIbl ? 0.12 : 0.03);
-    ambient += uSheenColor * clamp(uSheenWeight, 0.0, 1.0) * 0.025;
+    ambient += sheenColor * clamp(sheenWeight, 0.0, 1.0) * 0.025;
     if (uAlphaMode == 1 && opacity <= 0.0) {
         discard;
     }
@@ -1527,6 +1671,8 @@ in vec3 vNormal;
 in vec2 vUV;
 in vec2 vUV1;
 in vec4 vColor;
+uniform int uClippingPlaneCount;
+uniform vec4 uClippingPlanes[8];
 uniform vec3 uCameraPos;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
@@ -1534,43 +1680,162 @@ uniform float uExposure;
 uniform vec3 uBaseColor;
 uniform vec3 uEmissive;
 uniform float uAlpha;
+uniform int uAlphaMode;
+uniform float uAlphaCutoff;
 uniform float uMetallic;
 uniform float uRoughness;
+uniform int uUseSpecularWorkflow;
+uniform int uOpenPbrSpecularModel;
+uniform vec3 uSpecularColor;
+uniform float uIor;
+uniform float uBaseWeight;
+uniform float uSpecularWeight;
+uniform float uDiffuseRoughness;
 uniform float uTransmission;
 uniform vec3 uTransmissionColor;
+uniform float uTransmissionDepth;
+uniform vec3 uTransmissionScatter;
+uniform float uTransmissionDispersion;
+uniform float uTransmissionDispersionScale;
+uniform float uVolumeDensity;
+uniform vec3 uVolumeAlbedo;
+uniform vec3 uVolumeEmission;
+uniform float uVolumeEmissionScale;
 uniform float uSubsurface;
 uniform vec3 uSubsurfaceColor;
+uniform float uSubsurfaceScale;
+uniform float uSubsurfaceAnisotropy;
+uniform float uSubsurfaceScatterAnisotropy;
+uniform float uCoatWeight;
+uniform vec3 uCoatColor;
+uniform float uCoatRoughness;
+uniform float uCoatIor;
+uniform float uCoatAffectColor;
+uniform float uCoatDarkening;
+uniform float uSheenWeight;
+uniform vec3 uSheenColor;
+uniform float uSheenRoughness;
+uniform float uSpecularAnisotropy;
+uniform float uSpecularRoughnessAnisotropy;
 uniform sampler2D uMetallicTex;
 uniform sampler2D uRoughnessTex;
 uniform sampler2D uNormalTex;
+uniform sampler2D uEmissiveTex;
+uniform sampler2D uOpacityTex;
+uniform sampler2D uOcclusionTex;
+uniform sampler2D uSpecularColorTex;
+uniform sampler2D uCoatWeightTex;
+uniform sampler2D uCoatColorTex;
+uniform sampler2D uCoatRoughnessTex;
+uniform sampler2D uCoatNormalTex;
 uniform int uRenderMode;
+uniform int uMatId;
 uniform sampler2D uBaseColorTex;
 uniform bool uHasBaseColorTex;
 uniform bool uHasMetallicTex;
 uniform bool uHasRoughnessTex;
 uniform bool uHasNormalTex;
+uniform bool uHasEmissiveTex;
+uniform bool uHasOpacityTex;
+uniform bool uHasOcclusionTex;
+uniform bool uHasSpecularColorTex;
+uniform bool uHasCoatWeightTex;
+uniform bool uHasCoatColorTex;
+uniform bool uHasCoatRoughnessTex;
+uniform bool uHasCoatNormalTex;
 uniform vec3 uBaseColorUv0;
 uniform vec3 uBaseColorUv1;
 uniform vec3 uMetallicUv0;
 uniform vec3 uMetallicUv1;
 uniform vec3 uRoughnessUv0;
 uniform vec3 uRoughnessUv1;
+uniform int uRoughnessUvSet;
 uniform vec3 uNormalUv0;
 uniform vec3 uNormalUv1;
+uniform vec3 uEmissiveUv0;
+uniform vec3 uEmissiveUv1;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
+uniform vec3 uOcclusionUv0;
+uniform vec3 uOcclusionUv1;
+uniform vec3 uSpecularColorUv0;
+uniform vec3 uSpecularColorUv1;
+uniform vec3 uCoatWeightUv0;
+uniform vec3 uCoatWeightUv1;
+uniform vec3 uCoatColorUv0;
+uniform vec3 uCoatColorUv1;
+uniform vec3 uCoatRoughnessUv0;
+uniform vec3 uCoatRoughnessUv1;
+uniform vec3 uCoatNormalUv0;
+uniform vec3 uCoatNormalUv1;
+uniform ivec4 uUvSet;
+uniform int uOpacityUvSet;
+uniform int uOcclusionUvSet;
+uniform int uSpecularColorUvSet;
+uniform int uCoatWeightUvSet;
+uniform int uCoatColorUvSet;
+uniform int uCoatRoughnessUvSet;
+uniform int uCoatNormalUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityTexScale;
+uniform float uOpacityTexBias;
 uniform int uMetallicChannel;
 uniform int uRoughnessChannel;
+uniform int uOcclusionChannel;
+uniform int uCoatWeightChannel;
+uniform int uCoatRoughnessChannel;
+uniform float uOcclusionTexScale;
+uniform float uOcclusionTexBias;
+uniform vec4 uSpecularColorScale;
+uniform vec4 uSpecularColorBias;
+uniform vec4 uCoatWeightScale;
+uniform vec4 uCoatWeightBias;
+uniform vec4 uCoatColorScale;
+uniform vec4 uCoatColorBias;
+uniform vec4 uCoatRoughnessScale;
+uniform vec4 uCoatRoughnessBias;
+uniform vec4 uCoatNormalScale;
+uniform vec4 uCoatNormalBias;
+uniform float uOcclusion;
+uniform float uCoatAffectRoughness;
 uniform float uMetallicTexScale;
 uniform float uMetallicTexBias;
 uniform float uRoughnessTexScale;
 uniform float uRoughnessTexBias;
 uniform vec4 uNormalTexScale;
 uniform vec4 uNormalTexBias;
+uniform vec4 uEmissiveTexScale;
+uniform vec4 uEmissiveTexBias;
+uniform bool uHasShadowMap;
+uniform int uShadowLightSlot;
+uniform mat4 uShadowViewProj;
+uniform sampler2D uShadowMap;
+uniform bool uHasPointShadowMap;
+uniform vec3 uPointShadowLightPos;
+uniform mat4 uPointShadowViewProj[6];
+uniform samplerCube uPointShadowMap;
+uniform int uLightCount;
+uniform uint uLightMask;
+uniform vec4 uLightPositionType[16];
+uniform vec4 uLightDirectionAngle[16];
+uniform vec4 uLightColorDiffuse[16];
+uniform vec4 uLightSpecularShape[16];
+uniform vec4 uLightAreaParams[16];
+uniform vec4 uLightIesAxisX[16];
+uniform vec4 uLightIesAxisY[16];
+uniform vec4 uLightIesProfile[96];
 out vec4 fragColor;
 vec3 linearToSrgb(vec3 c) {
     c = clamp(c, 0.0, 1.0);
     vec3 lo = c * 12.92;
     vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
     return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+vec3 idColor(int id) {
+    if (id < 0) return vec3(0.45);
+    uint h = (uint(id) + 1u) * 2654435761u;
+    return vec3(float(h & 255u), float((h >> 8) & 255u),
+                float((h >> 16) & 255u)) * (1.0 / 255.0);
 }
 vec2 applyUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0),
@@ -1582,47 +1847,347 @@ float channelOf(vec4 c, int channel) {
     if (channel == 3) return c.a;
     return c.r;
 }
+float ggxD(float noH, float roughness) {
+    float a = roughness * roughness;
+    float d = noH * noH * (a - 1.0) + 1.0;
+    return a / max(3.14159265 * d * d, 1e-5);
+}
+float ggxG1(float noX, float roughness) {
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    return noX / max(noX * (1.0 - k) + k, 1e-5);
+}
+vec3 fresnel(float voH, vec3 f0) {
+    return f0 + (vec3(1.0) - f0) * pow(1.0 - clamp(voH, 0.0, 1.0), 5.0);
+}
+float sampleChannel(vec4 value, int channel) {
+    if (channel == 1) return value.g;
+    if (channel == 2) return value.b;
+    if (channel == 3) return value.a;
+    return value.r;
+}
+float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    if (uHasPointShadowMap) {
+        vec3 d = worldPos - uPointShadowLightPos;
+        vec3 a = abs(d);
+        int face;
+        if (a.x >= a.y && a.x >= a.z) face = d.x >= 0.0 ? 0 : 1;
+        else if (a.y >= a.z) face = d.y >= 0.0 ? 2 : 3;
+        else face = d.z >= 0.0 ? 4 : 5;
+        vec4 clip = uPointShadowViewProj[face] * vec4(worldPos, 1.0);
+        vec3 p = clip.xyz / clip.w;
+        p = p * 0.5 + 0.5;
+        if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
+        float bias = max(0.00035,
+                         0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+        return (p.z - bias <= texture(uPointShadowMap, normalize(d)).r)
+                   ? 1.0
+                   : 0.0;
+    }
+    if (!uHasShadowMap) return 1.0;
+    vec4 clip = uShadowViewProj * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    p = p * 0.5 + 0.5;
+    if (p.z <= 0.0 || p.z >= 1.0 || any(lessThan(p.xy, vec2(0.0))) ||
+        any(greaterThan(p.xy, vec2(1.0)))) return 1.0;
+    float bias = max(0.00035,
+                     0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float visible = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+            visible += p.z - bias <=
+                               texture(uShadowMap, p.xy + vec2(x, y) * texel).r
+                           ? 1.0
+                           : 0.0;
+    return visible / 9.0;
+}
 void main() {
+    for (int i = 0; i < uClippingPlaneCount; ++i) {
+        if (dot(vec4(vWorldPos, 1.0), uClippingPlanes[i]) < 0.0) discard;
+    }
+    vec3 displayColor = vColor.rgb;
+    float displayOpacity = vColor.a;
     vec3 N = normalize(vNormal);
-    if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
-    vec3 base = uBaseColor * vColor.rgb;
+    if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }
+    vec3 base = uBaseColor * displayColor;
+    vec3 emissive = uEmissive;
+    float opacity = clamp(uAlpha * displayOpacity, 0.0, 1.0);
+    float metallic = clamp(uMetallic, 0.0, 1.0);
+    float roughness = clamp(uRoughness, 0.02, 1.0);
     if (uHasBaseColorTex) {
-        vec2 uv = applyUv(vUV, uBaseColorUv0, uBaseColorUv1);
+        vec2 uv = applyUv(uUvSet.x == 1 ? vUV1 : vUV,
+                          uBaseColorUv0, uBaseColorUv1);
         base *= texture(uBaseColorTex, uv).rgb;
     }
     if (uHasNormalTex) {
-        vec2 uv = applyUv(vUV, uNormalUv0, uNormalUv1);
+        vec2 uv = applyUv(uUvSet.z == 1 ? vUV1 : vUV,
+                          uNormalUv0, uNormalUv1);
         vec3 mapped = texture(uNormalTex, uv).rgb * uNormalTexScale.xyz +
                       uNormalTexBias.xyz;
-        N = normalize(mapped);
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float determinant = du1.x * du2.y - du2.x * du1.y;
+        vec3 tangent = dp1 * du2.y - dp2 * du1.y;
+        if (abs(determinant) > 1e-8) tangent /= determinant;
+        else tangent = cross(abs(N.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
+                                            : vec3(0.0, 1.0, 0.0), N);
+        tangent = normalize(tangent - N * dot(N, tangent));
+        vec3 bitangent = normalize(cross(N, tangent)) *
+                         (determinant < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(tangent, bitangent, N) * normalize(mapped));
     }
-    float metallic = clamp(uMetallic, 0.0, 1.0);
     if (uHasMetallicTex) {
-        vec2 uv = applyUv(vUV, uMetallicUv0, uMetallicUv1);
+        vec2 uv = applyUv(uUvSet.y == 1 ? vUV1 : vUV,
+                          uMetallicUv0, uMetallicUv1);
         metallic = clamp(channelOf(texture(uMetallicTex, uv), uMetallicChannel) *
                               uMetallicTexScale + uMetallicTexBias, 0.0, 1.0);
     }
-    float roughness = clamp(uRoughness, 0.02, 1.0);
     if (uHasRoughnessTex) {
-        vec2 uv = applyUv(vUV, uRoughnessUv0, uRoughnessUv1);
+        vec2 uv = applyUv(uRoughnessUvSet == 1 ? vUV1 : vUV,
+                          uRoughnessUv0, uRoughnessUv1);
         roughness = clamp(channelOf(texture(uRoughnessTex, uv), uRoughnessChannel) *
                               uRoughnessTexScale + uRoughnessTexBias, 0.02, 1.0);
     }
+    if (uHasEmissiveTex) {
+        vec2 uv = applyUv(uUvSet.w == 1 ? vUV1 : vUV,
+                          uEmissiveUv0, uEmissiveUv1);
+        emissive *= (texture(uEmissiveTex, uv) * uEmissiveTexScale +
+                     uEmissiveTexBias).rgb;
+    }
+    if (uHasOpacityTex) {
+        vec2 uv = applyUv(uOpacityUvSet == 1 ? vUV1 : vUV,
+                          uOpacityUv0, uOpacityUv1);
+        opacity *= clamp(sampleChannel(texture(uOpacityTex, uv),
+                                       uOpacityChannel) * uOpacityTexScale +
+                       uOpacityTexBias, 0.0, 1.0);
+    }
+    float occlusion = clamp(uOcclusion, 0.0, 1.0);
+    if (uHasOcclusionTex) {
+        vec2 uv = applyUv(uOcclusionUvSet == 1 ? vUV1 : vUV,
+                          uOcclusionUv0, uOcclusionUv1);
+        occlusion *= clamp(channelOf(texture(uOcclusionTex, uv),
+                                     uOcclusionChannel) * uOcclusionTexScale +
+                           uOcclusionTexBias, 0.0, 1.0);
+    }
+    float coatWeight = clamp(uCoatWeight, 0.0, 1.0);
+    if (uHasCoatWeightTex) {
+        vec2 uv = applyUv(uCoatWeightUvSet == 1 ? vUV1 : vUV,
+                          uCoatWeightUv0, uCoatWeightUv1);
+        coatWeight *= channelOf(texture(uCoatWeightTex, uv), uCoatWeightChannel) *
+                      uCoatWeightScale.x + uCoatWeightBias.x;
+    }
+    vec3 coatColor = uCoatColor;
+    if (uHasCoatColorTex) {
+        vec2 uv = applyUv(uCoatColorUvSet == 1 ? vUV1 : vUV,
+                          uCoatColorUv0, uCoatColorUv1);
+        coatColor *= (texture(uCoatColorTex, uv) * uCoatColorScale +
+                      uCoatColorBias).rgb;
+    }
+    float coatRoughness = clamp(uCoatRoughness, 0.02, 1.0);
+    if (uHasCoatRoughnessTex) {
+        vec2 uv = applyUv(uCoatRoughnessUvSet == 1 ? vUV1 : vUV,
+                          uCoatRoughnessUv0, uCoatRoughnessUv1);
+        coatRoughness *= channelOf(texture(uCoatRoughnessTex, uv),
+                                   uCoatRoughnessChannel) *
+                         uCoatRoughnessScale.x + uCoatRoughnessBias.x;
+    }
+    coatRoughness = mix(coatRoughness, roughness,
+                        clamp(uCoatAffectRoughness, 0.0, 1.0));
+    vec3 coatN = N;
+    if (uHasCoatNormalTex) {
+        vec2 uv = applyUv(uCoatNormalUvSet == 1 ? vUV1 : vUV,
+                          uCoatNormalUv0, uCoatNormalUv1);
+        vec3 mapped = (texture(uCoatNormalTex, uv) * uCoatNormalScale +
+                       uCoatNormalBias).xyz;
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float determinant = du1.x * du2.y - du2.x * du1.y;
+        vec3 tangent = dp1 * du2.y - dp2 * du1.y;
+        if (abs(determinant) > 1e-8) tangent /= determinant;
+        else tangent = cross(abs(N.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
+                                            : vec3(0.0, 1.0, 0.0), N);
+        tangent = normalize(tangent - N * dot(N, tangent));
+        vec3 bitangent = normalize(cross(N, tangent)) *
+                         (determinant < 0.0 ? -1.0 : 1.0);
+        coatN = normalize(mat3(tangent, bitangent, N) * normalize(mapped));
+    }
+    if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+    if (uRenderMode == 35) { fragColor = vec4(coatN * 0.5 + 0.5, 1.0); return; }
+    if (uRenderMode == 36) { fragColor = vec4(vec3(clamp(coatWeight, 0.0, 1.0)), 1.0); return; }
+    if (uRenderMode == 37) { fragColor = vec4(coatColor, 1.0); return; }
+    if (uRenderMode == 38) { fragColor = vec4(vec3(coatRoughness), 1.0); return; }
+    vec3 sampledSpecularColor = uSpecularColor;
+    if (uHasSpecularColorTex) {
+        vec2 uv = applyUv(uSpecularColorUvSet == 1 ? vUV1 : vUV,
+                          uSpecularColorUv0, uSpecularColorUv1);
+        sampledSpecularColor *= (texture(uSpecularColorTex, uv) *
+                                 uSpecularColorScale + uSpecularColorBias).rgb;
+    }
+    float dielectric = pow((max(uIor, 1.0) - 1.0) /
+                           (max(uIor, 1.0) + 1.0), 2.0);
+    if (uRenderMode == 40) { fragColor = vec4(vec3(dielectric), 1.0); return; }
+    if (uRenderMode == 39) {
+        vec3 f0 = uUseSpecularWorkflow != 0 ? sampledSpecularColor :
+                  mix(vec3(dielectric), base, metallic);
+        if (uUseSpecularWorkflow == 0 && uOpenPbrSpecularModel != 0)
+            f0 *= sampledSpecularColor;
+        fragColor = vec4(f0, 1.0); return;
+    }
+    if (uAlphaMode == 1) opacity = opacity >= uAlphaCutoff ? 1.0 : 0.0;
+    if (uAlphaMode == 1 && opacity <= 0.0) discard;
+    float volumeOpacity = clamp(1.0 - exp(-max(uVolumeDensity, 0.0) * 0.1),
+                                0.0, 1.0);
+    base = mix(base, base * uVolumeAlbedo, volumeOpacity);
+    emissive += uVolumeEmission * uVolumeEmissionScale * volumeOpacity;
     vec3 V = normalize(uCameraPos - vWorldPos);
     vec3 Nf = dot(N, V) < 0.0 ? -N : N;
-    vec3 L = normalize(uLightDir);
-    float nl = max(dot(Nf, L), 0.0);
-    float nv = max(dot(Nf, V), 0.0);
-    float dielectric = 0.04 + 0.96 * metallic;
-    float gloss = 1.0 - roughness;
-    vec3 color = base * (1.0 - metallic) * (0.18 + 0.82 * nl) *
-                 uLightColor + vec3(dielectric * gloss * pow(max(nl, 0.0), 8.0)) *
-                 uLightColor + uEmissive;
-    color += base * (0.08 + 0.12 * nv);
-    float back = 1.0 - nl;
-    color += (uTransmissionColor * uTransmission +
-              uSubsurfaceColor * uSubsurface) * back * 0.16 * uLightColor;
-    fragColor = vec4(linearToSrgb(color * exp2(uExposure)), uAlpha * vColor.a);
+    float nv = max(dot(Nf, V), 1e-4);
+    float baseWeight = clamp(uBaseWeight, 0.0, 1.0);
+    float specularWeight = clamp(uSpecularWeight, 0.0, 1.0);
+    vec3 f0;
+    if (uUseSpecularWorkflow != 0) {
+        f0 = max(uSpecularColor, vec3(0.0));
+    } else {
+        float ior = max(uIor, 1.0);
+        float f = (ior - 1.0) / (ior + 1.0);
+        f0 = vec3(f * f);
+        if (uOpenPbrSpecularModel != 0) f0 *= max(uSpecularColor, vec3(0.0));
+        f0 = mix(f0, base, metallic);
+    }
+    float diffuseRoughness = clamp(uDiffuseRoughness, 0.0, 1.0);
+    float rough = clamp(roughness + 0.25 * diffuseRoughness * (1.0 - metallic),
+                        0.02, 1.0);
+    vec3 direct = vec3(0.0);
+    for (int li = 0; li < 16; ++li) {
+        if (li >= uLightCount) break;
+        if ((uLightMask & (1u << uint(li))) == 0u) continue;
+        vec4 pt = uLightPositionType[li];
+        vec4 da = uLightDirectionAngle[li];
+        vec4 lc = uLightColorDiffuse[li];
+        vec4 ss = uLightSpecularShape[li];
+        int lightType = int(pt.w + 0.5);
+        int sampleCount = (lightType == 2 || lightType == 3 ||
+                           lightType == 4 || lightType == 7 ||
+                           lightType == 8) ? 8 : 1;
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 samplePos = pt.xyz;
+        int sampleBase = sampleIndex * 3;
+        if (lightType == 7) {
+            samplePos = vec3(
+                uLightIesProfile[li * 6 + sampleBase / 4][sampleBase % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 1) / 4][(sampleBase + 1) % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 2) / 4][(sampleBase + 2) % 4]);
+        } else if (lightType == 3 || lightType == 8) {
+            float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+            float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (sx * uLightAreaParams[li].y) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sy * uLightAreaParams[li].z);
+        } else if (lightType == 2 || lightType == 4) {
+            float angle = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (cos(angle) * 0.5 * uLightAreaParams[li].x) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sin(angle) * 0.5 * uLightAreaParams[li].x);
+        }
+        vec3 L;
+        float attenuation = 1.0;
+        if (lightType == 5) {
+            L = normalize(da.xyz);
+        } else {
+            vec3 toLight = samplePos - vWorldPos;
+            float dist2 = max(dot(toLight, toLight), 1e-6);
+            L = toLight * inversesqrt(dist2);
+            attenuation = 1.0 / dist2;
+        }
+        float shape = 1.0;
+        if (ss.w > 0.5 && lightType != 5) {
+            float coneCos = dot(normalize(da.xyz), -L);
+            float outer = cos(radians(clamp(da.w, 0.0, 180.0)));
+            float inner = cos(radians(clamp(da.w *
+                                             (1.0 - clamp(ss.y, 0.0, 1.0)),
+                                             0.0, 180.0)));
+            shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
+                    pow(max(coneCos, 0.0), max(ss.z, 0.0));
+        }
+        float nl = max(dot(Nf, L), 0.0);
+        if (nl <= 0.0 || shape <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float nh = max(dot(Nf, H), 0.0);
+        float vh = max(dot(V, H), 0.0);
+        vec3 F = fresnel(vh, f0);
+        float D = ggxD(nh, rough);
+        float G = ggxG1(nv, rough) * ggxG1(nl, rough);
+        vec3 spec = D * G * F * specularWeight /
+                    max(4.0 * nv * nl, 1e-5);
+        vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) * base *
+                    baseWeight / 3.14159265;
+        float wrap = clamp(uSubsurface, 0.0, 1.0) *
+                     (0.5 + 0.25 * abs(clamp(uSubsurfaceAnisotropy, -1.0, 1.0)) +
+                      0.25 * abs(clamp(uSubsurfaceScatterAnisotropy, -1.0, 1.0)));
+        float wrapped = clamp((dot(Nf, L) + wrap) / (1.0 + wrap), 0.0, 1.0);
+        vec3 subsurface = uSubsurfaceColor * clamp(uSubsurface, 0.0, 1.0) *
+                          wrapped * (0.35 + 0.65 *
+                                    clamp(uSubsurfaceScale, 0.0, 1.0)) /
+                          3.14159265;
+        vec3 sheen = uSheenColor * clamp(uSheenWeight, 0.0, 1.0) *
+                      (0.5 + 0.5 * clamp(uSheenRoughness, 0.0, 1.0)) *
+                      pow(1.0 - nl, 5.0) / 3.14159265;
+        float coat = clamp(uCoatWeight, 0.0, 1.0);
+        float coatRough = clamp(uCoatRoughness, 0.02, 1.0);
+        float coatIor = max(uCoatIor, 1.0);
+        float coatF0v = (coatIor - 1.0) / (coatIor + 1.0);
+        vec3 coatF = fresnel(vh, vec3(coatF0v * coatF0v));
+        vec3 coatSpec = ggxD(nh, coatRough) *
+                        ggxG1(nv, coatRough) * ggxG1(nl, coatRough) * coatF /
+                        max(4.0 * nv * nl, 1e-5);
+        vec3 brdf = (diff + subsurface + sheen) *
+                    (1.0 - clamp(uCoatDarkening, 0.0, 1.0) * coat) +
+                    spec * (vec3(1.0) - coatF * coat) +
+                    coatSpec * mix(vec3(1.0), uCoatColor,
+                                   clamp(uCoatAffectColor, 0.0, 1.0)) * coat;
+        float dispersion = clamp(uTransmissionDispersion *
+                                 uTransmissionDispersionScale, 0.0, 1.0);
+        vec3 transmitted = uTransmissionColor *
+                           vec3(1.0 + 0.35 * dispersion, 1.0,
+                                1.0 - 0.25 * dispersion) *
+                           exp(-max(uTransmissionScatter, vec3(0.0)) *
+                               max(uTransmissionDepth, 0.0)) *
+                           clamp(uTransmission, 0.0, 1.0) *
+                           max(dot(-Nf, L), 0.0) / 3.14159265;
+        float visibility = li == uShadowLightSlot
+                               ? sampleShadow(vWorldPos, Nf, L)
+                               : 1.0;
+        direct += (brdf * nl + transmitted) * lc.rgb *
+                  (attenuation * shape * visibility) / float(sampleCount);
+        }
+    }
+    if (uLightCount == 0) {
+        vec3 L = dot(uLightDir, uLightDir) > 1e-8
+                     ? normalize(uLightDir)
+                     : normalize(vec3(0.3, 0.5, 0.8));
+        vec3 lc = dot(uLightColor, uLightColor) > 1e-8
+                      ? uLightColor : vec3(1.0);
+        float nl = max(dot(Nf, L), 0.0);
+        vec3 H = normalize(L + V);
+        vec3 F = fresnel(max(dot(V, H), 0.0), f0);
+        vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) * base *
+                    baseWeight / 3.14159265;
+        vec3 spec = ggxD(max(dot(Nf, H), 0.0), rough) *
+                    ggxG1(nv, rough) * ggxG1(nl, rough) * F * specularWeight /
+                    max(4.0 * nv * nl, 1e-5);
+        direct = (diff + spec) * lc * nl;
+    }
+    vec3 color = base * 0.12 * occlusion + direct + emissive;
+    color += uSubsurfaceColor * clamp(uSubsurface, 0.0, 1.0) * 0.03;
+    color += uTransmissionColor * clamp(uTransmission, 0.0, 1.0) * 0.04;
+    if (uRenderMode == 7) color = base;
+    else if (uRenderMode == 9) color = vec3(roughness);
+    else if (uRenderMode == 10) color = vec3(metallic);
+    else if (uRenderMode == 11) color = emissive;
+    else if (uRenderMode == 12) color = vec3(opacity);
+    fragColor = vec4(linearToSrgb(color * exp2(uExposure)), opacity);
 }
 )glsl";
 }

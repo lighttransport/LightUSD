@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "next/stage/stage.hh"
+#include "lightusd-cpp.hh"
 
 namespace lusdview {
 
@@ -22,7 +22,7 @@ struct PreviewCacheLookup {
   bool hit{false};
   std::string reason;
   std::string key;
-  lightusd::next::Stage stage;
+  lightusd::api::Stage stage;
 };
 
 std::string DefaultPreviewCacheDirectory();
@@ -34,7 +34,7 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
 bool StorePreviewCache(const PreviewCacheOptions& options,
                        const std::string& root,
                        const std::string& fingerprint,
-                       const lightusd::next::Stage& preview,
+                       const lightusd::api::Stage& preview,
                        const std::vector<std::string>& dependencies,
                        std::string* reason);
 

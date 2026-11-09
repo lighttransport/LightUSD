@@ -605,6 +605,16 @@ class USDCReader::Impl {
     return false;
   }
 
+  /// Borrowed path for `index`, or nullptr when out of range. Prefer this over
+  /// GetPath()/GetPathDirect() on hot paths: it neither copies the Path nor
+  /// builds an optional. Valid while crate_reader exists.
+  const Path *GetPathRef(crate::Index index) const {
+    if (index.value < _paths->size()) {
+      return &(*_paths)[index.value];
+    }
+    return nullptr;
+  }
+
   bool GetElemPathDirect(crate::Index index, Path *out) const {
     if (!out) return false;
     if (index.value < _elemPaths->size()) {

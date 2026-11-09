@@ -4,6 +4,8 @@
 // LightUSD Next - UsdAR Schema Implementation
 
 #include "usd-ar.hh"
+#include "schema-predicates.hh"
+#include "../layer/prim-spec.hh"
 
 namespace lightusd {
 namespace next {
@@ -12,16 +14,7 @@ namespace next {
 // Helpers
 // ============================================================
 
-static bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
-  for (const auto& s : prim.GetMeta().apiSchemas()) {
-    if (s == name) return true;
-  }
-  return false;
-}
 
-static bool IsType(const UsdPrim& prim, const std::string& type) {
-  return prim.IsValid() && prim.GetTypeName() == type;
-}
 
 // ============================================================
 // Typed prims
@@ -79,7 +72,7 @@ bool GetARImageData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("ar:imageAsset");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->imageAsset = *s;
     }
   }
@@ -117,9 +110,9 @@ bool GetARFaceGeometryData(const Stage& stage, const UsdPrim& prim,
   {
     EvalResult result = eval.Eval(prim, "ar:blendShapeCoefficients");
     if (result.success && result.value.is_array()) {
-      const std::vector<float>* arr = result.value.as_float_array();
+      auto arr = result.value.as_float_array();
       if (arr) {
-        out->blendShapeCoefficients = *arr;
+        out->blendShapeCoefficients.assign(arr->begin(), arr->end());
       }
     }
   }
@@ -128,9 +121,9 @@ bool GetARFaceGeometryData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("ar:blendShapeNames");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->blendShapeNames.push_back(*s);
-      const std::string* tok = val->as_token();
+      auto tok = val->as_token();
       if (tok) out->blendShapeNames.push_back(*tok);
     }
   }
@@ -151,7 +144,7 @@ bool GetARPlaneData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("ar:semanticType");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->semanticType = *s;
     }
   }
@@ -159,9 +152,9 @@ bool GetARPlaneData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("ar:extent");
     if (val && val->is_array()) {
-      const std::vector<float>* arr = val->as_float_array();
+      auto arr = val->as_float_array();
       if (arr) {
-        out->extent = *arr;
+        out->extent.assign(arr->begin(), arr->end());
       }
     }
   }
@@ -169,9 +162,9 @@ bool GetARPlaneData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("ar:boundary");
     if (val && val->is_array()) {
-      const std::vector<float>* arr = val->as_float_array();
+      auto arr = val->as_float_array();
       if (arr) {
-        out->boundary = *arr;
+        out->boundary.assign(arr->begin(), arr->end());
       }
     }
   }
@@ -201,24 +194,24 @@ bool GetARPointCloudData(const Stage& stage, const UsdPrim& prim,
   {
     EvalResult result = eval.Eval(prim, "ar:points");
     if (result.success && result.value.is_array()) {
-      const std::vector<float>* arr = result.value.as_float_array();
-      if (arr) out->points = *arr;
+      auto arr = result.value.as_float_array();
+      if (arr) out->points.assign(arr->begin(), arr->end());
     }
   }
 
   {
     EvalResult result = eval.Eval(prim, "ar:normals");
     if (result.success && result.value.is_array()) {
-      const std::vector<float>* arr = result.value.as_float_array();
-      if (arr) out->normals = *arr;
+      auto arr = result.value.as_float_array();
+      if (arr) out->normals.assign(arr->begin(), arr->end());
     }
   }
 
   {
     EvalResult result = eval.Eval(prim, "ar:confidences");
     if (result.success && result.value.is_array()) {
-      const std::vector<float>* arr = result.value.as_float_array();
-      if (arr) out->confidences = *arr;
+      auto arr = result.value.as_float_array();
+      if (arr) out->confidences.assign(arr->begin(), arr->end());
     }
   }
 
@@ -283,7 +276,7 @@ bool GetARDeviceData(const Stage& stage, const UsdPrim& prim,
       if (i32) {
         out->resolution = {static_cast<float>(*i32), 0.0f};
       }
-      const std::vector<int32_t>* arr = val->as_int_array();
+      auto arr = val->as_int_array();
       if (arr && arr->size() >= 2) {
         if (arr->size() >= 2) {
           out->resolution = {
@@ -324,7 +317,7 @@ bool GetARAnchorAPIData(const UsdPrim& prim, ARAnchorAPIData* out) {
   {
     const Value* val = prim.GetPropertyValue("ar:anchorName");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->anchorName = *s;
     }
   }
@@ -338,7 +331,7 @@ bool GetARImagingAPIData(const UsdPrim& prim, ARImagingAPIData* out) {
   {
     const Value* val = prim.GetPropertyValue("ar:imageAsset");
     if (val) {
-      const std::string* s = val->as_string();
+      auto s = val->as_string();
       if (s) out->imageAsset = *s;
     }
   }

@@ -2,6 +2,8 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "usd-vol.hh"
+#include "schema-predicates.hh"
+#include "../layer/prim-spec.hh"
 
 #include "../eval/attribute-eval.hh"
 
@@ -9,12 +11,6 @@ namespace lightusd {
 namespace next {
 namespace {
 
-bool HasApplied(const UsdPrim& prim, const char* schema) {
-  for (const std::string& entry : prim.GetMeta().apiSchemas()) {
-    if (entry == schema) return true;
-  }
-  return false;
-}
 
 void Append(std::string* warning, const std::string& message) {
   if (!warning) return;
@@ -119,11 +115,11 @@ bool GetParticleFieldData(const Stage& stage, const UsdPrim& prim,
       eval.EvalInt(prim, "radiance:sphericalHarmonicsDegree").value_or(3);
 
   if (IsParticleField3DGaussianSplat(prim) ||
-      HasApplied(prim, "ParticleFieldKernelGaussianEllipsoidAPI")) {
+      HasAPISchema(prim, "ParticleFieldKernelGaussianEllipsoidAPI")) {
     out->kernel = ParticleKernel::GaussianEllipsoid;
-  } else if (HasApplied(prim, "ParticleFieldKernelGaussianSurfletAPI")) {
+  } else if (HasAPISchema(prim, "ParticleFieldKernelGaussianSurfletAPI")) {
     out->kernel = ParticleKernel::GaussianSurflet;
-  } else if (HasApplied(prim, "ParticleFieldKernelConstantSurfletAPI")) {
+  } else if (HasAPISchema(prim, "ParticleFieldKernelConstantSurfletAPI")) {
     out->kernel = ParticleKernel::ConstantSurflet;
   }
   out->projection_mode_hint =

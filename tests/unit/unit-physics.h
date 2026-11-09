@@ -110,3 +110,8 @@ void physics_static_world_link_test(void);
 
 // <freejoint> -> floating-base articulation root with mjc:freeJoint marker
 void physics_freejoint_floating_base_test(void);
+
+void physics_obj_c11_import_test(void);
+void physics_obj_export_facevarying_test(void);
+
+void physics_obj_composition_test(void);

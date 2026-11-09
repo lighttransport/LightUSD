@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 
 namespace {

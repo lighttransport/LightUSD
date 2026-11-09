@@ -7,7 +7,7 @@
 
 #include "composition.hh"  // CompositeSublayers
 #include "io-util.hh"      // io::GetBaseDir
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "lightusd.hh"  // LoadLayerFromMemory
 
 namespace lightusd {

@@ -3,7 +3,10 @@
 ## Demo app
 
 See `demo` folder.
-It uses npm package of `lightusd`, so no WASM building required.
+Its build uses the local next WASM module and also builds the deprecated
+combined module for the backend comparison page and LightRT worker. Emscripten
+is required. The online viewer composes references and payloads during loading
+through the next flattening API.
 
 ## Technical note on JS/WASM version of LightUSD
 
@@ -25,7 +28,7 @@ produces separate legacy and next products:
 
 | Variant | CMake option | Module (`js/src/lightusd/`) | Contents | .wasm (MinSizeRel) |
 |---|---|---|---|---|
-| **legacy** | `-DLIGHTUSD_WASM_PRODUCT=legacy` | `lightusd.js/.wasm` | Classic loader and legacy Tydra RenderScene conversion | varies by toolchain |
+| **legacy (deprecated)** | `-DLIGHTUSD_WASM_PRODUCT=legacy` | `lightusd.js/.wasm` | Compatibility loader and legacy Tydra RenderScene conversion; retained in CI | varies by toolchain |
 | **next** | `-DLIGHTUSD_WASM_PRODUCT=next` | `lightusd_next.js/.wasm` | next-core + Tydra-next (USDA/USDC/USDZ parse, composition, render extraction, streaming) | varies by toolchain |
 | **combined** (compatibility-only) | `-DLIGHTUSD_WASM_PRODUCT=combined` | `lightusd_combined.js/.wasm` | Both APIs in one module for transition testing; not the published default | varies by toolchain |
 
@@ -34,19 +37,19 @@ other's output. `LIGHTUSD_WASM64=ON` combines with any variant and appends
 `_64` to the module name (`lightusd_64`, `lightusd_next_64`, or
 `lightusd_combined_64`).
 
-- **legacy** (`src/*.cc`) is the shipped npm loader: mature reader + Tydra
-  RenderScene conversion.
-- **next** (`src/next/`) is the standalone AOUSD-aligned core (parser, crate,
-  PCP composition, evaluation, validation, and writers). The next product
-  exposes it through Tydra-next and `RenderStream`.
+- **next** (`src/next/`) is the default AOUSD-aligned core (parser, crate,
+  PCP composition, evaluation, validation, and writers), exposed through
+  Tydra-next and `RenderStream`.
+- **legacy** (`src/*.cc`) remains available in the package for compatibility
+  and continues to receive CI coverage. New integrations should use next.
 
 ### Standard WASM32 build (2GB memory limit)
 
-Build the legacy product:
+Build the default next product:
 
 ```bash
-$ ./bootstrap-linux.sh
-$ ninja -C build          # or: cmake --build build
+$ emcmake cmake -S web -B web/build_ninja -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+$ cmake --build web/build_ninja
 ```
 
 ### Next product

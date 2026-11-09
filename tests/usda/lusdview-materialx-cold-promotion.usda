@@ -1,0 +1,49 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "Card"
+    {
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        uniform token subdivisionScheme = "none"
+        uniform bool doubleSided = 1
+        rel material:binding = </World/Material>
+    }
+    def Material "Material" (prepend apiSchemas = ["MaterialXConfigAPI"])
+    {
+        token outputs:mtlx:surface.connect = </World/Material/Surface.outputs:out>
+        token outputs:surface.connect = </World/Material/Surface.outputs:out>
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/Material/Noise.outputs:out>
+            float inputs:base = 1
+            float inputs:specular = 0
+            token outputs:out
+        }
+        def Shader "Position"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            vector3f outputs:out
+        }
+        def Shader "Noise"
+        {
+            uniform token info:id = "ND_noise3d_color3"
+            vector3f inputs:position.connect = </World/Material/Position.outputs:out>
+            float inputs:amplitude = 0.5
+            float inputs:pivot = 0.5
+            color3f outputs:out
+        }
+    }
+    def DistantLight "Key"
+    {
+        float inputs:intensity = 1
+    }
+}

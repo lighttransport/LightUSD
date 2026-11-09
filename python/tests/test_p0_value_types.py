@@ -84,7 +84,7 @@ def test_array_zero_copy_all_integer_types():
     a = np.asarray(arr)
     assert a.tolist() == [1, 2, 255]
     # zero-copy pointer equality
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
 
 
 def test_value_block_identity():
@@ -119,13 +119,13 @@ def test_type_helpers_roundtrip():
 
 
 def test_asarray_and_memoryview_zero_copy():
-    st = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,1,1)] }')
+    st = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,1,1)]\n}')
     arr = st.prim_at("/M")["points"]
     a = lightusd.asarray(arr)
     b = np.asarray(arr)
-    assert a.__array_interface__["data"][0] == b.__array_interface__["data"][0]
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
-    mv = arr.memoryview()
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(b).__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
+    mv = memoryview(arr)
     assert mv.nbytes == arr.nbytes
     assert mv.readonly
     assert len(arr) == 2

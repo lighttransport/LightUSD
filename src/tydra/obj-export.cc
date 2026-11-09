@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 //
+#include <algorithm>
+#include <array>
+#include <locale>
 #include <sstream>
+#include <limits>
 #include <numeric>
 #include <unordered_set>
 
@@ -12,11 +16,11 @@
 namespace lightusd {
 namespace tydra {
 
-#define PushError(msg) { \
+#define PushError(msg) do { \
   if (err) { \
     (*err) += msg + "\n"; \
   } \
-}
+} while (0)
 
 bool export_to_obj(const RenderScene &scene, const int mesh_id,
   std::string &obj_str, std::string &mtl_str, std::string *warn, std::string *err) {
@@ -33,6 +37,9 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   (void)warn;
 
   std::stringstream ss;
+  // OBJ/MTL numbers must not follow the process locale's decimal separator.
+  ss.imbue(std::locale::classic());
+  ss.precision(std::numeric_limits<float>::max_digits10);
 
   if (mesh_id < 0) {
     PUSH_ERROR_AND_RETURN("Invalid mesh_id");
@@ -51,11 +58,14 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   }
   ss << "# " << mesh.points.size() << " vertices\n";
 
-  if (mesh.joint_and_weights.jointWeights.size() == (mesh.points.size() * size_t(mesh.joint_and_weights.elementSize))) {
+  if (mesh.joint_and_weights.elementSize > 0 &&
+      mesh.joint_and_weights.jointIndices.size() == mesh.joint_and_weights.jointWeights.size() &&
+      mesh.joint_and_weights.jointWeights.size() / size_t(mesh.joint_and_weights.elementSize) == mesh.points.size() &&
+      mesh.joint_and_weights.jointWeights.size() % size_t(mesh.joint_and_weights.elementSize) == 0) {
 
     size_t elementSize = size_t(mesh.joint_and_weights.elementSize); // # of weights per vertex.
     for (size_t i = 0; i < mesh.points.size(); i++) {
-      ss << "vw ";
+      ss << "vw " << i << " ";
       for (size_t w = 0; w < elementSize; w++) {
         if (w > 0) {
           ss << " ";
@@ -68,8 +78,10 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
   bool has_texcoord = false;
   bool is_facevarying_texcoord = false;
+  size_t texcoord_count = 0;
   bool has_normal = false;
   bool is_facevarying_normal = false;
+  size_t normal_count = 0;
 
   // primary texcoord only
   if (mesh.texcoords.count(0)) {
@@ -83,10 +95,10 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
     if (texcoord.format == VertexAttributeFormat::Vec2) {
       const float *ptr = reinterpret_cast<const float *>(texcoord.buffer());
-      for (size_t i = 0; i < texcoord.vertex_count(); i++) {
+      texcoord_count = texcoord.vertex_count();
+      for (size_t i = 0; i < texcoord_count; i++) {
         ss << "vt " << ptr[2 * i + 0] << " " << ptr[2 * i + 1] << "\n";
       }
-
       has_texcoord = true;
     }
   }
@@ -97,101 +109,112 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     } else if (mesh.normals.variability == VertexVariability::Vertex) {
       is_facevarying_normal = false;
     } else {
-      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for texcoord0");
+      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for normals");
     }
     if (mesh.normals.format == VertexAttributeFormat::Vec3) {
       const float *ptr = reinterpret_cast<const float *>(mesh.normals.buffer());
-      for (size_t i = 0; i < mesh.normals.vertex_count(); i++) {
+      normal_count = mesh.normals.vertex_count();
+      for (size_t i = 0; i < normal_count; i++) {
         ss << "vn " << ptr[3 * i + 0] << " " << ptr[3 * i + 1] << " " << ptr[3 * i + 2] << "\n";
       }
       has_normal = true;
     }
   }
 
-  // name -> (mat_id, face_ids)
-  std::unordered_map<std::string, std::pair<int, std::vector<uint32_t>>> face_groups;
-  if (mesh.material_subsetMap.size()) {
+  const auto &counts = mesh.faceVertexCounts();
+  const auto &indices = mesh.faceVertexIndices();
+  const size_t num_faces = counts.size();
 
-    std::unordered_set<uint32_t> subset_face_ids;
-
-    for (const auto &subset : mesh.material_subsetMap) {
-      std::vector<uint32_t> face_ids(subset.second.indices().size());
-      for (size_t i = 0; i < subset.second.indices().size(); i++) {
-        face_ids[i] = uint32_t(subset.second.indices()[i]);
-        subset_face_ids.insert(face_ids[i]);
+  // Corner offset of every face into faceVertexIndices (and face-varying
+  // attributes), validated against the index array.
+  std::vector<size_t> offsets(num_faces);
+  {
+    size_t offset = 0;
+    for (size_t i = 0; i < num_faces; i++) {
+      offsets[i] = offset;
+      if (counts[i] > indices.size() - std::min(offset, indices.size())) {
+        PUSH_ERROR_AND_RETURN(fmt::format("faceVertexCounts exceed faceVertexIndices at face {}", i));
       }
+      offset += counts[i];
+    }
+  }
+
+  // Groups in deterministic order: faces outside any subset first (so they
+  // never inherit a later group's usemtl), then subsets by their first face.
+  struct FaceGroup {
+    std::string name;
+    int material_id;
+    std::vector<uint32_t> faces;
+  };
+  std::vector<FaceGroup> groups;
+  {
+    std::vector<bool> in_subset(num_faces, false);
+    for (const auto &subset : mesh.material_subsetMap) {
       if (subset.first.empty()) {
         PUSH_ERROR_AND_RETURN("Empty material_subset name is not allowed.");
       }
-      face_groups[subset.first] = std::make_pair(subset.second.material_id, face_ids);
-    }
-
-    // face_ids without materialsubset
-    std::vector<uint32_t> face_ids;
-    for (size_t i = 0; i < mesh.faceVertexCounts().size(); i++) {
-      if (!subset_face_ids.count(uint32_t(i))) {
-        face_ids.push_back(uint32_t(i));
+      FaceGroup group{subset.first, subset.second.material_id, {}};
+      for (const int32_t face : subset.second.indices()) {
+        if (face < 0 || size_t(face) >= num_faces) {
+          PUSH_ERROR_AND_RETURN(fmt::format("GeomSubset `{}` face index {} is out of range", subset.first, face));
+        }
+        group.faces.push_back(uint32_t(face));
+        in_subset[size_t(face)] = true;
       }
+      groups.push_back(std::move(group));
     }
-    face_groups[""] = std::make_pair(mesh.material_id, face_ids);
-  } else {
-    std::vector<uint32_t> face_ids(mesh.faceVertexCounts().size());
-    std::iota(face_ids.begin(), face_ids.end(), 0);
-
-    face_groups[""] = std::make_pair(mesh.material_id, face_ids);
+    std::sort(groups.begin(), groups.end(), [](const FaceGroup &a, const FaceGroup &b) {
+      const uint32_t fa = a.faces.empty() ? UINT32_MAX : *std::min_element(a.faces.begin(), a.faces.end());
+      const uint32_t fb = b.faces.empty() ? UINT32_MAX : *std::min_element(b.faces.begin(), b.faces.end());
+      return fa != fb ? fa < fb : a.name < b.name;
+    });
+    FaceGroup rest{"", mesh.material_id, {}};
+    for (size_t i = 0; i < num_faces; i++) {
+      if (!in_subset[i]) rest.faces.push_back(uint32_t(i));
+    }
+    if (!rest.faces.empty() || groups.empty()) groups.insert(groups.begin(), std::move(rest));
+  }
+  for (const auto &group : groups) {
+    if (group.material_id >= 0 && size_t(group.material_id) >= scene.materials.size()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Material id {} is out of range. scene.materials.size = {}",
+                                        group.material_id, scene.materials.size()));
+    }
   }
 
-  // build face_id -> location in mesh.faceVertexIndices table.
-  std::vector<size_t> offsets(mesh.faceVertexCounts().size());
-  size_t offset = 0;
-  for (size_t i = 0; i < mesh.faceVertexCounts().size(); i++) {
-    offsets[i] = offset;
-    offset += mesh.faceVertexCounts()[i];
-  }
-
-  size_t faceIndexOffset = 0;
-  // Assume empty group name is iterated first.
-  for (const auto &group : face_groups) {
-
-    if (group.first.size()) {
-      ss << "g " << group.first << "\n";
+  for (const auto &group : groups) {
+    if (!group.name.empty()) {
+      ss << "g " << group.name << "\n";
     }
-
-    if (std::get<0>(group.second) > -1) {
-      uint32_t mat_id = uint32_t(std::get<0>(group.second));
-      ss << "usemtl " << scene.materials[mat_id].name << "\n";
+    if (group.material_id >= 0) {
+      ss << "usemtl " << scene.materials[size_t(group.material_id)].name << "\n";
     }
-
-    const auto &face_ids = std::get<1>(group.second);
-
-    for (size_t i = 0; i < face_ids.size(); i++) {
-      ss << "f ";
-
-      for (size_t f = 0; f < mesh.faceVertexCounts()[face_ids[i]]; f++) {
-        if (f > 0) {
-          ss << " ";
+    for (const uint32_t face : group.faces) {
+      ss << "f";
+      for (size_t f = 0; f < counts[face]; f++) {
+        const size_t corner = offsets[face] + f;
+        const uint32_t vertex = indices[corner];
+        if (vertex >= mesh.points.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("faceVertexIndex {} is out of range", vertex));
         }
-        // obj's index starts with 1.
-        uint32_t idx = mesh.faceVertexIndices()[offsets[face_ids[i]] + f] + 1;
-
-        uint32_t t_idx = is_facevarying_texcoord ? uint32_t(faceIndexOffset + f) : idx;
-        uint32_t n_idx = is_facevarying_normal ? uint32_t(faceIndexOffset + f) : idx;
-
-        if (has_texcoord && has_normal) {
-          ss << idx << "/" << t_idx << "/" << n_idx;
-        } else if (has_texcoord) {
-          ss << idx << "/" << t_idx;
-        } else if (has_normal) {
-          ss << idx << "//" << n_idx;
-        } else {
-          ss << idx;
+        // OBJ indices are 1-based; face-varying attributes index corners.
+        const size_t t_idx = is_facevarying_texcoord ? corner : vertex;
+        const size_t n_idx = is_facevarying_normal ? corner : vertex;
+        const bool t = has_texcoord && t_idx < texcoord_count;
+        const bool n = has_normal && n_idx < normal_count;
+        if ((has_texcoord && !t) || (has_normal && !n)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Attribute index out of range at face {}", face));
+        }
+        ss << " " << (vertex + 1);
+        if (t && n) {
+          ss << "/" << (t_idx + 1) << "/" << (n_idx + 1);
+        } else if (t) {
+          ss << "/" << (t_idx + 1);
+        } else if (n) {
+          ss << "//" << (n_idx + 1);
         }
       }
-
-      faceIndexOffset += mesh.faceVertexIndices()[face_ids[i]];
       ss << "\n";
     }
-
     ss << "\n";
   }
 
@@ -200,262 +223,86 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   ss.str("");
   ss << "# exported from LightUSD Tydra.\n";
 
-  // emit material info
-  for (const auto &group : face_groups) {
-    if (group.second.first == -1) {
+  // Original MTL spec: https://paulbourke.net/dataformats/mtl/
+  // PBR extension: https://github.com/tinyobjloader/tinyobjloader/blob/release/pbr-mtl.md
+  auto texture_name = [&](int32_t tex_id, std::string *name) -> bool {
+    if (tex_id < 0 || size_t(tex_id) >= scene.textures.size()) {
+      PushError(fmt::format("Invalid texture id {}. scene.textures.size = {}", tex_id, scene.textures.size()));
+      return false;
+    }
+    const int64_t image_id = scene.textures[size_t(tex_id)].texture_image_id;
+    if (image_id < 0 || image_id >= int64_t(scene.images.size())) {
+      PushError(fmt::format("Invalid image id {}. scene.images.size = {}", image_id, scene.images.size()));
+      return false;
+    }
+    *name = scene.images[size_t(image_id)].asset_identifier;
+    if (name->empty()) {
+      PushError(fmt::format("Filename for image id {} is empty.", image_id));
+      return false;
+    }
+    return true;
+  };
+  // Emit `map_<key> file` for a texture or `<key> value` otherwise.
+  auto emit = [&](const char *map_key, const char *key, int32_t tex_id,
+                  const std::string &value) -> bool {
+    if (tex_id >= 0) {
+      std::string name;
+      if (!texture_name(tex_id, &name)) return false;
+      ss << map_key << " " << name << "\n";
+    } else {
+      ss << key << " " << value << "\n";
+    }
+    return true;
+  };
+  auto scalar = [&](float v) {
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(std::numeric_limits<float>::max_digits10);
+    os << v;
+    return os.str();
+  };
+  auto color = [&](const std::array<float, 3> &c) {
+    return scalar(c[0]) + " " + scalar(c[1]) + " " + scalar(c[2]);
+  };
+
+  std::vector<bool> written(scene.materials.size(), false);
+  size_t material_count = 0;
+  for (const auto &group : groups) {
+    if (group.material_id < 0 || written[size_t(group.material_id)]) {
       continue;
     }
-
-    uint32_t mat_id = uint32_t(std::get<0>(group.second));
-    ss << "newmtl " << scene.materials[mat_id].name << "\n";
-
-    // Original MTL spec: https://paulbourke.net/dataformats/mtl/
-    // Emit PBR material: https://github.com/tinyobjloader/tinyobjloader/blob/release/pbr-mtl.md
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->diffuseColor.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->diffuseColor.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_Kd " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto col = scene.materials[mat_id].surfaceShader->diffuseColor.value;
-      ss << "Kd " << col[0] << " " << col[1] << " " << col[2] << "\n";
+    written[size_t(group.material_id)] = true;
+    ++material_count;
+    const RenderMaterial &material = scene.materials[size_t(group.material_id)];
+    ss << "newmtl " << material.name << "\n";
+    const auto &shader = material.surfaceShader;
+    if (!shader) {
+      ss << "\n";
+      continue;
     }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->useSpecularWorkflow) {
-      if (scene.materials[mat_id].surfaceShader->specularColor.is_texture()) {
-        int32_t texId = scene.materials[mat_id].surfaceShader->specularColor.texture_id;
-        if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-        }
-
-        int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-        if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-        }
-
-        std::string texname = scene.images[size_t(imageId)].asset_identifier;
-        if (texname.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-        }
-        ss << "map_Ks " << texname << "\n";
-      } else if (scene.materials[mat_id].surfaceShader) {
-        const auto col = scene.materials[mat_id].surfaceShader->specularColor.value;
-        ss << "Ks " << col[0] << " " << col[1] << " " << col[2] << "\n";
-      }
+    bool ok = emit("map_Kd", "Kd", shader->diffuseColor.texture_id, color(shader->diffuseColor.value));
+    if (shader->useSpecularWorkflow) {
+      ok = ok && emit("map_Ks", "Ks", shader->specularColor.texture_id, color(shader->specularColor.value));
     } else {
-
-      if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->metallic.is_texture()) {
-        int32_t texId = scene.materials[mat_id].surfaceShader->metallic.texture_id;
-        if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-        }
-
-        int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-        if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-        }
-
-        std::string texname = scene.images[size_t(imageId)].asset_identifier;
-        if (texname.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-        }
-        ss << "map_Pm " << texname << "\n";
-      } else if (scene.materials[mat_id].surfaceShader) {
-        const auto f = scene.materials[mat_id].surfaceShader->metallic.value;
-        ss << "Pm " << f << "\n";
-      }
+      ok = ok && emit("map_Pm", "Pm", shader->metallic.texture_id, scalar(shader->metallic.value));
     }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->roughness.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->roughness.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_Pr " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->roughness.value;
-      ss << "Pr " << f << "\n";
+    ok = ok && emit("map_Pr", "Pr", shader->roughness.texture_id, scalar(shader->roughness.value));
+    ok = ok && emit("map_Ke", "Ke", shader->emissiveColor.texture_id, color(shader->emissiveColor.value));
+    ok = ok && emit("map_d", "d", shader->opacity.texture_id, scalar(shader->opacity.value));
+    // Clearcoat thickness/roughness (PBR extension).
+    ok = ok && emit("map_Pc", "Pc", shader->clearcoat.texture_id, scalar(shader->clearcoat.value));
+    ok = ok && emit("map_Pcr", "Pcr", shader->clearcoatRoughness.texture_id,
+                    scalar(shader->clearcoatRoughness.value));
+    // map_Ni is not in the original MTL definition.
+    ok = ok && emit("map_Ni", "Ni", shader->ior.texture_id, scalar(shader->ior.value));
+    ok = ok && emit("map_Ka", "Ka", shader->occlusion.texture_id, scalar(shader->occlusion.value));
+    if (!ok) {
+      return false;
     }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->emissiveColor.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->emissiveColor.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_Ke " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto col = scene.materials[mat_id].surfaceShader->emissiveColor.value;
-      ss << "Ke " << col[0] << " " << col[1] << " " << col[2] << "\n";
-    }
-
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->opacity.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->opacity.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_d " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->opacity.value;
-      ss << "d " << f << "\n";
-    }
-
-    // emit as cleacoat thickness
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->clearcoat.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->clearcoat.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_Pc " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->clearcoat.value;
-      ss << "Pc " << f << "\n";
-    }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->clearcoatRoughness.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->clearcoatRoughness.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      ss << "map_Pcr " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->clearcoatRoughness.value;
-      ss << "Pcr " << f << "\n";
-    }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->ior.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->ior.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      // map_Ni is not in original mtl definition
-      ss << "map_Ni " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->ior.value;
-      ss << "Ni " << f << "\n";
-    }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->occlusion.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->occlusion.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      // Use map_ao?
-      ss << "map_Ka " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->occlusion.value;
-      ss << "Ka " << f << "\n";
-    }
-
-    if (scene.materials[mat_id].surfaceShader && scene.materials[mat_id].surfaceShader->ior.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader->ior.texture_id;
-      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
-      }
-
-      int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
-      }
-
-      std::string texname = scene.images[size_t(imageId)].asset_identifier;
-      if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
-      }
-      // map_Ni is not in original mtl definition
-      ss << "map_Ni " << texname << "\n";
-    } else if (scene.materials[mat_id].surfaceShader) {
-      const auto f = scene.materials[mat_id].surfaceShader->ior.value;
-      ss << "Ni " << f << "\n";
-    }
-
     // TODO: opacityThreshold
-
     ss << "\n";
   }
-  ss << "# " << face_groups.size() << " materials.\n";
+  ss << "# " << material_count << " materials.\n";
 
   mtl_str = ss.str();
 

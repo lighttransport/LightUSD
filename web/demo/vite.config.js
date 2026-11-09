@@ -1,23 +1,30 @@
 import { defineConfig } from 'vite'
 import path from 'path'
+import { copyFile, mkdir } from 'node:fs/promises'
 import { compression } from 'vite-plugin-compression2'
+
+function copyLocalWasmProducts(sourceDir) {
+  return {
+    name: 'copy-local-wasm-products',
+    apply: 'build',
+    async writeBundle(output) {
+      const assetsDir = path.join(output.dir || path.resolve(__dirname, 'dist'), 'assets');
+      await mkdir(assetsDir, { recursive: true });
+      for (const filename of ['lightusd.js', 'lightusd.wasm', 'lightusd_next.js', 'lightusd_next.wasm']) {
+        await copyFile(path.join(sourceDir, filename), path.join(assetsDir, filename));
+      }
+    },
+  };
+}
 
 // Do not minify(we want to make demo website simple)
 // base: "./" => make asset path relative(required for static hosting of lightusd demo page at github pages)
-export default defineConfig(({ command, mode }) => {
-  const useLocalLightUSD = command === 'serve' && mode === 'development';
-  const lightusdRoot = useLocalLightUSD
-    ? path.resolve(__dirname, '../js/src/lightusd')
-    : path.resolve(__dirname, 'node_modules/lightusd');
-  const nextUtils = useLocalLightUSD
-    ? path.resolve(__dirname, '../js/src/lightusd/NextRenderSceneUtils.js')
-    : path.resolve(__dirname, 'src/next-backend-production-shim.js');
+export default defineConfig(() => {
+  const lightusdRoot = path.resolve(__dirname, '../js/src/lightusd');
+  const nextUtils = path.resolve(lightusdRoot, 'NextRenderSceneUtils.js');
 
   return {
     base: "./",
-    define: {
-        __LIGHTUSD_LOCAL_DEV__: JSON.stringify(useLocalLightUSD),
-    },
     server: {
         fs: {
             allow: [__dirname, path.resolve(__dirname, '../js')],
@@ -36,10 +43,12 @@ export default defineConfig(({ command, mode }) => {
             { find: 'lightusd-js', replacement: path.resolve(__dirname, '../js') },
         ],
     },
+    worker: { format: 'es' },
     build: {
         rollupOptions: {
           input: {
             main: path.resolve(__dirname, 'index.html'),
+            validation: path.resolve(__dirname, 'validation.html'),
             hair_fur: path.resolve(__dirname, 'hair-fur.html'),
             materialx_openchess: path.resolve(__dirname, 'materialx-openchess.html'),
             materialx_node: path.resolve(__dirname, 'materialx-node.html'),
@@ -60,6 +69,7 @@ export default defineConfig(({ command, mode }) => {
             composition_viz: path.resolve(__dirname, 'composition-viz.html'),
             streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
             viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
+            usd_viewer: path.resolve(__dirname, 'usd-viewer.html'),
             animation_blending: path.resolve(__dirname, 'animation-blending.html'),
             procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
             usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
@@ -76,6 +86,7 @@ export default defineConfig(({ command, mode }) => {
     // Use only gzip here. Vite will emit the WASM referenced by the npm package.
     plugins: [
       compression({algorithms: ['gzip']}),
+      copyLocalWasmProducts(lightusdRoot),
     ],
   };
 });

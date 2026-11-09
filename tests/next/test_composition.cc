@@ -236,14 +236,14 @@ static void test_variants() {
     PrimSpec shape = MakePrim("/Shape", "Sphere");
     shape.add_property("radius", Value(1.0));  // local opinion (strongest)
 
-    VariantSetData vsd;
+    PrimVariantSetData vsd;
     vsd.name = "shapeVariant";
-    VariantData big;
+    PrimVariantData big;
     big.name = "big";
     big.properties.emplace_back("radius", Value(10.0));            // weaker than local
     big.properties.emplace_back("color", Value(std::string("red")));  // variant-only
     vsd.variants.push_back(std::move(big));
-    VariantData small;
+    PrimVariantData small;
     small.name = "small";
     small.properties.emplace_back("radius", Value(0.5));
     vsd.variants.push_back(std::move(small));
@@ -272,14 +272,14 @@ static void test_variants_multiset() {
   Layer layer;
   {
     PrimSpec p = MakePrim("/M", "Mesh");
-    VariantSetData lod;
+    PrimVariantSetData lod;
     lod.name = "lod"; lod.selected = "high";
-    { VariantData v; v.name = "high"; v.properties.emplace_back("subdiv", Value(int32_t(2))); lod.variants.push_back(std::move(v)); }
-    { VariantData v; v.name = "low";  v.properties.emplace_back("subdiv", Value(int32_t(0))); lod.variants.push_back(std::move(v)); }
+    { PrimVariantData v; v.name = "high"; v.properties.emplace_back("subdiv", Value(int32_t(2))); lod.variants.push_back(std::move(v)); }
+    { PrimVariantData v; v.name = "low";  v.properties.emplace_back("subdiv", Value(int32_t(0))); lod.variants.push_back(std::move(v)); }
     p.meta().variantSets().push_back(std::move(lod));
-    VariantSetData shade;
+    PrimVariantSetData shade;
     shade.name = "shading"; shade.selected = "red";
-    { VariantData v; v.name = "red"; v.properties.emplace_back("tint", Value(std::string("r"))); shade.variants.push_back(std::move(v)); }
+    { PrimVariantData v; v.name = "red"; v.properties.emplace_back("tint", Value(std::string("r"))); shade.variants.push_back(std::move(v)); }
     p.meta().variantSets().push_back(std::move(shade));
     layer.add_prim(std::move(p));
   }
@@ -301,7 +301,7 @@ static void test_variant_subprim() {
   Layer layer;
   {
     PrimSpec root = MakePrim("/Root", "Xform");
-    VariantSetData vsd;
+    PrimVariantSetData vsd;
     vsd.name = "geo";
     vsd.selected = "hi";  // no property variants — only child prims
     root.meta().variantSets().push_back(std::move(vsd));
@@ -342,7 +342,7 @@ static void test_variant_roundtrip() {
   Layer layer;
   {
     PrimSpec root = MakePrim("/Root", "Xform");
-    VariantSetData vsd;
+    PrimVariantSetData vsd;
     vsd.name = "geo";
     vsd.selected = "hi";
     root.meta().variantSets().push_back(std::move(vsd));
@@ -387,11 +387,11 @@ static void test_variant_roundtrip() {
 
 // A modelingVariant set with two options ("ChairA"/"ChairB"); each option
 // carries a distinguishing "which" property only when `populated`.
-static VariantSetData MakeModelingVariantSet(bool populated) {
-  VariantSetData vsd;
+static PrimVariantSetData MakeModelingVariantSet(bool populated) {
+  PrimVariantSetData vsd;
   vsd.name = "modelingVariant";
-  VariantData a; a.name = "ChairA";
-  VariantData b; b.name = "ChairB";
+  PrimVariantData a; a.name = "ChairA";
+  PrimVariantData b; b.name = "ChairB";
   if (populated) {
     a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
     b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
@@ -439,11 +439,11 @@ static void test_variant_selection_over_reference() {
   CHECK(which != nullptr,
         "/C1.which present (selected variant's opinion applied to host)");
   if (which) {
-    const std::string* s = which->as_string();
+    auto s = which->as_string();
     CHECK(s && *s == "I_am_ChairB",
           std::string("local 'ChairB' wins over referenced default 'ChairA' "
                       "(got '") +
-              (s ? *s : std::string("<non-string>")) + "')");
+              (s ? std::string(*s) : std::string("<non-string>")) + "')");
   }
 }
 
@@ -470,12 +470,12 @@ static void test_many_variant_bearing_references() {
                    std::string*) -> std::unique_ptr<Layer> {
     auto layer = std::make_unique<Layer>();
     PrimSpec model = MakePrim("/Model", "Xform");
-    VariantSetData lod;
+    PrimVariantSetData lod;
     lod.name = "lod";
     lod.selected = "low";  // host's high selection must remain stronger.
-    VariantData low;
+    PrimVariantData low;
     low.name = "low";
-    VariantData high;
+    PrimVariantData high;
     high.name = "high";
     lod.variants.push_back(std::move(low));
     lod.variants.push_back(std::move(high));
@@ -579,11 +579,11 @@ static void test_variant_ref_payload_chain() {
         "/C1.which present (deep populated variant content reached the host "
         "through the ref->payload->ref chain)");
   if (which) {
-    const std::string* s = which->as_string();
+    auto s = which->as_string();
     CHECK(s && *s == "I_am_ChairB",
           std::string("local 'ChairB' wins across the full ref+payload chain "
                       "(got '") +
-              (s ? *s : std::string("<non-string>")) + "', want 'I_am_ChairB')");
+              (s ? std::string(*s) : std::string("<non-string>")) + "', want 'I_am_ChairB')");
   }
 }
 
@@ -677,7 +677,7 @@ static void test_extref_non_self_contained_fallback() {
 }
 
 // The crate (USDC) reader records a variant selection as BOTH a per-set
-// VariantSetData.selected AND the legacy variantSelection string. A host that
+// PrimVariantSetData.selected AND the legacy variantSelection string. A host that
 // overrides a referenced asset's variant must win regardless of which form it
 // carries; the asset's (weaker) per-set `selected` must not ride along the
 // CopyLocalOpinions variantSet merge and defeat the override in ApplyVariants
@@ -687,12 +687,12 @@ static void test_variant_selected_field_over_reference() {
 
   // A modelingVariant set carrying its own per-set `selected` (reader form).
   auto makeSet = [](const std::string& sel) {
-    VariantSetData vsd;
+    PrimVariantSetData vsd;
     vsd.name = "modelingVariant";
     vsd.selected = sel;
-    VariantData a; a.name = "ChairA";
+    PrimVariantData a; a.name = "ChairA";
     a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
-    VariantData b; b.name = "ChairB";
+    PrimVariantData b; b.name = "ChairB";
     b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
     vsd.variants.push_back(std::move(a));
     vsd.variants.push_back(std::move(b));
@@ -710,7 +710,7 @@ static void test_variant_selected_field_over_reference() {
   };
   auto whichOf = [](const Layer* out, const std::string& prim) {
     const Value* w = out ? PropOf(*out, prim, "which") : nullptr;
-    return (w && w->as_string()) ? *w->as_string() : std::string("<none>");
+    return (w && w->as_string()) ? std::string(*w->as_string()) : std::string("<none>");
   };
 
   // (1) reader-consistent host: BOTH per-set selected AND the string = "ChairB".
@@ -1423,8 +1423,8 @@ static void test_dictionary_type_conflict_diagnostic() {
   CHECK(out != nullptr, "compose succeeds");
   const PrimSpec* p = out->prim_at_path("/p");
   CHECK(p != nullptr, "prim composed");
-  const Dict* cd = p ? p->meta().customData().as_dictionary() : nullptr;
-  const Value* k = cd ? cd->find("k") : nullptr;
+  auto cd = p ? p->meta().customData().as_dictionary() : nullptr;
+  auto k = cd ? cd->find("k") : nullptr;
   CHECK(k && k->as_int() && *k->as_int() == 3,
         "stronger scalar opinion wins the conflicting key");
   bool saw = false;

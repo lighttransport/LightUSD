@@ -16,8 +16,10 @@
 // (malformed-input DoS hardening, same spirit as the unknownMeta decoder).
 
 #include "expression-variables.hh"
+#include <vector>
 
 #include <cerrno>
+#include <charconv>
 #include <cstdlib>
 
 namespace lightusd {
@@ -25,9 +27,9 @@ namespace next {
 
 namespace {
 
-const std::string* StringValue(const Value& value) {
-  if (const std::string* s = value.as_string()) return s;
-  if (const std::string* s = value.as_token()) return s;
+StringView StringValue(ValueView value) {
+  if (auto s = value.as_string()) return s;
+  if (auto s = value.as_token()) return s;
   return value.as_asset_path();
 }
 
@@ -76,7 +78,7 @@ struct ExprValue {
 
 class ExpressionEvaluator {
  public:
-  ExpressionEvaluator(const Dict* vars) : vars_(vars) {}
+  ExpressionEvaluator(DictView  vars) : vars_(vars) {}
 
   // Evaluate a full backtick-stripped expression body.
   bool EvalBody(const std::string& body, ExprValue* out) {
@@ -160,11 +162,11 @@ class ExpressionEvaluator {
   }
 
   bool LookupVariable(const std::string& name, ExprValue* out) {
-    const Value* v = vars_ ? vars_->find(name) : nullptr;
+    auto v = vars_ ? vars_->find(name) : nullptr;
     if (!v) {
       return Fail("undefined expression variable `" + name + "`");
     }
-    if (const std::string* s = StringValue(*v)) {
+    if (auto s = StringValue(*v)) {
       if (s->size() >= 2 && s->front() == '`' && s->back() == '`') {
         return EvalVariableExpression(name, *s, out);
       }
@@ -187,19 +189,19 @@ class ExpressionEvaluator {
       *out = ExprValue::MakeInt(static_cast<int64_t>(*u));
       return true;
     }
-    if (const std::vector<std::string>* a = v->as_token_array()) {
+    if (auto a = v->as_token_array()) {
       out->kind = ExprValue::Kind::List;
       out->list.clear();
       for (const std::string& e : *a) out->list.push_back(ExprValue::MakeString(e));
       return true;
     }
-    if (const std::vector<int32_t>* a = v->as_int_array()) {
+    if (auto a = v->as_int_array()) {
       out->kind = ExprValue::Kind::List;
       out->list.clear();
       for (int32_t e : *a) out->list.push_back(ExprValue::MakeInt(e));
       return true;
     }
-    if (const std::vector<int64_t>* a = v->as_int64_array()) {
+    if (auto a = v->as_int64_array()) {
       out->kind = ExprValue::Kind::List;
       out->list.clear();
       for (int64_t e : *a) out->list.push_back(ExprValue::MakeInt(e));
@@ -257,10 +259,9 @@ class ExpressionEvaluator {
     }
     if (!digits) return Fail("malformed integer literal");
     const std::string token = text_->substr(start, pos_ - start);
-    errno = 0;
-    char* endp = nullptr;
-    const long long v = std::strtoll(token.c_str(), &endp, 10);
-    if (errno == ERANGE || !endp || *endp != '\0') {
+    long long v = 0;
+    const auto parsed = std::from_chars(token.data(), token.data() + token.size(), v, 10);
+    if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
       return Fail("integer literal out of int64 range: " + token);
     }
     *out = ExprValue::MakeInt(static_cast<int64_t>(v));
@@ -498,7 +499,7 @@ class ExpressionEvaluator {
         if (a.kind != ExprValue::Kind::String) {
           return Fail("`defined` arguments must be variable-name strings");
         }
-        all = all && vars_ && vars_->find(a.s) != nullptr;
+        all = all && vars_ && static_cast<bool>(vars_->find(a.s));
       }
       *out = ExprValue::MakeBool(all);
       return true;
@@ -506,7 +507,7 @@ class ExpressionEvaluator {
     return Fail("unknown expression function `" + name + "`");
   }
 
-  const Dict* vars_ = nullptr;
+  DictView  vars_ = nullptr;
   const std::string* text_ = nullptr;
   size_t pos_ = 0;
   std::string error_;
@@ -517,11 +518,11 @@ class ExpressionEvaluator {
 
 Value ComposeExpressionVariables(const Value& weaker, const Value& stronger) {
   Value result = Value::MakeDictionary();
-  Dict* out = result.as_dictionary();
-  if (const Dict* d = weaker.as_dictionary()) {
+  auto out = result.as_dictionary();
+  if (auto d = weaker.as_dictionary()) {
     for (const auto& entry : d->entries()) out->set(entry.first, entry.second);
   }
-  if (const Dict* d = stronger.as_dictionary()) {
+  if (auto d = stronger.as_dictionary()) {
     for (const auto& entry : d->entries()) out->set(entry.first, entry.second);
   }
   return result;

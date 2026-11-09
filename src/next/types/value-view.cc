@@ -4,6 +4,7 @@
 // Read-only array views for next::Value.
 
 #include "value-view.hh"
+#include "../c/lightusd-core-c.h"
 
 #include "type-info.hh"
 #include "../crate/lazy-array.hh"
@@ -17,17 +18,17 @@ namespace next {
 namespace {
 
 TypeId ScalarComponent(TypeId id) {
-  const TypeId c = GetComponentType(id);
-  return c == TypeId::Invalid ? id : c;
+  return static_cast<TypeId>(lu_scalar_component(static_cast<uint16_t>(id)));
 }
 
 bool RequiresLazyComponentReorder(TypeId id) {
-  return id == TypeId::Quatf || id == TypeId::Quatd || id == TypeId::Quath;
+  return lu_requires_lazy_component_reorder(static_cast<uint16_t>(id)) != 0;
 }
 
 template <typename T>
 bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
                          ArrayView<T>* out) {
+  if (!CanBorrowLazyFlat(value)) return false;
   const LazyArrayRef* ref = value.lazy_ref();
   if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
     return false;
@@ -67,22 +68,11 @@ bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
 // Scalar byte size / alignment for the borrowable POD component types. Returns 0
 // for unsupported types (which are therefore not borrowable).
 size_t ScalarByteSize(TypeId comp) {
-  switch (comp) {
-    case TypeId::Float:
-    case TypeId::Int:
-    case TypeId::UInt:
-      return 4;
-    case TypeId::Double:
-    case TypeId::Int64:
-    case TypeId::UInt64:
-      return 8;
-    default:
-      return 0;
-  }
+  return lu_scalar_byte_size(static_cast<uint16_t>(comp));
 }
 
-template <typename T>
-bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
+template <typename T, typename U>
+bool FinishBorrowedView(ValueArrayView<U> storage, ArrayView<T>* out) {
   if (!storage) return false;
   *out = ArrayView<T>{storage->empty() ? nullptr : storage->data(),
                       storage->size(), true};
@@ -91,9 +81,7 @@ bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
 
 bool FinishFloatBackedView(const Value& value, ArrayView<float>* out) {
   const TypeId component = GetComponentType(value.type_id());
-  // Half arrays are widened into float storage by both USDA and Crate readers.
-  // Preserve their authored TypeId while allowing float consumers to borrow
-  // the already-widened buffer.
+  // Half arrays retain authored types but use widened float storage.
   if (!value.is_array() ||
       (component != TypeId::Float && component != TypeId::Half))
     return false;
@@ -110,20 +98,36 @@ bool FinishFloatBackedView(const Value& value, ArrayView<float>* out) {
 }  // namespace
 
 bool CanBorrowLazyFlat(const Value& value) {
+  return CanBorrowLazyFlat(value.view());
+}
+
+bool CanBorrowLazyFlat(ValueView value) {
   // Mirrors BorrowLazyFlatArray's preconditions WITHOUT materializing: true only
   // when the lazy array's bytes can be aliased zero-copy from the source mapping
   // (so independent element ranges can be formatted concurrently, with no decode).
   if (!value.is_lazy()) return false;
+  const uint16_t endian = 1;
+  if (*reinterpret_cast<const uint8_t*>(&endian) != 1) return false;
   const LazyArrayRef* ref = value.lazy_ref();
   if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
     return false;
+  if (value.type_id() != ref->value_type ||
+      value.array_size() != ref->element_count ||
+      ref->element_count > ref->max_elements) return false;
   if (RequiresLazyComponentReorder(ref->value_type)) return false;
+  // Decoding canonicalizes every nonzero bool byte to one.
+  if (ScalarComponent(ref->value_type) == TypeId::Bool) return false;
   const size_t ts = ScalarByteSize(ScalarComponent(ref->value_type));
   if (ts == 0) return false;
+  // Half and uchar arrays widen in canonical Value storage. Their on-disk
+  // component widths cannot back a C/Python view of the widened components.
+  if (lu_type_size(lu_value_array_component(static_cast<uint16_t>(ref->value_type))) != ts)
+    return false;
   const size_t comps = GetComponentCount(ref->value_type);
   if (comps == 0) return false;
   if (ref->src_elem_stride != comps * ts) return false;
   if (ref->element_count == 0) return true;
+  if (!ref->source->base()) return false;
   const uint64_t header_bytes =
       CrateArrayCountHeaderBytes(ref->source->version());
   if (ref->block_offset == 0 || ref->block_len < header_bytes) return false;
@@ -146,11 +150,14 @@ bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
                        ArrayView<float>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() ||
+      lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_FLOAT)
+    return false;
   if (value.is_lazy() && BorrowLazyFlatArray<float>(value, TypeId::Float, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<float>* arr = value.as_float_array();
+    auto arr = value.as_float_array();
     if (arr) {
       *out = ArrayView<float>{arr->empty() ? nullptr : arr->data(),
                               arr->size(), true};
@@ -171,11 +178,12 @@ bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,
                         ArrayView<double>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() || lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_DOUBLE) return false;
   if (value.is_lazy() && BorrowLazyFlatArray<double>(value, TypeId::Double, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<double>* arr = value.as_double_array();
+    auto arr = value.as_double_array();
     if (!arr) return false;
     *out = ArrayView<double>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -188,11 +196,12 @@ bool GetIntArrayView(const Value& value, ArrayScratch<int32_t>* scratch,
                      ArrayView<int32_t>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() || lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_INT) return false;
   if (value.is_lazy() && BorrowLazyFlatArray<int32_t>(value, TypeId::Int, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<int32_t>* arr = value.as_int_array();
+    auto arr = value.as_int_array();
     if (!arr) return false;
     *out = ArrayView<int32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -205,11 +214,12 @@ bool GetInt64ArrayView(const Value& value, ArrayScratch<int64_t>* scratch,
                        ArrayView<int64_t>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() || lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_INT64) return false;
   if (value.is_lazy() && BorrowLazyFlatArray<int64_t>(value, TypeId::Int64, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<int64_t>* arr = value.as_int64_array();
+    auto arr = value.as_int64_array();
     if (!arr) return false;
     *out = ArrayView<int64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -222,11 +232,12 @@ bool GetUIntArrayView(const Value& value, ArrayScratch<uint32_t>* scratch,
                       ArrayView<uint32_t>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() || lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_UINT) return false;
   if (value.is_lazy() && BorrowLazyFlatArray<uint32_t>(value, TypeId::UInt, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<uint32_t>* arr = value.as_uint_array();
+    auto arr = value.as_uint_array();
     if (!arr) return false;
     *out = ArrayView<uint32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -239,11 +250,12 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
                         ArrayView<uint64_t>* out) {
   if (!out || !scratch) return false;
   *out = {};
+  if (!value.is_array() || lu_value_array_component(static_cast<uint16_t>(value.type_id())) != LU_TYPE_UINT64) return false;
   if (value.is_lazy() && BorrowLazyFlatArray<uint64_t>(value, TypeId::UInt64, out)) {
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<uint64_t>* arr = value.as_uint64_array();
+    auto arr = value.as_uint64_array();
     if (!arr) return false;
     *out = ArrayView<uint64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;

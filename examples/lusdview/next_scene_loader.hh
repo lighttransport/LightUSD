@@ -15,15 +15,23 @@
 #include <utility>
 #include <vector>
 
+#include "lightusd-c.h"
 #include "gpu_scene.hh"      // DrawScene
-#include "camera_nav.hh"     // CameraProjection
+#include "light3d/camera-nav.hh"     // CameraProjection
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
 #include "skinning.hh"       // RtSkinnedMeshUpload
 
-namespace lightusd { namespace next { class Stage; class StageSession; } }
-
 namespace lusdview {
+
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
+class ViewerDocument;
+struct ViewerChanges;
 
 // Load `path` (usd/usda/usdc) through the `next` loader, convert to a
 // flat-shaded DrawScene (`draw`). Returns false with `*err` set on failure (or
@@ -35,10 +43,12 @@ namespace lusdview {
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl = nullptr,
-                    std::shared_ptr<lightusd::next::StageSession>* out_session = nullptr,
-                    ProgressiveSceneStream* stream = nullptr);
+                    std::shared_ptr<ViewerDocument>* out_session = nullptr,
+                    ViewerChanges* out_changes = nullptr,
+                    ProgressiveSceneStream* stream = nullptr,
+                    const std::string& reload_layer_id = {});
 
-bool UpdateNextAnimatedMeshWorlds(const lightusd::next::Stage& stage,
+bool UpdateNextAnimatedMeshWorlds(const lightusd_stage* stage,
                                   DrawScene* draw, double time);
 
 // Decode one ordinary filesystem texture reserved by the async next-loader.
@@ -77,14 +87,15 @@ struct NextCameraPose {
 // Gather all Camera prims from `stage` and populate `*out` with their world
 // pose and lens properties at `time`. Used to populate the camera record summary
 // for loader-equivalence testing.
-void GatherNextCameras(const lightusd::next::Stage& stage, double time,
+void GatherNextCameras(const lightusd_stage* stage, double time,
                        std::vector<DrawCameraCPU>* out);
 
 // Find the Camera prim named (or path-suffixed by) `name` in `stage` and fill
 // `*out` with its world-space pose at `time`. Returns false if no such camera
-// exists. Used to drive the viewer's orbit camera from a scene camera (the
-// auto-fit framing is useless on vast scenes like Caldera).
-bool FindNextCamera(const lightusd::next::Stage& stage, const std::string& name,
+// exists or stage/out is null. Lens properties use defaults; transforms sample
+// time. The caller retains stage during this query. Used to drive the viewer's orbit camera from a scene camera (the
+// auto-fit framing is useless on vast scenes like Scene C).
+bool FindNextCamera(const lightusd_stage* stage, const std::string& name,
                     double time, NextCameraPose* out);
 
 // Same, for the LEGACY loader, which has no next Stage -- only the converted
@@ -96,6 +107,14 @@ bool FindNextCamera(const lightusd::next::Stage& stage, const std::string& name,
 bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
                       const std::string& name, NextCameraPose* out);
 
+// Evaluate a legacy-loader camera directly from the retained Stage at `time`.
+// This keeps authored camera motion available to the native temporal raster and
+// Vulkan paths without reconverting the scene's geometry for every shutter
+// midpoint. The RenderScene overload above remains the load-time camera query.
+bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
+                            const std::string& name, double time,
+                            NextCameraPose* out);
+
 // Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
 // draw mesh that carries morph channels, resolve its blendshape weights from
 // `stage` at `time` (manual `blendOverride` weights, when set, replace animated
@@ -103,7 +122,7 @@ bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
 // shader sums. Emits (meshIndex, coeffs) only for morphed meshes. Mirrors
 // BuildMorphChannelWeights/EvalMorphChannelCoeffs for the next stage.
 void BuildNextMorphWeights(
-    const lightusd::next::Stage& stage, const DrawScene& draw, double time,
+    const lightusd_stage* stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<std::pair<int, std::vector<float>>>* out);
 
@@ -119,9 +138,22 @@ void BuildNextMorphWeights(
 // bounds are not refreshed: a skinned batch deliberately carries the conservative
 // scene box, so that a moving rig never culls itself out of view. The SCENE box is
 // refreshed separately -- see BuildNextPosedSceneBounds.
-// Returns false when the scene has no next-path skinning.
-bool BuildNextSkinningFrame(const lightusd::next::Stage& stage, DrawScene* draw,
-                            double time, SkinningFrameCPU* frame);
+// Returns false when the scene has no next-path skinning. When `outMin`/`outMax`
+// are provided, the conservative posed scene box (per-mesh padded rest boxes
+// transformed by the same bone rows) is written there and `draw`'s scene box is
+// refreshed. This avoids a second full CPU vertex re-pose just to bound the
+// scene during raster playback.
+bool BuildNextSkinningFrame(const lightusd_stage* stage, DrawScene* draw,
+                            double time, SkinningFrameCPU* frame,
+                            float* outMin = nullptr, float* outMax = nullptr);
+
+struct NextSkeletonOverlay {
+  std::vector<float> positions; // world-space xyz, one per joint
+  std::vector<int> parents;
+};
+// Uses the same posed joint hierarchy as native next skinning; source visibility is respected.
+bool BuildNextSkeletonOverlay(const lightusd_stage* stage, const std::string& path,
+                              double time, NextSkeletonOverlay* output);
 
 // The scene's world box at `time`, with the skeleton posed. The load-time box is
 // the REST box, so an animated `--time` load otherwise frames, grids and depth-
@@ -132,10 +164,18 @@ bool BuildNextSkinningFrame(const lightusd::next::Stage& stage, DrawScene* draw,
 // the same tight box the CPU bake and the Tydra path derive -- a conservative
 // bound would put the grid and the depth ramp somewhere else than those paths do,
 // on identical geometry. Returns false when nothing deformed.
+// `precomputedPosed` lets a caller that already ran BuildNextRtDeformedVertices
+// reuse those uploads instead of skinning every vertex a second time.
+// `conservative` skips the vertex pose entirely and bounds from the bone-box
+// union; raster playback uses that because the exact box is not worth a full
+// CPU re-pose every frame (the grid is frozen and the conservative box is safe
+// for auto-clip).
 bool BuildNextPosedSceneBounds(
-    const lightusd::next::Stage& stage, DrawScene* draw, double time,
+    const lightusd_stage* stage, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
-    float outMin[3], float outMax[3]);
+    float outMin[3], float outMax[3],
+    const std::vector<RtSkinnedMeshUpload>* precomputedPosed = nullptr,
+    bool conservative = false);
 
 // Ray tracing cannot use the raster vertex shader's deform: the BLAS is built
 // from actual vertex buffers, so the geometry itself has to move. Re-pose the
@@ -148,8 +188,10 @@ bool BuildNextPosedSceneBounds(
 // Meshes whose CPU geometry was freed after upload are skipped; the RT path
 // therefore has to retain it for deformable meshes (see App::freeCpuGeometry).
 // Returns false when nothing deformed.
+// The caller retains the public stage for the duration of the call. Null stage
+// returns false and clears out; native animation queries remain private to the loader.
 bool BuildNextRtDeformedVertices(
-    const lightusd::next::Stage& stage, const DrawScene& draw, double time,
+    const lightusd_stage* stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<RtSkinnedMeshUpload>* out);
 

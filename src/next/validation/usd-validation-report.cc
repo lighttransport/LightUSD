@@ -2,6 +2,8 @@
 // Copyright 2026 Light Transport Entertainment Inc.
 #include "usd-validation.hh"
 #include <sstream>
+#include <algorithm>
+#include <cstring>
 namespace lightusd {
 namespace next {
 
@@ -25,6 +27,46 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
   // are emitted by the byte-container checks in lusdchecker, which shares
   // this registry.
   static constexpr ValidationRuleInfo kRules[] = {
+      {"core.apiSchema.kind", "core", "only single-apply and multiple-apply schemas may appear in apiSchemas"},
+      {"shade.collection.binding", "shade", "collection material bindings must identify a collection and a material"},
+      {"checker.coverage.version", "checker", "the declared file version must be covered by the pinned specification"},
+      {"checker.coverage.dependencies", "checker", "required dependencies must be available"},
+      {"checker.coverage.package", "checker", "nested package validation must fit the depth limit"},
+      {"checker.coverage.io", "checker", "loaded layer bytes must remain readable"},
+      {"checker.coverage.resolver", "checker", "required dependency resolvers must be available"},
+      {"shade.normalMap.file", "shade", "normal texture assets must resolve"},
+      {"shade.normalMap.connection", "shade", "normal input sources must be shader or interface attributes"},
+      {"checker.baseline", "checker", "Validation requirement: checker.baseline"},
+      {"checker.coverage.memory", "checker", "Validation requirement: checker.coverage.memory"},
+      {"checker.coverage.stage", "checker", "Validation requirement: checker.coverage.stage"},
+      {"checker.definitions", "checker", "Validation requirement: checker.definitions"},
+      {"checker.io", "checker", "Validation requirement: checker.io"},
+      {"checker.usage", "checker", "Validation requirement: checker.usage"},
+      {"parser.error", "parser", "Validation requirement: parser.error"},
+      {"physics.collider.nonUniformScale", "physics", "Validation requirement: physics.collider.nonUniformScale"},
+      {"physics.density", "physics", "Validation requirement: physics.density"},
+      {"physics.joint.bodyCount", "physics", "Validation requirement: physics.joint.bodyCount"},
+      {"physics.joint.bodyTarget", "physics", "Validation requirement: physics.joint.bodyTarget"},
+      {"physics.mass", "physics", "Validation requirement: physics.mass"},
+      {"physics.rigidBody.instanceProxy", "physics", "Validation requirement: physics.rigidBody.instanceProxy"},
+      {"physics.rigidBody.scaleOrientation", "physics", "Validation requirement: physics.rigidBody.scaleOrientation"},
+
+      {"core.schema.propertyKind", "core", "property kind must match its schema definition"},
+      {"geom.subset.familyOverlap", "geom", "restricted subset families must not overlap"},
+      {"geom.subset.familyPartition", "geom", "partitions must cover every parent element"},
+      {"shade.shader.sourceType", "shade", "source-based shaders must declare a source type"},
+      {"shade.shader.implementationSource", "shade", "shader implementationSource must be id/sourceAsset/sourceCode"},
+      {"shade.shader.sourceTypeConflict", "shade", "shader source definitions must agree on input types"},
+      {"checker.coverage.schema", "checker", "required schema definitions must be available"},
+      {"checker.coverage.shader", "checker", "required shader definitions must be available"},
+      {"checker.coverage.callback", "checker", "registered callbacks must complete successfully"},
+      {"checker.coverage.variants", "checker", "requested variant validation must complete"},
+      {"checker.coverage.samples", "checker", "sample validation must fit the configured limit"},
+      {"checker.coverage.evaluation", "checker", "required sampled values must resolve"},
+      {"checker.coverage.clips", "checker", "clip assets and sample times must be available"},
+      {"checker.coverage.spline", "checker", "spline knots must be decodable"},
+      {"checker.coverage.subset", "checker", "subset element domains must be supported"},
+
       {"arkit.layer.extension", "arkit",
        "subLayer assets must be usd/usda/usdc/usdz layers"},
       {"arkit.material.binding", "arkit",
@@ -117,6 +159,25 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "variantSets metadata must be well-formed"},
       {"core.schema.attributeType", "core",
        "attribute is declared with a different type than its schema defines"},
+      {"core.schema.variability", "core",
+       "authored attribute variability must match its schema definition"},
+      {"core.dict.duplicateKey", "core",
+       "dictionary fields must not repeat a key at any nesting level "
+       "(reader-level: the Layer keeps the last value, so the finding is "
+       "imported from the parser diagnostics)"},
+      {"core.listop.deprecatedAdd", "core",
+       "list-op fields should not use the deprecated `add` operation"},
+      {"core.listop.deprecatedReorder", "core",
+       "list-op fields should not use the deprecated `reorder` operation"},
+      {"core.listop.duplicateItems", "core",
+       "each list-op sequence (explicit/prepended/appended/deleted) must hold "
+       "unique items"},
+      {"core.schema.familyVersion", "core",
+       "prim typeName and apiSchemas entries must parse per the schema "
+       "family/version grammar"},
+      {"core.schema.selfFamilyInherit", "core",
+       "a versioned schema definition must not inherit from its own family "
+       "(enforced when a schema manifest is loaded)"},
       {"core.dependency.unresolvable", "core",
        "authored asset dependencies must be resolvable (usdchecker MissingReferenceValidator)"},
       {"core.layer.colorConfiguration", "core",
@@ -135,6 +196,22 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "framesPerSecond must be a positive finite number"},
       {"core.layer.kilogramsPerUnit", "core",
        "kilogramsPerUnit must be a positive finite number"},
+      {"core.layer.layerRelocates.ancestor", "core",
+       "a relocate target must not be an ancestor of its source"},
+      {"core.layer.layerRelocates.duplicateSource", "core",
+       "one authored relocate source must not have different targets"},
+      {"core.layer.layerRelocates.duplicateTarget", "core",
+       "one nonempty relocate target must not have different sources"},
+      {"core.layer.layerRelocates.nestedSource", "core",
+       "relocate sources must use an already relocated ancestor namespace"},
+      {"core.layer.layerRelocates.root", "core",
+       "root/pseudo-root source restrictions; OpenUSD permits root-prim targets (LEAN-515)"},
+      {"core.layer.layerRelocates.targetIsSource", "core",
+       "OpenUSD compatibility forbids targets equal to other sources (LEAN-514)"},
+      {"core.layer.layerRelocates.targetUnderOtherSource", "core",
+       "OpenUSD compatibility forbids targets below another source"},
+      {"core.layer.layerRelocates.targetUnderSource", "core",
+       "a relocate target must not be below its source"},
       {"core.layer.layerRelocates.identity", "core",
        "a relocate must not map a path to itself"},
       {"core.layer.layerRelocates.source", "core",
@@ -143,10 +220,16 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "relocate targets must be absolute prim paths or empty (delete)"},
       {"core.layer.metersPerUnit", "core",
        "metersPerUnit must be a positive finite number"},
+      {"core.layer.primOrder", "core",
+       "root primOrder entries should be valid prim names; missing children are allowed"},
+      {"core.prim.primOrder", "core",
+       "primOrder entries should be valid prim names; missing children are allowed"},
+      {"core.prim.propertyOrder", "core",
+       "propertyOrder entries should be valid property names; missing properties are allowed"},
       {"core.layer.owner", "core",
        "owner must be a non-empty string"},
       {"core.layer.subLayerOffset", "core",
-       "subLayer offsets must be finite with non-zero scale"},
+       "subLayer offsets must be finite with positive scale"},
       {"core.layer.subLayers", "core",
        "subLayers entries must be non-empty asset paths"},
       {"core.layer.timeCodeRange", "core",
@@ -404,7 +487,7 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
       {"physics.collisionGroup.mergeGroup", "physics",
        "mergeGroupName must be consistent across merged groups"},
       {"physics.drive.dof", "physics",
-       "a drive's degree of freedom must match its joint type"},
+       "drive instance must name a supported axis or linear/angular DOF"},
       {"physics.drive.type", "physics",
        "drive type must be force or acceleration"},
       {"physics.drive.value", "physics",
@@ -419,6 +502,8 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "MJC extension tokens must be valid"},
       {"physics.extension.newton.asset", "physics",
        "Newton extension asset paths must be non-empty"},
+      {"physics.extension.newton.inertia", "physics",
+       "NewtonMassAPI inertia tensors must be finite and positive semidefinite"},
       {"physics.extension.newton.lookup", "physics",
        "Newton extension lookups must reference existing entries"},
       {"physics.extension.newton.range", "physics",
@@ -453,6 +538,8 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "preliminary physics values must be within range"},
       {"physics.preliminary.relationship", "physics",
        "preliminary physics relationships must target valid prims"},
+      {"physics.property.nonStandardName", "physics",
+       "multiple-apply physics properties must use the schema namespace"},
       {"physics.quaternion", "physics",
        "physics quaternions must be finite and non-zero"},
       {"physics.relationship.target", "physics",
@@ -526,8 +613,16 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
       {"shade.uvTexture.wrap", "shade",
        "wrapS/wrapT must be valid wrap tokens"},
   };
-  if (count) *count = sizeof(kRules) / sizeof(kRules[0]);
-  return kRules;
+  static const std::vector<ValidationRuleInfo> rules = [] {
+    std::vector<ValidationRuleInfo> sorted(std::begin(kRules), std::end(kRules));
+    std::sort(sorted.begin(), sorted.end(), [](const ValidationRuleInfo& a, const ValidationRuleInfo& b) {
+      const int group = std::strcmp(a.group, b.group);
+      return group != 0 ? group < 0 : std::strcmp(a.id, b.id) < 0;
+    });
+    return sorted;
+  }();
+  if (count) *count = rules.size();
+  return rules.data();
 }
 
 void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
@@ -539,11 +634,22 @@ void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
   // rule id so the upgrade also covers issues merged in from the
   // byte-container checks.
   static constexpr const char* kErrorRules[] = {
+      "package.entry.extension",
+      "geom.subset.indices",
+      "shade.normalMap.file",
+      "shade.normalMap.connection",
       "geom.stage.upAxis",
       "geom.stage.metersPerUnit",
       "core.layer.defaultPrim.missing",
       "core.dependency.unresolvable",
       "core.schema.attributeType",
+      "core.schema.propertyKind",
+      "geom.subset.familyOverlap",
+      "geom.subset.familyPartition",
+      "shade.shader.sourceType",
+      "shade.shader.implementationSource",
+      "shade.material.binding",
+      "shade.collection.binding",
       "geom.encapsulation.nestedGprim",
       "geom.subset.parent",
       "geom.subset.familyType",
@@ -586,15 +692,22 @@ std::string FormatValidationResult(const USDValidationResult &result) {
       if (!issue->location.empty()) {
         ss << issue->location << ": ";
       }
+      if (!issue->source_asset.empty()) ss << "[source=" << issue->source_asset << "] ";
+      if (!issue->variants.empty()) ss << "[variants=" << issue->variants << "] ";
+      if (issue->has_time) ss << "[time=" << issue->time << "] ";
       ss << issue->message << "\n";
     }
   }
 
   const size_t errors = result.error_count();
   const size_t warnings = result.warning_count();
+  if (result.omitted_issues)
+    ss << "\nOmitted " << result.omitted_issues << " issues due to report limits.\n";
 
   ss << "\nResult: ";
-  if (errors > 0) {
+  if (!result.complete) {
+    ss << "FAILED - validation coverage is incomplete (" << errors << " errors, " << warnings << " warnings)\n";
+  } else if (errors > 0) {
     ss << "FAILED - " << Pluralize(errors, "error") << ", "
        << Pluralize(warnings, "warning") << "\n";
   } else if (warnings > 0) {

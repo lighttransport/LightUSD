@@ -3,7 +3,7 @@
 //
 // Tydra Next - Mesh topology sanitization
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,7 +12,7 @@
 
 namespace lightusd { namespace tydra { namespace next {
 
-void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
+void RenderSceneConverter::Impl::SanitizeMeshTopology(RenderMesh* mesh) {
   const uint32_t point_count = static_cast<uint32_t>(mesh->point_count());
   const size_t index_count = mesh->face_vertex_indices.size();
 
@@ -80,9 +80,9 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
                         "faceVertexIndices, or counts overrunning the index "
                         "buffer)");
     mesh->face_vertex_counts.clear();
-    mesh->face_vertex_counts.append(counts.data(), counts.size());
+    mesh->face_vertex_counts.append_exact(counts.data(), counts.size());
     mesh->face_vertex_indices.clear();
-    mesh->face_vertex_indices.append(indices.data(), indices.size());
+    mesh->face_vertex_indices.append_exact(indices.data(), indices.size());
 
     // holeIndices were read in authored face numbering; remap them so hole
     // faces keep pointing at the same topological faces after the drop.

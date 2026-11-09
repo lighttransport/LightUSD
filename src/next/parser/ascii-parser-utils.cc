@@ -6,9 +6,24 @@
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 #include "../strfmt.hh"
+#include "../prim/relocate-path.hh"
 
 namespace lightusd {
 namespace next {
+
+bool AsciiParser::Impl::ResolveRelocatePath(const std::string& path,
+                                             const std::string& anchor,
+                                             std::string* output) {
+  if (AnchorRelocatePath(path, anchor, output)) return true;
+  const std::string message = "Relocates path `" + path + "` cannot be anchored at `" + anchor + "`";
+  if (options_.strict_aousd_conformance) {
+    AddError(message);
+    return false;
+  }
+  AddWarning(message + " (preserved for validation; composition ignores the entry)");
+  *output = path;
+  return true;
+}
 
 bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) {
   if (!out) return false;
@@ -37,8 +52,31 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
   return true;
 }
 
+bool AsciiParser::Impl::CheckQualifiedEmptyList(const char* what) {
+  if (!Check(TokenType::OpenBracket)) return true;
+  const Lexer::SavedState saved = lexer_->save_state();
+  lexer_->next();
+  const bool empty_list = Check(TokenType::CloseBracket);
+  lexer_->restore_state(saved);
+  if (!empty_list) return true;
+  const std::string msg =
+      std::string("Empty list after a list-op qualifier for ") + what;
+  if (options_.strict_aousd_conformance) {
+    AddError(msg);
+    return false;
+  }
+  AddWarning(msg + " (OpenUSD rejects this)");
+  return true;
+}
+
 bool AsciiParser::Impl::ParseOrderList(std::vector<std::string>* out) {
-  if (!out || !Match(TokenType::Equals) || !Match(TokenType::OpenBracket)) {
+  if (out && Check(TokenType::Equals)) {
+    lexer_->next();
+    if (!CheckQualifiedEmptyList("reorder")) return false;
+  } else {
+    out = nullptr;  // force the error below
+  }
+  if (!out || !Match(TokenType::OpenBracket)) {
     AddError("Expected '= [...]' after reorder field");
     return false;
   }
@@ -143,7 +181,22 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   lexer_->next();  // consume '('
   PrimSpec* prim = builder_->current();
 
+  bool need_sep = false;
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    if (Match(TokenType::Semicolon) || Match(TokenType::Comma)) {
+      need_sep = false;
+      continue;
+    }
+    // Entries need a newline or `;` between them (pxr grammar).
+    if (need_sep && !lexer_->newline_before_current()) {
+      // Spec/pxr reject it; lenient mode keeps loading (warns).
+      if (options_.strict_aousd_conformance) {
+        AddError("Expected newline or ';' between property metadata entries");
+        return;
+      }
+      AddWarning("Expected newline or ';' between property metadata entries" " (OpenUSD rejects this)");
+    }
+    need_sep = true;
     // Bare string = property COMMENT (`float x = 1 ( "note" )`) — pxr's only
     // accepted spelling, same mapping as the prim/layer metadata blocks.
     if (Check(TokenType::String)) {
@@ -170,6 +223,9 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       continue;
     }
     if (!Match(TokenType::Equals)) break;
+    if (!qualifier.empty() && !CheckQualifiedEmptyList(key.c_str())) {
+      return;
+    }
     if (key == "permission" && qualifier.empty()) {
       // Unquoted token (`permission = private`).
       std::string v;
@@ -236,7 +292,8 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     } else if (key == "allowedTokens") {
       ParseResult r = ParseArrayValue(*lexer_, TypeId::Token);
       if (r.success && r.value.as_token_array()) {
-        m.allowedTokens = *r.value.as_token_array();
+        const auto names = r.value.as_token_array();
+    m.allowedTokens.assign(names.begin(), names.end());
         m.authored |= PropMeta::kAllowedTokens;
       }
     } else if (key == "customData") {
@@ -248,6 +305,22 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
       if (r.success) { m.sdrMetadata = std::move(r.value); m.authored |= PropMeta::kSdrMetadata; }
+    } else if (key == "uiHints") {
+      // AOUSD Core 1.1 UI-hint extension dictionary (see the prim parser).
+      ParseResult r = ParseDict(*lexer_);
+      if (r.success) {
+        m.unknownFields.erase(
+            std::remove_if(m.unknownFields.begin(), m.unknownFields.end(),
+                           [](const DecodedExtensionField& f) {
+                             return f.name == "uiHints";
+                           }),
+            m.unknownFields.end());
+        DecodedExtensionField field;
+        field.name = "uiHints";
+        field.value = std::move(r.value);
+        m.unknownFields.push_back(std::move(field));
+        m.authored |= PropMeta::kUnknownMeta;
+      }
     } else {
       // Unknown property metadata: consume the value structurally but
       // preserve its raw source text for verbatim re-emit (same treatment
@@ -265,8 +338,8 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
           vend--;
         }
         if (vend > vstart) {
-          m.unknownMeta.emplace_back(qualifier + key,
-                                     std::string(base + vstart, vend - vstart));
+          StoreRawMetadataOpinion(&m.unknownMeta, qualifier + key,
+                                  std::string(base + vstart, vend - vstart));
           m.authored |= PropMeta::kUnknownMeta;
         }
       }
@@ -290,18 +363,18 @@ void AsciiParser::Impl::AddWarning(const std::string& message) {
 
 bool AsciiParser::Impl::Match(TokenType type) {
   if (Check(type)) {
-    lexer_->next();
+    lexer_->consume();
     return true;
   }
   return false;
 }
 
 bool AsciiParser::Impl::Check(TokenType type) {
-  return lexer_ && lexer_->peek().type == type;
+  return lexer_ && lexer_->peek_view().type == type;
 }
 
 bool AsciiParser::Impl::AtEnd() {
-  return !lexer_ || lexer_->peek().type == TokenType::Eof;
+  return !lexer_ || lexer_->peek_view().type == TokenType::Eof;
 }
 
 }  // namespace next

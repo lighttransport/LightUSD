@@ -7,13 +7,15 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include "compare_panel.hh"
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "camera_nav.hh"
+#include "lightusd-cpp.hh"
+#include "light3d/camera-nav.hh"
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
 #include "light3d/camera.h"  // light3d::Frustum (cull worker)
@@ -26,10 +28,6 @@
 
 namespace lightusd {
 class Prim;
-namespace next {
-class Stage;
-class UsdPrim;
-}
 namespace tydra {
 struct Node;
 }
@@ -37,8 +35,17 @@ struct Node;
 
 namespace lusdview {
 
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
+
 class Gui {
  public:
+  void openCompare(int mode = -1) { comparePanel_.open(mode); }
+  void setCompareContext(unsigned long long generation, bool threaded) { compareGeneration_=generation; compareThreaded_=threaded; }
   ~Gui();  // joins the per-instance cull worker
 
   struct LoadStatus {
@@ -115,7 +122,8 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const lightusd::next::Stage* stage) { nextStage_ = stage; }
+  void setNextStage(const lightusd::api::Stage& stage);
+  size_t nextSkeletonOverlayVertexCount() const { return showSkeleton_ ? nextSkeletonLines_.size() : 0; }
   // StageSession owns the authoritative deferred set. The composed next Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
@@ -131,7 +139,7 @@ class Gui {
   void setTimeline(const TimelineInfo& t) {
     const bool poseChanged = t.applied != timeline_.applied;
     timeline_ = t;
-    if (poseChanged) rebuildSubsetHighlight();
+    if (poseChanged && selectionNeedsPoseRebuild()) rebuildSubsetHighlight();
   }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setCameraLens(const RtCameraLens& lens) {
@@ -139,6 +147,16 @@ class Gui {
     if (lens.apertureRadius > 0.0f) {
       lastDofApertureRadius_ = lens.apertureRadius;
     }
+  }
+  void setCameraShutter(const RtCameraShutter& shutter) {
+    cameraShutter_ = shutter;
+  }
+  void setRtTemporalAccumulation(bool active, bool reset) {
+    rtTemporalPose_ = active;
+    rtTemporalReset_ = reset;
+  }
+  void setCameraClippingPlanes(std::vector<float> planes) {
+    cameraClippingPlanes_ = std::move(planes);
   }
   void setPathTraceSettings(const PathTraceSettings& settings) {
     pathTrace_ = settings;
@@ -222,11 +240,17 @@ class Gui {
     if (w) *w = viewportW_;
     if (h) *h = viewportH_;
   }
+  // Temporarily render an authored stereo eye into a half-width target. The
+  // ImGui viewport remains full width; App composites the two eye captures back
+  // into that display-sized target before the final present.
+  void setFixedRenderSize(int width, int height) { fixedRenderW_ = width; fixedRenderH_ = height; }
+  void setStereoEyeViewportWidth(int width) { stereoEyeViewportWidth_ = width; }
   void viewportPixelToScreen(float x, float y, float* sx, float* sy) const {
     if (sx) *sx = x + viewportImageMin_.x;
     if (sy) *sy = y + viewportImageMin_.y;
   }
   // Route a GPU op to the render thread (threaded); runs inline if unset.
+  void setRenderObserver(std::function<void()> observer) { renderObserver_ = std::move(observer); }
   void setPostGpu(std::function<void(std::function<void()>)> fn) {
     postGpu_ = std::move(fn);
   }
@@ -265,6 +289,17 @@ class Gui {
   float displacementScale() const {
     return displacementEnabled_ ? displacementScale_ : 0.0f;
   }
+  void setBackgroundPreset(bool white) {
+    clearColor_[0] = clearColor_[1] = clearColor_[2] = white ? 1.0f : 0.0f;
+  }
+  const char* backgroundPreset() const {
+    if (clearColor_[0] == 0 && clearColor_[1] == 0 && clearColor_[2] == 0) return "black";
+    if (clearColor_[0] == 1 && clearColor_[1] == 1 && clearColor_[2] == 1) return "white";
+    return "native";
+  }
+  void setPurposeFlags(bool guide, bool proxy, bool render) {
+    showPurposeGuide_ = guide; showPurposeProxy_ = proxy; showPurposeRender_ = render;
+  }
   uint32_t purposeVisibleMask() const {
     return (showPurposeDefault_ ? 1u : 0u) |
            (showPurposeRender_ ? 2u : 0u) |
@@ -300,6 +335,9 @@ class Gui {
   // the new state. Used by the MCP input tool.
   int cycleWireframe() { wireCycle_ = (wireCycle_ + 1) % 3; return wireCycle_; }
   int wireframeMode() const { return wireCycle_; }
+  bool wireXray() const { return wireXray_; }
+  void setWireXray(bool on) { wireXray_ = on; }
+  bool toggleWireXray() { wireXray_ = !wireXray_; return wireXray_; }
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
@@ -414,7 +452,35 @@ class Gui {
             statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
-  void selectByPath(const std::string& absPath, int meshIndex);
+  // One selected prim. A merged static/material batch collapses many prims into
+  // one draw, so `sourcePrim` (an index into DrawMeshCPU::sourcePrims) is what
+  // makes the selection resolve to the prim under the cursor; -1 means the whole
+  // draw is selected.
+  struct SelectionItem {
+    std::string path;
+    int meshIndex{-1};
+    int sourcePrim{-1};
+  };
+  void selectByPath(const std::string& absPath, int meshIndex,
+                    int sourcePrim = -1);
+  // Multi-selection. `selectionList_` holds every selected prim; the primary
+  // (selPath_/selMeshIndex_/selSourcePrim_) is the focused one, used by the
+  // inspector, framing and gizmo.
+  const std::vector<SelectionItem>& selectionItems() const {
+    return selectionList_;
+  }
+  bool isPathSelected(const std::string& path) const;
+  // Replace the whole multi-selection (region picks, hierarchy group). Focuses
+  // the first item.
+  void setSelectionItems(std::vector<SelectionItem> items, bool recordHistory);
+  // Ctrl+click in the hierarchy: add/remove one prim from the multi-selection.
+  void toggleSelectionItem(const SelectionItem& item);
+  bool focusSelectedPath(const std::string& path);
+  // Hierarchy "select group": every renderable prim at or below `path`.
+  void selectDescendants(const std::string& path, bool addToSelection);
+  // Every prim visible inside the viewport rectangle.
+  std::vector<SelectionItem> pickViewportRegionItems(float x0, float y0,
+                                                     float x1, float y1) const;
   struct PickReport {
     std::string path;
     std::string kind;
@@ -425,6 +491,9 @@ class Gui {
     int viewportHeight{0};
     int coveredPixels{0};
     float hitDistance{0.0f};
+    // Region picks report every prim inside the marquee; `path`/`meshIndex`
+    // remain the focused (first) item for callers that only need one.
+    std::vector<SelectionItem> items;
   };
   PickReport pickViewportPixel(float x, float y, bool select);
   PickReport pickViewportRegion(float x0, float y0, float x1, float y1,
@@ -480,15 +549,20 @@ class Gui {
   bool focusDofOnSelection(float* focusDistance = nullptr);
   float dofFocusDistance() const { return cameraLens_.focusDistance; }
   const RtCameraLens& cameraLens() const { return cameraLens_; }
+  const RtCameraShutter& cameraShutter() const { return cameraShutter_; }
+  const std::vector<float>& cameraClippingPlanes() const {
+    return cameraClippingPlanes_;
+  }
 
  private:
-  void applySelection(const std::string& absPath, int meshIndex, bool recordHistory);
+  void applySelection(const std::string& absPath, int meshIndex,
+                      bool recordHistory, int sourcePrim = -1);
   void pushSelectionHistory(const std::string& absPath);
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
   bool drawPrimTree(const lightusd::Prim& prim);
-  bool drawNextPrimTree(const lightusd::next::UsdPrim& prim);
+  bool drawNextPrimTree(lightusd_prim prim);
   void drawNextInspector();
   bool drawNodeTree(const lightusd::tydra::Node& node);
   void drawInspector();
@@ -523,6 +597,7 @@ class Gui {
   bool meshVisibleForView(size_t meshIndex) const;
   bool carrierVisibleForView(size_t carrierIndex) const;
   size_t carrierIndexForPath(const std::string& path) const;
+  bool pathInSelection(const std::string& path) const;
   bool selectionHasRenderable() const;
   void isolateSelection();
   void setSelectionVisibility(bool visible);
@@ -535,13 +610,37 @@ class Gui {
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
   void finishRegionSelection(const ImVec2& imageMin);
+  void beginPointSelection(const ImVec2& mouse);
+  void updatePointSelection(const ImVec2& mouse);
+  void finishPointSelection(const ImVec2& imageMin);
   std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH,
-               float* hitDistance = nullptr) const;
+               float* hitDistance = nullptr,
+               int* hitSourcePrim = nullptr) const;
+  // Single-ray implementation used by the pixel-center + cursor aperture in
+  // pickMesh(). Kept separate so both rays share the same mesh logic.
+  int pickMeshSingle(
+      float px, float py, int vpW, int vpH, float* hitDistance,
+      const std::unordered_map<int, std::vector<DrawVertex>>* posedCache,
+      int* hitSourcePrim = nullptr) const;
+  // Pose skinned/morphed meshes at the current timeline time for exact
+  // ray/triangle picking. The raster path deforms on the GPU, so draw_'s
+  // `vertices` are the rest pose; picking them directly would select the wrong
+  // surface (or miss entirely) on animated characters.
+  // Displayed-pose vertices for deformable meshes, cached until the time code or
+  // the scene changes. Re-posing every skinned mesh on every pick cost ~0.4 s a
+  // click on a scene with thousands of skinned meshes.
+  const std::unordered_map<int, std::vector<DrawVertex>>* posedPickVertices()
+      const;
+  mutable std::unordered_map<int, std::vector<DrawVertex>> posedPickCache_;
+  mutable double posedPickCacheTime_{-1.0e30};
+  mutable uint64_t posedPickCacheGen_{0};
   std::string pickCarrierPath(float px, float py, int vpW, int vpH,
-                              float* hitDistance = nullptr) const;
+                              float* hitDistance = nullptr,
+                              int* hitMeshIndex = nullptr,
+                              int* hitSourcePrim = nullptr) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -552,6 +651,10 @@ class Gui {
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
+  bool rtTemporalPose_{false};
+  bool rtTemporalReset_{false};
+  std::vector<float> cameraClippingPlanes_;
   float lastDofApertureRadius_{0.0f};
   PathTraceSettings pathTrace_;
   const LoadedScene* loaded_{nullptr};
@@ -577,10 +680,19 @@ class Gui {
   };
 
   const lightusd::Prim* selPrim_{nullptr};
-  const lightusd::next::Stage* nextStage_{nullptr};
+  lightusd::api::Stage nextStage_;
+  std::vector<std::string> nextSkeletonPaths_;
+  bool nextSkeletonPathsReady_{false};
+  double nextSkeletonTime_{0};
+  bool nextSkeletonTimeValid_{false};
+  std::vector<HelperVertex> nextSkeletonLines_;
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
+  // When a viewport pick lands inside a merged batch, the index of the source
+  // prim (DrawMeshCPU::sourcePrims) that owns the hit triangle. The highlight
+  // then outlines just that prim instead of the whole batch. -1 = whole draw.
+  int selSourcePrim_{-1};
   int openPbrEditorMaterial_{-1};
   int openPbrEditorSelectionMesh_{-2};
   bool openPbrDockAttempted_{false};
@@ -601,13 +713,24 @@ class Gui {
   int selectionHighlightMode_{2};
   int selectionHighlightLastVisibleMode_{2};
   void rebuildSubsetHighlight();
+  // Outline one draw with world-space orange edge lines (whole draw, one batched
+  // source prim, or an explicit triangle list). Shared by single and multi
+  // selection.
+  void appendMeshHighlightLines(
+      int meshIndex, const std::vector<uint32_t>* triOverride, int sourcePrim,
+      const std::unordered_map<int, std::vector<DrawVertex>>* posedCache);
+  // Outline a Points/Curves carrier selection.
+  void appendCarrierHighlightLines(const std::string& path);
+  // True when a timeline change actually needs the CPU selection-highlight
+  // geometry rebuilt (animated selection whose backend does not re-pose it).
+  bool selectionNeedsPoseRebuild() const;
 
   // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when
   // blendActive_ it overrides the SkelAnimation-driven weights in the morph pass.
   std::unordered_map<std::string, float> blendWeights_;
   bool blendActive_{false};
   bool blendDirty_{false};
-  std::vector<std::pair<std::string, int>> selectionList_;
+  std::vector<SelectionItem> selectionList_;
   std::array<CameraBookmark, 3> cameraBookmarks_{};
   std::vector<std::string> selectionHistory_;
   int selectionHistoryIndex_{-1};
@@ -615,6 +738,9 @@ class Gui {
   RenderMode mode_{RenderMode::Shaded};
   // Wireframe overlay state cycled by the 'v' key: 0 off / 1 wire-only / 2 wire+shaded.
   int wireCycle_{0};
+  // When false (default) scene wireframe is depth tested; when true it draws
+  // through surfaces (x-ray). Toggled with X / View > Wireframe X-ray.
+  bool wireXray_{false};
   int curveMaxSegments_{8};
   std::array<float, 16> lastCurveView_{};
   bool haveLastCurveView_{false};
@@ -641,10 +767,10 @@ class Gui {
   ImGuiTextFilter metaFilter_;
 
   // View menu toggles
+  int fixedRenderW_{0}, fixedRenderH_{0};
   bool showGrid_{true};
   bool showAxes_{true};
   bool showSceneBbox_{false};
-  bool showPrimBbox_{false};  // legacy config state; selection mode owns display
   bool showSkeleton_{true};
   bool virtualHumanProfile_{false};
   std::vector<VcharControl> facialControls_;
@@ -697,6 +823,10 @@ class Gui {
   // scenes); cullInstances() polls the worker, applies its compacted result on the
   // main thread (updateInstanceVisibility is a GPU call), and relaunches on change.
   // Run a GPU op on the render thread when threaded, else inline.
+  ComparePanel comparePanel_;
+  unsigned long long compareGeneration_{0};
+  bool compareThreaded_{false};
+  std::function<void()> renderObserver_;
   std::function<void(std::function<void()>)> postGpu_;
   void gpu(std::function<void()> op) {
     if (postGpu_) postGpu_(std::move(op)); else op();
@@ -843,11 +973,23 @@ class Gui {
   int navMode_{0};
   int viewportW_{0};
   int viewportH_{0};
+  int stereoEyeViewportWidth_{0};
   ImVec2 viewportImageMin_{0.0f, 0.0f};
   bool regionSelecting_{false};
   bool regionSelectionMoved_{false};
   ImVec2 regionStart_{0.0f, 0.0f};
   ImVec2 regionEnd_{0.0f, 0.0f};
+  // Plain LMB drag is a point/surface pick. Region (marquee) selection is
+  // reserved for Shift+LMB drag so the common gesture never turns into a
+  // rubber band by accident.
+  bool pointSelecting_{false};
+  bool pointSelectionMoved_{false};
+  ImVec2 pointStart_{0.0f, 0.0f};
+  ImVec2 pointEnd_{0.0f, 0.0f};
+  // Grid/axes half-extent frozen per scene so an animated pose changing the
+  // scene bounds during playback does not rescale (wobble) the ground grid.
+  float helperHalfExtent_{10.0f};
+  bool helperHalfExtentValid_{false};
 
   bool wantOpen_{false};
   bool wantOpenRecent_{false};

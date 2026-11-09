@@ -239,6 +239,32 @@ int main() {
     return 1;
   }
 
+  // Ordinary meshes are world-baked into RT prototype vertices and therefore
+  // keep an identity instance transform. Refit must apply a changed world once,
+  // refresh BLAS/TLAS bounds, and avoid the historical double transform.
+  {
+    lusdview::HostScene refitHost;
+    lusdview::RefitMap refitMap;
+    std::string refitError;
+    if (!lusdview::BuildHostScene(scene, 0, 0, 0.0f, &refitHost,
+                                  &refitError, nullptr, &refitMap)) {
+      std::fprintf(stderr, "refit scene build failed: %s\n",
+                   refitError.c_str());
+      return 1;
+    }
+    scene.meshes[0].world[12] = 3.0f;
+    if (!lusdview::RefitHostScene(scene, refitMap, &refitHost, &refitError) ||
+        refitHost.tris.empty() || !Near(refitHost.tris[0], 3.0f) ||
+        refitHost.instances.empty() ||
+        !Near(refitHost.instances[0].o2w[3], 0.0f) ||
+        refitHost.tlas.empty() || !Near(refitHost.tlas[0].bmin[0], 3.0f)) {
+      std::fprintf(stderr, "animated-world RT refit failed: %s\n",
+                   refitError.c_str());
+      return 1;
+    }
+    scene.meshes[0].world[12] = 0.0f;
+  }
+
   // Non-uniform object-to-world scale must use the inverse-transpose normal
   // transform in the flattened CPU/RT scene, matching the Vulkan path.
   {
@@ -2171,6 +2197,7 @@ int main() {
   directPtex.image.channels = 4;
   directPtex.image.data.assign(4 * 4 * 4, 192);
   directPtex.ptexRectTexelOffset = 0;
+  directPtex.ptexFaces = 1;
   directPtex.ptexFaceRects.push_back({0, 0, 4, 4, 0, 0});
   directPtex.compressed.format = lusdview::DrawCompressedFormat::BC7;
   directPtex.compressed.width = 4;

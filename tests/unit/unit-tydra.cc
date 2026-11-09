@@ -20,9 +20,10 @@
 #include "io-util.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
-#include "mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "value-clip-utils.hh"
 #include "lightusd.hh"
+#include "tydra/openpbr-params.hh"
 #include "image-types.hh"
 #include "image-writer.hh"
 #include "tydra/attribute-eval.hh"
@@ -2424,6 +2425,47 @@ void tydra_material_colorspace_token_test(void) {
   TEST_CHECK(!tydra::InferColorSpace(value::token("not_a_colorspace"),
                                      &actual));
   TEST_CHECK(actual == tydra::ColorSpace::Unknown);
+}
+
+void tydra_lightrt_opacity_mode_test(void) {
+  using lightusd::tydra::PackRealtimePbrMaterial;
+  using lightusd::tydra::RealtimePbrMaterial;
+  constexpr int kFloats = lightusd::tydra::kLightRtOpenPBRFloats;
+
+  // UsdPreviewSurface inputs:opacityMode="presence" keeps the packed coverage
+  // flag clear so the RT shader may drop a hit; the default "transparent"
+  // mode sets it so only the diffuse lobe is attenuated.
+  RealtimePbrMaterial presence;
+  presence.baseColor[0] = 0.25f;
+  presence.baseColor[1] = 0.5f;
+  presence.baseColor[2] = 0.75f;
+  presence.specularRoughness = 0.4f;
+  presence.diffuseRoughness = 0.2f;
+  presence.opacityTransparent = false;
+  std::vector<float> packed(size_t(kFloats), -1.0f);
+  PackRealtimePbrMaterial(presence, true, 2.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[56] == 0.0f);
+  TEST_CHECK(packed[0] == 0.25f);
+  TEST_CHECK(packed[42] == 0.4f);
+  TEST_CHECK(packed[41] == 0.2f);  // diffuseRoughness keeps its own slot
+
+  RealtimePbrMaterial transparent = presence;
+  transparent.opacityTransparent = true;
+  PackRealtimePbrMaterial(transparent, true, 2.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[56] == 1.0f);
+  TEST_CHECK(packed[42] == 0.4f);
+  TEST_CHECK(packed[0] == 0.25f);
+
+  // UsdPreviewSurface metallic workflow is flagged with a 2.0 sentinel in slot
+  // 41 so the RT shader can use Storm's F0 = mix(SC*r2, SC, metallic) while
+  // OpenPBR keeps its diffuseRoughness value there.
+  RealtimePbrMaterial preview = presence;
+  preview.previewSurfaceMetallicWorkflow = true;
+  PackRealtimePbrMaterial(preview, true, 0.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[41] == 2.0f);
+  preview.previewSurfaceMetallicWorkflow = false;
+  PackRealtimePbrMaterial(preview, true, 0.0f, 0.0f, packed.data());
+  TEST_CHECK(packed[41] == 0.2f);
 }
 
 void tydra_progress_cancellation_test(void) {

@@ -6,7 +6,7 @@
 #include "crate-reader-internal.hh"
 #include "../layer/array-edit.hh"
 #include "../writer/value-printer.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <cmath>
 #include <cstdint>
@@ -16,6 +16,11 @@
 
 namespace lightusd {
 namespace next {
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+thread_local CrateReader::Impl::ThreadDecodeCtx*
+    CrateReader::Impl::tls_decode_ctx_ = nullptr;
+#endif
 
 // ============================================================
 // Main value unpacker using switch statement
@@ -34,14 +39,14 @@ bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
   if (rep.payload() == 0) {
     return true;  // identity edit
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload()))) {
+  if (!reader()->seek(static_cast<size_t>(rep.payload()))) {
     AddWarning("Invalid offset for array-edit value");
     return false;
   }
   uint64_t values_raw = 0, indexes_raw = 0;
   uint8_t is_dense = 0;
-  if (!reader_->read_u64(values_raw) || !reader_->read_u64(indexes_raw) ||
-      !reader_->read_u8(is_dense)) {
+  if (!reader()->read_u64(values_raw) || !reader()->read_u64(indexes_raw) ||
+      !reader()->read_u8(is_dense)) {
     AddWarning("Truncated array-edit tuple");
     return false;
   }
@@ -81,8 +86,8 @@ bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
       AddWarning("Failed to decode array-edit op stream");
       return false;
     }
-    if (const std::vector<int64_t>* v = idx_val.as_int64_array()) {
-      ins = *v;
+    if (auto v = idx_val.as_int64_array()) {
+      ins.assign(v->begin(), v->end());
     }
   }
 
@@ -248,20 +253,20 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::UnregisteredValue: {
       if (rep.is_inlined() || rep.payload() == 0) return false;
       const uint64_t wrapper = rep.payload_as_offset();
-      if (!reader_->seek(static_cast<size_t>(wrapper))) return false;
+      if (!reader()->seek(static_cast<size_t>(wrapper))) return false;
       int64_t relative = 0;
-      if (!reader_->read_i64(relative) || relative < 0) return false;
+      if (!reader()->read_i64(relative) || relative < 0) return false;
       uint64_t nested_pos = 0;
       if (static_cast<uint64_t>(relative) >
               (std::numeric_limits<uint64_t>::max)() - wrapper) {
         return false;
       }
       nested_pos = wrapper + static_cast<uint64_t>(relative);
-      if (!reader_->seek(static_cast<size_t>(nested_pos))) {
+      if (!reader()->seek(static_cast<size_t>(nested_pos))) {
         return false;
       }
       uint64_t nested_raw = 0;
-      if (!reader_->read_u64(nested_raw)) return false;
+      if (!reader()->read_u64(nested_raw)) return false;
       const ValueRep nested(nested_raw);
       // OpenUSD stores the authored source spelling as a nested String (and
       // may use Dictionary for registered dictionary-shaped extensions).
@@ -286,7 +291,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::PayloadListOp: {
       std::vector<std::string> arcs;
       if (!DecodeReferenceListOp(rep, type_id == CrateTypeId::PayloadListOp,
-                                 arcs)) {
+                                 arcs, depth)) {
         return false;
       }
       out = Value::MakeTokenArray(std::move(arcs));
@@ -319,11 +324,11 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         out = Value::MakeDoubleArray(std::vector<double>());
         return true;
       }
-      if (!SeekToPayload(reader_.get(), rep)) return false;
+      if (!SeekToPayload(reader(), rep)) return false;
       uint64_t n = 0;
-      if (!reader_->read_u64(n)) return false;
+      if (!reader()->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
-      if (!reader_->has_elements(static_cast<size_t>(n), 16)) return false;
+      if (!reader()->has_elements(static_cast<size_t>(n), 16)) return false;
       if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
         return false;
       }
@@ -334,20 +339,20 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         return false;
       }
       std::vector<double> vals(scalar_count);
-      if (n && !reader_->read(vals.data(), byte_count)) return false;
+      if (n && !reader()->read(vals.data(), byte_count)) return false;
       out = Value::MakeDoubleArray(std::move(vals));
       return true;
     }
 
     // Path-valued fields: inheritPaths / specializes arcs (PathListOp) and
     // raw path vectors. Flattened to a token array of path strings; BuildStage
-    // routes them into PrimSpecMeta.
+    // routes them into PrimMetadata.
     case CrateTypeId::PathVector:
     case CrateTypeId::PathListOp: {
       std::vector<std::string> paths;
       if (!DecodePathTargets(rep, paths, /*with_markers=*/true)) return false;
       // Arc-string form ("</Base>"), matching what the usda parser stores in
-      // PrimSpecMeta::inherits/specializes. Sublist markers ("\x01?") pass
+      // PrimMetadata::inherits/specializes. Sublist markers ("\x01?") pass
       // through unbracketed for BuildStage's list-op reconstruction.
       for (std::string& p : paths) {
         if (!p.empty() && p[0] != '\x01') p = "<" + p + ">";
@@ -364,14 +369,14 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         out = Value::MakeTokenArray(std::vector<std::string>());
         return true;
       }
-      if (!SeekToPayload(reader_.get(), rep)) return false;
+      if (!SeekToPayload(reader(), rep)) return false;
       uint32_t asset_idx = 0, path_idx = 0;
-      if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+      if (!reader()->read_u32(asset_idx) || !reader()->read_u32(path_idx)) {
         return false;
       }
       double offset = 0.0, scale = 1.0;
       if (version_.minor >= 8) {
-        if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+        if (!reader()->read_f64(offset) || !reader()->read_f64(scale)) {
           return false;
         }
         if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
@@ -380,7 +385,15 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
       if (!GetString(asset_idx, asset) || path_idx >= paths_.size()) {
         return false;
       }
-      const std::string& prim = paths_[path_idx];
+      const std::string prim = paths_.str(path_idx);
+      // pxr upgrades an empty single SdfPayload (no asset, no prim path) to
+      // an explicitly-empty payload list op (`payload = None`).
+      if (asset.empty() && (prim.empty() || prim == "/") && offset == 0.0 &&
+          scale == 1.0) {
+        // "\x01" "E": authored explicit-clear marker (see crate-reader-prim).
+        out = Value::MakeTokenArray({std::string("\x01" "E")});
+        return true;
+      }
       // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
       std::string arc;
       if (!asset.empty()) arc = "@" + asset + "@";
@@ -404,11 +417,11 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::PathExpression: {
       // SdfPathExpression (crate >= 0.10): the expression text as a u32
       // string index in the value stream.
-      if (!SeekToPayload(reader_.get(), rep)) {
+      if (!SeekToPayload(reader(), rep)) {
         return false;
       }
       uint32_t sidx = 0;
-      if (!reader_->read_u32(sidx)) return false;
+      if (!reader()->read_u32(sidx)) return false;
       std::string text;
       if (!GetString(sidx, text)) return false;
       out = Value::MakeStringLike(text, TypeId::PathExpression);
@@ -421,30 +434,30 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::Relocates: {
       // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].
       // Surface as a flat token array of [src, dst, ...] pairs; the stage
-      // builder folds them into PrimSpecMeta::relocates.
+      // builder folds them into PrimMetadata::relocates.
       if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
-      if (!SeekToPayload(reader_.get(), rep)) {
+      if (!SeekToPayload(reader(), rep)) {
         return false;
       }
       uint64_t n = 0;
-      if (!reader_->read_u64(n)) return false;
+      if (!reader()->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
       if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
         return false;
       }
       size_t pair_count = 0;
       if (!safe::mul(static_cast<size_t>(n), size_t{2}, &pair_count) ||
-          !reader_->has_elements(static_cast<size_t>(n), size_t{8})) {
+          !reader()->has_elements(static_cast<size_t>(n), size_t{8})) {
         return false;
       }
       std::vector<std::string> pairs;
       pairs.reserve(pair_count);
       for (uint64_t i = 0; i < n; ++i) {
         uint32_t src = 0, dst = 0;
-        if (!reader_->read_u32(src) || !reader_->read_u32(dst)) return false;
+        if (!reader()->read_u32(src) || !reader()->read_u32(dst)) return false;
         if (src >= paths_.size() || dst >= paths_.size()) return false;
-        pairs.push_back(paths_[src]);
-        pairs.push_back(paths_[dst]);
+        pairs.push_back(paths_.str(src));
+        pairs.push_back(paths_.str(dst));
       }
       out = Value::MakeTokenArray(std::move(pairs));
       return true;

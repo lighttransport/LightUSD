@@ -81,15 +81,28 @@ lvg_surface_t *lui_window_get_surface(lui_window_t *window)
     return lui_platform_ops.window_get_surface(window);
 }
 
+uintptr_t lui_window_native_handle(const lui_window_t *window, lui_native_kind_t *kind)
+{
+    if (kind) *kind = LUI_NATIVE_NONE;
+    if (!window) return 0;
+    if (kind) *kind = (lui_native_kind_t)window->native_kind;
+    return window->native_window;
+}
+
+void lui_window_set_external_render(lui_window_t *window, bool enabled)
+{
+    if (window) window->external_render = enabled;
+}
+
 void lui_window_present(lui_window_t *window)
 {
-    if (window)
+    if (window && !window->external_render)
         lui_platform_ops.window_present(window);
 }
 
 void lui_window_present_rect(lui_window_t *window, const lvg_rect_t *dirty)
 {
-    if (!window) return;
+    if (!window || window->external_render) return;
     /* Use the partial-present path when the backend provides one and the
      * caller gave a non-empty rect; otherwise fall back to a full present. */
     if (dirty && !lvg_rect_is_empty(dirty) &&
@@ -104,6 +117,19 @@ bool lui_window_poll_event(lui_window_t *window, lui_event_t *event)
 {
     if (!window || !event) return false;
     return lui_platform_ops.window_poll_event(window, event);
+}
+
+void lui_window_set_file_drop(lui_window_t *window, bool enabled)
+{
+    if (window && lui_platform_ops.window_set_file_drop)
+        lui_platform_ops.window_set_file_drop(window, enabled);
+}
+
+char *lui_window_take_dropped_file(lui_window_t *window)
+{
+    if (!window || !lui_platform_ops.window_take_dropped_file)
+        return NULL;
+    return lui_platform_ops.window_take_dropped_file(window);
 }
 
 bool lui_window_wait_event(lui_window_t *window, lui_event_t *event)

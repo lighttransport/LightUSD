@@ -18,6 +18,7 @@
 #include "load-rules.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
+#include "core/safe-arithmetic.hh"
 
 #include <cstdint>
 #include <functional>
@@ -25,11 +26,45 @@
 #include <string>
 #include <vector>
 
-#include "nonstd/expected.hpp"
+#include "../expected.hh"
 
 namespace lightusd {
 namespace next {
 namespace pcp {
+
+// Owning, opt-in property-stack record. No provenance is retained by normal
+// stage population; callers request this while the composition cache lives.
+struct PropertyOpinion {
+  std::string layer_identifier;
+  std::string prim_path;
+  std::string arc;
+  double offset = 0.0;
+  double scale = 1.0;
+  bool has_default = false;
+  bool has_samples = false;
+  bool has_connection = false;
+  bool suppressed = false;
+  Value default_value;
+  // Expression variables visible at this composition source. Asset-valued
+  // opinions must be evaluated in this context, rather than against the
+  // flattened stage's root-layer dictionary.
+  Value expression_variables;
+  std::vector<double> sample_times;
+  std::vector<std::string> connections;
+};
+
+// One contributing prim spec site (pxr "prim stack" entry): the layer and the
+// prim path inside it, strongest first. Variant-content sites are spelled the
+// pxr way (`/Owner{set=name}child`) and attributed to the layer that authored
+// the selected option.
+struct PrimStackEntry {
+  std::string layer_identifier;
+  std::string prim_path;
+  std::string arc;
+  // Property (attribute + relationship) names the spec authors, in authored
+  // order. pxr's composed property order is the weakest-first union of these.
+  std::vector<std::string> property_names;
+};
 
 class Cache {
  public:
@@ -47,7 +82,8 @@ class Cache {
     size_t composed_prim_count = 0;
 
     size_t total_bytes() const {
-      return source_layer_bytes + transient_cache_bytes;
+      return safe::saturating_add(source_layer_bytes,
+                                  transient_cache_bytes);
     }
   };
 
@@ -62,10 +98,18 @@ class Cache {
   /// the root layer stack [root, sublayers...]. `resolver` is borrowed and must
   /// outlive the cache. `root_identifier` is the root layer's resolved file path
   /// (used as the anchor for resolving its references/sublayers); may be empty.
-  static nonstd::expected<Cache, std::string> Open(
+  static expected<Cache, std::string> Open(
       AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
       const std::string &root_identifier = "",
       const CompositionOptions &options = {});
+
+  /// As above, also append initial sublayer warnings and nonfatal load errors
+  /// to `warn`. Fatal errors remain in the expected error value. The original
+  /// four-argument overload is retained for source and binary compatibility.
+  static expected<Cache, std::string> Open(
+      AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
+      const std::string &root_identifier, const CompositionOptions &options,
+      std::string *warn);
 
   // --- typed composition diagnostics (Phase 7 E4) -------------------------
 
@@ -100,6 +144,8 @@ class Cache {
   /// borrowed reference could dangle if a concurrent compose appended to the
   /// log under LIGHTUSD_NEXT_FINE_LOCKS.
   std::vector<CompositionIssue> GetCompositionIssues() const;
+  size_t GetCompositionIssueCount() const;
+  bool GetCompositionIssue(size_t index, CompositionIssue* out) const;
 
   /// Drop all accumulated composition issues.
   void ClearCompositionIssues();
@@ -127,6 +173,23 @@ class Cache {
   /// composition, including the root. Sorted and deduplicated so callers can
   /// construct deterministic cache manifests without borrowing Layer objects.
   std::vector<std::string> GetLayerDependencies() const;
+
+  /// Strong-to-weak contributing declarations, including blocked defaults and
+  /// suppressed relocation sites. Bound the result independently of scene size.
+  std::vector<PropertyOpinion> GetPropertyStack(const Path& prim_path,
+      const std::string& property, size_t max_opinions, bool* truncated,
+      std::string* warn, std::string* err);
+
+  /// Strong-to-weak contributing prim spec sites of `prim_path` (pxr's
+  /// PcpPrimIndex prim stack: one entry per layer that holds a spec at each
+  /// composition node's site). Suppressed relocation-source sites are omitted.
+  std::vector<PrimStackEntry> GetPrimStack(const Path& prim_path,
+                                           std::string* warn,
+                                           std::string* err);
+
+  /// Resolved identifiers of the root layer stack (root layer first, then
+  /// its sublayers strongest-first), as composed by Open.
+  std::vector<std::string> GetRootLayerStackIdentifiers() const;
 
   /// Approximate logical residency owned by the composition cache. Source
   /// layers are counted once even when several layer stacks reference them.
@@ -259,7 +322,13 @@ class Cache {
   struct Impl;
 
  private:
+  friend struct BatchedComposeAccess;
   std::unique_ptr<Impl> impl_;
+};
+
+struct CompositionReport {
+  std::vector<std::string> layer_dependencies;
+  std::vector<Cache::CompositionIssue> issues;
 };
 
 // --- one-call composition helpers ------------------------------------------
@@ -273,13 +342,18 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           const CompositionOptions &options = {},
                           std::string *warn = nullptr, std::string *err = nullptr);
 
+/// Waits for the composition caches CompositionOptions::background_reclaim
+/// handed to background threads.
+void WaitForBackgroundReclaim();
+
 /// Compose an already-loaded in-memory root layer into `out_stage`.
 bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            AssetResolver &resolver, Stage *out_stage,
                            const std::string &root_identifier = "",
                            const CompositionOptions &options = {},
                            std::string *warn = nullptr,
-                           std::string *err = nullptr);
+                           std::string *err = nullptr,
+                           CompositionReport *report = nullptr);
 
 }  // namespace pcp
 }  // namespace next

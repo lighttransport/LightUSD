@@ -5,19 +5,19 @@
 // Included inside value-parser.cc anonymous namespace.
 
 ParseResult ParseBool(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type == TokenType::True) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(true));
   } else if (tok.type == TokenType::False) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
     // pxr accepts ONLY the integer literals 0 and 1 for bool (not arbitrary
     // numerics: `bool b = 5` / `= 0.5` are parse errors, not truthiness).
     if (tok.value == "0" || tok.value == "1") {
       const bool b = (tok.value == "1");
-      lexer.next();
+      lexer.consume();
       return ParseResult::Ok(Value(b));
     }
     return ParseResult::Error("Invalid boolean value (expected 0, 1, true or false)");
@@ -30,7 +30,7 @@ ParseResult ParseBool(Lexer& lexer) {
 // ERANGE clamp after the int32/int64 cast). Callers pass clean lexer Number
 // tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
 ParseResult ParseInt(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected integer value");
   }
@@ -41,12 +41,12 @@ ParseResult ParseInt(Lexer& lexer) {
             tok.value, -2147483648.0, 2147483648.0, &coerced)) {
       return ParseResult::Error("Expected integer value");
     }
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(static_cast<int32_t>(coerced)));
   }
-  lexer.next();
+  lexer.consume();
   int64_t wide = 0;
-  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &wide) ||
+  if (!value_parser_detail::DecimalToI64Checked(tok.value, &wide) ||
       wide > INT32_MAX || wide < INT32_MIN) {
     return ParseResult::Error("Integer value out of range");
   }
@@ -54,7 +54,7 @@ ParseResult ParseInt(Lexer& lexer) {
 }
 
 ParseResult ParseUInt(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected unsigned integer value");
   }
@@ -64,19 +64,19 @@ ParseResult ParseUInt(Lexer& lexer) {
                                                     &coerced)) {
       return ParseResult::Error("Expected unsigned integer value");
     }
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(static_cast<uint32_t>(coerced)));
   }
-  lexer.next();
+  lexer.consume();
   uint64_t wide = 0;
-  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) || wide > UINT32_MAX) {
+  if (!value_parser_detail::DecimalToU64Checked(tok.value, &wide) || wide > UINT32_MAX) {
     return ParseResult::Error("Unsigned integer value out of range");
   }
   return ParseResult::Ok(Value(static_cast<uint32_t>(wide)));
 }
 
 ParseResult ParseInt64(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
@@ -87,19 +87,19 @@ ParseResult ParseInt64(Lexer& lexer) {
             &coerced)) {
       return ParseResult::Error("Expected 64-bit integer value");
     }
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(coerced));
   }
-  lexer.next();
+  lexer.consume();
   int64_t value = 0;
-  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &value)) {
+  if (!value_parser_detail::DecimalToI64Checked(tok.value, &value)) {
     return ParseResult::Error("64-bit integer value out of range");
   }
   return ParseResult::Ok(Value(value));
 }
 
 ParseResult ParseUInt64(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
@@ -109,12 +109,12 @@ ParseResult ParseUInt64(Lexer& lexer) {
             tok.value, 18446744073709551616.0, &coerced)) {
       return ParseResult::Error("Expected 64-bit unsigned integer value");
     }
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(coerced));
   }
-  lexer.next();
+  lexer.consume();
   uint64_t value = 0;
-  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &value)) {
+  if (!value_parser_detail::DecimalToU64Checked(tok.value, &value)) {
     return ParseResult::Error("64-bit unsigned integer value out of range");
   }
   return ParseResult::Ok(Value(value));
@@ -125,38 +125,39 @@ ParseResult ParseUInt64(Lexer& lexer) {
 // bare forms (inf / infinity / nan) as an Identifier token, so a numeric-value
 // context accepts both while an attribute literally named `inf` (always read in
 // identifier context) is never misclassified. strtof/strtod parse all of these.
-bool IsFloatSpecialWord(const std::string& v) {
-  std::string s = v;
+bool IsFloatSpecialWord(std::string_view v) {
+  std::string s(v);
   if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.erase(s.begin());
   for (auto& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   return s == "inf" || s == "infinity" || s == "nan";
 }
 
-bool IsNumberToken(const Token& tok) {
+template <class T>
+bool IsNumberToken(const T& tok) {
   return tok.type == TokenType::Number ||
          (tok.type == TokenType::Identifier && IsFloatSpecialWord(tok.value));
 }
 
 ParseResult ParseFloat(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected float value");
   }
-  lexer.next();
+  lexer.consume();
   return ParseResult::Ok(Value(FastFloatParseToken<float>(tok.value)));
 }
 
 ParseResult ParseDouble(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected double value");
   }
-  lexer.next();
+  lexer.consume();
   return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
 }
 
 ParseResult ParseUChar(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected unsigned integer value");
   }
@@ -166,13 +167,13 @@ ParseResult ParseUChar(Lexer& lexer) {
                                                     &coerced)) {
       return ParseResult::Error("Expected unsigned integer value");
     }
-    lexer.next();
+    lexer.consume();
     const uint8_t cb = static_cast<uint8_t>(coerced);
     return ParseResult::Ok(Value::MakeFromRaw(TypeId::UChar, &cb));
   }
-  lexer.next();
+  lexer.consume();
   uint64_t wide = 0;
-  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) ||
+  if (!value_parser_detail::DecimalToU64Checked(tok.value, &wide) ||
       wide > 255) {
     return ParseResult::Error("uchar value out of range");
   }
@@ -183,40 +184,40 @@ ParseResult ParseUChar(Lexer& lexer) {
 ParseResult ParseTimeCode(Lexer& lexer) {
   // Same wire format as double, but the value keeps its TimeCode identity
   // (matches the crate reader; a rewrite must not mutate timecode -> double).
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected timecode value");
   }
-  lexer.next();
+  lexer.consume();
   const double d = FastFloatParseToken<double>(tok.value);
   return ParseResult::Ok(Value::MakeFromRaw(TypeId::TimeCode, &d));
 }
 
 ParseResult ParseString(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::String) {
     return ParseResult::Error("Expected string value");
   }
-  lexer.next();
-  return ParseResult::Ok(Value(tok.value));
+  lexer.consume();
+  return ParseResult::Ok(Value(std::string(tok.value)));
 }
 
 ParseResult ParseToken(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::String && tok.type != TokenType::Identifier) {
     return ParseResult::Error("Expected token value");
   }
-  lexer.next();
-  return ParseResult::Ok(Value::MakeToken(tok.value));
+  lexer.consume();
+  return ParseResult::Ok(Value::MakeToken(std::string(tok.value)));
 }
 
 ParseResult ParseAssetPath(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (tok.type != TokenType::String) {
     return ParseResult::Error("Expected asset path value");
   }
-  lexer.next();
-  return ParseResult::Ok(Value::MakeAssetPath(tok.value));
+  lexer.consume();
+  return ParseResult::Ok(Value::MakeAssetPath(std::string(tok.value)));
 }
 
 // Parse a tuple of N float values: (x, y, z, ...)
@@ -224,13 +225,13 @@ bool ParseFloatTuple(Lexer& lexer, float* out, size_t count) {
   if (!lexer.expect(TokenType::OpenParen)) return false;
 
   for (size_t i = 0; i < count; i++) {
-    const Token& tok = lexer.peek();
+    const auto tok = lexer.peek_view();
     if (!IsNumberToken(tok)) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
     out[i] = FastFloatParseToken<float>(tok.value);
-    lexer.next();
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -246,13 +247,13 @@ bool ParseDoubleTuple(Lexer& lexer, double* out, size_t count) {
   if (!lexer.expect(TokenType::OpenParen)) return false;
 
   for (size_t i = 0; i < count; i++) {
-    const Token& tok = lexer.peek();
+    const auto tok = lexer.peek_view();
     if (!IsNumberToken(tok)) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
     out[i] = FastFloatParseToken<double>(tok.value);
-    lexer.next();
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -268,7 +269,7 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
   if (!lexer.expect(TokenType::OpenParen)) return false;
 
   for (size_t i = 0; i < count; i++) {
-    const Token& tok = lexer.peek();
+    const auto tok = lexer.peek_view();
     if (tok.type != TokenType::Number) {
       lexer.set_error("Expected integer in tuple");
       return false;
@@ -284,9 +285,9 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       }
       out[i] = static_cast<int32_t>(coerced);
     } else {
-      out[i] = DecimalToI32(tok.value.c_str());
+      out[i] = DecimalToI32(tok.value);
     }
-    lexer.next();
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -301,7 +302,7 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
   if (!lexer.expect(TokenType::OpenParen)) return false;
 
   for (size_t i = 0; i < count; i++) {
-    const Token& tok = lexer.peek();
+    const auto tok = lexer.peek_view();
     if (tok.type != TokenType::Number) {
       lexer.set_error("Expected unsigned integer in tuple");
       return false;
@@ -317,9 +318,9 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       }
       out[i] = static_cast<uint32_t>(coerced);
     } else {
-      out[i] = DecimalToU32(tok.value.c_str());
+      out[i] = DecimalToU32(tok.value);
     }
-    lexer.next();
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -355,11 +356,11 @@ ParseResult ParseFloat4(Lexer& lexer) {
 }
 
 ParseResult ParseHalf(Lexer& lexer) {
-  const Token& tok = lexer.peek();
+  const auto tok = lexer.peek_view();
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected half value");
   }
-  lexer.next();
+  lexer.consume();
   uint16_t bits = FloatToHalf(FastFloatParseToken<float>(tok.value));
   return ParseResult::Ok(Value::MakeFromRaw(TypeId::Half, &bits));
 }
@@ -569,7 +570,7 @@ ParseResult ParsePathExpression(Lexer& lexer) {
   // SdfPathExpression is authored as a quoted string.
   ParseResult r = ParseString(lexer);
   if (r.success) {
-    if (const std::string* sp = r.value.as_string()) {
+    if (auto sp = r.value.as_string()) {
       return ParseResult::Ok(
           Value::MakeStringLike(*sp, TypeId::PathExpression));
     }

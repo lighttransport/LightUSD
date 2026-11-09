@@ -256,7 +256,7 @@ export async function decodeEXRAsync(data, options = {}) {
     // The WASM glue is a generated, optional artifact. Keep Vite from trying to
     // resolve it while transforming demos that only use the Three.js decoder.
     // The browser resolves this URL only if the fallback is actually needed.
-    const lightusdModuleUrl = './lightusd.js';
+    const lightusdModuleUrl = new URL('./lightusd_exr.js', import.meta.url).href;
     const createLightUSD = (await import(/* @vite-ignore */ lightusdModuleUrl)).default;
     const lightusd = await createLightUSD();
     return decodeEXR(data, lightusd, options);

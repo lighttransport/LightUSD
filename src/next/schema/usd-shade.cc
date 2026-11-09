@@ -4,6 +4,7 @@
 // LightUSD Next - UsdShade Schema Implementation
 
 #include "usd-shade.hh"
+#include "../layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -60,7 +61,7 @@ bool ResolveShaderPortValueRec(const Stage& stage, const UsdPrim& prim,
   // outputs:out port is a declaration without a default value.
   if (port_name.rfind("outputs:", 0) == 0 && IsShader(prim)) {
     const Value* id_value = prim.GetPropertyValue("info:id");
-    const std::string* id = id_value ? id_value->as_token() : nullptr;
+    auto id = id_value ? id_value->as_token() : nullptr;
     if (id && (id->find("constant") != std::string::npos ||
                id->find("Constant") != std::string::npos)) {
       return ResolveShaderPortValueRec(stage, prim, "inputs:value", out, time,
@@ -235,6 +236,19 @@ std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) 
   return GetTerminalShaderPath(material, "outputs:surface");
 }
 
+std::string GetSurfaceShaderWithRenderContextFallback(
+    const Stage& /* stage */, const UsdPrim& material) {
+  if (!IsMaterial(material)) return "";
+  std::string path = GetTerminalShaderPath(material, "outputs:surface");
+  if (path.empty()) {
+    // RenderMan-authored production layers commonly expose only the ri render
+    // context. Renderer adapters use this to translate a supported PxrDisney
+    // graph instead of treating the material as unbound.
+    path = GetTerminalShaderPath(material, "outputs:ri:surface");
+  }
+  return path;
+}
+
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
   std::string path = GetTerminalShaderPath(material, "outputs:displacement");
@@ -385,7 +399,7 @@ std::string GetShaderId(const UsdPrim& shader) {
 
   const Value* result = shader.GetPropertyValue("info:id");
   if (result && result->type_id() == TypeId::Token) {
-    if (const std::string* str = result->as_token()) {
+    if (auto str = result->as_token()) {
       return *str;
     }
   }
@@ -397,7 +411,7 @@ std::string GetShaderImplementationSource(const UsdPrim& shader) {
 
   const Value* result = shader.GetPropertyValue("info:implementationSource");
   if (result && result->type_id() == TypeId::Token) {
-    if (const std::string* str = result->as_token()) {
+    if (auto str = result->as_token()) {
       return *str;
     }
   }
@@ -672,8 +686,8 @@ namespace {
 
 std::string TokenishValue(const Value* v) {
   if (!v) return "";
-  if (const std::string* tok = v->as_token()) return *tok;
-  if (const std::string* str = v->as_string()) return *str;
+  if (auto tok = v->as_token()) return *tok;
+  if (auto str = v->as_string()) return *str;
   return "";
 }
 

@@ -54,7 +54,17 @@
 #include <thread>
 #endif
 
-#include "value-types.hh"
+// Only value::float2 / float3 (std::array<float, N>) are used here, so declare
+// them locally instead of pulling the legacy value-type layer. Redeclaring the
+// aliases is legal even where value-types.hh is also included.
+#include <array>
+
+namespace lightusd {
+namespace value {
+using float2 = std::array<float, 2>;
+using float3 = std::array<float, 3>;
+}  // namespace value
+}  // namespace lightusd
 #include "fast-math.hh"
 
 namespace lightusd {

@@ -8,6 +8,7 @@
 //   vite-node cli/usdzconvert.js <input-dir|input.usd> [options]
 //   vite-node cli/usdzconvert.js --repack out.png -packR a.png:0 -packG b.png:0 [options]
 
+import { udimOptions } from '../src/udim-bake.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm, parseByteSize } from '../src/usdzconvert.js';
@@ -44,6 +45,13 @@ Convert options:
                                       gamma-space) — correct without guessing;
                            'srgb'   = force linear-light for ALL resized textures;
                            'linear' = force gamma-space for all (default).
+  --bake-udim <mode>       off, grid, or dense (default: off).
+  --udim-max-tiles <n>     Maximum tiles per atlas (default: 100; excess fails).
+  --udim-max-atlas-size <n> Maximum atlas edge (default: 8192).
+  --udim-memory-budget <size> Working-memory cap (default: 512 MiB).
+  --udim-cross-tile <mode> reject or split (default: reject).
+  --udim-dense-padding <n> Gutter pixels (default: 2).
+  --udim-subdivision-level <n> Refinement level (default: 2).
   --texture-format <fmt>   Texture output: keep, png, jpeg, exr (default: keep).
                            'keep' preserves each source format (EXR stays EXR,
                            resize-only — HDR is retained). 'exr' forces EXR (fp16)
@@ -193,6 +201,13 @@ function parseArgs() {
     else if (a === '--root') o.root = args[++i];
     else if (a === '--resize') o.resize = parseInt(args[++i], 10) || 0;
     else if (a === '--resize-colorspace') o.resizeColorspace = args[++i];
+    else if (a === '--bake-udim') o.udimBake = args[++i];
+    else if (a === '--udim-cross-tile') o.udimCrossTile = args[++i];
+    else if (a === '--udim-max-tiles') o.udimMaxTiles = Number(args[++i]);
+    else if (a === '--udim-max-atlas-size') o.udimMaxAtlasSize = Number(args[++i]);
+    else if (a === '--udim-memory-budget') o.udimMemoryBudgetBytes = parseByteSize(args[++i]);
+    else if (a === '--udim-dense-padding') o.udimDensePadding = Number(args[++i]);
+    else if (a === '--udim-subdivision-level') o.udimSubdivisionLevel = Number(args[++i]);
     else if (a === '--texture-format') o.textureFormat = args[++i];
     else if (a === '--root-layer-format') o.rootLayerFormat = args[++i];
     else if (a === '--arkit-compatible') o.arkitCompatible = true;
@@ -283,7 +298,12 @@ function folderSource(dir) {
   walk(dir, '');
   return {
     keys,
-    fetch: async (key) => new Uint8Array(await fs.promises.readFile(path.join(dir, key))),
+    fetch: async (key, {maxBytes} = {}) => {
+      const file = path.join(dir, key);
+      if (maxBytes !== undefined && (await fs.promises.stat(file)).size > maxBytes)
+        throw new Error(`UDIM bake: encoded tile exceeds memory limit: ${key}`);
+      return new Uint8Array(await fs.promises.readFile(file));
+    },
     fetchSync: (key) => new Uint8Array(fs.readFileSync(path.join(dir, key))),
   };
 }
@@ -306,10 +326,32 @@ function urlListSource(file) {
   const byKey = new Map(entries.map((e) => [e.key, e.url]));
   return {
     keys: [...byKey.keys()],
-    fetch: async (key) => {
+    fetch: async (key, {maxBytes} = {}) => {
       const res = await fetch(byKey.get(key));
       if (!res.ok) throw new Error(`fetch ${byKey.get(key)}: HTTP ${res.status}`);
-      return new Uint8Array(await res.arrayBuffer());
+      if (maxBytes === undefined) return new Uint8Array(await res.arrayBuffer());
+      const length = Number(res.headers.get('content-length'));
+      if (length > maxBytes) {
+        await res.body?.cancel();
+        throw new Error(`UDIM bake: encoded tile exceeds memory limit: ${key}`);
+      }
+      const reader = res.body.getReader(), chunks = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          if (value.length > maxBytes - size) {
+            await reader.cancel();
+            throw new Error(`UDIM bake: encoded tile exceeds memory limit: ${key}`);
+          }
+          size += value.length; chunks.push(value);
+        }
+      } finally {reader.releaseLock();}
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {bytes.set(chunk, offset); offset += chunk.length;}
+      return bytes;
     },
   };
 }
@@ -479,6 +521,10 @@ async function runStreamingConvert(native, o) {
   try {
     const { stats } = await convertSourceToUSDZStreaming(native, source, {
       rootPath: o.root || undefined,
+      udimBake: o.udimBake, udimCrossTile: o.udimCrossTile,
+      udimMaxTiles: o.udimMaxTiles, udimMaxAtlasSize: o.udimMaxAtlasSize,
+      udimMemoryBudgetBytes: o.udimMemoryBudgetBytes, udimDensePadding: o.udimDensePadding,
+      udimSubdivisionLevel: o.udimSubdivisionLevel,
       maxTextureSize: o.resize,
       resizeColorspace: o.resizeColorspace,
       reencode: o.reencode,
@@ -564,6 +610,7 @@ async function runRepack(native, o) {
 
 async function main() {
   const o = parseArgs();
+  udimOptions(o);
 
   const native = await loadWasm(() => import(wasmGlue));
   if (o.verbose) console.log('WASM module loaded.');
@@ -723,6 +770,10 @@ async function main() {
   try {
     convertResult = await convertFolderToUSDZ(native, assetMap, {
       rootPath: rootRel,
+      udimBake: o.udimBake, udimCrossTile: o.udimCrossTile,
+      udimMaxTiles: o.udimMaxTiles, udimMaxAtlasSize: o.udimMaxAtlasSize,
+      udimMemoryBudgetBytes: o.udimMemoryBudgetBytes, udimDensePadding: o.udimDensePadding,
+      udimSubdivisionLevel: o.udimSubdivisionLevel,
       maxTextureSize: o.resize,
       resizeColorspace: o.resizeColorspace,
       targetTextureBytes: o.targetSize,

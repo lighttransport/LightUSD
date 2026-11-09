@@ -34,11 +34,12 @@ values = {
     "LIGHTUSD_GPU_OPENPBR_FLOATS": 80,
     "LIGHTUSD_GPU_MATERIAL_TEX_PARAM_FLOATS": 155,
     "LIGHTUSD_GPU_MATERIAL_TEX_SLOTS": 12,
-    "LIGHTUSD_GPU_GRAPH_OUTPUTS": 48,
-    "LIGHTUSD_GPU_GRAPH_HEADER_FLOATS": 50,
+    "LIGHTUSD_GPU_RASTER_PBR_VEC4S": 20,
+    "LIGHTUSD_GPU_GRAPH_OUTPUTS": 49,
+    "LIGHTUSD_GPU_GRAPH_HEADER_FLOATS": 51,
     "LIGHTUSD_GPU_GRAPH_NODE_FLOATS": 21,
     "LIGHTUSD_GPU_GRAPH_MAX_NODES": 64,
-    "LIGHTUSD_GPU_GRAPH_FLOATS": 1394,
+    "LIGHTUSD_GPU_GRAPH_FLOATS": 1395,
     "LIGHTUSD_GPU_LIGHTRT_LIGHT_FLOATS": 16,
     "LIGHTUSD_GPU_LIGHTRT_TEXTURE_DESC_INTS": 8,
 }
@@ -59,8 +60,8 @@ for name in (
 
 for name, value in {
     "MAT_STRIDE": 80,
-    "GRAPH_OUTPUTS": 48,
-    "GRAPH_HEADER": 50,
+    "GRAPH_OUTPUTS": 49,
+    "GRAPH_HEADER": 51,
     "GRAPH_NODE": 21,
     "GRAPH_NODES": 64,
     "TEX_DESC_STRIDE": 8,
@@ -72,8 +73,14 @@ require(openpbr, r"kLightRtOpenPBRVec4s\s*=\s*20", "Tydra OpenPBR vec4 count")
 require(bridge, r"kLightRtOpenPBRFloats\s*==\s*LIGHTUSD_GPU_OPENPBR_FLOATS", "bridge OpenPBR guard")
 require(kernel, r"base\s*\+\s*LIGHTUSD_GPU_GRAPH_HEADER_FLOATS\s*\+\s*i\s*\*\s*LIGHTUSD_GPU_GRAPH_NODE_FLOATS", "CUDA/HIP graph record offset")
 require(shader, r"r\s*<\s*GRAPH_OUTPUTS", "Vulkan graph output routing")
-require(shader, r"op\s*==\s*21\)\s*value\[i\]\s*=\s*vec4\(uv,\s*0,\s*1\)",
-        "Vulkan texcoord uses hit UV")
+require(shader, r"op\s*==\s*21\)\s*value\[i\]\s*=\s*vec4\(graphs\[p\+14u\]\s*>=\s*0\.5\s*\?\s*uvb\s*:\s*uv,\s*0,\s*1\)",
+        "Vulkan texcoord selects the UV set from the graph flag")
+require(shader, r"vertices\[i0\*10u", "Vulkan 10-float vertex stride")
+require(shader, r"vec2 uv; vec2 uvb;", "Vulkan Hit carries the second UV set")
+require(shader, r"evalGraphAll\(h\.mat,h\.uv,h\.uvb", "Vulkan graph receives both UV sets")
+require(shader, r"vec3 tangent; vec3 tangentb;", "Vulkan Hit carries the second tangent")
+require(shader, r"graphs\[gb\+50u\]\s*>=\s*0\.5\s*\?\s*h\.tangentb\s*:\s*h\.tangent",
+        "Vulkan normal route selects the UV-set tangent")
 if re.search(r"base\s*\+\s*46\s*\+\s*i\s*\*\s*21", kernel):
     raise SystemExit("GPU material ABI mismatch: stale CUDA/HIP graph header")
 if ("(int)(graph[base + 1 + route] + 0.5f)" in kernel or

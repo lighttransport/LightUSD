@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "lightrt_c_tri.h"  // lrt_tri_scene, lrt_ray, lrt_hit
@@ -21,12 +22,13 @@ namespace lusdr {
 // the caller owns it and must lrt_tri_scene_free() it.
 struct GpuTriScene {
   std::vector<float> flat_verts;    // 3*nverts unique positions (indexed input)
-  std::vector<float> flat_attrs;    // 8*nverts: pos,nrm,uv for shaded Vulkan RT
+  std::vector<float> flat_attrs;    // 10*nverts: pos,nrm,uv,uv1 for shaded Vulkan RT
   std::vector<uint32_t> flat_idx;   // 3*ntris vertex ids
   uint32_t ntris = 0;
   std::vector<Vec3> base_colors;    // per-triangle base color
   std::vector<uint32_t> material_ids;  // source mesh/material per triangle
   std::vector<float> tri_uvs;          // six floats per triangle
+  std::vector<uint32_t> flat_ptex;     // PtexTriRef per triangle when any mesh binds Ptex
   std::vector<Vec3> normals;        // per-triangle flat face normal (fallback)
   std::vector<Vec3> vn0, vn1, vn2;  // per-triangle vertex normals (smooth shading)
   bool has_vertex_normals{false};   // false => the vn streams are omitted
@@ -60,7 +62,9 @@ bool BuildGpuCpuScene(int threads, GpuTriScene *out,
 
 // Append per-triangle smooth-normal metadata from a chunk, promoting the
 // destination to zero-filled streams only when some chunk actually needs it.
-void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst);
+// prior_triangles is explicit: colors may already contain the current chunk.
+void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst,
+                            size_t prior_triangles);
 
 // Validate a GPU trace dispatch dimensions before allocating rays or passing the
 // count to LightRT's GPU APIs, which all take a uint32_t ray count.
@@ -84,6 +88,12 @@ struct GpuInstProto {
   std::vector<Vec3> normals;         // per-tri flat face normal (prototype space)
   std::vector<Vec3> vn0, vn1, vn2;   // per-tri vertex normals (prototype space)
   Vec3 base_color{0.5f, 0.5f, 0.5f};
+  // Ptex base-colour lane: per-triangle face reference (parallel to idx/3) and
+  // the resolved lazy texture id. Empty/-1 when the prototype's material does
+  // not bind a Ptex base colour. The instanced path uses mip 0; the chunked and
+  // descriptor paths retain their per-face mip/footprint logic.
+  std::vector<uint32_t> ptex_tri;
+  int32_t ptex_tex_id{-1};
 };
 struct GpuInstPlacement {
   float o2w[12];  // object->world 3x4 row-major (world = M*[p;1])
@@ -101,8 +111,10 @@ struct GpuInstancedScene {
 // the image. Sets scene.stride from the build. Returns false (leaving the scene
 // untouched) when ray query is unavailable or the build fails, so the caller can
 // fall back to the flat path. Defined only under HAVE_VULKAN.
-bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
-                               const CameraFrame &camera, int height);
+bool RunVulkanLightRTInstanced(
+    const Options &opt, GpuInstancedScene &scene,
+    const std::vector<lusdr::Texture> &textures, const CameraFrame &camera,
+    int height);
 
 // One traced primary-ray sample already decoded to two-level scene coordinates:
 // `inst` = placement index, `local` = prototype-local triangle, (u,v) = hit
@@ -112,7 +124,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
 struct InstSampleHit {
   uint32_t inst = 0;
   uint32_t local = 0;
-  float u = 0.0f, v = 0.0f;
+  float u = 0.0f, v = 0.0f, t = 0.0f;
   bool valid = false;
 };
 
@@ -120,10 +132,11 @@ struct InstSampleHit {
 // triangle and transform its object-space normal by the instance's normal matrix.
 // Same lighting model + spp averaging as ShadeAndWriteImage. `hits` is indexed
 // identically to `rays` ((y*w+x)*spp + s). Returns false on write failure.
-bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
-                                 const std::vector<lrt_ray> &rays,
-                                 const std::vector<InstSampleHit> &hits, int w,
-                                 int h, int spp);
+bool ShadeAndWriteImageInstanced(
+    const Options &opt, const GpuInstancedScene &s,
+    const std::vector<lusdr::Texture> &textures,
+    const std::vector<lrt_ray> &rays, const std::vector<InstSampleHit> &hits,
+    int w, int h, int spp);
 
 // Generate w*h*spp primary rays for `camera`, ray index = (y*w + x)*spp + s,
 // each sample offset by a Halton(2,3) sub-pixel jitter for anti-aliasing.
@@ -133,11 +146,16 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 // Shade the traced `hits` (smooth normal + key light + camera headlight +
 // ambient), average the spp samples per pixel, and write the image to
 // opt.output. Returns false on image-write failure.
+using GpuTraceContinuation = std::function<bool(
+    const std::vector<lrt_ray>&, std::vector<lrt_hit>*)>;
+using GpuTrianglePositions = std::function<bool(uint32_t, Vec3*)>;
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
                         const std::vector<lrt_hit> &hits, int w, int h, int spp,
                         const std::vector<ResolvedMat> *materials = nullptr,
-                        const std::vector<Texture> *textures = nullptr);
+                        const std::vector<Texture> *textures = nullptr,
+                        const GpuTraceContinuation& trace_continuation = {},
+                        const GpuTrianglePositions& triangle_positions = {});
 
 // Shade native Gaussian ellipse hits directly from chunk-local metadata. This
 // avoids flattening all splat colors/normals into a second scene-wide

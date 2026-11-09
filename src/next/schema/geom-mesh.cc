@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomMesh Schema Implementation
 
 #include "geom-mesh.hh"
+#include "../layer/property-index.hh"
 
 #include <cmath>
 
@@ -78,9 +79,9 @@ std::vector<int> UsdGeomMesh::GetFaceVertexCounts() const {
   const Value* val = prim_.GetPropertyValue(kIdFaceVertexCounts());
   if (!val) return result;
 
-  const std::vector<int32_t>* arr = val->as_int_array();
+  auto arr = val->as_int_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -92,9 +93,9 @@ std::vector<int> UsdGeomMesh::GetFaceVertexIndices() const {
   const Value* val = prim_.GetPropertyValue(kIdFaceVertexIndices());
   if (!val) return result;
 
-  const std::vector<int32_t>* arr = val->as_int_array();
+  auto arr = val->as_int_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -105,7 +106,7 @@ size_t UsdGeomMesh::GetFaceCount() const {
   const Value* val = prim_.GetPropertyValue(kIdFaceVertexCounts());
   if (!val) return 0;
 
-  const std::vector<int32_t>* arr = val->as_int_array();
+  auto arr = val->as_int_array();
   return arr ? arr->size() : 0;
 }
 
@@ -116,7 +117,7 @@ size_t UsdGeomMesh::GetPointCount() const {
   if (!val) return 0;
 
   // Points are float3[], so divide by 3
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   return arr ? arr->size() / 3 : 0;
 }
 
@@ -127,9 +128,9 @@ std::vector<float> UsdGeomMesh::GetPoints() const {
   const Value* val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return result;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -140,7 +141,7 @@ bool UsdGeomMesh::GetPoints(std::vector<float>& x, std::vector<float>& y, std::v
   const Value* val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return false;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (!arr || arr->size() < 3) return false;
 
   size_t point_count = arr->size() / 3;
@@ -163,9 +164,9 @@ std::vector<float> UsdGeomMesh::GetNormals() const {
   const Value* val = prim_.GetPropertyValue(kIdNormals());
   if (!val) return result;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -182,7 +183,7 @@ bool UsdGeomMesh::GetExtent(float* min, float* max) const {
   if (!val) return false;
 
   // Extent is float3[2] - min and max corners
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (!arr || arr->size() < 6) return false;
 
   min[0] = (*arr)[0]; min[1] = (*arr)[1]; min[2] = (*arr)[2];
@@ -201,9 +202,9 @@ std::vector<float> UsdGeomMesh::GetUVs() const {
   }
   if (!val) return result;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -223,9 +224,9 @@ std::vector<int> UsdGeomMesh::GetUVIndices() const {
   }
   if (!val) return result;
 
-  const std::vector<int32_t>* arr = val->as_int_array();
+  auto arr = val->as_int_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -236,7 +237,7 @@ std::string UsdGeomMesh::GetSubdivisionScheme() const {
   const Value* val = prim_.GetPropertyValue(kIdSubdivisionScheme());
   if (!val) return "none";
 
-  const std::string* scheme = val->as_token();
+  auto scheme = val->as_token();
   if (scheme) return *scheme;
   return "none";
 }
@@ -264,9 +265,9 @@ std::vector<float> UsdGeomMesh::GetPointsAtTimecode(double timecode) const {
   if (!val) val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return result;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr && !arr->empty()) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }

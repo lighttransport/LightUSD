@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
+#include "core/native-io.hh"
 #include "value-clip.hh"
+#include "../layer/prim-spec.hh"
+#include "../layer/asset-anchor.hh"
+#include "../resolver/asset-resolver.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -9,14 +13,66 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#if !defined(__EMSCRIPTEN__)
+#if defined(_WIN32)
+#include <filesystem>
+#else
+#include <sys/stat.h>
+#endif
+#endif
 
 namespace lightusd {
 namespace next {
+
 namespace {
+
+/// File identity used to decide whether a cached clip stage is still current.
+struct FileStamp {
+  bool valid = false;
+  int64_t mtime_ticks = 0;
+  uint64_t size_bytes = 0;
+  bool matches(const FileStamp& other) const {
+    return valid && other.valid && mtime_ticks == other.mtime_ticks &&
+           size_bytes == other.size_bytes;
+  }
+};
+
+FileStamp StampFile(const std::string& path) {
+  if (!::lightusd::NativeIOEnabled()) return {};
+
+  FileStamp stamp;
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+  // One stat() per check: this runs on every revalidating cache hit.
+  struct stat st;
+  if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return stamp;
+  stamp.valid = true;
+#if defined(__APPLE__)
+  stamp.mtime_ticks = int64_t(st.st_mtimespec.tv_sec) * 1000000000LL +
+                      int64_t(st.st_mtimespec.tv_nsec);
+#else
+  stamp.mtime_ticks = int64_t(st.st_mtim.tv_sec) * 1000000000LL +
+                      int64_t(st.st_mtim.tv_nsec);
+#endif
+  stamp.size_bytes = static_cast<uint64_t>(st.st_size);
+#elif !defined(__EMSCRIPTEN__)
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(path, ec) || ec) return stamp;
+  const auto mtime = std::filesystem::last_write_time(path, ec);
+  if (ec) return stamp;
+  const auto size = std::filesystem::file_size(path, ec);
+  if (ec) return stamp;
+  stamp.valid = true;
+  stamp.mtime_ticks = static_cast<int64_t>(mtime.time_since_epoch().count());
+  stamp.size_bytes = static_cast<uint64_t>(size);
+#else
+  (void)path;
+#endif
+  return stamp;
+}
 
 constexpr size_t kMaxTemplateClipCount = 1000000;
 
-bool ToDouble(const Value* value, double* out) {
+bool ToDouble(ValueView value, double* out) {
   if (!value || !out) return false;
   if (const double* v = value->as_double()) *out = *v;
   else if (const float* v = value->as_float()) *out = *v;
@@ -26,29 +82,29 @@ bool ToDouble(const Value* value, double* out) {
   return true;
 }
 
-bool ToString(const Value* value, std::string* out) {
+bool ToString(ValueView value, std::string* out) {
   if (!value || !out) return false;
-  if (const std::string* v = value->as_string()) *out = *v;
-  else if (const std::string* v = value->as_token()) *out = *v;
-  else if (const std::string* v = value->as_asset_path()) *out = *v;
+  if (auto v = value->as_string()) *out = *v;
+  else if (auto v = value->as_token()) *out = *v;
+  else if (auto v = value->as_asset_path()) *out = *v;
   else return false;
   return true;
 }
 
-std::vector<std::pair<double, double>> PairArray(const Value* value) {
+std::vector<std::pair<double, double>> PairArray(ValueView value) {
   std::vector<std::pair<double, double>> out;
   if (!value || !value->is_array()) return out;
-  if (const std::vector<double>* flat = value->as_double_array()) {
+  if (auto flat = value->as_double_array()) {
     for (size_t i = 0; i + 1 < flat->size(); i += 2)
       out.emplace_back((*flat)[i], (*flat)[i + 1]);
-  } else if (const std::vector<float>* flat = value->as_float_array()) {
+  } else if (auto flat = value->as_float_array()) {
     for (size_t i = 0; i + 1 < flat->size(); i += 2)
       out.emplace_back((*flat)[i], (*flat)[i + 1]);
   }
   return out;
 }
 
-bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
+bool ExpandTemplate(DictView  dict, ValueClipSet* out, std::string* error) {
   if (!out) return false;
   std::string pattern;
   if (!ToString(dict.find("templateAssetPath"), &pattern)) {
@@ -61,12 +117,12 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
     if (error) *error = "Missing value-clip template time range";
     return false;
   }
-  const Value* stride_value = dict.find("templateStride");
+  auto stride_value = dict.find("templateStride");
   if (stride_value && !ToDouble(stride_value, &stride)) {
     if (error) *error = "Invalid templateStride";
     return false;
   }
-  const Value* offset_value = dict.find("templateActiveOffset");
+  auto offset_value = dict.find("templateActiveOffset");
   if (offset_value && !ToDouble(offset_value, &active_offset)) {
     if (error) *error = "Invalid templateActiveOffset";
     return false;
@@ -219,6 +275,10 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
   return !out->asset_paths.empty();
 }
 
+}  // namespace
+
+namespace value_clip_detail {
+
 int ActiveIndex(const ValueClipSet& set, double time) {
   if (set.active.empty()) return set.asset_paths.empty() ? -1 : 0;
   int result = set.active.front().second;
@@ -231,11 +291,10 @@ int ActiveIndex(const ValueClipSet& set, double time) {
 
 double ClipTime(const ValueClipSet& set, double time) {
   if (set.times.empty()) return time;
-  // Stage times strictly OUTSIDE the authored `times` range map to the
-  // boundary STAGE time (AOUSD supplemental value-resolution reference
-  // semantics), which the clip's own sample range then clamps.
-  if (time < set.times.front().first) return set.times.front().first;
-  if (time > set.times.back().first) return set.times.back().first;
+  // Stage times strictly OUTSIDE the authored `times` range clamp to the
+  // boundary CLIP time (spec L6983-6990, OpenUSD Usd_Clip).
+  if (time < set.times.front().first) return set.times.front().second;
+  if (time > set.times.back().first) return set.times.back().second;
   auto hi = std::lower_bound(
       set.times.begin(), set.times.end(), time,
       [](const std::pair<double, double>& p, double t) { return p.first < t; });
@@ -254,24 +313,29 @@ double ClipTime(const ValueClipSet& set, double time) {
   return a.second + (b.second - a.second) * alpha;
 }
 
+}  // namespace value_clip_detail
+
+namespace {
+using value_clip_detail::ActiveIndex;
+using value_clip_detail::ClipTime;
 }  // namespace
 
 bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         std::string* error) {
   if (!out || !prim.GetPrimSpec()) return false;
-  const Dict* clips = prim.GetPrimSpec()->meta().clips().as_dictionary();
+  auto clips = prim.GetPrimSpec()->meta().clips().as_dictionary();
   if (!clips) return false;
   for (const auto& entry : clips->entries()) {
-    const Dict* dict = entry.second.as_dictionary();
+    auto dict = entry.second.as_dictionary();
     if (!dict) continue;
     ValueClipSet set;
     set.name = entry.first;
     if (dict->find("templateAssetPath")) {
       if (!ExpandTemplate(*dict, &set, error)) return false;
     } else {
-      if (const Value* assets = dict->find("assetPaths")) {
-        if (const std::vector<std::string>* paths = assets->as_token_array())
-          set.asset_paths = *paths;
+      if (auto assets = dict->find("assetPaths")) {
+        if (auto paths = assets->as_token_array())
+          set.asset_paths.assign(paths->begin(), paths->end());
       }
       set.times = PairArray(dict->find("times"));
       for (const auto& pair : PairArray(dict->find("active"))) {
@@ -290,9 +354,15 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                   &set.manifest_asset_path)) {
       ToString(dict->find("manifestPath"), &set.manifest_asset_path);
     }
-    const Value* interpolate = dict->find("interpolateMissingClipValues");
+    auto interpolate = dict->find("interpolateMissingClipValues");
     if (interpolate && interpolate->as_bool())
       set.interpolate_missing = *interpolate->as_bool();
+    const uint32_t anchor_id = prim.GetPrimSpec()->asset_anchor_id();
+    if (AssetResolver::IsPackagePath(AssetAnchorPath(anchor_id))) {
+      for (auto& path : set.asset_paths) path = ResolveAssetAnchorPath(path, anchor_id);
+      if (!set.manifest_asset_path.empty())
+        set.manifest_asset_path = ResolveAssetAnchorPath(set.manifest_asset_path, anchor_id);
+    }
     for (const std::string& path : set.asset_paths) {
       if (path.empty()) {
         if (error) *error = "Empty value-clip asset path in set `" + set.name + "`";
@@ -313,6 +383,13 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         const std::pair<double, int>& b) {
                        return a.first < b.first;
                      });
+    for (size_t i = 1; i < set.active.size(); ++i) {
+      if (set.active[i - 1].first == set.active[i].first) {
+        if (error) *error = "Duplicate value-clip active time in set `" +
+                            set.name + "`";
+        return false;
+      }
+    }
     // Jump discontinuity: two consecutive authored entries with the SAME
     // stage time mean "clip time approaches the first entry's value up to
     // (not including) the stage time, then jumps to the second's". Use a
@@ -340,7 +417,7 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
             [](const ValueClipSet& a, const ValueClipSet& b) {
               return a.name < b.name;
             });
-  const StringListOpEdits& edits = prim.GetPrimSpec()->meta().clipSetEdits();
+  const StringListOps& edits = prim.GetPrimSpec()->meta().clipSetEdits();
   if (edits.authored) {
     std::vector<std::string> weaker;
     weaker.reserve(out->size());
@@ -363,12 +440,14 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       double stage_time, const ValueClipStageLoader& loader,
                       Value* out, std::string* source_asset,
                       std::string* error, std::string* source_clip_set,
-                      ValueClipStageCache* stage_cache) {
+                      ValueClipStageCache* stage_cache,
+                      ValueClipResolutionInfo* resolution_info,
+                      TimeInterpolation interpolation) {
   std::vector<ValueClipSet> sets;
   if (!ParseValueClipSets(prim, &sets, error)) return false;
   return ResolveValueClipFromSets(sets, prim, property, stage_time, loader,
                                   out, source_asset, error, source_clip_set,
-                                  stage_cache);
+                                  stage_cache, resolution_info, interpolation);
 }
 
 bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
@@ -377,7 +456,9 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               const ValueClipStageLoader& loader, Value* out,
                               std::string* source_asset, std::string* error,
                               std::string* source_clip_set,
-                              ValueClipStageCache* stage_cache) {
+                              ValueClipStageCache* stage_cache,
+                              ValueClipResolutionInfo* resolution_info,
+                      TimeInterpolation interpolation) {
   if (!out || sets.empty()) return false;
   if (!loader) {
     if (error) *error = "Value clips require a clip_stage_loader";
@@ -385,30 +466,91 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
   }
   ValueClipStageCache query_cache;
   ValueClipStageCache* cache = stage_cache ? stage_cache : &query_cache;
-  auto load_stage = [&](const std::string& asset) -> const Stage* {
-    auto found = cache->entries.find(asset);
+  // Nested-resolution state is per call path, so it cannot live in a cache that
+  // concurrent queries may share.
+  thread_local std::vector<std::string> resolution_stack;
+  // A cache may opt into file-stamp revalidation so a rewritten clip is
+  // observed by the next query, matching the per-query loader the cache
+  // replaces. Without it the caller owns freshness. Entries without a stamp are
+  // always trusted: pre-seeded caches (tydra's bake) loaded them themselves.
+  const bool revalidate = cache->revalidate_file_stamps;
+  // Insert/refresh one entry, evicting the least recently used one when the
+  // cache is full. Callers hold a shared_ptr for the duration of their query,
+  // so eviction never invalidates a stage that is still in use.
+  // `evict` is false for negative entries: a failing clip must not displace a
+  // successfully parsed one.
+  auto store = [&](const std::string& key, ValueClipStageCache::Entry entry,
+                   bool evict = true) {
+    std::lock_guard<std::mutex> lock(cache->mutex);
+    entry.use_tick = ++cache->clock;
+    auto found = cache->entries.find(key);
     if (found != cache->entries.end()) {
-      if (!found->second.stage && error && error->empty()) {
-        *error = found->second.error;
+      found->second = std::move(entry);
+      return;
+    }
+    if (cache->max_entries == 0) return;
+    if (cache->entries.size() >= cache->max_entries) {
+      if (!evict) return;
+      auto oldest = cache->entries.begin();
+      for (auto it = cache->entries.begin(); it != cache->entries.end(); ++it) {
+        if (it->second.use_tick < oldest->second.use_tick) oldest = it;
       }
-      return found->second.stage.get();
+      cache->entries.erase(oldest);
+    }
+    cache->entries.emplace(key, std::move(entry));
+  };
+  auto load_stage = [&](const std::string& asset) -> std::shared_ptr<Stage> {
+    const FileStamp before = revalidate ? StampFile(asset) : FileStamp{};
+    {
+      std::lock_guard<std::mutex> lock(cache->mutex);
+      auto found = cache->entries.find(asset);
+      if (found != cache->entries.end()) {
+        ValueClipStageCache::Entry& entry = found->second;
+        const bool current = !entry.stamped || !revalidate ||
+            (before.valid && entry.mtime_ticks == before.mtime_ticks &&
+             entry.size_bytes == before.size_bytes);
+        if (current) {
+          entry.use_tick = ++cache->clock;
+          if (!entry.stage && error && error->empty()) {
+            *error = entry.error;
+          }
+          return entry.stage;
+        }
+      }
     }
     std::shared_ptr<Stage> stage = std::make_shared<Stage>();
     std::string warn, load_error;
     if (!loader(asset, stage.get(), &warn, &load_error)) {
       std::string message = "Failed to load value-clip asset `" + asset + "`";
       if (!load_error.empty()) message += ": " + load_error;
-      ValueClipStageCache::Entry entry;
-      entry.error = message;
-      cache->entries.emplace(asset, std::move(entry));
+      // A revalidating cache only records a failure it can later invalidate.
+      const bool cacheable = !revalidate || before.valid;
+      if (cacheable) {
+        ValueClipStageCache::Entry entry;
+        entry.error = message;
+        entry.stamped = revalidate;
+        entry.mtime_ticks = before.mtime_ticks;
+        entry.size_bytes = before.size_bytes;
+        store(asset, std::move(entry), /*evict=*/false);
+      }
       if (error && error->empty()) *error = std::move(message);
       return nullptr;
     }
-    const Stage* result = stage.get();
-    ValueClipStageCache::Entry entry;
-    entry.stage = std::move(stage);
-    cache->entries.emplace(asset, std::move(entry));
-    return result;
+    bool cacheable = true;
+    FileStamp after;
+    if (revalidate) {
+      after = StampFile(asset);
+      cacheable = before.valid && after.valid && before.matches(after);
+    }
+    if (cacheable) {
+      ValueClipStageCache::Entry entry;
+      entry.stage = stage;
+      entry.stamped = revalidate;
+      entry.mtime_ticks = after.mtime_ticks;
+      entry.size_bytes = after.size_bytes;
+      store(asset, std::move(entry));
+    }
+    return stage;
   };
   for (const ValueClipSet& set : sets) {
     const int index = ActiveIndex(set, stage_time);
@@ -416,6 +558,12 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       continue;
     const std::string clip_path =
         set.prim_path.empty() ? prim.GetPath().str() : set.prim_path;
+    if (resolution_info) {
+      *resolution_info = ValueClipResolutionInfo();
+      resolution_info->active_index = index;
+      resolution_info->active_asset = set.asset_paths[size_t(index)];
+      resolution_info->clip_time = ClipTime(set, stage_time);
+    }
 
     // Manifest gating (pxr semantics): when a manifest is authored and
     // loadable, a property resolves through clips only if it is DECLARED
@@ -423,7 +571,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
     // here — it also reports schema-fallback properties (visibility, radius,
     // ...) that are not in the manifest, which would leak them into clips.
     if (!set.manifest_asset_path.empty()) {
-      if (const Stage* manifest_stage = load_stage(set.manifest_asset_path)) {
+      if (const std::shared_ptr<Stage> manifest_stage =
+              load_stage(set.manifest_asset_path)) {
         const UsdPrim mprim = manifest_stage->GetPrimAtPath(clip_path);
         const PrimSpec* mspec = mprim.GetPrimSpec();
         if (!mspec || !mspec->property(property)) continue;
@@ -440,36 +589,39 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       Value none;
       if (clip_index >= set.asset_paths.size()) return none;
       const std::string& asset = set.asset_paths[clip_index];
-      const Stage* clip_stage = load_stage(asset);
+      const std::shared_ptr<Stage> clip_stage = load_stage(asset);
       if (!clip_stage) return none;
       const UsdPrim clip_prim = clip_stage->GetPrimAtPath(clip_path);
       if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) {
         return none;
       }
-      Value v = clip_prim.GetInterpolatedValue(property,
-                                               ClipTime(set, at_time));
+      Value v;
+      if (interpolation == TimeInterpolation::Held) {
+        const Value* sample = clip_prim.GetValueAtTime(property, ClipTime(set, at_time));
+        if (!sample) sample = clip_prim.GetPropertyValue(property);
+        if (sample) v = *sample;
+      } else v = clip_prim.GetInterpolatedValue(property, ClipTime(set, at_time));
       if ((v.is_empty() || v.is_block()) && clip_prim.GetPrimSpec() &&
           clip_prim.GetPrimSpec()->meta().clips().is_dictionary()) {
         const std::string key = asset + "|" + clip_path + "." + property;
-        if (std::find(cache->resolution_stack.begin(),
-                      cache->resolution_stack.end(), key) !=
-            cache->resolution_stack.end()) {
+        if (std::find(resolution_stack.begin(), resolution_stack.end(), key) !=
+            resolution_stack.end()) {
           if (error && error->empty())
             *error = "Value-clip cycle detected at `" + key + "`";
           return none;
         }
-        if (cache->resolution_stack.size() >= cache->max_recursion_depth) {
+        if (resolution_stack.size() >= cache->max_recursion_depth) {
           if (error && error->empty())
             *error = "Value-clip recursion depth exceeded at `" + key + "`";
           return none;
         }
-        cache->resolution_stack.push_back(key);
+        resolution_stack.push_back(key);
         Value nested;
         std::string nested_asset;
         const bool resolved = ResolveValueClip(
             clip_prim, property, ClipTime(set, at_time), loader, &nested,
-            &nested_asset, error, nullptr, cache);
-        cache->resolution_stack.pop_back();
+            &nested_asset, error, nullptr, cache, nullptr, interpolation);
+        resolution_stack.pop_back();
         if (resolved) {
           if (asset_out)
             *asset_out = nested_asset.empty() ? asset : nested_asset;
@@ -484,6 +636,93 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
     std::string asset;
     Value value =
         sample_clip_at(static_cast<size_t>(index), stage_time, &asset);
+
+    // The clip's active start is an implicit sample. After its last sample,
+    // linear resolution brackets against the NEXT clip's active start, rather
+    // than clamping the current file. This is independent of the option for
+    // interpolating clips that omit the property entirely.
+    if (!value.is_empty() && interpolation == TimeInterpolation::Linear &&
+        set.active.size() > 1) {
+      const auto next = std::upper_bound(
+          set.active.begin(), set.active.end(), stage_time,
+          [](double t, const std::pair<double, int>& entry) {
+            return t < entry.first;
+          });
+      if (next != set.active.end() && next != set.active.begin() &&
+          stage_time > std::prev(next)->first) {
+        const auto current = std::prev(next);
+        const double start = current->first, end = next->first;
+        const auto mapping_at_end = std::lower_bound(
+            set.times.begin(), set.times.end(), end,
+            [](const std::pair<double, double>& mapping, double t) {
+              return mapping.first < t;
+            });
+        const auto mapping_after_end = std::upper_bound(
+            mapping_at_end, set.times.end(), end,
+            [](double t, const std::pair<double, double>& mapping) {
+              return t < mapping.first;
+            });
+        const bool jumps_at_end = mapping_at_end != mapping_after_end &&
+            mapping_at_end->second != std::prev(mapping_after_end)->second;
+        const std::shared_ptr<Stage> active_stage =
+            load_stage(set.asset_paths[size_t(index)]);
+        const UsdPrim active_prim = active_stage
+            ? active_stage->GetPrimAtPath(clip_path) : UsdPrim();
+        double lower = start;
+        bool has_upper = false;
+        auto consider = [&](double t) {
+          if (!std::isfinite(t) || t < start || t >= end) return;
+          if (t <= stage_time) lower = std::max(lower, t);
+          if (t >= stage_time) has_upper = true;
+        };
+        for (const auto& mapping : set.times) consider(mapping.first);
+        // Invert each piece of the stage-to-clip time function. A frozen
+        // segment has no additional sample locations; its endpoints above
+        // already bracket its constant value. Reversed segments are valid.
+        const auto samples = active_prim.GetTimeSampleTimes(property);
+        if (set.times.empty()) {
+          const auto upper = std::lower_bound(samples.begin(), samples.end(), stage_time);
+          if (upper != samples.end()) consider(*upper);
+          if (upper != samples.begin()) consider(*std::prev(upper));
+        } else if (!samples.empty()) {
+          for (size_t i = 1; i < set.times.size(); ++i) {
+            const auto& a = set.times[i - 1];
+            const auto& b = set.times[i];
+            if (b.first <= a.first || b.second == a.second ||
+                b.first < start || a.first >= end) continue;
+            const double query = std::max(a.first, std::min(b.first, stage_time));
+            const double clip_query = a.second + (b.second - a.second) *
+                ((query - a.first) / (b.first - a.first));
+            const auto upper = std::lower_bound(samples.begin(), samples.end(), clip_query);
+            auto invert = [&](double t) {
+              const double alpha = (t - a.second) / (b.second - a.second);
+              if (alpha >= 0.0 && alpha <= 1.0)
+                consider(a.first + alpha * (b.first - a.first));
+            };
+            if (upper != samples.end()) invert(*upper);
+            if (upper != samples.begin()) invert(*std::prev(upper));
+          }
+        }
+        // A time-map jump at the boundary isolates its two sides. Never
+        // blend the left clip toward the right-hand value of that jump.
+        // Default-only compatibility opinions also remain held.
+        if (!has_upper && !jumps_at_end && stage_time > lower && !samples.empty()) {
+          std::string lower_asset, upper_asset;
+          Value lo = sample_clip_at(size_t(index), lower, &lower_asset);
+          Value hi = sample_clip_at(size_t(next->second), end, &upper_asset);
+          if (!lo.is_empty() && !hi.is_empty()) {
+            value = LerpValue(lo, hi, (stage_time - lower) / (end - lower));
+            asset = lower_asset;
+            if (resolution_info) {
+              resolution_info->lower_asset = lower_asset;
+              resolution_info->upper_asset = upper_asset;
+              resolution_info->lower_stage_time = lower;
+              resolution_info->upper_stage_time = end;
+            }
+          }
+        }
+      }
+    }
 
     // interpolateMissingClipValues: when the ACTIVE clip has no opinion, pxr
     // treats all clips as one merged timeline and LINEARLY INTERPOLATES the
@@ -529,14 +768,31 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
         // vectors, colors, matrices, quats, half, and their arrays) and HOLDS
         // (returns the earlier value) for non-interpolatable types or a
         // cross-clip type mismatch — exactly pxr's clip-value semantics.
-        value = LerpValue(v_lo, v_hi, alpha);
+        value = interpolation == TimeInterpolation::Held ? v_lo : LerpValue(v_lo, v_hi, alpha);
         asset = a_lo;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = interpolation != TimeInterpolation::Held;
+          resolution_info->lower_asset = a_lo;
+          resolution_info->upper_asset = a_hi;
+          resolution_info->lower_stage_time = t_lo;
+          resolution_info->upper_stage_time = t_hi;
+        }
       } else if (!v_lo.is_empty()) {
         value = std::move(v_lo);
         asset = a_lo;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = true;
+          resolution_info->lower_asset = a_lo;
+          resolution_info->lower_stage_time = t_lo;
+        }
       } else if (!v_hi.is_empty()) {
         value = std::move(v_hi);
         asset = a_hi;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = true;
+          resolution_info->upper_asset = a_hi;
+          resolution_info->upper_stage_time = t_hi;
+        }
       }
     }
 

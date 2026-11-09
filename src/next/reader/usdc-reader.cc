@@ -4,6 +4,7 @@
 // LightUSD Next - USDC Reader implementation
 
 #include "usdc-reader.hh"
+#include "../next-util.hh"
 #include "../strfmt.hh"
 
 #include <fstream>
@@ -13,13 +14,6 @@ namespace next {
 
 namespace {
 
-std::string GetBaseDir(const std::string& filename) {
-  size_t pos = filename.find_last_of("/\\");
-  if (pos != std::string::npos) {
-    return filename.substr(0, pos + 1);
-  }
-  return "";
-}
 
 // Convert CrateReadResult to USDCLoadResult
 USDCLoadResult ConvertResult(CrateReadResult&& crate_result) {

@@ -36,6 +36,7 @@
 #include "tydra/diff-and-compare.hh"
 #include "next/lightusd-next.hh"
 #include "next/diff/layer-diff.hh"
+#include "collection-diff.hh"
 
 namespace {
 
@@ -946,6 +947,7 @@ void print_usage() {
   std::cout << "  --json      Output diff in JSON format\n";
   std::cout << "  --quiet     Suppress diff output, exit code only\n";
   std::cout << "  -q, --brief Alias for --quiet (OpenUSD usddiff compatibility).\n";
+  std::cout << "  -r, --recursive  Compare USDZ entries recursively; directories recurse automatically.\n";
   std::cout << "  -f, --flatten\n";
   std::cout << "              Compose both inputs before comparing them. Uses the\n";
   std::cout << "              dependency-free next PCP path and loads payloads.\n";
@@ -1018,6 +1020,7 @@ int main(int argc, char **argv) {
   }
 
   bool json_output = false;
+  bool recursive = false;
   bool quiet = false;
   bool flatten = false;
   // Match flatten prototypes by CONTENT (default on) so non-deterministic
@@ -1046,6 +1049,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (args[i] == "--json") {
       json_output = true;
+    } else if (args[i] == "--recursive" || args[i] == "-r") {
+      recursive = true;
     } else if (args[i] == "--quiet" || args[i] == "--brief" ||
                args[i] == "-q") {
       quiet = true;
@@ -1124,6 +1129,18 @@ int main(int argc, char **argv) {
   if (flatten && (fast || faster)) {
     std::cerr << "Error: --flatten cannot be combined with --fast/--faster\n";
     return 2;
+  }
+
+  if (recursive || IsDiffDirectory(file1) || IsDiffDirectory(file2)) {
+    if (IsDiffDirectory(file1) != IsDiffDirectory(file2) || flatten || fast || faster ||
+        low_mem || fuzzy_assets || !path_filter.empty()) {
+      std::cerr << "Collection diff requires matching input kinds and supports authored semantic comparison only\n";
+      return 2;
+    }
+    lightusd::next::DiffOptions opts;
+    opts.floatUlps = diff_opts.floatUlps; opts.doubleUlps = diff_opts.doubleUlps;
+    opts.absEps = diff_opts.absEps; opts.compareMetadata = diff_opts.compareMetadata;
+    return DiffCollections(file1, file2, opts, json_output, quiet);
   }
 
   if (flatten) {

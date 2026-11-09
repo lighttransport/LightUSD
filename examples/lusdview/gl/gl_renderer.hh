@@ -5,6 +5,7 @@
 
 #include <glad/glad.h>
 
+#include <array>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -55,11 +56,27 @@ class GLRenderer final : public Renderer {
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
+  bool applyMeshSlotUpdatesTransactional(
+      const std::vector<MeshSlotUpdate>& updates, std::string* error) override;
+  bool replaceMeshSlotsTransactional(
+      const std::vector<MeshSlotReplacement>& replacements,
+      std::string* error) override;
+  bool applyMaterialUpdatesTransactional(
+      const std::vector<MaterialSlotUpdate>& updates,
+      std::string* error) override;
+  bool replaceTextureSlotsTransactional(
+      const std::vector<TextureSlotReplacement>& replacements,
+      std::string* error) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
+  void viewportSize(int* width, int* height) const override {
+    if (width) *width=vpW_;
+    if (height) *height=vpH_;
+  }
+  ViewportTexHandle comparisonImage(int slot, const light3d::Image* image = nullptr) override;
   bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   void present() override;
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
@@ -94,6 +111,8 @@ class GLRenderer final : public Renderer {
     float albedo[3]{0.6f, 0.6f, 0.65f};
     float emission[3]{0, 0, 0};
     float background{0.0f};
+    bool isLevelSet{false};
+    float isovalue{0.0f};
   };
   struct GLMesh {
     GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
@@ -207,6 +226,7 @@ class GLRenderer final : public Renderer {
   GLMaterial makeMaterial(const DrawMaterialCPU& material) const;
 
   void destroyScene();
+  void destroyMesh(GLMesh& mesh);
   void buildTessProgram();  // GL>=4.0 tessellation displacement program (best-effort)
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
@@ -217,7 +237,8 @@ class GLRenderer final : public Renderer {
   // non-instanced and instanced prototypes, in a flat color with a small NDC depth
   // bias so the lines sit just in front of the surface.
   void buildWireProgram();
-  void drawWireframe(const RenderFrameParams& params, const float wireColor[3]);
+  void drawWireframe(const RenderFrameParams& params, const float wireColor[3],
+                     bool xray);
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   void presentImpl(ImDrawData* drawData, int fbw, int fbh);
 #endif
@@ -250,6 +271,7 @@ class GLRenderer final : public Renderer {
   GLint uCoatRoughness_{-1}, uCoatIor_{-1};
   GLint uTransmission_{-1}, uTransmissionColor_{-1};
   GLint uTransmissionDepth_{-1}, uTransmissionScatter_{-1};
+  GLint uTransmissionScatterAnisotropy_{-1};
   GLint uVolumeDensity_{-1}, uVolumeAlbedo_{-1};
   GLint uVolumeEmission_{-1}, uVolumeEmissionScale_{-1};
   GLint uDiffuseRoughness_{-1};
@@ -315,12 +337,12 @@ class GLRenderer final : public Renderer {
   GLint uAdvancedUdimSlots_{-1};
   GLint uCoatNormalTexIsUdim_{-1}, uCoatNormalUdimRoute_{-1};
   GLint uCoatNormalUdimSlot_{-1};
-  GLint uGraphNodeCount_{-1}, uGraphOutputs0_{-1}, uGraphOutputs1_{-1},
-      uGraphOutputs2_{-1}, uGraphOutputs3_{-1};
+  GLint uGraphNodeCount_{-1}, uGraphOutputs_{-1};
   GLint uGraphUsable_{-1};
   GLint uGraphNode0_{-1}, uGraphNode1_{-1}, uGraphNode2_{-1};
   GLint uGraphNode3_{-1}, uGraphNode4_{-1}, uGraphNode5_{-1};
   GLint uGraphTex_[8]{-1, -1, -1, -1, -1, -1, -1, -1};
+  GLint uGraphUdimRoutes_{-1};
   GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1}, uRoughnessUdimSlot_{-1};
   GLint uOcclusionUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
@@ -414,7 +436,8 @@ class GLRenderer final : public Renderer {
   RasterPointShadowCameras pointShadowCameras_;
   void destroyIblTextures();
 
-  GLuint whiteTex_{0}, boneTex_{0};
+  GLuint whiteTex_{0};
+  GLuint boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
   int maxTextureSize_{4096};
   float maxTextureAnisotropy_{1.0f};
@@ -446,14 +469,19 @@ class GLRenderer final : public Renderer {
   GLint uVolEmissionField_{-1}, uVolTemperatureField_{-1};
   GLint uVolHasEmissionField_{-1}, uVolHasTemperatureField_{-1};
   GLint uVolAlbedo_{-1}, uVolEmission_{-1}, uVolBackground_{-1};
+  GLint uVolIsLevelSet_{-1}, uVolIsovalue_{-1};
   std::vector<GLVolume> volumes_;
 
   // Offscreen target
-  GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
+  GLuint fbo_{0}, colorTex_{0}, depthTex_{0};
+  GLuint dofFbo_{0}, dofTex_{0}, dofProgram_{0}, dofVao_{0};
+  bool dofApplied_{false};
+  void applyRasterDof(const RenderFrameParams& params);
   int vpW_{0}, vpH_{0};
   // Row-flip scratch for uploadViewportImage (CUDA/HIP/CPU RT overlay).
   std::vector<uint8_t> flippedUploadScratch_;
 
+  std::array<GLuint,4> comparisonTextures_{};
   struct GLTexture {
     GLuint tex2d{0};
     GLuint arrayTex{0};

@@ -73,7 +73,7 @@ void Cache::Impl::SaltInternalRefContent(std::vector<Src> &content, const Src &p
                               std::string *warn, std::string *err) {
     for (Src &c : content) {
       if (c.suppress_site_specs) continue;
-      if (FlowsThroughRelocateSource(c, arrival) ||
+      if (FlowsThroughRelocateSource(c, ps.stack_idx, arrival) ||
           ContentSiteDeparted(c, ps, arrival, warn, err)) {
         c.suppress_site_specs = true;
       }
@@ -98,15 +98,15 @@ bool Cache::Impl::ContentSiteDeparted(const Src &c, const Src &ps,
     return edits.departed.count(cp.name()) != 0;
   }
 
-bool Cache::Impl::FlowsThroughRelocateSource(const Src &c,
+bool Cache::Impl::FlowsThroughRelocateSource(const Src &c, uint32_t relocating_stack,
                                   const StackRelocates::Arrival &arrival) const {
     // Only REFERENCE-delivered content: the leaf-name-under-target suffix is
     // valid only across NAME-PRESERVING reference arcs. An INHERIT renames its
     // subtree (SymRig -> LRig), so the intermediate path would be mis-computed
     // (TrickyRelocationOfPrimFromPayload false-positive on inherited /Rig/SymRig).
     if (c.arc_kind != ArcType::Reference) return false;
-    if (!c.arc_sites || c.arc_sites->size() < 2) return false;
-    const auto &trail = *c.arc_sites;
+    if (!c.arc_sites() || c.arc_sites()->size() < 2) return false;
+    const auto &trail = *c.arc_sites();
     const std::string &leaf_tgt = trail.back().second;
     if (!NamespaceMapping::AtOrUnder(c.site, leaf_tgt)) return false;
     const std::string suffix = c.site.substr(leaf_tgt.size());  // e.g. "/Child"
@@ -114,9 +114,12 @@ bool Cache::Impl::FlowsThroughRelocateSource(const Src &c,
     for (size_t i = 0; i + 1 < trail.size(); ++i) {
       const std::string inter = trail[i].second + suffix;
       // The current arrival's OWN relocate source is not a departure here.
-      if (inter == arrival.src_site ||
-          NamespaceMapping::AtOrUnder(inter, arrival.src_site) ||
-          NamespaceMapping::AtOrUnder(arrival.src_site, inter))
+      // Qualify its path by layer stack: another reference branch may use
+      // exactly the same site spelling for a different relocation.
+      if (trail[i].first == relocating_stack &&
+          (inter == arrival.src_site ||
+           NamespaceMapping::AtOrUnder(inter, arrival.src_site) ||
+           NamespaceMapping::AtOrUnder(arrival.src_site, inter)))
         continue;
       if (PathInRelocateSource(trail[i].first, inter)) return true;
     }
@@ -269,8 +272,8 @@ std::vector<Src> Cache::Impl::IsolatedRelocatedContent(
       }
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
-      c.offset = ps.offset.Compose(s.offset);
-      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      c.set_offset(ps.offset().Compose(s.offset()));
+      if (!c.expression_variables()) c.set_expression_variables(ps.expression_variables());
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
       out.push_back(std::move(c));
     }
@@ -313,15 +316,17 @@ std::vector<Src> Cache::Impl::ComposedRelocatedContent(
     std::vector<Src> derived = DeriveChildSources(
         parent_srcs, src_root_path.name(), src_root, warn, err, ps.stack_idx,
         src_root_parent.str());
-    // Salt BEFORE expansion: opinions authored in the RELOCATING stack AT the
-    // relocation source are ignored by pxr ("opinions at relocation source"),
+    // Salt BEFORE expansion: opinions authored in the relocating stack or the
+    // root stack AT the relocation source are ignored by pxr ("opinions at
+    // relocation source"),
     // and so are the ARCS they author (ExpandList skips a salted spec's arcs).
     // Marking after ExpandList would be too late -- the source's own
     // (prohibited) reference/inherit would already have been expanded
     // (ErrorOpinionAtRelocationSource). The Src stays so arc-delivered content
     // and chained derivation still descend through it.
     for (Src &s : derived) {
-      if (s.stack_idx == ps.stack_idx && s.arc_kind == ArcType::Root &&
+      if ((s.stack_idx == 0 || s.stack_idx == ps.stack_idx) &&
+          s.arc_kind == ArcType::Root &&
           s.site == src_root) {
         s.suppress_site_specs = true;
       }
@@ -340,7 +345,7 @@ std::vector<Src> Cache::Impl::ComposedRelocatedContent(
       Src c = s;
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(redirect, Mapping(s.map_idx)));
-      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      if (!c.expression_variables()) c.set_expression_variables(ps.expression_variables());
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
       out.push_back(std::move(c));
     }
@@ -369,13 +374,12 @@ void Cache::Impl::AddRelocatedSources(const Src &ps,
     dst.stack_idx = ps.stack_idx;
     dst.site = arrival.dst_site;
     dst.map_idx = InternMapping(renamed_map(arrival.dst_site));
-    dst.offset = ps.offset;
+    // Offset, expression variables, arc chain and site trail: the parent's
+    // shared arc context.
+    dst.set_context(ps.context());
     dst.arc_kind = ps.arc_kind;
     dst.implied_anchor = ps.implied_anchor;
     dst.suppress_site_specs = false;  // the TARGET address is a legal site
-    dst.expression_variables = ps.expression_variables;
-    dst.arc_chain = ps.arc_chain;
-    dst.arc_sites = ps.arc_sites;
     dst.ancestral = true;  // child derivation, like DeriveChildSources
     base->push_back(std::move(dst));
 
@@ -384,7 +388,10 @@ void Cache::Impl::AddRelocatedSources(const Src &ps,
     // when content_out != base.
     std::vector<Src> content =
         SourcesForRelocatedContent(ps, arrival, child_composed, warn, err);
-    for (Src &c : content) content_out->push_back(std::move(c));
+    for (Src &c : content) {
+      c.arcs_expanded = true;
+      content_out->push_back(std::move(c));
+    }
   }
 
 std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
@@ -403,21 +410,76 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
     // pxr shadows ("should not show up"). `arrival_stacks` accumulates the
     // relocating stacks as we walk psrcs strong->weak, so a NORMAL child from a
     // weaker DIFFERENT stack is shadowed while stronger pre-arrival opinions and
-    // same-stack grafts are kept. `deferred_content` holds (b), appended last.
+    // the destination's exact same-stack graft are kept. Other same-stack
+    // ancestral arcs (notably an inherited class child with the same spelling)
+    // are elided with the rest of the ancestral subtree. `deferred_content`
+    // holds (b), appended last.
     // (TrickyVariantOverrideOfRelocatedPrim / TrickyMultipleRelocations /
     // TrickySpookyVariantSelection, verified vs pcp.txt prim stacks.)
     std::vector<Src> deferred_content;
     std::set<uint32_t> arrival_stacks;
+    std::set<std::pair<uint32_t, std::string>> arrival_destinations;
+    std::set<std::pair<uint32_t, std::string>> handled_arrival_destinations;
+    // Apply the same instance-descendant source policy for direct path
+    // queries as for stage traversal. Local overs below an instanceable host
+    // are not part of its shared prototype, even when the queried child also
+    // exists in a contributing reference. Unresolved arcs do not make a host
+    // instanceable (IsInstanceableSources checks actual contributing specs).
+    const bool instanceable = IsInstanceableSources(psrcs);
     for (const Src &ps : psrcs) {
+      if (instanceable && !Mapping(ps.map_idx).MapsFrom(ps.site)) continue;
       // Variant sources are inline opinions on the prim itself; they do not
       // (yet) carry child prims, so they don't propagate to children.
       if (ps.variant) continue;
       const StackRelocates &rel = layer_stacks[ps.stack_idx].relocates;
-      const bool raw = ps.stack_idx == raw_stack && ps.site == raw_site;
+      // Root-stack relocates are expressed in the composed namespace, while a
+      // source delivered through an arc may still carry its pre-map site
+      // (e.g. /CharBase/Anim mapped to /Char/Anim). Use the arc mapping but
+      // strip this stack's relocate renames so source/departure lookup is made
+      // at the path where Pcp evaluates the node.
+      const std::string relocate_parent = ps.stack_idx == 0
+          ? ArcOnlyMapping(ps).Apply(ps.site)
+          : ps.site;
+      // Relocate-source walks suppress the source's own departure. The supplied
+      // raw site may be expressed in composed/root space, so also match a
+      // source whose arc map lands at that path.
+      const bool raw = ps.stack_idx == raw_stack &&
+          (ps.site == raw_site || relocate_parent == raw_site);
       if (!rel.empty() && !raw) {
-        if (rel.IsDeparted(ps.site, cn)) continue;
-        if (const StackRelocates::Arrival *arrival =
-                rel.ArrivalOf(ps.site, cn)) {
+        if (rel.IsDeparted(ps.site, cn) ||
+            (ps.stack_idx == 0 && rel.IsDeparted(relocate_parent, cn)))
+          continue;
+        const StackRelocates::Arrival *arrival = nullptr;
+        NamespaceMapping relocate_mapping;
+        if (ps.stack_idx == 0) {
+          relocate_mapping = ArcOnlyMapping(ps);
+          // Prefer an arrival at the mapped parent. Root-stack relocates apply
+          // to the composed namespace, so a source such as /CharBase/Anim may
+          // encounter the stronger /Char/Anim arrival after crossing its arc.
+          arrival = rel.ArrivalOf(relocate_parent, cn);
+          if (arrival && relocate_mapping.Apply(arrival->dst_site) != child_composed)
+            arrival = nullptr;
+          // Relocates authored at the source spelling also propagate through
+          // references (for example /Ref1 -> /InternalReferences). Fall back
+          // to that spelling only when its mapped destination is this child.
+          if (!arrival) {
+            arrival = rel.ArrivalOf(ps.site, cn);
+            if (arrival && relocate_mapping.Apply(arrival->dst_site) != child_composed)
+              arrival = nullptr;
+          }
+        } else {
+          arrival = rel.ArrivalOf(ps.site, cn);
+        }
+        if (arrival) {
+          const auto destination = std::make_pair(
+              ps.stack_idx, ps.stack_idx == 0
+                  ? relocate_mapping.Apply(arrival->dst_site)
+                  : arrival->dst_site);
+          // The same composed arrival can be reached through multiple
+          // ancestral source mappings. Its strongest occurrence owns the
+          // destination and supplies relocated content once.
+          arrival_destinations.emplace(ps.stack_idx, arrival->dst_site);
+          if (!handled_arrival_destinations.insert(destination).second) continue;
           // dst-site opinions inline (strong); relocated content deferred.
           AddRelocatedSources(ps, *arrival, child_composed, &base, warn, err,
                               &deferred_content);
@@ -427,15 +489,46 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
       }
       // Same-name collision with a relocate destination owned by another
       // (stronger) stack: shadowed. Opinions stronger than the arrival (seen
-      // before it here) and same-stack grafts pass through.
-      if (!arrival_stacks.empty() && !arrival_stacks.count(ps.stack_idx))
-        continue;
+      // before it here) already passed through. After the arrival, keep only
+      // its exact destination-site graft; a same-stack inherited or referenced
+      // child is still part of the ancestral subtree OpenUSD elides.
+      if (!arrival_stacks.empty()) {
+        bool destination_variant = false;
+        uint32_t owner = ps.stack_idx;
+        for (size_t depth = 0; depth < layer_stacks.size(); ++depth) {
+          const LayerStack &current = layer_stacks[owner];
+          if (current.variant_owner_key.empty()) break;
+          auto found = stack_by_id.find(current.variant_owner_key);
+          if (found == stack_by_id.end()) break;
+          owner = found->second;
+          if (arrival_stacks.count(owner)) {
+            for (const auto &destination : arrival_destinations) {
+              if (destination.first == owner &&
+                  IsPathAtOrUnder(destination.second, current.variant_owner_site)) {
+                destination_variant = true;
+                break;
+              }
+            }
+            break;
+          }
+        }
+        // Selected variants of the relocating stack can author legal opinions
+        // at its destination. They precede the relocated reference content.
+        if (!destination_variant) {
+          if (!arrival_stacks.count(ps.stack_idx)) continue;
+          if (!arrival_destinations.count({ps.stack_idx, ps.site})) continue;
+        }
+      }
       Src c;
       c.stack_idx = ps.stack_idx;
-      c.site = ps.site + "/" + cn;
+      // Exact-size join: `a + "/" + b` doubles its temporary, and every
+      // derived source keeps its site.
+      c.site.reserve(ps.site.size() + 1 + cn.size());
+      c.site.append(ps.site).append(1, '/').append(cn);
       c.map_idx = ps.map_idx;  // share the parent's mapping (no string copy)
-      c.expression_variables = ps.expression_variables;
-      c.offset = ps.offset;
+      // Offset, expression variables, arc chain (implied class arcs need the
+      // whole chain) and ancestral cycle trail: the parent's shared context.
+      c.set_context(ps.context());
       c.arc_kind = ps.arc_kind;
       c.implied_anchor = ps.implied_anchor;
       // Prohibited relocation-source namespace extends to DESCENDANTS: their
@@ -443,8 +536,6 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
       // ignored, while the Srcs themselves stay traversable for chained
       // relocations (arrivals registered under another relocate's source).
       c.suppress_site_specs = ps.suppress_site_specs;
-      c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
-      c.arc_sites = ps.arc_sites;  // ancestral cycle trail (see Src::arc_sites)
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
     }
@@ -505,8 +596,8 @@ const std::vector<Src> &Cache::Impl::SourcesForRelocateSource(uint32_t stack,
         Src s;
         s.stack_idx = stack;
         s.site = p.str();
-        s.expression_variables = std::make_shared<const Value>(
-            layer_stacks[stack].expression_variables);
+        s.set_expression_variables(std::make_shared<const Value>(
+            layer_stacks[stack].expression_variables));
         if (arrival) {
           AddRelocatedSources(s, *arrival, p.str(), &base, warn, err);
         } else {
@@ -559,23 +650,33 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
 
     // Collect the uncached ancestor chain (leaf -> topmost uncached), then
     // expand top-down, so a pathologically deep query path walks a loop instead
-    // of the C++ stack.
+    // of the C++ stack. Each ancestor's cache key is built once and reused by
+    // the expansion below: a deep path otherwise allocates the same key
+    // strings three times per level.
     std::vector<Path> pending;
+    std::vector<std::string> pending_keys;
+    std::string top_parent_key;
     {
       Path cur = path;
       for (;;) {
         pending.push_back(cur);
+        pending_keys.push_back(SourcesKey(stack, cur.str()));
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (HasCachedSources(SourcesKey(stack, parent.str()))) break;
+        const std::string parent_key = SourcesKey(stack, parent.str());
+        if (HasCachedSources(parent_key)) {
+          top_parent_key = parent_key;
+          break;
+        }
         cur = parent;
       }
     }
 
     const std::vector<Src> *result = nullptr;
+    const std::vector<Src> *parent_slot = nullptr;
     for (size_t i = pending.size(); i-- > 0;) {
       const Path &p = pending[i];
-      const std::string key_i = SourcesKey(stack, p.str());
+      const std::string &key_i = pending_keys[i];
 
       std::vector<Src> base;
       Path parent = p.parent();
@@ -591,16 +692,19 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
         s.stack_idx = stack;
         s.site = p.str();
         s.map_idx = InternMapping(WithStackRelocates(stack, NamespaceMapping{}));
-        s.expression_variables = std::make_shared<const Value>(
-            layer_stacks[stack].expression_variables);
+        s.set_expression_variables(std::make_shared<const Value>(
+            layer_stacks[stack].expression_variables));
         if (arrival) {
           AddRelocatedSources(s, *arrival, p.str(), &base, warn, err);
         } else {
           base.push_back(std::move(s));
         }
       } else {
+        // The parent's sources were produced by the previous iteration; only
+        // the topmost ancestor needs the cached parent looked up.
         const std::vector<Src> &psrc =
-            GetOrCreateCachedSources(SourcesKey(stack, parent.str()));
+            parent_slot ? *parent_slot
+                        : GetOrCreateCachedSources(top_parent_key);
         base = DeriveChildSources(psrc, p.name(), p.str(), warn, err);
       }
 
@@ -608,6 +712,7 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
       // and pending[0] (the queried leaf) is filled last, so this captures it.
       std::vector<Src> &slot = GetOrCreateCachedSources(key_i);
       slot = ExpandList(base, p.str(), warn, err);
+      parent_slot = &slot;
       result = &slot;
     }
     sources_in_progress.erase(key);

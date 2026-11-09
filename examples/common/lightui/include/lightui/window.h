@@ -97,6 +97,45 @@ void lui_window_present(lui_window_t *window);
  */
 void lui_window_present_rect(lui_window_t *window, const lvg_rect_t *dirty);
 
+/** Kind of native window handle returned by lui_window_native_handle(). */
+typedef enum {
+    LUI_NATIVE_NONE    = 0,
+    LUI_NATIVE_X11     = 1,  /* handle is an X11 Window (XID)  */
+    LUI_NATIVE_WAYLAND = 2,  /* handle is a wl_surface*        */
+    LUI_NATIVE_WIN32   = 3,  /* handle is an HWND              */
+} lui_native_kind_t;
+
+/**
+ * Return the platform window handle (HWND on Win32) so an external graphics
+ * API such as Direct3D 12 can create a swapchain on it.  Returns 0 and sets
+ * *kind to LUI_NATIVE_NONE when unavailable.  @kind may be NULL.  The handle
+ * is owned by the window; do not destroy it.
+ */
+uintptr_t lui_window_native_handle(const lui_window_t *window, lui_native_kind_t *kind);
+
+/**
+ * Mark the window as rendered by external code.  While enabled, lightui no
+ * longer paints the CPU surface to the window (lui_window_present* become
+ * no-ops and the Win32 WM_PAINT handler only validates), so it will not
+ * overwrite what the caller presents.  lui_window_get_surface() stays valid
+ * for drawing UI into an off-screen pixel buffer the caller composites.
+ */
+void lui_window_set_external_render(lui_window_t *window, bool enabled);
+
+/**
+ * Accept (or stop accepting) files dragged from the OS file manager onto the
+ * window.  While enabled, each dropped file queues a LUI_EVENT_FILE_DROP
+ * event.  Currently implemented on Win32; a no-op elsewhere.
+ */
+void lui_window_set_file_drop(lui_window_t *window, bool enabled);
+
+/**
+ * Pop the oldest dropped file path (UTF-8, newly allocated; release with
+ * free()).  Returns NULL when none is pending or the backend has no drop
+ * support.  Call once per LUI_EVENT_FILE_DROP.
+ */
+char *lui_window_take_dropped_file(lui_window_t *window);
+
 /**
  * Non-blocking event poll.
  *

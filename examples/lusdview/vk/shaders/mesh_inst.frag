@@ -44,6 +44,11 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count, .y = exposure stops
+  mat4 shadowViewProj;
+  vec4 pointShadowLight;
+  mat4 pointShadowViewProj[6];
+  vec4 clippingPlanes[8];
+  ivec4 clippingInfo;
 } fr;
 layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
@@ -98,6 +103,9 @@ vec3 kindColor(int k) {
 }
 
 void shadeFragment() {
+  for (int i = 0; i < fr.clippingInfo.x; ++i) {
+    if (dot(vec4(vWorldPos, 1.0), fr.clippingPlanes[i]) < 0.0) discard;
+  }
   vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
   // Face the geometric normal toward the camera (winding-independent). Using the
   // view vector instead of gl_FrontFacing avoids the VK Y-flipped-viewport
@@ -164,12 +172,21 @@ void shadeFragment() {
     vec4 lc = fr.rasterLights[li].colorDiffuse;
     vec4 ss = fr.rasterLights[li].specularShape;
     int lightType = int(pt.w + 0.5);
-    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4) ? 8 : 1;
+    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4 ||
+                       lightType == 7 ||
+                       lightType == 8) ? 8 : 1;
     for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
     vec3 samplePos = pt.xyz;
+    if (lightType == 7) {
+      int base = sampleIndex * 3;
+      samplePos = vec3(
+          fr.rasterLights[li].iesProfile[base / 4][base % 4],
+          fr.rasterLights[li].iesProfile[(base + 1) / 4][(base + 1) % 4],
+          fr.rasterLights[li].iesProfile[(base + 2) / 4][(base + 2) % 4]);
+    }
     vec3 areaX = normalize(fr.rasterLights[li].iesAxisX.xyz);
     vec3 areaY = normalize(fr.rasterLights[li].iesAxisY.xyz);
-    if (lightType == 3) {
+    if (lightType == 3 || lightType == 8) {
       float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
       float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
       samplePos += areaX * (sx * fr.rasterLights[li].areaParams.y) +
@@ -200,7 +217,8 @@ void shadeFragment() {
               pow(max(coneCos, 0.0), max(ss.z, 0.0));
     }
     float ies = 1.0;
-    if (lightType != 5 && dot(fr.rasterLights[li].iesProfile[0],
+    if (lightType != 5 && lightType != 7 &&
+        dot(fr.rasterLights[li].iesProfile[0],
                               fr.rasterLights[li].iesProfile[0]) > 1e-8) {
       vec3 iesDir = normalize(-L);
       float v = degrees(acos(clamp(dot(iesDir, normalize(da.xyz)), -1.0, 1.0)));

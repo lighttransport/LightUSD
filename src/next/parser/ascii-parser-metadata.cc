@@ -4,6 +4,8 @@
 // LightUSD Next - USDA ASCII parser stage metadata.
 
 #include "ascii-parser-internal.hh"
+
+#include <algorithm>
 #include "value-parser.hh"
 
 namespace lightusd {
@@ -22,9 +24,24 @@ bool AsciiParser::Impl::ParseStageMetadata() {
     lexer_->next();
 
     // Parse metadata key-value pairs
+    bool need_sep = false;
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
       // pxr accepts `;` as an optional statement separator.
-      if (Match(TokenType::Semicolon)) continue;
+      if (Match(TokenType::Semicolon)) {
+        need_sep = false;
+        continue;
+      }
+      // Entries need a newline or `;` between them (pxr rejects
+      // `( defaultPrim = "A" upAxis = "Y" )`).
+      if (need_sep && !lexer_->newline_before_current()) {
+        // Spec/pxr reject it; lenient mode keeps loading (warns).
+        if (options_.strict_aousd_conformance) {
+          AddError("Expected newline or ';' between layer metadata entries");
+          return false;
+        }
+        AddWarning("Expected newline or ';' between layer metadata entries" " (OpenUSD rejects this)");
+      }
+      need_sep = true;
       // A bare (often triple-quoted) string is the layer COMMENT — pxr's
       // only accepted spelling (26.x rejects `comment = "..."`; the bare
       // string maps to `comment`, not `doc`).
@@ -35,6 +52,15 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         layer_->meta().comment_set = true;
         continue;
       }
+      // pxr accepts a list-op qualifier on UNREGISTERED layer metadata
+      // (`append foo = [1, 2]`) and keeps it as a list-op field; registered
+      // keys reject it.
+      const char* qualifier = nullptr;
+      if (Match(TokenType::Prepend)) qualifier = "prepend";
+      else if (Match(TokenType::Append)) qualifier = "append";
+      else if (Match(TokenType::Add)) qualifier = "add";
+      else if (Match(TokenType::Delete)) qualifier = "delete";
+      else if (Match(TokenType::Reorder)) qualifier = "reorder";
       std::string key;
       if (!lexer_->expect(TokenType::Identifier, key)) {
         AddError("Expected metadata key");
@@ -44,6 +70,24 @@ bool AsciiParser::Impl::ParseStageMetadata() {
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after metadata key");
         return false;
+      }
+      if (qualifier) {
+        static const char* const kRegistered[] = {
+            "defaultPrim", "upAxis", "metersPerUnit", "timeCodesPerSecond",
+            "startTimeCode", "endTimeCode", "framesPerSecond",
+            "kilogramsPerUnit", "relocates", "colorConfiguration",
+            "colorManagementSystem", "renderSettingsPrimPath", "doc",
+            "documentation", "comment", "hasOwnedSubLayers", "owner",
+            "autoPlay", "playbackMode", "customLayerData",
+            "expressionVariables", "subLayers"};
+        for (const char* r : kRegistered) {
+          if (key == r) {
+            AddError(std::string("List-op qualifier '") + qualifier +
+                     "' is not valid for layer metadata " + key);
+            return false;
+          }
+        }
+        if (!CheckQualifiedEmptyList(key.c_str())) return false;
       }
 
       // Parse value based on known metadata keys
@@ -104,7 +148,14 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             if (!lexer_->expect(TokenType::PathRef, src)) break;
             if (!Match(TokenType::Colon)) break;
             if (!lexer_->expect(TokenType::PathRef, dst)) break;
-            layer_->meta().relocates.emplace_back(src, dst);
+            if (src.find('{') != std::string::npos || dst.find('{') != std::string::npos) {
+              AddError("Relocates paths cannot contain variant selections");
+              return false;
+            }
+            std::string absolute_source, absolute_target;
+            if (!ResolveRelocatePath(src, "/", &absolute_source) ||
+                !ResolveRelocatePath(dst, "/", &absolute_target)) return false;
+            layer_->meta().relocates.emplace_back(std::move(absolute_source), std::move(absolute_target));
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBrace);
@@ -153,14 +204,34 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().owner = value;
           layer_->meta().owner_set = true;
         }
+      } else if (key == "autoPlay") {
+        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
+        if (r.success && r.value.as_bool()) {
+          layer_->meta().autoPlay = *r.value.as_bool();
+          layer_->meta().autoPlay_set = true;
+        }
+      } else if (key == "playbackMode") {
+        std::string value;
+        if (lexer_->expect(TokenType::String, value)) {
+          layer_->meta().playbackMode = value == "loop" ? "loop" : "none";
+          layer_->meta().playbackMode_set = true;
+        }
       } else if (key == "customLayerData") {
         ParseResult r = ParseDict(*lexer_);
+        if (!r.success) {
+          AddError(r.error);
+          return false;
+        }
         if (r.success) {
           layer_->meta().customLayerData = std::move(r.value);
           layer_->meta().customLayerData_set = true;
         }
       } else if (key == "expressionVariables") {
         ParseResult r = ParseDict(*lexer_);
+        if (!r.success) {
+          AddError(r.error);
+          return false;
+        }
         if (r.success) {
           layer_->meta().expressionVariables = std::move(r.value);
           layer_->meta().expressionVariables_set = true;
@@ -223,10 +294,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           Match(TokenType::CloseBracket);
         }
       } else {
-        if (options_.strict_aousd_conformance) {
-          AddError("Unsupported stage metadata in strict AOUSD mode: " + key);
-          return false;
-        }
+        // AOUSD Core's layer grammar accepts any metadata key (the spec's own
+        // file_formats baseline keeps `foo = bar` / `baz = None`, and elective
+        // fields such as framePrecision). Strict mode therefore preserves
+        // unknown stage metadata losslessly, like prim/property metadata.
         // Generic metadata may be a dictionary/list: consume it structurally
         // but PRESERVE the raw source text so the writer re-emits it verbatim
         // (uniform losslessness with prim/property metadata).
@@ -243,8 +314,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             vend--;
           }
           if (vend > vstart) {
-            layer_->meta().unknownMeta.emplace_back(
-                key, std::string(base + vstart, vend - vstart));
+            const std::string name =
+                qualifier ? std::string(qualifier) + " " + key : key;
+            StoreRawMetadataOpinion(&layer_->meta().unknownMeta, name,
+                                    std::string(base + vstart, vend - vstart));
           }
         }
         AddWarning("Unknown stage metadata (preserved): " + key);

@@ -1,0 +1,18 @@
+#usda 1.0
+ def Xform "Root" (
+  variants = { string view = "default" }
+  prepend variantSets = "view"
+ ) {
+  def Xform "Body" ( prepend inherits = </Class> ) {}
+  variantSet "view" = {
+   "default" {
+ over "Body" ( variants = { string view = "default" } ) {
+ float strength = 1
+ }
+ }
+   "preview" {}
+  }
+ }
+
+class Xform "Class" (prepend references = @geometry.usda@</Asset>
+ variants = {string view = "preview"}) {}

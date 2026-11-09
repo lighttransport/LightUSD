@@ -7,6 +7,7 @@
 
 #include "unit-timesamples.h"
 #include "core/prim.hh"
+#include "../../src/timesamples.hh"
 #include "core/attribute.hh"
 #include "core/animatable.hh"
 #include "math-util.inc"
@@ -1354,4 +1355,46 @@ void timesamples_test(void) {
       for (double t : times) { check(ts, t, Held, value::token{}); check(ts, t, Linear, value::token{}); }
     }
   }
+}
+
+void timesamples_variable_array_inmemory_test(void) {
+  // Variable per-sample counts in binary storage.
+  value::TimeSamples ts;
+  std::vector<float> a = {1.0f, 2.0f, 3.0f};
+  std::vector<float> b = {4.0f};
+  std::vector<float> c = {};  // empty (will be blocked via array-blocked)
+  ts.add_array_sample<float>(2.0, a.data(), a.size());
+  ts.add_array_sample<float>(0.0, b.data(), b.size());  // out of order
+  ts.add_array_blocked_sample<float>(1.0);
+  ts.add_array_sample<float>(3.0, nullptr, 0);  // empty non-blocked
+
+  // Out-of-order insertion must sort without error.
+  ts.update();
+  TEST_CHECK(!ts.has_error());
+  TEST_CHECK(ts.size() == 4);
+
+  // Counts aligned with sorted times.
+  TEST_CHECK(ts.get_array_count(0) == 1);  // t=0 -> b (size1)
+  TEST_CHECK(ts.get_array_count(1) == 0);  // t=1 -> blocked
+  TEST_CHECK(ts.get_array_count(2) == 3);  // t=2 -> a
+  TEST_CHECK(ts.get_array_count(3) == 0);  // t=3 -> empty non-blocked
+
+  // Blocked flag.
+  value::TimeSamples::Sample s;
+  TEST_CHECK(ts.get_sample_at(1, &s) && s.blocked);
+
+  // duplicate_sample propagates count.
+  TEST_CHECK(ts.duplicate_sample(2, 2.5));
+  ts.update();
+  // find index for 2.5
+  size_t idx = (size_t)-1;
+  for (size_t i = 0; i < ts.size(); ++i) {
+    auto t = ts.get_time(i);
+    if (t && *t == 2.5) { idx = i; break; }
+  }
+  TEST_CHECK(idx != (size_t)-1);
+  if (idx != (size_t)-1) TEST_CHECK(ts.get_array_count(idx) == 3);
+
+  // has_error stays false.
+  TEST_CHECK(!ts.has_error());
 }

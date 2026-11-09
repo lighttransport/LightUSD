@@ -1,3 +1,4 @@
+#include "escape-string.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
@@ -8,6 +9,7 @@
 // string-backed StreamWriter, so this whole printer is libc-stdio-free.
 
 #include "prim-printer.hh"
+#include "../layer/layer.hh"
 #include "usda-format-utils.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"
@@ -34,34 +36,6 @@ const char* GetSpecifierString(PrimSpecifier spec) {
 }
 
 // Escape a string for USDA output (duplicated from usda-writer.cc — debug-only).
-std::string EscapeString(const std::string& s) {
-  std::string result;
-  result.reserve(s.size() + 2);
-  result += '"';
-  for (char c : s) {
-    switch (c) {
-      case '"':  result += "\\\""; break;
-      case '\\': result += "\\\\"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default: {
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (uc < 0x20 || uc == 0x7f) {
-          static const char* hexd = "0123456789abcdef";
-          result += "\\x";
-          result += hexd[uc >> 4];
-          result += hexd[uc & 0xf];
-        } else {
-          result += c;
-        }
-        break;
-      }
-    }
-  }
-  result += '"';
-  return result;
-}
 
 // ostream's default float formatting is "%.6g" (6 significant digits); match it
 // with the freestanding formatter so the debug output is unchanged.
@@ -174,7 +148,7 @@ void PrintRelationships(StreamWriter& os, const PrimSpec& spec,
 }
 
 // Print metadata block
-void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
+void PrintMetadata(StreamWriter& os, const PrimMetadata& meta, int depth,
                    const PrimPrintOptions& opts) {
   bool has_meta = false;
 
@@ -207,14 +181,14 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
   }
   if (!meta.doc().empty()) {
     PrintIndent(os, item_depth, opts.indent);
-    os << "doc = " << EscapeString(meta.doc()) << "\n";
+    os << "doc = " << EscapeUSDAString(meta.doc()) << "\n";
   }
   if (!meta.apiSchemas().empty()) {
     PrintIndent(os, item_depth, opts.indent);
     os << "apiSchemas = [";
     for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
       if (i > 0) os << ", ";
-      os << EscapeString(meta.apiSchemas()[i]);
+      os << EscapeUSDAString(meta.apiSchemas()[i]);
     }
     os << "]\n";
   }
@@ -388,7 +362,7 @@ void PrintLayerMeta(StreamWriter& os, const LayerMeta& meta, const PrimPrintOpti
   }
   if (!meta.doc.empty()) {
     if (!first) os << "\n";
-    os << opts.indent << "doc = " << EscapeString(meta.doc);
+    os << opts.indent << "doc = " << EscapeUSDAString(meta.doc);
     first = false;
   }
   if (!meta.subLayers.empty()) {

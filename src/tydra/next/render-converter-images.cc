@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "next/layer/asset-anchor.hh"
 #include "next/resolver/asset-resolver.hh"
 #include <cstdint>
+#include <filesystem>
 #include <string>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
@@ -21,7 +23,7 @@ uint64_t ImageCacheHash(const std::string& resolved,
 }
 }  // namespace
 
-std::string RenderSceneConverter::ResolveAssetPath(const std::string& file,
+std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file,
                                                    uint32_t asset_anchor_id) const {
   if (file.empty() || file[0] == '/' ||
       file.find("://") != std::string::npos) {
@@ -40,24 +42,74 @@ std::string RenderSceneConverter::ResolveAssetPath(const std::string& file,
 
   // A configured AssetResolver owns resolution (anchor/search paths + suffix
   // fallback). Anchor it at the AUTHORING layer's directory, same as above.
-  if (config_.asset_resolver) {
-    ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
-        file, base.empty() ? std::string() : base + "/");
-    if (resolved.exists && !resolved.resolved_path.empty()) {
+  auto resolve_against = [&](const std::string& dir,
+                             bool* exists) -> std::string {
+    if (config_.asset_resolver) {
+      ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
+          file, dir.empty() ? std::string()
+                            : (::lightusd::next::AssetResolver::IsPackagePath(dir)
+                                   ? dir : dir + "/"));
+      if (exists) *exists = resolved.exists && !resolved.resolved_path.empty();
       return resolved.resolved_path;
+    }
+    if (exists) {
+      const std::string candidate = ::lightusd::next::AssetResolver::NormalizePath(
+          ::lightusd::next::AssetResolver::JoinPath(dir, file));
+      // No implicit filesystem probes during an in-memory conversion.
+      *exists = false;
+      return candidate;
+    }
+    return ::lightusd::next::AssetResolver::NormalizePath(
+        ::lightusd::next::AssetResolver::JoinPath(dir, file));
+  };
+
+  // The prim's spec anchor is the best first guess, but a flattened prim merges
+  // opinions from several layers and the surviving spec may be the referenced
+  // one. When the anchored candidate does not exist, the root/scene directory
+  // that authored the value is the next candidate. Both Island (authoring layer
+  // is a look-scope element layer) and root-layer overlays need this.
+  const std::string& fallback = config_.asset_base_dir;
+
+  if (!base.empty() && !::lightusd::next::AssetResolver::IsPackagePath(base)) {
+    bool anchored_exists = false;
+    const std::string anchored = resolve_against(base, &anchored_exists);
+    if (anchored_exists) return anchored;
+    if (!fallback.empty() && fallback != base &&
+        !::lightusd::next::AssetResolver::IsPackagePath(fallback)) {
+      bool fallback_exists = false;
+      const std::string candidate = resolve_against(fallback, &fallback_exists);
+      if (fallback_exists) return candidate;
+    }
+    // Nothing found: keep the anchored location (pre-fallback behaviour), never
+    // a bare relative path that would be looked up against the process CWD.
+    return ::lightusd::next::AssetResolver::NormalizePath(
+        ::lightusd::next::AssetResolver::JoinPath(base, file));
+  }
+  if (!anchor.empty() && ::lightusd::next::AssetResolver::IsPackagePath(anchor)) {
+    return ::lightusd::next::ResolveAssetAnchorPath(file, asset_anchor_id);
+  }
+  if (base.empty()) {
+    // No anchor and no configured base directory: a resolver may still find
+    // the asset through its search paths.
+    if (config_.asset_resolver) {
+      bool exists = false;
+      const std::string candidate = resolve_against(std::string(), &exists);
+      if (exists) return candidate;
     }
     return file;
   }
-
-  if (base.empty()) return file;
-
+  if (config_.asset_resolver) {
+    bool exists = false;
+    const std::string candidate = resolve_against(base, &exists);
+    if (exists) return candidate;
+  }
   // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
-  // an un-collapsed path would also defeat the `resolved_path` image dedup below.
+  // an un-collapsed path would also defeat the `resolved_path` image dedup.
   return ::lightusd::next::AssetResolver::NormalizePath(
       ::lightusd::next::AssetResolver::JoinPath(base, file));
 }
 
-uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
+uint32_t RenderSceneConverter::Impl::AssetAnchorOf(const UsdPrim& prim) {
   const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
   return spec ? spec->asset_anchor_id() : 0u;
 }
@@ -67,14 +119,14 @@ uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
 // long-path comparison per step (a 5000-image scene cost ~12.5M string
 // compares). image_id_by_key_ makes it O(1); FindImageId/RememberImageId are
 // the single place that maintains it.
-std::string RenderSceneConverter::ImageKey(const std::string& resolved_path,
+std::string RenderSceneConverter::Impl::ImageKey(const std::string& resolved_path,
                                            ColorSpace cs) {
   // '\x1f' = unit separator, never valid in a path.
   return resolved_path + '\x1f' +
          std::to_string(static_cast<int>(cs));
 }
 
-int32_t RenderSceneConverter::FindImageId(const RenderScene* scene,
+int32_t RenderSceneConverter::Impl::FindImageId(const RenderScene* scene,
                                           const std::string& resolved_path,
                                           ColorSpace cs) {
   if (!scene) return -1;
@@ -94,14 +146,14 @@ int32_t RenderSceneConverter::FindImageId(const RenderScene* scene,
 }
 
 
-void RenderSceneConverter::RememberImageId(const RenderScene* scene,
+void RenderSceneConverter::Impl::RememberImageId(const RenderScene* scene,
                                            const std::string& resolved_path,
                                            ColorSpace cs, int32_t id) {
   (void)scene;
   image_id_by_key_.emplace(ImageKey(resolved_path, cs), id);
 }
 
-int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
+int32_t RenderSceneConverter::Impl::ResolveImageId(RenderScene* scene,
                                              const std::string& file,
                                              ColorSpace color_space,
                                              uint32_t asset_anchor_id) {
@@ -114,6 +166,7 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   TextureImage image;
   image.name = file;
   image.resolved_path = resolved;
+  image.asset_identifier = file;
   image.color_space = csp;
   const int32_t id = static_cast<int32_t>(scene->images.size());
   scene->images.push_back(std::move(image));
@@ -121,9 +174,9 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   return id;
 }
 
-thread_local bool RenderSceneConverter::tl_material_local_scope_ = false;
+thread_local bool RenderSceneConverter::Impl::tl_material_local_scope_ = false;
 
-int32_t RenderSceneConverter::FindCachedImageId(
+int32_t RenderSceneConverter::Impl::FindCachedImageId(
     RenderScene* scene, const std::string& resolved, ColorSpace color_space) {
   if (!scene) return -1;
   if (tl_material_local_scope_) {
@@ -165,7 +218,7 @@ int32_t RenderSceneConverter::FindCachedImageId(
   return -1;
 }
 
-void RenderSceneConverter::RememberImageId(RenderScene* scene,
+void RenderSceneConverter::Impl::RememberImageId(RenderScene* scene,
                                            const std::string& resolved,
                                            ColorSpace color_space,
                                            int32_t id) {
@@ -178,7 +231,7 @@ void RenderSceneConverter::RememberImageId(RenderScene* scene,
   image_id_cache_.emplace(ImageCacheHash(resolved, color_space), id);
 }
 
-void RenderSceneConverter::ResetImageIdCache() {
+void RenderSceneConverter::Impl::ResetImageIdCache() {
   image_id_cache_.clear();
   image_cache_scene_ = nullptr;
 }

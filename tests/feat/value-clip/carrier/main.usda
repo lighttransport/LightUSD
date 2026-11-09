@@ -1,0 +1,41 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 0
+    endTimeCode = 1
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World" (
+    clips = {
+        dictionary default = {
+            double2[] active = [(0, 0), (1, 1)]
+            asset[] assetPaths = [@clip_wide.usda@, @clip_tall.usda@]
+            string primPath = "/World"
+            double2[] times = [(0, 0), (1, 1)]
+        }
+    }
+)
+{
+    def Mesh "Quad"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points
+        color3f[] primvars:displayColor = [(0.8, 0.8, 0.8)]
+    }
+
+    def BasisCurves "Curve"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [2]
+        point3f[] points
+        float[] widths = [0.03] (
+            interpolation = "constant"
+        )
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+}

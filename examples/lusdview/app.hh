@@ -3,15 +3,15 @@
 // main loop.
 #pragma once
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
-#include <future>
 #include <functional>
+#include <future>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -23,25 +23,32 @@
 #include <unordered_set>
 #include <vector>
 
-#include "frame_packet.hh"
+#include "../vchar/autorigger_client.hh"
 
-#include "camera_nav.hh"
+#include "viewer_document.hh"
+#include "lightusd-render-cpp.hh"
+
+#include "light3d/camera-nav.hh"
 #include "cpu/cpu_raytracer.hh"
 #include "cuda/cuda_raytracer.hh"
+#include "frame_packet.hh"
 #include "gpu_scene.hh"
-#include "hip/hip_raytracer.hh"
-#include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "gui.hh"
+#include "hip/hip_raytracer.hh"
+#include "lightusd-render-cpp.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
-#include "ptex_atlas.hh"
 #include "prototype_lod.hh"
+#include "ptex_atlas.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
-#include "tydra/rb-dynamics.hh"
+#include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
-#include "../vchar/autorigger_client.hh"
+#include "tydra/next/scene-preview-compute.hh"
+#include "tydra/next/scene-preview.hh"
+#include "tydra/rb-dynamics.hh"
+#include "viewer_document.hh"
 #if defined(LUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
@@ -51,9 +58,16 @@
 
 struct GLFWwindow;
 
-namespace lightusd { namespace next { class Stage; class StageSession; } }
-
+namespace lightusd { namespace next { class Stage; } }
 namespace lusdview {
+
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
+class ViewerDocument;
 
 // Encode an RGBA8 (top-down) buffer to an image file; format chosen by extension
 // (.png/.ppm). Defined in app.cc. Declared here so the MCP screenshot tool can
@@ -67,8 +81,12 @@ class App
 #endif
 {
  public:
-  explicit App(Backend backend) : backend_(backend) {}
-  ~App() override;
+  explicit App(Backend backend);
+  ~App()
+#if defined(LUSDVIEW_HAVE_MCP)
+      override
+#endif
+      ;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
   void setLoadBudget(std::size_t maxTris, double convertTimeBudgetSec) {
@@ -106,6 +124,15 @@ class App
     rasterLodEnabled_ = enabled;
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+  void setScenePreviewLods(const lightusd::tydra::next::ScenePreviewLods& lods,
+                           double pixelError) {
+    previewLods_ = lods;
+    previewLodPixelError_ = pixelError;
+  }
+  void setScenePreviewRequest(
+      const lightusd::tydra::next::ScenePreviewRequest& request) {
+    previewRequest_ = request;
   }
   void setDynamicPrototypeLod(bool enabled) {
     dynamicPrototypeLodEnabled_ = enabled;
@@ -263,11 +290,13 @@ class App
   void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
-  // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
+  // of auto-fitting the whole scene. Essential for vast scenes (e.g. Scene C).
   void setCameraName(const std::string& n) {
     cameraName_ = n;
     loadOpts_.viewCamera = n;
   }
+  void setStereoRequested(bool on) { stereoRequested_ = on; }
+  void setRasterMotionEnabled(bool on) { rasterMotionEnabled_ = on; }
   void setCameraConform(CameraConform conform) { camera_.setConform(conform); }
   void setViewDirection(float x, float y, float z) {
     viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
@@ -292,6 +321,7 @@ class App
     modeSweepPattern_ = pattern;
   }
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
+  void setWireframeXray(bool on) { gui_.setWireXray(on); }
   void setBlendWeight(const std::string& name, float w) {
     gui_.setBlendWeight(name, w);
   }
@@ -344,8 +374,11 @@ class App
   nlohmann::json mcpInput(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpMouse(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpPick(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSelect(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpReloadLayer(const nlohmann::json& a,
+                                std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpRenderSettings(const nlohmann::json& a,
@@ -403,7 +436,11 @@ class App
   // on-demand load). `addPrimPaths` are deferred-payload prim paths to load on
   // top of those already loaded. No-op if the scene wasn't composed.
   void startRecomposeAsync(const std::set<std::string>& addPrimPaths);
+  void startLayerReloadAsync(const std::string& resolvedLayerId);
   void finishLoadIfReady();
+  bool tryApplyNextSceneUpdate(
+      DrawScene* next, const ViewerChanges& changes);
+  void prepareNextRenderTransaction(const DrawScene& next);
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
@@ -559,12 +596,20 @@ class App
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
-  // Persistent next document: owns the composed stage, resolver, and PCP cache.
-  std::shared_ptr<lightusd::next::StageSession> nextSession_;
-  std::shared_ptr<lightusd::next::StageSession> pendingNextSession_;
+  // Persistent public-C document owner, with temporary native query views.
+  std::shared_ptr<ViewerDocument> nextSession_;
+  std::shared_ptr<ViewerDocument> pendingNextSession_;
+  ViewerChanges pendingNextChanges_;
+  std::shared_ptr<lightusd::api::RenderSession> nextRenderSession_;
+  std::shared_ptr<lightusd::api::RenderSession>
+      pendingNextRenderSession_;
+  std::unique_ptr<lightusd::api::PreparedRenderUpdate>
+      pendingNextRenderUpdate_;
+  bool pendingNextRenderBootstrap_{false};
   // Immutable published stage used by the render/UI thread while a shared
-  // StageSession recomposes on the loader thread.
-  std::shared_ptr<const lightusd::next::Stage> nextStageSnapshot_;
+  // document recomposes on the loader thread.
+  lightusd::api::Stage nextStageSnapshot_;
+  uint64_t nextStageRevision_{0};
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -606,6 +651,10 @@ class App
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
+  bool stereoRequested_{false};  // --stereo: resolve a left/right authored pair
+  bool rasterMotionEnabled_{true};  // native raster shutter accumulation
+  bool stereoLiveComposed_{false};
+  bool stereoCaptureComposed_{false};  // native side-by-side viewport capture
   bool viewDirExplicit_{false};
   float viewDir_[3]{0.0f, 0.0f, -1.0f};  // normalized eye-to-target direction
   std::filesystem::path configPath_;        // where to persist recent scenes
@@ -637,15 +686,37 @@ class App
   bool rasterLodEnabled_{false};       // --raster-lod (optimization B)
   // Screen size at/above which an instance keeps its real geometry; below it (down
   // to rasterLodCullPx_) it is drawn as a box proxy. This was 48px, which proxied
-  // clearly-visible geometry: on Moana island isDunesB the vegetation turned into
+  // clearly-visible geometry: on a large scene subtree the vegetation turned into
   // white boxes. The quality cliff sits between 16 and 48 -- 4, 8 and 16 all render
   // that scene identically (21445786 tris, 6.4ms vs 1154ms unculled) while 48 drops
   // to 5655 proxies and visible blocks. 8 keeps a wide margin below the cliff; use
-  // --raster-lod-full-px 4 for quality-critical work (isCoral is baseline-identical
+  // --raster-lod-full-px 4 for quality-critical work (prototype subtree is baseline-identical
   // at 4, marginally blockier at 8).
   float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
   bool dynamicPrototypeLodEnabled_{false};
+  void stepScenePreviewLods();
+  bool renderScenePreviewVolume(std::vector<uint8_t>*, int*, int*,
+                                std::string*, bool advance = true);
+  std::unique_ptr<lightusd::tydra::next::PreviewVolumeRenderer>
+      previewVolumeRenderer_;
+  std::string previewVolumeRoot_;
+  lightusd::tydra::next::ScenePreviewLods previewLods_;
+  double previewLodPixelError_ = 2;
+  lightusd::tydra::next::ScenePreviewRequest previewRequest_;
+  using PreviewRefinement = std::pair<lightusd::tydra::next::ScenePreviewResult,
+                                      lightusd::tydra::next::ScenePreviewLods>;
+  std::future<PreviewRefinement> previewRefinement_;
+  std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
+  bool previewRefinementTried_ = false;
+  bool previewLodReloadPending_ = false;
+  bool previewLodHaveCamera_ = false;
+  double previewLodLastFocalPixels_ = 0;
+  int previewLodLastWidth_ = 0, previewLodLastHeight_ = 0;
+  uint64_t previewLodUpdates_ = 0;
+  light3d::Vec3 previewLodLastEye_{0, 0, 0}, previewLodLastForward_{0, 0, -1};
+  std::chrono::steady_clock::time_point previewLodStillSince_{};
+
   struct PendingPrototypeLod {
     std::future<PrototypeLodBuildResult> future;
   };
@@ -664,7 +735,7 @@ class App
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   // True when a headless --cuda/--hip run owns the screenshot: the rasterized
   // upload + per-frame draw are then skipped (the RT path writes the image, the
-  // raster capture is never used) -- a big win on huge scenes (Moana Island).
+  // raster capture is never used) -- a big win on huge scenes (Island).
   bool rtOwnsScreenshot_{false};
   // True for a windowed --hip run: the HIP tracer drives the viewport per frame
   // (build once, retrace on the orbit camera, upload into the offscreen color via
@@ -716,9 +787,13 @@ class App
     uint32_t maxSubsurfaceEvents{0};
     uint32_t maxVolumeEvents{0};
     uint32_t motionSegments{0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
     uint32_t seed{0};
     uint64_t kernelGeneration{0};
     uint32_t samples{0};
+    uint64_t shutterSegmentMask{0};
+    uint64_t sceneShutterSegmentMask{0};
     uint64_t generation{0};
     bool valid{false};
     std::vector<uint8_t> lastRgba;
@@ -726,7 +801,19 @@ class App
       samples = 0;
       valid = false;
       lastRgba.clear();
+      shutterSegmentMask = 0;
+      sceneShutterSegmentMask = 0;
       ++generation;
+    }
+    void noteSceneShutterSegment(uint32_t sample, uint32_t segments,
+                                 const RtCameraShutter& shutter) {
+      if (!shutter.enabled() || segments == 0) return;
+      sceneShutterSegmentMask |= uint64_t{1} << ((sample % segments) % 64u);
+    }
+    void noteShutterSegment(uint32_t sample, uint32_t segments,
+                            const RtCameraShutter& shutter) {
+      if (!shutter.enabled() || segments == 0) return;
+      shutterSegmentMask |= uint64_t{1} << ((sample % segments) % 64u);
     }
   };
   struct ExternalTraceResult {
@@ -743,6 +830,51 @@ class App
   };
   ExternalPathAccumulation cudaPathAccum_;
   ExternalPathAccumulation hipPathAccum_;
+  struct RasterMotionAccumulation {
+    std::array<float, 16> baseViewProj{};
+    std::vector<float> linearSum;
+    std::vector<uint8_t> lastRgba;
+    double baseTime{0.0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
+    uint64_t sceneGeneration{0};
+    uint32_t segmentCount{0};
+    uint32_t nextSegment{0};
+    uint64_t sampledMask{0};
+    int width{0};
+    int height{0};
+    bool valid{false};
+    void reset() {
+      linearSum.clear();
+      lastRgba.clear();
+      nextSegment = 0;
+      sampledMask = 0;
+      valid = false;
+    }
+  } rasterMotionAccum_;
+  struct VulkanRtMotionAccumulation {
+    std::array<float, 16> baseViewProj{};
+    RtCameraLens baseLens;
+    double baseTime{0.0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
+    uint64_t sceneGeneration{0};
+    uint32_t segmentCount{0};
+    uint32_t nextSegment{0};
+    uint64_t sampledMask{0};
+    uint32_t pathMaxDepth{0};
+    uint32_t pathRouletteDepth{0};
+    uint32_t pathSeed{0};
+    int width{0};
+    int height{0};
+    bool pathEnabled{false};
+    bool valid{false};
+    void reset() {
+      nextSegment = 0;
+      sampledMask = 0;
+      valid = false;
+    }
+  } vulkanRtMotionAccum_;
   std::future<ExternalTraceResult> cudaTraceFuture_;
   std::future<ExternalTraceResult> hipTraceFuture_;
   // Lazy, cached CUDA/HIP device-availability probe: init() compiles NVRTC/
@@ -829,6 +961,7 @@ class App
   float lensFStopOverride_{0.0f};
   float lensFocusOverride_{0.0f};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
   bool vulkanAvailable_{false};
   bool vulkanRtAvailable_{false};
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
@@ -1067,6 +1200,17 @@ class App
   std::uint64_t sceneGen_{0};
 #if defined(LUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
+  double mcpCpuFrameSeconds_{0.0};
+  double mcpRenderedTime_{0.0};
+  uint64_t mcpFrameSerial_{0};
+  nlohmann::json mcpRenderedCamera_;
+  std::string mcpCompareWindowPath_;
+  nlohmann::json mcpCompareWindowResult_;
+  std::string mcpBarrierRequest_;
+  nlohmann::json mcpBarrierSubmitting_;
+  nlohmann::json mcpBarrier_;
+  std::vector<uint8_t> mcpBarrierPixels_;
+  int mcpBarrierWidth_{0}, mcpBarrierHeight_{0};
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.

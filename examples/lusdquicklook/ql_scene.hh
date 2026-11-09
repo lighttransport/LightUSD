@@ -114,7 +114,7 @@ struct QlMesh {
 
   size_t vertex_count() const { return positions.size() / 3; }
   size_t triangle_count() const { return indices.size() / 3; }
-  size_t byte_size() const;
+  uint64_t byte_size() const;
 };
 
 struct QlLight {

@@ -5,8 +5,11 @@ import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 export async function resolve(specifier, context, nextResolve) {
-  const override = process.env.LIGHTUSD_NEXT_MODULE;
-  if (override && /(?:^|\/)lightusd_next(?:_64)?\.js$/.test(specifier)) {
+  const override = /(?:^|\/)lightusd_next(?:_64)?\.js$/.test(specifier)
+    ? process.env.LIGHTUSD_NEXT_MODULE
+    : /(?:^|\/)lightusd_combined(?:_64)?\.js$/.test(specifier)
+      ? process.env.LIGHTUSD_COMBINED_MODULE : undefined;
+  if (override) {
     return {url: 'lightusd-next-override:' + encodeURIComponent(
       pathToFileURL(path.resolve(override)).href), shortCircuit: true};
   }
@@ -20,9 +23,12 @@ export async function load(url, context, nextLoad) {
   // Tests and loaders may supply locateFile or wasmBinary pointing at the
   // application build. Keep the overridden JS and WASM an inseparable pair.
   const source = `import factory from ${JSON.stringify(target + '?actual-next-module')};
-    import fs from 'node:fs';
     export default function(options = {}) {
-      return factory({...options, wasmBinary: fs.readFileSync(new URL(${JSON.stringify(wasm)}))});
+      const {wasmBinary: ignoredBinary, locateFile: callerLocate, ...rest} = options;
+      return factory({...rest, locateFile(name, prefix) {
+        if (name.endsWith('.wasm')) return ${JSON.stringify(wasm)};
+        return callerLocate ? callerLocate(name, prefix) : prefix + name;
+      }});
     }`;
   return {format: 'module', source, shortCircuit: true};
 }

@@ -2,12 +2,12 @@
 # Flattened-USDA roundtrip throughput benchmark.
 #
 # For each scene: flatten -> write a big .usda to $TMPDIR (write MB/s), then
-# re-parse it with `next_usdcat -l` (read MB/s). Verifies the flatten output
+# re-parse it with `lusdcat -l` (read MB/s). Verifies the flatten output
 # sha256 (byte-identity oracle) and, with --roundtrip, that re-flattening the
 # flat file reproduces it byte-for-byte.
 #
 # Usage:
-#   tests/next/bench_roundtrip_usda.sh [--bin <next_usdcat>] [--tmp <dir>]
+#   tests/next/bench_roundtrip_usda.sh [--bin <lusdcat>] [--tmp <dir>]
 #                                      [--threads N] [--use-o] [--roundtrip]
 #                                      [--keep] [scene ...]
 #
@@ -15,7 +15,7 @@
 # scene names. Paths/expected-shas are in the table below.
 set -u
 
-BIN="${BIN:-build_next_thr/next_usdcat}"
+BIN="${BIN:-build_next_thr/lusdcat}"
 TMP="${TMP:-${TMPDIR:-/tmp}/lightusd-next-bench}"
 THREADS=""          # empty = auto
 USE_O=0             # 1 = use `-o <file>` (FdSink) instead of stdout redirect

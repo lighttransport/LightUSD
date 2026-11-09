@@ -11,18 +11,24 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
+#include "next/pcp/batched-compose.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 
@@ -40,6 +46,401 @@ static int g_pcp_check_failures = 0;
       ++g_pcp_check_failures;                                             \
     }                                                                     \
   } while (0)
+
+static const std::string& PcpScratchDirectory() {
+  static const std::string directory = [] {
+    char pattern[] = "/tmp/lightusd-next-pcp-suite-XXXXXX";
+    char* created = ::mkdtemp(pattern);
+    return created ? std::string(created) : std::string("/tmp");
+  }();
+  return directory;
+}
+
+static std::string PcpScratchPath(const char* name) {
+  return PcpScratchDirectory() + "/" + name;
+}
+
+static void test_source_snapshot_replay() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  AssetResolver resolver;
+  const std::string id = "/virtual/snapshot-source";  // Opaque callback identifier.
+  resolver.SetCustomResolver([&](const std::string&, const std::string&) { return id; });
+  std::atomic<int> reads{0};
+  resolver.SetAssetReader([&](const std::string&, std::vector<uint8_t>* bytes,
+                              std::string*) {
+    const int n = ++reads;
+    const std::string text = n == 1 ? "#usda 1.0\ndef Xform \"Original\" {}\n"
+                                    : "#usda 1.0\ndef Xform \"Changed\" {}\n";
+    bytes->assign(text.begin(), text.end());
+    return true;
+  });
+  pcp::LayerRegistry registry;
+  std::string warn, err;
+  PCP_CHECK(registry.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto first = registry.GetOrLoad(resolver, "source.usda", "", &warn, &err);
+  PCP_CHECK(first && first->prim_at_path("/Original"), err);
+  if (!first) return;
+  PCP_CHECK(AssetAnchorPath(first->prim_at_path("/Original")->asset_anchor_id()) ==
+            "/virtual", "snapshot must preserve the original asset anchor");
+  PCP_CHECK(registry.GetOrLoad(resolver, "source-alias.usda", "", &warn, &err) == first,
+            "warm aliases should share the original parsed source");
+  resolver.SetCustomResolver([](const std::string&, const std::string&) {
+    return "/virtual/replaced.usda";
+  });
+  std::weak_ptr<Layer> released = first;
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "snapshot layer should evict");
+  first.reset();
+  PCP_CHECK(released.expired(), "snapshot must not retain parsed metadata");
+  pcp::LayerLoadOptions changed_options;
+  changed_options.max_memory = 4;
+  auto replay = registry.GetOrLoad(resolver, "source.usda", "", &warn, &err,
+                                    changed_options);
+  PCP_CHECK(replay && replay->prim_at_path("/Original"), err);
+  PCP_CHECK(reads == 1 && registry.parse_count() == 2,
+            "evicted layer must reparse the original bytes without rereading");
+  PCP_CHECK(registry.GetOrLoad(resolver, "source-alias.usda", "", &warn, &err) == replay &&
+            reads == 1, "warm alias binding must survive source eviction");
+  PCP_CHECK(registry.snapshot_identifiers() == std::vector<std::string>{id},
+            "evicted sources remain in dependency manifests");
+  if (!replay) return;
+  replay->meta().imported_assets = std::make_shared<ImportedAssets>();
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 0, "foreign dependency owner stays pinned");
+  replay->meta().imported_assets.reset();
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "plain USD owner can evict again");
+  registry.Preload(id, replay);
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 0, "preloads have no replay contract");
+  PCP_CHECK(registry.snapshot_identifiers().empty(), "preload replaces the source version");
+  resolver.SetCustomResolver([&](const std::string&, const std::string&) { return id; });
+
+  // A hard byte limit must fail before publishing any parsed layer/snapshot.
+  pcp::LayerRegistry limited;
+  err.clear();
+  PCP_CHECK(limited.EnableSourceSnapshots(PcpScratchDirectory(), 4, &err), err);
+  PCP_CHECK(!limited.GetOrLoad(resolver, "source.usda", "", &warn, &err),
+            "snapshot byte limit must reject input");
+  PCP_CHECK(limited.size() == 0 && limited.snapshot_identifiers().empty() &&
+            err.find("byte limit") != std::string::npos, "failed snapshot was published");
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  pcp::LayerRegistry concurrent;
+  reads = 0;
+  err.clear();
+  PCP_CHECK(concurrent.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  for (int round = 0; round != 2; ++round) {
+    std::vector<std::shared_ptr<Layer>> results(8);
+    std::vector<std::string> errors(8), warnings(8);
+    std::vector<std::thread> workers;
+    for (size_t i = 0; i < results.size(); ++i)
+      workers.emplace_back([&, i] {
+        results[i] = concurrent.GetOrLoad(resolver, "source.usda", "",
+                                          &warnings[i], &errors[i]);
+      });
+    for (auto& worker : workers) worker.join();
+    for (size_t i = 0; i < results.size(); ++i)
+      PCP_CHECK(results[i] && results[i] == results[0], errors[i]);
+    PCP_CHECK(reads == 1 && concurrent.parse_count() == static_cast<size_t>(round + 1),
+              "concurrent initial/replay loads must share one parse");
+    PCP_CHECK(concurrent.EvictSnapshottedLayers() == 1, "joined loads should evict");
+  }
+#endif
+
+  const std::string file = PcpScratchPath("snapshot-native.usda");
+  { std::ofstream out(file); out << "#usda 1.0\ndef Xform \"Before\" {}\n"; }
+  AssetResolver files;
+  pcp::LayerRegistry native;
+  err.clear();
+  PCP_CHECK(native.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto original = native.GetOrLoad(files, file, "", &warn, &err);
+  PCP_CHECK(original && original->prim_at_path("/Before"), err);
+  PCP_CHECK(native.EvictSnapshottedLayers() == 1, "native snapshot should evict");
+  std::remove(file.c_str());
+  auto deleted = native.GetOrLoad(files, file, "", &warn, &err);
+  PCP_CHECK(deleted && deleted->prim_at_path("/Before"),
+            "replay must survive removal of the original file: " + err);
+  const std::string wrong_extension = PcpScratchPath("snapshot-wrong.usdc");
+  { std::ofstream out(wrong_extension); out << "#usda 1.0\ndef Xform \"Text\" {}\n"; }
+  err.clear();
+  PCP_CHECK(!native.GetOrLoad(files, wrong_extension, "", &warn, &err),
+            "native snapshot dispatch must keep USDC extension checks");
+  std::remove(wrong_extension.c_str());
+  std::cout << "source snapshot replay/eviction/limits: PASSED\n";
+#endif
+}
+
+static void test_batched_source_snapshot_back_reference() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  const std::string root = PcpScratchPath("snapshot-batched-root.usda");
+  {
+    std::ofstream out(root);
+    out << "#usda 1.0\ndef Xform \"Root\" {\n"
+           "def Xform \"A\" (references = @shared.usda@</Shared>) {}\n"
+           "def Xform \"B\" (references = @shared.usda@</Shared>) {}\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetCustomResolver([](const std::string& name, const std::string&) {
+    return name == "shared.usda" ? "/virtual/shared.usda" : std::string();
+  });
+  int reads = 0;
+  resolver.SetAssetReader([&](const std::string& name, std::vector<uint8_t>* bytes,
+                              std::string*) {
+    if (name != "/virtual/shared.usda") return false;
+    ++reads;
+    const std::string text = reads == 1
+        ? "#usda 1.0\ndef Xform \"Shared\" { def Scope \"Original\" {} }\n"
+        : "#usda 1.0\ndef Xform \"Shared\" { def Scope \"Changed\" {} }\n";
+    bytes->assign(text.begin(), text.end());
+    return true;
+  });
+  pcp::CompositionOptions options;
+  options.num_threads = 1;
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 2;
+  batches.roots_per_batch = 1;
+  batches.target_batch_prims = 1;
+  batches.pipeline = false;
+  batches.source_snapshot_directory = PcpScratchDirectory();
+  pcp::BatchedComposer composer;
+  std::string warn, err;
+  PCP_CHECK(composer.Open(root, resolver, options, batches, &warn, &err), err);
+  PCP_CHECK(composer.Plan(&warn, &err), err);
+  PCP_CHECK(composer.batch_count() >= 2, "snapshot probe must span multiple batches");
+  bool a = false, b = false, changed = false;
+  PCP_CHECK(composer.Run([&](pcp::ComposedBatch& batch) {
+    a = a || batch.layer->prim_at_path("/Root/A/Original");
+    b = b || batch.layer->prim_at_path("/Root/B/Original");
+    changed = changed || batch.layer->prim_at_path("/Root/A/Changed") ||
+                         batch.layer->prim_at_path("/Root/B/Changed");
+    return true;
+  }, &warn, &err), err);
+  PCP_CHECK(a && b && !changed && reads == 1,
+            "later batches must back-reference the first source snapshot");
+  const auto ids = composer.source_identifiers();
+  PCP_CHECK(std::find(ids.begin(), ids.end(), "/virtual/shared.usda") != ids.end(),
+            "evicted source missing from final dependency manifest");
+  std::remove(root.c_str());
+#endif
+}
+
+static void test_source_snapshot_crate_and_package() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+  auto input = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"Root\" {\n"
+      "custom float[] weights = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]\n}\n");
+  PCP_CHECK(input.success, input.error_summary);
+  if (!input.success) return;
+  const std::string crate = PcpScratchPath("snapshot-array.usdc");
+  CrateWriteOptions options;
+  options.compress_arrays = false;
+  CrateWriter writer(options);
+  PCP_CHECK(writer.WriteToFile(crate.c_str(), input.stage).success, "write snapshot fixture");
+  AssetResolver resolver;
+  pcp::LayerRegistry registry;
+  std::string warn, err;
+  PCP_CHECK(registry.EnableSourceSnapshots(PcpScratchDirectory(), 1024 * 1024, &err), err);
+  auto layer = registry.GetOrLoad(resolver, crate, "", &warn, &err);
+  PCP_CHECK(layer && layer->prim_at_path("/Root"), err);
+  if (!layer || !layer->prim_at_path("/Root")) return;
+  const Value* source = layer->prim_at_path("/Root")->property_value("weights");
+  PCP_CHECK(source && source->is_lazy(), "fixture must retain mapped lazy array data");
+  if (!source) return;
+  Value retained = *source;
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "crate metadata should evict");
+  layer.reset();
+  auto replay = registry.GetOrLoad(resolver, crate, "", &warn, &err);
+  PCP_CHECK(replay && replay->prim_at_path("/Root"), err);
+  replay.reset();
+  registry.Clear();  // Unlinks the snapshot while retained still owns its mapping.
+  PCP_CHECK(retained.materialize(), "retained source must survive registry cleanup");
+  const auto values = retained.as_float_array();
+  PCP_CHECK(values.size() == 16 && values[7] == 7 && values[15] == 15,
+            "mapped source bytes changed after metadata eviction");
+
+  std::ifstream file(crate, std::ios::binary);
+  std::vector<uint8_t> usdc((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+  const std::string alternative = "#usda 1.0\ndef Scope \"Alternate\" {}\n";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["layers/alternate.usda"] = std::vector<uint8_t>(alternative.begin(), alternative.end());
+  std::vector<uint8_t> archive;
+  PCP_CHECK(WriteUSDZFromUSDCAndAssetsToMemory(
+      archive, usdc.data(), usdc.size(), assets).success, "write snapshot package");
+  const std::string package = PcpScratchPath("snapshot-package.usdz");
+  { std::ofstream out(package, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(archive.data()),
+               static_cast<std::streamsize>(archive.size())); }
+  const std::string id = package + "[layers/alternate.usda]";
+  auto selected = registry.GetOrLoad(resolver, id, "", &warn, &err);
+  PCP_CHECK(selected && selected->prim_at_path("/Alternate"), err);
+  PCP_CHECK(registry.EvictSnapshottedLayers() == 1, "package entry should evict");
+  std::remove(package.c_str());
+  selected = registry.GetOrLoad(resolver, id, "", &warn, &err);
+  PCP_CHECK(selected && selected->prim_at_path("/Alternate"),
+            "snapshot must preserve package entry selection after source removal: " + err);
+  std::remove(crate.c_str());
+#endif
+}
+
+static void test_batched_discovery_frontier_lower_bound() {
+  const std::string root = PcpScratchPath("frontier-root.usda");
+  const std::string model = PcpScratchPath("frontier-model.usda");
+  const std::string tail = PcpScratchPath("frontier-tail.usda");
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\ndef Xform \"World\" (references = "
+         "@frontier-model.usda@</Model>) {}\n";
+  }
+  {
+    std::ofstream f(model);
+    f << "#usda 1.0\ndef Xform \"Model\" {\n"
+         "def Scope \"A\" {\ndef Scope \"One\" {}\n"
+         "def Scope \"Two\" {}\n}\n"
+         "def Scope \"B\" (references = @frontier-tail.usda@</Tail>) {}\n"
+         "def Scope \"C\" {}\n}\n";
+  }
+  {
+    std::ofstream f(tail);
+    f << "#usda 1.0\ndef Scope \"Tail\" {\ndef Scope \"Shape\" {}\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(PcpScratchDirectory());
+  pcp::CompositionOptions options;
+  options.num_threads = 1;  // Observe demand loads without background prefetch.
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 3;
+  pcp::BatchedComposer composer;
+  std::string warn, err;
+  const bool opened = composer.Open(root, resolver, options, batches, &warn, &err);
+  PCP_CHECK(opened, err);
+  if (!opened) return;
+  PCP_CHECK(composer.frontier_size() == 3, "reject the entire overflowing level");
+  auto dependencies = composer.source_identifiers();
+  // A contributes two children; B and C contribute at least one each. The
+  // level cannot fit three roots, so discovery must not load B's reference.
+  PCP_CHECK(std::find(dependencies.begin(), dependencies.end(), tail) == dependencies.end(),
+            "do not load later roots after the frontier lower bound overflows");
+  Stage regular;
+  PCP_CHECK(pcp::ComposeStageFromFile(root, resolver, &regular, options, &warn, &err), err);
+  const std::string expected = WriteUSDAToString(regular);
+  for (size_t cap : {size_t(0), size_t(1), size_t(2), size_t(3), size_t(4),
+                     size_t(5), size_t(8), (std::numeric_limits<size_t>::max)()}) {
+    batches.max_frontier = cap;
+    batches.target_batch_prims = 1;
+    Stage batched;
+    const bool ok = pcp::ComposeStageBatched(root, resolver, &batched, options,
+                                            batches, &warn, &err);
+    PCP_CHECK(ok, err);
+    if (ok) PCP_CHECK(WriteUSDAToString(batched) == expected,
+                      "frontier rejection must preserve all composed children");
+  }
+}
+
+// Eight batches each cross a packed path-storage block and the parallel writer
+// threshold. The first batch is freed before the second and before PATHS is
+// encoded: prim and property paths must not borrow the released layer text.
+static void test_batched_writer_path_lifetime() {
+  const std::string root = PcpScratchPath("packed-path-root.usda");
+  const std::string model = PcpScratchPath("packed-path-model.usda");
+  const std::string output = PcpScratchPath("packed-path-output.usdc");
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\ndef Scope \"World\" {\n";
+    for (char name = 'A'; name <= 'H'; ++name)
+      f << "def Scope \"" << name
+        << "\" (references = @packed-path-model.usda@</Model>) {}\n";
+    f << "}\n";
+    PCP_CHECK(f.good(), "write packed-path root");
+  }
+  {
+    std::ofstream f(model);
+    f << "#usda 1.0\ndef Scope \"Model\" {\n"
+         "def Scope \"S\" { float value = 1 }\n";
+    for (int i = 0; i < 9000; ++i)
+      f << "def Scope \"Child_" << i << "_" << std::string(160, 'x')
+        << "\" {\nfloat value = 1\n"
+           "rel target = </Outside/Unwritten.outputs:surface>\n}\n";
+    f << "}\n";
+    PCP_CHECK(f.good(), "write packed-path model");
+  }
+  AssetResolver resolver;
+  pcp::CompositionOptions options;
+  options.num_threads = 4;
+  Stage regular;
+  std::string warn, err;
+  const bool composed = pcp::ComposeStageFromFile(root, resolver, &regular,
+                                                 options, &warn, &err);
+  PCP_CHECK(composed, err);
+  if (!composed) return;
+  CrateWriteOptions write;
+  write.num_threads = 1;
+  std::vector<uint8_t> expected;
+  PCP_CHECK(CrateWriter(write).WriteToMemory(expected, regular).success,
+            "encode regular reference");
+  pcp::BatchedComposeOptions batches;
+  batches.max_frontier = 8;
+  batches.roots_per_batch = 1;
+  for (int mode : {0, 1, 2}) {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__wasi__) || defined(LIGHTUSD_NEXT_NO_MMAP)
+    if (mode == 2) continue;
+#endif
+    const int threads = mode == 0 ? 1 : 4;
+    batches.overlap_plan_write = mode == 2;
+    write.spill_directory = PcpScratchDirectory();
+    write.num_threads = threads;
+    CrateWriteResult result;
+    const bool ok = pcp::FlattenToUSDCFileBatched(root, resolver, output, options,
+        batches, write, &result, &warn, &err);
+    PCP_CHECK(ok, err);
+    PCP_CHECK(result.success, result.error);
+    if (!ok || !result.success) continue;
+    std::ifstream f(output, std::ios::binary);
+    const std::vector<uint8_t> actual((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+    PCP_CHECK(actual == expected,
+              "released batches preserve prim/property/target paths exactly");
+  }
+  std::remove(output.c_str());
+  std::remove(root.c_str());
+  std::remove(model.c_str());
+}
+
+static void test_prepared_writer_late_instance_fields() {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__) && !defined(LIGHTUSD_NEXT_NO_MMAP)
+  for (int mode : {0, 1, 2}) {
+    const std::string text = "#usda 1.0\ndef Xform \"Root\" (customData = {string label = \"after\"}) {\n"
+        "token[] names = [\"Child\"]\ndef Scope \"Child\" " +
+        std::string(mode == 1 ? "(instanceable = false)" : "") +
+        " { float value = 3 }\n}\n";
+    auto parsed = LoadUSDAFromString(text);
+    PCP_CHECK(parsed.success, parsed.error_summary);
+    if (!parsed.success) continue;
+    Layer expected = parsed.stage.GetRootLayer()->Clone();
+    expected.prim_at_path_mutable("/Root")->meta().instanceable_authored = mode == 2;
+    auto input = parsed.stage.ReleaseRootLayer();
+    input->prim_at_path_mutable("/Root")->meta().instanceable = true;
+    input->prim_at_path_mutable("/Root")->meta().instanceable_authored = mode == 2;
+    CrateWriteOptions options;
+    options.spill_directory = PcpScratchDirectory();
+    CrateWriter writer(options);
+    std::vector<uint8_t> flags(input->prim_count(), 0);
+    PCP_CHECK(writer.PrepareBatch(*input, flags, flags, {}), "encode pending prototype field");
+    input.reset();
+    const std::string output = PcpScratchPath("prepared-late-instance.usdc");
+    const auto result = writer.WritePreparedFile(output.c_str(), {"/Root"});
+    PCP_CHECK(result.success, result.error);
+    PCP_CHECK(!writer.WritePreparedFile(output.c_str(), {}).success,
+              "committed scratch cannot be replayed again or truncate the final file");
+    std::ifstream file(output, std::ios::binary);
+    const std::vector<uint8_t> actual((std::istreambuf_iterator<char>(file)),
+                                     std::istreambuf_iterator<char>());
+    std::vector<uint8_t> reference;
+    PCP_CHECK(CrateWriter(options).WriteLayerToMemory(reference, expected).success,
+              "encode final prototype metadata reference");
+    PCP_CHECK(actual == reference,
+              "late field removal/boolean update preserves token first-use order and raw dedup");
+    std::remove(output.c_str());
+  }
+#endif
+}
 
 // Build an in-memory root layer:
 //   /World (Xform)
@@ -80,12 +481,12 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   // V has a variant set "vset" with selection "high".
   lb.begin_prim("V", "");
   {
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "vset";
-    VariantData hi;
+    PrimVariantData hi;
     hi.name = "high";
     hi.properties.push_back({"variantHigh", Value::MakeFloat3(9, 9, 9)});
-    VariantData lo;
+    PrimVariantData lo;
     lo.name = "low";
     lo.properties.push_back({"variantLow", Value::MakeFloat3(1, 1, 1)});
     vss.variants.push_back(std::move(hi));
@@ -106,9 +507,9 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     cb.finalize();
 
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -119,15 +520,15 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   // MV selects TWO variant sets at once via variantSelections.
   {
     lb.begin_prim("MV", "");
-    VariantSetData s1;
+    PrimVariantSetData s1;
     s1.name = "s1";
-    VariantData s1on;
+    PrimVariantData s1on;
     s1on.name = "on";
     s1on.properties.push_back({"p1", Value::MakeFloat3(1, 1, 1)});
     s1.variants.push_back(std::move(s1on));
-    VariantSetData s2;
+    PrimVariantSetData s2;
     s2.name = "s2";
-    VariantData s2on;
+    PrimVariantData s2on;
     s2on.name = "on";
     s2on.properties.push_back({"p2", Value::MakeFloat3(2, 2, 2)});
     s2.variants.push_back(std::move(s2on));
@@ -315,7 +716,7 @@ static void test_child_order_weak_to_strong() {
 }
 
 // Crate-authored variants: pxr crates store variant content as bracketed HOLDER
-// prims ("/Asset/{LOD=high}/LOD0") with a VariantSetData carrying only
+// prims ("/Asset/{LOD=high}/LOD0") with a PrimVariantSetData carrying only
 // {name, selected} (no inline content). The compositor must graft the selected
 // holder's descendants onto the host. Combined with a reference + local overrides
 // this reproduces a real UE-exported case: asset locally [Materials] +
@@ -333,7 +734,7 @@ static void test_crate_style_variant_holder() {
   lb.begin_prim("Lib", "Scope");
   lb.begin_prim("Asset", "");
   {
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "LOD";
     vss.selected = "high";  // crate form: selection only, no inline content
     lb.current()->meta().variantSets().push_back(std::move(vss));
@@ -424,7 +825,7 @@ static void test_usda_connection_and_custom_rel() {
 // block must be followed -- XGen-style assets author the geometry-defining
 // `def Mesh` in a payload on the variant, not in the variant body. Before the
 // fix the parser dropped variant-option arcs, so the prim stayed empty (the
-// 13411-specifier Moana Island residual). Relative `@./geo@` must anchor to the
+// 13411-specifier Island residual). Relative `@./geo@` must anchor to the
 // file that authored the variant.
 static void test_variant_option_payload_arc() {
   std::cout << "test_variant_option_payload_arc..." << std::endl;
@@ -472,7 +873,7 @@ static void test_variant_option_payload_arc() {
 // boundary, not an asset-specific prim or property name.
 static void test_variant_content_payload_anchor() {
   std::cout << "test_variant_content_payload_anchor..." << std::endl;
-  ::system("mkdir -p /tmp/next_variant_anchor/sub");
+  if (::system("mkdir -p /tmp/next_variant_anchor/sub") != 0) { /* ignore */ }
   const std::string root = "/tmp/next_variant_anchor/root.usda";
   const std::string variants = "/tmp/next_variant_anchor/sub/variants.usda";
   const std::string payload = "/tmp/next_variant_anchor/sub/payload.usda";
@@ -567,7 +968,7 @@ static void test_parallel_compose_byte_identical() {
 
 // An authored value block (`= None`) is a real opinion that blocks weaker values
 // and must round-trip as `= None`, NOT collapse to a declared-only attribute
-// (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
+// (the 13.5k-line Island residual: indexed-primvar `:indices = None`).
 static void test_value_block_roundtrip() {
   std::cout << "test_value_block_roundtrip..." << std::endl;
   const std::string base = "/tmp/next_block_base.usda";
@@ -602,7 +1003,7 @@ static void test_value_block_roundtrip() {
 // contains an instance references another /Flattened_Prototype_M).
 static void test_extracted_prototypes() {
   std::cout << "test_extracted_prototypes..." << std::endl;
-  const std::string f = "/tmp/next_extract.usda";
+  const std::string f = PcpScratchPath("next_extract.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -658,7 +1059,7 @@ static void test_extracted_prototypes() {
 
 static void test_extracted_prototypes_collision_and_remap() {
   std::cout << "test_extracted_prototypes_collision_and_remap..." << std::endl;
-  const std::string f = "/tmp/next_extract_collision.usda";
+  const std::string f = PcpScratchPath("next_extract_collision.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -1417,7 +1818,7 @@ static void test_inherits_specializes() {
 
 // Phase 4: variant selection grafts the chosen variant's opinions only.
 // An attribute authored inside a USDA inline variant must keep its qualifier
-// flags (custom / uniform) through parse -> compose -> write. (VariantData stored
+// flags (custom / uniform) through parse -> compose -> write. (PrimVariantData stored
 // name->Value without flags, so the variant graft silently dropped them.)
 static void test_variant_inline_property_flags() {
   std::cout << "test_variant_inline_property_flags..." << std::endl;
@@ -1516,7 +1917,7 @@ static void test_variants() {
 }
 
 // Variant-content layer stacks are keyed by a STABLE identity (host stack +
-// site + set + variant name), not the VariantData pointer. So the instance key
+// site + set + variant name), not the PrimVariantData pointer. So the instance key
 // of a variant-content prim is deterministic across independent compositions
 // (the old uintptr_t key differed by heap address between runs, and aliased
 // after a free+realloc). Two separate Cache::Open of the same scene must agree.
@@ -1535,9 +1936,9 @@ static void test_variant_content_key_stable() {
     auto root = std::make_shared<Layer>();
     LayerBuilder lb(*root);
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -1640,6 +2041,109 @@ static void test_flatten_instances() {
   std::remove(asset.c_str());
   std::remove(root.c_str());
   std::cout << "  OK" << std::endl;
+}
+
+// Asset identity is anchored before every list-op comparison, while the
+// authored arc/owner remains available to expansion and payload callbacks.
+static void test_anchored_arc_listops() {
+  for (const char* field : {"references", "payload"}) {
+    for (int operation = 0; operation < 3; ++operation) {
+      AssetResolver resolver;
+      const std::string base = PcpScratchDirectory() + "/anchored-" + field +
+          "-" + std::to_string(operation) + "/";
+      PCP_CHECK(::mkdir(base.c_str(), 0700) == 0, "create anchored fixture directory");
+      PCP_CHECK(::mkdir((base + "one").c_str(), 0700) == 0, "create first authoring directory");
+      PCP_CHECK(::mkdir((base + "two").c_str(), 0700) == 0, "create second authoring directory");
+      auto remember = [&](const std::string& name, const std::string& text) {
+        std::ofstream stream(base + name, std::ios::binary);
+        stream << text;
+        PCP_CHECK(stream.good(), "write anchored arc fixture");
+        return base + name;
+      };
+      remember("one/ref.usda", "#usda 1.0\ndef \"Asset\" {\nint winner = 1\ndef \"One\" {}\n}\n");
+      remember("two/ref.usda", "#usda 1.0\ndef \"Asset\" {\nint winner = 2\ndef \"Two\" {}\n}\n");
+      std::string strong = "#usda 1.0\nover \"P\" (\nprepend " + std::string(field) +
+          " = @./ref.usda@</Asset>\n";
+      if (operation == 1)
+        strong += "delete " + std::string(field) + " = @../two/ref.usda@</Asset>\n";
+      strong += ") {}\n";
+      remember("one/edits.usda", strong);
+      remember("two/edits.usda", "#usda 1.0\nover \"P\" (\nprepend " + std::string(field) +
+          " = @./ref.usda@</Asset>\n) {}\n");
+      std::string root = "#usda 1.0\n(\nsubLayers = [@./one/edits.usda@, @./two/edits.usda@]\n)\n";
+      if (operation == 2)
+        root += "over \"P\" (\nreorder " + std::string(field) +
+            " = [@./two/ref.usda@</Asset>, @./one/ref.usda@</Asset>]\n) {}\n";
+      const std::string id = remember("root.usda", root);
+      Stage stage;
+      std::string warn, err;
+      PCP_CHECK(pcp::ComposeStageFromFile(id, resolver, &stage, {}, &warn, &err),
+                "anchored list-op stage composes: " + err);
+      PCP_CHECK(stage.GetPrimAtPath("/P/One").IsValid(), "strong anchored asset retained");
+      PCP_CHECK(stage.GetPrimAtPath("/P/Two").IsValid() == (operation != 1),
+                "relative assets in different folders stay distinct; anchored delete matches");
+      const auto prim = stage.GetPrimAtPath("/P");
+      const Value* winner = prim.IsValid() ? prim.GetPropertyValue("winner") : nullptr;
+      PCP_CHECK(winner && winner->as_int() && *winner->as_int() == (operation == 2 ? 2 : 1),
+                "anchored reorder changes arc strength without losing authoring identity");
+      for (const char* name : {"root.usda", "one/ref.usda", "one/edits.usda",
+                               "two/ref.usda", "two/edits.usda"})
+        std::remove((base + name).c_str());
+      ::rmdir((base + "one").c_str());
+      ::rmdir((base + "two").c_str());
+      ::rmdir(base.c_str());
+    }
+  }
+}
+
+// LEAN-533: authored instanceable metadata requires a direct contributing arc.
+static void test_instanceable_contributing_arcs() {
+  const std::string text = R"USD(#usda 1.0
+def "Bare" (instanceable = true) {
+  def "Local" {}
+}
+def "MissingInherit" (instanceable = true; inherits = </NoClass>) {
+  def "Local" {}
+}
+def "MissingReference" (instanceable = true; references = </NoAsset>) {
+  def "Local" {}
+}
+def "Asset" {
+  def "Remote" {}
+}
+def "Good" (instanceable = true; references = </Asset>) {
+  def "Local" {}
+}
+)USD";
+  std::string warn, err;
+  auto root = pcp::LoadLayerFromMemory("contributing-arcs.usda",
+      reinterpret_cast<const uint8_t*>(text.data()), text.size(), &warn, &err);
+  PCP_CHECK(bool(root), "contributing arc fixture parses: " + err);
+  if (!root) return;
+  for (size_t threads : {size_t(1), size_t(4)}) {
+    AssetResolver resolver;
+    pcp::CompositionOptions options;
+    options.num_threads = threads;
+    auto opened = pcp::Cache::Open(resolver, root, "", options);
+    PCP_CHECK(bool(opened), "contributing arc cache opens");
+    if (!opened) continue;
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    PCP_CHECK(cache.BuildStage(&stage, &warn, &err), "contributing arcs compose: " + err);
+    for (const char* name : {"Bare", "MissingInherit", "MissingReference"}) {
+      const std::string path = std::string("/") + name;
+      PCP_CHECK(stage.GetPrimAtPath(path + "/Local").IsValid(),
+                "non-instance retains its local child: " + path);
+      PCP_CHECK(cache.GetPrototype(Path(path)).empty(),
+                "non-contributing arc must not register a prototype: " + path);
+    }
+    PCP_CHECK(stage.GetPrimAtPath("/Good/Remote").IsValid(),
+              "contributing reference retains shared descendants");
+    PCP_CHECK(!stage.GetPrimAtPath("/Good/Local").IsValid(),
+              "actual instance excludes local descendants");
+    PCP_CHECK(!cache.GetPrototype(Path("/Good")).empty(),
+              "contributing reference registers a prototype");
+  }
 }
 
 static void test_instancing() {
@@ -2033,9 +2537,9 @@ static void test_cross_source_variant() {
   {
     LayerBuilder ab(*asset);
     ab.begin_prim("A", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "vs";
-    VariantData hi;
+    PrimVariantData hi;
     hi.name = "hi";
     hi.properties.push_back({"xvar", Value::MakeFloat3(5, 5, 5)});
     vss.variants.push_back(std::move(hi));
@@ -2154,7 +2658,7 @@ static void test_implied_intermediate() {
 // bare/explicit list in the stronger layer replaces the weaker one. With the
 // flag off, both arcs compose (legacy strong-first concatenation).
 // Phase 7 S5: the USDA writer re-emits the authored list-op qualifier from the
-// ArcEdit instead of always `prepend` -- a bare list as a bare list, and a
+// ArcListOp instead of always `prepend` -- a bare list as a bare list, and a
 // prepend/delete edit with its qualifiers (the old writer could not emit
 // `delete` at all).
 static void test_writer_listop_fidelity() {
@@ -2169,7 +2673,7 @@ static void test_writer_listop_fidelity() {
   lb.begin_prim("Edited", "Scope");
   lb.current()->meta().references.push_back("ext.usda</A>");  // within-spec list
   {
-    ArcEdit& e = lb.current()->meta().ensure_arc_edits().references;
+    ArcListOp& e = lb.current()->meta().ensure_arc_edits().references;
     e.authored = true;
     e.is_explicit = false;
     e.prepended.push_back("ext.usda</A>");
@@ -2378,7 +2882,7 @@ static void test_authored_arc_fidelity_fixture() {
   const PrimSpec *prim = loaded->prim_at_path("/ArcFidelity");
   PCP_CHECK(prim != nullptr, "authored arc fixture prim missing");
   if (!prim) return;
-  const ArcListOpEdits *edits = prim->meta().arc_edits();
+  const ArcListOps *edits = prim->meta().arc_edits();
   PCP_CHECK(edits != nullptr, "authored arc edits missing");
   if (!edits) return;
   PCP_CHECK(edits->references.prepended.size() == 1 &&
@@ -2391,6 +2895,14 @@ static void test_authored_arc_fidelity_fixture() {
                 edits->payloads.deleted.size() == 1 &&
                 edits->payloads.ordered.size() == 2,
             "all authored payload list-op sublists must survive parsing");
+  PCP_CHECK(prim->meta().references.size() == 2 &&
+                prim->meta().references[0].find("</InternalA>") == 0 &&
+                prim->meta().references[1].find("@asset-a.usda@") == 0,
+            "reorder references must reorder existing inline arcs without adding duplicates");
+  PCP_CHECK(prim->meta().payloads.size() == 2 &&
+                prim->meta().payloads[0].find("</InternalPayload>") == 0 &&
+                prim->meta().payloads[1].find("@payload-a.usda@") == 0,
+            "reorder payloads must reorder existing inline arcs without adding duplicates");
   PCP_CHECK(edits->references.prepended[0].find("?layerOffset=2.000000:0.500000") !=
                 std::string::npos,
             "reference layer offset must survive authored parsing");
@@ -2514,7 +3026,7 @@ static void test_nested_relative_reference() {
   //   nrr_root.usda                 -> refs nrr/Meshes/Sub/mesh.usda
   //   nrr/Meshes/Sub/mesh.usda      -> refs ../../Materials/mat.usda
   //   nrr/Materials/mat.usda        (defines the leaf Material type)
-  ::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials");
+  if (::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/nrr/Materials/mat.usda");
     f << "#usda 1.0\ndef Material \"Mat\"\n{\n}\n"; }
   { std::ofstream f("/tmp/nrr/Meshes/Sub/mesh.usda");
@@ -2557,7 +3069,7 @@ static void test_nested_relative_reference() {
 
 // A reference/payload authored in a SUBLAYER (or inside a variant) must anchor
 // its relative asset path to the LAYER that authored it, not the layer-stack
-// root. Regression for the ALab failure: entry.usda sublayers
+// root. Regression for the Scene A failure: entry.usda sublayers
 // deep/dir/mid.usda, which references `../../target/asset.usda` relative to its
 // OWN dir; anchoring to the root made `../../` resolve too high and fail.
 static void test_sublayer_authored_reference_anchor() {
@@ -2565,7 +3077,7 @@ static void test_sublayer_authored_reference_anchor() {
   // /tmp/sar/entry.usda            (root) -> sublayer a/b/mid.usda
   // /tmp/sar/a/b/mid.usda          -> /World/P references ../../target/asset.usda
   // /tmp/sar/target/asset.usda     def Mesh "Geom"
-  ::system("mkdir -p /tmp/sar/a/b /tmp/sar/target");
+  if (::system("mkdir -p /tmp/sar/a/b /tmp/sar/target") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/sar/target/asset.usda");
     f << "#usda 1.0\ndef Mesh \"Geom\" { custom int marker = 7 }\n"; }
   { std::ofstream f("/tmp/sar/a/b/mid.usda");
@@ -2609,7 +3121,7 @@ static void test_payload_policy_owner_anchor() {
   // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
   // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
   // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
-  ::system("mkdir -p /tmp/ppoa/sub");
+  if (::system("mkdir -p /tmp/ppoa/sub") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/ppoa/sub/pay.usda");
     f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
   { std::ofstream f("/tmp/ppoa/sub/weak.usda");
@@ -2955,14 +3467,16 @@ static void test_usdz_package_layers() {
       assert(session.IsComposed());
       assert(session.GetDeferredPayloadPaths().size() == 1);
       assert(session.GetDeferredPayloadPaths()[0] == Path("/World/P"));
-      UsdPrim deferred = session.GetStage().GetPrimAtPath("/World/P");
+      StageSnapshot deferred_snapshot = session.GetSnapshot();
+      UsdPrim deferred = deferred_snapshot->GetPrimAtPath("/World/P");
       assert(deferred.IsValid());
       assert(deferred.GetPropertyValue("siblingVal") == nullptr &&
              "deferred package payload was composed eagerly");
 
       assert(session.LoadPayload(Path("/World/P")) &&
              "package-internal deferred payload failed to load");
-      UsdPrim loaded = session.GetStage().GetPrimAtPath("/World/P");
+      StageSnapshot loaded_snapshot = session.GetSnapshot();
+      UsdPrim loaded = loaded_snapshot->GetPrimAtPath("/World/P");
       assert(loaded.IsValid());
       assert(loaded.GetPropertyValue("siblingVal") != nullptr &&
              "loaded package payload opinion is missing");
@@ -2973,8 +3487,8 @@ static void test_usdz_package_layers() {
       assert(session.GetDeferredPayloadPaths().size() == 1);
       assert(session.LoadPayload(Path("/World/P")) &&
              "cached package payload failed to reload");
-      assert(session.GetStage()
-                 .GetPrimAtPath("/World/P")
+      assert(session.GetSnapshot()
+                 ->GetPrimAtPath("/World/P")
                  .GetPropertyValue("siblingVal") != nullptr);
     }
 
@@ -3030,8 +3544,11 @@ static void test_sublayer_cycle_and_depth() {
 
   AssetResolver resolver;
   resolver.SetWorkingDirectory("/tmp");
-  std::string warn, err;
-  auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
+  std::string warn = "existing warning\n", err;
+  auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root, {}, &warn);
+  assert(warn.find("existing warning\n") == 0);
+  assert(warn.find("Sublayer cycle") != std::string::npos &&
+         "Open must propagate initial cycle diagnostics when requested");
   // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
   // the rest of the scene still composes (previously the whole load failed).
   assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
@@ -3067,6 +3584,31 @@ static void test_sublayer_cycle_and_depth() {
   auto opened = pcp::Cache::Open(resolver, root_layer,
                                  "/tmp/next_pcp_depth_root.usda", opts);
   assert(!opened && "sublayer depth overflow should fail Cache::Open");
+
+  auto missing_layer = std::make_shared<Layer>();
+  missing_layer->meta().subLayers.push_back("next_pcp_unwritten_sublayer_93c4.usda");
+  LayerBuilder missing_builder(*missing_layer);
+  missing_builder.begin_prim("Survivor", "Xform");
+  missing_builder.end_prim();
+  missing_builder.finalize();
+  std::string missing_warn;
+  auto missing_opened = pcp::Cache::Open(resolver, missing_layer,
+      "/tmp/next_pcp_missing_root.usda", {}, &missing_warn);
+  assert(missing_opened && "permissive missing sublayer keeps the valid root");
+  assert(missing_warn.find("Failed to load sublayer") != std::string::npos);
+  bool missing_reported = false;
+  for (const auto& issue : missing_opened->GetCompositionIssues()) {
+    if (issue.code == pcp::Cache::ErrorCode::InvalidAssetPath) missing_reported = true;
+  }
+  assert(missing_reported && "unreadable sublayer must have a typed diagnostic");
+  Stage surviving_stage;
+  assert(missing_opened->BuildStage(&surviving_stage, nullptr, nullptr));
+  assert(surviving_stage.GetPrimAtPath("/Survivor").IsValid());
+  pcp::CompositionOptions strict_missing;
+  strict_missing.error_when_asset_not_found = true;
+  auto failed_open = pcp::Cache::Open(resolver, missing_layer,
+      "/tmp/next_pcp_missing_root.usda", strict_missing, &missing_warn);
+  assert(!failed_open && !failed_open.error().empty());
 
   std::remove(cycle_root.c_str());
   std::remove(depth_sub.c_str());
@@ -3405,9 +3947,9 @@ static void test_variant_content_cycle() {
   {
     LayerBuilder lb(*root);
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -3620,7 +4162,7 @@ static void test_prototype_order_independent() {
   std::cout << "  OK" << std::endl;
 }
 
-// Regression: pcp::Cache must honor the per-set VariantSetData.selected field as
+// Regression: pcp::Cache must honor the per-set PrimVariantSetData.selected field as
 // a selection opinion. The crate (USDC) reader sets `selected` for EVERY chosen
 // variant set but the legacy variantSelection STRING for only the FIRST set (and
 // no variantSelections map). Reading only the string dropped every set after the
@@ -3638,24 +4180,24 @@ static void test_variant_selected_field() {
     // legacy string on only the FIRST, no variantSelections map.
     rb.begin_prim("P", "");
     {
-      VariantSetData lod;
+      PrimVariantSetData lod;
       lod.name = "lod";
       lod.selected = "high";
       {
-        VariantData v; v.name = "high";
+        PrimVariantData v; v.name = "high";
         v.properties.push_back({"L", Value::MakeFloat3(9, 9, 9)});
         lod.variants.push_back(std::move(v));
       }
       {
-        VariantData v; v.name = "low";
+        PrimVariantData v; v.name = "low";
         v.properties.push_back({"L", Value::MakeFloat3(1, 1, 1)});
         lod.variants.push_back(std::move(v));
       }
-      VariantSetData shade;
+      PrimVariantSetData shade;
       shade.name = "shade";
       shade.selected = "red";
       {
-        VariantData v; v.name = "red";
+        PrimVariantData v; v.name = "red";
         v.properties.push_back({"S", Value::MakeFloat3(1, 0, 0)});
         shade.variants.push_back(std::move(v));
       }
@@ -3668,10 +4210,10 @@ static void test_variant_selected_field() {
     // Q selects a single set via `selected` ONLY (no string, no map).
     rb.begin_prim("Q", "");
     {
-      VariantSetData s;
+      PrimVariantSetData s;
       s.name = "geo";
       s.selected = "hi";
-      VariantData v; v.name = "hi";
+      PrimVariantData v; v.name = "hi";
       v.properties.push_back({"G", Value::MakeFloat3(2, 2, 2)});
       s.variants.push_back(std::move(v));
       rb.current()->meta().variantSets().push_back(std::move(s));
@@ -3793,8 +4335,13 @@ static void test_out_of_scope_targets_dropped() {
 // deferral marker set by an earlier deferred one.
 static void test_deferred_payload_marker_order() {
   std::cout << "test_deferred_payload_marker_order..." << std::endl;
-  const std::string pay1 = "/tmp/next_def_p1.usda";
-  const std::string pay2 = "/tmp/next_def_p2.usda";
+  char directory_template[] = "/tmp/lightusd-next-pcp-XXXXXX";
+  char* directory = ::mkdtemp(directory_template);
+  PCP_CHECK(directory != nullptr, "create isolated PCP temporary directory");
+  if (!directory) return;
+  const std::string temp_dir(directory);
+  const std::string pay1 = temp_dir + "/next_def_p1.usda";
+  const std::string pay2 = temp_dir + "/next_def_p2.usda";
   {
     std::ofstream o(pay1);
     o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
@@ -3804,20 +4351,20 @@ static void test_deferred_payload_marker_order() {
     o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
   }
   for (int order = 0; order < 2; ++order) {
-    const std::string root = "/tmp/next_def_root.usda";
+    const std::string root = temp_dir + "/next_def_root.usda";
     {
       std::ofstream o(root);
       o << "#usda 1.0\n"
            "def Xform \"A\" (prepend payload = [";
       if (order == 0) {
-        o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
       } else {
         o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
       }
       o << "])\n{\n}\n";
     }
     AssetResolver resolver;
-    resolver.SetWorkingDirectory("/tmp");
+    resolver.SetWorkingDirectory(temp_dir);
     pcp::CompositionOptions opts;
     // Load only p1; p2 stays deferred — regardless of arc order.
     opts.payload_policy = [](const Path&, const std::string& asset) {
@@ -3841,10 +4388,11 @@ static void test_deferred_payload_marker_order() {
     assert(a.GetPropertyValue("b") == nullptr && "deferred payload leaked");
     assert(cache.HasDeferredPayload(Path("/A")) &&
            "deferral marker lost (payload order dependence)");
-    std::remove(root.c_str());
+  std::remove(root.c_str());
   }
   std::remove(pay1.c_str());
   std::remove(pay2.c_str());
+  ::rmdir(temp_dir.c_str());
   std::cout << "  OK" << std::endl;
 }
 
@@ -4012,6 +4560,84 @@ static void test_relocates_in_referenced_layer_stack() {
   assert(stage.GetPrimAtPath("/Char/Rig/SubRig/Anim").IsValid());
   assert(stage.GetRootLayer()->meta().relocates.empty());
   std::cout << "  OK" << std::endl;
+}
+
+// Programmatic inputs bypass the authored-path parser checks.
+static void test_invalid_relocates_do_not_poison_valid_edits() {
+  const std::vector<std::string> invalid_sources = {
+      "/P/Missing.attr", "/P/Missing{v=x}", "/", "/P", ""};
+  for (const auto& invalid : invalid_sources) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    ab.begin_prim("Model", "Xform");
+    ab.begin_prim("A", "Xform");
+    ab.add_property("value", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    root->meta().relocates = {{invalid, "/P/New"}, {"/P/A", "/P/New"}};
+    LayerBuilder rb(*root);
+    rb.begin_prim("P", "Xform");
+    rb.current()->meta().references.push_back("@mem_asset@</Model>");
+    rb.end_prim();
+    rb.finalize();
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_asset", asset);
+    Stage stage;
+    std::string warnings, errors;
+    assert(cache.BuildStage(&stage, &warnings, &errors));
+    const auto moved = stage.GetPrimAtPath("/P/New");
+    assert(moved.IsValid());
+    const auto* value = moved.GetPropertyValue("value");
+    assert(value && value->as_int() && *value->as_int() == 7);
+    assert(!stage.GetPrimAtPath("/P/A").IsValid());
+  }
+}
+
+// Raw programmatic metadata must use the same anchoring as parsed metadata.
+static void test_relative_relocates_and_invalid_targets() {
+  for (int mode = 0; mode < 3; ++mode) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    ab.begin_prim("Model", "Xform");
+    ab.begin_prim("A", "Xform");
+    ab.add_property("value", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    LayerBuilder rb(*root);
+    rb.begin_prim("P", "Xform");
+    rb.current()->meta().references.push_back("@mem_asset@</Model>");
+    if (mode == 1) {
+      rb.begin_prim("Sub", "Xform");
+      rb.current()->meta().relocates() = {{"../A", "../New"}};
+      rb.end_prim();
+    }
+    rb.end_prim();
+    rb.finalize();
+    if (mode == 0) root->meta().relocates = {{"P/A", "P/New"}};
+    if (mode == 2) root->meta().relocates = {{"P/A", "../Gone"}};
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_asset", asset);
+    Stage stage;
+    std::string warnings, errors;
+    assert(cache.BuildStage(&stage, &warnings, &errors));
+    const auto prim = stage.GetPrimAtPath(mode == 2 ? "/P/A" : "/P/New");
+    assert(prim.IsValid());
+    const auto* value = prim.GetPropertyValue("value");
+    assert(value && value->as_int() && *value->as_int() == 7);
+    assert(!stage.GetPrimAtPath(mode == 2 ? "/P/New" : "/P/A").IsValid());
+  }
 }
 
 // A relocate may move a prim to a NEW ROOT PRIM; opinions authored at the new
@@ -4508,6 +5134,56 @@ static void test_p2_inactive_subtree_pruned() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_subroot_implied_class_strength() {
+  for (bool root_inherit_value : {false, true}) {
+    auto asset = std::make_shared<Layer>();
+    LayerBuilder ab(*asset);
+    for (const auto& name : {"Inherit", "Specializes"}) {
+      ab.begin_prim(name, "", PrimSpecifier::Class);
+      ab.begin_prim("Model", "");
+      ab.add_property("marker", Value(int32_t(name[0] == 'I' ? 33 : 44)));
+      ab.end_prim();
+      ab.end_prim();
+    }
+    ab.begin_prim("Set", "");
+    ab.current()->meta().inherits.push_back("</Inherit>");
+    ab.current()->meta().specializes.push_back("</Specializes>");
+    ab.begin_prim("Model", "");
+    ab.add_property("marker", Value(int32_t(22)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+    auto root = std::make_shared<Layer>();
+    LayerBuilder rb(*root);
+    for (const auto& name : {"Inherit", "Specializes"}) {
+      rb.begin_prim(name, "", PrimSpecifier::Over);
+      rb.begin_prim("Model", "", PrimSpecifier::Over);
+      if (name[0] != 'I' || root_inherit_value)
+        rb.add_property("marker", Value(int32_t(name[0] == 'I' ? 11 : 55)));
+      rb.end_prim();
+      rb.end_prim();
+    }
+    rb.begin_prim("Ref", "");
+    rb.current()->meta().references.push_back("@mem_subroot@</Set/Model>");
+    rb.end_prim();
+    rb.finalize();
+    AssetResolver resolver;
+    resolver.SetCustomResolver([](const std::string& a, const std::string&) { return a; });
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_subroot", asset);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    const auto prim = stage.GetPrimAtPath("/Ref");
+    assert(prim.IsValid());
+    const Value* value = prim.GetPropertyValue("marker");
+    assert(value && value->as_int());
+    assert(*value->as_int() == (root_inherit_value ? 11 : 22));
+  }
+}
+
 // P2 audit: an inherit to a SUB-ROOT class reached through a reference is
 // implied at the MAPPED class path in the referencing stack, so a root-layer
 // override at that path composes onto the inheriting prim (pxr maps implied
@@ -4579,9 +5255,9 @@ static void test_p2_implied_subroot_class() {
 
 
 // `reorder nameChildren` / `reorder rootPrims` apply to the flattened child
-// order (pxr semantics: listed names move to the front in list order, the
-// rest keep authored order). Locked here because the audit once flagged
-// reorder as unimplemented.
+// order using Sdf run-preserving restatements. This example has no unordered
+// prefix; the CLI stock-oracle contract separately covers x,a,b -> x,b,a.
+// Locked here because the audit once flagged reorder as unimplemented.
 static void test_reorder_children() {
   std::cout << "test_reorder_children..." << std::endl;
   auto parse_to_layer = [](const char* usda) -> std::shared_ptr<Layer> {
@@ -4624,7 +5300,353 @@ static void test_reorder_children() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_local_opinions_require_composition() {
+  struct Case {
+    const char* authored;
+    const char* composed;
+  };
+  const Case cases[] = {
+    {"def Xform \"P\" { custom int[] a = edit [append 1; append 2] }",
+     "def Xform \"P\" { custom int[] a = [1, 2] }"},
+    {"def Xform \"P\" { add rel r = </Target> }",
+     "def Xform \"P\" { rel r = </Target> }"},
+    {"def Xform \"P\" { append float x.connect = </Target.x> }",
+     "def Xform \"P\" { float x.connect = </Target.x> }"},
+    {"def Xform \"P\" (references = None) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (payload = None) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (inherits = []) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (specializes = []) {}", "def Xform \"P\" {}"},
+    {"(relocates = { </P/old/deep>: </P/new> })\ndef Xform \"P\" {}",
+     "def Xform \"P\" { over \"new\" {} }"},
+    {"def Xform \"P\" (active = false) { def Scope \"Child\" {} }",
+     "def Xform \"P\" (active = false) {}"},
+    {"def Xform \"P\" (prepend apiSchemas = [\"TestAPI\"]) {}",
+     "def Xform \"P\" (apiSchemas = [\"TestAPI\"]) {}"},
+  };
+  AssetResolver resolver;
+  USDAWriteOptions write_options;
+  write_options.composed_stage_output = true;
+  for (const Case& c : cases) {
+    const std::string source = std::string("#usda 1.0\n") + c.authored + "\n";
+    LoadResult expected = LoadUSDAFromString(
+        std::string("#usda 1.0\n") + c.composed + "\n");
+    PCP_CHECK(expected.success, "canonical local-opinion fixture parses");
+    if (!expected.success) continue;
+    const std::string canonical = WriteUSDAToString(expected.stage, write_options);
+    for (bool public_loader : {false, true}) {
+      LoadResult loaded = LoadUSDAFromString(source);
+      PCP_CHECK(loaded.success, "authored local-opinion fixture parses");
+      if (!loaded.success) continue;
+      PCP_CHECK(StageNeedsComposition(loaded.stage),
+                "local authored operations require stage composition");
+      Stage result;
+      std::string warn, err;
+      bool ok;
+      if (public_loader) {
+        result = std::move(loaded.stage);
+        ok = ComposeLoadedStage(&result, resolver, "", {}, &warn, &err);
+      } else {
+        ok = pcp::ComposeStageFromLayer(loaded.stage.ReleaseRootLayer(),
+                                        resolver, &result, "", {}, &warn, &err);
+      }
+      PCP_CHECK(ok, "local opinions compose without external arcs");
+      if (!ok) continue;
+      const std::string actual = WriteUSDAToString(result, write_options);
+      if (actual != canonical) {
+        std::cerr << "Authored: " << c.authored << "\nExpected:\n" << canonical
+                  << "Actual:\n" << actual;
+      }
+      PCP_CHECK(actual == canonical, "composed output resolves local opinions");
+    }
+  }
+
+  LoadResult plain = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { int[] a = [1, 2]\n"
+      "rel r = </Target>\nfloat x.connect = </Target.x> }\n");
+  PCP_CHECK(plain.success, "ordinary single-layer fixture parses");
+  if (!plain.success) return;
+  PCP_CHECK(!StageNeedsComposition(plain.stage),
+            "explicit values and targets need no composition");
+  const PrimSpec* retained = plain.stage.GetRootLayer()->prim(0);
+  Stage result;
+  PCP_CHECK(pcp::ComposeStageFromLayer(plain.stage.ReleaseRootLayer(), resolver,
+                                      &result), "ordinary layer composes");
+  PCP_CHECK(result.GetRootLayer() && result.GetRootLayer()->prim(0) == retained,
+            "ordinary layer retains its original prim storage");
+}
+
+// The per-stack negative-lookup path filter must be transparent: after it is
+// built (many sites absent from every layer of a multi-layer stack), a spec
+// authored ONLY by a weaker layer must still be found, and a referenced
+// sub-asset's children must all compose. A false negative in the filter would
+// silently drop those prims.
+static void test_spec_lookup_filter_exactness() {
+  std::cout << "test_spec_lookup_filter_exactness..." << std::endl;
+  const std::string dir = "/tmp/next_spec_filter";
+  assert(::system(("mkdir -p " + dir).c_str()) == 0);
+  constexpr int kRefChildren = 128;
+  {
+    std::ofstream f(dir + "/lib.usda");
+    f << "#usda 1.0\ndef Xform \"Model\"\n{\n";
+    for (int i = 0; i < kRefChildren; ++i) {
+      f << "    def Sphere \"S" << i << "\"\n    {\n"
+        << "        custom int idx = " << i << "\n    }\n";
+    }
+    f << "}\n";
+  }
+  {
+    // Weakest layer: an opinion on /World plus prims authored NOWHERE else.
+    std::ofstream f(dir + "/weak.usda");
+    f << "#usda 1.0\n"
+         "over \"World\"\n{\n"
+         "    def Sphere \"WeakOnly\"\n    {\n"
+         "        custom int weak = 7\n    }\n"
+         "    over \"Ref\"\n    {\n"
+         "        def Sphere \"ZZZWeakSibling\"\n        {\n"
+         "            custom int weak = 9\n        }\n"
+         "    }\n"
+         "}\n";
+  }
+  { std::ofstream f(dir + "/mid.usda");
+    f << "#usda 1.0\nover \"World\"\n{\n    custom int mid = 5\n}\n"; }
+  {
+    std::ofstream f(dir + "/root.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@mid.usda@, @weak.usda@]\n)\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"Ref\" (\n"
+         "        references = @lib.usda@</Model>\n"
+         "    )\n    {\n    }\n"
+         "    def Sphere \"StrongOnly\"\n    {\n"
+         "        custom int strong = 3\n    }\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  std::string warn, err;
+  std::shared_ptr<Layer> root = pcp::LoadLayerFromFile(dir + "/root.usda",
+                                                       &warn, &err);
+  assert(root && "spec-filter root layer load failed");
+  auto opened = pcp::Cache::Open(resolver, std::move(root), dir + "/root.usda");
+  assert(opened && "spec-filter Cache::Open failed");
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  bool ok = cache.BuildStage(&stage, &warn, &err);
+  if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+  assert(ok && "spec-filter BuildStage failed");
+
+  // Every child of the external reference composed.
+  for (int i = 0; i < kRefChildren; ++i) {
+    UsdPrim p = stage.GetPrimAtPath("/World/Ref/S" + std::to_string(i));
+    assert(p.IsValid() && "referenced child dropped");
+    const Value *v = p.GetPropertyValue("idx");
+    assert(v && v->as_int() && *v->as_int() == i &&
+           "referenced child opinion wrong");
+  }
+  // Prims authored only by the weakest sublayer survived the active filter.
+  UsdPrim weak_only = stage.GetPrimAtPath("/World/WeakOnly");
+  assert(weak_only.IsValid() && "weakest-layer child dropped");
+  const Value *wv = weak_only.GetPropertyValue("weak");
+  assert(wv && wv->as_int() && *wv->as_int() == 7);
+  UsdPrim weak_sibling = stage.GetPrimAtPath("/World/Ref/ZZZWeakSibling");
+  assert(weak_sibling.IsValid() && "weakest-layer sibling dropped");
+  const Value *sv = weak_sibling.GetPropertyValue("weak");
+  assert(sv && sv->as_int() && *sv->as_int() == 9);
+  assert(stage.GetPrimAtPath("/World/StrongOnly").IsValid());
+
+  // Direct lazy compose of a weak-layer path on the SAME cache: the filter is
+  // already built here, so this exercises the positive fast path directly.
+  const PrimSpec *weak_spec =
+      cache.ComposePrim(Path("/World/Ref/ZZZWeakSibling"), &warn, &err);
+  assert(weak_spec && "filtered ComposePrim dropped a weak-layer spec");
+  const PrimSpec *absent =
+      cache.ComposePrim(Path("/World/Ref/DoesNotExist123"), &warn, &err);
+  assert(!absent && "filter must not invent a negative-lookup spec");
+
+  std::cout << "  OK" << std::endl;
+}
+
+// Clip metadata authored only on an ancestor must keep its strength against
+// defaults introduced by a weaker reference, including absent child specs.
+static void test_inherited_clip_strength() {
+  const std::string weak = PcpScratchDirectory() + "/clip-weak.usda";
+  const std::string root = PcpScratchDirectory() + "/clip-root.usda";
+  { std::ofstream f(weak); f << "#usda 1.0\ndef Xform \"Asset\" {\n"
+      " def Scope \"C\" { float x = 9 }\n"
+      " def Scope \"Override\" { float x = 9 }\n}\n"; }
+  { std::ofstream f(root); f << "#usda 1.0\ndef Xform \"Shot\" (\n"
+      " prepend references = @clip-weak.usda@</Asset>\n"
+      " clips = { dictionary default = {\n"
+      "  asset[] assetPaths = [@clip.usda@]\n"
+      "  string primPath = \"/Cache\"\n"
+      "  double2[] active = [(1, 0)]\n"
+      " } }\n) {\n over \"Override\" { float x = 7 }\n}\n"; }
+  const std::string clip_path = PcpScratchDirectory() + "/clip.usda";
+  { std::ofstream f(clip_path); f << "#usda 1.0\ndef Xform \"Cache\" {\n"
+      " def Scope \"C\" { float x.timeSamples = { 1: 2, 2: 4 } }\n"
+      " def Scope \"Override\" { float x.timeSamples = { 1: 2, 2: 4 } }\n}\n"; }
+  AssetResolver resolver;
+  Stage stage;
+  std::string warn, err;
+  const bool built = pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err);
+  PCP_CHECK(built, err);
+  if (!built) return;
+  EvalOptions options;
+  options.time = TimeQuery::Numeric(1.5);
+  options.clip_stage_loader = [&](const std::string& asset, Stage* out,
+                                  std::string*, std::string*) {
+    PCP_CHECK(asset == clip_path, "clip asset anchored at authoring layer");
+    auto clip = LoadUSDAFromFile(asset);
+    if (!clip.success) return false;
+    *out = std::move(clip.stage);
+    return true;
+  };
+  AttributeEval eval(&stage);
+  auto child = stage.GetPrimAtPath("/Shot/C");
+  auto value = eval.EvalWith(child, "x", options);
+  PCP_CHECK(value.success && value.from_time_sample && value.value.as_float() &&
+            *value.value.as_float() == 3.0f, "inherited clip beats weak default");
+  auto override_value = eval.EvalWith(stage.GetPrimAtPath("/Shot/Override"), "x", options);
+  PCP_CHECK(override_value.success && override_value.value.as_float() &&
+            *override_value.value.as_float() == 7.0f, "strong local default beats clip");
+  options.time = TimeQuery::Default();
+  value = eval.EvalWith(child, "x", options);
+  PCP_CHECK(value.success && value.value.as_float() && *value.value.as_float() == 9.0f,
+            "default-time does not sample inherited clips");
+  std::remove(root.c_str());
+  std::remove(weak.c_str());
+  std::remove(clip_path.c_str());
+}
+
+static void test_ancestor_variant_child_arc_strength() {
+  const std::string base = LIGHTUSD_TEST_REPO_ROOT
+      "/tests/usda/pcp-ancestor-variant/";
+  for (const char* name : {"reference.usda", "payload.usda", "inherit.usda",
+                            "local-reference.usda"}) {
+    for (int threads : {1, 4}) {
+      for (bool native : {false, true}) {
+        AssetResolver resolver;
+        pcp::CompositionOptions options;
+        options.num_threads = threads;
+        options.load_payloads = true;
+        if (native) {
+          options.flatten_instances = false;
+          options.instance_flatten_mode = pcp::InstanceFlattenMode::Native;
+        }
+        Stage stage;
+        std::string warning, error;
+        const bool loaded = pcp::ComposeStageFromFile(base + name, resolver,
+            &stage, options, &warning, &error);
+        PCP_CHECK(loaded, error);
+        if (!loaded) continue;
+        const bool inherited = std::string(name) == "inherit.usda" ||
+                               std::string(name) == "local-reference.usda";
+        const std::string selected = inherited ? "Proxy" : "Render";
+        const std::string rejected = inherited ? "Render" : "Proxy";
+        PCP_CHECK(stage.GetPrimAtPath("/Root/Body/" + selected).IsValid(),
+                  "ancestor variant/child arc selected geometry");
+        PCP_CHECK(!stage.GetPrimAtPath("/Root/Body/" + rejected).IsValid(),
+                  "ancestor variant/child arc must not retain stale geometry");
+        const Value* strength = stage.GetPrimAtPath("/Root/Body")
+            .GetPropertyValue("strength");
+        PCP_CHECK(strength && strength->as_float() &&
+                  *strength->as_float() == (inherited ? 0.0f : 1.0f),
+                  "ordinary property must use the same arc strength order");
+      }
+    }
+  }
+}
+
+static void test_strict_failed_arc_and_variant_dependencies() {
+  const uint32_t package_anchor = InternAssetAnchor("/tmp/package.usdz[nested/model.usda]");
+  PCP_CHECK(ResolveAssetAnchorPath("../tex.png", package_anchor) ==
+            "/tmp/package.usdz[tex.png]", "package parent stays inside archive");
+  PCP_CHECK(ResolveAssetAnchorPath("textures/tex.png", package_anchor) ==
+            "/tmp/package.usdz[nested/textures/tex.png]", "package layer directory retained");
+  PCP_CHECK(ResolveAssetAnchorPath("../../escape.png", package_anchor).empty(),
+            "package asset cannot escape archive root");
+  for (bool strict : {false, true}) {
+    for (const char* arc : {"references", "payload"}) {
+      auto loaded = LoadUSDAFromString(std::string("#usda 1.0\ndef Xform \"Root\" (") +
+          arc + " = @absent-strict-arc.usda@</Asset>) {}\n");
+      PCP_CHECK(loaded.success, "parse missing-arc fixture");
+      if (!loaded.success) continue;
+      AssetResolver resolver;
+      resolver.SetWorkingDirectory(PcpScratchDirectory());
+      pcp::CompositionOptions options;
+      options.error_when_asset_not_found = strict;
+      options.load_payloads = true;
+      auto opened = pcp::Cache::Open(resolver,
+          std::shared_ptr<Layer>(loaded.stage.ReleaseRootLayer()), "", options);
+      PCP_CHECK(bool(opened), "open missing-arc fixture");
+      if (!opened) continue;
+      Stage result;
+      PCP_CHECK(opened->BuildStage(&result, nullptr, nullptr) == !strict,
+                "strict BuildStage must fail without an error output pointer");
+      if (strict) PCP_CHECK(opened->GetCompositionIssueCount() != 0,
+                            "strict failed arc needs a typed diagnostic");
+    }
+  }
+  const std::string base = LIGHTUSD_TEST_REPO_ROOT
+      "/tests/usda/pcp-ancestor-variant/";
+  StageSession session;
+  PCP_CHECK(session.OpenFile(base + "reference.usda"), session.GetError());
+  const auto dependencies = session.GetLayerDependencies();
+  AssetResolver dependency_resolver;
+  const std::string geometry = dependency_resolver.ResolvePath(
+      base + "geometry.usda", "");
+  PCP_CHECK(std::find(dependencies.begin(), dependencies.end(),
+                     geometry) != dependencies.end(),
+            "variant dependency must retain its physical asset");
+  for (const auto& dependency : dependencies) {
+    PCP_CHECK(dependency.find('\x1f') == std::string::npos &&
+              dependency.compare(0, 8, "variant:") != 0,
+              "synthetic variant identity must not leak into physical dependencies");
+  }
+}
+
+// The high-level loader must honor an explicit one-thread composition budget.
+static void test_composed_loader_serial_thread_budget() {
+  const std::string file = "/tmp/next_pcp_serial_budget_" + std::to_string(getpid()) + ".usda";
+  {
+    std::ofstream out(file);
+    out << "#usda 1.0\ndef Xform \"Source\" {}\ndef Xform \"World\" {\n";
+    for (int i = 0; i < 2048; ++i)
+      out << " def Xform \"P" << i << "\" (prepend payload = </Source>) {}\n";
+    out << "}\n";
+  }
+  for (const int threads : {0, 1}) {
+    const auto caller = std::this_thread::get_id();
+    std::atomic<bool> foreign_thread{false};
+    std::atomic<unsigned> calls{0};
+    pcp::CompositionOptions options;
+    options.num_threads = threads;
+    options.payload_policy = [&](const Path&, const std::string&) {
+      ++calls;
+      if (std::this_thread::get_id() != caller) foreign_thread.store(true);
+      return false;
+    };
+    Stage stage;
+    std::string warn, err;
+    const bool loaded = LoadUSDComposed(file, &stage, LoadUSDOptions{}, &warn, &err, &options);
+    PCP_CHECK(loaded, "serial-budget fixture must compose");
+    PCP_CHECK(calls.load() >= 2048, "serial-budget fixture must exercise payload policy");
+    PCP_CHECK(!foreign_thread.load(), "zero/one-thread composition policy must stay on caller thread");
+  }
+  std::remove(file.c_str());
+}
+
 int main() {
+  test_strict_failed_arc_and_variant_dependencies();
+  test_ancestor_variant_child_arc_strength();
+  test_inherited_clip_strength();
+  test_source_snapshot_replay();
+  test_batched_source_snapshot_back_reference();
+  test_source_snapshot_crate_and_package();
+  test_batched_discovery_frontier_lower_bound();
+  test_batched_writer_path_lifetime();
+  test_prepared_writer_late_instance_fields();
+  test_local_opinions_require_composition();
   test_compute_prim_index();
   test_typed_composition_issues();
   test_prototype_order_independent();
@@ -4663,6 +5685,8 @@ int main() {
   test_variant_option_authored_state();
   test_variant_content_key_stable();
   test_variants_v2();
+  test_anchored_arc_listops();
+  test_instanceable_contributing_arcs();
   test_instancing();
   test_path_translation();
   test_flatten_instances();
@@ -4671,6 +5695,8 @@ int main() {
   test_layer_relocates();
   test_relocates_in_referenced_layer_stack();
   test_relocate_to_new_root_prim();
+  test_invalid_relocates_do_not_poison_valid_edits();
+  test_relative_relocates_and_invalid_targets();
   test_relative_class_arc_target();
   test_specifier_resolution();
   test_expression_sublayer_and_variant_selection();
@@ -4680,6 +5706,7 @@ int main() {
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
   test_p2_implied_subroot_class();
+  test_subroot_implied_class_strength();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();
@@ -4694,6 +5721,7 @@ int main() {
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
   test_payload_policy_owner_anchor();
+  test_spec_lookup_filter_exactness();
   test_sublayer_stack_composition();
   test_usdz_package_layers();
   test_sublayer_cycle_and_depth();
@@ -4701,6 +5729,7 @@ int main() {
   test_concurrent_queries();
   test_concurrent_payload_edits();
   test_parallel_build_matches_serial();
+  test_composed_loader_serial_thread_budget();
   test_ancestor_reference_cycle();
   test_mutual_reference_cycle();
   test_self_payload_cycle();

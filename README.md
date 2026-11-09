@@ -4,6 +4,11 @@ LightUSD is a full-featured, dependency-free, lightweight USD library written
 in C++17. It reads and writes USDA, USDC, and USDZ, and includes MaterialX and USD Physics support.
 (Previously known as TinyUSDZ)
 
+The `src/next` product is the default for native, Python, and WASM consumers.
+The legacy product is deprecated, but remains in the repository and in CI for
+existing integrations. Select it explicitly with
+`-DLIGHTUSD_NATIVE_PRODUCT=legacy` or `-DLIGHTUSD_WASM_PRODUCT=legacy`.
+
 LightUSD is designed for applications that need USD to be compact, portable,
 and fast: high-performance 3D interchange and DCC tools, render and asset
 pipelines, generative AI, and Physical AI systems that connect scene
@@ -62,7 +67,7 @@ build options, and examples.
 - [USD Physics](doc/usd-physics.md)
 - [Composition](doc/composition.md)
 - [Python bindings](doc/python_binding.md)
-- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.0.1
+- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.1.0 (v1.0.1 plan + v1.1 delta audit)
 - [Testing](doc/testing-cpp.md)
 - [Release and CI](doc/ci.md)
 

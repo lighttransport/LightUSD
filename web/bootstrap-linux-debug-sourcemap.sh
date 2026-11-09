@@ -5,7 +5,7 @@
 rm -rf build_debug_sourcemap
 mkdir build_debug_sourcemap
 
-emcmake cmake \
+emcmake cmake -DLIGHTUSD_WASM_PRODUCT=legacy \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIGHTUSD_WASM_DEBUG=ON \
   -DCMAKE_VERBOSE_MAKEFILE=1 \

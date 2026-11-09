@@ -14,12 +14,20 @@
 #include "next/writer/usdc-writer.hh"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
 #include "next/schema/schema-registry.hh"
 
 using namespace lightusd::next;
@@ -77,18 +85,20 @@ void TestUnicodeAndPaths() {
   assert(unicode.stage.GetPrimAtPath("/München").IsValid());
 
   const std::string invalid =
-      "def Xform \"Root\" { rel r = </Root//Child> }\n";
+      "def Xform \"Root\" {\n  rel r = </Root//Child>\n}\n";
   assert(Parse(invalid, false).success);
   LoadResult strict = Parse(invalid, true);
   assert(!strict.success);
   assert(strict.error_summary.find("Invalid AOUSD path") != std::string::npos);
 
-  // Table-driven boundaries from AOUSD Core §8.3. In particular, absolute
-  // paths use PrimFirstPathElements (at most one property element), while
-  // relative paths permit relational-property chains.
+  // Table-driven boundaries from AOUSD Core §8.3. A property is always the
+  // terminal element (L3449-3450): the PEG's `PathElements <- PrimElements
+  // (PropElements)*` would admit relative chains like `.relationship.attribute`,
+  // but the spec tables never list one and OpenUSD SdfPath rejects them
+  // (usdspec-conformance LEAN-203, UsdSpec.PathGrammar.peg_property_asymmetry).
   const char* valid_paths[] = {
       "/", ".", "..", "../..", "../../Sibling", "../.points",
-      "Descendant", ".property", ".relationship.attribute",
+      "Descendant", ".property",
       "/City{ selection = NewYork }",
       "/City/Street{selection=5thAvenue}",
       "/City/Street{selection=}",
@@ -96,6 +106,7 @@ void TestUnicodeAndPaths() {
   for (const char* path : valid_paths) assert(IsValidPathString(path));
   const char* invalid_paths[] = {
       "", "./Descendant/Prim", "/New York/New York", "/abc/123",
+      ".relationship.attribute", "a.b.c",
       "/City/Street{=}", "/abc{123=}", "/Root/", "/Root//Child",
       "/Prim/namespace:", "/Prim.:property", "/Prim.namespace::property",
       "/Prim.abc:123", "/Prim.relationship.attribute",
@@ -222,6 +233,38 @@ void TestLosslessUnsupportedValues() {
     assert(rew.find("pathExpression expr = \"/World//Mesh*\"") !=
            std::string::npos);
   }
+  // pathExpression[] (AOUSD gen_pathexpression.usdc): USDA and a Crate round
+  // trip preserve every element.
+  {
+    LoadResult arr = Parse(
+        "def Xform \"root\" {\n"
+        "    pathExpression[] array = [\"/root/Spam\", \"/root/Eggs\"]\n"
+        "}\n",
+        true);
+    assert(arr.success);
+    const char* kExpected =
+        "pathExpression[] array = [\"/root/Spam\", \"/root/Eggs\"]";
+    assert(WriteUSDAToString(arr.stage).find(kExpected) != std::string::npos);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, arr.stage).success);
+    if (const char* dump = std::getenv("LIGHTUSD_TEST_PE_USDC")) {
+      if (FILE* f = std::fopen(dump, "wb")) {
+        std::fwrite(crate.data(), 1, crate.size(), f);
+        std::fclose(f);
+      }
+    }
+    USDCLoadOptions strict_crate;
+    strict_crate.crate_options.strict_aousd_conformance = true;
+    USDCLoadResult back =
+        LoadUSDCFromMemory(crate.data(), crate.size(), strict_crate);
+    assert(back.success);
+    const Value* v =
+        back.stage.GetPrimAtPath("/root").GetPropertyValue("array");
+    assert(v && v->type_id() == TypeId::PathExpression && v->is_array());
+    assert(v->as_token_array() && v->as_token_array()->size() == 2 &&
+           (*v->as_token_array())[1] == "/root/Eggs");
+    assert(WriteUSDAToString(back.stage).find(kExpected) != std::string::npos);
+  }
 
   // `opaque` and its `group` semantic alias can only agree with a ValueBlock.
   // Strict mode must accept that normative form and preserve the declaration.
@@ -268,7 +311,7 @@ void TestSchemaRegistryBreadth() {
     const SchemaPropertyDefinition* def =
         GetSchemaRegistry().FindProperty(*p.GetPrimSpec(), attr);
     assert(def && def->has_fallback);
-    const std::string* t = def->fallback.as_token();
+    auto t = def->fallback.as_token();
     assert(t && *t == want);
   };
   expect_tok("/M", "purpose", "default");
@@ -342,10 +385,10 @@ void TestDictionaryAndRelationshipComposition() {
   assert(composed);
   const PrimSpec* root = composed->prim_at_path("/Root");
   assert(root);
-  const Dict* custom = root->meta().customData().as_dictionary();
+  auto custom = root->meta().customData().as_dictionary();
   assert(custom && custom->find("weak") && custom->find("strong"));
-  const Value* nested_value = custom->find("nested");
-  const Dict* nested = nested_value ? nested_value->as_dictionary() : nullptr;
+  auto nested_value = custom->find("nested");
+  auto nested = nested_value ? nested_value->as_dictionary() : nullptr;
   assert(nested && nested->find("a") && nested->find("b"));
   assert(nested->find("a")->as_int() && *nested->find("a")->as_int() == 9);
   const std::vector<Path>* targets = root->relationship("r");
@@ -356,12 +399,12 @@ void TestDictionaryAndRelationshipComposition() {
   PrimSpec weak_rel("R"), middle_rel("R"), strong_rel("R"), merged("R");
   weak_rel.set_relationship_targets("r", {Path("/A")});
   middle_rel.set_relationship_targets("r", {Path("/C")});
-  ArcEdit& middle_edit = middle_rel.ensure_relationship_edit("r");
+  ArcListOp& middle_edit = middle_rel.ensure_relationship_edit("r");
   middle_edit.authored = true;
   middle_edit.is_explicit = false;
   middle_edit.appended = {"/C"};
   strong_rel.set_relationship_targets("r", {Path("/B")});
-  ArcEdit& strong_edit = strong_rel.ensure_relationship_edit("r");
+  ArcListOp& strong_edit = strong_rel.ensure_relationship_edit("r");
   strong_edit.authored = true;
   strong_edit.is_explicit = false;
   strong_edit.prepended = {"/B"};
@@ -406,7 +449,7 @@ void TestDictionaryAndRelationshipComposition() {
   strong_nested.as_dictionary()->set("a", Value(int32_t(9)));
   strong_meta.customData.as_dictionary()->set("nested", strong_nested);
 
-  TypedExtensionField strong_extension;
+  DecodedExtensionField strong_extension;
   strong_extension.name = "extensionDict";
   strong_extension.unregistered = true;
   strong_extension.unregistered_source =
@@ -417,7 +460,7 @@ void TestDictionaryAndRelationshipComposition() {
   strong_extension.value.as_dictionary()->set("nested",
                                                strong_extension_nested);
   strong_meta.unknownFields.push_back(strong_extension);
-  TypedExtensionField weak_extension;
+  DecodedExtensionField weak_extension;
   weak_extension.name = "extensionDict";
   weak_extension.unregistered = true;
   weak_extension.value = Value::MakeDictionary();
@@ -438,14 +481,14 @@ void TestDictionaryAndRelationshipComposition() {
          merged_meta->unknownMeta.size() == 2);
   assert(composed_prop.meta().unknownMeta().size() == 2 &&
          "unknown prim metadata must fill by field name across sites");
-  const Dict* merged_custom = merged_meta->customData.as_dictionary();
-  const Dict* merged_nested =
+  auto merged_custom = merged_meta->customData.as_dictionary();
+  auto merged_nested =
       merged_custom->find("nested")->as_dictionary();
   assert(merged_nested->find("a") && merged_nested->find("b"));
   assert(merged_meta->unknownFields.size() == 1);
-  const Dict* merged_extension =
+  auto merged_extension =
       merged_meta->unknownFields[0].value.as_dictionary();
-  const Dict* merged_extension_nested =
+  auto merged_extension_nested =
       merged_extension->find("nested")->as_dictionary();
   assert(merged_extension->find("weak") &&
          merged_extension_nested->find("a") &&
@@ -465,9 +508,14 @@ void TestDictionaryAndRelationshipComposition() {
       extension_back.stage.GetRootLayer()->prim_at_path("/P");
   const PropMeta* extension_back_meta =
       extension_back_prim->property_meta("x");
-  assert(extension_back_meta && extension_back_meta->unknownFields.size() == 1);
-  const Dict* extension_back_dict =
-      extension_back_meta->unknownFields[0].value.as_dictionary();
+  assert(extension_back_meta && extension_back_meta->unknownFields.size() == 3);
+  const auto extension_dict = std::find_if(extension_back_meta->unknownFields.begin(),
+      extension_back_meta->unknownFields.end(), [](const DecodedExtensionField& field) {
+        return field.name == "extensionDict";
+      });
+  assert(extension_dict != extension_back_meta->unknownFields.end());
+  auto extension_back_dict = extension_dict->value.as_dictionary();
+  assert(WriteUSDAToString(extension_back.stage).find("strongMeta = \"yes\"") != std::string::npos);
   assert(extension_back_dict && extension_back_dict->find("weak") &&
          extension_back_dict->find("nested")->as_dictionary()->find("a") &&
          extension_back_dict->find("nested")->as_dictionary()->find("b"));
@@ -486,6 +534,31 @@ void TestNamespaceOrdering() {
   const std::vector<UsdPrim> children = b.GetChildren();
   assert(children.size() == 2 && children[0].GetName() == "D" &&
          children[1].GetName() == "C");
+  // Layer vectors retain authored order; Stage views apply restatements.
+  const Layer* raw = result.stage.GetRootLayer();
+  assert(raw && raw->prim(raw->root_indices()[0])->name() == "A");
+  const PrimSpec* raw_b = raw->prim_at_path("/B");
+  assert(raw_b && raw->prim(raw_b->child_indices()[0])->name() == "C");
+  assert(b.GetChildAt(0).GetName() == "D" && b.GetChildAt(1).GetName() == "C");
+  std::vector<std::string> traversal;
+  result.stage.Traverse([&](const UsdPrim& prim) {
+    traversal.push_back(prim.GetPath().str());
+    return true;
+  });
+  assert((traversal == std::vector<std::string>{"/B", "/B/D", "/B/C", "/A"}));
+
+  // Views respond to authoring without a stale derived-order cache. Clone and
+  // move preserve the authored links and metadata independently of the source.
+  Stage edited = result.stage.Clone();
+  Layer* edit_layer = edited.GetRootLayer();
+  edit_layer->prim_at_path_mutable("/B")->meta().editPrimOrder() = {"C", "D"};
+  assert(edit_layer->define_prim_at_path("/B/E", "Scope") != UINT32_MAX);
+  assert(edit_layer->remove_prim_at_path("/B/D"));
+  Stage moved = std::move(edited);
+  const auto edited_children = moved.GetPrimAtPath("/B").GetChildren();
+  assert(edited_children.size() == 2 && edited_children[0].GetName() == "C" &&
+         edited_children[1].GetName() == "E");
+  assert(result.stage.GetPrimAtPath("/B").GetChildAt(0).GetName() == "D");
   const std::vector<std::string> properties = b.GetPropertyNames();
   const auto y = std::find(properties.begin(), properties.end(), "y");
   const auto x = std::find(properties.begin(), properties.end(), "x");
@@ -557,6 +630,21 @@ void TestDefaultPrimReferenceEncoding() {
   const Value* marker = host->property_value("marker");
   assert(marker && marker->as_int() && *marker->as_int() == 7 &&
          "omitted reference path must compose the target defaultPrim");
+}
+
+void TestEmptyPathReference() {
+  // AOUSD's own corpus authors `<>` (RelocateToNone, BasicReference_session);
+  // strict parsing must accept the empty path while still rejecting invalid
+  // non-empty path text.
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  assert(LoadUSDAFromFile(UsdaFixturePath("relocates_basic.usda"), strict).success);
+  assert(LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: <>\n }\n)\n"
+      "def \"A\" (\n references = <>\n) {\n}\n", strict).success);
+  assert(!LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: </Root//Bad>\n }\n)\n",
+      strict).success);
 }
 
 void TestRelationshipForwarding() {
@@ -665,7 +753,7 @@ void TestAuthoredEmptyMetadata() {
          "USDC documentation must use the standard field and retain authored state");
 
   LoadResult empty_prim_strings = Parse(
-      "over \"P\" (kind = \"\" displayName = \"\" comment = \"\") {}\n",
+      "over \"P\" (\n  kind = \"\"\n  displayName = \"\"\n  comment = \"\"\n) {}\n",
       true);
   assert(empty_prim_strings.success);
   const UsdPrim empty_strings_prim =
@@ -674,8 +762,8 @@ void TestAuthoredEmptyMetadata() {
          empty_strings_prim.GetMeta().displayNameAuthored() &&
          empty_strings_prim.GetMeta().comment_authored());
   LoadResult weak_prim_strings = Parse(
-      "def \"P\" (kind = \"component\" displayName = \"Weak\" "
-      "comment = \"Weak comment\") {}\n",
+      "def \"P\" (\n  kind = \"component\"\n  displayName = \"Weak\"\n"
+      "  comment = \"Weak comment\"\n) {}\n",
       true);
   PrimSpec merged_strings("P");
   Compositor::CopyLocalOpinions(
@@ -916,7 +1004,7 @@ void TestVariantSetListOpFidelity() {
       ") {}\n",
       true);
   assert(text.success);
-  const StringListOpEdits& text_edits =
+  const StringListOps& text_edits =
       text.stage.GetPrimAtPath("/Text").GetMeta().variantSetNameEdits();
   assert(text_edits.added == std::vector<std::string>{"add"} &&
          text_edits.prepended == std::vector<std::string>{"pre"} &&
@@ -928,7 +1016,7 @@ void TestVariantSetListOpFidelity() {
       ReadHexFixture("aousd-variantset-listops.usdc.hex");
   USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
   assert(loaded.success);
-  auto edits = [&](const char* path) -> const StringListOpEdits& {
+  auto edits = [&](const char* path) -> const StringListOps& {
     const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
     assert(prim);
     return prim.GetMeta().variantSetNameEdits();
@@ -946,7 +1034,7 @@ void TestVariantSetListOpFidelity() {
   assert(edits("/Added").added == std::vector<std::string>{"add"});
   assert(edits("/Deleted").deleted == std::vector<std::string>{"del"});
   assert(edits("/Ordered").ordered == std::vector<std::string>{"ord"});
-  const StringListOpEdits& mixed = edits("/Mixed");
+  const StringListOps& mixed = edits("/Mixed");
   assert(mixed.authored && !mixed.is_explicit &&
          mixed.added == std::vector<std::string>{"add"} &&
          mixed.prepended == std::vector<std::string>{"pre"} &&
@@ -955,16 +1043,39 @@ void TestVariantSetListOpFidelity() {
          mixed.ordered == std::vector<std::string>{"ord"});
 
   const std::string usda = WriteUSDAToString(loaded.stage);
-  assert(usda.find("variantSets = [\"explicit\"]") != std::string::npos);
-  assert(usda.find("add variantSets = [\"add\"]") != std::string::npos);
-  assert(usda.find("prepend variantSets = [\"pre\"]") !=
+  assert(usda.find("variantSets = \"explicit\"") != std::string::npos);
+  assert(usda.find("add variantSets = \"add\"") != std::string::npos);
+  assert(usda.find("prepend variantSets = \"pre\"") !=
          std::string::npos);
-  assert(usda.find("append variantSets = [\"app\"]") !=
+  assert(usda.find("append variantSets = \"app\"") !=
          std::string::npos);
-  assert(usda.find("delete variantSets = [\"del\"]") !=
+  assert(usda.find("delete variantSets = \"del\"") !=
          std::string::npos);
-  assert(usda.find("reorder variantSets = [\"ord\"]") !=
+  assert(usda.find("reorder variantSets = \"ord\"") !=
          std::string::npos);
+
+  // pxr (Sdf_FileIOUtility::WriteNameVector) spells a single variantSets
+  // name without brackets; it must parse back to the same list ops.
+  assert(usda.find("variantSets = [") == std::string::npos);
+  {
+    LoadResult reparsed = LoadUSDAFromString(usda, LoadOptions());
+    assert(reparsed.success);
+    const UsdPrim rm = reparsed.stage.GetPrimAtPath("/Mixed");
+    assert(rm && rm.GetMeta().variantSetNameEdits().ordered ==
+                     std::vector<std::string>{"ord"});
+    const UsdPrim re = reparsed.stage.GetPrimAtPath("/Explicit");
+    assert(re && re.GetMeta().variantSetNameEdits().explicit_items ==
+                     std::vector<std::string>{"explicit"});
+  }
+  {
+    // Two or more names keep the bracketed list.
+    LoadResult two = Parse(
+        "def Scope \"Two\" (\n  prepend variantSets = [\"a\", \"b\"]\n) {}\n");
+    assert(two.success);
+    const std::string two_usda = WriteUSDAToString(two.stage);
+    assert(two_usda.find("prepend variantSets = [\"a\", \"b\"]") !=
+           std::string::npos);
+  }
 
   std::vector<uint8_t> rewritten;
   assert(WriteUSDCToMemory(rewritten, loaded.stage).success);
@@ -1001,9 +1112,9 @@ void TestApiSchemaListOpFidelity() {
       ") {}\n",
       true);
   assert(text.success);
-  const StringListOpEdits& empty_text =
+  const StringListOps& empty_text =
       text.stage.GetPrimAtPath("/Empty").GetMeta().apiSchemaEdits();
-  const StringListOpEdits& mixed_text =
+  const StringListOps& mixed_text =
       text.stage.GetPrimAtPath("/Text").GetMeta().apiSchemaEdits();
   assert(empty_text.authored && empty_text.is_explicit &&
          empty_text.explicit_items.empty());
@@ -1017,7 +1128,7 @@ void TestApiSchemaListOpFidelity() {
       ReadHexFixture("aousd-apischemas-listops.usdc.hex");
   USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
   assert(loaded.success);
-  auto edits = [&](const char* path) -> const StringListOpEdits& {
+  auto edits = [&](const char* path) -> const StringListOps& {
     const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
     assert(prim);
     return prim.GetMeta().apiSchemaEdits();
@@ -1034,7 +1145,7 @@ void TestApiSchemaListOpFidelity() {
   assert(edits("/Added").added == std::vector<std::string>{"AddAPI"});
   assert(edits("/Deleted").deleted == std::vector<std::string>{"DelAPI"});
   assert(edits("/Ordered").ordered == std::vector<std::string>{"OrdAPI"});
-  const StringListOpEdits& mixed = edits("/Mixed");
+  const StringListOps& mixed = edits("/Mixed");
   assert(mixed.added == std::vector<std::string>{"AddAPI"} &&
          mixed.prepended == std::vector<std::string>{"PreAPI"} &&
          mixed.appended == std::vector<std::string>{"AppAPI"} &&
@@ -1058,9 +1169,9 @@ void TestApiSchemaListOpFidelity() {
   USDCLoadResult back =
       LoadUSDCFromMemory(rewritten.data(), rewritten.size());
   assert(back.success);
-  const StringListOpEdits& empty_back =
+  const StringListOps& empty_back =
       back.stage.GetPrimAtPath("/ExplicitEmpty").GetMeta().apiSchemaEdits();
-  const StringListOpEdits& mixed_back =
+  const StringListOps& mixed_back =
       back.stage.GetPrimAtPath("/Mixed").GetMeta().apiSchemaEdits();
   assert(empty_back.authored && empty_back.is_explicit &&
          empty_back.explicit_items.empty());
@@ -1092,7 +1203,7 @@ void TestApiSchemaListOpFidelity() {
   assert(composed_prim &&
          composed_prim->meta().apiSchemas() ==
              std::vector<std::string>{"KeepAPI"});
-  const StringListOpEdits& resolved =
+  const StringListOps& resolved =
       composed_prim->meta().apiSchemaEdits();
   assert(resolved.authored && resolved.is_explicit &&
          resolved.explicit_items == std::vector<std::string>{"KeepAPI"} &&
@@ -1111,7 +1222,7 @@ void TestConnectionListOpFidelity() {
       true);
   assert(authored.success);
   const UsdPrim p = authored.stage.GetPrimAtPath("/P");
-  const ArcEdit* edit = p.GetPrimSpec()->connection_edit("x");
+  const ArcListOp* edit = p.GetPrimSpec()->connection_edit("x");
   assert(edit && edit->authored && !edit->is_explicit &&
          edit->added == std::vector<std::string>{"/Add.out"} &&
          edit->prepended == std::vector<std::string>{"/Pre.out"} &&
@@ -1133,7 +1244,7 @@ void TestConnectionListOpFidelity() {
   assert(WriteUSDCToMemory(crate, authored.stage).success);
   USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
   assert(back.success);
-  const ArcEdit* back_edit =
+  const ArcListOp* back_edit =
       back.stage.GetPrimAtPath("/P").GetPrimSpec()->connection_edit("x");
   assert(back_edit && back_edit->added == edit->added &&
          back_edit->prepended == edit->prepended &&
@@ -1159,7 +1270,7 @@ void TestConnectionListOpFidelity() {
   assert(resolved && resolved->size() == 2 &&
          (*resolved)[0].str() == "/Strong.out" &&
          (*resolved)[1].str() == "/Weak.out");
-  const ArcEdit* resolved_edit = strong_p->connection_edit("x");
+  const ArcListOp* resolved_edit = strong_p->connection_edit("x");
   assert(resolved_edit && resolved_edit->is_explicit);
 }
 
@@ -1490,7 +1601,7 @@ void TestSchemaFallbackAndValueClips() {
          multi.source_asset == "weak.usda" && multi.value.as_float() &&
          *multi.value.as_float() == 1.0f);
 
-  const StringListOpEdits& clip_sets =
+  const StringListOps& clip_sets =
       multi_result.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
   assert(clip_sets.authored && clip_sets.is_explicit &&
          clip_sets.explicit_items ==
@@ -1504,7 +1615,7 @@ void TestSchemaFallbackAndValueClips() {
   USDCLoadResult clip_sets_back =
       LoadUSDCFromMemory(clip_sets_usdc.data(), clip_sets_usdc.size());
   assert(clip_sets_back.success);
-  const StringListOpEdits& clip_sets_back_edits =
+  const StringListOps& clip_sets_back_edits =
       clip_sets_back.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
   assert(clip_sets_back_edits.authored && clip_sets_back_edits.is_explicit &&
          clip_sets_back_edits.explicit_items == clip_sets.explicit_items);
@@ -1520,13 +1631,13 @@ void TestSchemaFallbackAndValueClips() {
       ") {}\n",
       true);
   assert(clip_ops.success);
-  const StringListOpEdits& empty_clip_sets =
+  const StringListOps& empty_clip_sets =
       clip_ops.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
   assert(empty_clip_sets.authored && empty_clip_sets.is_explicit &&
          empty_clip_sets.explicit_items.empty());
   assert(WriteUSDAToString(clip_ops.stage).find("clipSets = None") !=
          std::string::npos);
-  const StringListOpEdits& ops =
+  const StringListOps& ops =
       clip_ops.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
   assert(ops.authored && !ops.is_explicit &&
          ops.added == std::vector<std::string>{"add"} &&
@@ -1539,11 +1650,11 @@ void TestSchemaFallbackAndValueClips() {
   USDCLoadResult clip_ops_back =
       LoadUSDCFromMemory(clip_ops_usdc.data(), clip_ops_usdc.size());
   assert(clip_ops_back.success);
-  const StringListOpEdits& back_empty =
+  const StringListOps& back_empty =
       clip_ops_back.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
   assert(back_empty.authored && back_empty.is_explicit &&
          back_empty.explicit_items.empty());
-  const StringListOpEdits& back_ops =
+  const StringListOps& back_ops =
       clip_ops_back.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
   assert(back_ops.added == ops.added &&
          back_ops.prepended == ops.prepended &&
@@ -1585,7 +1696,7 @@ void TestSchemaFallbackAndValueClips() {
   const PrimSpec* composed_root =
       composed_clip_sets->prim_at_path("/Root");
   assert(composed_root);
-  const StringListOpEdits& composed_order =
+  const StringListOps& composed_order =
       composed_root->meta().clipSetEdits();
   assert(composed_order.authored && composed_order.is_explicit &&
          composed_order.explicit_items ==
@@ -1693,6 +1804,10 @@ void TestSchemaFallbackAndValueClips() {
   EvalResult from_neighbor = m_eval.EvalWith(
       manifest_result.stage.GetPrimAtPath("/Root"), "x", m_opts);
   assert(from_neighbor.success && from_neighbor.source_asset == "clipA.usda");
+  assert(from_neighbor.clip_resolution.active_index == 1);
+  assert(from_neighbor.clip_resolution.active_asset == "clipB.usda");
+  assert(from_neighbor.clip_resolution.interpolated_missing);
+  assert(from_neighbor.clip_resolution.lower_asset == "clipA.usda");
   assert(from_neighbor.value.as_float() &&
          *from_neighbor.value.as_float() == 7.0f);
   // y is not in the manifest: no clip resolution (falls back to no value).
@@ -1750,6 +1865,13 @@ void TestSchemaFallbackAndValueClips() {
   assert(interp.success && interp.value.as_double());
   assert(std::fabs(*interp.value.as_double() - 12.0) < 1e-9 &&
          "missing clip value must interpolate to 12.0, not hold 0.0");
+  assert(interp.clip_resolution.active_index == 1);
+  assert(interp.clip_resolution.active_asset == "b.usda");
+  assert(interp.clip_resolution.interpolated_missing);
+  assert(interp.clip_resolution.lower_asset == "a.usda");
+  assert(interp.clip_resolution.upper_asset == "c.usda");
+  assert(interp.clip_resolution.lower_stage_time == 0.0);
+  assert(interp.clip_resolution.upper_stage_time == 20.0);
 
   // Vectors (and other linear types) must interpolate component-wise, not
   // hold — the common animated float3 case. Same clip layout, float3 p:
@@ -1947,7 +2069,9 @@ void TestAuthoredStateBits() {
     const std::string usda = WriteUSDAToString(r.stage);
     assert(usda.find("relocates = {}") != std::string::npos);
     assert(usda.find("subLayers = []") != std::string::npos);
-    assert(usda.find("variants = {}") != std::string::npos);
+    // pxr's USDA writer (Sdf_WritePrimMetadata) omits an empty variant
+    // selection map; only USDC keeps the authored-empty bit (below).
+    assert(usda.find("variants") == std::string::npos);
     // The USDA spelling itself re-parses to the same authored state.
     LoadResult again = LoadUSDAFromString(usda, LoadOptions{});
     assert(again.success);
@@ -2002,11 +2126,11 @@ void TestStringListOpFieldTable() {
 
   // apiSchemas: stronger prepend+delete edits over a weaker bare list.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     weaker.apiSchemas() = {"KeepAPI", "DropAPI"};
     weaker.setApiSchemasAuthored();
-    PrimSpecMeta stronger;
-    StringListOpEdits& e = stronger.apiSchemaEdits();
+    PrimMetadata stronger;
+    StringListOps& e = stronger.apiSchemaEdits();
     e.authored = true;
     e.is_explicit = false;
     e.prepended = {"NewAPI"};
@@ -2019,10 +2143,10 @@ void TestStringListOpFieldTable() {
   }
   // apiSchemas: legacy qualifier (no edits) normalizes and merges.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     weaker.apiSchemas() = {"WeakAPI"};
     weaker.setApiSchemasAuthored();
-    PrimSpecMeta stronger;
+    PrimMetadata stronger;
     stronger.apiSchemas() = {"StrongAPI"};
     stronger.setApiSchemasAuthored();
     stronger.apiSchemasQualifier() = "append";
@@ -2035,13 +2159,13 @@ void TestStringListOpFieldTable() {
   // variantSetNames: stronger prepend MERGES over the weaker declaration
   // (was fill-absent-only, dropping the weaker set name).
   {
-    PrimSpecMeta weaker;
-    StringListOpEdits& we = weaker.variantSetNameEdits();
+    PrimMetadata weaker;
+    StringListOps& we = weaker.variantSetNameEdits();
     we.authored = true;
     we.is_explicit = false;
     we.prepended = {"vsWeak"};
-    PrimSpecMeta stronger;
-    StringListOpEdits& se = stronger.variantSetNameEdits();
+    PrimMetadata stronger;
+    StringListOps& se = stronger.variantSetNameEdits();
     se.authored = true;
     se.is_explicit = false;
     se.prepended = {"vsStrong"};
@@ -2052,13 +2176,13 @@ void TestStringListOpFieldTable() {
   }
   // clipSets: stronger reorder over the weaker clips dictionary's name order.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     Value wclips = Value::MakeDictionary();
     wclips.as_dictionary()->set("setA", Value::MakeDictionary());
     wclips.as_dictionary()->set("setB", Value::MakeDictionary());
     weaker.clips() = std::move(wclips);
-    PrimSpecMeta stronger;
-    StringListOpEdits& ce = stronger.clipSetEdits();
+    PrimMetadata stronger;
+    StringListOps& ce = stronger.clipSetEdits();
     ce.authored = true;
     ce.is_explicit = false;
     ce.ordered = {"setB", "setA"};
@@ -2093,9 +2217,9 @@ void TestVariantExtensionFields() {
   assert(r.success);
   const PrimSpec* prim = r.stage.GetRootLayer()->prim_at_path("/P");
   assert(prim);
-  const VariantData* red = nullptr;
-  for (const VariantSetData& vs : prim->meta().variantSets()) {
-    for (const VariantData& vd : vs.variants) {
+  const PrimVariantData* red = nullptr;
+  for (const PrimVariantSetData& vs : prim->meta().variantSets()) {
+    for (const PrimVariantData& vd : vs.variants) {
       if (vd.name == "red") red = &vd;
     }
   }
@@ -2121,7 +2245,7 @@ void TestVariantExtensionFields() {
 
 void TestVariableExpressionGrammar() {
   Value vars = Value::MakeDictionary();
-  Dict* d = vars.as_dictionary();
+  auto d = vars.as_dictionary();
   d->set("A", Value(std::string("v1")));
   d->set("B", Value(std::string("v2")));
   d->set("N", Value(int32_t(3)));
@@ -2259,6 +2383,20 @@ void TestRemainingElectiveFieldCoverage() {
   // Comment round-trips as a BARE empty string literal (pxr spelling).
   assert(text.find("\"\"") != std::string::npos);
 
+  // Strict parsing keeps elective and unregistered layer metadata, as the
+  // AOUSD file_formats corpus does (empty.usda: framePrecision;
+  // layermetadata.usda: `foo = bar`, `baz = None`).
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult opaque = LoadUSDAFromString(
+      "#usda 1.0\n(\n    framesPerSecond = 24\n    framePrecision = 3\n    foo = bar\n"
+      "    baz = None\n)\n", strict);
+  assert(opaque.success);
+  const std::string opaque_text = WriteUSDAToString(opaque.stage);
+  assert(opaque_text.find("framePrecision = 3") != std::string::npos);
+  assert(opaque_text.find("foo = bar") != std::string::npos);
+  assert(opaque_text.find("baz = None") != std::string::npos);
+
   std::vector<uint8_t> crate;
   assert(WriteUSDCToMemory(crate, parsed.stage, USDCWriteOptions{}).success);
   USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
@@ -2266,6 +2404,202 @@ void TestRemainingElectiveFieldCoverage() {
   const std::string binary_text = WriteUSDAToString(back.stage);
   assert(binary_text.find("displayGroupOrder") != std::string::npos);
   assert(binary_text.find("\"\"") != std::string::npos);
+}
+
+void TestGeneratedElectiveAuthoredRoundtrips() {
+  struct Field { const char* scope; const char* name; const char* mode; };
+  const Field fields[] = {
+#define AOUSD_FIELD(scope, name, mode) {#scope, #name, #mode},
+#include "next/schema/generated/aousd-elective-field-coverage.inc"
+#undef AOUSD_FIELD
+  };
+  size_t tested = 0;
+  for (const Field& field : fields) {
+    if (std::string(field.mode) != "Typed") continue;
+    const std::string name(field.name), scope(field.scope);
+    // Type and namespace order are structural USDA syntax, covered by the
+    // namespace-order and crate-version matrices rather than metadata syntax.
+    if (name == "typeName" || name == "primOrder" || name == "propertyOrder") continue;
+    std::string value = "\"\"";
+    if (name == "active" || name == "instanceable" || name == "hidden") value = "false";
+    else if (name == "timeCodesPerSecond" || name == "framesPerSecond") value = "24";
+    else if (name == "startTimeCode" || name == "endTimeCode") value = "0";
+    else if (name == "customLayerData" || name == "expressionVariables" || name == "customData" || name == "assetInfo") value = "{}";
+    else if (name == "colorConfiguration") value = "@@";
+    else if (name == "allowedTokens" || name == "displayGroupOrder") value = "[]";
+    const std::string assignment = name + " = " + value;
+    const bool layer = scope == "Layer", prim = scope == "Prim";
+    const std::string absent = layer || prim ? "def Scope \"P\" {}\n" : "def Scope \"P\" { int a = 1\n}\n";
+    const std::string source = layer ? "(" + assignment + ")\n" + absent : prim ?
+        "def Scope \"P\" (" + assignment + ") {}\n" :
+        "def Scope \"P\" { int a = 1 (" + assignment + ")\n}\n";
+    LoadResult loaded = Parse(source, true), bare = Parse(absent, true);
+    if (!loaded.success) std::cerr << "elective parse: " << scope << "." << name << "\n";
+    assert(loaded.success && bare.success);
+    const std::string canonical = WriteUSDAToString(loaded.stage);
+    if (canonical == WriteUSDAToString(bare.stage)) std::cerr << "lost authored field: " << scope << "." << name << "\n";
+    assert(canonical != WriteUSDAToString(bare.stage));
+    LoadResult text = LoadUSDAFromString(canonical);
+    assert(text.success && WriteUSDAToString(text.stage) == canonical);
+    std::vector<uint8_t> bytes;
+    assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+    USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+    if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+      std::cerr << "elective crate mismatch: " << scope << "." << name << "\n";
+    assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+    ++tested;
+  }
+  assert(tested >= 30);
+}
+
+void TestClipActiveOrderingAndDuplicates() {
+  struct Case { const char* active; bool duplicate; };
+  for (const auto& sample : {Case{"[(10, 1), (0, 0)]", false},
+                            Case{"[(0, 0), (10, 1)]", false},
+                            Case{"[(0, 0), (0, 1)]", true},
+                            Case{"[(0, 0), (0, 0)]", true},
+                            Case{"[(10, 1), (0, 0), (10, 1)]", true}}) {
+    auto loaded = Parse(std::string("def \"P\" (clips = { dictionary default = {\n") +
+        "asset[] assetPaths = [@a.usda@, @b.usda@]\n" +
+        "string primPath = \"/P\"\n" + "double2[] active = " + sample.active +
+        "\n} }) {}\n");
+    assert(loaded.success);
+    std::vector<ValueClipSet> sets;
+    std::string error;
+    const bool valid = ParseValueClipSets(loaded.stage.GetPrimAtPath("/P"), &sets, &error);
+    assert(valid == !sample.duplicate);
+    if (sample.duplicate) {
+      assert(error.find("Duplicate value-clip active time") != std::string::npos);
+      assert(sets.empty());
+    } else {
+      assert(sets.size() == 1);
+      for (double time : {-1.0, 0.0, 9.0, 10.0, 11.0})
+        assert(value_clip_detail::ActiveIndex(sets[0], time) == (time < 10 ? 0 : 1));
+    }
+  }
+}
+
+void TestRelationshipDefaultOpinions() {
+  for (const char* strong : {"", "rel r.default = <>", "rel r.default = <relative>"}) {
+    auto source = Parse(std::string("def Scope \"P\" { rel r\n") + strong + "\n}\n");
+    auto weak = Parse("def Scope \"P\" { rel r.default = </Weak>\n}\n");
+    assert(source.success && weak.success);
+    auto* prim = source.stage.GetRootLayer()->prim_at_path_mutable("/P");
+    const auto* before = prim->property_meta("r");
+    const bool authored = *strong != '\0';
+    assert(bool(before && (before->authored & PropMeta::kRelDefault)) == authored);
+    Compositor::CopyLocalOpinions(*prim, *weak.stage.GetRootLayer()->prim_at_path("/P"));
+    const auto* meta = prim->property_meta("r");
+    assert(meta && (meta->authored & PropMeta::kRelDefault));
+    assert(meta->relDefault == (authored ? (std::strstr(strong, "relative") ? "relative" : "") : "/Weak"));
+    const auto canonical = WriteUSDAToString(source.stage);
+    auto back = LoadUSDAFromString(canonical);
+    assert(back.success && WriteUSDAToString(back.stage) == canonical);
+    assert(canonical.find("rel r.default = <" + meta->relDefault + ">") != std::string::npos);
+  }
+}
+
+void TestUnregisteredMetadataOpinionFolding() {
+  using Fields = std::vector<std::pair<std::string, std::string>>;
+  struct Case { const char* opinions; Fields expected; };
+  const Case cases[] = {
+      {"prepend pipelineTags = [\"a\"]\nprepend pipelineTags = [\"b\"]",
+       {{"prepend pipelineTags", "[\"b\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\nappend pipelineTags = [\"c\"]\nprepend pipelineTags = [\"b\"]",
+       {{"prepend pipelineTags", "[\"b\"]"}, {"append pipelineTags", "[\"c\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\npipelineTags = [\"x\"]",
+       {{"pipelineTags", "[\"x\"]"}}},
+      {"pipelineTags = [\"x\"]\nprepend pipelineTags = [\"b\"]",
+       {{"pipelineTags", "[\"x\"]"}}},
+      {"pipelineTags = [\"x\"]\nappend pipelineTags = [\"c\"]\npipelineTags = [\"y\"]\ndelete pipelineTags = [\"z\"]",
+       {{"pipelineTags", "[\"y\"]"}}},
+      {"pipelineTags = [\"a\"]\npipelineTags = [\"b\"]",
+       {{"pipelineTags", "[\"b\"]"}}},
+      {"prepend pipelineTags = [\"a\"]\nprepend pipelineTags = []",
+       {{"prepend pipelineTags", "[]"}}},
+      {"pipelineOther = \"keep\"\nprepend pipelineTags = [\"a\"]\npipelineTags = None",
+       {{"pipelineOther", "\"keep\""}, {"pipelineTags", "None"}}}};
+  for (const char* scope : {"Layer", "Prim", "Variant", "Property"}) {
+    for (const auto& sample : cases) {
+      const std::string opinions = sample.opinions;
+      std::string body;
+      if (std::string(scope) == "Layer") body = "(" + opinions + ")\ndef Scope \"P\" {}\n";
+      else if (std::string(scope) == "Prim") body = "def Scope \"P\" (" + opinions + ") {}\n";
+      else if (std::string(scope) == "Variant")
+        body = "def Scope \"P\" { variantSet \"v\" = { \"a\" (" + opinions + ") {} } }\n";
+      else body = "def Scope \"P\" { int x = 1 (" + opinions + ") }\n";
+      LoadResult loaded = Parse(body);
+      assert(loaded.success);
+      const auto* layer = loaded.stage.GetRootLayer();
+      const auto* prim = layer->prim_at_path("/P");
+      const Fields* fields = nullptr;
+      if (std::string(scope) == "Layer") fields = &layer->meta().unknownMeta;
+      else if (std::string(scope) == "Prim") fields = &prim->meta().unknownMeta();
+      else if (std::string(scope) == "Variant") fields = &prim->meta().variantSets()[0].variants[0].unknownMeta;
+      else fields = &prim->property_meta("x")->unknownMeta;
+      assert(*fields == sample.expected);
+      const std::string canonical = WriteUSDAToString(loaded.stage);
+      auto text = LoadUSDAFromString(canonical);
+      assert(text.success && WriteUSDAToString(text.stage) == canonical);
+      std::vector<uint8_t> bytes;
+      assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+      auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+        std::cerr << "folding crate " << scope << ": " << opinions << "\nBEFORE\n" << canonical
+                  << "\nAFTER\n" << WriteUSDAToString(binary.stage);
+      assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+    }
+  }
+  // A real crate String containing array-like text must stay a string, while
+  // UnregisteredValue stores the authored source spelling verbatim.
+  auto typed = Parse("def Scope \"P\" { int x = 1 }\n");
+  auto* prim = typed.stage.GetRootLayer()->prim_at_path_mutable("/P");
+  DecodedExtensionField field;
+  field.name = "pipelineTyped";
+  field.value = Value(std::string("[\"b\"]"));
+  field.unregistered = false;
+  prim->ensure_property_meta("x").unknownFields.push_back(field);
+  std::vector<uint8_t> bytes;
+  assert(WriteUSDCToMemory(bytes, typed.stage).success);
+  auto binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(binary.success);
+  const auto* meta = binary.stage.GetRootLayer()->prim_at_path("/P")->property_meta("x");
+  const auto found = std::find_if(meta->unknownFields.begin(), meta->unknownFields.end(),
+      [](const DecodedExtensionField& item) { return item.name == "pipelineTyped"; });
+  assert(found != meta->unknownFields.end() && !found->unregistered);
+  assert(found->value.as_string() && *found->value.as_string() == "[\"b\"]");
+  assert(WriteUSDAToString(binary.stage).find("pipelineTyped = \"[\\\"b\\\"]\"") != std::string::npos);
+}
+
+void TestUnregisteredListOpAuthoredRoundtrips() {
+  // Unregistered extension fields have no schema-defined merge semantics.
+  // Preserve their authored qualifier/value spelling in layer round trips;
+  // do not reinterpret them as a registered composition operation.
+  for (const char* scope : {"Layer", "Prim", "Variant"}) {
+    for (const char* qualifier : {"", "prepend ", "append ", "delete ", "add ", "reorder "}) {
+      for (const char* value : {"None", "[]", "[\"a\", \"b\"]"}) {
+        const std::string assignment = std::string(qualifier) + "pipelineTags = " + value;
+        const std::string source = std::string(scope) == "Layer" ?
+            "(" + assignment + ")\ndef Scope \"P\" {}\n" :
+            std::string(scope) == "Prim" ? "def Scope \"P\" (" + assignment + ") {}\n" :
+            "def Scope \"P\" { variantSet \"v\" = { \"a\" (" + assignment + ") {} } }\n";
+        LoadResult loaded = Parse(source);
+        if (!loaded.success) std::cerr << "extension parse: " << scope << ": " << assignment << "\n";
+        assert(loaded.success);
+        const std::string canonical = WriteUSDAToString(loaded.stage);
+        if (canonical.find(assignment) == std::string::npos) std::cerr << "extension qualifier lost: " << assignment << "\n" << canonical;
+        assert(canonical.find(assignment) != std::string::npos);
+        LoadResult text = LoadUSDAFromString(canonical);
+        assert(text.success && WriteUSDAToString(text.stage) == canonical);
+        std::vector<uint8_t> bytes;
+        assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+        USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+        if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+          std::cerr << "extension crate: " << scope << ": " << assignment << "\nBEFORE\n" << canonical << "\nAFTER\n" << WriteUSDAToString(binary.stage);
+        assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+      }
+    }
+  }
 }
 
 void TestTypedSplines() {
@@ -2412,6 +2746,238 @@ void TestTypedSplines() {
 // USDA -> USDC -> USDA round trip with no value/type loss and no spurious
 // structural additions (e.g. a `reorder properties` synthesized from the
 // crate `properties` field).
+// AOUSD Core 1.1 spline value resolution. Every expected value below was
+// produced by OpenUSD 26.11 (UsdAttribute::Get) on the same layer.
+void TestSplineCore11Parity() {
+  const std::string body =
+      "def \"S\" {\n"
+      "  double hermite.spline = {\n"
+      "    hermite,\n"
+      "    pre: linear,\n"
+      "    post: linear,\n"
+      "    0: 0; post curve (1),\n"
+      "    4: 10; pre (2); post curve (-1),\n"
+      "    8: 0; pre (0),\n"
+      "  }\n"
+      "  double reset.spline = {\n"
+      "    pre: loop reset,\n"
+      "    post: loop reset,\n"
+      "    0: 0; post linear,\n"
+      "    10: 10,\n"
+      "  }\n"
+      "  double bare.spline = {\n"
+      "    0: 0; post linear,\n"
+      "    5: 5; post curve,\n"
+      "    10: 0,\n"
+      "  }\n"
+      "  double inner.spline = {\n"
+      "    loop: (0, 10, 1, 2, 5),\n"
+      "    -20: 100; post linear,\n"
+      "    0: 0; post linear,\n"
+      "    5: 10; post linear,\n"
+      "    10: 0; post linear,\n"
+      "    40: 50; post linear,\n"
+      "    50: 60,\n"
+      "  }\n"
+      "  double innerx.spline = {\n"
+      "    pre: linear,\n"
+      "    post: loop repeat,\n"
+      "    loop: (0, 10, 1, 1, 5),\n"
+      "    0: 0; post linear,\n"
+      "    5: 10; post linear,\n"
+      "    10: 0,\n"
+      "  }\n"
+      "  double nonmono.spline = {\n"
+      "    bezier,\n"
+      "    0: 0; post curve (12, 10),\n"
+      "    10: 10; pre (12, 10),\n"
+      "  }\n"
+      "}\n";
+  LoadResult res = Parse(body, true);
+  assert(res.success);
+  AttributeEval eval(&res.stage);
+  const UsdPrim s = res.stage.GetPrimAtPath("/S");
+  auto at = [&](const char* name, double t) -> double {
+    EvalOptions o;
+    o.time = t;
+    EvalResult r = eval.EvalWith(s, name, o);
+    assert(r.success && r.value.as_double());
+    return *r.value.as_double();
+  };
+  auto near = [](double a, double b, double tol) {
+    return std::fabs(a - b) <= tol * std::max(1.0, std::fabs(b));
+  };
+  // Linear extrapolation takes the slope of the adjacent SEGMENT (the first
+  // knot's post tangent here), not the terminal knot's pre tangent.
+  assert(near(at("hermite", -12.0), -12.0, 1e-9));
+  assert(near(at("hermite", -0.5), -0.5, 1e-9));
+  // Loop reset: the last knot's time starts the next copy.
+  assert(near(at("reset", 10.0), 0.0, 1e-9));
+  assert(near(at("reset", 30.0), 0.0, 1e-9));
+  assert(near(at("reset", 15.0), 5.0, 1e-9));
+  // A bare `post curve` (tangent omitted) parses and stays evaluable.
+  (void)at("bare", 7.0);
+  // Inner loops: expansion, closing knot, kept outer knots.
+  const double inner_t[] = {-25, -15, -10.5, -10, -5, 9, 10, 15, 25, 29, 30, 31, 35, 45};
+  const double inner_v[] = {100, 47.5, 0.25, -5, 5, 6, 5, 15, 20, 16, 15, 18.5, 32.5, 55};
+  for (size_t i = 0; i < sizeof(inner_t) / sizeof(inner_t[0]); ++i) {
+    assert(near(at("inner", inner_t[i]), inner_v[i], 1e-9));
+  }
+  // Extrapolation runs over the expanded knot list.
+  const double ix_t[] = {-15, -10, 10, 19, 21, 25, 30, 40};
+  const double ix_v[] = {-15, -5, 5, 11, 12, 20, 15, 20};
+  for (size_t i = 0; i < sizeof(ix_t) / sizeof(ix_t[0]); ++i) {
+    assert(near(at("innerx", ix_t[i]), ix_v[i], 1e-9));
+  }
+  // Non-monotonic Bezier: evaluation-time Keep Ratio. pxr stops ~1e-5 short
+  // of the exact non-regressive limit, so compare at 1e-4.
+  assert(near(at("nonmono", 4.0), 29.97398957136784, 1e-4));
+  assert(near(at("nonmono", 6.0), -19.97398957136786, 1e-4));
+  assert(near(at("nonmono", 0.5), 4.920575533113868, 1e-4));
+  std::printf("  spline AOUSD Core 1.1 parity: PASSED\n");
+}
+
+// AOUSD Core 1.1 "Piecewise-Linear Approximation" (optional). Expected data
+// is OpenUSD 26.11 TsSpline::Sample(interval, 1, 1, 1e-3) on the same spline
+// text: the polyline split (count and end vertices) must agree, every pxr
+// interior vertex must lie on our curve, and our approximation must stay
+// within the tolerance of exact evaluation (dense check).
+void TestSplinePiecewiseLinear() {
+  struct PxrCase {
+    const char* name;
+    double t0, t1;
+    const char* text;
+    std::vector<std::array<double, 4>> ends;  // per polyline: t,v first; t,v last
+    std::vector<std::array<double, 2>> on_curve;  // pxr interior vertices
+    double cusp_window;
+  };
+  const std::vector<PxrCase> cases = {
+      {"bez", -3, 14,
+       "{\n" "    bezier,\n" "    pre: held,\n" "    post: linear,\n" "    0: 0; post curve (2, 3),\n" "    6: 10; pre (2, 0); post curve (1, -2),\n" "    10: 2; pre (1.5, 1),\n" "  }\n",
+       {{-3, 0, 14, 6}},
+       {{10, 2}, {2.625, 6.55908203125}, {4.40625, 9.1908035278320312}, {6.1438694000244141, 9.6839885711669922}, {8.2053985595703125, 3.6557464599609375}, {9.2987823486328125, 1.9007415771484375}}},
+      {"herm", -3, 12,
+       "{\n" "    hermite,\n" "    pre: linear,\n" "    post: sloped(0.5),\n" "    0: 0; post curve (1),\n" "    4: 10; pre (2); post curve (-1),\n" "    8: 0; pre (0),\n" "  }\n",
+       {{-3, -3, 12, 2}},
+       {{1, 1.7500000000000002}, {3.5, 8.859375}, {4.4375, 9.32025146484375}, {6.125, 4.0649414062499991}, {7.375, 0.57373046875}, {8, 0}}},
+      {"mixed", -2, 14,
+       "{\n" "    pre: none,\n" "    post: held,\n" "    0: 1; post held,\n" "    2: 3; post linear,\n" "    4: 5 & 7; post curve (3, 0),\n" "    8: 2; pre (1, 4); post none,\n" "    10: 6; post linear,\n" "    12: 4,\n" "  }\n",
+       {{0, 1, 2, 1}, {2, 3, 4, 5}, {4, 7, 8, 2}, {10, 6, 14, 4}},
+       {{12, 4}, {4.8819427490234375, 6.7057876586914062}, {5.5355281829833984, 6.0051279067993164}, {6.4390869140625, 4.01898193359375}, {7.3045654296875, 1.22052001953125}, {7.5708980560302734, 0.98384189605712891}, {7.9538421630859375, 1.8219375610351562}}},
+      {"inner", -25, 55,
+       "{\n" "    loop: (0, 10, 1, 2, 5),\n" "    -20: 100; post linear,\n" "    0: 0; post curve (2, 4),\n" "    5: 10; pre (2, 0); post linear,\n" "    10: 0; post linear,\n" "    40: 50; post linear,\n" "    50: 60,\n" "  }\n",
+       {{-25, 100, 55, 60}},
+       {{-6.34375, 4.5625}, {11.49468994140625, 10.4151611328125}, {14.63623046875, 14.9755859375}, {2.5703201293945312, 8.1377105712890625}, {23.430824279785156, 19.366531372070312}, {50, 60}}},
+      {"rep", -12, 20,
+       "{\n" "    pre: loop repeat,\n" "    post: loop repeat,\n" "    0: 0; post curve (2, 5),\n" "    4: 3; pre (1, 0); post curve (1, 0),\n" "    8: 1; pre (3, -1),\n" "  }\n",
+       {{-12, 1, 20, 5}},
+       {{-0.2725830078125, 0.269683837890625}, {-5.8964352607727051, 4.3784370422363281}, {10.072399139404297, 6.381378173828125}, {15.4716796875, 2.516845703125}, {19.976562023162842, 5.0012702941894531}, {4, 3}}},
+      {"reset", -15, 25,
+       "{\n" "    pre: loop reset,\n" "    post: loop reset,\n" "    0: 0; post curve (1, 1),\n" "    10: 10; pre (4, 0),\n" "  }\n",
+       {{-15, 6.7227210510734103, -10, 10}, {-10, 0, 0, 10}, {0, 0, 10, 10}, {10, 0, 20, 10}, {20, 0, 25, 6.7227210510734103}},
+       {{-0.093930721282958984, 9.9983601570129395}, {-1.147247314453125, 9.776702880859375}, {-10.093930721282959, 9.9983601570129395}, {-10.760498046875, 9.898681640625}, {-11.341846466064453, 9.6992454528808594}, {-12.027419567108154, 9.3483262062072754}, {-12.617805957794189, 8.9581999778747559}, {-13.696079254150391, 8.0651664733886719}, {-2.2241044044494629, 9.2268633842468262}, {-3.6960792541503906, 8.0651664733886719}, {-5.769195556640625, 5.818328857421875}, {-8.043212890625, 2.762451171875}, {1.956787109375, 2.762451171875}, {11.956787109375, 2.762451171875}, {14.230804443359375, 5.818328857421875}, {16.303920745849609, 8.0651664733886719}, {17.775895595550537, 9.2268633842468262}, {18.852752685546875, 9.776702880859375}, {19.906069278717041, 9.9983601570129395}, {20.305233001708984, 0.37275314331054688}, {20.951416015625, 1.294189453125}, {22.548828125, 3.603515625}, {23.358058929443359, 4.7054862976074219}, {24.051860809326172, 5.5972251892089844}, {24.965118408203125, 6.683746337890625}, {4.230804443359375, 5.818328857421875}, {6.3039207458496094, 8.0651664733886719}, {7.7758955955505371, 9.2268633842468262}, {8.852752685546875, 9.776702880859375}, {9.906069278717041, 9.9983601570129395}}},
+      {"osc", -10, 16,
+       "{\n" "    pre: loop oscillate,\n" "    post: loop oscillate,\n" "    0: 0; post curve (1, 3),\n" "    3: 2; pre (1, 0); post linear,\n" "    6: 0,\n" "  }\n",
+       {{-10, 2.1477254231770835, 16, 1.3333333333333335}},
+       {{-1.21875, 2.011016845703125}, {0.46875, 1.132354736328125}, {11.015625, 1.8377723693847656}, {12.65625, 1.446868896484375}, {15, 2}, {2.53125, 2.054168701171875}}},
+      {"nonmono", 0, 10,
+       "{\n" "    bezier,\n" "    0: 0; post curve (12, 10),\n" "    10: 10; pre (12, 10),\n" "  }\n",
+       {{0, 0, 10, 10}},
+       {{3.6367253749966619, 29.002176015973085}, {4.374971875, 29.68721875}, {5, 5}, {5.5961864761710158, -19.578078218102455}, {6.3145920796394339, -19.180729823112483}, {9.7692703249931334, 7.7090969114303594}}, 1e-12},
+  };
+  const double tol = 1e-3;
+  auto near = [](double a, double b, double t) {
+    return std::fabs(a - b) <= t * std::max(1.0, std::fabs(b));
+  };
+  size_t ours_total = 0;
+  for (const PxrCase& c : cases) {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText(c.text, &sd, &err));
+    // pxr's Keep Ratio stops ~1e-5 short of the exact limit (see parity test).
+    const double vt = std::strcmp(c.name, "nonmono") == 0 ? 1e-4 : 1e-9;
+    std::vector<SplinePolyline> pls;
+    assert(SampleSplineData(sd, c.t0, c.t1, tol, &pls, &err));
+    if (pls.size() != c.ends.size()) {
+      for (const auto& q : pls) std::fprintf(stderr, "   [%g,%g]-[%g,%g] n=%zu\n", q.front()[0], q.front()[1], q.back()[0], q.back()[1], q.size());
+      std::fprintf(stderr, "  %s: %zu polylines, pxr %zu\n", c.name, pls.size(),
+                  c.ends.size());
+      assert(false);
+    }
+    for (size_t i = 0; i < pls.size(); ++i) {
+      const SplinePolyline& pl = pls[i];
+      assert(pl.size() >= 2);
+      assert(pl.front()[0] == c.ends[i][0] && pl.back()[0] == c.ends[i][2]);
+      // pxr clips curve polylines at the interval by interpolating its own
+      // chord, so a clipped end is only within pxr's tolerance of the curve.
+      if (!near(pl.front()[1], c.ends[i][1], tol) ||
+          !near(pl.back()[1], c.ends[i][3], tol)) {
+        std::fprintf(stderr, "  %s[%zu]: ends %.17g..%.17g, pxr %.17g..%.17g\n",
+                     c.name, i, pl.front()[1], pl.back()[1], c.ends[i][1],
+                     c.ends[i][3]);
+        assert(false);
+      }
+      ours_total += pl.size();
+      // Error bound: dense check of every chord against exact evaluation.
+      for (size_t j = 0; j + 1 < pl.size(); ++j) {
+        assert(pl[j][0] < pl[j + 1][0]);
+        for (int q = 1; q < 32; ++q) {
+          const double u = q / 32.0;
+          const double t = pl[j][0] + u * (pl[j + 1][0] - pl[j][0]);
+          // nonmono sits exactly at the Keep Ratio limit: a vertical tangent
+          // at t=5 where v ~ cbrt(t-5), so a vertical bound is unattainable
+          // within a few ulps of it. Skip that window only.
+          if (c.cusp_window > 0.0 && std::fabs(t - 5.0) < c.cusp_window) continue;
+          double v;
+          assert(EvaluateSplineData(sd, t, &v));
+          const double lerp = pl[j][1] + u * (pl[j + 1][1] - pl[j][1]);
+          if (!(std::fabs(lerp - v) <= tol)) {
+            std::fprintf(stderr, "  %s: deviation %g at t=%.17g\n", c.name,
+                        std::fabs(lerp - v), t);
+            assert(false);
+          }
+        }
+      }
+    }
+    for (const auto& p : c.on_curve) {
+      double v;
+      assert(EvaluateSplineData(sd, p[0], &v));
+      assert(near(v, p[1], vt));
+    }
+  }
+  std::printf("  spline piecewise-linear vertices: ours %zu\n", ours_total);
+
+  // Value-block spline (pre/post none, single none segment) yields nothing;
+  // invalid arguments are rejected.
+  {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText("{\n pre: none,\n post: none,\n 0: 0; post none,\n"
+                           " 5: 1,\n}\n", &sd, &err));
+    std::vector<SplinePolyline> pls;
+    assert(SampleSplineData(sd, -10, -1, tol, &pls, &err) && pls.empty());
+    assert(!SampleSplineData(sd, 1, 0, tol, &pls, &err));
+    assert(!SampleSplineData(sd, 0, 1, 0.0, &pls, &err));
+    assert(SampleSplineData(SplineData(), 0, 1, tol, &pls, &err) && pls.empty());
+    // Looping over an absurd range hits the cap instead of exhausting memory.
+    SplineData lp;
+    assert(ParseSplineText("{\n post: loop repeat,\n 0: 0; post linear,\n"
+                           " 1e-6: 1,\n}\n", &lp, &err));
+    assert(!SampleSplineData(lp, 0, 1e9, tol, &pls, &err));
+  }
+  // Tighter tolerance -> more vertices, still within bound.
+  {
+    SplineData sd;
+    std::string err;
+    assert(ParseSplineText(cases[0].text, &sd, &err));
+    std::vector<SplinePolyline> coarse, fine;
+    assert(SampleSplineData(sd, 0, 10, 1e-2, &coarse, &err));
+    assert(SampleSplineData(sd, 0, 10, 1e-5, &fine, &err));
+    assert(fine[0].size() > coarse[0].size());
+  }
+  std::printf("  spline piecewise-linear approximation: PASSED\n");
+}
+
 void TestFoundationalTypeMatrix() {
   const std::string body =
       "def Scope \"T\" {\n"
@@ -2812,16 +3378,32 @@ void TestMetadataAndListOpFidelity() {
       "  prepend references = @sub.usda@</R> "
       "(offset = 5; scale = -2)\n"
       ") {}\n";
-  assert(!Parse(invalid_arc_offset, true).success &&
-         "negative reference scale must be rejected in strict mode");
-  LoadResult compat_arc = Parse(invalid_arc_offset, false);
+  // A finite negative arc scale is valid file-format data (AOUSD
+  // primmetadata.usda keeps `scale = -2.0`); both modes preserve it and
+  // composition maps it to identity when applying the arc.
+  for (bool strict_mode : {true, false}) {
+    LoadResult arc = Parse(invalid_arc_offset, strict_mode);
+    assert(arc.success && "finite negative reference scale must parse");
+    const UsdPrim arc_prim = arc.stage.GetPrimAtPath("/R");
+    assert(arc_prim && !arc_prim.GetMeta().references.empty() &&
+           arc_prim.GetMeta().references.front().find(":-2") !=
+               std::string::npos &&
+           "negative reference scale must be preserved");
+  }
+  const std::string nan_arc_offset =
+      "def Xform \"R\" (\n"
+      "  prepend references = @sub.usda@</R> (offset = 5; scale = nan)\n"
+      ") {}\n";
+  assert(!Parse(nan_arc_offset, true).success &&
+         "non-finite reference scale must be rejected in strict mode");
+  LoadResult compat_arc = Parse(nan_arc_offset, false);
   assert(compat_arc.success);
   const UsdPrim compat_arc_prim = compat_arc.stage.GetPrimAtPath("/R");
   assert(compat_arc_prim &&
          !compat_arc_prim.GetMeta().references.empty() &&
          compat_arc_prim.GetMeta().references.front().find("layerOffset=") ==
              std::string::npos &&
-         "invalid reference offset must degrade to identity");
+         "non-finite reference offset must degrade to identity");
 
   // apiSchemas listop qualifier survives a USDC round trip: a bare authoring
   // stays explicit (not flipped to prepend); an authored prepend stays prepend.
@@ -3022,14 +3604,14 @@ void TestPathGrammarProductions() {
       {"/Pri{m", false},
       {"/Prim}", false},
       // Relative forms: parent chains need '/'; '.' never precedes '/'.
-      {".a.b", true},
+      {".a.b", false},  // property is terminal (LEAN-203; OpenUSD rejects)
       {"..points", false},
       {"../", false},
       {"../../", false},
       {"a/b.p", true},
-      {"a/b.p.q", true},
-      // Absolute paths take at most ONE property element
-      // (PrimFirstPathElements); relative paths permit chains.
+      {"a/b.p.q", false},
+      // At most ONE property element in every form: the PEG's relative
+      // `(PropElements)*` contradicts L3449-3450 (usdspec-conformance LEAN-203).
       {"/a/b.p.q", false},
       {"/.points", false},
       // Namespaced property elements inside longer paths.
@@ -3136,6 +3718,307 @@ void TestCrateVersionMatrix() {
   }
 }
 
+// One shared caller-owned cache, many threads: clip stages must be loaded at
+// most once per asset after the first wave, every thread must resolve the same
+// sampled value, and the nested-resolution stack must be per-thread. The
+// caller-owned cache keeps its "caller owns freshness" contract, so a warm
+// entry is reused instead of re-parsed per query.
+void TestConcurrentValueClipCache() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  LoadResult root_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clips = { dictionary default = {\n"
+      "    double2[] active = [(0, 0)]\n"
+      "    asset[] assetPaths = [@clip.usda@]\n"
+      "    string primPath = \"/Root\"\n"
+      "    double2[] times = [(0, 0), (1, 1)]\n"
+      "  } }\n"
+      ") { float x }\n");
+  assert(root_result.success);
+  AttributeEval eval(&root_result.stage);
+  EvalOptions options;
+  options.time = 0.5;
+  options.strict_aousd_conformance = true;
+  options.clip_stage_cache = std::make_shared<ValueClipStageCache>();
+  std::atomic<int> load_count{0};
+  options.clip_stage_loader =
+      [&load_count](const std::string& asset, Stage* out, std::string*,
+                    std::string*) {
+        load_count.fetch_add(1);
+        if (asset != "clip.usda" || !out) return false;
+        LoadResult clip = Parse(
+            "def Xform \"Root\" {\n"
+            "  float x.timeSamples = { 0: 2, 1: 4 }\n"
+            "}\n");
+        if (!clip.success) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  const UsdPrim root = root_result.stage.GetPrimAtPath("/Root");
+  std::atomic<int> failures{0};
+  const int kThreads = 8;
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    threads.emplace_back([&]() {
+      for (int j = 0; j < 32; ++j) {
+        EvalResult r = eval.EvalWith(root, "x", options);
+        if (!r.success || !r.value.as_float() ||
+            std::fabs(*r.value.as_float() - 3.0f) > 1e-6f) {
+          failures.fetch_add(1);
+        }
+      }
+    });
+  }
+  for (std::thread& t : threads) t.join();
+  assert(failures.load() == 0 && "concurrent clip resolve disagreed");
+  // Threads may race the very first load, but the warmed cache must reuse the
+  // winning entry instead of parsing the clip again.
+  const int warmed = load_count.load();
+  assert(warmed >= 1);
+  EvalResult after = eval.EvalWith(root, "x", options);
+  assert(after.success && after.value.as_float() &&
+         std::fabs(*after.value.as_float() - 3.0f) < 1e-6f);
+  assert(load_count.load() == warmed &&
+         "warmed shared cache reloaded a clip stage");
+#endif
+}
+
+std::vector<uint8_t> ReadUsdcFixture(const std::string& filename) {
+  std::string path = UsdaFixturePath(filename);
+  path.replace(path.rfind("/usda/"), 6, "/usdc/");
+  std::ifstream ifs(path, std::ios::binary);
+  assert(ifs);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)),
+                              std::istreambuf_iterator<char>());
+}
+
+// Field count stored at the head of a crate's FIELDS section (TOC lookup).
+uint64_t CrateFieldCount(const std::vector<uint8_t>& d) {
+  auto u64 = [&](size_t o) {
+    uint64_t v = 0;
+    assert(o + 8 <= d.size());
+    std::memcpy(&v, d.data() + o, 8);
+    return v;
+  };
+  const uint64_t toc = u64(16);
+  const uint64_t n = u64(toc);
+  for (uint64_t i = 0; i < n; ++i) {
+    const size_t o = toc + 8 + i * 32;
+    if (std::strncmp(reinterpret_cast<const char*>(d.data() + o), "FIELDS",
+                     16) == 0) {
+      return u64(u64(o + 16));
+    }
+  }
+  assert(false && "no FIELDS section");
+  return 0;
+}
+
+// Regressions from tests/run-usdcat-compare.sh vs OpenUSD usdcat.
+void TestUsdcatCompareParity() {
+  // Empty `timeSamples = {}` is an authored field (pxr keeps it) through
+  // USDA and USDC.
+  {
+    LoadResult r = Parse(
+        "def Xform \"muda\" {\n"
+        "  float xformOp:rotateZ:spin.timeSamples = {}\n"
+        "}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("float xformOp:rotateZ:spin.timeSamples = {") !=
+           std::string::npos);
+    // ...but a composed (flattened) stage drops it, like UsdStage::Flatten.
+    USDAWriteOptions composed;
+    composed.composed_stage_output = true;
+    assert(WriteUSDAToString(r.stage, composed).find("timeSamples") ==
+           std::string::npos);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success);
+    assert(WriteUSDAToString(back.stage).find("spin.timeSamples = {") !=
+           std::string::npos);
+  }
+  // pxr omits an empty `variants = {}`; single variantSets name unbracketed.
+  {
+    LoadResult r = Parse(
+        "def Xform \"hello\" (\n"
+        "  variants = {\n  }\n"
+        "  prepend variantSets = \"shadingVariant\"\n"
+        ") {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("variants =") == std::string::npos);
+    assert(usda.find("prepend variantSets = \"shadingVariant\"") !=
+           std::string::npos);
+  }
+  // reorder nameChildren with one name follows the same name-vector rule.
+  {
+    LoadResult r = Parse(
+        "def Xform \"P\" {\n  reorder nameChildren = [\"a\"]\n"
+        "  def \"a\" {}\n}\n");
+    assert(r.success);
+    assert(WriteUSDAToString(r.stage).find("reorder nameChildren = \"a\"") !=
+           std::string::npos);
+  }
+  // A single empty SdfPayload (crate 0.x) is pxr's `payload = None`.
+  {
+    const std::vector<uint8_t> d = ReadUsdcFixture("payload-002.usdc");
+    USDCLoadResult r = LoadUSDCFromMemory(d.data(), d.size());
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("payload = None") != std::string::npos);
+    assert(usda.find("@@") == std::string::npos);
+  }
+  // Legacy token-typed autoPlay / quoted playbackMode tokens.
+  {
+    const std::vector<uint8_t> a =
+        ReadUsdcFixture("usdz-schema-autoplay-001.usdc");
+    USDCLoadResult ra = LoadUSDCFromMemory(a.data(), a.size());
+    assert(ra.success);
+    assert(ra.stage.GetRootLayer()->meta().autoPlay_set &&
+           !ra.stage.GetRootLayer()->meta().autoPlay);
+    const std::vector<uint8_t> p =
+        ReadUsdcFixture("usdz-schema-playbackmode-001.usdc");
+    USDCLoadResult rp = LoadUSDCFromMemory(p.data(), p.size());
+    assert(rp.success);
+    assert(rp.stage.GetRootLayer()->meta().playbackMode == "loop");
+  }
+  // An empty layer must not write a zero-field FIELDS section (pxr cannot
+  // decode its empty compressed stream); pxr writes `primChildren = []`.
+  {
+    LoadResult r = Parse("");
+    assert(r.success);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+    assert(CrateFieldCount(crate) >= 1);
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success);
+  }
+}
+
+// Coordinator follow-ups: dictionary key order, metadata separators, empty
+// layer header, applied-API-schema query.
+void TestPxrTextFormRules() {
+  // (a) pxr VtDictionary is a std::map: dictionary keys print sorted.
+  {
+    LoadResult r = Parse(
+        "def \"P\" (\n  customData = {\n    int zeta = 1\n"
+        "    dictionary beta = {\n      int y = 1\n      int x = 2\n    }\n"
+        "    int alpha = 3\n  }\n) {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    const size_t a = usda.find("int alpha"), b = usda.find("dictionary beta"),
+                 z = usda.find("int zeta"), x = usda.find("int x"),
+                 y = usda.find("int y");
+    assert(a != std::string::npos && a < b && b < z && x < y);
+  }
+  // (b) Entries on one line need `;`: strict rejects, lenient warns.
+  {
+    const char* bad[] = {
+        "(\n  defaultPrim = \"A\" upAxis = \"Y\"\n)\n",
+        "def \"A\" ( kind = \"component\" active = true ) {}\n",
+        "def \"A\" (\n  customData = {\n    int a = 1 int b = 2\n  }\n) {}\n",
+        "def \"A\" {\n  float x = 1 ( doc = \"d\" hidden = true )\n}\n"};
+    for (const char* src : bad) {
+      assert(!Parse(src, true).success);
+      LoadResult lenient = Parse(src, false);
+      assert(lenient.success);
+    }
+    assert(!Parse(bad[1], false).warnings.empty());
+    assert(Parse("def \"A\" ( kind = \"component\"; active = true ) {}\n"
+                 "def \"B\" ( customData = { int a = 1; int b = 2 } ) {}\n",
+                 true).success);
+  }
+  // (c) No metadata -> no `( )` layer header (pxr spelling).
+  {
+    LoadResult r = Parse("def \"A\" {}\n");
+    assert(r.success);
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.compare(0, 11, "#usda 1.0\n\n") == 0);
+    assert(usda.find("(") == std::string::npos);
+  }
+  // (d) Applied API schema query on composed prims.
+  {
+    LoadResult r = Parse(
+        "def SphereLight \"L\" {}\n"
+        "def Mesh \"M\" (\n"
+        "  prepend apiSchemas = [\"MaterialBindingAPI\", "
+        "\"CollectionAPI:lights\", \"MeshLightAPI\"]\n) {}\n"
+        "def ParticleField3DGaussianSplat \"G\" {}\n");
+    assert(r.success);
+    const UsdPrim l = r.stage.GetPrimAtPath("/L");
+    const UsdPrim m = r.stage.GetPrimAtPath("/M");
+    const UsdPrim g = r.stage.GetPrimAtPath("/G");
+    assert(l.HasAPI("LightAPI") && !l.HasAPI("ShapingAPI"));
+    assert(m.HasAPI("MaterialBindingAPI"));
+    assert(!m.HasAPI("MaterialBindingAPI", "x"));
+    assert(m.HasAPI("CollectionAPI") && m.HasAPI("CollectionAPI", "lights") &&
+           !m.HasAPI("CollectionAPI", "other"));
+    assert(m.HasAPI("MeshLightAPI") && m.HasAPI("LightAPI"));
+    assert(g.HasAPI("ParticleFieldPositionAttributeAPI"));
+    assert(!g.HasAPI("MaterialBindingAPI"));
+    const std::vector<std::string> applied = m.GetAppliedSchemas();
+    assert(applied.size() == 4 && applied[1] == "CollectionAPI:lights");
+    assert(!UsdPrim().HasAPI("LightAPI"));
+  }
+  // (e) pxr-accepted forms: list ops on unregistered layer metadata (an
+  // explicit value overrides the edits, as in pxr usdcat) and the legacy
+  // `rel r.default = </t>` statement.
+  {
+    const char* src =
+        "(\n  foo = [6, 5, 4]\n  append foo = [3, 2, 1]\n"
+        "  append foo = [1, 2, 3]\n)\n";
+    for (bool strict : {true, false}) assert(Parse(src, strict).success);
+    const std::string usda = WriteUSDAToString(Parse(src).stage);
+    assert(usda.find("foo = [6, 5, 4]") != std::string::npos);
+    assert(usda.find("append foo") == std::string::npos);
+    assert(!Parse("(\n  append upAxis = \"Y\"\n)\n").success);
+    const std::string edits = WriteUSDAToString(
+        Parse("(\n  append bar = [2]\n  prepend bar = [3]\n"
+              "  append bar = [4]\n)\n", true).stage);
+    assert(edits.find("append bar = [4]") != std::string::npos &&
+           edits.find("prepend bar = [3]") != std::string::npos &&
+           edits.find("append bar = [2]") == std::string::npos);
+    const char* rel =
+        "def \"a\" {\n  rel r.default = </a>\n  rel q.default = <../b>\n}\n";
+    for (bool strict : {true, false}) assert(Parse(rel, strict).success);
+    const std::string ru = WriteUSDAToString(Parse(rel).stage);
+    assert(ru.find("    rel r\n    rel r.default = </a>\n") !=
+           std::string::npos);
+    assert(ru.find("rel q.default = <../b>") != std::string::npos);
+    LoadResult rt = Parse(ru, true);
+    assert(rt.success && WriteUSDAToString(rt.stage) == ru);
+  }
+  // (f) pxr-rejected forms: strict errors, default mode warns and loads.
+  {
+    const char* bad[] = {
+        "def \"a\" {\n  def \"b\" {\n  }}\n",
+        "def \"a\" {\n  int x = 1 }\n",
+        "def \"a\" (\n  prepend apiSchemas = []\n) {}\n",
+        "def \"a\" (\n  prepend references = []\n) {}\n",
+        "def \"a\" (\n  append inherits = []\n) {}\n",
+        "def \"a\" (\n  delete specializes = []\n) {}\n",
+        "def \"a\" (\n  prepend variantSets = []\n) {}\n",
+        "def \"a\" (\n  prepend foo = []\n) {}\n",
+        "def \"a\" {\n  prepend rel r = []\n}\n",
+        "def \"a\" {\n  prepend int x.connect = []\n}\n",
+        "def \"a\" {\n  int x (\n    append foo = []\n  )\n}\n",
+        "def \"a\" {\n  float x\n  reorder properties = []\n}\n",
+        "(\n  prepend foo = []\n)\n",
+        "def \"a\" {\n  varying float x = 1\n}\n"};
+    for (const char* src : bad) {
+      assert(!Parse(src, true).success);
+      LoadResult lenient = Parse(src, false);
+      assert(lenient.success && !lenient.warnings.empty());
+    }
+    // Explicit empty lists and `;`-separated statements stay valid.
+    assert(Parse("def \"a\" (\n  apiSchemas = []\n  references = []\n) {\n"
+                 "  rel r = []\n  int x = 1; }\n",
+                 true).success);
+  }
+}
+
 int main() {
   TestUnicodeAndPaths();
   TestPathGrammarProductions();
@@ -3143,12 +4026,15 @@ int main() {
   TestCrateVersionMatrix();
   TestLosslessUnsupportedValues();
   TestTypedSplines();
+  TestSplineCore11Parity();
+  TestSplinePiecewiseLinear();
   TestFoundationalTypeMatrix();
   TestNormativeTypeMatrix();
   TestMetadataAndListOpFidelity();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestDefaultPrimReferenceEncoding();
+  TestEmptyPathReference();
   TestRelationshipForwarding();
   TestAuthoredEmptyMetadata();
   TestVariantSetListOpFidelity();
@@ -3158,6 +4044,7 @@ int main() {
   TestStageQueryAncestry();
   TestInterpolationMatrix();
   TestSchemaFallbackAndValueClips();
+  TestConcurrentValueClipCache();
   TestSchemaRegistryBreadth();
   TestRelationshipVariabilityFidelity();
   TestLayerOwnerFidelity();
@@ -3168,6 +4055,13 @@ int main() {
   TestStringListOpFieldTable();
   TestVariantExtensionFields();
   TestRemainingElectiveFieldCoverage();
+  TestGeneratedElectiveAuthoredRoundtrips();
+  TestClipActiveOrderingAndDuplicates();
+  TestRelationshipDefaultOpinions();
+  TestUnregisteredMetadataOpinionFolding();
+  TestUnregisteredListOpAuthoredRoundtrips();
+  TestUsdcatCompareParity();
+  TestPxrTextFormRules();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
 }

@@ -891,6 +891,11 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     // time even though their final composited contribution is zero.
     alphaTest: authoredAlphaTest || (hasOpacityMap ? 1 / 255 : 0)
   });
+  if (paths.emissive && !skipTextures && material.emissive.getHex() === 0) {
+    material.emissive.setRGB(1, 1, 1);
+    material.emissiveIntensity = 1;
+  }
+  if (hasOpacityMap) material.depthWrite = false;
   if (!isDefaultMaterial) {
     const openPBR = rawData.openPBR || {};
     const scalar = (name, fallback) => {
@@ -1092,6 +1097,7 @@ export function buildNextThreeNode(adapter, {
   progressInterval = 25,
   releaseBuildData = true,
   showCurves = true,
+  showGuides = false,
   pruneEmptyNodes = false
 } = {}) {
   const group = new THREE.Group();
@@ -1362,11 +1368,16 @@ export function buildNextThreeNode(adapter, {
     }
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
+    // Guide geometry (e.g. MJCF/URDF colliders) is hidden by default, as in
+    // usdview; it stays in the graph so callers can toggle it on.
+    const isGuide = mesh.purpose === 'guide';
+    if (isGuide && !showGuides) threeMesh.visible = false;
     threeMesh.userData['primMeta.absPath'] = mesh.primPath || '';
     threeMesh.userData.usdMesh = {
       index: mesh.index,
       primName: mesh.primName || '',
       primPath: mesh.primPath || '',
+      purpose: mesh.purpose || 'default',
       materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
       materialKey: mesh.materialKey || '',
       doubleSided: !!mesh.doubleSided,
@@ -1395,7 +1406,7 @@ export function buildNextThreeNode(adapter, {
       applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
       group.add(threeMesh);
     }
-    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
+    if (threeMesh.visible && geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
       const worldBoxMatrix = new THREE.Matrix4();
       if (Array.isArray(mesh.worldMatrix) && mesh.worldMatrix.length === 16) {
         const m = mesh.worldMatrix;

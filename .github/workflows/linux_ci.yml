@@ -9,6 +9,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# ccache (installed and persisted per job by hendrikmuhs/ccache-action; the
+# root CMakeLists picks it up as the compiler launcher). Sloppiness lets
+# precompiled-header TUs (src/next) be cached too.
+env:
+  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+  CCACHE_COMPRESS: "true"
+
 jobs:
 
   # Disable gcc4.9 and gcc5 since its too obsolete and failed to do apt-get
@@ -78,6 +85,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-i386-asan
+        max-size: 2G
     - name: setup
       run: |
           sudo apt update
@@ -92,9 +104,11 @@ jobs:
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make
-      run: cd build_m32 && make
+      run: cmake --build build_m32 -j $(nproc)
     - name: test
-      run: cd build_m32 && ctest --output-on-failure
+      # Benchmarks (label "benchmark") are timing runs, not checks; under
+      # Debug + ASan on i386 they alone took ~15 min.
+      run: cd build_m32 && ctest --output-on-failure -j $(nproc) -LE benchmark
 
   build:
 
@@ -102,13 +116,18 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-clang-legacy
+        max-size: 500M
     # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
     # so use clang
     # TODO: Use libc++ for STL?
     - name: configure
       run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
     - name: tests
       run: cd build && ctest --output-on-failure
 
@@ -174,9 +193,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-mcp-qjs
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_mcp -S . \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_MCP_SERVER=On \
           -DLIGHTUSD_WITH_QJS=On \
@@ -185,9 +210,156 @@ jobs:
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_mcp -j2
+      run: cmake --build build_mcp -j $(nproc)
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
+
+  # Default product: the root configure builds the next implementation
+  # (LIGHTUSD_NATIVE_PRODUCT defaults to next). The legacy jobs pin
+  # -DLIGHTUSD_NATIVE_PRODUCT=legacy explicitly.
+  build-next-product:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-next-product
+        max-size: 500M
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_next_product -S . -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLIGHTUSD_WITH_TYDRA=On \
+          -DLIGHTUSD_WITH_MCP_SERVER=On \
+          -DLIGHTUSD_BUILD_EXAMPLES=On \
+          -DLIGHTUSD_BUILD_TESTS=On
+    - name: make
+      run: cmake --build build_next_product -j $(nproc)
+    - name: tests
+      run: cd build_next_product && ctest --output-on-failure
+
+  # Fuzz the installed C ABI (src/c-api/lightusd-c.h) -- the boundary the
+  # JavaScript/WASM, Python and engine bindings call. The C++-internal fuzzers
+  # do not cover it. Bounded smoke run; a crash fails the job and uploads the
+  # reproducer. ASan/UBSan come from LIGHTUSD_NEXT_BUILD_FUZZERS; hardening is
+  # disabled so nothing masks or conflicts with the sanitizer output.
+  next-fuzz-cabi:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-fuzz-cabi
+        max-size: 500M
+    - name: configure (clang + sanitizers)
+      run: |
+        CXX=clang++ CC=clang cmake -B build_fuzz -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=next \
+          -DLIGHTUSD_NEXT_BUILD_FUZZERS=On \
+          -DLIGHTUSD_HARDENING=Off \
+          -DLIGHTUSD_WITH_TYDRA=Off \
+          -DLIGHTUSD_BUILD_TESTS=Off \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    - name: build the C ABI fuzzer
+      run: cmake --build build_fuzz -j $(nproc) --target fuzz_next_cabi
+    - name: seed corpus
+      run: |
+        mkdir -p /tmp/cabi-corpus /tmp/cabi-artifacts
+        cp tests/usda/*.usda /tmp/cabi-corpus/ 2>/dev/null || true
+        cp tests/usdc/*.usdc /tmp/cabi-corpus/ 2>/dev/null || true
+    - name: fuzz (bounded)
+      run: |
+        ./build_fuzz/src/next/fuzz_next_cabi \
+          -max_total_time=60 -rss_limit_mb=4096 \
+          -artifact_prefix=/tmp/cabi-artifacts/ /tmp/cabi-corpus
+    - name: upload reproducers on failure
+      if: failure()
+      uses: actions/upload-artifact@v5
+      with:
+        name: cabi-fuzz-artifacts
+        path: /tmp/cabi-artifacts
+
+  # Sanitizer sweep over the whole next test tree. The C ABI fuzzer job above
+  # only exercises the FFI surface; this runs every next ctest (parser, crate,
+  # pcp, composition, validation, tydra) under AddressSanitizer and
+  # UndefinedBehaviorSanitizer. Hardening is off so nothing masks ASan/UBSan.
+  next-asan-ubsan:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-next-asan-ubsan
+        max-size: 500M
+    - name: configure (clang, ASan + UBSan)
+      run: |
+        CXX=clang++ CC=clang cmake -B build_asan -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=next \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON \
+          -DLIGHTUSD_HARDENING=Off \
+          -DLIGHTUSD_WITH_TYDRA=On \
+          -DLIGHTUSD_BUILD_TESTS=On
+    - name: build
+      run: cmake --build build_asan -j $(nproc)
+    - name: tests
+      run: |
+        cd build_asan && \
+        UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        ASAN_OPTIONS=abort_on_error=1 \
+        ctest --output-on-failure
+
+  # Verify the shipped next artifacts carry the release hardening set
+  # (LIGHTUSD_HARDENING defaults ON). The assertions are the executable
+  # specification of the option: if a flag silently stops being applied, this
+  # job fails rather than leaving the mitigation quietly missing.
+  next-hardening:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-hardening
+        max-size: 500M
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_hardening -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=next \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLIGHTUSD_WITH_TYDRA=Off \
+          -DLIGHTUSD_BUILD_TESTS=On
+    - name: build
+      run: cmake --build build_hardening -j $(nproc)
+    - name: tests
+      run: cd build_hardening && ctest --output-on-failure
+    - name: assert mitigations on lusdcat
+      run: |
+        BIN=build_hardening/lusdcat
+        test -x "$BIN"
+        readelf -hW "$BIN" | grep -q 'DYN (Position-Independent Executable'
+        readelf -lW "$BIN" | grep -q GNU_RELRO
+        readelf -dW "$BIN" | grep -q BIND_NOW
+        ! readelf -lW "$BIN" | grep -q 'GNU_STACK.*RWE'
+        nm "$BIN" | grep -q __stack_chk_fail
+    - name: assert mitigations on the shared C library
+      run: |
+        LIB=build_hardening/src/next/liblightusd_c.so
+        test -f "$LIB"
+        readelf -lW "$LIB" | grep -q GNU_RELRO
+        readelf -dW "$LIB" | grep -q BIND_NOW
+
 
   # Build and run the lusdview unit tests (no GPU required). These compiled
   # unit tests validate lighting, texture, material, geometry, and camera
@@ -198,6 +370,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-lusdview-hermetic
+        max-size: 500M
     - name: install configure dependencies
       run: |
         sudo apt-get update
@@ -206,6 +383,7 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_lusdview -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -213,7 +391,7 @@ jobs:
           -DLIGHTUSD_BUILD_GUI_VIEWER=On
     - name: build tests
       run: |
-        cmake --build build_lusdview -j2 \
+        cmake --build build_lusdview -j $(nproc) \
           --target lusdview_lighting_test \
           --target lusdview_lightrt_bridge_test \
           --target lusdview_openpbr_material_test \
@@ -237,9 +415,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-legacy-with-next
+        max-size: 500M
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
           -DLIGHTUSD_WITH_TYDRA=On \
@@ -247,7 +431,7 @@ jobs:
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_next
+      run: cmake --build build_next -j $(nproc)
     - name: tests
       run: cd build_next && ctest --output-on-failure
 
@@ -262,6 +446,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-aousd
+        max-size: 500M
     - name: Fetch AOUSD supplemental
       run: |
         SUITE_ROOT=$(bash scripts/fetch-aousd-supplemental.sh)
@@ -278,9 +467,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_NEXT_BUILD_TESTS=On \
           -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \
-          -DLIGHTUSD_NEXT_ENABLE_THREAD=On
+          -DLIGHTUSD_NEXT_ENABLE_THREAD=On \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     - name: make next
-      run: cmake --build build_next_aousd -j 4
+      run: cmake --build build_next_aousd -j $(nproc)
     - name: ctest aousd
       run: ctest --test-dir build_next_aousd -R "aousd" --output-on-failure
     - name: Python aousd binding
@@ -329,6 +519,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-arm64-gcc
+        max-size: 500M
 
     - name: prep
       run: |
@@ -337,7 +532,7 @@ jobs:
     - name: configure
       run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5
@@ -367,6 +562,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: linux-arm64-clang
+        max-size: 500M
 
     - name: prep
       run: |
@@ -382,7 +582,7 @@ jobs:
     - name: configure
       run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cmake --build build
+      run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5

@@ -702,7 +702,7 @@ class UsdaLexer {
       }
     }
 
-    return { type: TokenType.STRING, value };
+    return { type: TokenType.STRING, value, isPath: true };
   }
 
   nextToken() {
@@ -940,12 +940,55 @@ class UsdaParser {
       }
 
       if (this.match(TokenType.EQUALS)) {
-        metadata[key] = this.parseValue();
+        const field = key.split(' ').at(-1);
+        metadata[key] = (field === 'references' || field === 'payload')
+          ? this.parseReferenceList() : this.parseValue();
       }
     }
 
     this.expect(TokenType.RPAREN);
     return metadata;
+  }
+
+  parseReferenceList() {
+    if (this.peek().type === TokenType.IDENTIFIER && this.peek().value === 'None') {
+      return this.parseValue();
+    }
+    const list = this.match(TokenType.LBRACKET);
+    const items = [];
+    do {
+      if (list && this.peek().type === TokenType.RBRACKET) break;
+      this.checkIterations();
+      const fields = {
+        asset: { type: 'asset', value: '' },
+        primPath: { type: 'string', value: '' },
+      };
+      const asset = this.peek();
+      if (asset.type === TokenType.STRING && asset.isAsset) {
+        fields.asset = this.parseValue();
+      }
+      const primPath = this.peek();
+      if (primPath.type === TokenType.STRING && primPath.isPath) {
+        fields.primPath = { type: 'string', value: this.advance().value };
+      } else if (!asset.isAsset) {
+        throw new Error(`Expected reference asset or prim path at position ${this.pos}`);
+      }
+      if (this.peek().type === TokenType.LPAREN) {
+        const parameters = this.parseMetadata();
+        for (const [key, value] of Object.entries(parameters)) {
+          // OpenUSD omits identity layer offsets and empty customData.
+          if (key === 'offset' && value.type === 'number' && Number(value.value) === 0) continue;
+          if (key === 'scale' && value.type === 'number' && Number(value.value) === 1) continue;
+          if (key === 'customData' && value.type === 'dictionary' &&
+              Object.keys(value.value).length === 0) continue;
+          fields[key] = value;
+        }
+      }
+      items.push({ type: 'dictionary', value: fields });
+      if (!list || !this.match(TokenType.COMMA)) break;
+    } while (this.peek().type !== TokenType.EOF);
+    if (list) this.expect(TokenType.RBRACKET);
+    return { type: 'array', value: items };
   }
 
   parseAttributeName() {
@@ -1782,9 +1825,28 @@ function extractAttributeName(fullKey) {
   return result;
 }
 
-/**
- * Compare attributes between two prims
- */
+// Only bool declarations allow numeric and textual boolean spellings to compare
+// interchangeably. Do not coerce strings, tokens, or arbitrary numeric values.
+function normalizeBooleanValue(value) {
+  if (!value || typeof value !== 'object') return value;
+  if ((value.type === 'token' || value.type === 'keyword') &&
+      /^(true|false)$/i.test(value.value)) {
+    return { type: 'token', value: value.value.toLowerCase() };
+  }
+  if (value.type === 'number' && (Number(value.value) === 0 || Number(value.value) === 1)) {
+    return { type: 'token', value: Number(value.value) === 1 ? 'true' : 'false' };
+  }
+  if (value.type === 'array') {
+    return { ...value, value: value.value.map(normalizeBooleanValue) };
+  }
+  if (value.type === 'timeSamples') {
+    return { ...value, value: Object.fromEntries(Object.entries(value.value)
+      .map(([time, sample]) => [time, normalizeBooleanValue(sample)])) };
+  }
+  return value;
+}
+
+/** Compare attributes between two prims. */
 function compareAttributes(attrs1, attrs2, primPath, options = {}) {
   const differences = [];
 
@@ -1851,6 +1913,13 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
     let actualVal1 = val1 && typeof val1 === 'object' && val1.value !== undefined && val1.line !== undefined ? val1.value : val1;
     let actualVal2 = val2 && typeof val2 === 'object' && val2.value !== undefined && val2.line !== undefined ? val2.value : val2;
 
+    const boolType1 = /^(?:(?:custom|uniform|varying)\s+)*bool(\[\])?\s+/.exec(key1);
+    const boolType2 = /^(?:(?:custom|uniform|varying)\s+)*bool(\[\])?\s+/.exec(key2);
+    if (boolType1 && boolType2 && boolType1[1] === boolType2[1]) {
+      actualVal1 = normalizeBooleanValue(actualVal1);
+      actualVal2 = normalizeBooleanValue(actualVal2);
+    }
+
     // Check if this is a half-precision attribute (using original keys which have type info)
     const isHalfAttr = isHalfPrecisionAttribute(key1 || '') || isHalfPrecisionAttribute(key2 || '');
 
@@ -1866,8 +1935,8 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
       valuesEqual = areValuesEqualAsHalf(actualVal1, actualVal2);
     } else {
       // Normal comparison path
-      const norm1 = normalizeValueForCompare(val1, options, 1);
-      const norm2 = normalizeValueForCompare(val2, options, 2);
+      const norm1 = normalizeValueForCompare(actualVal1, options, 1);
+      const norm2 = normalizeValueForCompare(actualVal2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {
@@ -1897,32 +1966,28 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
   return differences;
 }
 
-/**
- * Normalize relationship name by stripping qualifiers (listops and custom)
- * E.g., "delete myheight" -> "myheight", "append custom myval" -> "myval"
- */
-function normalizeRelationshipName(name) {
-  const qualifierPrefixes = ['delete ', 'prepend ', 'append ', 'add ', 'reorder ', 'custom '];
-  let normalized = name;
-  let changed = true;
-  // Keep stripping qualifiers until no more are found
-  while (changed) {
-    changed = false;
-    for (const prefix of qualifierPrefixes) {
-      if (normalized.startsWith(prefix)) {
-        normalized = normalized.slice(prefix.length);
-        changed = true;
-        break;
-      }
-    }
-  }
-  return normalized;
+// Custom authoring does not change targets, but list-op qualifiers do:
+// an explicit empty list clears weaker targets; prepend/append/delete do not.
+function normalizeRelationshipName(name, declarationOnly = false) {
+  const words = name.split(' ');
+  const targetName = words.pop();
+  // A declaration without '=' authors no target list-op. OpenUSD drops its
+  // list-op keyword on export; explicit empty target opinions still matter.
+  if (declarationOnly) return targetName;
+  return [...words.filter(word => word !== 'custom'), targetName].join(' ');
 }
 
-/**
- * Compare relationships between two prims
- * Normalizes listop qualifiers (delete/prepend/append/add/reorder) for comparison
- */
+// AOUSD Core 1.0.1, "A General Note on Listops": None and [] are
+// equivalent except for attributes (where None is a value block).
+function normalizeListOpValueForCompare(val, options, side) {
+  if (val && typeof val === 'object' && val.value !== undefined && val.line !== undefined) {
+    val = val.value;
+  }
+  if (val && val.type === 'keyword' && val.value === 'None') return '[]';
+  return normalizeValueForCompare(val, options, side);
+}
+
+/** Compare relationship target opinions, preserving list-op qualifiers. */
 function compareRelationships(rels1, rels2, primPath, options = {}) {
   const differences = [];
 
@@ -1931,12 +1996,12 @@ function compareRelationships(rels1, rels2, primPath, options = {}) {
   const relMap2 = {};
 
   for (const key of Object.keys(rels1)) {
-    const normName = normalizeRelationshipName(key);
+    const normName = normalizeRelationshipName(key, rels1[key] === null);
     relMap1[normName] = key;
   }
 
   for (const key of Object.keys(rels2)) {
-    const normName = normalizeRelationshipName(key);
+    const normName = normalizeRelationshipName(key, rels2[key] === null);
     relMap2[normName] = key;
   }
 
@@ -1976,8 +2041,8 @@ function compareRelationships(rels1, rels2, primPath, options = {}) {
       continue; // Both are declaration-only, equivalent
     }
 
-    const norm1 = normalizeValueForCompare(val1, options, 1);
-    const norm2 = normalizeValueForCompare(val2, options, 2);
+    const norm1 = normalizeListOpValueForCompare(val1, options, 1);
+    const norm2 = normalizeListOpValueForCompare(val2, options, 2);
 
     if (norm1 !== norm2) {
       differences.push({
@@ -2039,9 +2104,15 @@ function compareObjects(obj1, obj2, context, options = {}) {
         actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
       valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, 1e-6, options);
     } else {
-      // Normal comparison path
-      const norm1 = normalizeValueForCompare(val1, options, 1);
-      const norm2 = normalizeValueForCompare(val2, options, 2);
+      // Restrict empty-list normalization to known list-op metadata fields.
+      // Custom metadata, subLayers arrays and attribute value blocks retain
+      // their ordinary comparison semantics.
+      const listOpFields = ['inherits', 'specializes', 'references', 'payload',
+                            'apiSchemas', 'variantSets', 'clipSets'];
+      const normalize = listOpFields.includes(key.split(' ').pop())
+        ? normalizeListOpValueForCompare : normalizeValueForCompare;
+      const norm1 = normalize(val1, options, 1);
+      const norm2 = normalize(val2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {
@@ -2187,6 +2258,8 @@ Options:
   -v, --verbose           Show detailed output
   -q, --quiet             Only show if files differ (exit code)
   --lusdcat <path>        Path to lusdcat executable
+  --lusdcat-arg <arg>     Extra argument passed to lusdcat before the input
+                          (repeatable; e.g. --rewrite-layer for next lusdcat)
   --usdcat <path>         Path to usdcat executable
   --base-dir <path>       Base directory for glob patterns (default: current dir)
   --summary               Show summary statistics only
@@ -2222,43 +2295,32 @@ function compareSingleFile(inputFile, options) {
     content2: null
   };
 
-  // Filename-based XFAIL for .usdc fixtures that can't carry an inline
+  // Filename-based XFAIL hint for .usdc fixtures that can't carry an inline
   // marker. Keyed on basename so it's path-independent. Mirrors the
   // `# XFAIL:` comment used by .usda fixtures.
   const usdcXfails = {
     'utf8-assetpath-001.usdc':
       'pixar-usdcat-parse — pxr <= 23.08 rejects UTF-8 in asset paths ' +
       '(fixed in 24.x per OpenUSD#2560)',
-    'refs-customdata-001.usdc':
-      'reference customData has no slot in the next arc model (arc itself ' +
-      'is preserved; dict is skipped by design)',
-    'delete-apischemas-001.usdc':
-      'delete-apiSchemas sublists apply as in-place removals; the writer ' +
-      'does not re-emit a delete qualifier (known crate-writer P1)',
-    'rel-inherits-none-001.usdc':
-      'legacy lusdcat prints explicit-empty inherits as [] where pxr keeps ' +
-      'None (legacy-side gap; the next reader preserves the clear)',
   };
   const base = require('path').basename(inputFile);
-  if (usdcXfails[base]) {
-    result.status = 'xfail';
-    result.error = usdcXfails[base];
-    return result;
-  }
 
-  // Check for XFAIL/XDIFF marker near the top of USDA fixtures. XFAIL skips
-  // comparison because one tool is expected not to parse the file. XDIFF still
-  // compares both outputs, but classifies non-empty diffs as expected.
+  // XFAIL/XDIFF markers near the top of USDA fixtures, plus the .usdc table
+  // above. XFAIL is a *hint*, not a skip: the fixture is still compared, and
+  // only reported as expected-failure when the OpenUSD side really cannot
+  // parse it. pxr fixed most of these (one-line prim bodies, UTF-8 asset
+  // paths), so against a current usdcat the same fixtures give real coverage
+  // instead of silently dropping out. XDIFF still compares both outputs but
+  // classifies non-empty diffs as expected.
+  let xfailTag = usdcXfails[base] || null;
   let xdiffTag = null;
   try {
     const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 32);
     for (const line of head) {
       const trimmed = line.trim();
       if (trimmed.startsWith('# XFAIL:')) {
-        const tag = trimmed.slice('# XFAIL:'.length).trim();
-        result.status = 'xfail';
-        result.error = tag;
-        return result;
+        xfailTag = trimmed.slice('# XFAIL:'.length).trim();
+        break;
       }
       if (trimmed.startsWith('# XDIFF:')) {
         xdiffTag = trimmed.slice('# XDIFF:'.length).trim();
@@ -2271,8 +2333,8 @@ function compareSingleFile(inputFile, options) {
     let content1, content2;
 
     // Run lusdcat with timeout
-    const runUsdTool = (exe, filePath) => {
-      return execFileSync(exe, [filePath], {
+    const runUsdTool = (exe, filePath, extraArgs = []) => {
+      return execFileSync(exe, [...extraArgs, filePath], {
         encoding: 'utf-8',
         maxBuffer: 100 * 1024 * 1024,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -2282,7 +2344,7 @@ function compareSingleFile(inputFile, options) {
 
     // Run lusdcat with timeout
     try {
-      content1 = runUsdTool(options.lusdcat, inputFile);
+      content1 = runUsdTool(options.lusdcat, inputFile, options.lusdcatArgs);
     } catch (e) {
       result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
@@ -2294,8 +2356,14 @@ function compareSingleFile(inputFile, options) {
     try {
       content2 = runUsdTool(options.usdcat, inputFile);
     } catch (e) {
-      result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
+      if (xfailTag && e.code !== 'ETIMEDOUT') {
+        // The marker exists because OpenUSD could not parse this fixture.
+        result.status = 'xfail';
+        result.error = xfailTag;
+        return result;
+      }
+      result.status = 'error';
       result.error = `usdcat failed: ${timeoutMsg}`;
       return result;
     }
@@ -2332,6 +2400,11 @@ function compareSingleFile(inputFile, options) {
     try {
       usda2 = parseUsda(content2);
     } catch (e) {
+      if (xfailTag) {
+        result.status = 'xfail';
+        result.error = xfailTag;
+        return result;
+      }
       result.status = 'error';
       result.error = `Failed to parse usdcat output: ${e.message}`;
       // Show context in verbose mode
@@ -2408,6 +2481,7 @@ function main() {
     assetPathBase2: null,
     floatTolerance: 1e-6,
     lusdcat: null,
+    lusdcatArgs: [],
     usdcat: null,
     baseDir: process.cwd(),
     continueOnError: false,
@@ -2455,6 +2529,9 @@ function main() {
         break;
       case '--lusdcat':
         options.lusdcat = args[++i];
+        break;
+      case '--lusdcat-arg':
+        options.lusdcatArgs.push(args[++i]);
         break;
       case '--usdcat':
         options.usdcat = args[++i];

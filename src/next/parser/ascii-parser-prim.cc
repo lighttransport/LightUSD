@@ -12,8 +12,6 @@
 namespace lightusd {
 namespace next {
 
-namespace {
-
 // Grammar and type validation plus canonical-text reconstruction for a
 // VtArrayEdit value: `edit [ <op>; ... ]` (usda 1.2, crate 0.14). The next
 // core does not model VtArrayEdit; the edit is preserved as pxr's canonical
@@ -106,7 +104,7 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
     // Array elements never start with `[` (the element type is scalar or
     // tuple), so a `[` after the op keyword is always an index reference.
     auto next_is_index = [&]() {
-      return lexer.peek().type == TokenType::OpenBracket;
+      return lexer.peek_view().type == TokenType::OpenBracket;
     };
 
     std::string op;
@@ -170,7 +168,7 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
                                     : ArrayEditOpRec::MaxSize;
       op = kw + " " + n.value;
       lexer.next();
-      if (kw != "maxsize" && lexer.peek().type == TokenType::Identifier &&
+      if (kw != "maxsize" && lexer.peek_view().type == TokenType::Identifier &&
           lexer.peek().value == "fill") {
         lexer.next();
         std::string f;
@@ -191,6 +189,8 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
   *canonical = std::move(out);
   return true;
 }
+
+namespace {
 
 // Resolve a relative prim/property path (../Sibling, ./Child, Child.attr,
 // .prop, ..) against the owning prim's absolute path. Crate files never
@@ -307,15 +307,40 @@ bool AsciiParser::Impl::ParsePrim() {
   }
 
   builder_->end_prim();
-  return true;
+  return ReportProgress("prims", lexer_->position(), parse_length_);
 }
 
 bool AsciiParser::Impl::ParsePrimContents() {
   if (!builder_->current()) return false;
 
-  while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+  // pxr requires a newline (or `;`) after every prim-body statement, so
+  // `int x = 1 }` and a child's `}}` on one line are rejected.
+  bool need_sep = false;
+  auto check_sep = [&]() -> bool {
+    if (!need_sep || AtEnd() || lexer_->newline_before_current() ||
+        lexer_->has_error()) {
+      return true;  // a lexer error is reported by the statement parser
+    }
+    if (options_.strict_aousd_conformance) {
+      AddError("Expected newline or ';' after prim body statement");
+      return false;
+    }
+    AddWarning("Expected newline or ';' after prim body statement"
+               " (OpenUSD rejects this)");
+    return true;
+  };
+  while (true) {
+    if (Check(TokenType::CloseBrace) || AtEnd()) {
+      if (!check_sep()) return false;
+      break;
+    }
     // pxr accepts `;` as an optional statement separator in prim bodies.
-    if (Match(TokenType::Semicolon)) continue;
+    if (Match(TokenType::Semicolon)) {
+      need_sep = false;
+      continue;
+    }
+    if (!check_sep()) return false;
+    need_sep = true;
     const Token& tok = lexer_->peek();
 
     // Re-fetch each iteration: parsing a nested child prim (below) appends to
@@ -327,7 +352,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
         tok.type == TokenType::Class) {
-      if (!ParsePrim()) {
+      if (!ParsePrimMaybeParallel()) {
         return false;
       }
       continue;
@@ -342,7 +367,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Reorder) {
       lexer_->next();
-      if (lexer_->peek().type == TokenType::Rel) {
+      if (lexer_->peek_view().type == TokenType::Rel) {
         if (!ParseRelationship(PrimSpec::RelationshipListOp::Reorder,
                                /*explicit_list=*/false)) return false;
         continue;
@@ -366,7 +391,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
         tok.type == TokenType::Delete || tok.type == TokenType::Add) {
       TokenType op_tok = tok.type;
       lexer_->next();
-      if (lexer_->peek().type == TokenType::Rel) {
+      if (lexer_->peek_view().type == TokenType::Rel) {
         PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
         if (op_tok == TokenType::Prepend) {
           op = PrimSpec::RelationshipListOp::Prepend;
@@ -439,6 +464,13 @@ bool AsciiParser::Impl::ParseAttribute(
       variability_authored = true;
       lexer_->next();
     } else if (tok.type == TokenType::Varying) {
+      // pxr 26.x and the AOUSD grammar (AttributeVariability) only know
+      // `uniform`; `varying` is a legacy spelling of the default.
+      if (options_.strict_aousd_conformance) {
+        AddError("'varying' variability keyword is not valid USDA");
+        return false;
+      }
+      AddWarning("'varying' variability keyword (OpenUSD rejects this)");
       is_varying = true;
       variability_authored = true;
       lexer_->next();
@@ -447,7 +479,7 @@ bool AsciiParser::Impl::ParseAttribute(
     }
   }
 
-  if (lexer_->peek().type == TokenType::Rel) {
+  if (lexer_->peek_view().type == TokenType::Rel) {
     uint16_t rflags = 0;
     if (is_custom) rflags |= PropSlot::kFlagCustom;
     if (is_uniform) rflags |= PropSlot::kFlagUniform;
@@ -495,6 +527,8 @@ bool AsciiParser::Impl::ParseAttribute(
   uint16_t flags = 0;
   if (is_custom) flags |= PropSlot::kFlagCustom;
   if (is_uniform) flags |= PropSlot::kFlagUniform;
+  if (variability_authored) flags |= PropSlot::kFlagVariabilityAuthored;
+  if (is_varying) flags |= PropSlot::kFlagVarying;
 
   if (Check(TokenType::Equals)) {
     if (!explicit_connection) {
@@ -571,12 +605,6 @@ bool AsciiParser::Impl::ParseAttribute(
                  type_name);
     } else {
       ParseResult result;
-      ParseArrayContext array_ctx;
-      array_ctx.source = source_;
-      array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
-      array_ctx.max_usda_lazy_array_elements =
-          options_.max_usda_lazy_array_elements;
-      array_ctx.num_threads = options_.num_threads;
       const Token& vtok = lexer_->peek();
       if (is_array && vtok.type == TokenType::Identifier &&
           vtok.value == "edit") {
@@ -605,7 +633,7 @@ bool AsciiParser::Impl::ParseAttribute(
         return true;
       }
       if (is_array) {
-        result = ParseArrayValue(*lexer_, type_id, array_ctx);
+        result = ParseArrayAttributeValue(type_id, nullptr);
       } else {
         result = ParseValue(*lexer_, type_id);
       }
@@ -646,6 +674,15 @@ bool AsciiParser::Impl::ParseAttribute(
         return false;
       }
       flags |= PropSlot::kFlagTimeSampled;
+      if (is_array) flags |= PropSlot::kFlagArray;
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId name_id = GetPropNameTable().intern(attr_name);
+        if (PropSlot* slot = cur->property_mutable(name_id)) {
+          slot->flags |= flags;
+        } else {
+          cur->add_property_slot(name_id, type_id, flags);
+        }
+      }
       if (!ParseTimeSamples(attr_name, type_id, is_array)) {
         return false;
       }
@@ -655,6 +692,10 @@ bool AsciiParser::Impl::ParseAttribute(
       lexer_->next();
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after connect");
+        return false;
+      }
+      if (!explicit_connection &&
+          !CheckQualifiedEmptyList("attribute connections")) {
         return false;
       }
       flags |= PropSlot::kFlagConnection;
@@ -691,19 +732,19 @@ bool AsciiParser::Impl::ParseAttribute(
       if (cur) {
         if (explicit_connection) {
           cur->set_connection_targets(attr_name, std::move(targets));
-          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
-          edit = ArcEdit();
+          ArcListOp& edit = cur->ensure_connection_edit(attr_name);
+          edit = ArcListOp();
           edit.authored = true;
           edit.is_explicit = true;
         } else {
-          const ArcEdit* prior_edit = cur->connection_edit(attr_name);
+          const ArcListOp* prior_edit = cur->connection_edit(attr_name);
           const bool explicit_base =
               prior_edit && prior_edit->authored && prior_edit->is_explicit &&
               cur->connection(attr_name) && !cur->connection(attr_name)->empty();
           cur->apply_connection_list_op(attr_name, targets, connection_op);
-          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          ArcListOp& edit = cur->ensure_connection_edit(attr_name);
           if (explicit_base) {
-            edit = ArcEdit();
+            edit = ArcListOp();
             edit.authored = true;
             edit.is_explicit = true;
             ParsePropertyMetadata(attr_name);
@@ -827,6 +868,36 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
     }
   }
 
+  // Legacy `rel r.default = </target>` (pxr RelationshipDefault): sets the
+  // relationship's `default` field, not its targets.
+  if (Check(TokenType::Dot)) {
+    lexer_->next();
+    const Token& sfx = lexer_->peek();
+    if (!(sfx.type == TokenType::Identifier && sfx.value == "default")) {
+      AddError("Expected 'default' after '.' in relationship statement");
+      return false;
+    }
+    lexer_->next();
+    if (!Match(TokenType::Equals)) {
+      AddError("Expected '=' after relationship '.default'");
+      return false;
+    }
+    std::string target;
+    if (!lexer_->expect(TokenType::PathRef, target)) {
+      AddError("Expected a path for relationship '.default'");
+      return false;
+    }
+    if (PrimSpec* prim = builder_->current()) {
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+      // Kept as authored (pxr re-emits relative paths verbatim).
+      prim->ensure_property_meta(rel_name).relDefault = target;
+      prim->ensure_property_meta(rel_name).authored |= PropMeta::kRelDefault;
+    }
+    return true;
+  }
+
   ParsePropertyMetadata(rel_name);
 
   if (!Match(TokenType::Equals)) {
@@ -840,7 +911,11 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
     return true;
   }
 
+  if (!explicit_list && !CheckQualifiedEmptyList("relationship targets")) {
+    return false;
+  }
   std::vector<Path> targets;
+  const bool value_block = Check(TokenType::None);
   const ::lightusd::next::PrimSpec* owner = builder_->current();
   if (Check(TokenType::OpenBracket)) {
     lexer_->next();
@@ -870,10 +945,11 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       if (!prim->relationship(rel_name)) {
         prim->set_relationship_targets(rel_name, {});
       }
-      ArcEdit& e = prim->ensure_relationship_edit(rel_name);
-      e = ArcEdit();
+      ArcListOp& e = prim->ensure_relationship_edit(rel_name);
+      e = ArcListOp();
       e.authored = true;
       e.is_explicit = explicit_list;
+      e.is_value_block = value_block;
     } else {
       // A bare explicit list authored BEFORE any edits dominates: the
       // explicit base is not representable in edit sublists, so subsequent
@@ -886,7 +962,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       // (`prepend rel r = <...>` used to flatten to an explicit list and
       // `delete` edits vanished entirely).
       if (!explicit_list && !explicit_base) {
-        ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+        ArcListOp& e = prim->ensure_relationship_edit(rel_name);
         e.authored = true;
         e.is_explicit = false;
         std::vector<std::string>* sub = nullptr;
@@ -913,8 +989,8 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       } else {
         // A later bare (explicit) authoring replaces any recorded edits.
         if (prim->relationship_edits().count(rel_name)) {
-          ArcEdit& e = prim->ensure_relationship_edit(rel_name);
-          e = ArcEdit();
+          ArcListOp& e = prim->ensure_relationship_edit(rel_name);
+          e = ArcListOp();
           e.authored = true;
         }
       }

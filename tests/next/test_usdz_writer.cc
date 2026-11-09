@@ -2,10 +2,10 @@
 /// Writes a Stage to USDZ, reads it back with the USDZ reader,
 /// then reads the embedded USDC with the USDC reader.
 
-#include "next/lightusd-next.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/reader/usdz-reader.hh"
+#include "next/load-usd.hh"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -271,7 +271,7 @@ void test_usdz_memory_caps() {
   }
 
   LoadUSDOptions load_opts;
-  load_opts.max_memory = 1;
+  load_opts.limits.max_input_bytes = 1;
   Stage loaded_stage;
   std::string warn, err;
   if (LoadUSD("/tmp/test_usdz_next.usdz", &loaded_stage, load_opts, &warn, &err)) {
@@ -347,6 +347,87 @@ void test_write_from_usdc() {
   PASS();
 }
 
+void test_usdz_stream_sink() {
+  TEST("Stream USDZ archive to sink");
+  const std::string root = "root-usdc-payload";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["textures/albedo.bin"] = {1, 2, 3, 4};
+  std::vector<uint8_t> expected;
+  const auto memory = WriteUSDZFromUSDCAndAssetsToMemory(
+      expected, reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets);
+  if (!memory.success) { FAIL(memory.error.c_str()); return; }
+
+  std::vector<uint8_t> streamed;
+  const auto result = WriteUSDZFromUSDCAndAssetsToSink(
+      reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets,
+      [&streamed](const uint8_t* data, size_t size) {
+        streamed.insert(streamed.end(), data, data + size);
+        return true;
+      });
+  if (!result.success || result.bytes_written != streamed.size() ||
+      streamed != expected) {
+    FAIL(result.error.empty() ? "sink bytes differ from memory writer" : result.error.c_str());
+    return;
+  }
+  bool rejected = false;
+  const auto failed = WriteUSDZFromUSDCAndAssetsToSink(
+      reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets,
+      [&rejected](const uint8_t*, size_t) { rejected = true; return false; });
+  if (failed.success || !rejected || failed.error.empty()) {
+    FAIL("sink rejection was not propagated"); return;
+  }
+  PASS();
+}
+
+void test_usdz_rejects_long_entry_name() {
+  TEST("Reject ZIP32 filename overflow");
+  const std::string root = "root-usdc-payload";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets[std::string(65536, 'a')] = {1, 2, 3};
+  std::vector<uint8_t> bytes;
+  const auto result = WriteUSDZFromUSDCAndAssetsToMemory(
+      bytes, reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets);
+  if (result.success || result.error.find("16-bit ZIP filename") ==
+                             std::string::npos) {
+    FAIL("oversized ZIP filename was not rejected"); return;
+  }
+  PASS();
+}
+
+void test_write_from_usda_with_assets() {
+  TEST("Write USDA root with packaged assets");
+  const std::string usda = "#usda 1.0\n\ndef Xform \"World\" {}\n";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["textures/albedo.bin"] = {1, 2, 3};
+  std::vector<uint8_t> bytes;
+  const auto result = WriteUSDZFromUSDAAndAssetsToMemory(
+      bytes, reinterpret_cast<const uint8_t*>(usda.data()), usda.size(), assets);
+  if (!result.success) { FAIL(result.error.c_str()); return; }
+
+  USDZReader reader;
+  if (!reader.Open(bytes.data(), bytes.size())) {
+    FAIL("failed to open USDA-root USDZ"); return;
+  }
+  const int root = reader.FindRootLayer();
+  if (root < 0 || reader.EntryName(root) != "root.usda" ||
+      reader.EntrySize(root) != usda.size() ||
+      std::memcmp(reader.EntryData(root), usda.data(), usda.size()) != 0) {
+    FAIL("USDA root layer was not written faithfully"); return;
+  }
+  int asset = -1;
+  for (size_t i = 0; i < reader.NumEntries(); ++i) {
+    if (reader.EntryName(i) == "textures/albedo.bin") {
+      asset = static_cast<int>(i);
+      break;
+    }
+  }
+  if (asset < 0 || reader.EntrySize(asset) != 3 ||
+      reader.EntryData(asset)[2] != 3) {
+    FAIL("packaged asset was not retained"); return;
+  }
+  PASS();
+}
+
 void test_write_failure() {
   TEST("Report file write failure");
 #if defined(__linux__)
@@ -357,6 +438,39 @@ void test_write_failure() {
     FAIL("/dev/full write was not reported safely"); return;
   }
 #endif
+  PASS();
+}
+
+void test_asset_views() {
+  TEST("Borrowed asset views match owning assets and validate bounds");
+  auto stage = MakeTestStage();
+  std::vector<uint8_t> usdc, owned, viewed, streamed;
+  if (!WriteUSDCToMemory(usdc, stage).success) { FAIL("USDC write"); return; }
+  const std::map<std::string, std::vector<uint8_t>> assets = {
+      {"textures/a.bin", {1, 3, 5, 7}}, {"textures/empty.bin", {}}};
+  USDZAssetViews views;
+  for (const auto& asset : assets) views[asset.first] = {asset.second.data(), asset.second.size()};
+  if (!WriteUSDZFromUSDCAndAssetsToMemory(owned, usdc.data(), usdc.size(), assets).success ||
+      !WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views).success ||
+      owned != viewed) { FAIL("owning/view archive parity"); return; }
+  const auto sink = [&](const uint8_t* data, size_t size) {
+    if (size) streamed.insert(streamed.end(), data, data + size);
+    return true;
+  };
+  if (!WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink).success || streamed != owned) {
+    FAIL("view sink parity"); return;
+  }
+  USDZWriteOptions limits;
+  limits.max_memory_bytes = 1;
+  if (WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views, limits).success ||
+      WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink, limits).success) {
+    FAIL("view memory budget"); return;
+  }
+  views["textures/bad.bin"] = {nullptr, 1};
+  if (WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views).success ||
+      !viewed.empty() || WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink).success) {
+    FAIL("null view rejected"); return;
+  }
   PASS();
 }
 
@@ -372,7 +486,11 @@ int main() {
   test_usdz_memory_caps();
   test_usdc_from_usdz();
   test_write_from_usdc();
+  test_usdz_stream_sink();
+  test_usdz_rejects_long_entry_name();
+  test_write_from_usda_with_assets();
   test_write_failure();
+  test_asset_views();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

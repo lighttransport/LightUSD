@@ -1,3 +1,4 @@
+#include "escape-string.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
@@ -7,7 +8,7 @@
 #include "../crate/crate-data-source.hh"
 #include "../crate/crate-format.hh"  // HalfToFloat
 #include "../crate/lazy-array.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../types/value-view.hh"
 #include "../types/type-id.hh"
@@ -17,6 +18,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 
 namespace lightusd {
 namespace next {
@@ -43,108 +45,76 @@ inline void ReserveArrayHeadroom(std::string& o, size_t want) {
 }
 
 // Escape a string for USDA output
-std::string EscapeString(const std::string& s) {
-  std::string result;
-  result.reserve(s.size() + 2);
-  result += '"';
-  for (char c : s) {
-    switch (c) {
-      case '"':  result += "\\\""; break;
-      case '\\': result += "\\\\"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default: {
-        // Control bytes written raw make the output unreadable by next's own
-        // loader (format sniffing rejects them); emit \xNN like pxr does.
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (uc < 0x20 || uc == 0x7f) {
-          static const char* hexd = "0123456789abcdef";
-          result += "\\x";
-          result += hexd[uc >> 4];
-          result += hexd[uc & 0xf];
-        } else {
-          result += c;
-        }
-        break;
-      }
-    }
-  }
-  result += '"';
-  return result;
-}
 
 // Forward decl: recursive dictionary printer (defined after PrintValue).
-std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
                                     int base_depth);
 
 class ChunkedStream {
  public:
-  explicit ChunkedStream(StreamWriter& out) : out_(out) {
-    buf_.reserve(kFlushAt + 256);
-  }
+  explicit ChunkedStream(StreamWriter& out)
+      : out_(out), buf_(new char[kCap]) {}
 
   ~ChunkedStream() { flush(); }
 
-  void append(const char* s) {
-    while (*s) append(*s++);
-  }
+  void append(const char* s) { append(s, std::strlen(s)); }
   void append(const char* s, size_t n) {
-    if (n >= kFlushAt) {
+    if (n >= kFlushAt) {  // bigger than a chunk: flush pending + pass through
       flush();
       out_.write(s, n);
       return;
     }
-    if (buf_.size() + n > kFlushAt) flush();
-    buf_.append(s, n);
+    if (len_ + n > kFlushAt) flush();
+    std::memcpy(buf_.get() + len_, s, n);
+    len_ += n;
   }
   void append(const std::string& s) { append(s.data(), s.size()); }
   void append(char c) {
-    if (buf_.size() == kFlushAt) flush();
-    buf_.push_back(c);
+    if (len_ >= kFlushAt) flush();
+    buf_[len_++] = c;
   }
-  // Number formatters write into a small stack buffer and append it to the chunk
-  // buffer in a single copy -- no intermediate std::string per scalar (this is
-  // the per-element hot path for large numeric arrays). The formatters never emit
-  // more than `sizeof(t)` bytes; clamping the length is a no-op at runtime but
-  // lets the optimizer prove the append cannot take the oversized path (which
-  // would otherwise trip -Warray-bounds on the stack buffer).
+  // Number formatters write DIRECTLY into the chunk buffer tail -- no stack
+  // buffer, no intermediate copy (this is the per-element hot path for large
+  // numeric arrays; the former stack-buffer-then-append was a sizeable share of
+  // the write in memcpy alone). Flush first when a scalar might not fit, so the
+  // format never runs off the end; kCap has headroom past kFlushAt for
+  // dtos_to's SIMD overshoot (see kDtoaBufSize).
   void append_int(int64_t v) {
-    char t[32];
-    size_t n = IntTo(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + 32 > kFlushAt) flush();
+    len_ += IntTo(buf_.get() + len_, v);
   }
   void append_uint(uint64_t v) {
-    char t[32];
-    size_t n = UIntTo(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + 32 > kFlushAt) flush();
+    len_ += UIntTo(buf_.get() + len_, v);
   }
   void append_float(float v) {
-    char t[32];
-    size_t n = dtos_to(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += dtos_to(buf_.get() + len_, v);
   }
   void append_half(uint16_t bits) {
-    char t[48];
-    size_t n = htos_to(t, bits);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += htos_to(buf_.get() + len_, bits);
   }
   void append_double(double v) {
-    char t[32];
-    size_t n = dtos_to(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += dtos_to(buf_.get() + len_, v);
   }
   void flush() {
-    if (!buf_.empty()) {
-      out_.write(buf_.data(), buf_.size());
-      buf_.clear();
+    if (len_) {
+      out_.write(buf_.get(), len_);
+      len_ = 0;
     }
   }
 
  private:
   static constexpr size_t kFlushAt = 64u << 10;
+  // The allocation has headroom past the flush threshold so a scalar formatted
+  // when len_ is just under kFlushAt (plus dtos_to's SIMD overshoot) can never
+  // run off the buffer end.
+  static constexpr size_t kCap = kFlushAt + kDtoaBufSize + 64;
   StreamWriter& out_;
-  std::string buf_;
+  std::unique_ptr<char[]> buf_;
+  size_t len_ = 0;
 };
 
 template <typename T, typename Emit>
@@ -493,7 +463,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         tmp = value.materialized_copy();
         src = &tmp;
       }
-      const std::vector<uint8_t>* a = src->as_bool_array();
+      auto a = src->as_bool_array();
       if (!a) return false;
       out.append('[');
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
@@ -507,6 +477,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
     }
     case TypeId::Token:
     case TypeId::String:
+    case TypeId::PathExpression:
     case TypeId::AssetPath: {
       Value tmp;
       const Value* src = &value;
@@ -514,7 +485,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         tmp = value.materialized_copy();
         src = &tmp;
       }
-      const std::vector<std::string>* a = src->as_token_array();
+      auto a = src->as_token_array();
       if (!a) return false;
       out.append('[');
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
@@ -523,7 +494,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         if (type_id == TypeId::AssetPath) {
           out.append(FormatAssetPathForUsda((*a)[i]));
         } else {
-          out.append(EscapeString((*a)[i]));
+          out.append(EscapeUSDAString((*a)[i]));
         }
       }
       if (limit < a->size()) out.append(", ...");
@@ -680,7 +651,7 @@ void PrintValueInto(std::string& out, const Value& value,
 
     switch (type_id) {
       case TypeId::Int: {
-        if (const auto* a = value.as_int_array()) {
+        if (auto a = value.as_int_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
@@ -690,7 +661,7 @@ void PrintValueInto(std::string& out, const Value& value,
       }
       case TypeId::UInt:
       case TypeId::UChar: {
-        if (const auto* a = value.as_uint_array()) {
+        if (auto a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
@@ -699,7 +670,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::Int64: {
-        if (const auto* a = value.as_int64_array()) {
+        if (auto a = value.as_int64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
@@ -708,7 +679,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::UInt64: {
-        if (const auto* a = value.as_uint64_array()) {
+        if (auto a = value.as_uint64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
@@ -717,7 +688,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::Bool: {
-        if (const auto* a = value.as_bool_array()) {
+        if (auto a = value.as_bool_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "1" : "0"); }  // pxr: 1/0
           if (limit < a->size()) out += ", ...";
@@ -726,13 +697,14 @@ void PrintValueInto(std::string& out, const Value& value,
       }
       case TypeId::Token:
       case TypeId::String:
+      case TypeId::PathExpression:
       case TypeId::AssetPath: {
-        if (const auto* a = value.as_token_array()) {
+        if (auto a = value.as_token_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) {
             if (i) out += ", ";
             if (type_id == TypeId::AssetPath) out += FormatAssetPathForUsda((*a)[i]);
-            else out += EscapeString((*a)[i]);
+            else out += EscapeUSDAString((*a)[i]);
           }
           if (limit < a->size()) out += ", ...";
         }
@@ -744,7 +716,7 @@ void PrintValueInto(std::string& out, const Value& value,
                          type_id == TypeId::Double ||
                          type_id == TypeId::TimeCode;
         if (dbl) {
-          if (const auto* a = value.as_double_array()) {
+          if (auto a = value.as_double_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -753,7 +725,7 @@ void PrintValueInto(std::string& out, const Value& value,
           }
         } else if (GetComponentType(type_id) == TypeId::UInt) {
           // UInt2/UInt3/UInt4 arrays (flat uint32 buffer)
-          if (const auto* a = value.as_uint_array()) {
+          if (auto a = value.as_uint_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -771,7 +743,7 @@ void PrintValueInto(std::string& out, const Value& value,
           }
         } else if (GetComponentType(type_id) == TypeId::Int) {
           // Int2/Int3/Int4 arrays (flat int32 buffer)
-          if (const auto* a = value.as_int_array()) {
+          if (auto a = value.as_int_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -788,7 +760,7 @@ void PrintValueInto(std::string& out, const Value& value,
             if (limit < n) out += ", ...";
           }
         } else {
-          if (const auto* a = value.as_float_array()) {
+          if (auto a = value.as_float_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -857,19 +829,19 @@ void PrintValueInto(std::string& out, const Value& value,
 
     case TypeId::String:
     case TypeId::PathExpression: {  // SdfPathExpression prints as a string
-      const std::string* v = value.as_string();
-      out += v ? EscapeString(*v) : "None";
+      auto v = value.as_string();
+      out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
     case TypeId::Token: {
-      const std::string* v = value.as_token();
-      out += v ? EscapeString(*v) : "None";
+      auto v = value.as_token();
+      out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
     case TypeId::AssetPath: {
-      const std::string* v = value.as_asset_path();
+      auto v = value.as_asset_path();
       if (v) out += FormatAssetPathForUsda(*v); else out += "None";
       return;
     }
@@ -1100,7 +1072,7 @@ void PrintValueInto(std::string& out, const Value& value,
     }
 
     case TypeId::Dictionary: {
-      const Dict* d = value.as_dictionary();
+      auto d = value.as_dictionary();
       if (d) out += PrintDictionaryIndented(*d, opts, 0); else out += "{\n}";
       return;
     }
@@ -1159,6 +1131,10 @@ bool IsChunkableType(const Value& value, const PrintOptions& opts) {
   if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::UChar:
@@ -1192,6 +1168,10 @@ bool IsChunkableArray(const Value& value, const PrintOptions& opts) {
   if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::UChar:
@@ -1226,6 +1206,26 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
   };
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath: {
+      // Non-POD lazy arrays share a DecodeSlot before entering this path.
+      // Never materialize an entire string array separately for each chunk.
+      if (value.is_lazy()) return false;
+      auto strings = value.as_token_array();
+      if (!strings) return false;
+      if (open) out.append('[');
+      for (size_t i = elem_lo; i < elem_hi; ++i) {
+        if (i) out.append(", ");
+        if (type_id == TypeId::AssetPath)
+          out.append(FormatAssetPathForUsda(strings[i]));
+        else
+          out.append(EscapeUSDAString(strings[i]));
+      }
+      if (close) out.append(']');
+      return true;
+    }
     case TypeId::Int: {
       ArrayScratch<int32_t> scratch;
       ArrayView<int32_t> view;
@@ -1294,13 +1294,13 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
 
 namespace {
 
-std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
                                     int base_depth) {
   std::string s;
   s += "{\n";
 
   // Keys that aren't valid identifiers (spaces, punctuation, leading digit,
-  // keyword-free requirement does not apply) must be quoted or the output is
+  // namespace separators included; keywords are allowed) must be quoted or the output is
   // unparseable.
   auto key_text = [](const std::string& k) -> std::string {
     auto ident = [](const std::string& v) {
@@ -1310,39 +1310,52 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
       };
       if (!head(v[0])) return false;
       for (char c : v) {
-        if (!head(c) && !(c >= '0' && c <= '9') && c != ':') return false;
+        if (!head(c) && !(c >= '0' && c <= '9')) return false;
       }
       return true;
     };
-    return ident(k) ? k : EscapeString(k);
+    return ident(k) ? k : EscapeUSDAString(k);
   };
 
   struct Frame {
-    const Dict* dict{nullptr};
+    DictView  dict{nullptr};
     int depth{0};
     size_t next_entry{0};
+    std::vector<size_t> order;
+    Frame(DictView  d, int level, bool sort_keys) : dict(d), depth(level) {
+      if (sort_keys) {
+        order.resize(d->entries().size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::sort(order.begin(), order.end(), [d](size_t a, size_t b) {
+          return d->entries()[a].first < d->entries()[b].first;
+        });
+      }
+    }
   };
   std::vector<Frame> stack;
-  stack.push_back(Frame{&d, base_depth, 0});
+  stack.emplace_back(d, base_depth, opts.sort_dictionary_keys);
 
   while (!stack.empty()) {
     Frame& frame = stack.back();
     if (frame.next_entry < frame.dict->entries().size()) {
-      const auto& kv = frame.dict->entries()[frame.next_entry++];
+      const size_t index = frame.order.empty()
+          ? frame.next_entry : frame.order[frame.next_entry];
+      ++frame.next_entry;
+      const auto& kv = frame.dict->entries()[index];
       const std::string& key = kv.first;
-      const Value& val = kv.second;
+      const ValueView val = kv.second;
       for (int i = 0; i <= frame.depth; ++i) s += opts.indent;
       if (val.is_dictionary()) {
         s += "dictionary ";
         s += key_text(key);
         s += " = ";
-        const Dict* nested = val.as_dictionary();
+        auto nested = val.as_dictionary();
         if (!nested) {
           s += "{}\n";
           continue;
         }
         s += "{\n";
-        stack.push_back(Frame{nested, frame.depth + 1, 0});
+        stack.emplace_back(nested, frame.depth + 1, opts.sort_dictionary_keys);
         continue;
       }
 

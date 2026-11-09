@@ -226,7 +226,8 @@ std::string to_string(const GeomCamera::StereoRole &role) {
 
 std::string to_string(const Model &model, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(model.spec);
   if (model.prim_type_name.size()) {
@@ -242,18 +243,21 @@ std::string to_string(const Model &model, const uint32_t indent,
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
+  ss << print_material_binding(&model, indent + 1);
+  ss << print_collection(&model, indent + 1);
   ss << print_props(model.props, tokset, model.propertyNames(), indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Scope &scope, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(scope.spec) << " Scope \""
      << scope.name << "\"\n";
@@ -269,6 +273,8 @@ std::string to_string(const Scope &scope, const uint32_t indent,
   // they are silently dropped on write.
   ss << print_typed_token_attr(scope.purpose, "purpose", indent + 1);
   ss << print_typed_token_attr(scope.visibility, "visibility", indent + 1);
+  ss << print_material_binding(&scope, indent + 1);
+  ss << print_collection(&scope, indent + 1);
 
   std::set<std::string> tokset;
   ss << print_props(scope.props, tokset, scope.propertyNames(), indent + 1);
@@ -277,7 +283,7 @@ std::string to_string(const Scope &scope, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // UsdRender / UsdProc placeholder prim types: emit `<spec> <TypeName> "name"`
@@ -285,7 +291,8 @@ std::string to_string(const Scope &scope, const uint32_t indent,
 #define DEFINE_PLACEHOLDER_PRIM_TO_STRING(__cls, __tyname)                 \
   std::string to_string(const __cls &p, const uint32_t indent,            \
                         bool closing_brace) {                             \
-    std::stringstream ss;                                                 \
+    ::lightusd::pprint::ScratchRef pp_ss;                                 \
+    ::lightusd::pprint::Appender &ss = pp_ss.app();                                        \
     ss << pprint::Indent(indent) << to_string(p.spec) << " " __tyname     \
        << " \"" << p.name << "\"\n";                                      \
     if (p.meta.authored()) {                                              \
@@ -299,7 +306,7 @@ std::string to_string(const Scope &scope, const uint32_t indent,
     if (closing_brace) {                                                  \
       ss << pprint::Indent(indent) << "}\n";                              \
     }                                                                     \
-    return ss.str();                                                     \
+    return pp_ss.str();                                                  \
   }
 
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderSettings, "RenderSettings")
@@ -310,7 +317,8 @@ DEFINE_PLACEHOLDER_PRIM_TO_STRING(GenerativeProcedural, "GenerativeProcedural")
 
 std::string to_string(const GPrim &gprim, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(gprim.spec) << " GPrim \""
      << gprim.name << "\"\n";
@@ -325,12 +333,13 @@ std::string to_string(const GPrim &gprim, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Xform &xform, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(xform.spec) << " Xform \""
      << xform.name << "\"\n";
@@ -349,12 +358,13 @@ std::string to_string(const Xform &xform, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCamera &camera, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(camera.spec) << " Camera \""
      << camera.name << "\"\n";
@@ -396,13 +406,14 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 
 std::string to_string(const GeomSphere &sphere, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(sphere.spec) << " Sphere \""
      << sphere.name << "\"\n";
@@ -423,24 +434,89 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // --- UsdVol ---
 
-// Shared printer for FieldAsset-derived field-asset attributes.
-static void print_field_asset_attrs(std::stringstream &ss,
-                                    const FieldAsset &field,
+// Shared printer for field-asset attributes (VolumeFieldAsset and the types
+// derived from it, including the deprecated FieldAsset spelling).
+static void print_field_asset_attrs(::lightusd::pprint::Appender &ss,
+                                    const VolumeFieldAsset &field,
                                     const uint32_t indent) {
   ss << print_typed_attr(field.filePath, "filePath", indent);
   ss << print_typed_attr(field.fieldName, "fieldName", indent);
   ss << print_typed_attr(field.fieldDataType, "fieldDataType", indent);
   ss << print_typed_attr(field.fieldIndex, "fieldIndex", indent);
+  ss << print_typed_attr(field.vectorDataRoleHint, "vectorDataRoleHint", indent);
+}
+
+// Base field prims carry inherited Xformable attributes only.
+std::string to_string(const VolumeFieldBase &field, const uint32_t indent,
+                      bool closing_brace) {
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ss << pprint::Indent(indent) << to_string(field.spec) << " VolumeFieldBase \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return pp_ss.str();
+}
+
+std::string to_string(const FieldBase &field, const uint32_t indent,
+                      bool closing_brace) {
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ss << pprint::Indent(indent) << to_string(field.spec) << " FieldBase \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return pp_ss.str();
+}
+
+std::string to_string(const VolumeFieldAsset &field, const uint32_t indent,
+                      bool closing_brace) {
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ss << pprint::Indent(indent) << to_string(field.spec) << " VolumeFieldAsset \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, field, indent + 1);
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return pp_ss.str();
 }
 
 std::string to_string(const FieldAsset &field, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << to_string(field.spec) << " FieldAsset \""
      << field.name << "\"\n";
   if (field.meta.authored()) {
@@ -455,12 +531,13 @@ std::string to_string(const FieldAsset &field, const uint32_t indent,
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const OpenVDBAsset &asset, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << to_string(asset.spec) << " OpenVDBAsset \""
      << asset.name << "\"\n";
   if (asset.meta.authored()) {
@@ -476,12 +553,13 @@ std::string to_string(const OpenVDBAsset &asset, const uint32_t indent,
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Field3DAsset &asset, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << to_string(asset.spec) << " Field3DAsset \""
      << asset.name << "\"\n";
   if (asset.meta.authored()) {
@@ -497,12 +575,13 @@ std::string to_string(const Field3DAsset &asset, const uint32_t indent,
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Volume &volume, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << to_string(volume.spec) << " Volume \""
      << volume.name << "\"\n";
   if (volume.meta.authored()) {
@@ -525,12 +604,13 @@ std::string to_string(const Volume &volume, const uint32_t indent,
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(mesh.spec) << " Mesh \""
      << mesh.name << "\"\n";
@@ -597,12 +677,13 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomSubset &subset, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(subset.spec) << " GeomSubset \""
      << subset.name << "\"\n";
@@ -624,12 +705,13 @@ std::string to_string(const GeomSubset &subset, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomPoints &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Points \""
      << geom.name << "\"\n";
@@ -656,12 +738,13 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " BasisCurves \""
      << geom.name << "\"\n";
@@ -693,12 +776,13 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " NurbsCurves \""
      << geom.name << "\"\n";
@@ -732,12 +816,13 @@ std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCube &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Cube \""
      << geom.name << "\"\n";
@@ -759,12 +844,13 @@ std::string to_string(const GeomCube &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCone &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Cone", indent);
 
@@ -780,12 +866,13 @@ std::string to_string(const GeomCone &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCylinder &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Cylinder", indent);
 
@@ -800,12 +887,13 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCapsule &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Capsule", indent);
 
@@ -821,12 +909,13 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(instancer.spec)
      << " PointInstancer \"" << instancer.name << "\"\n";
@@ -863,12 +952,13 @@ std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomPlane &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Plane", indent);
 
@@ -884,12 +974,13 @@ std::string to_string(const GeomPlane &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCylinder_1 &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Cylinder_1", indent);
 
@@ -906,12 +997,13 @@ std::string to_string(const GeomCylinder_1 &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomCapsule_1 &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "Capsule_1", indent);
 
@@ -928,12 +1020,13 @@ std::string to_string(const GeomCapsule_1 &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomTetMesh &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "TetMesh", indent);
 
@@ -952,12 +1045,13 @@ std::string to_string(const GeomTetMesh &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomNurbsPatch &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "NurbsPatch", indent);
 
@@ -995,12 +1089,13 @@ std::string to_string(const GeomNurbsPatch &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent,
                       bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_prim_header(geom, "HermiteCurves", indent);
 
@@ -1020,7 +1115,7 @@ std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent,
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

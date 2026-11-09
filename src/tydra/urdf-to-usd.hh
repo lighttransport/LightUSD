@@ -11,6 +11,7 @@
 #include <vector>
 
 namespace lightusd {
+namespace minijson { class Value; }
 
 class Stage;
 
@@ -37,6 +38,11 @@ struct URDFMeshBuffer {
 ///
 /// The generated stage authors standard UsdPhysics, MuJoCo, and Newton API
 /// schema properties where LightUSD has schema support.
+// Native frontends already own validated bounded JSON; avoid text serialization
+// and a second full parse (large mesh payloads can exceed JSON text caps).
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
+    Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
+
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     Stage *stage,

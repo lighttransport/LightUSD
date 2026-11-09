@@ -182,6 +182,32 @@ The `lightusd_next*` modules are the lean next-core + Tydra-next builds used
 by `LightUSDLoader` by default. The deprecated `useNextOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
+The next distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
+`lightusd_validator`, and `lightusd_exr`, each with `.js` / `.wasm` files and
+matching `_64` variants. Keep these files beside the main module, or supply
+`locateFeature(filename)` to resolve both feature JS and WASM files.
+
+```js
+const module = await createLightUSD();
+const geometry = await module.loadFeature('geometry');
+const simplifier = new geometry.MeshoptSimplifier();
+const subdiv = new geometry.SubdivStreamer();
+const raytrace = await module.loadFeature('raytrace');
+const tracer = new raytrace.LightRTPathTracer();
+const validator = await module.loadFeature('validator');
+const exr = await module.loadFeature('exr');
+```
+
+Each feature has its own heap. Pass typed arrays to its methods; the wrappers
+transfer counted data and return owned copies where documented. Subdivision
+callback arrays borrow the geometry heap and must be copied to retain them.
+`loadFeature` shares pending and successful promises, allows retry after failure,
+and rejects mismatched ABI versions, pointer widths, or layouts. `featureInfo`
+reports that metadata. The old `loadEXR` / `loadValidator` loaders and feature
+constructors on the main next module have been removed. Load EXR before direct
+synchronous EXR rendering/encoding calls, and validator before
+`LayerDocument.validateLoadedLayer()`.
+
 The equivalent manual sequence is:
 
 ```bash

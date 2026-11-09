@@ -141,6 +141,11 @@ child.on('exit', (code, signal) => {
   if (!initial.loaded || !initial.composed || initial.deferred_payload_count !== 1) {
     throw new Error(`unexpected deferred scene: ${JSON.stringify(initial)}`);
   }
+  if (initial.deferred_payloads.length !== 1 ||
+      initial.deferred_payloads[0].prim !== '/World' ||
+      initial.deferred_payloads[0].arc !== 'payload') {
+    throw new Error(`unexpected deferred paths: ${JSON.stringify(initial.deferred_payloads)}`);
+  }
   if (loader === 'legacy' && initial.triangle_count !== 0) {
     throw new Error(`legacy payload geometry was not deferred: ${JSON.stringify(initial)}`);
   }
@@ -156,8 +161,12 @@ child.on('exit', (code, signal) => {
     throw new Error(`payload recomposition did not start: ${JSON.stringify(started)}`);
   }
 
+  // Wall-clock deadline (sanitizer builds recompose much slower); the
+  // completion assertion below is unchanged.
+  const budgetMs = Number(process.env.LUSDVIEW_DEFERRED_PAYLOAD_TIMEOUT_MS) || 10000;
+  const deadline = Date.now() + budgetMs;
   let lastInfo = initial;
-  for (let attempt = 0; attempt < 120; ++attempt) {
+  while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 25));
     const info = await call('get_scene_info');
     lastInfo = info;

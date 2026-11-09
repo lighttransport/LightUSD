@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 #include "render-extract.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/shape-to-mesh.hh"
 #include <algorithm>
 #include <array>
@@ -11,23 +12,15 @@
 namespace lightusd { namespace tydra { namespace next {
 using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
 namespace {
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name); const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name); if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) { *out = *result; return true; }
-  if (const std::string* result = value->as_string()) { *out = *result; return true; }
-  return false;
-}
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
-                          double fallback) {
-  double d = fallback;
-  if (GetDouble(prim, name, &d)) return d;
+                          double fallback, double time) {
+  const Value* authored = prim.GetPropertyValue(name);
+  const Value value = std::isnan(time)
+      ? (authored ? *authored : Value())
+      : prim.GetInterpolatedValue(name, time);
+  if (const double* number = value.as_double()) return *number;
+  if (const float* number = value.as_float()) return *number;
   return fallback;
 }
 
@@ -63,12 +56,12 @@ void FillGeneratedMesh(const UsdPrim& prim,
                        RenderMesh* out) {
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  out->face_vertex_counts.reserve(face_counts.size());
+  out->face_vertex_counts.reserve_exact(face_counts.size());
   for (int c : face_counts) {
     out->face_vertex_counts.push_back(c < 0 ? uint32_t{0}
                                             : static_cast<uint32_t>(c));
   }
-  out->face_vertex_indices.reserve(face_indices.size());
+  out->face_vertex_indices.reserve_exact(face_indices.size());
   for (int idx : face_indices) {
     out->face_vertex_indices.push_back(idx < 0 ? uint32_t{0}
                                                : static_cast<uint32_t>(idx));
@@ -94,10 +87,10 @@ void FillGeneratedMesh(const UsdPrim& prim,
     }
   }
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
-  GetBool(prim, "doubleSided", &out->double_sided);
+  GetPropBool(prim, "doubleSided", &out->double_sided);
   if (!points.empty()) {
     out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
     out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
@@ -114,7 +107,7 @@ void FillGeneratedMesh(const UsdPrim& prim,
 }
 }  // namespace
 
-bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
                                                 RenderMesh* out) {
   if (!out || !prim.IsValid() ||
       (!IsAnalyticGeomTypeName(prim.GetTypeName()) &&
@@ -206,21 +199,21 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
     }
   } else if (type == "Cube") {
     ::lightusd::tydra::GenerateCubeMesh(
-        ReadDoubleProperty(prim, "size", 2.0), points, face_counts,
+        ReadDoubleProperty(prim, "size", 2.0, config_.time_code), points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
     ::lightusd::tydra::GenerateIcosphereMesh(
         // USD's Sphere.radius default is 1 (Cube.size is 2). Normally the
         // schema registry supplies it and this fallback never fires.
-        ReadDoubleProperty(prim, "radius", 1.0),
+        ReadDoubleProperty(prim, "radius", 1.0, config_.time_code),
         std::max(0, std::min(config_.mesh.sphere_subdivisions, 6)), points,
         face_counts,
         face_indices, normals, uvs);
   } else if (type == "Cylinder" || type == "Cylinder_1") {
-    double radius = ReadDoubleProperty(prim, "radius", 1.0);
+    double radius = ReadDoubleProperty(prim, "radius", 1.0, config_.time_code);
     if (type == "Cylinder_1") {
-      const double rt = ReadDoubleProperty(prim, "radiusTop", 1.0);
-      const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0);
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 1.0, config_.time_code);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0, config_.time_code);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
         AddWarning("Cylinder_1 '" + prim.GetPath().str() +
@@ -228,19 +221,19 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       }
     }
     ::lightusd::tydra::GenerateCylinderMesh(
-        radius, ReadDoubleProperty(prim, "height", 2.0), 24, 1, points,
+        radius, ReadDoubleProperty(prim, "height", 2.0, config_.time_code), 24, 1, points,
         face_counts, face_indices, normals, uvs);
   } else if (type == "Cone") {
     ::lightusd::tydra::GenerateConeMesh(
-        ReadDoubleProperty(prim, "radius", 1.0),
-        ReadDoubleProperty(prim, "height", 2.0), 24, points, face_counts,
+        ReadDoubleProperty(prim, "radius", 1.0, config_.time_code),
+        ReadDoubleProperty(prim, "height", 2.0, config_.time_code), 24, points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Capsule" || type == "Capsule_1") {
-    double radius = ReadDoubleProperty(prim, "radius", 0.5);
-    double height = ReadDoubleProperty(prim, "height", type == "Capsule_1" ? 1.0 : 2.0);
+    double radius = ReadDoubleProperty(prim, "radius", 0.5, config_.time_code);
+    double height = ReadDoubleProperty(prim, "height", type == "Capsule_1" ? 1.0 : 2.0, config_.time_code);
     if (type == "Capsule_1") {
-      const double rt = ReadDoubleProperty(prim, "radiusTop", 0.5);
-      const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5);
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 0.5, config_.time_code);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5, config_.time_code);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
         AddWarning("Capsule_1 '" + prim.GetPath().str() +
@@ -252,9 +245,34 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
                                            uvs);
   } else if (type == "Plane") {
     ::lightusd::tydra::GeneratePlaneMesh(
-        ReadDoubleProperty(prim, "width", 2.0),
-        ReadDoubleProperty(prim, "length", 2.0), 1, 1, points, face_counts,
+        ReadDoubleProperty(prim, "width", 2.0, config_.time_code),
+        ReadDoubleProperty(prim, "length", 2.0, config_.time_code), 1, 1, points, face_counts,
         face_indices, normals, uvs);
+    std::string axis = "Z";
+    GetPropToken(prim, "axis", &axis);
+    if (axis == "Z") {
+      // UsdGeomPlane's canonical quad starts at (+width,+length); the
+      // generator's face starts at (-width,+length). Remap authored tuples
+      // rather than indexing them with the generator's private vertex order.
+      ::lightusd::next::EvalOptions evaluation;
+      evaluation.time = std::isnan(config_.time_code)
+          ? ::lightusd::next::TimeQuery::Default()
+          : ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+      evaluation.follow_connections = false;
+      MeshFloatAttribute authored;
+      if (ReadMeshFloatAttribute(prim, "primvars:st", evaluation, 2, 4, 4,
+                                 &authored)) {
+        const size_t canonical[4] = {1, 2, 3, 0};
+        std::vector<value::float2> remapped;
+        for (size_t i : canonical) {
+          size_t tuple = 0;
+          if (!authored.TupleIndex(i, i, 0, &tuple)) break;
+          remapped.push_back({authored.values[tuple * 2],
+                              authored.values[tuple * 2 + 1]});
+        }
+        if (remapped.size() == 4) uvs = std::move(remapped);
+      }
+    }
   } else {
     SetLastError("Unsupported analytic geom prim");
     return false;
@@ -306,7 +324,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
 
   if (type != "TetMesh") {
     std::string axis = "Z";
-    GetToken(prim, "axis", &axis);
+    GetPropToken(prim, "axis", &axis);
     if (type == "Cube" || type == "Sphere") axis = "Y";
     ApplyAxis(&points, &normals, axis);
   }

@@ -5,7 +5,6 @@
  * Communicates with the main thread via postMessage for progress updates.
  */
 
-import createLightUSD from './lightusd.js';
 import { NextRenderSceneAdapter } from './LightUSDLoader.js';
 
 let lightusd = null;
@@ -14,11 +13,10 @@ let lightusdNext = null;
 let lightusdBackend = '';
 let loader = null;
 
+// next is the default product; the legacy module is used only when a
+// caller asks for it explicitly.
 function wantsNextBackend(options = {}) {
-    return options.backend === 'next' ||
-        options.useNextOnlyWasm === true ||
-        options.nextOnlyWasm === true ||
-        options.wasm === 'next';
+    return options.backend !== 'legacy' && options.wasm !== 'legacy';
 }
 
 function postNextProgress(info = {}) {
@@ -58,6 +56,8 @@ async function init(options = {}) {
             return true;
         }
 
+        // Loaded on demand so next-only deployments need no legacy module.
+        const {default: createLightUSD} = await import('./lightusd.js');
         lightusdLegacy = await createLightUSD();
         lightusd = lightusdLegacy;
         lightusdBackend = 'legacy';

@@ -9,7 +9,13 @@
 | Normative specification | [AOUSD Core Specification 1.0.1](../aousd/core/1.0.1/core_spec.md), source revision `b7bc21a`, 2025-12-12 |
 | Vendored specification provenance | `aousd/specifications-public` at `2f9e746c4fbd7f48d6d2c9ac568133fe398bbfc0` |
 
-The vendored Markdown and [license](../aousd/core/1.0.1/LICENSE) are exact copies from that checkout. Their SHA-256 digests are `b2feeb2c900befe224a372b2d60d0ddcc6e35048ab54c32c17d5c085b44c642d` and `9cc97638cf0185884ac800144b6246c7772f94ff2cc70686afa9574aaea4fa2b`, respectively.
+The vendored Markdown and [license](../aousd/core/1.0.1/LICENSE) are exact copies from that checkout.
+
+> **Note (2026-10-27):** AOUSD has since published Core **1.1.0**
+> (`core/v1.1.0`, 2026-08-13), vendored at
+> [`aousd/core/1.1.0/`](../aousd/core/1.1.0/). This review remains pinned to
+> 1.0.1; the 1.1.0 changelog is additive in the areas covered below, so a
+> citation refresh (and a delta re-review) is a follow-up, not a correction. Their SHA-256 digests are `b2feeb2c900befe224a372b2d60d0ddcc6e35048ab54c32c17d5c085b44c642d` and `9cc97638cf0185884ac800144b6246c7772f94ff2cc70686afa9574aaea4fa2b`, respectively.
 
 ## Implementation update
 
@@ -18,7 +24,7 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 | Requested area | Current status | Implementation |
 |---|---|---|
 | Unicode identifiers | **Fixed** | `next` reuses LightUSD's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
-| Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `next_usdcat --aousd-strict` enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
+| Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `lusdcat --aousd-strict` (the `next_usdcat` target alias carries the same flag) enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
 | Spline support | **Implemented** | Typed splines parse, evaluate (`timeSamples > spline > default`, held/linear/bezier/hermite + extrapolation + `autoEase`), and serialize to USDC type-59. Per-knot `customData` now survives USDA and the Crate `unordered_map<double, VtDictionary>` framing. |
 | Unsupported typed-value loss | **Mitigated; `frame4d`/`pathExpression` first-class, `opaque`/`group` blocks supported** | Typed values round-trip; `opaque`/`group` declarations and their only agreeing value (`None`) are accepted. Other extension defaults are preserved as raw authored values, and strict mode rejects unencodable values. |
 | Recursive dictionaries | **Fixed for next composition paths** | Prim and property dictionary metadata now recursively fill missing weaker keys. |
@@ -117,7 +123,7 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 | Foundational data types (§6) | Partial, improved | Broad scalar/vector/matrix/array support; `frame4d`, `pathExpression`, typed splines, and `opaque`/`group` value blocks round-trip. The expanded matrix is still hand-maintained rather than generated from the normative table. |
 | Document and layer data model (§7) | Partial | Strong spec containers and metadata coverage, but generic extension fields and empty-but-authored elective metadata/list-op states cannot be represented uniformly. |
 | Paths and identifiers (§8) | Partial/strict-conformant subset | Unicode XID and authored ordering are implemented; strict mode now covers the normative valid/invalid example table, including repeated parent traversal and the absolute-path single-property restriction, while compatibility mode remains permissive. |
-| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions and richer scheme contexts remain. |
+| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, OpenUSD-style persistent/scoped resolver contexts, scoped resolution caches, package resolver extensions, package-aware asset info/timestamps, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions remain; scheme-specific contexts and context-aware handler registration are exposed through the C ABI and Python. |
 | Composition (§10) | Partial | Sublayers, references, payloads, variants, inherits, specializes, relocates, cycles, and prototypes have meaningful coverage; exact field composition still differs. |
 | Composed stage population (§11) | Partial, improved | Authored ordering, recursive dictionaries, custom OR, and relationship list-op results are now represented; remaining work is schema/specifier breadth. |
 | Value resolution (§12) | Partial, improved | List ops, AOUSD Core schema fallbacks, blocks, bounded nested clips, typed spline evaluation, DefaultTime, and ordinary/instance relationship forwarding are implemented; all supplemental entry layers load, while direct sampled-value oracle comparison remains. |
@@ -389,9 +395,74 @@ inherited variables composed over them (root-most opinion wins). The same
 asset referenced under two different variable contexts composes as two
 distinct stacks (`test_layer_stack_identity_expression_vars`).
 
-**Remaining fix needed:** broaden scheme-specific context objects as demanded.
-Address the documented `lstat`-then-open TOCTOU window where security policy
-depends on the checked path.
+Deterministic default-resolver contexts are now supported: `ResolverConfig::context`
+is inherited by composition/worker threads, `BindContext`/`UnbindContext`
+provide nested thread-local overrides, `ResolverScopedCache` memoizes
+resolution for a scope, and `RegisterPackageResolver` handles custom package
+formats. Context strings are parsed as platform-separated search paths. These
+APIs are exposed through the portable C ABI and the Python `AssetResolver`
+type, including context managers for bindings and scoped caches. Resolved
+asset metadata (`GetAssetInfo`) and modification timestamps
+(`GetModificationTimestamp`) are exposed as well: `lightusd_asset_resolver_get_asset_info`,
+`lightusd_asset_resolver_get_modification_timestamp`, and the Python
+`AssetResolver.asset_info()` / `AssetResolver.modification_timestamp()`.
+
+Resolver API parity (C++ `next::AssetResolver` → C ABI → Python):
+
+| C++ | C ABI | Python |
+| --- | --- | --- |
+| `Resolve` | `lightusd_asset_resolver_resolve` | `AssetResolver.resolve()` |
+| `ResolveForNewAsset` | `lightusd_asset_resolver_resolve_for_new_asset` | `AssetResolver.resolve_new()` |
+| `CreateIdentifier` | `lightusd_asset_resolver_create_identifier` | `AssetResolver.create_identifier()` |
+| `GetAssetInfo` | `lightusd_asset_resolver_get_asset_info` | `AssetResolver.asset_info()` |
+| `GetModificationTimestamp` | `lightusd_asset_resolver_get_modification_timestamp` | `AssetResolver.modification_timestamp()` |
+| `ReadAsset` / `OpenAsset` | `lightusd_asset_resolver_read` | `AssetResolver.read()` |
+| `RegisterMemoryAsset` | `lightusd_asset_resolver_register_memory` | `AssetResolver.register_memory()` |
+| `UnregisterMemoryAsset` | `lightusd_asset_resolver_unregister_memory` | `AssetResolver.unregister_memory()` |
+| `SetAlias` | `lightusd_asset_resolver_set_alias` | `AssetResolver.set_alias()` |
+| (alias removal) | `lightusd_asset_resolver_unset_alias` | `AssetResolver.unset_alias()` |
+| `BindContext` / `UnbindContext` | `lightusd_asset_resolver_{bind,unbind}_context` | `AssetResolver.bind_context()` |
+| `GetCurrentContext` | `lightusd_asset_resolver_get_context` | `AssetResolver.current_context` |
+| `IsContextDependentPath` | `lightusd_asset_resolver_is_context_dependent` | `AssetResolver.is_context_dependent()` |
+| `RegisterScheme` / `UnregisterScheme` | `lightusd_asset_resolver_{register,unregister}_scheme[_owned]` | `AssetResolver.{register,unregister}_scheme()` |
+| `HasScheme` | `lightusd_asset_resolver_has_scheme` | `AssetResolver.has_scheme()` |
+| `RegisterPackageResolver` | `lightusd_asset_resolver_{register,unregister}_package[_owned]` | `AssetResolver.{register,unregister}_package()` |
+| `ResolverScopedCache` | `lightusd_asset_resolver_{create,destroy}_cache_scope` | `AssetResolver.cache_scope()` |
+| `ResolverConfig::context` | `lightusd_resolver_context_{set,get}_scheme` | `AssetResolver.bind_context(scheme_contexts=...)` |
+| `CollectDependencies` | `lightusd_dependency_report_json` | `AssetResolver.dependency_report()` |
+
+The C ABI additionally tracks a memory-asset budget that the C++ resolver does
+not: `lightusd_asset_resolver_set_memory_limit` and
+`lightusd_asset_resolver_get_memory_stats` (surfaced as
+`AssetResolver.memory_stats`).
+
+Scheme-specific context objects are supported through
+`ResolverContext::SetSchemeContext` and the context-aware `RegisterScheme`
+overload. The filesystem resolver captures device/inode identity during
+resolution, `ReadAsset(ResolvedAsset)` opens once and verifies the descriptor
+with `fstat`, and file-backed layer loads re-check identity after parsing.
+Package entries carry the package file's identity, so a replaced `.usdz` is
+rejected as well. The identity is captured by the same existence probe that
+resolves the path, so verification costs no extra `stat` (measured ~20% faster
+resolution than probing the file a second time). Asset bytes are read straight
+into their destination container, so a large read is copied once instead of
+twice (measured ~49% lower peak RSS for a 128 MiB asset through the C ABI).
+Already-normalized paths skip the component-by-component rewrite, and a
+resolver without callbacks or memory assets skips the registry lock entirely:
+together these are ~37% faster single-threaded and ~44% faster with eight
+resolving threads (micro-benchmark in `tests/next`).
+
+Callback userdata is owned explicitly: the C ABI gained
+`lightusd_asset_resolver_register_{scheme,package}_owned()`, which releases
+userdata only after the last in-flight callback copy finishes (intrusive
+refcount, no shared ownership). Handler replacement, unregistration, and
+resolver assignment release retired handlers outside the registry lock, so a
+callback that re-enters the resolver cannot deadlock or observe freed state.
+Python callbacks reacquire the GIL, are released as soon as they are
+unregistered, and their exceptions are captured per resolver so a failure on a
+composition worker is re-raised by `resolve`, `read`, or `load`.
+Residual risk: the first path selection is still string-based, so a race before
+resolution cannot be attributed to the resolved file.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
 
@@ -627,7 +698,7 @@ Security is a genuine comparative strength:
 
 Correctness gaps can still become security-relevant. Compatibility mode's acceptance of invalid paths can bypass namespace assumptions; unsupported USDC values and resolver suffix fallback can change scene intent. Strict AOUSD parsing/Crate reading now fails closed for the reviewed cases; security-sensitive applications should additionally disable suffix fallback and report every external asset actually opened.
 
-The resolver contains a documented check/use window around filesystem inspection and open. Where the threat model includes hostile filesystem mutation, open the file first with appropriate flags and validate the opened descriptor rather than relying on a prior `lstat`.
+The filesystem resolver now captures device/inode identity at resolution and validates the opened descriptor before reading; layer loads re-check identity after parsing. Path-policy decisions remain string-based, so hostile filesystem mutation before the first resolution is outside this check/use protection.
 
 ## Prioritized fix plan
 
@@ -666,7 +737,7 @@ The first remediation pass completed the loss policy, Unicode/path handling, rec
 
 ### Phase 4 — Broaden OpenUSD/Tydra parity by demand
 
-1. Instance/prototype-aware relationship/property forwarding and explicit URI/anonymous resolver dispatch are complete for the reviewed paths. Add scheme-specific context objects and substitution only when required.
+1. Instance/prototype-aware relationship/property forwarding and explicit URI/anonymous resolver dispatch are complete for the reviewed paths. Scheme-handler registration and scheme-specific contexts are complete for the reviewed paths.
 2. Expand schema wrappers from the generated registry rather than by hand duplication.
 3. Add Tydra strict conversion and structured approximation reporting.
 4. PRODUCT PARITY (partially done): the schema registry and validator now cover volume/field (UsdVol registry entries + `vol.volume.fieldRel`/`vol.fieldAsset.*` structural checks), Hermite/TetMesh/NURBS-patch property definitions, and render-settings (UsdRender registry entries + `render.*` token/relationship checks). Remaining product work is RENDERING support (Tydra converters for volumes/tet meshes/NURBS — a resource + shader design, not schema breadth) and further shader-node coverage beyond UsdPreviewSurface/UsdUVTexture/UsdPrimvarReader/MaterialX.
@@ -712,6 +783,15 @@ The final pass closed the last 22 by fixing four structural defects in `src/next
 Relative class-arc targets (`inherits = <../_Y>`) now resolve against the authoring prim, and unselected variant sets fall back to USD's registered global fallbacks (`CompositionOptions::variant_fallbacks`, defaulting to `standin → render, proxy`), which is what pxr's museum runner supplies. Regressions for all of this live in `tests/next/test_pcp.cc` (`test_relocates_in_referenced_layer_stack`, `test_relocate_to_new_root_prim`, `test_relative_class_arc_target`).
 
 The native legacy USDA parser/round-trip pair was also rerun after placing the two new regressions under `tests/next/fixtures` rather than widening the shared legacy corpus. It still reports the four pre-existing unexpected files (`aousd-namespace-order.usda`, `aousd-unknown-property-metadata.usda`, `rel-inherits-none-001.usda`, and `token-string-escapes.usda`); neither new next-only fixture appears in that failure set.
+
+A later rebuild of the current legacy library confirms that
+`rel-inherits-none-001.usda` and its Pixar-authored USDC counterpart retain both
+`inherits = None` and `rel r = None` and compare equal to Pixar. The old binary
+used for the earlier comparison predates that preservation fix. Empty `[]`
+list-op spelling is also semantically equivalent to `None` under AOUSD; the
+comparator now recognizes that equivalence without accepting an unassigned
+relationship or an attribute value block as an empty list. The native
+`usdc_reader_prim_metadata_roundtrip_test` covers both spellings.
 
 The corpus-labelled gate also passed:
 
@@ -808,3 +888,24 @@ At minimum add named tests for:
 LightUSD `next` is already credible as a bounded, portable USD ingestion and rendering foundation, especially for controlled content profiles. Its USDZ writer, broad Crate machinery, composition graph work, diagnostics, and Tydra conversion coverage are notable strengths.
 
 For arbitrary AOUSD Core 1.0.1 content, the current implementation remains **profile-based, not fully conformant**. The renewed passes closed the reviewed defaultPrim-reference and authored-empty defaultPrim, population/order, AOUSD Core generated schemas, generated elective-field inventory, expression asset paths, `apiSchemas`/`variantSetNames` authored sublists, compression-bit, interpolation, relationship-forwarding, documentation/dictionary/color fields, reviewed specifier matrices, ancestry/model queries, explicit-empty relationship/API-schema, and strict all-spec-scope field-loss gaps. The supplemental composition delta is now closed as well (138/138; per-layer-stack relocates, prefix-map sets, ancestral arc targets, and full implied-class chains). The measured critical path is now direct sampled-value oracle comparison, non-core OpenUSD schema breadth, the general variable-expression function language, and registry-driven cross-site composition for unregistered list-op fields.
+
+### Sampled-value differential follow-up
+
+The pinned supplemental expected-value assertions are now paired with a
+304-query OpenUSD differential grid: DefaultTime, exact/intermediate samples,
+held/linear interpolation, out-of-range times, and clip transition neighbors.
+This found and fixed held interpolation being replaced by linear interpolation
+inside clips, including nested clips and interpolation of missing clip values.
+Six clip-timing queries retain the pinned AOUSD corpus's expected extrapolation
+instead of OpenUSD's clamping and are reported as explicit oracle differences.
+The grid has zero unexpected mismatches. This is targeted sample coverage,
+not an exhaustive conformance claim.
+
+The generated elective-field inventory also drives 30 authored-state cases
+through USDA and USDC; typed empty/default metadata must remain different from
+an absent opinion. Structural type and namespace-order cases remain in their
+existing specialized matrices.
+Unknown-metadata coverage adds 39 accepted raw opinions and 15 rejected qualified
+layer spellings. It caught lost `add` qualifiers in prim/variant metadata and an
+inferred variant-set list incorrectly encoded as explicit in USDC; both now
+preserve their authored/composable form.

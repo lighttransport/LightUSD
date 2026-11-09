@@ -10,6 +10,13 @@ set(LIGHTUSD_TEST_TARGET "test_lightusd")
 set(LIGHTUSD_BENCHMARK_TARGET "benchmark_lightusd")
 
 project(${LIGHTUSD_TARGET} C CXX)
+option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
+if(NOT LIGHTUSD_NATIVE_IO)
+  add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NEXT_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+option(LIGHTUSD_NATIVE_HOST_SERVICES "Build the explicit native host service provider" ON)
+
+include(${PROJECT_SOURCE_DIR}/tools/ousddiff/tests.cmake)
 
 # PROJECT_IS_TOP_LEVEL is available from cmake 3.21
 if (CMAKE_VERSION VERSION_LESS 3.21)
@@ -32,29 +39,118 @@ if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TY
 endif ()
 
 
-# Keep the compatibility default until the next product passes the full parity
-# gate. Select before configuring legacy dependencies or global compiler flags.
-set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING "Native implementation: legacy or next")
-set_property(CACHE LIGHTUSD_NATIVE_PRODUCT PROPERTY STRINGS legacy next)
+# next is the default product. The legacy implementation stays available for
+# a transition period with -DLIGHTUSD_NATIVE_PRODUCT=legacy. Select before
+# configuring legacy dependencies or global compiler flags.
+set(LIGHTUSD_NATIVE_PRODUCT "next" CACHE STRING "Native implementation: next or legacy")
+set_property(CACHE LIGHTUSD_NATIVE_PRODUCT PROPERTY STRINGS next legacy)
 if(NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy" AND
    NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   message(FATAL_ERROR "LIGHTUSD_NATIVE_PRODUCT must be legacy or next")
 endif()
+if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+  message(DEPRECATION
+    "LIGHTUSD_NATIVE_PRODUCT=legacy is deprecated; use next for new integrations. The legacy product remains available for compatibility and CI.")
+endif()
+# [ccache] Configured before the next-product branch below (which returns
+# early) so both products use it.
+option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
+option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
+if(LIGHTUSD_USE_CCACHE)
+  if(MSVC)
+    # No ccache support
+  else()
+    find_program(CCACHE_EXE ccache)
+    if(CCACHE_EXE)
+
+      message(STATUS "Use ccache : " ${CCACHE_EXE})
+
+      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
+      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
+      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
+      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
+      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
+        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
+      endif()
+
+      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
+      if(CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
+                                      ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+      if(CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
+                                        ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+    endif(CCACHE_EXE)
+  endif()
+endif()
+
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
+  # The next product returns before the legacy dependency/configuration block
+  # below. Load sanitizer support here as well so SANITIZE_ADDRESS and
+  # SANITIZE_UNDEFINED are honored by next-only targets.
+  list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
+  find_package(Sanitizers)
+  if(SANITIZE_ADDRESS)
+    set(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  endif()
+  if(SANITIZE_UNDEFINED)
+    set(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+  endif()
   option(LIGHTUSD_BUILD_TESTS "Build tests" OFF)
+  option(LIGHTUSD_BUILD_EXAMPLES "Build public next consumer examples" OFF)
+  option(LIGHTUSD_NEXT_BUILD_EXAMPLES "Build next-native consumer examples"
+         ${LIGHTUSD_BUILD_EXAMPLES})
   option(LIGHTUSD_ENABLE_THREAD "Enable optional parallel paths" OFF)
   if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TESTS)
     set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
   endif()
+  if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TOOLS)
+    # The next-backed `lusdcat` CLI is the default tool for the default
+    # product. WASM/WASI builds have no command line to drive, so they skip it.
+    if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+      set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)")
+    else()
+      set(LIGHTUSD_NEXT_BUILD_TOOLS ON CACHE BOOL "Build next CLI tools (lusdcat)")
+    endif()
+  endif()
   if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
-    set(LIGHTUSD_NEXT_ENABLE_THREAD ${LIGHTUSD_ENABLE_THREAD} CACHE BOOL "Enable next parallel paths")
+    # The next core has its own parallel paths (source warm, arc-layer
+    # prefetch, opinion fill, crate-writer build). They are ON by default for
+    # native builds regardless of the legacy LIGHTUSD_ENABLE_THREAD switch,
+    # which stays opt-in for the legacy library.
+    if(EMSCRIPTEN)
+      set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Enable next parallel paths")
+    else()
+      set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "Enable next parallel paths")
+    endif()
+  endif()
+  if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
+    set(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE ON CACHE BOOL
+        "Build the public next C API consumer example")
   endif()
   if(LIGHTUSD_NEXT_BUILD_TESTS)
     enable_testing()
   endif()
   add_subdirectory(src/next)
+  if(COMMAND add_sanitizers)
+    add_sanitizers(lightusd_next)
+  endif()
   # Explicit next names prevent consumers from silently binding legacy APIs.
   add_library(lightusd::next ALIAS lightusd_next)
+  option(LIGHTUSD_BUILD_TOOLS "Build next-compatible command-line tools" OFF)
+  if(LIGHTUSD_BUILD_TOOLS)
+    add_subdirectory(tools/lusdchecker)
+  endif()
   return()
 endif()
 
@@ -105,11 +201,9 @@ else()
 endif ()
 
 # options
-option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
 # NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
 # compile cost is dominated by template *instantiation* and -O3 codegen, not by
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
-option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(LIGHTUSD_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
@@ -415,10 +509,16 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 # __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
 # globally avoids that footgun across examples/, tests/feat/,
 # tests/pprint/, ... — every binary in the build tree gets the runtime
-# automatically.
+# automatically. Shared libraries need it too: liblightusd_c embeds the
+# instrumented asset-import and render-support objects, and macOS rejects
+# undefined __asan_* references when linking a dylib.
 if(SANITIZE_ADDRESS)
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_SHARED_LINKER_FLAGS
+      "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_MODULE_LINKER_FLAGS
+      "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 endif()
 
 # [cifuzz]
@@ -474,42 +574,6 @@ if(MSVC)
   add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
-# [ccache]
-if(LIGHTUSD_USE_CCACHE)
-  if(MSVC)
-    # No ccache support
-  else()
-    find_program(CCACHE_EXE ccache)
-    if(CCACHE_EXE)
-
-      message(STATUS "Use ccache : " ${CCACHE_EXE})
-
-      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
-      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
-      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
-      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
-        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
-      endif()
-
-      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
-      if(CMAKE_C_COMPILER_LAUNCHER)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
-                                      ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-      if(CMAKE_CXX_COMPILER_LAUNCHER)
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
-                                        ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-    endif(CCACHE_EXE)
-  endif()
-endif()
 
 
 if (LIGHTUSD_WITH_MCP_SERVER)
@@ -607,6 +671,9 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/unicode-xid-c.c
+    ${PROJECT_SOURCE_DIR}/src/next/c/spline.c
+    ${PROJECT_SOURCE_DIR}/src/core/logger.cc
     ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint-dispatch.cc
@@ -617,19 +684,24 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
     ${PROJECT_SOURCE_DIR}/src/value-types-lerp.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
-    ${PROJECT_SOURCE_DIR}/src/color-transform.cc
+    ${PROJECT_SOURCE_DIR}/src/core/color-transform.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-mesh.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-layer-geometry.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-udim-bake.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-geometry-optimize.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-material-optimize.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
@@ -648,7 +720,7 @@ set(LIGHTUSD_SOURCES
     # usdMtlX has less dependency(pugixml), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/core/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx-write.cc
@@ -798,6 +870,7 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+        ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.hh
@@ -962,7 +1035,7 @@ endif()
 
 if(LIGHTUSD_WITH_JSON)
   list(APPEND LIGHTUSD_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/minijson.cc
+    ${PROJECT_SOURCE_DIR}/src/core/minijson.cc
     ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
     ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     ${PROJECT_SOURCE_DIR}/src/json-writer.cc
@@ -980,8 +1053,7 @@ if(LIGHTUSD_WITH_USDFBX)
 endif()
 
 if(LIGHTUSD_WITH_USDOBJ)
-  list(APPEND LIGHTUSD_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
+  # usdObj uses the shared C11 asset importer.
 endif()
 
 if(LIGHTUSD_WITH_USDVOX)
@@ -989,9 +1061,8 @@ if(LIGHTUSD_WITH_USDVOX)
 endif()
 
 if(LIGHTUSD_WITH_USDVOL)
-  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
-  list(APPEND LIGHTUSD_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyvdb/tinyvdb_io.c)
+  # usdVol.cc and tydra/vol build in lightusd_asset_import (shared with the
+  # next tydra), with tinyvdb from lightusd_tinyvdb.
 endif()
 
 if(LIGHTUSD_WITH_TIFF)
@@ -1021,14 +1092,15 @@ if(LIGHTUSD_WITH_EXR)
     # it depends on neither miniz nor zlib.
     message(STATUS "LightUSD: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
-    file(GLOB TINYEXR_V3_SOURCES
+    file(GLOB TINYEXR_V3_SOURCES CONFIGURE_DEPENDS
          ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
 
     set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
       INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
       COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
 
-    list(APPEND LIGHTUSD_DEP_SOURCES ${TINYEXR_V3_SOURCES})
+    list(APPEND LIGHTUSD_DEP_SOURCES ${TINYEXR_V3_SOURCES}
+      ${PROJECT_SOURCE_DIR}/src/imageio/exr-codec.c)
 
   else()
     # TinyEXR v1 API (legacy; deprecated, kept behind LIGHTUSD_USE_TINYEXR_V3=OFF).
@@ -1051,7 +1123,6 @@ endif(LIGHTUSD_WITH_EXR)
 
 # LightUSD's PTEX reader and nanoimage backend use miniz directly. Keep this
 # bundled dependency even when TinyDNG itself is configured to use system zlib.
-list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
 set_source_files_properties(
   ${PROJECT_SOURCE_DIR}/src/external/miniz.c
   PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
@@ -1165,19 +1236,13 @@ if(LIGHTUSD_WITH_QJS)
   )
 endif(LIGHTUSD_WITH_QJS)
 
-# tinysubdiv (tsd): dependency-free subdivision surface library, always built.
+# Share stage-neutral Ptex/subdivision objects with next and render consumers.
+include("${PROJECT_SOURCE_DIR}/cmake/lightusd-render-support.cmake")
+lightusd_add_render_support()
 list(APPEND LIGHTUSD_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-bilinear.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-catmark.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-loop.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-fvar.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-stream.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-limit.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc
-)
+  $<TARGET_OBJECTS:lightusd_ptex_objects>
+  $<TARGET_OBJECTS:lightusd_subdiv_objects>
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc)
 
 if(LIGHTUSD_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -1350,7 +1415,19 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
 
-  # Suppress pragma message warnings from external libraries (miniz.c)
+  # C11 leaves share the strict warning policy. Mixed declarations are valid
+  # in C11; disable only the pre-C99 compatibility diagnostic for C sources.
+  set_property(SOURCE ${LIGHTUSD_SOURCES} ${LIGHTUSD_C_API_SOURCES}
+    APPEND PROPERTY COMPILE_OPTIONS
+    "$<$<COMPILE_LANGUAGE:C>:-Wno-declaration-after-statement>")
+
+  # Suppress informational `#pragma message` output. miniz.c no longer needs
+  # this, but src/prim-types.hh and some vendored deps (wamr, wuffs) still
+  # emit it, and it is not worth a diagnostic per translation unit.
+  #
+  # The _LARGEFILE*_SOURCE feature-test macros that miniz.c must define before
+  # its first include are handled per-source in cmake/lightusd-render-support.cmake,
+  # so the vendored file itself needs no diagnostic pragma.
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-#pragma-messages")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-#pragma-messages")
 
@@ -1400,6 +1477,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+      ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
@@ -1607,7 +1685,35 @@ endif()
 #add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
 #add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 
+# miniz (and the bundled zstd) build inside lightusd_tinyvdb, which links
+# after the root objects: one copy serves the root library and tinyvdb, and
+# single-pass static links resolve both (an archive linked before tinyvdb
+# could not provide its codec symbols).
+list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+set(LIGHTUSD_TINYVDB_ZSTD OFF)
+if(LIGHTUSD_WITH_ZSTD_COMPRESSION AND NOT LIGHTUSD_USE_SYSTEM_ZSTD)
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+  set(LIGHTUSD_TINYVDB_ZSTD ON)
+endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
+if(TARGET lightusd_asset_import)
+  # lightusd_asset_import compiles pugixml and is linked below; a second copy
+  # in lightusd_static gives macOS ld duplicate pugi:: symbols.
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
+endif()
+list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/core/host-services.cc)
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
+if(NOT LIGHTUSD_NATIVE_IO)
+  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+  target_link_libraries(${LIGHTUSD_TARGET_STATIC} ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(${LIGHTUSD_TARGET_STATIC} psapi)
+  endif()
+endif()
 set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 #set_target_properties(lightusd_object PROPERTIES FOLDER "lightusd")
@@ -1621,6 +1727,17 @@ if(LIGHTUSD_BUILD_SHARED_LIBS)
   #  ${LIGHTUSD_TARGET} SHARED $<TARGET_OBJECTS:lightusd_object>)
   add_library(
     ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+  target_link_libraries(${LIGHTUSD_TARGET} lightusd_asset_import)
+  if(NOT LIGHTUSD_NATIVE_IO)
+    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+  endif()
+  if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+    target_link_libraries(${LIGHTUSD_TARGET} ${CMAKE_DL_LIBS})
+    if(WIN32)
+      target_link_libraries(${LIGHTUSD_TARGET} psapi)
+    endif()
+  endif()
   add_sanitizers(${LIGHTUSD_TARGET})
 
   # for dllexport
@@ -1645,6 +1762,12 @@ endif()
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
 if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  if(LIGHTUSD_BUILD_EXAMPLES)
+    # examples/lusdcat defines the legacy `lusdcat`; keep the next subproject
+    # from defining its own CLI (and the tests that require it) under that name.
+    set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
+    set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
+  endif()
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next lightusd_next_build)
 endif()
 
@@ -2046,7 +2169,9 @@ if(LIGHTUSD_WITH_TCMALLOC)
 endif()
 
 if(LIGHTUSD_BUILD_EXAMPLES)
-  add_subdirectory(examples/lusdcat)
+  if(NOT TARGET lusdcat)
+    add_subdirectory(examples/lusdcat)
+  endif()
   if(LIGHTUSD_WITH_TEXTOOLS)
     # Authors .ktx2 texture companions + the legacy-safe customData hints.
     add_subdirectory(examples/usd-texcomp)
@@ -2059,6 +2184,9 @@ if(LIGHTUSD_BUILD_EXAMPLES)
     add_subdirectory(examples/urdf-to-usd)
 
     if (LIGHTUSD_BUILD_GUI_VIEWER)
+      if(APPLE)
+        enable_language(OBJC OBJCXX)
+      endif()
       add_subdirectory(examples/lusdview)
     endif()
 
@@ -2078,6 +2206,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
   endif ()
 
   add_subdirectory(examples/api_tutorial)
+  add_subdirectory(examples/next_workflows)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
@@ -2085,9 +2214,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
   #if (LIGHTUSD_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
-  #if (LIGHTUSD_WITH_USD_TO_GLTF)
-  #  add_subdirectory(examples/usd_to_gltf)
-  #endif()
+  add_subdirectory(examples/usd_to_gltf)
   if(LIGHTUSD_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
@@ -2114,6 +2241,7 @@ if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusddumpcrate)
   add_subdirectory(tools/lusdzconvert)
   add_subdirectory(tools/lusdchecker)
+  add_subdirectory(tools/lusddeps)
   # lusddiff uses the Tydra diff-and-compare API.
   if(LIGHTUSD_WITH_TYDRA)
     add_subdirectory(tools/lusddiff)
@@ -2191,6 +2319,31 @@ if(LIGHTUSD_BUILD_TESTS)
     endforeach()
   endif()
 
+  # Vendored tptex (Ptex) self-tests: unit tests of the reader, writer, half,
+  # utils and filters (the upstream differential suite runs in tinyexr).
+  # Self-contained; links its own sources, no textools gate needed.
+  file(GLOB LIGHTUSD_TPTEX_ALL_SOURCES CONFIGURE_DEPENDS
+       ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/src/*.c)
+  file(GLOB LIGHTUSD_TPTEX_TEST_SOURCES CONFIGURE_DEPENDS
+       ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/test/*.c)
+  add_executable(textools_ptex_test ${LIGHTUSD_TPTEX_TEST_SOURCES}
+                 ${LIGHTUSD_TPTEX_ALL_SOURCES} ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+  target_include_directories(textools_ptex_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/include
+    ${PROJECT_SOURCE_DIR}/src/external/textools/ptex/src)
+  target_compile_definitions(textools_ptex_test PRIVATE _LARGEFILE64_SOURCE=1)
+  # (cmake/lightusd-ptex.cmake sets TPTEX_MINIZ_HEADER="external/miniz.h" on these
+  # sources, resolved from the src/ root.)
+  target_include_directories(textools_ptex_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_features(textools_ptex_test PRIVATE c_std_11)
+  if(NOT MSVC)
+    target_compile_options(textools_ptex_test PRIVATE -ffp-contract=off -w)
+    target_link_libraries(textools_ptex_test PRIVATE m)
+  endif()
+  add_test(NAME textools-ptex COMMAND textools_ptex_test)
+  set_tests_properties(textools-ptex PROPERTIES LABELS "textools;ptex"
+    ENVIRONMENT "TPTEX_TEST_TMPDIR=${CMAKE_CURRENT_BINARY_DIR}")
+
   # (The lusdview unit tests are registered inside
   # examples/lusdview/CMakeLists.txt, where their targets are in scope; that
   # works because enable_testing() is now called before that subdirectory is
@@ -2232,6 +2385,59 @@ if(LIGHTUSD_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
+  if(TARGET lightusd_tinyvdb)
+    add_executable(test-tet-float-range tests/volumetric/tet-float-range.c src/lz4/lz4.c)
+    target_link_libraries(test-tet-float-range PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-float-range COMMAND test-tet-float-range)
+    set_tests_properties(volumetric-tet-float-range PROPERTIES LABELS "cpu;volume;security")
+    if(LIGHTUSD_TINYVDB_GPU AND NOT EMSCRIPTEN)
+      add_executable(profile-gpu-level-set tests/volumetric/profile-gpu-level-set.c src/lz4/lz4.c)
+      target_link_libraries(profile-gpu-level-set PRIVATE lightusd_tinyvdb ${CMAKE_DL_LIBS})
+    endif()
+    add_executable(test-level-set-allocator tests/volumetric/test-level-set-allocator.c src/lz4/lz4.c)
+    target_link_libraries(test-level-set-allocator PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-level-set-allocator COMMAND test-level-set-allocator)
+    set_tests_properties(volumetric-level-set-allocator PROPERTIES LABELS "cpu;volume;security")
+    add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c src/lz4/lz4.c)
+    target_link_libraries(test-graded-stencil PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-graded-stencil COMMAND test-graded-stencil)
+    set_tests_properties(volumetric-graded-stencil PROPERTIES LABELS "cpu;volume")
+    add_executable(test-tet-center-sample tests/volumetric/tet-center-sample.c
+      src/lz4/lz4.c)
+    target_link_libraries(test-tet-center-sample PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-center-sample COMMAND test-tet-center-sample)
+    set_tests_properties(volumetric-tet-center-sample PROPERTIES LABELS "cpu;volume")
+    add_executable(test-tet-worker-identity
+      tests/volumetric/tet-worker-identity.c src/lz4/lz4.c)
+    target_link_libraries(test-tet-worker-identity PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-worker-identity COMMAND test-tet-worker-identity)
+    set_tests_properties(volumetric-tet-worker-identity PROPERTIES LABELS "cpu;volume")
+    add_executable(profile-tet tests/volumetric/profile-tet.c src/lz4/lz4.c)
+    target_link_libraries(profile-tet PRIVATE lightusd_tinyvdb)
+    # The graded background is experimental and not wired into stuffing yet.
+    add_executable(test-graded-refine tests/volumetric/test-graded-refine.c
+      src/external/tinyvdb/tinyvdb_tet_refine.c)
+    target_include_directories(test-graded-refine PRIVATE src/external/tinyvdb)
+    if(UNIX)
+      target_link_libraries(test-graded-refine PRIVATE m)
+    endif()
+    if(MSVC)
+      target_compile_options(test-graded-refine PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(test-graded-refine PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME volumetric-graded-refine COMMAND test-graded-refine)
+    set_tests_properties(volumetric-graded-refine PROPERTIES LABELS "cpu;volume")
+  endif()
+
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
+    add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c src/lz4/lz4.c)
+    target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
+    target_link_libraries(test-tet-overflow-32 PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-overflow-32 COMMAND test-tet-overflow-32)
+    set_tests_properties(volumetric-tet-overflow-32 PROPERTIES LABELS "cpu;volume;security")
+  endif()
+
   # Prefer an explicitly configured interpreter so CTest can use a virtualenv,
   # cross-build host Python, or another interpreter selected by CI. Keep the
   # automatic lookup as the default for ordinary native builds.
@@ -2239,6 +2445,16 @@ if(LIGHTUSD_BUILD_TESTS)
     set(LUSDR_PYTHON "${LIGHTUSD_PYTHON_EXECUTABLE}")
   else()
     find_program(LUSDR_PYTHON NAMES python3 python)
+  endif()
+
+  find_program(LIGHTUSD_HDRGEN_NODE_EXECUTABLE NAMES node nodejs)
+  if(LIGHTUSD_HDRGEN_NODE_EXECUTABLE)
+    add_test(
+      NAME tool-hdrgen-test
+      COMMAND ${LIGHTUSD_HDRGEN_NODE_EXECUTABLE}
+              ${PROJECT_SOURCE_DIR}/tools/hdrgen/examples/test-presets.js)
+    set_tests_properties(tool-hdrgen-test PROPERTIES
+                         TIMEOUT 30 LABELS "tools;hdrgen;node;cpu")
   endif()
 
   if(LIGHTUSD_BUILD_PYTHON_TESTS AND LUSDR_PYTHON)
@@ -2265,6 +2481,33 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
+    add_test(NAME tool-view-control-headless
+      COMMAND ${LUSDR_PYTHON} -m unittest discover
+              -s ${PROJECT_SOURCE_DIR}/tools/view_control -p test_headless.py)
+    set_tests_properties(tool-view-control-headless PROPERTIES
+      TIMEOUT 30 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;headless;mcp")
+    # MuJoCo consumer matrix (source MJCF vs converted USD). Skips (77) unless
+    # LIGHTUSD_MUJOCO_WORKER / LIGHTUSD_MUJOCO_USD_PLUGIN point at a build made by
+    # tools/view_control/setup_mujoco_usd.sh.
+    add_test(NAME tool-mujoco-usd-matrix
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/view_control/check_mujoco_usd_matrix.py)
+    set_tests_properties(tool-mujoco-usd-matrix PROPERTIES
+      TIMEOUT 600 SKIP_RETURN_CODE 77 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;physics;mujoco")
+    set(LUSDR_SPARSE_QJS_ARG)
+    if(LIGHTUSD_WITH_QJS)
+      set(LUSDR_SPARSE_QJS_ARG --with-qjs)
+    endif()
+    add_test(
+      NAME tool-lusdrender-sparse-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_sparse_volume.py
+              "$<TARGET_FILE:lusdrender>" ${LUSDR_SPARSE_QJS_ARG})
+    set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume")
     add_test(
       NAME tool-lusdrender-smoke
       COMMAND ${LUSDR_PYTHON}
@@ -2273,6 +2516,29 @@ if(LIGHTUSD_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}
               ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
+    # This smoke mixes CPU assertions with optional HIP/Vulkan requests, so
+    # exclude it from explicitly CPU-only profiles even when those backends
+    # happen to be installed on the test host.
+    set_tests_properties(tool-lusdrender-smoke PROPERTIES
+                         LABELS "lusdrender;cpu;gpu")
+
+    add_test(
+      NAME tool-lusdrender-analytic-primitives
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_analytic_primitives.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/analytic-primitives)
+    set_tests_properties(tool-lusdrender-analytic-primitives PROPERTIES
+                         TIMEOUT 90 LABELS "lusdrender;cpu;geometry;regression")
+
+    add_test(
+      NAME tool-lusdrender-cpu-preview-opacity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_cpu_preview_opacity.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/cpu-preview-opacity)
+    set_tests_properties(tool-lusdrender-cpu-preview-opacity PROPERTIES
+                         TIMEOUT 60 LABELS "lusdrender;cpu;material;regression")
 
     add_test(
       NAME tool-lusdrender-materialx-cpu-graph
@@ -2323,6 +2589,35 @@ if(LIGHTUSD_BUILD_TESTS)
     )
     set_tests_properties(tool-lusdrender-colorspace-regression
                          PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Analytic oracle for the usd-assets ColorSpaceTests/UsdPreviewSurface tile grid
+    # (all 25 tiles must equal the asset's stated {200,100,50}); skips (77)
+    # without the usd-assets checkout or a Vulkan renderer.
+    add_test(
+      NAME tool-lusdrender-uvtexture-colorspace-tiles
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_uvtexture_colorspace_tiles.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/uvtexture-colorspace-tiles
+    )
+    set_tests_properties(tool-lusdrender-uvtexture-colorspace-tiles
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                         LABELS "lusdrender;gpu;colorspace")
+
+    # Vulkan descriptor-path Ptex oracle: a real Island quad mesh rendered with
+    # -vkr, every visible pixel's base colour checked against OpenPtex. Skips (77)
+    # without the Island corpus, OpenPtex sources (LIGHTUSD_PTEX_INCLUDE), g++ or
+    # Vulkan.
+    add_test(
+      NAME tool-lusdrender-vkr-ptex-openptex
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_vkr_ptex.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/vkr-ptex-openptex
+    )
+    set_tests_properties(tool-lusdrender-vkr-ptex-openptex
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                         LABELS "lusdrender;gpu;ptex")
 
     # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
     # edge-on and render black.
@@ -2379,8 +2674,15 @@ if(LIGHTUSD_BUILD_TESTS)
         backface-material
         camera-modes
         cli-robustness
+        gpu-test-status
         cmyk-jpeg-texture
         degraded-material
+        diagnostic-material
+        diagnostic-material-gpu
+        diagnostic-opacity
+        diagnostic-opacity-chunks-gpu
+        diagnostic-opacity-cpu-chunks
+        diagnostic-opacity-gpu
         dome-format
         double-sided-cull
         frames-framespec
@@ -2405,8 +2707,12 @@ if(LIGHTUSD_BUILD_TESTS)
         sphere-light-nee
         subdivision-schemes
         textureless-dome
+        texture-value-modifiers
+        texture-value-modifiers-gpu
+        texture-chunk-uvs-gpu
         timecode-blendshape-animation
         timecode-normals-animation
+        capture-normals
         timecode-points-animation
         timecode-transform-animation
         transparency
@@ -2415,6 +2721,10 @@ if(LIGHTUSD_BUILD_TESTS)
         uv-set-routing
         gaussian-carrier-dispatch
         gaussian-schema-aliases
+        vk-instanced-lifetime
+        vk-data-aovs
+        vk-instanced-curves
+        vk-blas-batches
         vk-ray-tiling)
     foreach(t ${LUSDR_SHELL_TESTS})
       add_test(
@@ -2424,6 +2734,13 @@ if(LIGHTUSD_BUILD_TESTS)
                 "$<TARGET_FILE:lusdrender>"
       )
       set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+      if(t MATCHES "gpu|^vk-blas-batches$|^vk-instanced-curves$|^vk-data-aovs$|^vk-instanced-lifetime$|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;gpu")
+      else()
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;cpu")
+      endif()
     endforeach()
 
     # run-material-resolver.sh takes the binary via $LUSDRENDER (its positional
@@ -2598,11 +2915,22 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-vk-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
 
+    if(LUSDR_PYTHON)
+      add_test(NAME lusdview-next-mesh-materials
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-next-mesh-materials.py"
+                "$<TARGET_FILE:lusdview>"
+                --output "${CMAKE_BINARY_DIR}/lusdview-next-mesh-materials")
+      set_tests_properties(lusdview-next-mesh-materials PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 600
+                           LABELS "lusdview;vulkan;rt")
+    endif()
+
     add_test(
       NAME lusdview-vk-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
     )
     set_tests_properties(lusdview-vk-stacked-glass PROPERTIES
@@ -2624,7 +2952,7 @@ if(LIGHTUSD_BUILD_TESTS)
       NAME lusdview-vk-swbvh-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
     )
     set_tests_properties(lusdview-vk-swbvh-stacked-glass PROPERTIES
@@ -2651,7 +2979,7 @@ if(LIGHTUSD_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-mtlx-cold-fallback.sh"
     )
     set_tests_properties(lusdview-vk-mtlx-cold-fallback PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 120
+                         SKIP_RETURN_CODE 77 TIMEOUT 420
                          LABELS "lusdview;vulkan;rt;materialx")
 
     add_test(
@@ -2674,6 +3002,17 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-raster-multilight PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview"
                          ENVIRONMENT "LUSDVIEW_GL_TIMEOUT=120s"
+                         RESOURCE_LOCK lusdview_gl_gpu)
+
+    add_test(
+      NAME lusdview-raster-geometry-light
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-geometry-light.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(lusdview-raster-geometry-light PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120
+                         LABELS "lusdview;lighting"
                          RESOURCE_LOCK lusdview_gl_gpu)
 
     add_test(
@@ -2721,6 +3060,11 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-aousd-conformance PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview")
+    # Each fixture starts both viewers. ASan/LSan startup and shutdown costs
+    # accumulate across the external suite; retain the normal-build deadline.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-aousd-conformance PROPERTIES TIMEOUT 2700)
+    endif()
 
     add_test(
       NAME lusdview-gl-vk-parity
@@ -2961,6 +3305,15 @@ if(LIGHTUSD_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-lod"
         )
       set_tests_properties(lusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
+      add_test(
+        NAME lusdview-wire-depth-fill
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-wire-depth-fill.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-wire-depth-fill")
+      set_tests_properties(lusdview-wire-depth-fill PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 200 LABELS "lusdview")
+
 
       # The ray tracer traces vertex buffers, so the raster vertex shader's
       # deform never reaches it. --next --rt used to give up and re-run the whole
@@ -3111,7 +3464,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   #
   # UsdShade material-binding resolution: purpose-scoped (material:binding:preview
-  # / :full) bindings authored on an ANCESTOR, as production scenes (ALab) bind.
+  # / :full) bindings authored on an ANCESTOR, as production scenes (Scene A) bind.
   # Reading only the Mesh's own `material:binding` drops the material and every
   # texture with it. Renders headless (Vulkan offscreen); SKIPs without a GPU.
   #
@@ -3173,6 +3526,128 @@ if(LIGHTUSD_BUILD_TESTS)
       set_tests_properties(lusdview-camera-record-equivalence
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
                                     LABELS "lusdview")
+
+    add_test(
+      NAME lusdview-camera-clipping-planes
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-clipping-planes.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-clipping-planes
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;raster")
+
+    add_test(
+      NAME lusdview-value-clip-carrier
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-value-clip-carrier.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-value-clip-carrier
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                                    LABELS "lusdview;animation")
+
+    add_test(
+      NAME lusdview-camera-dof-raster
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-raster.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-dof-raster
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;raster")
+
+    add_test(
+      NAME lusdview-camera-shutter-contract
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-shutter-contract.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-shutter-contract
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                                    LABELS "lusdview;camera")
+
+    add_test(
+      NAME lusdview-camera-motion-cpu
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cpu.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-cpu
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;camera;cpu-rt")
+
+    add_test(
+      NAME lusdview-camera-motion-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cuda.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;cuda")
+
+    add_test(
+      NAME lusdview-camera-motion-hip
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-hip.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-hip
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;hip")
+
+    add_test(
+      NAME lusdview-camera-stereo-contract
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-stereo-contract.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-stereo-contract
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;camera;stereo")
+
+    add_test(
+      NAME lusdview-camera-motion-raster-export
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-raster-export
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                    LABELS "lusdview;camera;raster")
+
+    add_test(
+      NAME lusdview-camera-motion-raster-legacy
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" vk legacy
+    )
+    set_tests_properties(lusdview-camera-motion-raster-legacy
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                    LABELS "lusdview;camera;raster;legacy")
+
+    add_test(
+      NAME lusdview-camera-motion-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-vulkan.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;vulkan;rt")
+
+    if(LIGHTUSD_XVFB_RUN)
+      add_test(
+        NAME lusdview-camera-motion-raster-gl
+        COMMAND "${LIGHTUSD_XVFB_RUN}" -a bash
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" gl
+      )
+      set_tests_properties(lusdview-camera-motion-raster-gl
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                      LABELS "lusdview;camera;raster;gl")
+    endif()
 
     add_test(
       NAME lusdview-camera-dof-cuda
@@ -3594,6 +4069,11 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-rt-geomsubset-material
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # Instrumented RT renders exceed the 60 s per-render default.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-rt-geomsubset-material PROPERTIES
+                           TIMEOUT 1500 ENVIRONMENT "LUSDVIEW_RENDER_TIMEOUT=240s")
+    endif()
 
     # Deferred package payloads must survive the async recomposition handoff in
     # both loaders. Drive the actual MCP action so the test covers the same
@@ -3606,6 +4086,66 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-usdz-deferred-payload
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    # Instrumented recomposition is slower; widen only the harness poll
+    # deadline (the completion assertion is unchanged).
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-usdz-deferred-payload PROPERTIES
+                           TIMEOUT 300
+                           ENVIRONMENT "LUSDVIEW_DEFERRED_PAYLOAD_TIMEOUT_MS=120000")
+    endif()
+
+    add_test(
+      NAME lusdview-incremental-topology
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-topology.sh"
+      )
+    set_tests_properties(lusdview-incremental-topology
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    add_test(
+      NAME lusdview-incremental-layer-reload
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+      )
+    set_tests_properties(lusdview-incremental-layer-reload
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    if(LUSDVIEW_XVFB_RUN)
+      add_test(
+        NAME lusdview-incremental-layer-reload-gl
+        COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "BACKEND=gl"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+        )
+      set_tests_properties(lusdview-incremental-layer-reload-gl
+                           PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
+
+    add_test(
+      NAME lusdview-incremental-texture
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+      )
+    set_tests_properties(lusdview-incremental-texture
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    if(LUSDVIEW_XVFB_RUN)
+      add_test(
+        NAME lusdview-incremental-texture-gl
+        COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "BACKEND=gl"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+        )
+      set_tests_properties(lusdview-incremental-texture-gl
+                           PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
 
     # Deterministic back-to-front alpha blending on both raster backends.
     # Keep this registered separately from scalar opacity/cutout coverage: it
@@ -3672,11 +4212,153 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-cpu-rt-headless PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180)
 
+    # A tangent-space normal map must shade exactly like the same world normal
+    # authored as geometry normals, and a flat map must be neutral. Uses the
+    # CPU tracer so no GPU ray-query support is required beyond the headless
+    # presentation context.
+    add_test(
+      NAME lusdview-cpu-normal-map
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-normal-map.sh"
+      )
+    set_tests_properties(lusdview-cpu-normal-map PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # MaterialX `tangent`/`bitangent` graph nodes must report the hit
+    # triangle's frame, not fixed constants; the CPU graph evaluator now takes
+    # both from the same frame the normal map uses.
+    add_test(
+      NAME lusdview-cpu-graph-tangent
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-graph-tangent.sh"
+      )
+    set_tests_properties(lusdview-cpu-graph-tangent PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # Per-slot texture UV transforms and UV-set routing on the CPU path. A
+    # transformed slot must shade exactly like the same texture sampled with
+    # pre-transformed `st`, including the normal-map tangent frame.
+    add_test(
+      NAME lusdview-cpu-uv-transform
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-uv-transform.sh"
+      )
+    set_tests_properties(lusdview-cpu-uv-transform PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # The same per-slot UV transform contract on the non-base semantic lanes
+    # (metallic, occlusion, clearcoat, emissive): each lane must match the
+    # pre-transformed-UV reference and must not be a no-op.
+    add_test(
+      NAME lusdview-cpu-lane-uv-transform
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-lane-uv-transform.sh"
+      )
+    set_tests_properties(lusdview-cpu-lane-uv-transform PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # Second UV set (multi-UV): a texture whose UsdPrimvarReader names `st1`
+    # must sample the second set, matching the equivalent pre-transformed `st`
+    # lookup, with an identity-st control that must differ.
+    # The oracle renders the same scenes through lusdrender (legacy converter)
+    # as well as the viewer, so it needs both binaries.
+    if(TARGET lusdrender)
+      add_test(
+        NAME lusdview-cpu-multi-uv
+        COMMAND ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "LUSDRENDER=$<TARGET_FILE:lusdrender>"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-multi-uv.sh"
+        )
+      set_tests_properties(lusdview-cpu-multi-uv PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300
+                           LABELS "lusdview;rt;cpu-rt")
+    endif()
+
+    # CPU authored tangent basis: a rotated primvars:tangents must shade the
+    # same tangent-space normal like the equivalent geometry normal.
+    add_test(
+      NAME lusdview-cpu-authored-tangent
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-authored-tangent.sh"
+      )
+    set_tests_properties(lusdview-cpu-authored-tangent PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # CPU OpenPBR coat-normal lane: a tilted coat map must shade exactly like
+    # the same world normal authored as geometry normals and must not change
+    # the image at coat weight 0; a flat map is neutral.
+    add_test(
+      NAME lusdview-cpu-coat-normal
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-coat-normal.sh"
+      )
+    set_tests_properties(lusdview-cpu-coat-normal PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt")
+
+    # CPU preview semantic material lanes: a uniform texture lane must shade
+    # exactly like the equivalent constant lane, and MaterialX metallic/
+    # roughness/emission graph routes must affect the render.
+    foreach(cpu_lane_test
+        lusdview-cpu-material-lanes
+        lusdview-cpu-graph-lanes
+        lusdview-cpu-graph-chain)
+      string(REPLACE "lusdview-cpu-" "run-cpu-" cpu_lane_script
+                     "${cpu_lane_test}")
+      add_test(
+        NAME ${cpu_lane_test}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/${cpu_lane_script}.sh"
+        )
+      set_tests_properties(${cpu_lane_test} PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300
+                           LABELS "lusdview;rt;cpu-rt")
+    endforeach()
+
+    # Element-scale Island PTex routing: a real quad-topology element must not
+    # fall back to the representative face, and every visible PTex sample must
+    # match the independent OpenPtex decoder. Skips without the corpus/OpenPtex.
+    add_test(
+      NAME lusdview-cpu-ptex-element
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-element.sh"
+      )
+    set_tests_properties(lusdview-cpu-ptex-element PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 1800
+                         LABELS "lusdview;rt;cpu-rt;ptex")
+
+    # Visible Island PTex material routing: the CPU tracer must map intrinsic
+    # Ptex face coordinates through the atlas face rectangles and show the
+    # decoded face colour. Skips when the pinned Island texture is unavailable.
+    add_test(
+      NAME lusdview-cpu-ptex-routing
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-routing.sh"
+      )
+    set_tests_properties(lusdview-cpu-ptex-routing PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "lusdview;rt;cpu-rt;ptex")
+
     add_test(
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
     )
     set_tests_properties(lusdview-cpu-rt-stacked-glass PROPERTIES
@@ -3713,6 +4395,11 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-openchess-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 240
                          LABELS "lusdview;rt;materialx;openpbr")
+    # The ~7M-triangle CPU RT capture exceeds 180 s under ASan/UBSan.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-openchess-materials PROPERTIES
+                           TIMEOUT 1200 ENVIRONMENT "LUSDVIEW_OPENCHESS_TIMEOUT=900s")
+    endif()
 
     add_test(
       NAME lusdview-openchess-path-trace
@@ -3939,17 +4626,22 @@ if(LIGHTUSD_BUILD_TESTS)
   # usd-wg asset corpus parse regression (native `lusdcat -l`).
   #
   # Runs the Node harness over the usd-wg/assets corpus (path from the
-  # USD_WG_ASSETS_DIR env var, else its built-in default). The repository
+  # LIGHTUSD_USD_ASSETS_ROOT setting, else USD_WG_ASSETS_DIR). The repository
   # verification harness supplies its prepared corpus explicitly. --max-fail
   # 0 gates on the load baseline.
   #
   find_program(LIGHTUSD_NODE_EXECUTABLE NAMES node nodejs)
   if(LIGHTUSD_NODE_EXECUTABLE AND TARGET lusdcat)
+    set(_lightusd_corpus_root_args)
+    if(LIGHTUSD_USD_ASSETS_ROOT)
+      list(APPEND _lightusd_corpus_root_args --assets "${LIGHTUSD_USD_ASSETS_ROOT}")
+    endif()
     add_test(
       NAME corpus-parse-native
       COMMAND ${LIGHTUSD_NODE_EXECUTABLE}
               ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
               --optional-assets
+              ${_lightusd_corpus_root_args}
               --mode load
               --lusdcat "$<TARGET_FILE:lusdcat>"
               --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
@@ -3978,6 +4670,33 @@ if(LIGHTUSD_BUILD_TESTS)
   # Feature tests as CTest targets (Phase 0B)
   #
   if(LIGHTUSD_WITH_MODULE_USDA_READER)
+    # Native counterpart to the WASM Lucia UV/LightRT parity fixtures. Keep
+    # this independent of the main library so the vendored C BVH ABI and the
+    # deterministic center-sample barycentric policy are tested directly.
+    add_executable(feat-lightrt-uv
+      tests/feat/lightrt-uv/test-lightrt-uv.cc
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c)
+    add_sanitizers(feat-lightrt-uv)
+    # lightrt_c_tri.c uses <stdatomic.h>: C11 plus, on MSVC, the C11 atomics flag.
+    set_target_properties(feat-lightrt-uv PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    if(MSVC)
+      # A source property, not $<COMPILE_LANGUAGE:C>: Visual Studio generators
+      # ignore that genex on targets that mix C and C++.
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
+        PROPERTIES COMPILE_OPTIONS "/experimental:c11atomics")
+    endif()
+    target_include_directories(feat-lightrt-uv PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+    if(UNIX AND NOT APPLE)
+      find_package(Threads REQUIRED)
+      target_link_libraries(feat-lightrt-uv PRIVATE Threads::Threads m)
+    elseif(UNIX)
+      target_link_libraries(feat-lightrt-uv PRIVATE m)
+    endif()
+    add_test(NAME feat-lightrt-uv COMMAND feat-lightrt-uv
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
     add_sanitizers(feat-value-clip)
     target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})
@@ -4238,7 +4957,9 @@ if(LIGHTUSD_BUILD_TESTS)
     target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
-    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark")
+    # Both binaries create/remove the same /tmp/perfrc_scene_64.usda fixture.
+    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
+                         RESOURCE_LOCK render_convert_fixture)
 
     if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE AND TARGET lightusd_next AND TARGET tydra_next)
       add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
@@ -4249,7 +4970,8 @@ if(LIGHTUSD_BUILD_TESTS)
         ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/next)
       target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
       add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
-      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark")
+      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
+                           RESOURCE_LOCK render_convert_fixture)
     endif()
   endif()
 
@@ -4430,5 +5152,18 @@ if(WIN32)
     set_target_properties(
       ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusddeps AND TARGET next_quickstart AND TARGET lusddiff)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(workflow_capture_args)
+    if(TARGET lusdrender)
+      list(APPEND workflow_capture_args --capture-renderer $<TARGET_FILE:lusdrender>)
+    endif()
+    add_test(NAME workflow_tools COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-workflow-tools.py --bin-dir ${CMAKE_BINARY_DIR} ${workflow_capture_args})
+    set_tests_properties(workflow_tools PROPERTIES TIMEOUT 120 LABELS "tools;next")
   endif()
 endif()

@@ -10,11 +10,22 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 option(LIGHTUSD_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
 option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
+# Overrides the allocator of the next module (-sMALLOC=...): dlmalloc,
+# emmalloc or mimalloc. Empty keeps the default, dlmalloc (wasm32 and wasm64):
+# measured ~2% faster than emmalloc at ~1% less heap for +5.6 KB of code.
+# mimalloc is ~9-12% faster but commits 21-45% more heap (up to 2x on small
+# scenes), so it is opt-in for speed-first or multithreaded builds.
+# See doc/large-scene.md §10.26.
+set(LIGHTUSD_WASM_MALLOC "" CACHE STRING "Override -sMALLOC for the next module (dlmalloc, emmalloc, mimalloc)")
 option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(LIGHTUSD_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
-set(LIGHTUSD_WASM_PRODUCT "legacy" CACHE STRING
-    "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
-set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
+option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR decoding and encoding in next-only WASM" ON)
+option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
+option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
+# next is the default product; legacy and combined remain available for a
+# transition period.
+set(LIGHTUSD_WASM_PRODUCT "next" CACHE STRING
+    "WASM product to build: next, legacy, or combined (combined is compatibility-only)")
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined mcp)
 
 # Keep the historical switches as compatibility aliases for existing build
 # scripts. New callers should select the product explicitly.
@@ -30,12 +41,28 @@ endif()
 
 if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
     NOT LIGHTUSD_WASM_PRODUCT STREQUAL "next" AND
-    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   message(FATAL_ERROR
-    "LIGHTUSD_WASM_PRODUCT must be legacy, next, or combined (got '${LIGHTUSD_WASM_PRODUCT}')")
+    "LIGHTUSD_WASM_PRODUCT must be next, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
+endif()
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
+    LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  # The legacy WASM bindings link lightusd_static from the root project.
+  # Select that native product even when the root default is next.
+  set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING
+      "Native implementation required by the selected WASM product" FORCE)
+  message(DEPRECATION
+    "The legacy WASM product is deprecated; use LIGHTUSD_WASM_PRODUCT=next for new integrations. Legacy and combined builds remain available for compatibility and CI.")
 endif()
 
-if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  if (LIGHTUSD_WASM64)
+    set(BUILD_TARGET "lightusd_mcp_64")
+  else()
+    set(BUILD_TARGET "lightusd_mcp")
+  endif()
+elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   if (LIGHTUSD_WASM64)
     set(BUILD_TARGET "lightusd_next_64")
   else()
@@ -67,9 +94,13 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
       "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 endif()
 
-# Make C++20 default to use C++20 coroutine.
-# Emscripten 4.0 or above supports(C++20)
-set(CMAKE_CXX_STANDARD 20)
+# Only the legacy Embind async loader requires native coroutines. Combined
+# async loading uses C++17 tasks stepped by the JavaScript event loop.
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND LIGHTUSD_WASM_COROUTINE)
+  set(CMAKE_CXX_STANDARD 20)
+else()
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -303,51 +334,179 @@ endif()
 # browser-threading build option opts into it.
 set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
 
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  # The MCP server product: a separate module so the next-only scene module
+  # stays lean. Built on the next C API; no render conversion.
+  message(STATUS "LightUSD WASM: building the MCP server module")
+  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
+  set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
+  set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
+
+  add_executable(lightusd_mcp_wasm binding-mcp.cc)
+  target_link_libraries(lightusd_mcp_wasm PRIVATE lightusd_mcp)
+  # Untrusted tool arguments: JSON type errors are thrown and reported as
+  # tool errors, so this module keeps C++ exceptions.
+  target_compile_options(lightusd_mcp_wasm PRIVATE -fexceptions)
+  set_property(TARGET lightusd_mcp_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/mcp-api.js")
+
+  set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
+  if(LIGHTUSD_WASM_OUTPUT_DIRECTORY)
+    set(OUTPUT_WASM_DIR "${LIGHTUSD_WASM_OUTPUT_DIRECTORY}")
+  endif()
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-g ")
+  elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-Oz ")
+  else()
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "")
+  endif()
+  string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS "-fexceptions \
+     -sENVIRONMENT='web,worker,node' \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sSTACK_SIZE=512000 \
+     -sFILESYSTEM=0 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 -sEXPORT_NAME=createLightUSDMCP \
+     -sINVOKE_RUN=0 \
+     -sEXPORTED_FUNCTIONS=['_malloc','_free'] \
+     -sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToNewUTF8'] \
+     --post-js \"${PROJECT_SOURCE_DIR}/mcp-api.js\"")
+  if (LIGHTUSD_WASM64)
+    string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS " -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
+  endif()
+  set_target_properties(
+      lightusd_mcp_wasm
+      PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
+                 SUFFIX ".js"
+                 RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+                 LINK_FLAGS "${LIGHTUSD_MCP_EMCC_LINK_FLAGS}")
+  return()
+endif()
+
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
   set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
   set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
   set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL
+      "Do not build a shared C API in WASM" FORCE)
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
 
-  add_executable(lightusd_next_wasm binding-next.cc binding-next-scene.cc
+  add_executable(lightusd_next_wasm binding-udim.cc binding-next-udim.cc
+    ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-layer-geometry.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
+    binding-next.cc binding-next-scene.cc
+    binding-next-layer.cc
+    binding-next-layer-json-import.cc
+    binding-next-layer-json-export.cc
+    binding-next-layer-json-values.cc
+    binding-next-layer-inspect.cc
     binding-next-api.cc
+    binding-next-image.cc
+    binding-next-assets.cc
     binding-next-util.cc
     binding-next-render-lifecycle.cc
-    binding-next-render-scene.cc
-    binding-next-render-animation.cc
+    binding-next-render-query-geometry.cc
+    binding-next-render-query-scene.cc
+    binding-next-render-query-volume.cc
+    binding-next-render-query-shading.cc
+    binding-next-render-query-animation.cc
+    binding-next-render-assets.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
+    binding-next-render-primvars.cc
     binding-next-render-outputs.cc
     binding-next-render-mesh-helpers.cc
     binding-next-render-mesh.cc
     binding-next-render-material-key.cc
     binding-next-render-material.cc
+    ${PROJECT_SOURCE_DIR}/../src/tydra/material-serializer.cc
     binding-next-render-merge.cc
     binding-next-render-material-output.cc)
-  # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
-  target_sources(lightusd_next_wasm PRIVATE
-    ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
-    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
-    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-catmark.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-loop.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-fvar.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-refine.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-stream.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-limit.cc)
-  target_link_libraries(lightusd_next_wasm PRIVATE tydra_next lightusd_next)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+  target_sources(lightusd_next_wasm PRIVATE binding-exr-bridge.cc)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_EXR_EXTERNAL=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-loader.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_EXR_EXTERNAL=1")
+  if (LIGHTUSD_WASM_WITH_EXR)
+    file(GLOB TINYEXR_V3_SOURCES ../src/external/tinyexr/src/*.c)
+    add_executable(lightusd_exr_wasm EXCLUDE_FROM_ALL binding-exr.c
+      ../src/imageio/exr-codec.c ${TINYEXR_V3_SOURCES})
+    target_include_directories(lightusd_exr_wasm PRIVATE
+      ../src/external/tinyexr/include ../src/external/tinyexr/src)
+    target_compile_definitions(lightusd_exr_wasm PRIVATE EXR_NO_JPH EXR_NO_ZSTD)
+    set_target_properties(lightusd_exr_wasm PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  endif()
+  add_executable(lightusd_validator_wasm EXCLUDE_FROM_ALL
+    binding-validator.cc binding-validation.cc
+    ../tools/lusdchecker/lusdchecker.cc
+    ../tools/lusdchecker/checker-memory.cc ../tools/lusdchecker/checker-options.cc
+    ../tools/lusdchecker/report.cc)
+  target_compile_definitions(lightusd_validator_wasm PRIVATE LUSDCHECKER_MEMORY_ONLY=1)
+  target_link_libraries(lightusd_validator_wasm PRIVATE lightusd_validation)
+  target_include_directories(lightusd_validator_wasm PRIVATE ../src)
+  target_compile_options(lightusd_validator_wasm PRIVATE -fno-exceptions -fno-rtti)
+
+  # Distribution build includes optional artifacts without linking them into core.
+  add_custom_target(lightusd_next_distribution ALL
+    DEPENDS lightusd_next_wasm lightusd_validator_wasm)
+  if(TARGET lightusd_exr_wasm)
+    add_dependencies(lightusd_next_distribution lightusd_exr_wasm)
+  endif()
+
+  target_sources(lightusd_next_wasm PRIVATE ../src/sha256.cc binding-feature.c)
+  add_executable(lightusd_geometry_wasm EXCLUDE_FROM_ALL
+    binding-geometry.cc meshopt-wasm.cc binding-feature.c
+    $<TARGET_OBJECTS:lightusd_subdiv_objects>
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexgenerator.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/overdrawoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/partition.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/quantization.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/rasterizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/simplifier.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/spatialorder.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/stripifier.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vcacheoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp)
+  add_executable(lightusd_raytrace_wasm EXCLUDE_FROM_ALL
+    lightrt-wasm.cc binding-feature.c
+    ../src/external/lightrt/lightrt_c.c ../src/external/lightrt/lightrt_c_tri.c)
+  foreach(feature geometry raytrace)
+    target_include_directories(lightusd_${feature}_wasm PRIVATE ../src)
+    target_compile_definitions(lightusd_${feature}_wasm PRIVATE LIGHTUSD_NEXT_TYPED_BINDINGS=1)
+    target_compile_options(lightusd_${feature}_wasm PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions> $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    add_dependencies(lightusd_next_distribution lightusd_${feature}_wasm)
+  endforeach()
+  target_link_libraries(lightusd_next_wasm PRIVATE
+    tydra_next lightusd_c lightusd_next)
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/feature-runtime.js"
     "${PROJECT_SOURCE_DIR}/next-api.js")
   target_compile_options(lightusd_next_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
   target_compile_definitions(lightusd_next_wasm
                              PRIVATE JSON_NOEXCEPTION=1
-                                     LIGHTUSD_CXX_EXCEPTIONS=0)
+                                     LIGHTUSD_CXX_EXCEPTIONS=0
+                                     LIGHTUSD_NEXT_TYPED_BINDINGS=1)
   if (LIGHTUSD_WASM64)
     target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
   endif()
@@ -363,14 +522,14 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
-     -sMALLOC=emmalloc \
+     -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
      -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
      -sFILESYSTEM=0 \
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
-     -sINVOKE_RUN=0 --bind ")
+     -sINVOKE_RUN=0 ")
   else()
     if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
       set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
@@ -378,7 +537,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
       set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "")
     endif()
     set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
-     -sMALLOC=emmalloc \
+     -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
      -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
@@ -386,19 +545,27 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
      -sSAFE_HEAP=0 \
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
-     -sINVOKE_RUN=0 --bind ")
+     -sINVOKE_RUN=0 ")
   endif()
   if (LIGHTUSD_SIMD_FLAGS)
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
   endif()
   if (LIGHTUSD_WASM64)
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
   else()
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
   endif()
+  if (LIGHTUSD_WASM_MALLOC)
+    # Last -sMALLOC wins.
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sMALLOC=${LIGHTUSD_WASM_MALLOC}")
+  endif()
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+  # LightUSDLoader/tests hand the module a zstd-decompressed wasmBinary;
+  # newer emscripten dropped wasmBinary from the default
+  # INCOMING_MODULE_JS_API, so pin the default list plus wasmBinary.
+  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS
-    " --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
+    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
 
   set_target_properties(
       lightusd_next_wasm
@@ -406,6 +573,49 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
                  LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+  foreach(feature geometry raytrace)
+    set(feature_output lightusd_${feature})
+    if(LIGHTUSD_WASM64)
+      string(APPEND feature_output "_64")
+    endif()
+    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
+      feature_flags "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+    set_target_properties(lightusd_${feature}_wasm PROPERTIES OUTPUT_NAME ${feature_output}
+      SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${feature_flags}")
+    set_property(TARGET lightusd_${feature}_wasm APPEND PROPERTY LINK_DEPENDS
+      "${PROJECT_SOURCE_DIR}/feature-runtime.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js")
+  endforeach()
+  foreach(feature validator exr)
+    if(TARGET lightusd_${feature}_wasm)
+      target_sources(lightusd_${feature}_wasm PRIVATE binding-feature.c)
+      target_include_directories(lightusd_${feature}_wasm PRIVATE ../src)
+    endif()
+  endforeach()
+  set(VALIDATOR_OUTPUT lightusd_validator)
+  if(LIGHTUSD_WASM64)
+    string(APPEND VALIDATOR_OUTPUT "_64")
+  endif()
+  # Independent memory and exports: no dynamic-linking retention in scene core.
+  string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+                 "${PROJECT_SOURCE_DIR}/validator-api.js"
+                 VALIDATOR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+  set_target_properties(lightusd_validator_wasm PROPERTIES
+    OUTPUT_NAME ${VALIDATOR_OUTPUT} SUFFIX ".js"
+    RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+    LINK_FLAGS "${VALIDATOR_LINK_FLAGS}")
+  set_property(TARGET lightusd_validator_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/validator-api.js")
+  if(TARGET lightusd_exr_wasm)
+    string(REPLACE "validator" "exr" EXR_OUTPUT "${VALIDATOR_OUTPUT}")
+    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+                   "${PROJECT_SOURCE_DIR}/exr-api.js"
+                   EXR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+    set_target_properties(lightusd_exr_wasm PROPERTIES
+      OUTPUT_NAME ${EXR_OUTPUT} SUFFIX ".js"
+      RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${EXR_LINK_FLAGS}")
+    set_property(TARGET lightusd_exr_wasm APPEND PROPERTY LINK_DEPENDS
+      "${PROJECT_SOURCE_DIR}/exr-api.js")
+  endif()
   return()
 endif()
 
@@ -424,17 +634,50 @@ list(
   SOURCES
   binding.cc
   lightrt-wasm.cc
+  meshopt-wasm.cc
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexcodec.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexgenerator.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/overdrawoptimizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/partition.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/quantization.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/rasterizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/simplifier.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/spatialorder.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/stripifier.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vcacheoptimizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp
   ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
   ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
 )
+if (LIGHTUSD_WITH_XATLAS)
+  list(APPEND SOURCES ${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp)
+  # xatlas has an internal task scheduler, but the default WASM product does
+  # not enable Emscripten pthreads/SharedArrayBuffer. Keep the worker boundary
+  # at the JS level and compile the library's scheduler deterministically.
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp
+    PROPERTIES COMPILE_DEFINITIONS "XA_MULTITHREADED=0")
+  add_compile_definitions(LIGHTUSD_WITH_XATLAS=1)
+endif()
 # The legacy product deliberately excludes the next core. The combined product
 # remains available for compatibility testing, but is not the shipped default.
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   list(APPEND SOURCES ${NEXT_SOURCES})
+  list(APPEND SOURCES binding-combined-api.cc)
 endif()
 
 
 add_executable(${BUILD_TARGET} ${SOURCES})
+if(LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  # The compatibility product compiles the shared next C core directly.
+  set_target_properties(${BUILD_TARGET} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endif()
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
@@ -454,12 +697,17 @@ if (LIGHTUSD_WASM64)
 endif()
 
 # Pass through compile definitions for feature flags
+target_sources(${BUILD_TARGET} PRIVATE binding-udim.cc)
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  target_sources(${BUILD_TARGET} PRIVATE binding-next-udim.cc)
+endif()
+
 if (LIGHTUSD_WITH_EXR)
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WITH_EXR=1)
 endif()
 
-# C++20 coroutine support for async loading
-if (LIGHTUSD_WASM_COROUTINE)
+# C++20 coroutine support belongs to the legacy async binding.
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND LIGHTUSD_WASM_COROUTINE)
   message(STATUS "LightUSD WASM: C++20 coroutine async loading enabled")
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_USE_COROUTINE=1)
 endif()
@@ -575,6 +823,15 @@ endif()
 # Export heap views for zero-copy streaming and typed pointer descriptors used
 # by the web loader fast path.
 string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
+# Same wasmBinary pin as the next-product flags above (the Node
+# usd-graph snapshot test passes wasmBinary to the combined module).
+string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  string(APPEND LIGHTUSD_EMCC_LINK_FLAGS
+    " --post-js \"${PROJECT_SOURCE_DIR}/combined-api.js\"")
+  set_property(TARGET ${BUILD_TARGET} APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/combined-api.js")
+endif()
 
 message(STATUS ${LIGHTUSD_EMCC_LINK_FLAGS})
 

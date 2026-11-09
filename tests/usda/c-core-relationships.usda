@@ -1,0 +1,18 @@
+#usda 1.0
+def Xform "Source" {
+    rel link = </Source/Target>
+    rel empty = []
+    def Scope "Target" {}
+}
+def Xform "Instance" (
+    prepend references = </Source>
+    instanceable = true
+) {}
+def Xform "Override" (
+    prepend references = </Source>
+    instanceable = true
+) {
+    rel link = [</Target>, </Other>]
+}
+def Scope "Target" {}
+def Scope "Other" {}

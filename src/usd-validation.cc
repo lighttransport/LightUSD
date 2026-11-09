@@ -22,7 +22,7 @@
 #include "core/path.hh"
 #include "core/prim-enums.hh"
 #include "core/prim-spec.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "enum-handlers.hh"
 #include "io-util.hh"
 #include "path-util.hh"
@@ -1179,6 +1179,23 @@ void ValidateIntArrayLengthMatchesRelationship(
              array_prop + " requires relationship " + rel_prop);
     return;
   }
+  if (array_prop == "mjc:path:indices") {
+    // The path relationship is a unique table; indices describe the route,
+    // including repeated visits. Every target must participate in the route.
+    std::set<int32_t> used;
+    for (int32_t index : values) {
+      if (index < 0 || static_cast<size_t>(index) >= target_count) {
+        AddError(result, rule_id, location,
+                 array_prop + " contains an out-of-range target index");
+        return;
+      }
+      used.insert(index);
+    }
+    if (used.size() != target_count)
+      AddError(result, rule_id, location,
+               array_prop + " must cover every path target");
+    return;
+  }
   if (values.size() != target_count) {
     AddError(result, rule_id, location,
              array_prop + " has " + std::to_string(values.size()) +
@@ -1208,6 +1225,11 @@ void ValidateNumericArrayLengthMatchesRelationship(
     AddError(result, rule_id, location,
              array_prop + " requires relationship " + rel_prop);
     return;
+  }
+  if (array_prop == "mjc:path:coef") {
+    std::vector<int32_t> route;
+    if (GetIntArrayProperty(ps, "mjc:path:indices", &route))
+      target_count = route.size();
   }
   if (values.size() != target_count) {
     AddError(result, rule_id, location,
@@ -1907,6 +1929,19 @@ void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                         result);
   ValidateQuaternionProperty(ps, "physics:principalAxes",
                              "physics.quaternion", prim_location, result);
+  // UsdPhysicsValidators requires the principal moments and the principal
+  // axes to be authored together: a diagonal tensor without a basis (or a
+  // basis without moments) is ambiguous.
+  const Property *diag = GetProperty(ps, "physics:diagonalInertia");
+  const Property *axes = GetProperty(ps, "physics:principalAxes");
+  if ((diag == nullptr) != (axes == nullptr)) {
+    AddError(result, "physics.inertia",
+             MakePropertyLocation(
+                 prim_location,
+                 diag ? "physics:diagonalInertia" : "physics:principalAxes"),
+             "principalAxes and diagonalInertia must both be authored or "
+             "neither authored");
+  }
   ValidateFiniteVec3Property(ps, "physics:velocity", "physics.motion",
                              prim_location, result, false);
   ValidateFiniteVec3Property(ps, "physics:angularVelocity", "physics.motion",
@@ -3092,6 +3127,47 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
     AddWarning(result, "shade.materialX.sourceUri",
                MakePropertyLocation(prim_location, "config:mtlx:sourceUri"),
                "MaterialX sourceUri should usually reference a .mtlx asset");
+  }
+}
+
+void ValidateMaterialUEConfig(const PrimSpec &ps,
+                              const std::vector<AppliedSchema> &applied_schemas,
+                              const std::string &prim_location,
+                              USDValidationResult *result) {
+  bool has_config_property = false;
+  for (const auto &prop_entry : ps.props()) {
+    if (prop_entry.first.rfind("config:unreal:", 0) == 0) {
+      has_config_property = true;
+      break;
+    }
+  }
+
+  const bool has_config_api =
+      HasAppliedSchema(applied_schemas, "MaterialUEConfigAPI");
+  if (has_config_property && !has_config_api) {
+    AddWarning(result, "shade.materialUE.configAPI", prim_location,
+               "config:unreal:* properties are authored without applying "
+               "MaterialUEConfigAPI");
+  }
+  if (has_config_api && ps.typeName() != "Material") {
+    AddWarning(result, "shade.materialUE.configAPI", prim_location,
+               "MaterialUEConfigAPI is expected on Material prims");
+  }
+
+  std::string version;
+  if (GetStringProperty(ps, "config:unreal:version", &version) &&
+      version != "1") {
+    AddWarning(result, "shade.materialUE.version",
+               MakePropertyLocation(prim_location, "config:unreal:version"),
+               "MaterialUEConfigAPI version is not the supported version `1`");
+  }
+  std::string authority;
+  if (GetStringProperty(ps, "config:unreal:graphAuthority", &authority) &&
+      authority.empty()) {
+    AddWarning(result, "shade.materialUE.graphAuthority",
+               MakePropertyLocation(prim_location,
+                                    "config:unreal:graphAuthority"),
+               "graphAuthority should not be empty");
   }
 }
 
@@ -5062,6 +5138,7 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
   }
   if (options.shade) {
     ValidateMaterialXConfig(ps, applied_schemas, prim_location, result);
+    ValidateMaterialUEConfig(ps, applied_schemas, prim_location, result);
     if (type_name == "Shader") {
       ValidateMaterialXShader(ps, shader_id, prim_location, result);
     }

@@ -187,6 +187,56 @@ def Xform "Root" {
            mat_path_str.c_str());
 }
 
+void tydra_shader_collection_material_binding_test(void) {
+  const char *usda = R"(#usda 1.0
+def Scope "Root" (
+  prepend apiSchemas = ["CollectionAPI:hero", "MaterialBindingAPI"]
+) {
+  rel collection:hero:includes = [</Root/Included>]
+  rel material:binding:collection:hero = </Looks/CollectionMat>
+  def Mesh "Included" {
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+  }
+}
+def Mesh "Excluded" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+}
+def Scope "Looks" {
+  def Material "CollectionMat" {}
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "collection.usda", &stage,
+                                &warn, &err));
+  auto root_result = stage.GetPrimAtPath(Path("/Root", ""));
+  TEST_CHECK(bool(root_result));
+  const Scope *root_scope = root_result ? (*root_result)->as<Scope>() : nullptr;
+  TEST_CHECK(root_scope != nullptr);
+  if (root_scope) {
+    TEST_CHECK(root_scope->materialBindingCollectionMap().count("hero") == 1);
+    TEST_CHECK(root_scope->has_instance("hero"));
+  }
+  Path material_path;
+  const Material *material = nullptr;
+  TEST_CHECK(tydra::GetBoundMaterial(stage, Path("/Root/Included", ""), "",
+                                     &material_path, &material, &err));
+  TEST_CHECK(material != nullptr);
+  TEST_CHECK(material_path.prim_part() == "/Looks/CollectionMat");
+
+  material = nullptr;
+  material_path = Path();
+  err.clear();
+  TEST_CHECK(!tydra::GetBoundMaterial(stage, Path("/Excluded", ""), "",
+                                      &material_path, &material, &err));
+  TEST_CHECK(material == nullptr);
+}
+
 // ---------------------------------------------------------------------------
 // d. Property access - GetPropertyNames and GetAttribute on a Mesh prim
 // ---------------------------------------------------------------------------

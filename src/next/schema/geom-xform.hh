@@ -101,7 +101,6 @@ private:
 };
 
 /// Check if a prim is xformable (Xform, Mesh, etc.)
-bool IsXformable(const UsdPrim& prim);
 
 /// Check if a prim is specifically an Xform
 bool IsXform(const UsdPrim& prim);

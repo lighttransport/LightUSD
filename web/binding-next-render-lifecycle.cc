@@ -1,39 +1,94 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "next/schema/usd-shade.hh"
+#include "binding-next-assets.hh"
+#include "binding-next-layer.hh"
+#include "c-api/lightusd-render-c.h"
+#include "next/load-usd.hh"
+#include "next/composition/composition.hh"
+#include "next/resolver/asset-resolver.hh"
+#include "next/writer/usdc-writer.hh"
+#include "image-loader.hh"
+#include "core/safe-arithmetic.hh"
+#include "next/c/storage.h"
+#include <cmath>
 namespace lightusd {
 namespace web_next {
-RenderStream::RenderStream() = default;
+static_assert(LIGHTUSD_RENDER_NODE == 0 && LIGHTUSD_RENDER_MESH == 1 &&
+              LIGHTUSD_RENDER_MATERIAL == 2 && LIGHTUSD_RENDER_TEXTURE == 3 &&
+              LIGHTUSD_RENDER_IMAGE == 4 && LIGHTUSD_RENDER_LIGHT == 5 &&
+              LIGHTUSD_RENDER_CAMERA == 6 && LIGHTUSD_RENDER_SKELETON == 7 &&
+              LIGHTUSD_RENDER_ANIMATION == 8 && LIGHTUSD_RENDER_UNSUPPORTED == 9 &&
+              LIGHTUSD_RENDER_INSTANCER == 10 && LIGHTUSD_RENDER_ROOT_NODE == 11 &&
+              LIGHTUSD_RENDER_POINTS == 12 && LIGHTUSD_RENDER_CURVES == 13 &&
+              LIGHTUSD_RENDER_POINT_INSTANCE_DRAW == 14,
+              "web resource kinds must match the native C render enum");
+RenderStream::RenderStream() {
+    // Route resolved memory identifiers through ReadAsset rather than a
+    // filesystem open. Missing keys still fail at the byte-reader boundary.
+    asset_resolver_.SetAssetReader(
+        [](const std::string&, std::vector<uint8_t>*, std::string* error) {
+          if (error) *error = "asset is not present in the imported memory store";
+          return false;
+        });
+}
 RenderStream::~RenderStream() = default;
 
-void RenderStream::provideAsset(const std::string& name, const emscripten::val& bytes) {
-    std::string copy_error;
-    std::string data = CopyUint8ArrayToString(bytes, &copy_error);
-    if (!copy_error.empty()) {
-      error_ = copy_error;
-      return;
-    }
-    std::string key = tn::AssetResolver::NormalizePath(name);
-    while (key.rfind("./", 0) == 0) key.erase(0, 2);
-    clip_assets_[key] = std::move(data);
-  }
 
-emscripten::val RenderStream::listVariants() const {
-    emscripten::val out = emscripten::val::array();
-    for (const VariantSetInfo &info : variant_sets_) {
-      emscripten::val item = emscripten::val::object();
-      item.set("primPath", info.prim_path);
-      item.set("setName", info.set_name);
-      item.set("selected", info.selected);
-      emscripten::val names = emscripten::val::array();
-      for (const std::string &name : info.variant_names) {
-        names.call<void>("push", name);
-      }
-      item.set("variants", names);
-      out.call<void>("push", item);
+const tr::RenderMesh* RenderStream::sourceRenderMesh_(int mesh_id) const {
+    if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount()) return nullptr;
+    int source_index = -1;
+    if (mesh_merge_) {
+      if (static_cast<size_t>(mesh_id) < outputs_.size())
+        source_index = outputs_[static_cast<size_t>(mesh_id)].source_index;
+    } else if (static_cast<size_t>(mesh_id) < meshes_.size()) {
+      source_index = mesh_id;
     }
-    return out;
-  }
+    if (source_index < 0 || !render_scene_valid_ ||
+        static_cast<size_t>(source_index) >= meshes_.size()) return nullptr;
+    const std::string path = meshes_[static_cast<size_t>(source_index)]
+                                 .GetPrim().GetPath().str();
+    const auto it = render_scene_.mesh_by_path.find(path);
+    if (it == render_scene_.mesh_by_path.end() || it->second < 0 ||
+        static_cast<size_t>(it->second) >= render_scene_.meshes.size()) return nullptr;
+    return &render_scene_.meshes[static_cast<size_t>(it->second)];
+}
+
+
+
+
+
+namespace {
+template <typename Visitor>
+bool VisitLayerAssetPaths(const lightusd::next::Stage& stage, uint8_t kind,
+                          Visitor&& visitor) {
+    const lightusd::next::Layer* root = stage.GetRootLayer();
+    if (!root || kind > 2) return true;
+    if (kind == 0) {
+      for (const std::string& path : root->meta().subLayers)
+        if (!visitor(path)) return false;
+      return true;
+    }
+    for (size_t i = 0; i < root->prim_count(); ++i) {
+      const lightusd::next::PrimSpec* prim =
+          root->prim(static_cast<uint32_t>(i));
+      if (!prim) continue;
+      const auto& arcs = kind == 1 ? prim->meta().references
+                                   : prim->meta().payloads;
+      for (const std::string& encoded : arcs) {
+        const auto arc = kind == 1
+            ? lightusd::next::Compositor::ParseReference(encoded)
+            : lightusd::next::Compositor::ParsePayload(encoded);
+        if (kind == 1 && arc.is_internal) continue;
+        if (arc.asset_path.empty()) continue;
+        if (!visitor(arc.asset_path)) return false;
+      }
+    }
+    return true;
+}
+}  // namespace
+
 
 void RenderStream::setTangentMethod(const std::string &method) {
     tangent_method_ = method;
@@ -42,42 +97,65 @@ void RenderStream::setTangentMethod(const std::string &method) {
                    [](unsigned char c) { return char(std::tolower(c)); });
   }
 
-emscripten::val RenderStream::beginOwned(std::string &&crate) {
-    emscripten::val r = emscripten::val::object();
+bool RenderStream::beginOwned(std::string &&crate) {
+    // The next-only WASM surface accepts bytes, not filesystem paths. USDC
+    // lazy arrays retain this owned input buffer rather than an mmap.
     end();
     error_.clear();
+    warning_.clear();
+    composition_report_ = lightusd::next::pcp::CompositionReport{};
     stats_ = Stats{};
     stats_.input_copy_ms = pending_input_copy_ms_;
-    stats_.input_bytes = pending_input_bytes_;
+    stats_.input_bytes = crate.size();
     pending_input_copy_ms_ = 0.0;
     pending_input_bytes_ = 0;
+    if (crate.size() > max_input_bytes_) {
+      error_ = "Input exceeds configured byte limit";
+      return false;
+    }
+    const size_t memory_limit = maxMemoryLimitBytes();
+    const size_t asset_bytes = providedAssetMemoryBytes();
+    if (asset_bytes >= memory_limit ||
+        crate.size() >= memory_limit - asset_bytes) {
+      error_ = "Input and provided assets leave no resident memory for the Stage";
+      return false;
+    }
+    const size_t load_resident_limit =
+        memory_limit - asset_bytes - crate.size();
     const double stage_load_start_ms = emscripten_get_now();
     if (IsUSDCBytes(crate)) {
       lightusd::next::USDCLoadOptions opts;
+      opts.crate_options.max_memory = std::min(
+          opts.crate_options.max_memory,
+          std::min(static_cast<size_t>(max_input_bytes_),
+                   load_resident_limit));
       opts.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
-        reportNextCrateProgress(
+        return reportNextLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
-        return true;
       };
       lightusd::next::USDCLoadResult res =
           lightusd::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
       if (!res.success) {
         error_ = res.error_summary.empty() ? std::string("USDC load failed")
                                            : res.error_summary;
-        r.set("success", false);
-        r.set("error", error_);
-        return r;
+        return false;
       }
       stage_ = std::move(res.stage);
     } else {
       lightusd::next::LoadUSDOptions opts;
+      opts.limits.max_input_bytes = max_input_bytes_;
+      opts.limits.max_resident_bytes = load_resident_limit;
       opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
+      opts.usda_options.parse_options.progress_callback =
+          [](const char *phase, size_t current, size_t total) -> bool {
+        return reportNextLoadProgress(
+            phase, static_cast<double>(current), static_cast<double>(total));
+      };
       opts.usdc_options.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
-        reportNextCrateProgress(
+        return reportNextLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
-        return true;
       };
       std::string warn;
       std::string err;
@@ -85,12 +163,25 @@ emscripten::val RenderStream::beginOwned(std::string &&crate) {
           std::move(crate), &stage_, opts, &warn, &err);
       if (!ok) {
         error_ = err.empty() ? std::string("USD memory load failed") : err;
-        r.set("success", false);
-        r.set("error", error_);
-        return r;
+        return false;
       }
+      warning_ = std::move(warn);
     }
     stats_.stage_load_ms = emscripten_get_now() - stage_load_start_ms;
+    bool authored_has_inherits = false;
+    bool authored_has_specializes = false;
+    if (const lightusd::next::Layer* root = stage_.GetRootLayer()) {
+      for (size_t i = 0; i < root->prim_count(); ++i) {
+        const lightusd::next::PrimSpec* prim =
+            root->prim(static_cast<uint32_t>(i));
+        if (!prim) continue;
+        authored_has_inherits = authored_has_inherits ||
+                                !prim->meta().inherits.empty();
+        authored_has_specializes = authored_has_specializes ||
+                                   !prim->meta().specializes.empty();
+        if (authored_has_inherits && authored_has_specializes) break;
+      }
+    }
     // Record authored variant sets (consumed by composition below), then
     // compose in place when the layer carries composition arcs — variants,
     // internal references, inherits/specializes. External arcs cannot anchor
@@ -98,22 +189,57 @@ emscripten::val RenderStream::beginOwned(std::string &&crate) {
     // NextFlattenSession instead).
     const double composition_start_ms = emscripten_get_now();
     collectVariantSets_();
-    if (lightusd::next::StageNeedsComposition(stage_)) {
+    // In-place composition consumes the root layer's arcs; snapshot the
+    // authored sublayer/reference/payload asset paths for the arc queries.
+    for (uint8_t kind = 0; kind < 3; ++kind) {
+      authored_arc_paths_[kind].clear();
+      VisitLayerAssetPaths(stage_, kind, [&](const std::string& value) {
+        authored_arc_paths_[kind].push_back(value);
+        return true;
+      });
+    }
+    authored_arc_present_[0] = [&] {
+      const lightusd::next::Layer* root = stage_.GetRootLayer();
+      return root && !root->meta().subLayers.empty();
+    }();
+    for (uint8_t kind = 1; kind < 3; ++kind) {
+      authored_arc_present_[kind] = false;
+      if (const lightusd::next::Layer* root = stage_.GetRootLayer()) {
+        for (size_t i = 0; i < root->prim_count() && !authored_arc_present_[kind]; ++i) {
+          const lightusd::next::PrimSpec* prim = root->prim(static_cast<uint32_t>(i));
+          if (prim) authored_arc_present_[kind] = !(kind == 1 ? prim->meta().references
+                                                            : prim->meta().payloads).empty();
+        }
+      }
+    }
+    if (enable_composition_ && lightusd::next::StageNeedsComposition(stage_)) {
       lightusd::next::pcp::CompositionOptions copts;
       copts.variant_overrides = variant_overrides_;
       std::string cwarn, cerr;
-      if (!lightusd::next::ComposeLoadedStage(&stage_, &cwarn, &cerr, &copts,
-                                              "memory-root")) {
+      lightusd::next::LoadUSDOptions composition_options;
+      composition_options.limits.max_input_bytes = max_input_bytes_;
+      composition_options.limits.max_resident_bytes = load_resident_limit;
+      if (!lightusd::next::ComposeLoadedStage(
+              &stage_, asset_resolver_, "memory-root", composition_options,
+              &cwarn, &cerr, &copts, &composition_report_)) {
         error_ = cerr.empty() ? std::string("in-memory composition failed")
                               : cerr;
-        r.set("success", false);
-        r.set("error", error_);
-        return r;
+        return false;
       }
+      if (!cwarn.empty()) {
+        if (!warning_.empty()) warning_ += "\n";
+        warning_ += cwarn;
+      }
+    }
+    if (stage_.GetMemoryUsage() >= load_resident_limit) {
+      error_ = "Stage exceeds configured resident memory limit";
+      stage_ = lightusd::next::Stage();
+      return false;
     }
     stats_.composition_ms = emscripten_get_now() - composition_start_ms;
     const double mesh_discovery_start_ms = emscripten_get_now();
     meshes_ = lightusd::next::GetAllMeshes(stage_);
+    tangent_requests_.assign(meshes_.size(), 0);
     stats_.mesh_discovery_ms =
         emscripten_get_now() - mesh_discovery_start_ms;
     stats_.source_mesh_count = meshes_.size();
@@ -123,6 +249,30 @@ emscripten::val RenderStream::beginOwned(std::string &&crate) {
     // same composed world transforms as the node hierarchy. A full
     // RenderScene is intentionally not built for mesh-only workers.
     buildMeshTransformCaches_();
+    if (!mesh_only_) {
+      // Public material ids index materials_. Register every bound material
+      // in mesh order now so ids are deterministic (like legacy) instead of
+      // depending on which mesh a caller views first. Mesh-only workers
+      // convert only the materials of the meshes they are asked for.
+      // The fallback record for unbound meshes is registered last so it
+      // never shifts the ids of bound materials.
+      const double material_start_ms = emscripten_get_now();
+      bool has_unbound_mesh = false;
+      for (const auto& mesh : meshes_) {
+        const lightusd::next::UsdPrim& prim = mesh.GetPrim();
+        const lightusd::next::UsdPrim bound = lightusd::next::GetBoundMaterial(stage_, prim);
+        if (bound.IsValid()) (void)registerMaterial_(bound);
+        else has_unbound_mesh = true;
+        for (const lightusd::next::UsdPrim& child : prim.GetChildren()) {
+          if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
+          const lightusd::next::UsdPrim subset_bound =
+              lightusd::next::GetBoundMaterial(stage_, child);
+          if (subset_bound.IsValid()) (void)registerMaterial_(subset_bound);
+        }
+      }
+      if (has_unbound_mesh) (void)registerMaterial_(lightusd::next::UsdPrim());
+      stats_.material_ms += emscripten_get_now() - material_start_ms;
+    }
     if (mesh_merge_) {
       const double optimize_start_ms = emscripten_get_now();
       buildOptimizedOutputs_();
@@ -130,223 +280,200 @@ emscripten::val RenderStream::beginOwned(std::string &&crate) {
     }
     if (!mesh_only_) {
       buildRenderScene_();
+      source_primvars_.clear();
       buildAnalyticOutputs_();
+      remapNodeMeshIds_();
     }
     loaded_ = true;
-    r.set("success", true);
-    r.set("meshCount", meshCount());
-    r.set("points", static_cast<int>(pointsCount()));
-    r.set("pointsCount", static_cast<int>(pointsCount()));
-    r.set("curves", static_cast<int>(curvesCount()));
-    r.set("curvesCount", static_cast<int>(curvesCount()));
-    r.set("nodes", static_cast<int>(nodeCount()));
-    r.set("nodeCount", static_cast<int>(nodeCount()));
-    r.set("lights", static_cast<int>(lightCount()));
-    r.set("lightCount", static_cast<int>(lightCount()));
-    r.set("cameras", static_cast<int>(cameraCount()));
-    r.set("cameraCount", static_cast<int>(cameraCount()));
-    r.set("pointInstancers", static_cast<int>(pointInstancerCount()));
-    r.set("pointInstancerCount", static_cast<int>(pointInstancerCount()));
-    r.set("skeletons", static_cast<int>(skeletonCount()));
-    r.set("skeletonCount", static_cast<int>(skeletonCount()));
-    r.set("unsupportedRenderables", static_cast<int>(unsupportedRenderableCount()));
-    r.set("unsupportedRenderableCount", static_cast<int>(unsupportedRenderableCount()));
-    r.set("animations", static_cast<int>(animationCount()));
-    r.set("animationCount", static_cast<int>(animationCount()));
-    r.set("pointInstanceDraws", static_cast<int>(pointInstanceDrawCount()));
-    r.set("pointInstanceDrawCount", static_cast<int>(pointInstanceDrawCount()));
-    return r;
-  }
+    authored_has_inherits_ = authored_has_inherits;
+    authored_has_specializes_ = authored_has_specializes;
+    return true;
+}
 
-emscripten::val RenderStream::begin(emscripten::val bytes) {
-    const double input_copy_start_ms = emscripten_get_now();
-    const size_t size = bytes["byteLength"].as<size_t>();
-    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
-    if (size > kMaxLayerBytes) {
-      emscripten::val r = emscripten::val::object();
+int RenderStream::preflightBeginInput(uint32_t size) {
+    if (size > max_input_bytes_) {
+      error_ = "Input exceeds configured byte limit";
+      return 0;
+    }
+    if (size > (uint32_t{1} << 30)) {
       error_ = "Input exceeds 1 GiB limit";
-      r.set("success", false);
-      r.set("error", error_);
-      return r;
+      return 0;
     }
+    const size_t memory_limit = maxMemoryLimitBytes();
+    const size_t asset_bytes = providedAssetMemoryBytes();
+    if (asset_bytes >= memory_limit ||
+        size >= memory_limit - asset_bytes) {
+      error_ = "Input and provided assets leave no resident memory for the Stage";
+      return 0;
+    }
+    if (size > remainingMemoryLimitBytes()) {
+      error_ = "Input exceeds remaining resident memory allowance";
+      return 0;
+    }
+    error_.clear();
+    return 1;
+}
+
+int RenderStream::beginBytes(const uint8_t* bytes, uint32_t size) {
+    const double input_copy_start_ms = emscripten_get_now();
+    if (!bytes && size) {
+      error_ = "Invalid input buffer";
+      return 0;
+    }
+    if (!preflightBeginInput(size)) return 0;
     std::string s;
-    s.resize(size);
-    if (size > 0) {
-      emscripten::val view = emscripten::val::global("Uint8Array").new_(
-          bytes["buffer"], bytes["byteOffset"],
-          emscripten::val(static_cast<double>(size)));
-      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
-          size, reinterpret_cast<uint8_t *>(&s[0])));
-      heapView.call<void>("set", view);
-    }
+    if (size) s.assign(reinterpret_cast<const char*>(bytes), size);
     pending_input_copy_ms_ = emscripten_get_now() - input_copy_start_ms;
     pending_input_bytes_ = size;
-    return beginOwned(std::move(s));
-  }
+    return beginOwned(std::move(s)) ? 1 : 0;
+}
 
-emscripten::val RenderStream::getStats() const {
-    emscripten::val s = emscripten::val::object();
-    s.set("sourceMeshes", static_cast<int>(stats_.source_mesh_count));
-    const size_t source_material_count =
-        std::max(stats_.source_material_count, source_material_keys_.size());
-    const size_t source_texture_count =
-        std::max(stats_.source_texture_count, source_texture_keys_.size());
-    s.set("sourceMaterials", static_cast<int>(source_material_count));
-    s.set("sourceTextures", static_cast<int>(source_texture_count));
-    s.set("optimizedMeshes", static_cast<int>(meshCount()));
-    s.set("optimizedMaterials", static_cast<int>(materials_.size()));
-    s.set("optimizedTextures", static_cast<int>(texture_keys_.size()));
-    s.set("mergedMeshes", static_cast<int>(stats_.merged_mesh_count));
-    s.set("mergeGroups", static_cast<int>(stats_.merge_group_count));
-    s.set("skippedMergeMeshes", static_cast<int>(stats_.skipped_merge_count));
-    s.set("materialDedup", material_dedup_);
-    s.set("meshMerge", mesh_merge_);
-    s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
-    s.set("flattenRenderTree", flatten_render_tree_);
-    s.set("nativeStageLoadMs", stats_.stage_load_ms);
-    s.set("nativeInputCopyMs", stats_.input_copy_ms);
-    s.set("nativeInputBytes", static_cast<double>(stats_.input_bytes));
-    s.set("nativeCompositionMs", stats_.composition_ms);
-    s.set("nativeMeshDiscoveryMs", stats_.mesh_discovery_ms);
-    s.set("nativeOptimizeMs", stats_.optimize_ms);
-    s.set("nativeMaterialMs", stats_.material_ms);
-    s.set("nativeMaterialIdentityMs", stats_.material_identity_ms);
-    s.set("nativeMaterialConversionMs", stats_.material_conversion_ms);
-    s.set("nativeGeometryBuildMs", stats_.geometry_build_ms);
-    s.set("nativeMergeAppendMs", stats_.merge_append_ms);
-    s.set("materialIdentityHits",
-          static_cast<int>(stats_.material_identity_hits));
-    s.set("materialIdentityMisses",
-          static_cast<int>(stats_.material_identity_misses));
-    s.set("materialGraphCacheHits",
-          static_cast<int>(stats_.material_graph_cache_hits));
-    s.set("materialGraphCacheMisses",
-          static_cast<int>(stats_.material_graph_cache_misses));
-    s.set("geometryBorrowedBytes",
-          static_cast<double>(stats_.geometry_borrowed_bytes));
-    s.set("geometryMaterializedBytes",
-          static_cast<double>(stats_.geometry_materialized_bytes));
-    size_t provided_asset_bytes = 0;
-    for (const auto& asset : clip_assets_) {
-      provided_asset_bytes += asset.second.size();
+int RenderStream::beginFromLayerDocument(NextLayerDocument& document) {
+    const int32_t size = document.exportUsdaSize();
+    if (size < 0) {
+      error_ = "Layer document could not export USDA";
+      return 0;
     }
-    s.set("providedAssetBytes", static_cast<double>(provided_asset_bytes));
-    s.set("stageMemoryBytes", static_cast<double>(stage_.GetMemoryUsage()));
-    if (render_scene_valid_) {
-      s.set("renderSceneMemoryBytes",
-            static_cast<double>(render_scene_.memory_usage()));
-      size_t mesh_points_bytes = 0;
-      size_t mesh_normals_bytes = 0;
-      size_t mesh_uv_bytes = 0;
-      size_t mesh_topology_bytes = 0;
-      size_t mesh_triangulation_bytes = 0;
-      for (const tr::RenderMesh &mesh : render_scene_.meshes) {
-        mesh_points_bytes += mesh.points.memory_usage();
-        mesh_normals_bytes += mesh.normals.memory_usage();
-        mesh_uv_bytes += mesh.texcoords_0.memory_usage() +
-                         mesh.texcoords_1.memory_usage();
-        mesh_topology_bytes += mesh.face_vertex_counts.memory_usage() +
-                               mesh.face_vertex_indices.memory_usage();
-        mesh_triangulation_bytes +=
-            mesh.triangulated_indices.memory_usage() +
-            mesh.triangulated_face_vertex_indices.memory_usage();
-      }
-      s.set("renderMeshPointsBytes", static_cast<double>(mesh_points_bytes));
-      s.set("renderMeshNormalsBytes", static_cast<double>(mesh_normals_bytes));
-      s.set("renderMeshUvBytes", static_cast<double>(mesh_uv_bytes));
-      s.set("renderMeshTopologyBytes", static_cast<double>(mesh_topology_bytes));
-      s.set("renderMeshTriangulationBytes",
-            static_cast<double>(mesh_triangulation_bytes));
-      s.set("renderSceneNodes", static_cast<int>(render_scene_.nodes.size()));
-      s.set("renderSceneMeshes", static_cast<int>(render_scene_.meshes.size()));
-      s.set("renderScenePoints", static_cast<int>(render_scene_.points.size()));
-      s.set("renderSceneCurves", static_cast<int>(render_scene_.curves.size()));
-      s.set("renderScenePointInstancers",
-            static_cast<int>(render_scene_.point_instancers.size()));
-      s.set("renderScenePointInstanceDraws",
-            static_cast<int>(render_scene_.point_instance_draws.size()));
-      s.set("renderSceneMaterials",
-            static_cast<int>(render_scene_.materials.size()));
-      s.set("renderSceneTextures",
-            static_cast<int>(render_scene_.textures.size()));
-      s.set("renderSceneImages", static_cast<int>(render_scene_.images.size()));
-      s.set("renderSceneLights", static_cast<int>(render_scene_.lights.size()));
-      s.set("renderSceneCameras",
-            static_cast<int>(render_scene_.cameras.size()));
-      s.set("renderSceneAnimations",
-            static_cast<int>(render_scene_.animations.size()));
-      s.set("renderSceneSkeletons",
-            static_cast<int>(render_scene_.skeletons.size()));
-      s.set("renderSceneUnsupportedRenderables",
-            static_cast<int>(render_scene_.unsupported_renderables.size()));
-      s.set("renderSceneWarnings", static_cast<int>(render_scene_warnings_.size()));
-    } else {
-      s.set("renderSceneNodes", 0);
-      s.set("renderSceneMeshes", 0);
-      s.set("renderScenePoints", 0);
-      s.set("renderSceneCurves", 0);
-      s.set("renderScenePointInstancers", 0);
-      s.set("renderScenePointInstanceDraws", 0);
-      s.set("renderSceneMaterials", 0);
-      s.set("renderSceneTextures", 0);
-      s.set("renderSceneImages", 0);
-      s.set("renderSceneLights", 0);
-      s.set("renderSceneCameras", 0);
-      s.set("renderSceneAnimations", 0);
-      s.set("renderSceneSkeletons", 0);
-      s.set("renderSceneUnsupportedRenderables", 0);
-      s.set("renderSceneWarnings", 0);
+    const uintptr_t data = document.exportUsdaData();
+    if (!data && size) {
+      error_ = "Layer document USDA output is missing";
+      return 0;
     }
-    return s;
-  }
+    return beginBytes(reinterpret_cast<const uint8_t*>(data),
+                      static_cast<uint32_t>(size));
+}
 
-emscripten::val RenderStream::getSceneMetadata() const {
-    emscripten::val metadata = emscripten::val::object();
-    if (!loaded_) return metadata;
-    const lightusd::next::StageMeta &meta = stage_.GetMeta();
-    metadata.set("upAxis", meta.upAxis);
-    metadata.set("metersPerUnit", meta.metersPerUnit);
-    // MassAPI SI conversion on the web/sim side (parity with the legacy
-    // binding's kilogramsPerUnit export).
-    metadata.set("kilogramsPerUnit", meta.kilogramsPerUnit);
-    metadata.set("framesPerSecond", meta.framesPerSecond);
-    metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
-    metadata.set("startTimeCode", meta.startTimeCode);
-    metadata.set("endTimeCode", meta.endTimeCode);
-    metadata.set("renderSettingsPrimPath", render_scene_.render_settings_path);
-    metadata.set("workingColorSpace", render_scene_.working_color_space);
-    metadata.set("workingToDisplayLinear",
-                 Matrix3Value(render_scene_.working_to_display_linear));
-    return metadata;
-  }
+int RenderStream::setMaxInputBytes(uint32_t limit) {
+    if (limit == 0 || limit > (uint32_t{1} << 30)) return -1;
+    max_input_bytes_ = limit;
+    return 0;
+}
 
-emscripten::val RenderStream::getMesh(int i) {
-    emscripten::val out = emscripten::val::object();
-    if (!loaded_ || i < 0 || i >= meshCount()) {
-      out.set("error", std::string("invalid mesh index"));
-      return out;
+int RenderStream::setMaxMemoryLimitMB(int32_t limit_mb) {
+    if (limit_mb < 1 ||
+        static_cast<uint64_t>(limit_mb) >
+            (static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) >> 20)) {
+      return -1;
     }
-    if (mesh_merge_) {
-      if (static_cast<size_t>(i) < outputs_.size()) {
-        const OutputMesh &record = outputs_[static_cast<size_t>(i)];
-        if (record.merged) return outputMergedMesh_(record);
-        return outputSourceMesh_(record.source_index);
-      }
-      return outputMergedMesh_(
-          analytic_outputs_[static_cast<size_t>(i) - outputs_.size()]);
+    const size_t new_limit = static_cast<size_t>(limit_mb) * (size_t{1} << 20);
+    const size_t current_limit = maxMemoryLimitBytes();
+    const size_t remaining = remainingMemoryLimitBytes();
+    const size_t used = remaining >= current_limit ? 0 : current_limit - remaining;
+    if (used >= new_limit) return -1;
+    if (loaded_) {
+      const size_t input_bytes = stats_.input_bytes;
+      const size_t stage_bytes = stageMemoryForBudget_();
+      if (input_bytes >= new_limit - used ||
+          stage_bytes >= new_limit - used - input_bytes) return -1;
     }
-    if (static_cast<size_t>(i) < meshes_.size()) return outputSourceMesh_(i);
-    return outputMergedMesh_(
-        analytic_outputs_[static_cast<size_t>(i) - meshes_.size()]);
-  }
+    max_memory_limit_mb_ = limit_mb;
+    return 0;
+}
+
+
+size_t RenderStream::stageMemoryForBudget_() const {
+    if (mesh_copy_scope_id_ < 0) return stage_.GetMemoryUsage();
+    // On-demand opinion fillers can edit arbitrary C++ metadata as well as
+    // values. Keep their accounting uncached rather than infer completeness.
+    if (stage_.GetRootLayer() && stage_.GetRootLayer()->prim_filler())
+      return stage_.GetMemoryUsage();
+    for (size_t i = 0; i < stage_.GetSubLayerCount(); ++i)
+      if (stage_.GetSubLayer(i) && stage_.GetSubLayer(i)->prim_filler())
+        return stage_.GetMemoryUsage();
+    const size_t epoch = lu_storage_materialization_epoch();
+    if (epoch == 0) return stage_.GetMemoryUsage();
+    if (!stage_budget_cache_valid_ || stage_budget_cache_epoch_ != epoch) {
+      stage_budget_cache_bytes_ = stage_.GetMemoryUsage();
+      stage_budget_cache_epoch_ = epoch;
+      stage_budget_cache_valid_ = lu_storage_materialization_epoch() == epoch;
+    }
+    return stage_budget_cache_bytes_;
+}
+
+size_t RenderStream::remainingMemoryLimitBytes() const {
+    const size_t limit = maxMemoryLimitBytes();
+    size_t used = providedAssetMemoryBytes();
+    if (stats_.input_bytes > std::numeric_limits<size_t>::max() - used) return 0;
+    used += stats_.input_bytes;
+    const size_t stage_bytes = stageMemoryForBudget_();
+    if (stage_bytes > std::numeric_limits<size_t>::max() - used) return 0;
+    used += stage_bytes;
+    if (formatted_material_text_.size() >
+        std::numeric_limits<size_t>::max() - used) return 0;
+    used += formatted_material_text_.size();
+    if (stage_usdc_export_.size() > std::numeric_limits<size_t>::max() - used) return 0;
+    used += stage_usdc_export_.size();
+    const size_t range_bytes = streamingRangeBookkeepingBytes_();
+    if (range_bytes > std::numeric_limits<size_t>::max() - used) return 0;
+    used += range_bytes;
+    if (used >= limit) return 0;
+    return limit - used;
+}
+
+int RenderStream::setSphereSubdivisions(int value) {
+    if (value < 0 || value > 6) return -1;
+    sphere_subdivisions_ = value;
+    return 0;
+}
+
+int RenderStream::setTargetBoneCount(uint32_t value) {
+    if (value == 0 || value > 128) return -1;
+    target_bone_count_ = value;
+    return 0;
+}
+
+int RenderStream::setValueClipSetting(uint8_t field, double value) {
+    if (!std::isfinite(value)) return -1;
+    switch (field) {
+      case 0:
+        if (value < 0.0 || value > 10000.0) return -1;
+        value_clip_sample_rate_ = static_cast<float>(value);
+        return 0;
+      case 1:
+        if (value != 0.0 && value != 1.0) return -1;
+        value_clip_use_time_range_ = value != 0.0;
+        return 0;
+      case 2: value_clip_start_time_ = value; return 0;
+      case 3: value_clip_end_time_ = value; return 0;
+      default: return -1;
+    }
+}
+
+double RenderStream::valueClipSetting(uint8_t field) const {
+    switch (field) {
+      case 0: return value_clip_sample_rate_;
+      case 1: return value_clip_use_time_range_ ? 1.0 : 0.0;
+      case 2: return value_clip_start_time_;
+      case 3: return value_clip_end_time_;
+      default: return std::numeric_limits<double>::quiet_NaN();
+    }
+}
 
 void RenderStream::end() {
+    mesh_copy_scope_id_ = -1;
+    invalidateCopyPreparation_();
     loaded_ = false;
+    warning_.clear();
+    composition_report_ = lightusd::next::pcp::CompositionReport{};
+    authored_has_inherits_ = false;
+    authored_has_specializes_ = false;
+    for (auto& paths : authored_arc_paths_) paths.clear();
+    for (bool& present : authored_arc_present_) present = false;
+    source_primvars_.clear();
+    mesh_view_error_.clear();
+    mesh_view_source_id_ = -1;
     render_scene_valid_ = false;
+    formatted_material_id_ = -1;
+    formatted_material_format_ = 0xff;
+    formatted_material_status_ = 0;
+    formatted_material_text_.clear();
     render_scene_ = tr::RenderScene();
     render_scene_warnings_.clear();
+    stage_usdc_export_.clear();
     meshes_.clear();
     meshes_.shrink_to_fit();
+    tangent_requests_.clear();
+    tangent_requests_.shrink_to_fit();
     outputs_.clear();
     outputs_.shrink_to_fit();
     analytic_outputs_.clear();
@@ -369,41 +496,72 @@ void RenderStream::end() {
     freeVec_(s_joint_indices_);
     freeVec_(s_joint_weights_);
     freeVec_(s_point_source_indices_);
-    freeVec_(s_points_cloud_points_);
-    freeVec_(s_points_cloud_widths_);
-    freeVec_(s_points_cloud_colors_);
-    freeVec_(s_curve_points_);
-    freeVec_(s_curve_widths_);
-    freeVec_(s_curve_colors_);
-    freeVec_(s_curve_tessellated_points_);
-    freeVec_(s_curve_tessellated_widths_);
-    freeVec_(s_curve_tessellated_colors_);
   }
 
-void RenderStream::buildRenderScene_() {
-    tr::ConverterConfig cfg;
-    cfg.time_code = 0.0;
-    cfg.mesh.compute_tangents = compute_tangents_;
-    cfg.mesh.tangent_method = tangentMethod_();
-    cfg.mesh.enable_bone_reduction = true;
-    cfg.mesh.target_bone_count = 4;
-    // RenderStream builds one browser-facing mesh lazily from Stage. Keeping a
-    // second, complete geometry copy in RenderScene only inflates the wasm
-    // heap; retain its material/skinning/animation metadata instead. Keep the
-    // compact earcut result used by the lazy mesh builder, plus generated
-    // analytic geometry which has no authored Mesh payload to rebuild from.
-    cfg.mesh.retain_geometry = false;
-    cfg.mesh.retain_triangulation = true;
-    cfg.mesh.retain_analytic_geometry = true;
-    cfg.material.load_textures = false;
-    cfg.material.allow_missing_textures = true;
-    cfg.material.render_settings_path = render_settings_path_;
-    cfg.point_instancer.duplicate_meshes = false;
-    cfg.animation.clip_stage_loader =
-        [this](const std::string& asset_path, tn::Stage* stage,
+void RenderStream::reset() {
+    end();
+    clearVariantOverrides();
+    variant_sets_.clear();
+    clip_assets_.clear();
+    clip_asset_budget_reservations_.clear();
+    streaming_assets_.clear();
+    asset_resolver_.ClearMemoryAssets();
+    imported_asset_bytes_ = 0;
+    payload_budget_.reset();
+    stats_ = Stats{};
+    pending_input_copy_ms_ = 0.0;
+    pending_input_bytes_ = 0;
+    formatted_light_id_ = -1;
+    formatted_light_format_ = 0xff;
+    formatted_light_status_ = 0;
+    formatted_light_cached_ = false;
+    formatted_light_text_.clear();
+    error_.clear();
+    warning_.clear();
+  }
+
+int RenderStream::exportStageUSDC() {
+    stage_usdc_export_.clear();
+    if (!loaded_) {
+      error_ = "No stage loaded";
+      return 0;
+    }
+    const size_t budget = remainingMemoryLimitBytes();
+    if (!budget) {
+      error_ = "USDC export exceeds remaining resident memory limit";
+      return 0;
+    }
+    lightusd::next::USDCWriteOptions options;
+    options.crate_options.max_file_size_bytes = budget;
+    options.crate_options.max_memory_bytes = budget;
+    const lightusd::next::USDCWriteResult result =
+        lightusd::next::WriteUSDCToMemory(stage_usdc_export_, stage_, options);
+    if (!result.success) {
+      stage_usdc_export_.clear();
+      error_ = result.error.empty() ? "USDC export failed" : result.error;
+      return 0;
+    }
+    error_.clear();
+    return 1;
+}
+
+int RenderStream::stageUSDCSize() const {
+    return stage_usdc_export_.size() <=
+            static_cast<size_t>(std::numeric_limits<int>::max())
+        ? static_cast<int>(stage_usdc_export_.size()) : -1;
+}
+
+uintptr_t RenderStream::stageUSDCData() const {
+    return stage_usdc_export_.empty()
+        ? uintptr_t{0}
+        : reinterpret_cast<uintptr_t>(stage_usdc_export_.data());
+}
+
+tr::AnimationConfig::ClipStageLoader RenderStream::valueClipLoader_() {
+    if (!enable_value_clips_) return {};
+    return [this](const std::string& asset_path, tn::Stage* stage,
                std::string* warn, std::string* err) {
-          std::string key = tn::AssetResolver::NormalizePath(asset_path);
-          while (key.rfind("./", 0) == 0) key.erase(0, 2);
+          std::string key = NormalizeRenderAssetKey(asset_path);
           auto it = clip_assets_.find(key);
           if (it == clip_assets_.end()) {
             for (const std::string& candidate :
@@ -413,8 +571,23 @@ void RenderStream::buildRenderScene_() {
             }
           }
           if (it == clip_assets_.end()) {
-            if (err) *err = "asset was not supplied to RenderStream";
-            return false;
+            const tn::ResolvedAsset resolved =
+                asset_resolver_.Resolve(key, "memory-root");
+            std::vector<uint8_t> bytes;
+            std::string read_error;
+            if (!resolved.exists || !asset_resolver_.ReadAsset(
+                    resolved.resolved_path, &bytes, &read_error)) {
+              if (err) *err = "asset was not supplied to RenderStream";
+              return false;
+            }
+            tn::LoadUSDOptions options;
+            options.usda_options.parse_options.enable_usda_lazy_arrays = true;
+            std::string owned;
+            if (!bytes.empty())
+              owned.assign(reinterpret_cast<const char*>(bytes.data()),
+                           bytes.size());
+            return tn::LoadUSDFromMemoryOwned(std::move(owned), stage, options,
+                                              warn, err);
           }
           tn::LoadUSDOptions options;
           options.usda_options.parse_options.enable_usda_lazy_arrays = true;
@@ -422,6 +595,95 @@ void RenderStream::buildRenderScene_() {
           return tn::LoadUSDFromMemoryOwned(std::move(bytes), stage, options,
                                             warn, err);
         };
+}
+
+void RenderStream::buildRenderScene_() {
+    tr::ConverterConfig cfg;
+    cfg.time_code = 0.0;
+    cfg.limits.max_resident_bytes = remainingMemoryLimitBytes();
+    cfg.mesh.compute_tangents = compute_tangents_;
+    cfg.mesh.sphere_subdivisions = sphere_subdivisions_;
+    cfg.mesh.tangent_method = tangentMethod_();
+    cfg.mesh.enable_bone_reduction = enable_bone_reduction_;
+    cfg.mesh.target_bone_count = target_bone_count_;
+    cfg.mesh.round_bone_count = round_bone_count_;
+    // RenderStream builds one browser-facing mesh lazily from Stage. Keeping a
+    // second, complete geometry copy in RenderScene only inflates the wasm
+    // heap; retain its material/skinning/animation metadata instead. Keep the
+    // compact earcut result used by the lazy mesh builder, plus generated
+    // analytic geometry which has no authored Mesh payload to rebuild from.
+    cfg.mesh.retain_geometry = false;
+    cfg.mesh.retain_custom_primvars = true;
+    cfg.mesh.retain_triangulation = true;
+    cfg.mesh.retain_analytic_geometry = true;
+    cfg.material.load_textures = load_texture_in_native_;
+    cfg.material.combine_udim_tiles = combine_udim_tiles_;
+    cfg.material.allow_missing_textures = true;
+    size_t texture_reservation_bytes = 0;
+    if (load_texture_in_native_) {
+      cfg.material.custom_texture_loader = [this, &texture_reservation_bytes](
+          const std::string& asset_path, tr::TextureImage* out) {
+        if (!out || asset_path.empty()) return false;
+        std::shared_ptr<const std::vector<uint8_t>> memory_view;
+        const auto resolved = asset_resolver_.Resolve(asset_path, "memory-root");
+        if (resolved.exists && !resolved.resolved_path.empty()) {
+          memory_view = asset_resolver_.GetMemoryAssetView(resolved.resolved_path);
+        }
+        if (!memory_view) memory_view = asset_resolver_.GetMemoryAssetView(asset_path);
+        if (!memory_view) return false;
+        const uint8_t* encoded = memory_view->data();
+        const size_t encoded_size = memory_view->size();
+        if (!encoded || encoded_size == 0) return false;
+        const auto info = lightusd::image::GetImageInfoFromMemory(
+            encoded, encoded_size, asset_path);
+        if (!info) return false;
+        size_t pixels = 0;
+        size_t estimate = 0;
+        if (!lightusd::safe::mul(static_cast<size_t>(info.value().width),
+                                 static_cast<size_t>(info.value().height),
+                                 &pixels) ||
+            !lightusd::safe::mul(pixels, size_t{16}, &estimate)) return false;
+        const size_t remaining = remainingMemoryLimitBytes();
+        if (texture_reservation_bytes > remaining ||
+            estimate > remaining - texture_reservation_bytes) return false;
+        auto decoded = lightusd::image::LoadImageFromMemory(
+            encoded, encoded_size, asset_path);
+        if (!decoded || decoded.value().image.width <= 0 ||
+            decoded.value().image.height <= 0 ||
+            decoded.value().image.channels <= 0 ||
+            decoded.value().image.data.empty()) return false;
+        const auto& image = decoded.value().image;
+        if (image.data.size() > remaining - texture_reservation_bytes) return false;
+        texture_reservation_bytes += estimate;
+        out->width = static_cast<uint32_t>(image.width);
+        out->height = static_cast<uint32_t>(image.height);
+        out->channels = static_cast<uint8_t>(image.channels);
+        if (image.format == lightusd::Image::PixelFormat::Float) {
+          out->component_type = image.bpp == 16 ? tr::ComponentType::Float16
+              : image.bpp == 64 ? tr::ComponentType::Float64
+                                : tr::ComponentType::Float32;
+        } else if (image.format == lightusd::Image::PixelFormat::Int) {
+          out->component_type = image.bpp == 16 ? tr::ComponentType::Int16
+              : image.bpp == 32 ? tr::ComponentType::Int32
+                                : tr::ComponentType::Int8;
+        } else {
+          out->component_type = image.bpp == 16 ? tr::ComponentType::UInt16
+              : image.bpp == 32 ? tr::ComponentType::UInt32
+                                : tr::ComponentType::UInt8;
+        }
+        if (!out->data.append(image.data.data(), image.data.size())) return false;
+        return true;
+      };
+    }
+    cfg.material.render_settings_path = render_settings_path_;
+    cfg.asset_resolver = &asset_resolver_;
+    cfg.point_instancer.duplicate_meshes = false;
+    cfg.animation.clip_stage_loader = valueClipLoader_();
+    cfg.animation.bake_value_clips = enable_value_clips_;
+    cfg.animation.value_clip_sample_rate = value_clip_sample_rate_;
+    cfg.animation.value_clip_use_time_range = value_clip_use_time_range_;
+    cfg.animation.value_clip_start_time = value_clip_start_time_;
+    cfg.animation.value_clip_end_time = value_clip_end_time_;
     tr::RenderSceneConverter converter(cfg);
     tr::ConvertResult result = converter.Convert(stage_);
     render_scene_ = std::move(result.scene);
@@ -429,6 +691,61 @@ void RenderStream::buildRenderScene_() {
     render_scene_valid_ = result.success;
     if (!result.success && !result.error.empty()) {
       error_ = result.error;
+    }
+    if (render_scene_valid_ && flatten_render_tree_) flattenRenderTree_();
+  }
+
+// Legacy setNativeFlattenRenderTree: replace the hierarchy with one
+// "OptimizedRenderRoot" whose direct children are the renderable nodes (in
+// depth-first order) carrying their world transform as local transform.
+// Node ids stay stable; bypassed Xform nodes remain addressable by id but are
+// no longer reachable from the root, and animation channels targeting them
+// are detached as in legacy.
+void RenderStream::flattenRenderTree_() {
+    auto& nodes = render_scene_.nodes;
+    const auto keep = [](const tr::SceneNode& node) {
+      return node.data_id >= 0 && node.type != tr::NodeType::Xform;
+    };
+    std::vector<int32_t> kept;
+    std::vector<uint8_t> is_kept(nodes.size(), 0);
+    std::vector<std::pair<int32_t, size_t>> stack;
+    for (auto it = render_scene_.root_nodes.rbegin();
+         it != render_scene_.root_nodes.rend(); ++it) stack.emplace_back(*it, 0);
+    constexpr size_t kMaxDepth = 1u << 16;
+    while (!stack.empty()) {
+      const auto [id, depth] = stack.back();
+      stack.pop_back();
+      if (id < 0 || static_cast<size_t>(id) >= nodes.size() || depth >= kMaxDepth) continue;
+      const tr::SceneNode& node = nodes[static_cast<size_t>(id)];
+      if (keep(node) && !is_kept[static_cast<size_t>(id)]) {
+        is_kept[static_cast<size_t>(id)] = 1;
+        kept.push_back(id);
+      }
+      for (auto child = node.children.rbegin(); child != node.children.rend(); ++child)
+        stack.emplace_back(*child, depth + 1);
+    }
+    const int32_t root_id = static_cast<int32_t>(nodes.size());
+    for (const int32_t id : kept) {
+      tr::SceneNode& node = nodes[static_cast<size_t>(id)];
+      node.local_transform = node.world_transform;
+      node.children.clear();
+      node.parent_id = root_id;
+    }
+    tr::SceneNode flat_root;
+    flat_root.name = "OptimizedRenderRoot";
+    flat_root.prim_path = "/OptimizedRenderRoot";
+    flat_root.type = tr::NodeType::Xform;
+    flat_root.children = std::move(kept);
+    nodes.push_back(std::move(flat_root));
+    render_scene_.node_by_path["/OptimizedRenderRoot"] = root_id;
+    render_scene_.root_nodes.assign(1, root_id);
+    for (tr::AnimationClip& clip : render_scene_.animations) {
+      for (tr::AnimationChannel& channel : clip.channels) {
+        if (channel.target_node >= 0 &&
+            (static_cast<size_t>(channel.target_node) >= is_kept.size() ||
+             !is_kept[static_cast<size_t>(channel.target_node)]))
+          channel.target_node = -1;
+      }
     }
   }
 
@@ -444,7 +761,7 @@ void RenderStream::collectVariantSets_() {
         info.set_name = vs.name;
         // Authored selection lives in the prim's `variants = {...}` metadata
         // (variantSelections / legacy single variantSelection), not on the
-        // VariantSetData itself.
+        // PrimVariantSetData itself.
         info.selected = vs.selected;
         for (const auto &sel : meta.variantSelections()) {
           if (sel.first == vs.name) {

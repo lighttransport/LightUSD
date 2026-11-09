@@ -14,6 +14,7 @@
 #include "core/prim.hh"
 #include "value-types.hh"
 #include "usdc-writer.hh"
+#include "usda-writer.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
@@ -21,6 +22,7 @@
 #include "core/model-scope.hh"
 #include "math-util.inc"
 #include "crate-writer.hh"
+#include "crate-reader.hh"
 
 #include <cstring>
 
@@ -65,43 +67,53 @@ def Camera "cam" {
 }
 )";
 
-  // Debug: check if 2.5 is in the USDC bytes. OpenUSD-style writers may store
-  // float-exact doubles inline as float bits, so accept either representation.
+  // The crate FIELDS section stores value reps in an LZ4-compressed blob
+  // (crate >= 0.4.0 layout), so the raw value bits are never literally present
+  // in the file. Decode the crate instead: `double radius = 2.5` must be stored
+  // either inlined as a float-exact payload or out-of-line as a raw double, and
+  // both encodings must yield 2.5.
   {
     Stage tmp;
     std::string w2, e2;
-    LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
-                        std::strlen(usda), "test.usda", &tmp, &w2, &e2);
+    TEST_ASSERT(LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                   std::strlen(usda), "test.usda", &tmp, &w2,
+                                   &e2));
     std::vector<uint8_t> bytes;
-    usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2);
-    double target = 2.5;
-    uint8_t target_bytes[8];
-    std::memcpy(target_bytes, &target, 8);
-    bool found = false;
-    bool found_inline = false;
-    size_t found_offset = 0;
-    for (size_t i = 0; i + 8 <= bytes.size(); i++) {
-      if (std::memcmp(bytes.data() + i, target_bytes, 8) == 0) {
-        found = true;
-        found_offset = i;
-        break;
+    TEST_ASSERT(usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2));
+
+    StreamReader sr(bytes.data(), bytes.size(), /* swap_endian */ false);
+    lightusd::crate::CrateReader reader(&sr, {});
+    TEST_ASSERT(reader.ReadBootStrap());
+    TEST_ASSERT(reader.ReadTOC());
+    TEST_ASSERT(reader.ReadTokens());
+    TEST_ASSERT(reader.ReadFields());
+    TEST_ASSERT(reader.ReadFieldSets());
+    TEST_ASSERT(reader.ReadPaths());
+    TEST_ASSERT(reader.ReadSpecs());
+
+    bool found_double = false;
+    for (const auto &spec : reader.GetSpecs()) {
+      auto path = reader.GetPathString(spec.path_index);
+      if (!path || path->find("radius") == std::string::npos) {
+        continue;
       }
-    }
-    float inline_target = 2.5f;
-    uint8_t inline_bytes[4];
-    std::memcpy(inline_bytes, &inline_target, 4);
-    for (size_t i = 0; i + 4 <= bytes.size(); i++) {
-      if (std::memcmp(bytes.data() + i, inline_bytes, 4) == 0) {
-        found_inline = true;
-        if (!found) {
-          found_offset = i;
+      lightusd::crate::FieldValuePairVector pairs;
+      TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
+      for (const auto &pair : pairs) {
+        if (pair.first != "default") {
+          continue;
         }
-        break;
+        auto decoded = pair.second.get_value<double>();
+        TEST_CHECK(decoded.has_value());
+        if (decoded) {
+          TEST_MSG("double radius decoded=%f", *decoded);
+          TEST_CHECK(*decoded == 2.5);
+          found_double = *decoded == 2.5;
+        }
       }
     }
-    TEST_CHECK(found || found_inline);
-    TEST_MSG("USDC bytes=%zu, found 2.5 at offset %zu (raw=%d inline=%d)",
-             bytes.size(), found_offset, found, found_inline);
+    TEST_CHECK(found_double);
+    TEST_MSG("USDC bytes=%zu", bytes.size());
   }
 
   Stage stage;
@@ -635,25 +647,38 @@ def Material "mat" {
 }
 
 void usdc_reader_prim_metadata_roundtrip_test(void) {
-  const char *usda = R"(#usda 1.0
+  // AOUSD: None and [] are the same explicit empty list-op opinion.
+  // A bare relationship has no target opinion and must remain distinct.
+  for (const char *empty : {"None", "[]"}) {
+    const std::string usda = std::string(R"(#usda 1.0
 
 def Scope "test" (
     kind = "component"
+    inherits = )") + empty + "\n    specializes = " + empty + R"(
 ) {
+    rel cleared = )" + empty + R"(
+    rel declared
+    rel targeted = </Target>
 }
 )";
-  Stage stage;
-  std::string warn, err;
-  bool ok = usda_to_usdc_roundtrip(usda, &stage, &warn, &err);
-  if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
-  TEST_CHECK(ok);
+    Stage stage;
+    std::string warn, err;
+    const bool ok = usda_to_usdc_roundtrip(usda.c_str(), &stage, &warn, &err);
+    if (!ok) { TEST_MSG("%s roundtrip failed: %s", empty, err.c_str()); }
+    TEST_ASSERT(ok);
 
-  auto result = stage.GetPrimAtPath(Path("/test", ""));
-  TEST_CHECK(bool(result));
-  if (!result) return;
-
-  // Verify prim type survives (kind metadata stored as TokenIndex in binary format — known gap)
-  TEST_CHECK((*result)->as<Scope>() != nullptr);
+    auto result = stage.GetPrimAtPath(Path("/test", ""));
+    TEST_ASSERT(bool(result));
+    TEST_CHECK((*result)->as<Scope>() != nullptr);
+    std::string text;
+    TEST_ASSERT(usda::ExportToUSDAString(stage, &text, &warn, &err));
+    TEST_CHECK(text.find("inherits = None") != std::string::npos);
+    TEST_CHECK(text.find("specializes = None") != std::string::npos);
+    TEST_CHECK(text.find("rel cleared = None") != std::string::npos);
+    TEST_CHECK(text.find("rel declared\n") != std::string::npos);
+    TEST_CHECK(text.find("rel declared =") == std::string::npos);
+    TEST_CHECK(text.find("rel targeted = </Target>") != std::string::npos);
+  }
 }
 
 void usdc_reader_stage_metadata_roundtrip_test(void) {
@@ -889,6 +914,117 @@ void usdc_reader_truncated_input_test(void) {
   }
 }
 
+void usdc_reader_layer_memory_limit_test(void) {
+  std::string usda = "#usda 1.0\ndef Xform \"Root\" {\n custom int[] values = [";
+  const size_t count = 400000;
+  for (size_t i = 0; i < count; ++i) {
+    if (i) usda += ',';
+    usda += '1';
+  }
+  usda += "]\n}\n";
+  Layer source;
+  std::string warn, err;
+  TEST_ASSERT(LoadUSDALayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "budget.usda", &source, &warn, &err));
+  std::vector<uint8_t> bytes;
+  TEST_ASSERT(usdc::SaveAsUSDCToMemory(source, &bytes, &warn, &err));
+  TEST_ASSERT(bytes.size() < 1024 * 1024);
+  TEST_ASSERT(count * sizeof(int32_t) > 1024 * 1024);
+
+  for (bool strict : {false, true}) {
+    for (int32_t limit : {1, 8}) {
+      USDLoadOptions options;
+      options.num_threads = 1;
+      options.strict_loading = strict;
+      options.max_memory_limit_in_mb = limit;
+      const bool expected = limit == 8;
+      Stage stage;
+      Layer layer;
+      warn.clear();
+      err.clear();
+      TEST_CHECK(LoadUSDCFromMemory(bytes.data(), bytes.size(), "budget.usdc",
+                                   &stage, &warn, &err, options) == expected);
+      TEST_CHECK(expected ? err.empty() : err.find("memory budget") != std::string::npos);
+      TEST_MSG("stage: limit=%d strict=%d: %s", int(limit), int(strict), err.c_str());
+      warn.clear();
+      err.clear();
+      TEST_CHECK(LoadUSDCLayerFromMemory(bytes.data(), bytes.size(), "budget.usdc",
+                                        &layer, &warn, &err, options) == expected);
+      TEST_CHECK(expected ? err.empty() : err.find("memory budget") != std::string::npos);
+      TEST_MSG("layer: limit=%d strict=%d: %s", int(limit), int(strict), err.c_str());
+    }
+  }
+}
+
+void usdc_reader_truncated_array_test(void) {
+  // Keep the TOC and all structural sections intact. Only the array's count
+  // is corrupted, so the failure must come from reading its payload.
+  std::string usda = "#usda 1.0\ndef Xform \"Root\" {\n custom float[] values = [";
+  for (size_t i = 0; i < 2048; ++i) {
+    if (i) usda += ',';
+    usda += "1.25";
+  }
+  usda += "]\n}\n";
+  Layer source;
+  std::string warn, err;
+  TEST_ASSERT(LoadUSDALayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "array.usda", &source, &warn, &err));
+  std::vector<uint8_t> bytes;
+  TEST_ASSERT(usdc::SaveAsUSDCToMemory(source, &bytes, &warn, &err));
+  size_t payload = 0;
+  {
+    StreamReader stream(bytes.data(), bytes.size(), false);
+    lightusd::crate::CrateReader reader(&stream);
+    TEST_ASSERT(reader.ReadBootStrap());
+    TEST_ASSERT(reader.ReadTOC());
+    TEST_ASSERT(reader.ReadTokens());
+    TEST_ASSERT(reader.ReadFields());
+    for (const auto &field : reader.GetFields()) {
+      const auto &rep = field.value_rep;
+      if (rep.IsArray() && !rep.IsCompressed() && !rep.IsInlined() &&
+          rep.GetType() == int(lightusd::crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT)) {
+        payload = static_cast<size_t>(rep.GetPayload());
+      }
+    }
+  }
+  TEST_ASSERT(payload > 0 && payload + 8 < bytes.size());
+  std::vector<uint8_t> malformed = bytes;
+  const uint64_t count = (bytes.size() - payload - 8) / sizeof(float) + 1;
+  for (size_t i = 0; i < 8; ++i) {
+    malformed[payload + i] = static_cast<uint8_t>((count >> (8 * i)) & 0xff);
+  }
+
+  for (bool strict : {false, true}) {
+    for (bool zero_copy : {false, true}) {
+      for (bool valid : {false, true}) {
+        const auto &input = valid ? bytes : malformed;
+        USDLoadOptions options;
+        options.num_threads = 1;
+        options.strict_loading = strict;
+        options.mmap_zero_copy = zero_copy;
+        Stage stage;
+        Layer layer;
+        warn.clear();
+        err.clear();
+        TEST_CHECK(LoadUSDCFromMemory(input.data(), input.size(), "array.usdc",
+                                     &stage, &warn, &err, options) == valid);
+        TEST_CHECK(valid ? err.empty() : !err.empty());
+        TEST_MSG("stage: strict=%d zero_copy=%d valid=%d: %s",
+                 int(strict), int(zero_copy), int(valid), err.c_str());
+        warn.clear();
+        err.clear();
+        TEST_CHECK(LoadUSDCLayerFromMemory(input.data(), input.size(), "array.usdc",
+                                          &layer, &warn, &err, options) == valid);
+        TEST_CHECK(valid ? err.empty() : !err.empty());
+        TEST_MSG("layer: strict=%d zero_copy=%d valid=%d: %s",
+                 int(strict), int(zero_copy), int(valid), err.c_str());
+      }
+    }
+  }
+}
+
 void usdc_reader_corrupt_header_test(void) {
   const char *usda = "#usda 1.0\ndef Scope \"test\" {\n}\n";
   Stage tmp;
@@ -932,5 +1068,88 @@ void usdc_reader_corrupt_body_test(void) {
     TEST_CHECK(true);
   } else {
     TEST_CHECK(true);
+  }
+}
+
+// Model and Scope consume these properties into mixins during reconstruction.
+// Exercise both writers so removing properties from the generic map cannot
+// silently remove them from exported layers.
+void usdc_reader_collection_binding_roundtrip_test(void) {
+  for (const std::string type : {"", "Scope", "Xform"}) {
+    const std::string source = "#usda 1.0\ndef " + type + R"( "World" {
+    rel material:binding = </World/Material> (
+        bindMaterialAs = "strongerThanDescendants"
+    )
+    uniform token collection:members:expansionRule = "explicitOnly"
+    uniform bool collection:members:includeRoot = true
+    rel collection:members:includes = [</World/A>]
+    rel collection:members:excludes = [</World/B>]
+    uniform pathExpression collection:pattern:membershipExpression = "/World//A*" (
+        documentation = "Pattern documentation"
+    )
+    uniform pathExpression collection:blocked:membershipExpression = None
+    uniform pathExpression collection:declared:membershipExpression
+}
+)";
+    Stage stage;
+    std::string warn, err;
+    TEST_ASSERT(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(source.data()), source.size(),
+        "collections.usda", &stage, &warn, &err));
+
+    // Check the initially reconstructed Stage, then USDA and USDC roundtrips.
+    for (int pass = 0; pass < 3; ++pass) {
+      auto prim = stage.GetPrimAtPath(Path("/World", ""));
+      TEST_ASSERT(bool(prim));
+      const Collection *collections = nullptr;
+      const MaterialBinding *binding = nullptr;
+      if (auto p = (*prim)->as<Model>()) { collections = p; binding = p; }
+      if (auto p = (*prim)->as<Scope>()) { collections = p; binding = p; }
+      if (auto p = (*prim)->as<Xform>()) { collections = p; binding = p; }
+      TEST_ASSERT(collections && binding);
+      TEST_CHECK(binding->materialBinding.authored());
+      TEST_CHECK(binding->materialBinding.relationship().metas().get_bindMaterialAs().str() ==
+                 "strongerThanDescendants");
+      const CollectionInstance *members = nullptr;
+      TEST_ASSERT(collections->get_instance("members", &members));
+      TEST_CHECK(members->includes.authored());
+      TEST_CHECK(members->excludes.authored());
+      TEST_CHECK(members->expansionRule.get_value() ==
+                 CollectionInstance::ExpansionRule::ExplicitOnly);
+      bool root = false;
+      TEST_CHECK(members->includeRoot.get_value().get_scalar(&root) && root);
+      const CollectionInstance *pattern = nullptr;
+      TEST_ASSERT(collections->get_instance("pattern", &pattern));
+      TEST_CHECK(pattern->membershipExpression.has_value());
+      const CollectionInstance *blocked = nullptr;
+      TEST_ASSERT(collections->get_instance("blocked", &blocked));
+      TEST_CHECK(blocked->membershipExpression.is_blocked());
+      const CollectionInstance *declared = nullptr;
+      TEST_ASSERT(collections->get_instance("declared", &declared));
+      TEST_CHECK(declared->membershipExpression.authored());
+      TEST_CHECK(!declared->membershipExpression.has_value());
+      TEST_CHECK(!declared->membershipExpression.is_blocked());
+      const std::string text = stage.ExportToString();
+      TEST_CHECK(text.find("/World//A*") != std::string::npos);
+      TEST_CHECK(text.find("Pattern documentation") != std::string::npos);
+      TEST_CHECK(text.find("</World/A>") != std::string::npos);
+      TEST_CHECK(text.find("</World/B>") != std::string::npos);
+      TEST_CHECK(text.find("</World/Material>") != std::string::npos);
+      TEST_MSG("type=%s pass=%d", type.c_str(), pass);
+      if (pass == 0) {
+        Stage reloaded;
+        TEST_ASSERT(LoadUSDAFromMemory(
+            reinterpret_cast<const uint8_t *>(text.data()), text.size(),
+            "collections.usda", &reloaded, &warn, &err));
+        stage = std::move(reloaded);
+      } else if (pass == 1) {
+        std::vector<uint8_t> bytes;
+        TEST_ASSERT(usdc::SaveAsUSDCToMemory(stage, &bytes, &warn, &err));
+        Stage reloaded;
+        TEST_ASSERT(LoadUSDCFromMemory(bytes.data(), bytes.size(),
+                                      "collections.usdc", &reloaded, &warn, &err));
+        stage = std::move(reloaded);
+      }
+    }
   }
 }

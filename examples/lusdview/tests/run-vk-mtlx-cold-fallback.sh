@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify that a cold, oversized MaterialX ray-query shader fails fast and
+# Verify that a cold MaterialX interpreter shader fails fast and
 # leaves the compact Vulkan RT pipeline available for rendering.
 set -uo pipefail
 
@@ -7,7 +7,9 @@ SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LUSDVIEW="${LUSDVIEW:-$REPO_ROOT/build_ninja/lusdview}"
-ASSET="${ASSET:-$REPO_ROOT/usd-assets/full_assets/OpenChessSet/chess_set.usda}"
+# Direct image/normalmap graphs in OpenChess are now handled by the compact
+# shader. Use a procedural graph that actually requires full promotion.
+ASSET="${ASSET:-$REPO_ROOT/tests/usda/lusdview-materialx-cold-promotion.usda}"
 
 if [ ! -x "$LUSDVIEW" ]; then
   echo "SKIP: lusdview binary not found at $LUSDVIEW"
@@ -37,18 +39,38 @@ trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/full-fallback.png"
 LOGFILE="$TMP/lusdview.log"
 
+# Warm only the compact shader. The full MaterialX variant must remain cold,
+# while the hardware fallback needs a ready compact cache to stay on ray query.
+env LUSDVIEW_VK_PIPELINE_CACHE_DIR="$TMP/cache" \
+  LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 LUSDVIEW_NVIDIA_OFFLOAD=1 \
+  timeout --kill-after=5s "${LUSDVIEW_MTLX_VK_WARMUP_TIMEOUT:-300s}" \
+  "$LUSDVIEW" --headless --backend vk --vk-device nvidia --rt \
+  --frames 1 --size 32x32 --screenshot "$TMP/warmup.ppm" \
+  "$REPO_ROOT/tests/usda/cube.usda" >"$TMP/warmup.log" 2>&1
+WARMUP_RC=$?
+if [ "$WARMUP_RC" -ne 0 ] ||
+   ! grep -q 'device=discrete rt=hardware' "$TMP/warmup.log"; then
+  cat "$TMP/warmup.log"
+  echo "FAIL: compact hardware pipeline warmup failed (exit $WARMUP_RC)"
+  exit 1
+fi
+
 set +e
 if command -v timeout >/dev/null 2>&1; then
   env LUSDVIEW_VK_PIPELINE_CACHE_DIR="$TMP/cache" \
+    LUSDVIEW_RT_ALLOW_COLD_COMPILE=0 \
     LUSDVIEW_NVIDIA_OFFLOAD=1 \
     timeout --kill-after=10s "${LUSDVIEW_MTLX_VK_FALLBACK_TIMEOUT:-60s}" \
     "$LUSDVIEW" --headless --backend vk --vk-device nvidia --rt \
+    --path-trace --pt-samples 1 \
     --frames 1 --size 32x32 --materialx-vk-shader-max-kib 256 \
     --screenshot "$OUT" "$ASSET" >"$LOGFILE" 2>&1
 else
   env LUSDVIEW_VK_PIPELINE_CACHE_DIR="$TMP/cache" \
+    LUSDVIEW_RT_ALLOW_COLD_COMPILE=0 \
     LUSDVIEW_NVIDIA_OFFLOAD=1 \
     "$LUSDVIEW" --headless --backend vk --vk-device nvidia --rt \
+    --path-trace --pt-samples 1 \
     --frames 1 --size 32x32 --materialx-vk-shader-max-kib 256 \
     --screenshot "$OUT" "$ASSET" >"$LOGFILE" 2>&1
 fi

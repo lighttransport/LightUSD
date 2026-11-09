@@ -1,0 +1,62 @@
+Upstream: https://github.com/tinyobjloader/tinyobjloader
+Branch: release
+Revision: 45636bdcef1a4fec140346b90c0b50bf0bc3e23b
+License: MIT
+Vendored C11 loader and tessellator.
+Local patch: tobj_tess.c uses an inclusive point-in-triangle predicate.
+A reflex vertex on an ear diagonal must block clipping, otherwise concave
+polygons can produce overlapping triangles. Covered by native import tests.
+
+Local patch: tiny_obj_c_impl.inc parses the C++ loader's zero-based `vw`
+extension into the existing arena-owned skin_weights fields for float and
+double. Vertex/joint IDs, duplicate records, finite weights, array bounds and
+allocation limits are checked. Signed weights and every influence are retained;
+weights are not normalized. Covered by test_obj_reader and Python import tests.
+
+Local hardening: serial OBJ/MTL/callback paths scan bounded lines without a
+per-line index allocation. Integer overflow and malformed/out-of-range corners
+are errors; geometry caps cover all shapes, line/point records and emitted
+triangles. Numeric records use strict bounded finite scans, preserving tiny
+leading-zero decimals and double subnormals. Checked arena/vector arithmetic
+and failed-load cleanup are covered by generated in-memory OBJ tests.
+
+Local MTL hardening: recognized numeric fields use bounded complete-token
+finite/range validation; negative shininess, malformed integer and boolean
+options and missing texture filenames are errors. Optional texture components
+preserve numeric-looking filenames. Custom properties use in-place heapsort
+with sequence tie-breakers and linear material grouping, replacing quadratic
+material scans/insertion sorting while retaining duplicate-key order. Covered
+by test_obj_materials in float/double, OBJ/callback, allocator-failure and Python
+resolver paths. Material resolver errors other than NOT_FOUND abort loading;
+callback parsing stops reading libraries after a fatal resolution/parse error.
+
+Local material indexing: arena-backed keys and vector-indexed AVL nodes replace
+linear material-name scans and track requested mtllib names. Iterative balanced
+insertion/lookup uses a fixed bounded ancestor stack, preserving definition
+order and first-definition IDs. Repeated authored library names (including
+NOT_FOUND results) are resolved once per load. Scene and callback loaders share
+the same library handler. Covered by ordered/alternating/prefix/duplicate name
+tests and index allocation-failure sweeps in both precision families.
+
+Local tessellation budget: ear clipping counts containment-test and corner-
+advance steps and, past a budget linear in the face arity, fans the remaining
+ring with TOBJ_TESS_DEGENERATE_BESTEFFORT. Adversarial high-arity zig-zag faces
+therefore cost O(n) after the budget instead of approaching O(n^3). Covered by
+the generated zig-zag case in test_obj_large.
+
+Local MTL precedence: `d` (dissolve) is authoritative over `Tr` regardless of
+line order, matching the C++ loader; `dissolve_set` records it. Covered by the
+Python MTL material tests.
+
+Local scanner speedups (results unchanged): `tobj_memcpy`/`tobj_memset` use the
+GCC/Clang builtins, `tobj_scan_double` scans integer and fraction digits in
+separate loops with an 8-digit SWAR step once the mantissa has started
+(little-endian GCC/Clang), and vertex reals are scanned in place instead of
+after a separate tokenizing pass (a number must still end at whitespace or the
+end of the line). Parsed arrays and errors are byte-identical on 400 Menagerie
+OBJ files and generated edge-case numbers; a 31 MB OBJ parses in 0.165 s
+instead of 0.234 s.
+
+Local MTL leniency: a negative `Ns` (written by Blender's exporter, e.g.
+`Ns -1.960784`) is clamped to 0 instead of failing the parse; the C++ loader
+accepts any value.

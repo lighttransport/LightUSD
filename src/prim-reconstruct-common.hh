@@ -20,6 +20,14 @@
 namespace lightusd {
 namespace prim {
 
+/// Set of property names a schema reconstructor has already consumed.
+///
+/// std::less<> gives heterogeneous lookup, so count() can be called with a
+/// string literal or a tstring_view without constructing a temporary
+/// std::string - the reconstruct dispatch loop probes every candidate name of
+/// every authored property.
+using ParsePropertyTable = std::set<std::string, std::less<>>;
+
 /// Result codes for property parsing
 enum class PropertyParseResult {
   Success,           // Property parsed successfully
@@ -48,10 +56,10 @@ constexpr TypedAttributeDescriptor<PrimT, AttrT> MakeAttrDesc(
 /// Returns true if property was handled (matched and parsed)
 template <typename PrimT, typename AttrT, size_t N>
 bool ParseTypedAttributeFromDescriptors(
-    std::set<std::string>& table,
+    ParsePropertyTable& table,
     const std::string& prop_name,
     const Property& prop,
-    PrimT* prim,
+    PrimT* /*prim*/,
     const std::array<TypedAttributeDescriptor<PrimT, AttrT>, N>& descriptors,
     std::string* err) {
 

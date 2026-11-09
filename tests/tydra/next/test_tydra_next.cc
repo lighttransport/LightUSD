@@ -5,13 +5,20 @@
 
 #include <algorithm>
 #include <iostream>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 #include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <limits>
 #include <unordered_set>
 #include <atomic>
@@ -23,13 +30,16 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
-#include "tydra/next/mem-budget.hh"
+#include "tydra/next/render-converter-assembly.hh"
+#include "tydra/asset-import/volumetric.hh"
+#include "tinyvdb_io.h"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/texture-cache.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
+#include "next/load-usd.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
@@ -162,22 +172,20 @@ void TestChunkedArrayAllocFailure() {
 
 void TestChunkedArrayStorageEdges() {
   // Repeated tail compaction must preserve capacity and budget accounting.
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(size_t(1) << 30);
-  const size_t base = MemBudget::Get().Tracked();
-  MemBudget::InstallChunkedArrayTracking();
+  auto budget = std::make_shared<ChunkAllocationBudget>(size_t(1) << 30);
+  ScopedChunkAllocationBudget budget_scope(budget);
   {
     ChunkedArray<uint32_t> a;
     assert(a.resize(17, 42));
     a.shrink_to_fit();
-    const size_t compact = MemBudget::Get().Tracked();
+    const size_t compact = budget->Tracked();
     a.shrink_to_fit();
     assert(a.capacity() == 17);
-    assert(MemBudget::Get().Tracked() == compact);
+    assert(budget->Tracked() == compact);
     assert(a.resize(9));
     a.shrink_to_fit();
     assert(a.capacity() == 9);
-    assert(MemBudget::Get().Tracked() == base + 9 * sizeof(uint32_t));
+    assert(budget->Tracked() == 9 * sizeof(uint32_t));
 
     // An append source may be a borrowed view of the tail being expanded.
     const auto& read = a;
@@ -196,9 +204,7 @@ void TestChunkedArrayStorageEdges() {
     assert(b.push_back(7) == 0);
     assert(moved.size() == 36 && moved[0] == 42);
   }
-  assert(MemBudget::Get().Tracked() == base);
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
+  assert(budget->Tracked() == 0);
 
   struct alignas(64) Wide { uint32_t values[16]; };
   ChunkedArray<Wide, 256> aligned;
@@ -320,6 +326,16 @@ void TestChunkedArrayShareCow() {
   f.share_from(e);
   assert(f.size() == 0 && !f.is_shared());
 
+  // Ordinary copy syntax uses the same COW contract. RenderScene's
+  // transactional catalog clone relies on both construction and assignment.
+  ChunkedArray<uint32_t> copied(c);
+  ChunkedArray<uint32_t> assigned;
+  assigned = c;
+  assert(copied.chunk_data(0) == c.chunk_data(0));
+  assert(assigned.chunk_data(0) == c.chunk_data(0));
+  copied.mutable_at(8) = 54321u;
+  assert(copied[8] == 54321u && c[8] == 8u);
+
   std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
 }
 
@@ -328,35 +344,29 @@ void TestChunkedArrayShareCow() {
 void TestChunkedArrayShareCowBudgetFailure() {
   std::cout << "Testing ChunkedArray copy-on-write budget failure...\n";
 
-  ChunkedArray<uint32_t> source;
-  if (source.push_back(7u) != 0) std::abort();
   ChunkedArray<uint32_t> copy;
-  copy.share_from(source);
-  assert(source.is_shared() && copy.is_shared());
-
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(1);
-  MemBudget::InstallChunkedArrayTracking();
-
-  const uint32_t appended = 9u;
-  const bool append_ok = copy.append(&appended, 1);
-  if (append_ok) std::abort();
-  assert(copy.alloc_failed());
-  assert(copy.size() == 1);
   {
+    auto budget = std::make_shared<ChunkAllocationBudget>(kDefaultChunkSize);
+    ScopedChunkAllocationBudget budget_scope(budget);
+    ChunkedArray<uint32_t> source;
+    if (source.push_back(7u) != 0) std::abort();
+    copy.share_from(source);
+    assert(source.is_shared() && copy.is_shared());
+
+    const uint32_t appended = 9u;
+    const bool append_ok = copy.append(&appended, 1);
+    if (append_ok) std::abort();
+    assert(copy.alloc_failed());
+    assert(copy.size() == 1);
     const ChunkedArray<uint32_t>& source_read = source;
     const ChunkedArray<uint32_t>& copy_read = copy;
     assert(source_read[0] == 7u);
     assert(copy_read[0] == 7u);
   }
 
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
-
-  // The failed clone remains shareable and can detach once resources return.
+  // Once the other owner releases the backing store, mutation needs no copy.
   copy.mutable_at(0) = 11u;
   assert(copy[0] == 11u);
-  assert(source[0] == 7u);
 
   std::cout << "  ChunkedArray copy-on-write budget failure: PASSED\n";
 }
@@ -368,35 +378,33 @@ void TestChunkedArrayShareCowBudgetFailure() {
 void TestChunkedArrayBudgetTracking() {
   std::cout << "Testing ChunkedArray budget tracking...\n";
 
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(size_t(1) << 30);   // generous
-  const size_t base = MemBudget::Get().Tracked();
-  MemBudget::InstallChunkedArrayTracking();
-
+  auto budget = std::make_shared<ChunkAllocationBudget>(size_t(1) << 30);
   {
+    ScopedChunkAllocationBudget budget_scope(budget);
     ChunkedArray<float> a;
     for (size_t i = 0; i < 200000; ++i) a.push_back(float(i));
     assert(!a.alloc_failed());
     // The budget now sees the geometry, which is the whole point.
-    assert(MemBudget::Get().Tracked() > base);
+    assert(budget->Tracked() > 0);
 
     ChunkedArray<float> b;
     b.share_from(a);                 // share: no new charge
-    const size_t shared = MemBudget::Get().Tracked();
+    const size_t shared = budget->Tracked();
     assert(b[0] == 0.0f && b.chunk_data(0) == a.chunk_data(0));
-    assert(MemBudget::Get().Tracked() == shared);
+    assert(budget->Tracked() == shared);
     b.mutable_at(0) = 1.0f;                     // detach: takes a private copy
-    assert(MemBudget::Get().Tracked() > shared);
+    assert(budget->Tracked() > shared);
 
     a.shrink_to_fit();
     b.shrink_to_fit();
   }
   // Everything destroyed -> every charge released.
-  assert(MemBudget::Get().Tracked() == base);
+  assert(budget->Tracked() == 0);
 
   // A cap that cannot be met must be reported, not crashed through.
-  MemBudget::Get().InitBytes(1);
   {
+    auto tiny_budget = std::make_shared<ChunkAllocationBudget>(1);
+    ScopedChunkAllocationBudget budget_scope(tiny_budget);
     ChunkedArray<float> tiny;
     for (size_t i = 0; i < 100000; ++i) tiny.push_back(float(i));
     assert(tiny.alloc_failed());
@@ -404,9 +412,7 @@ void TestChunkedArrayBudgetTracking() {
     for (size_t i = 0; i < tiny.size(); ++i) (void)tiny[i];
   }
 
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
-  // With the hooks removed, allocation is unaffected again.
+  // Without a scope, allocation is unaffected again.
   {
     ChunkedArray<float> c;
     for (size_t i = 0; i < 100000; ++i) c.push_back(float(i));
@@ -616,6 +622,102 @@ void TestRenderScene() {
   std::cout << "  RenderScene: PASSED\n";
 }
 
+void TestRenderMemoryAccounting() {
+  RenderMesh mesh;
+  size_t before = mesh.memory_usage();
+  mesh.subdivision_face_source.reserve(64);
+  assert(mesh.memory_usage() >= before +
+         mesh.subdivision_face_source.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.hole_faces.reserve(32);
+  assert(mesh.memory_usage() >= before +
+         mesh.hole_faces.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.primvars.reserve(3);
+  assert(mesh.memory_usage() >= before +
+         mesh.primvars.capacity() * sizeof(VertexAttribute));
+  mesh.primvars.emplace_back();
+  before = mesh.memory_usage();
+  const size_t old_name_capacity = mesh.primvars[0].name.capacity();
+  mesh.primvars[0].name.assign(128, 'p');
+  assert(mesh.memory_usage() >= before +
+         mesh.primvars[0].name.capacity() - old_name_capacity);
+  before = mesh.memory_usage();
+  mesh.skin = std::make_shared<RenderMesh::SkinBinding>();
+  assert(mesh.memory_usage() >= before + sizeof(RenderMesh::SkinBinding));
+  before = mesh.memory_usage();
+  const size_t old_skeleton_capacity = mesh.skin->skeleton_path.capacity();
+  mesh.skin->skeleton_path.assign(128, 's');
+  assert(mesh.memory_usage() >= before +
+         mesh.skin->skeleton_path.capacity() - old_skeleton_capacity);
+  before = mesh.memory_usage();
+  mesh.skin->mesh_joint_order.reserve(4);
+  assert(mesh.memory_usage() >= before +
+         mesh.skin->mesh_joint_order.capacity() * sizeof(std::string));
+  before = mesh.memory_usage();
+  mesh.blend_shapes.reserve(2);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes.capacity() * sizeof(RenderMesh::BlendShape));
+  mesh.blend_shapes.emplace_back();
+  before = mesh.memory_usage();
+  mesh.blend_shapes[0].point_indices.reserve(16);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes[0].point_indices.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.blend_shapes[0].inbetweens.reserve(2);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes[0].inbetweens.capacity() *
+             sizeof(RenderMesh::BlendShape::Inbetween));
+
+  RenderScene scene;
+  before = scene.memory_usage();
+  scene.meshes.reserve(3);
+  assert(scene.memory_usage() >= before +
+         scene.meshes.capacity() * sizeof(RenderMesh));
+  before = scene.memory_usage();
+  scene.meshes.emplace_back();
+  assert(scene.memory_usage() == before +
+         scene.meshes.back().memory_usage() - sizeof(RenderMesh));
+  before = scene.memory_usage();
+  scene.points.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.points.capacity() * sizeof(RenderPoints));
+  before = scene.memory_usage();
+  scene.curves.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.curves.capacity() * sizeof(RenderCurves));
+  before = scene.memory_usage();
+  scene.point_instancers.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.point_instancers.capacity() * sizeof(RenderPointInstancer));
+  before = scene.memory_usage();
+  scene.images.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.images.capacity() * sizeof(TextureImage));
+  scene.materials.emplace_back();
+  RenderMaterial& material = scene.materials.back();
+  before = scene.memory_usage();
+  const size_t old_uri_capacity = material.mtlx_config.source_uri.capacity();
+  material.mtlx_config.source_uri.assign(128, 'u');
+  assert(scene.memory_usage() >= before +
+         material.mtlx_config.source_uri.capacity() - old_uri_capacity);
+  before = scene.memory_usage();
+  material.openpbr = std::make_shared<OpenPBRSurfaceShader>();
+  assert(scene.memory_usage() >= before + sizeof(OpenPBRSurfaceShader));
+  before = scene.memory_usage();
+  const size_t old_graph_capacity = material.openpbr->nodegraph_json.capacity();
+  material.openpbr->nodegraph_json.assign(256, 'g');
+  assert(scene.memory_usage() >= before +
+         material.openpbr->nodegraph_json.capacity() - old_graph_capacity);
+  before = scene.memory_usage();
+  const size_t old_preview_graph_capacity =
+      material.preview_surface_nodegraph_json.capacity();
+  material.preview_surface_nodegraph_json.assign(192, 'p');
+  assert(scene.memory_usage() >= before +
+         material.preview_surface_nodegraph_json.capacity() -
+             old_preview_graph_capacity);
+}
+
 //
 // Scene Access Tests
 //
@@ -717,8 +819,100 @@ void TestDeepSceneAccess() {
   std::cout << "  Deep Scene Access: PASSED\n";
 }
 
+void TestSkinnedPointEvaluation() {
+  std::string source = R"(#usda 1.0
+ def SkelRoot "Rig" {
+  rel skel:skeleton = </Rig/Skeleton>
+  def Skeleton "Skeleton" {
+   double3 xformOp:translate = (3,0,0)
+   uniform token[] xformOpOrder = ["xformOp:translate"]
+   uniform token[] joints = ["root"]
+   uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   uniform matrix4d[] restTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   rel skel:animationSource = </Rig/Animation>
+  }
+  def SkelAnimation "Animation" {
+   uniform token[] joints = ["root"]
+   float3[] translations = [(2,0,0)]
+   quatf[] rotations = [(0.70710678,0,0,0.70710678)]
+   half3[] scales = [(1,1,1)]
+  }
+  def Mesh "Mesh" {
+   point3f[] points = [(1,0,0),(0,1,0)]
+   int[] primvars:skel:jointIndices = [0] (elementSize = 1 interpolation = "constant")
+   float[] primvars:skel:jointWeights = [1] (elementSize = 1 interpolation = "constant")
+  }
+ }
+)";
+  auto loaded = LoadUSDAFromString(source);
+  assert(loaded.success);
+  auto prim = loaded.stage.GetPrimAtPath("/Rig/Mesh");
+  ValueArrayRead<float> points;assert(ReadFloatArray(prim,"points",0,&points));
+  std::vector<float> result;std::vector<double> normals;std::string error;
+  assert(EvaluateSkinnedPoints(loaded.stage,prim,0,points,&result,&error,&normals));
+  assert(result.size()==6);
+  // Scalar-first quaternion, inherited binding, constant influences and the
+  // skeleton-to-mesh transform each affect this independently derived result.
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  assert(std::abs(result[3]-4)<1e-5 && std::abs(result[4])<1e-5);
+  assert(normals.size()==18 && std::abs(normals[0])<1e-5 && std::abs(normals[1]-1)<1e-5);
+  auto replace = [&](const std::string& from,const std::string& to) {
+    const size_t at=source.find(from);assert(at!=std::string::npos);source.replace(at,from.size(),to);
+  };
+  replace("jointIndices = [0]", "jointIndices = [99,0]");
+  replace("jointWeights = [1]", "jointWeights = [0,1]");
+  replace("point3f[] points", "int[] primvars:skel:jointIndices:indices = [1]\n int[] primvars:skel:jointWeights:indices = [1]\n point3f[] points");
+  auto indexed=LoadUSDAFromString(source);assert(indexed.success);
+  assert(EvaluateSkinnedPoints(indexed.stage,indexed.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  replace("jointIndices:indices = [1]", "jointIndices:indices = [-1]");
+  auto invalid=LoadUSDAFromString(source);assert(invalid.success);
+  assert(!EvaluateSkinnedPoints(invalid.stage,invalid.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  std::cout << "  Standard linear skinning: PASSED\n";
+}
+
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
+  {
+    auto parsed = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "M" {
+   texCoord2f[] primvars:st0 = [(0, 0), (1, 0), (0, 1)] (interpolation = "faceVarying")
+   int[] primvars:st0:indices = [2, 0, 1]
+   normal3f[] normals = [(0, 0, 1)] (interpolation = "uniform")
+ }
+)");
+    assert(parsed.success);
+    auto prim = parsed.stage.GetPrimAtPath("/M");
+    EvalOptions options;
+    options.follow_connections = false;
+    MeshFloatAttribute uv, normal;
+    assert(ReadMeshFloatAttribute(prim, "primvars:st0", options, 2, 3, 3, &uv));
+    size_t tuple = 0;
+    assert(uv.TupleIndex(1, 0, 0, &tuple) && tuple == 2);
+    assert(uv.values[tuple * 2] == 0 && uv.values[tuple * 2 + 1] == 1);
+    assert(!uv.TupleIndex(0, 3, 0, &tuple));
+    assert(ReadMeshFloatAttribute(prim, "normals", options, 3, 3, 3, &normal));
+    assert(normal.TupleIndex(2, 2, 0, &tuple) && tuple == 0);
+    assert(!normal.TupleIndex(0, 0, 1, &tuple));
+    // Reading another attribute must preserve the first reader's storage.
+    assert(uv.values[4] == 0 && uv.values[5] == 1);
+  }
+  // Instance proxy expansion can outgrow the authored prim estimate. Every
+  // pointer view must still address its record after storage growth.
+  {
+    RenderExtractResult growing;
+    growing.storage.emplace_back();
+    growing.storage.front().path = "/First";
+    const RenderPrimRecord* first = &growing.storage.front();
+    growing.records.push_back(&growing.storage.front());
+    growing.meshes.push_back(&growing.storage.front());
+    for (size_t i = 0; i < 4096; ++i) growing.storage.emplace_back();
+    assert(&growing.storage.front() == first);
+    assert(growing.records.front().path == "/First");
+    assert(growing.meshes.front().path == "/First");
+    growing.release_storage();
+    assert(growing.storage.empty() && growing.records.empty() && growing.meshes.empty());
+  }
 
   const char* usda = R"(#usda 1.0
 (
@@ -796,6 +990,14 @@ def Xform "World"
   assert(er.curves.size() == 1);
   assert(er.meshes[0].purpose == "render");
   assert(er.meshes[0].path == "/World/MeshA");
+  assert(er.storage.size() == er.records.size());
+  assert(&er.meshes[0] == &er.storage[0]);
+  er.release_records();
+  assert(er.records.empty());
+  assert(er.meshes[0].path == "/World/MeshA");
+  RenderExtractResult::release_list(&er.meshes);
+  assert(er.meshes.empty());
+  assert(er.storage[0].path.empty());
   PointInstancerData pid;
   assert(ReadPointInstancerData(er.point_instancers[0].prim, 0.0, &pid));
   assert(pid.valid);
@@ -827,6 +1029,7 @@ def Xform "World"
 class RetainedStreamSink : public SceneSink {
  public:
   bool BeginScene(RenderScene&& catalog) override {
+    began = true;
     scene = std::move(catalog);
     return true;
   }
@@ -847,8 +1050,115 @@ class RetainedStreamSink : public SceneSink {
   }
   bool EndScene() override { return true; }
 
+  bool began = false;
   RenderScene scene;
 };
+
+void TestStrictConversionDiagnostics() {
+  const std::string unsupported = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
+  auto loaded = LoadUSDAFromString(unsupported.data(), unsupported.size());
+  assert(loaded.success);
+  RenderSceneConverter permissive;
+  auto result = permissive.Convert(loaded.stage);
+  assert(result.success);
+  assert(result.scene.conversion_diagnostics.size() == 1);
+  assert(result.scene.conversion_diagnostics[0].prim_path == "/V");
+  assert(result.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::PreservedUnsupported);
+  ConverterConfig config;
+  config.strict_conversion = true;
+  RenderSceneConverter strict(config);
+  auto refused = strict.Convert(loaded.stage);
+  assert(!refused.success && refused.status == OperationStatus::InvalidData);
+  assert(!refused.warnings.empty());
+  RetainedStreamSink sink;
+  assert(!strict.ConvertToSink(loaded.stage, &sink).success);
+  assert(!sink.began);
+  const std::string supported = "#usda 1.0\ndef Xform \"World\" {}\n";
+  auto clean = LoadUSDAFromString(supported.data(), supported.size());
+  assert(clean.success);
+  assert(strict.Convert(clean.stage).success);
+  RetainedStreamSink clean_sink;
+  assert(strict.ConvertToSink(clean.stage, &clean_sink).success);
+  const std::string material = R"(#usda 1.0
+def Material "M" {
+ token outputs:surface.connect = </M/S.outputs:surface>
+ def Shader "S" {
+  uniform token info:id = "UnsupportedVendorSurface"
+  token outputs:surface
+ }
+}
+)";
+  auto fallback = LoadUSDAFromString(material.data(), material.size());
+  assert(fallback.success);
+  auto degraded = permissive.Convert(fallback.stage);
+  assert(degraded.success && degraded.scene.materials.size() == 1);
+  assert(degraded.scene.materials[0].default_fallback);
+  assert(!degraded.scene.conversion_diagnostics.empty());
+  assert(degraded.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::Approximated);
+  assert(!strict.Convert(fallback.stage).success);
+  const std::string filter = R"(#usda 1.0
+def PluginLightFilter "Filter" {
+ float inputs:intensity = 100
+}
+)";
+  auto filter_stage = LoadUSDAFromString(filter.data(), filter.size());
+  assert(filter_stage.success);
+  RenderLight light;
+  RenderSceneConverter light_converter;
+  assert(light_converter.ConvertLight(filter_stage.stage,
+      filter_stage.stage.GetPrimAtPath("/Filter"), &light));
+  assert(light.intensity == 0.0f);
+  const std::string curves = R"(#usda 1.0
+def BasisCurves "Curves" {
+ uniform token type = "cubic"
+ uniform token basis = "unsupported"
+ point3f[] points = [(0,0,0), (1,0,0), (2,1,0), (3,1,0)]
+ int[] curveVertexCounts = [4]
+}
+)";
+  auto curve_stage = LoadUSDAFromString(curves.data(), curves.size());
+  assert(curve_stage.success);
+  auto approximate = permissive.Convert(curve_stage.stage);
+  assert(approximate.success && !approximate.scene.conversion_diagnostics.empty());
+  assert(approximate.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::Approximated);
+  RetainedStreamSink curve_sink;
+  auto strict_stream = strict.ConvertToSink(curve_stage.stage, &curve_sink);
+  assert(!strict_stream.success && !strict_stream.conversion_diagnostics.empty());
+  for (const char* type : {"Points", "BasisCurves"}) {
+    const std::string broken = std::string("#usda 1.0\ndef ") + type + " \"Broken\" {}\n";
+    auto failed_stage = LoadUSDAFromString(broken.data(), broken.size());
+    assert(failed_stage.success);
+    auto retained = permissive.Convert(failed_stage.stage);
+    assert(retained.success && !retained.scene.conversion_diagnostics.empty());
+    assert(retained.scene.conversion_diagnostics.back().disposition == ConversionDisposition::Failed);
+    RetainedStreamSink permissive_sink;
+    auto stream = permissive.ConvertToSink(failed_stage.stage, &permissive_sink);
+    assert(stream.success && !stream.conversion_diagnostics.empty());
+    assert(stream.conversion_diagnostics.back().disposition == ConversionDisposition::Failed);
+    RetainedStreamSink failed_sink;
+    auto rejected = strict.ConvertToSink(failed_stage.stage, &failed_sink);
+    assert(!rejected.success && rejected.status == OperationStatus::InvalidData);
+    assert(!rejected.conversion_diagnostics.empty());
+  }
+  class CancelCurvesSink : public RetainedStreamSink {
+   public:
+    GeometryDisposition SelectGeometry(const GeometryInfo& info) override {
+      return info.kind == GeometryKind::Curves ? GeometryDisposition::Cancel
+                                               : GeometryDisposition::Full;
+    }
+  };
+  const std::string partial = "#usda 1.0\ndef Points \"Broken\" {}\ndef BasisCurves \"Later\" {}\n";
+  auto partial_stage = LoadUSDAFromString(partial.data(), partial.size());
+  assert(partial_stage.success);
+  CancelCurvesSink cancelled_sink;
+  auto cancelled = permissive.ConvertToSink(partial_stage.stage, &cancelled_sink);
+  assert(cancelled.cancelled && cancelled.status == OperationStatus::Cancelled);
+  assert(cancelled.conversion_diagnostics.size() == 1);
+  assert(cancelled.conversion_diagnostics[0].prim_path == "/Broken");
+}
 
 class SelectiveStreamSink : public RetainedStreamSink {
  public:
@@ -866,6 +1176,44 @@ class SelectiveStreamSink : public RetainedStreamSink {
   bool aborted = false;
   std::vector<GeometryInfo> inspected;
 };
+
+void TestAnalyticPrimitiveTime() {
+  std::cout << "Testing analytic primitive time evaluation...\n";
+  const char* usda = R"(#usda 1.0
+def Sphere "Ball" {
+    double radius = 0.75
+    double radius.timeSamples = {1: 0.5, 3: 1.5}
+}
+def Cube "Box" {
+    double size.timeSamples = {1: 2, 3: 4}
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  const double times[] = {std::numeric_limits<double>::quiet_NaN(), 1, 2, 3};
+  const double radii[] = {0.75, 0.5, 1, 1.5};
+  const double half_sizes[] = {1, 1, 1.5, 2};
+  for (size_t sample = 0; sample < 4; ++sample) {
+    ConverterConfig config;
+    config.time_code = times[sample];
+    config.mesh.sphere_subdivisions = 0;
+    RenderSceneConverter converter(config);
+    RenderMesh sphere, cube;
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Ball"), &sphere));
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Box"), &cube));
+    assert(!sphere.points.empty() && !cube.points.empty());
+    for (size_t i = 0; i + 2 < sphere.points.size(); i += 3) {
+      const double x = sphere.points[i], y = sphere.points[i + 1],
+                   z = sphere.points[i + 2];
+      assert(std::fabs(std::sqrt(x * x + y * y + z * z) - radii[sample]) < 1e-5);
+    }
+    for (float coordinate : cube.points)
+      assert(std::fabs(std::fabs(coordinate) - half_sizes[sample]) < 1e-5);
+  }
+  std::cout << "  Analytic primitive time evaluation: PASSED\n";
+}
 
 void TestRenderConverter() {
   std::cout << "Testing RenderConverter...\n";
@@ -886,6 +1234,11 @@ void TestRenderConverter() {
          (std::numeric_limits<uint64_t>::max)());
   assert(extreme_budget.gpu_texture_limit <=
          (std::numeric_limits<uint64_t>::max)());
+  TextureFit texture_fit;
+  assert(ParseTextureFit("64M", &texture_fit));
+  assert(texture_fit.absolute_bytes == MiB(64));
+  assert(!ParseTextureFit("18446744073709551616", &texture_fit));
+  assert(!ParseTextureFit("18446744073709551615G", &texture_fit));
 
   const char* usda = R"(#usda 1.0
 (
@@ -1209,6 +1562,42 @@ def Xform "World"
   assert(compact_instancer.compact_instances[1].prototype_index == 1);
   assert(compact_instancer.compact_instances[2].flags == 0);
   assert(compact_instancer.memory_usage() < instancer.memory_usage());
+
+  // A compact-only instancer has no source arrays; draw expansion must not
+  // index proto_indices/instance_visible as if they were retained.
+  {
+    RenderPointInstancer compact_copy = compact_instancer;
+    RenderScene draw_scene;
+    AppendPointInstanceDraws(0, &compact_copy, &draw_scene);
+    assert(compact_copy.draw_count == 0);
+    assert(draw_scene.point_instance_draws.empty());
+  }
+
+  // INT32_MAX must not overflow `proto_index + 1` while bounds-checking.
+  {
+    RenderPointInstancer extreme;
+    extreme.valid = true;
+    extreme.proto_indices.push_back(std::numeric_limits<int32_t>::max());
+    extreme.prototype_mesh_offsets = {0, 0};
+    RenderScene draw_scene;
+    AppendPointInstanceDraws(0, &extreme, &draw_scene);
+    assert(draw_scene.point_instance_draws.empty());
+  }
+
+  // Cyclic node graphs must not recurse forever during prototype collection.
+  {
+    RenderScene cyclic;
+    cyclic.nodes.resize(2);
+    cyclic.nodes[0].local_transform = Matrix4::Identity();
+    cyclic.nodes[1].local_transform = Matrix4::Identity();
+    cyclic.nodes[0].children = {1};
+    cyclic.nodes[1].children = {0};
+    cyclic.node_by_path["/A"] = 0;
+    RenderPointInstancer cyclic_instancer;
+    cyclic_instancer.prototype_paths = {"/A"};
+    ResolvePointInstancerPrototypeBindings(&cyclic, &cyclic_instancer);
+    assert(cyclic_instancer.prototype_mesh_ids.empty());
+  }
 
   ConverterConfig duplicate_config = config;
   duplicate_config.point_instancer.duplicate_meshes = true;
@@ -2797,6 +3186,214 @@ def Xform "Scene"
 // winding, holeIndices, GeomSubset material bindings, NodeGraph texture
 // indirection, UsdTransform2d + primvar-reader varname, purpose bindings,
 // surface-output shader selection, spot lights, generic/indexed primvars.
+void TestForwardedTextureAssetAnchor() {
+  std::cout << "Testing forwarded texture asset anchoring...\n";
+
+  // A look layer owns the texture shader; the referencing material owns the
+  // asset value. The relative path must anchor to the layer that authored the
+  // value, not to the referenced look layer. This is the Island PTex material
+  // shape (`inputs:file.connect = </Mat.inputs:surfaceMap>`).
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_forwarded_anchor_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  fs::create_directories(fixture / "looks", ec);
+  fs::create_directories(fixture / "textures", ec);
+  assert(!ec);
+
+  const char* look = R"(#usda 1.0
+(
+    defaultPrim = "BaseMaterial"
+)
+def Material "BaseMaterial"
+{
+    token outputs:surface.connect = </BaseMaterial/Surface.outputs:surface>
+
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </BaseMaterial/Tex.outputs:rgb>
+        token outputs:surface
+    }
+
+    def Shader "Tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file.connect = </BaseMaterial.inputs:surfaceMap>
+        float3 outputs:rgb
+    }
+}
+)";
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def Material "M" (
+        prepend references = @looks/material.usda@</BaseMaterial>
+    )
+    {
+        asset inputs:surfaceMap = @./textures/albedo.png@
+    }
+}
+)";
+  {
+    std::ofstream ofs(fixture / "looks" / "material.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << look;
+  }
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+  }
+  {
+    std::ofstream ofs(fixture / "textures" / "albedo.png",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << "x";
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  const bool composed = pcp::ComposeStageFromFile(
+      (fixture / "root.usda").string(), resolver, &stage, {}, &warn, &err);
+  if (!composed) std::abort();
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/M");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(material.preview_surface);
+  assert(material.preview_surface->diffuse_color.is_texture());
+  const int32_t texture_id = material.preview_surface->diffuse_color.texture_id;
+  assert(texture_id >= 0);
+  assert(static_cast<size_t>(texture_id) < result.scene.textures.size());
+  const RenderTexture& texture =
+      result.scene.textures[static_cast<size_t>(texture_id)];
+  assert(texture.image_id >= 0);
+  assert(static_cast<size_t>(texture.image_id) < result.scene.images.size());
+  const std::string resolved =
+      result.scene.images[static_cast<size_t>(texture.image_id)].resolved_path;
+  const std::string expected = (fixture / "textures" / "albedo.png").string();
+  if (resolved != expected) {
+    std::cout << "  resolved=" << resolved << " expected=" << expected << "\n";
+  }
+  assert(resolved == expected);
+  assert(texture.asset_path == "./textures/albedo.png");
+
+  std::cout << "  Forwarded texture asset anchoring: PASSED\n";
+}
+
+void TestPxrDisneyRiSurfaceMaterial() {
+  std::cout << "Testing PxrDisney ri:surface material mapping...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "DisneyOnly"
+    {
+        token outputs:ri:surface.connect = </World/DisneyOnly/PxrDisney.outputs:bxdf_out>
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metallic = 0.35
+            float inputs:roughness = 0.45
+            float inputs:ior = 1.7
+            float inputs:clearcoat = 0.25
+            float inputs:clearcoatGloss = 0.8
+            float inputs:opacity = 0.9
+            token outputs:bxdf_out
+        }
+    }
+
+    def Material "Both"
+    {
+        token outputs:surface.connect = </World/Both/Preview.outputs:surface>
+        token outputs:ri:surface.connect = </World/Both/PxrDisney.outputs:bxdf_out>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.3)
+            token outputs:surface
+        }
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.9, 0.8, 0.7)
+            token outputs:bxdf_out
+        }
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse material USDA: "
+              << load_result.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+
+  // A material that only exposes the RenderMan terminal is mapped onto the
+  // OpenPBR preview instead of degrading to the default material.
+  auto disney_it = result.scene.material_by_path.find("/World/DisneyOnly");
+  assert(disney_it != result.scene.material_by_path.end());
+  const RenderMaterial& disney =
+      result.scene.materials[static_cast<size_t>(disney_it->second)];
+  assert(disney.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(disney.openpbr);
+  assert(std::fabs(disney.openpbr->base_color.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.y - 0.4f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.z - 0.6f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_metalness.value.x - 0.35f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_roughness.value.x - 0.45f) <
+         1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_ior.value.x - 1.7f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->coat_weight.value.x - 0.25f) < 1.0e-6f);
+  // clearcoatGloss 0.8 (sharp) becomes coat roughness 0.2.
+  assert(std::fabs(disney.openpbr->coat_roughness.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->opacity.value.x - 0.9f) < 1.0e-6f);
+  assert(disney.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  // The universal surface terminal still wins when both render contexts are
+  // authored (the Island material shape), so previews do not change.
+  auto both_it = result.scene.material_by_path.find("/World/Both");
+  assert(both_it != result.scene.material_by_path.end());
+  const RenderMaterial& both =
+      result.scene.materials[static_cast<size_t>(both_it->second)];
+  assert(both.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(both.preview_surface);
+  assert(std::fabs(both.preview_surface->diffuse_color.value.x - 0.1f) <
+         1.0e-6f);
+
+  std::cout << "  PxrDisney ri:surface mapping: PASSED\n";
+}
+
 void TestAudit2026_07() {
   std::cout << "TestAudit2026_07..." << std::endl;
 
@@ -3355,6 +3952,10 @@ def Xform "Root"
   assert(scene.physics.articulation_roots.size() == 1);
   assert(scene.physics.articulation_roots[0] == "/Root/Body");
 
+  RenderScene without_physics = scene;
+  without_physics.physics = PhysicsAnnotations{};
+  assert(scene.memory_usage() > without_physics.memory_usage());
+
   std::cout << "  USD Physics annotations: PASSED\n";
 }
 
@@ -3433,7 +4034,7 @@ void TestLargeMeshTangents() {
   std::cout << "  multi-chunk mesh tangents passed!\n";
 }
 
-// MemBudget wiring: with a cap below what the scene needs, conversion must
+// Per-conversion accounting: with a cap below what the scene needs, conversion must
 // degrade gracefully (warn + stop adding geometry) instead of running to OOM.
 // The converter's other limits are all per-prim, so this specifically covers
 // MANY small meshes summing past the cap -- the case none of them can see.
@@ -3453,8 +4054,6 @@ void TestConverterMemoryBudget() {
   LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
   assert(lr.success);
 
-  const size_t saved_cap = MemBudget::Get().Cap();
-
   // Baseline: the generous default cap converts everything.
   {
     ConverterConfig cfg;
@@ -3464,37 +4063,37 @@ void TestConverterMemoryBudget() {
     assert(res.scene.meshes.size() == static_cast<size_t>(kMeshes));
   }
 
-  // A cap far below current RSS trips the guard on the first check.
+  // An unsatisfiable per-conversion cap trips the guard on the first check.
   {
-    MemBudget::Get().InitBytes(1);  // 1 byte: unsatisfiable by construction
-    ConverterConfig cfg;
+    ConverterConfig cfg = MakeHardenedConverterConfig(1);
     RenderSceneConverter conv(cfg);
     ConvertResult res = conv.Convert(lr.stage);
     // Graceful: no crash, fewer meshes than authored, and a diagnostic.
+    assert(!res.success && res.status == OperationStatus::ResourceLimit);
     assert(res.scene.meshes.size() < static_cast<size_t>(kMeshes));
     bool warned = false;
     for (const std::string& w : res.warnings) {
-      if (w.find("Memory budget reached") != std::string::npos) warned = true;
+      if (w.find("Operation memory limit reached") != std::string::npos) {
+        warned = true;
+      }
     }
     assert(warned);
   }
 
-  MemBudget::Get().InitBytes(saved_cap);
-
   // A converter reused across APIs must not retain a previous operation's
-  // latched budget state. Trip the global guard in Convert(), restore it, then
-  // stream the same stage through the same converter.
+  // latched budget state.
   {
-    ConverterConfig cfg;
+    ConverterConfig cfg = MakeHardenedConverterConfig(1);
     RenderSceneConverter conv(cfg);
-    MemBudget::Get().InitBytes(1);
     ConvertResult limited = conv.Convert(lr.stage);
+    assert(!limited.success && limited.status == OperationStatus::ResourceLimit);
     assert(limited.scene.meshes.size() < static_cast<size_t>(kMeshes));
-    MemBudget::Get().InitBytes(saved_cap);
     RetainedStreamSink sink;
     StreamConvertResult streamed = conv.ConvertToSink(lr.stage, &sink);
-    assert(streamed.success);
-    assert(streamed.mesh_count == static_cast<size_t>(kMeshes));
+    assert(!streamed.success &&
+           streamed.status == OperationStatus::ResourceLimit);
+    assert(!sink.began);
+    assert(streamed.mesh_count == limited.scene.meshes.size());
   }
 
   // The hardened, operation-owned cap must work without mutating the global
@@ -3504,6 +4103,9 @@ void TestConverterMemoryBudget() {
     RenderSceneConverter conv(cfg);
     ConvertResult first = conv.Convert(lr.stage);
     ConvertResult second = conv.Convert(lr.stage);
+    assert(!first.success && !second.success &&
+           first.status == OperationStatus::ResourceLimit &&
+           second.status == OperationStatus::ResourceLimit);
     assert(first.scene.meshes.size() < static_cast<size_t>(kMeshes));
     assert(second.scene.meshes.size() == first.scene.meshes.size());
     bool warned = false;
@@ -3724,6 +4326,9 @@ def Xform "World"
         uniform token wrap = "nonperiodic"
         int[] curveVertexCounts = [4]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+        normal3f[] normals = [(0, 1, 0)] (interpolation = "constant")
+        normal3f[] primvars:normals = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+        int[] primvars:normals:indices = [0, 1, 2, 3]
     }
 
     def HermiteCurves "Hermite"
@@ -3757,6 +4362,15 @@ def Xform "World"
         int[] order = [3]
         double[] knots = [0, 0]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+    }
+
+    def NurbsCurves "AmbiguousNurbs"
+    {
+        int[] curveVertexCounts = [2, 4]
+        int[] order = [1, 4]
+        double[] knots = [0, 0, 0, 0, 1, 1, 1, 1]
+        point3f[] points = [(0, 0, 0), (1, 0, 0),
+                            (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
     }
 }
 )";
@@ -3799,8 +4413,9 @@ def Xform "World"
       "limit": {"lower": -1, "upper": 1},
       "dynamics": {"damping": 0.5, "stiffness": 3, "armature": 0.02}
     }],
-    "tendons": [{"name": "cable", "stiffness": 10}],
-    "mjcActuators": [{"name": "motor", "gear": [2]}],
+    "tendons": [{"name": "cable", "joints": [{"joint": "hinge"}],
+                 "stiffness": 10}],
+    "mjcActuators": [{"name": "motor", "targetTendon": "cable", "gear": [2]}],
     "keyframes": [{"name": "home", "qpos": [0]}],
     "sensors": [{"name": "position", "type": "jointpos"}]
   })JSON";
@@ -3877,9 +4492,9 @@ def Xform "World"
   RenderSceneConverter converter(cfg);
   ConvertResult result = converter.Convert(lr.stage);
   assert(result.success);
-  assert(result.scene.curves.size() == 6);
-  assert(result.scene.get_stats().curves_count == 6);
-  assert(result.scene.get_stats().curve_count == 7);
+  assert(result.scene.curves.size() == 7);
+  assert(result.scene.get_stats().curves_count == 7);
+  assert(result.scene.get_stats().curve_count == 9);
 
   auto curve = [&](const char* path) -> const RenderCurves& {
     auto it = result.scene.curves_by_path.find(path);
@@ -3919,6 +4534,12 @@ def Xform "World"
   assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
 
+  assert(bezier.tessellated_normals.size() == 9);
+  // Cubic midpoint weights are 1/8, 3/8, 3/8, 1/8; primvar wins.
+  assert(std::fabs(bezier.tessellated_normals[3] - .125f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[4] - .375f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[5] - .5f) < 1e-6f);
+
   const RenderCurves& hermite = curve("/World/Hermite");
   assert(hermite.is_hermite);
   assert(hermite.tessellated_vertex_counts == std::vector<uint32_t>({3}));
@@ -3955,6 +4576,12 @@ def Xform "World"
     }
   }
   assert(saw_fallback);
+
+  // An invalid order makes later knot offsets unknowable. Every later curve
+  // must fall back rather than consume the wrong knot vector.
+  const RenderCurves& ambiguous = curve("/World/AmbiguousNurbs");
+  assert(ambiguous.tessellated_vertex_counts ==
+         std::vector<uint32_t>({2, 4}));
 
   auto node_it = result.scene.node_by_path.find("/World/Bezier");
   assert(node_it != result.scene.node_by_path.end());
@@ -4171,10 +4798,11 @@ def Xform "Root"
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].type == NodeType::Points);
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].data_id == 0);
 
-  // BasisCurves are converted now (the empty def fails conversion with a
-  // warning), so only Volume remains unsupported.
-  assert(scene.unsupported_renderables.size() == 1);
-  assert(scene.unsupported_renderables[0].type_name == "Volume");
+  // BasisCurves and Volumes are converted now (the empty curves def fails
+  // conversion with a warning; the field-less Volume converts empty).
+  assert(scene.unsupported_renderables.empty());
+  assert(scene.volumes.size() == 1);
+  assert(scene.volumes[0].fields.empty());
   assert(scene.curves.empty());  // "/Root/Curve" has no points/counts
   bool saw_curve_warning = false;
   for (const std::string& w : res.warnings) {
@@ -4214,13 +4842,13 @@ def Xform "Root" (
       {"clip_0.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (1, 2, 3)
+    double3 xformOp:translate.timeSamples = {0: (1, 2, 3)}
 }
 )"},
       {"clip_1.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (5, 6, 7)
+    double3 xformOp:translate.timeSamples = {2: (5, 6, 7)}
 }
 )"}};
 
@@ -4259,7 +4887,7 @@ def Xform "Root"
   assert(channel.target_prim_path == "/Root");
   assert(channel.keyframes.size() == 3);
   assert(std::fabs(channel.keyframes[0].value.x - 1.0f) < 0.001f);
-  assert(std::fabs(channel.keyframes[1].value.x - 1.0f) < 0.001f);
+  assert(std::fabs(channel.keyframes[1].value.x - 3.0f) < 0.001f);
   assert(std::fabs(channel.keyframes[2].value.x - 5.0f) < 0.001f);
 
   std::cout << "  Next value-clip baking: PASSED\n";
@@ -5424,7 +6052,7 @@ def Xform "World"
   std::cout << "  Geometry release vs animated arrays: PASSED\n";
 }
 
-// Regression: ConvertAnimation iterates TimeSampleStorage's raw (time,
+// Regression: ConvertAnimation iterates TimeSampleBlock's raw (time,
 // value_offset) pairs directly (it is sorted with last-wins upsert). A USDA
 // file whose timeSamples keys are authored OUT OF ORDER must still produce
 // monotonically increasing AnimationClip keyframes.
@@ -5555,7 +6183,7 @@ def Xform "World"
     UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
     assert(anim.IsValid());
     Value mid = anim.GetInterpolatedValue("rotations", 2.0);
-    const std::vector<float>* lanes = mid.as_float_array();
+    auto lanes = mid.as_float_array();
     assert(lanes && lanes->size() == 8);
     assert(std::fabs((*lanes)[0] - 0.9238795f) < 1e-4f);  // cos(22.5deg)
     assert(std::fabs((*lanes)[1] - 0.3826834f) < 1e-4f);  // sin(22.5deg)
@@ -6898,8 +7526,16 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
     new_revision = next;
     full_resync = full;
     mesh_upserts = 0;
+    material_upserts = 0;
+    texture_upserts = 0;
+    image_upserts = 0;
     removes = 0;
     mesh_removes = 0;
+    if (begin_callback && !inside_callback) {
+      inside_callback = true;
+      begin_callback();
+      inside_callback = false;
+    }
     return true;
   }
   bool Remove(const RemovedRenderResource& removed) override {
@@ -6910,29 +7546,381 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
     ++mesh_upserts;
     mesh_ids[mesh.prim_path] = id;
-    if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
+    if (!mesh.points.empty()) mesh_x[mesh.prim_path] = mesh.points[0];
     return true;
   }
-  bool EndUpdate() override { return true; }
+  bool UpsertMaterial(RenderId, const RenderMaterial&) override {
+    ++material_upserts;
+    return true;
+  }
+  bool UpsertTexture(RenderId, const RenderTexture&) override {
+    ++texture_upserts;
+    return true;
+  }
+  bool UpsertImage(RenderId, const TextureImage&) override {
+    ++image_upserts;
+    return true;
+  }
+  bool EndUpdate() override { return !reject_end; }
+  void AbortUpdate() override { ++aborts; }
 
   uint64_t base_revision = 0;
   uint64_t new_revision = 0;
   bool full_resync = false;
   size_t mesh_upserts = 0;
+  size_t material_upserts = 0;
+  size_t texture_upserts = 0;
+  size_t image_upserts = 0;
   size_t removes = 0;
   size_t mesh_removes = 0;
-  float last_mesh_x = 0.0f;
   std::map<std::string, RenderId> mesh_ids;
+  std::map<std::string, float> mesh_x;
+  std::function<void()> begin_callback;
+  bool inside_callback = false;
+  bool reject_end = false;
+  size_t aborts = 0;
 };
 
-void TestIncrementalRenderSession() {
-  std::cout << "Testing incremental RenderSession...\n";
-  auto source = [](float x) {
+void TestRenderSessionResidentCap() {
+  auto source = [](size_t count) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n"
+        "int[] faceVertexCounts = [3]\n"
+        "int[] faceVertexIndices = [0, 1, 2]\n"
+        "point3f[] points = [";
+    for (size_t i = 0; i < count; ++i) {
+      if (i) text += ", ";
+      text += "(" + std::to_string(i) + ", 0, 0)";
+    }
+    return text + "]\n}\n";
+  };
+  LoadResult small = LoadUSDAFromString(source(3));
+  LoadResult large = LoadUSDAFromString(source(1024));
+  assert(small.success && large.success);
+  RenderSceneConverter unrestricted;
+  ConvertResult small_scene = unrestricted.Convert(small.stage);
+  ConvertResult large_scene = unrestricted.Convert(large.stage);
+  assert(small_scene.success && large_scene.success);
+  const size_t small_bytes = small_scene.scene.memory_usage();
+  const size_t large_bytes = large_scene.scene.memory_usage();
+  assert(large_bytes > small_bytes + 4096);
+
+  ConverterConfig config;
+  config.limits.max_resident_bytes =
+      small_bytes + (large_bytes - small_bytes) / 4;
+  RenderSession session(config);
+  RecordingSceneUpdateSink sink;
+  StageSnapshot first;
+  first.revision = 1;
+  first.stage.reset(new Stage(std::move(small.stage)));
+  assert(session.Initialize(first, &sink));
+  assert(session.revision() == 1 && sink.new_revision == 1);
+  StageSnapshot second;
+  second.revision = 2;
+  second.stage.reset(new Stage(std::move(large.stage)));
+  StageChangeSet changes;
+  changes.base_revision = 1;
+  changes.new_revision = 2;
+  PrimChange change;
+  change.path = Path("/M");
+  change.flags = StageChangeFlag::Topology;
+  change.properties.push_back("points");
+  changes.prims.push_back(std::move(change));
+  RenderUpdateResult rejected = session.Apply(second, changes, &sink);
+  assert(!rejected &&
+         rejected.status == OperationStatus::ResourceLimit);
+  assert(session.revision() == 1 && sink.new_revision == 1);
+  assert(session.GetSnapshot().scene->meshes[0].points.size() == 9);
+}
+
+void TestIncrementalRenderSessionDependencies() {
+  std::cout << "Testing incremental RenderSession dependencies...\n";
+
+  // A primvar update can newly satisfy a material's UV reader. The mesh patch
+  // path must rerun the material-driven UV promotion pass.
+  auto uv_source = [](bool with_uv) {
+    std::string text = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+)";
+    if (with_uv) {
+      text += R"(        texCoord2f[] primvars:uv = [(0, 0), (0.25, 0), (0.25, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
+)";
+    }
+    text += R"(    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @wood.png@
+            float2 inputs:st.connect = </World/Mat/Reader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uv"
+            float2 outputs:result
+        }
+    }
+}
+)";
+    return text;
+  };
+
+  LoadResult uv_initial = LoadUSDAFromString(uv_source(false));
+  assert(uv_initial.success);
+  StageSnapshot uv_initial_snapshot;
+  uv_initial_snapshot.revision = 1;
+  uv_initial_snapshot.stage.reset(new Stage(std::move(uv_initial.stage)));
+  RecordingSceneUpdateSink uv_sink;
+  RenderSession uv_session;
+  assert(uv_session.Initialize(uv_initial_snapshot, &uv_sink));
+  {
+    const RenderSceneSnapshot snap = uv_session.GetSnapshot();
+    assert(snap->meshes.size() == 1);
+    assert(snap->meshes[0].texcoords_0.empty());
+  }
+
+  LoadResult uv_updated = LoadUSDAFromString(uv_source(true));
+  assert(uv_updated.success);
+  StageSnapshot uv_updated_snapshot;
+  uv_updated_snapshot.revision = 2;
+  uv_updated_snapshot.stage.reset(new Stage(std::move(uv_updated.stage)));
+  StageChangeSet uv_changes;
+  uv_changes.base_revision = 1;
+  uv_changes.new_revision = 2;
+  PrimChange uv_change;
+  uv_change.path = Path("/World/Quad");
+  uv_change.flags = StageChangeFlag::Primvar;
+  uv_change.properties.push_back("primvars:uv");
+  uv_changes.prims.push_back(std::move(uv_change));
+  const RenderUpdateResult uv_update =
+      uv_session.Apply(uv_updated_snapshot, uv_changes, &uv_sink);
+  assert(uv_update);
+  assert(!uv_update.full_resync);
+  {
+    const RenderSceneSnapshot snap = uv_session.GetSnapshot();
+    assert(snap->meshes.size() == 1);
+    assert(snap->meshes[0].texcoords_0.size() == 8);
+    assert(snap->meshes[0].texcoords_0_name == "uv");
+  }
+
+  // A mesh that feeds a duplicated PointInstancer draw owns derived clone
+  // meshes. Updating only the source must not leave those clones stale.
+  auto instancer_source = [](float x) {
     std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
     text += "    int[] faceVertexCounts = [3]\n";
     text += "    int[] faceVertexIndices = [0, 1, 2]\n";
     text += "    point3f[] points = [(" + std::to_string(x);
     text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    text += R"(def PointInstancer "Inst" {
+    rel prototypes = </M>
+    point3f[] positions = [(0, 0, 0)]
+    int[] protoIndices = [0]
+    quatf[] orientations = [(1, 0, 0, 0)]
+    float3[] scales = [(1, 1, 1)]
+}
+)";
+    return text;
+  };
+
+  LoadResult inst_initial = LoadUSDAFromString(instancer_source(0.0f));
+  assert(inst_initial.success);
+  StageSnapshot inst_initial_snapshot;
+  inst_initial_snapshot.revision = 1;
+  inst_initial_snapshot.stage.reset(new Stage(std::move(inst_initial.stage)));
+  ConverterConfig inst_config;
+  inst_config.point_instancer.duplicate_meshes = true;
+  RecordingSceneUpdateSink inst_sink;
+  RenderSession inst_session(inst_config);
+  assert(inst_session.Initialize(inst_initial_snapshot, &inst_sink));
+  {
+    const RenderSceneSnapshot snap = inst_session.GetSnapshot();
+    assert(snap->point_instance_draws.size() == 1);
+    const RenderPointInstanceDraw& draw = snap->point_instance_draws[0];
+    assert(draw.expanded_mesh_id >= 0);
+    const RenderMesh* expanded = snap->get_mesh(draw.expanded_mesh_id);
+    assert(expanded && expanded->points.size() == 9);
+    assert(std::fabs(expanded->points[0]) < 1.0e-6f);
+  }
+
+  LoadResult inst_updated = LoadUSDAFromString(instancer_source(2.0f));
+  assert(inst_updated.success);
+  StageSnapshot inst_updated_snapshot;
+  inst_updated_snapshot.revision = 2;
+  inst_updated_snapshot.stage.reset(new Stage(std::move(inst_updated.stage)));
+  StageChangeSet inst_changes;
+  inst_changes.base_revision = 1;
+  inst_changes.new_revision = 2;
+  PrimChange inst_mesh_change;
+  inst_mesh_change.path = Path("/M");
+  inst_mesh_change.flags = StageChangeFlag::Topology;
+  inst_mesh_change.properties.push_back("points");
+  inst_changes.prims.push_back(std::move(inst_mesh_change));
+  const RenderUpdateResult inst_update =
+      inst_session.Apply(inst_updated_snapshot, inst_changes, &inst_sink);
+  assert(inst_update);
+  assert(!inst_update.full_resync);
+  {
+    const RenderSceneSnapshot snap = inst_session.GetSnapshot();
+    assert(snap->point_instance_draws.size() == 1);
+    const RenderPointInstanceDraw& draw = snap->point_instance_draws[0];
+    const RenderMesh* expanded = snap->get_mesh(draw.expanded_mesh_id);
+    assert(expanded && expanded->points.size() == 9);
+    assert(std::fabs(expanded->points[0] - 2.0f) < 1.0e-6f);
+  }
+
+  std::cout << "  incremental RenderSession dependencies: PASSED\n";
+}
+
+
+void TestRenderSessionTimeCode() {
+  std::cout << "Testing RenderSession time code...\n";
+  const char* usda = R"(#usda 1.0
+
+def Mesh "M"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+        10: [(5, 0, 0), (6, 0, 0), (5, 1, 0)],
+    }
+}
+
+def Volume "V"
+{
+    rel material:binding = </VolMat>
+}
+
+def Material "VolMat"
+{
+    token outputs:volume.connect = </VolMat/Shader.outputs:volume>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_volume"
+        float inputs:density.timeSamples = {
+            0: 1,
+            10: 4,
+        }
+        token outputs:volume
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse time-code USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+  StageSnapshot first;
+  first.revision = 1;
+  first.stage.reset(new Stage(std::move(lr.stage)));
+  RecordingSceneUpdateSink sink;
+  RenderSession session;
+  RenderUpdateResult initial = session.Initialize(first, &sink);
+  if (!initial) std::cerr << "  time-code init failed: " << initial.error << "\n";
+  assert(initial && initial.full_resync);
+  assert(session.GetTimeCode() == 0.0);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap);
+    assert(snap->meshes.size() == 1 && snap->volumes.size() == 1);
+    assert(std::fabs(sink.mesh_x.at("/M")) < 1.0e-6f);
+    assert(std::fabs(snap->volumes[0].density_scale - 1.0f) < 1.0e-6f);
+  }
+  /* An empty change set at the same time takes the no-op path. */
+  StageSnapshot second;
+  second.revision = 2;
+  second.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet;
+  quiet.base_revision = 1;
+  quiet.new_revision = 2;
+  RenderUpdateResult no_op = session.Apply(second, quiet, &sink);
+  if (!no_op) std::cerr << "  no-op apply failed: " << no_op.error << "\n";
+  assert(no_op && !no_op.full_resync && no_op.converted_resource_count == 0);
+  assert(sink.mesh_upserts == 0);
+  /* The same empty change set at a new time must re-evaluate everything. */
+  session.SetTimeCode(10.0);
+  assert(session.GetTimeCode() == 10.0);
+  StageSnapshot third;
+  third.revision = 3;
+  third.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_at_time;
+  quiet_at_time.base_revision = 2;
+  quiet_at_time.new_revision = 3;
+  RenderUpdateResult timed = session.Apply(third, quiet_at_time, &sink);
+  if (!timed) std::cerr << "  time apply failed: " << timed.error << "\n";
+  assert(timed);
+  assert(timed.full_resync && timed.converted_resource_count > 0);
+  assert(timed.upsert_count > 0);
+  assert(std::fabs(sink.mesh_x.at("/M") - 5.0f) < 1.0e-6f);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap && snap->volumes.size() == 1);
+    assert(std::fabs(snap->volumes[0].density_scale - 4.0f) < 1.0e-6f);
+  }
+  /* No pending time change: the next empty update is a no-op again. */
+  StageSnapshot fourth;
+  fourth.revision = 4;
+  fourth.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_again;
+  quiet_again.base_revision = 3;
+  quiet_again.new_revision = 4;
+  RenderUpdateResult settled = session.Apply(fourth, quiet_again, &sink);
+  assert(settled && !settled.full_resync && settled.converted_resource_count == 0);
+  std::cout << "  RenderSession time code: PASSED\n";
+}
+
+void TestIncrementalRenderSession() {
+  std::cout << "Testing incremental RenderSession...\n";
+  auto source = [](float x) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    rel material:binding = </Mat>\n";
+    text += "    int[] faceVertexCounts = [3]\n";
+    text += "    int[] faceVertexIndices = [0, 1, 2]\n";
+    text += "    point3f[] points = [(" + std::to_string(x);
+    text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    text += R"(def Mesh "N" {
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(10, 0, 0), (11, 0, 0), (10, 1, 0)]
+}
+def Material "Mat" {
+    token outputs:surface.connect = </Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Mat/Tex.outputs:rgb>
+        token outputs:surface
+    }
+    def Shader "Tex" {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @missing-render-session.png@
+        float2 inputs:st = (0, 0)
+        color3f outputs:rgb
+    }
+}
+)";
     return text;
   };
 
@@ -6952,9 +7940,18 @@ void TestIncrementalRenderSession() {
   assert(initial.converted_resource_count > 0);
   assert(initial.converted_scene_bytes > 0);
   assert(sink.full_resync);
-  assert(sink.mesh_upserts == 1);
+  assert(sink.mesh_upserts == 2);
+  // The fixture deliberately includes a stable material and texture catalog so
+  // the geometry-only update below proves they are neither reconverted nor
+  // emitted to the sink.
+  assert(sink.material_upserts == 1);
+  assert(sink.texture_upserts == 1);
+  assert(sink.image_upserts == 1);
+  RenderSceneSnapshot retained_render_snapshot = render_session.GetSnapshot();
+  assert(retained_render_snapshot.revision == 1);
+  assert(retained_render_snapshot.scene);
   const RenderId mesh_id = sink.mesh_ids.at("/M");
-  assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
+  assert(std::fabs(sink.mesh_x.at("/M")) < 1.0e-6f);
 
   LoadResult second = LoadUSDAFromString(source(2.0f));
   assert(second.success);
@@ -6973,13 +7970,23 @@ void TestIncrementalRenderSession() {
       render_session.Apply(second_snapshot, changes, &sink);
   assert(update);
   assert(!update.full_resync);
-  assert(update.converted_resource_count > 0);
+  assert(update.converted_resource_count == 1);
   assert(!sink.full_resync);
   assert(sink.mesh_upserts == 1);
+  assert(sink.material_upserts == 0);
+  assert(sink.texture_upserts == 0);
+  assert(sink.image_upserts == 0);
+  assert(update.upsert_count == 1);
   assert(sink.mesh_ids.at("/M") == mesh_id);
-  assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
+  assert(std::fabs(sink.mesh_x.at("/M") - 2.0f) < 1.0e-6f);
   assert(sink.removes == 0);
   assert(render_session.revision() == second_snapshot.revision);
+  const RenderSceneSnapshot patched_snapshot = render_session.GetSnapshot();
+  assert(retained_render_snapshot->meshes.size() == 2);
+  assert(patched_snapshot->meshes.size() == 2);
+  // The unaffected mesh remains the same physical COW geometry allocation.
+  assert(retained_render_snapshot->meshes[1].points.chunk_data(0) ==
+         patched_snapshot->meshes[1].points.chunk_data(0));
 
   LoadResult third = LoadUSDAFromString("#usda 1.0\n");
   assert(third.success);
@@ -6998,7 +8005,7 @@ void TestIncrementalRenderSession() {
   assert(removed);
   assert(!sink.full_resync);
   assert(sink.mesh_upserts == 0);
-  assert(sink.mesh_removes == 1);
+  assert(sink.mesh_removes == 2);
   assert(sink.removes >= 1);
   assert(removed.remove_count == sink.removes);
   assert(render_session.revision() == 3);
@@ -7020,6 +8027,96 @@ void TestIncrementalRenderSession() {
   assert(sink.mesh_upserts == 0);
   assert(sink.removes == 0);
   assert(render_session.revision() == 4);
+
+  // Sink callbacks may read snapshots, while reentrant writes fail fast.
+  RenderUpdateResult nested;
+  sink.begin_callback = [&]() {
+    (void)render_session.GetSnapshot();
+    nested = render_session.Apply(no_op_snapshot, no_op, &sink);
+  };
+  StageSnapshot callback_snapshot = no_op_snapshot;
+  callback_snapshot.revision = 5;
+  StageChangeSet callback_no_op;
+  callback_no_op.base_revision = 4;
+  callback_no_op.new_revision = 5;
+  assert(render_session.Apply(callback_snapshot, callback_no_op, &sink));
+  assert(!nested && nested.status == OperationStatus::Busy);
+  sink.begin_callback = {};
+
+  // A rejected transaction must not publish its scene/revision or consume
+  // stable IDs. Retrying the same update receives exactly the same IDs.
+  RenderSession retry_session;
+  RecordingSceneUpdateSink retry_sink;
+  assert(retry_session.Initialize(first_snapshot, &retry_sink));
+  const RenderSceneSnapshot before_reject = retry_session.GetSnapshot();
+  std::string expanded = source(3.0f);
+  expanded += R"(def Mesh "P" {
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+}
+)";
+  LoadResult expanded_load = LoadUSDAFromString(expanded);
+  assert(expanded_load.success);
+  StageSnapshot expanded_snapshot;
+  expanded_snapshot.revision = 2;
+  expanded_snapshot.stage.reset(new Stage(std::move(expanded_load.stage)));
+  StageChangeSet expanded_changes;
+  expanded_changes.base_revision = 1;
+  expanded_changes.new_revision = 2;
+  expanded_changes.full_resync = true;
+  retry_sink.reject_end = true;
+  RenderUpdateResult rejected =
+      retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
+  assert(!rejected && rejected.status == OperationStatus::SinkRejected);
+  const RenderId rejected_n_id = retry_sink.mesh_ids.at("/P");
+  const RenderSceneSnapshot after_reject = retry_session.GetSnapshot();
+  assert(after_reject.revision == before_reject.revision);
+  assert(after_reject.scene == before_reject.scene);
+  retry_sink.reject_end = false;
+  RenderUpdateResult retried =
+      retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
+  assert(retried);
+  assert(retry_sink.mesh_ids.at("/P") == rejected_n_id);
+
+  // Preparation performs conversion without publishing or touching the real
+  // sink. A rejected commit remains retryable, while a competing successful
+  // commit makes an older candidate stale.
+  RenderSession two_phase_session;
+  RecordingSceneUpdateSink two_phase_sink;
+  assert(two_phase_session.Initialize(first_snapshot, &two_phase_sink));
+  const size_t initial_sink_upserts = two_phase_sink.mesh_upserts;
+  PreparedRenderUpdate prepared;
+  RenderUpdateResult prepared_result =
+      two_phase_session.Prepare(second_snapshot, changes, &prepared);
+  assert(prepared_result && prepared);
+  assert(prepared.base_revision() == 1 && prepared.new_revision() == 2);
+  assert(two_phase_session.revision() == 1);
+  assert(two_phase_sink.mesh_upserts == initial_sink_upserts);
+  two_phase_sink.reject_end = true;
+  RenderUpdateResult rejected_commit =
+      two_phase_session.Commit(std::move(prepared), &two_phase_sink);
+  assert(!rejected_commit &&
+         rejected_commit.status == OperationStatus::SinkRejected);
+  assert(prepared);
+  assert(two_phase_session.revision() == 1);
+  two_phase_sink.reject_end = false;
+  assert(two_phase_session.Commit(std::move(prepared), &two_phase_sink));
+  assert(!prepared);
+  assert(two_phase_session.revision() == 2);
+
+  PreparedRenderUpdate candidate_a;
+  PreparedRenderUpdate candidate_b;
+  assert(two_phase_session.Prepare(third_snapshot, removal, &candidate_a));
+  assert(two_phase_session.Prepare(third_snapshot, removal, &candidate_b));
+  assert(two_phase_session.Commit(std::move(candidate_b), &two_phase_sink));
+  const RenderUpdateResult stale =
+      two_phase_session.Commit(std::move(candidate_a), &two_phase_sink);
+  assert(!stale && stale.status == OperationStatus::StaleRevision);
+  assert(candidate_a);
+  two_phase_session.Abort(&candidate_a);
+  assert(!candidate_a);
+
   std::cout << "  incremental RenderSession: PASSED\n";
 }
 
@@ -7168,6 +8265,7 @@ def Xform "World" {
     }
   }
 }
+
 )";
   LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
   assert(loaded.success);
@@ -7227,11 +8325,638 @@ def Xform "World" {
   ConverterConfig hardened = MakeHardenedConverterConfig(size_t(64) << 20);
   assert(hardened.execution.max_threads == 1);
   assert(hardened.execution.max_in_flight_bytes == (size_t(64) << 20));
-  assert(hardened.max_render_records != 0);
+  assert(hardened.limits.max_render_records != 0);
   std::cout << "  parallel material texture remap/callback policy: PASSED\n";
 }
 
+void TestSparseUDIMTextureRetention() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "lightusd-next-udim-retain";
+  std::error_code ec;
+  fs::remove_all(root, ec);
+  ec.clear();
+  fs::create_directories(root / "tiles", ec);
+  assert(!ec);
+  for (const char* tile : {"1001", "1011"}) {
+    std::ofstream file(root / "tiles" / (std::string("skin.") + tile + ".png"),
+                       std::ios::binary);
+    assert(file.good());
+  }
+  const std::string usda = R"(#usda 1.0
+def Xform "World" {
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+      token outputs:surface
+    }
+    def Shader "Tex" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @tiles/skin.<UDIM>.png@
+      color3f outputs:rgb
+    }
+  }
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda.data(), usda.size());
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = root.string();
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  const RenderTexture& texture = converted.scene.textures[0];
+  assert(texture.is_udim && texture.udim_texture_id == 0);
+  assert(converted.scene.udim_textures.size() == 1);
+  const RenderUDIMTexture& udim = converted.scene.udim_textures[0];
+  assert(udim.asset_identifier == "tiles/skin.<UDIM>.png");
+  assert(udim.tiles.size() == 2);
+  assert(udim.tiles[0].udim == 1001 && udim.tiles[1].udim == 1011);
+  assert(udim.tiles[0].image_id == texture.image_id);
+  assert(udim.tiles[1].image_id >= 0 && udim.tiles[1].image_id != texture.image_id);
+  assert(converted.scene.memory_usage() >= sizeof(RenderUDIMTexture) +
+         udim.asset_identifier.capacity() + udim.tiles.capacity() * sizeof(RenderUDIMTexture::Tile));
+  fs::remove_all(root, ec);
+  std::cout << "  sparse UDIM texture retention: PASSED\n";
+}
+
+void TestLowMemoryCustomPrimvarRetention() {
+  const char* usda = R"(#usda 1.0
+def Mesh "M"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)]
+    float[] primvars:heat = [0.1, 0.2, 0.3] (
+        interpolation = "vertex"
+    )
+    int[] primvars:heat:indices = [2, 1, 0]
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.mesh.retain_geometry = false;
+  config.mesh.retain_custom_primvars = true;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success && result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.points.empty() && mesh.face_vertex_indices.empty());
+  assert(mesh.texcoords_0.empty() && mesh.normals.empty());
+  assert(mesh.primvars.size() == 1);
+  const VertexAttribute& heat = mesh.primvars[0];
+  assert(heat.name == "heat");
+  assert(heat.float_data.size() == 3 && heat.indices.size() == 3);
+  assert(std::fabs(heat.float_data[0] - 0.1f) < 1e-6f);
+  assert(heat.indices[0] == 2 && heat.indices[1] == 1 && heat.indices[2] == 0);
+}
+
+// OpenUSD's UsdImagingGL VDB test fixtures (vdbVolume*.usda in
+// pxr/usdImaging/usdImagingGL/testenv/testUsdImagingGLVdbVolume). They are
+// outside this repo, so the test skips unless LIGHTUSD_OPENUSD_VDB_FIXTURES (or
+// OPENUSD_ROOT) points at them. Covers pxr-authored files rather than our own
+// writer: two fields sharing one file, a time-sampled filePath, flipped /
+// large scale placement, and the fallback material.
+static void TestOpenUsdVdbVolumeFixtures() {
+  std::cout << "OpenUSD VDB volume fixtures\n";
+  namespace fs = std::filesystem;
+  fs::path dir;
+  if (const char* env = std::getenv("LIGHTUSD_OPENUSD_VDB_FIXTURES")) {
+    if (env[0]) dir = env;
+  } else if (const char* root = std::getenv("OPENUSD_ROOT")) {
+    if (root[0]) {
+      dir = fs::path(root) / "pxr/usdImaging/usdImagingGL/testenv/"
+                             "testUsdImagingGLVdbVolume";
+    }
+  }
+  if (dir.empty() || !fs::exists(dir / "vdbVolume.usda")) {
+    std::cout << "  SKIP: set LIGHTUSD_OPENUSD_VDB_FIXTURES to OpenUSD's "
+                 "testUsdImagingGLVdbVolume directory\n";
+    return;
+  }
+
+  auto convert_fixture = [&](const char* name, double time) {
+    const std::string path = (dir / name).string();
+    ::lightusd::next::Stage stage;
+    std::string warn, err;
+    assert(::lightusd::next::LoadUSD(path, &stage, &warn, &err));
+    ConverterConfig config;
+    config.time_code = time;
+    config.asset_base_dir = dir.string();
+    RenderSceneConverter conv(config);
+    return conv.Convert(stage);
+  };
+
+  // Two fields in one file (densityAndHeat.vdb): both bindings resolve to
+  // their own grid, and both are placed by the same field transform.
+  {
+    ConvertResult res = convert_fixture("vdbVolumeTwoFields.usda", 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    const RenderVolume& volume = res.scene.volumes[0];
+    assert(volume.fields.size() == 2);
+    std::map<std::string, bool> seen;
+    for (const RenderVolumeField& field : volume.fields) {
+      seen[field.binding] = true;
+      assert(field.field.grid.name == field.binding);
+      assert(field.field.value_type == "float");
+      assert(field.field.has_bounds);
+    }
+    assert(seen["density"] && seen["heat"]);
+    // The Volume authors an extent, so it must not be replaced by the fields'
+    // union box.
+    assert(volume.has_extent);
+  }
+
+  // The fallback-material fixture samples filePath over time (smoke_000001/2/3).
+  // A different time must resolve a different file, and one whose grid decodes.
+  {
+    ConvertResult first = convert_fixture("vdbVolumeFallbackMaterial.usda", 1.0);
+    assert(first.success);
+    assert(first.scene.volumes.size() == 1);
+    assert(first.scene.volumes[0].fields.size() == 1);
+    const std::string file_t1 = first.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t1.empty());
+
+    ConvertResult last = convert_fixture("vdbVolumeFallbackMaterial.usda", 250.0);
+    assert(last.success);
+    assert(last.scene.volumes.size() == 1);
+    assert(last.scene.volumes[0].fields.size() == 1);
+    const std::string file_t250 = last.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t250.empty());
+    assert(file_t1 != file_t250);
+  }
+
+  // Flipped and large-scale placements keep resolving; the flipped fixture
+  // negates an axis, so its index-to-world must have a negative 3x3
+  // determinant while the unflipped one stays positive.
+  for (const char* name : {"vdbVolumeFlipped.usda", "vdbVolumeLarge.usda",
+                           "vdbVolumeInside.usda", "vdbVolume.usda"}) {
+    ConvertResult res = convert_fixture(name, 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    assert(!res.scene.volumes[0].fields.empty());
+    const RenderVolumeField& field = res.scene.volumes[0].fields[0];
+    const double (*m)[4] = field.field.index_to_world;  // row vectors
+    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                       m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                       m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    assert(std::fabs(det) > 0.0);
+    if (std::strcmp(name, "vdbVolumeFlipped.usda") == 0) {
+      assert(det < 0.0);
+    } else {
+      assert(det > 0.0);
+    }
+  }
+  std::cout << "  OpenUSD VDB volume fixtures: PASSED\n";
+}
+
+// A radius-1 sphere's narrow-band level set (grid "sdf") written to a temp
+// .vdb, so the volume tests need no external corpus. Returns its path.
+static const double kSphereLevelSetVoxel = 2.0 / 24.0;
+static std::filesystem::path WriteSphereLevelSet(const char* tag,
+                                                 bool check_write_budget = false) {
+  namespace fs = std::filesystem;
+  using lightusd::tydra::import_asset::LevelSet;
+  using lightusd::tydra::import_asset::LevelSetOptions;
+  using lightusd::tydra::import_asset::Mesh;
+  using lightusd::tydra::import_asset::MeshToLevelSet;
+  using lightusd::tydra::import_asset::WriteLevelSetVDB;
+
+  // Unit sphere (radius 1), enough rings for a clean narrow-band level set.
+  const int kLat = 24, kLon = 48;
+  Mesh sphere;
+  sphere.positions = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, -1.0f};
+  for (int i = 1; i < kLat; ++i) {
+    const double th = M_PI * double(i) / double(kLat);
+    for (int j = 0; j < kLon; ++j) {
+      const double ph = 2.0 * M_PI * double(j) / double(kLon);
+      sphere.positions.push_back(float(std::sin(th) * std::cos(ph)));
+      sphere.positions.push_back(float(std::sin(th) * std::sin(ph)));
+      sphere.positions.push_back(float(std::cos(th)));
+    }
+  }
+  const auto ring = [&](int i, int j) {
+    return int32_t(2 + (i - 1) * kLon + (j % kLon));
+  };
+  for (int j = 0; j < kLon; ++j) {
+    sphere.indices.insert(sphere.indices.end(),
+                          {0, ring(1, j), ring(1, j + 1), 1, ring(kLat - 1, j + 1),
+                           ring(kLat - 1, j)});
+  }
+  for (int i = 1; i < kLat - 1; ++i) {
+    for (int j = 0; j < kLon; ++j) {
+      sphere.indices.insert(sphere.indices.end(),
+                            {ring(i, j), ring(i + 1, j), ring(i + 1, j + 1),
+                             ring(i, j), ring(i + 1, j + 1), ring(i, j + 1)});
+    }
+  }
+
+  LevelSetOptions options;
+  options.voxel_size = kSphereLevelSetVoxel;
+  options.exterior_width = 3.0 * options.voxel_size;
+  options.interior_width = 3.0 * options.voxel_size;
+  LevelSet level_set;
+  std::string err;
+  assert(MeshToLevelSet(sphere, options, &level_set, &err));
+  if (check_write_budget) {
+    const size_t peak = level_set.build_peak_bytes();
+    const size_t retained = level_set.retained_allocation_bytes();
+    assert(retained > 0 && peak > retained);
+    LevelSet bounded;
+    options.max_working_memory_bytes = peak;
+    assert(MeshToLevelSet(sphere, options, &bounded, &err));
+    assert(bounded.build_peak_bytes() <= peak);
+    const auto* original = bounded.grid();
+    options.max_working_memory_bytes = peak - 1;
+    assert(!MeshToLevelSet(sphere, options, &bounded, &err));
+    assert(err.find("memory budget") != std::string::npos);
+    assert(bounded.grid() == original);
+    std::vector<uint8_t> expected_bytes, actual_bytes;
+    assert(WriteLevelSetVDB(level_set, &expected_bytes, &err));
+    LevelSet moved(std::move(bounded));
+    assert(bounded.empty() && moved.grid() == original);
+    LevelSet assigned;
+    assigned = std::move(moved);
+    assert(moved.empty() && assigned.retained_allocation_bytes() == retained);
+    assert(WriteLevelSetVDB(assigned, &actual_bytes, &err));
+    assert(expected_bytes == actual_bytes);
+    options.max_working_memory_bytes = peak;
+    assert(MeshToLevelSet(sphere, options, &bounded, &err));
+    std::vector<uint8_t> limited{0x12, 0x34};
+    const std::vector<uint8_t> previous = limited;
+    std::string budget_error;
+    assert(!WriteLevelSetVDB(level_set, &limited, &budget_error, 1));
+    assert(budget_error.find("memory budget exceeded") != std::string::npos);
+    assert(limited == previous);
+  }
+  std::vector<uint8_t> bytes;
+  assert(WriteLevelSetVDB(level_set, &bytes, &err));
+  assert(!bytes.empty());
+
+  const fs::path path =
+      fs::temp_directory_path() /
+      (std::string("lightusd_") + tag + "_" +
+       std::to_string(reinterpret_cast<uintptr_t>(&err)) + ".vdb");
+  {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+  }
+
+  return path;
+}
+
+// FieldCache::MeshLevelSet: a level-set field meshes to its zero isosurface,
+// placed by the field transform. Builds the fixture in a temp file so it needs
+// no external corpus.
+static void TestLevelSetFieldMesh() {
+  std::cout << "Level-set field mesh\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+
+  const fs::path path = WriteSphereLevelSet("level_set_mesh", true);
+  std::string err;
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "sdf";
+  request.field_prim = "/ls/sdf";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "sdf";
+  request.field_class = "levelSet";
+  ResolvedField field;
+  const bool resolved = cache.Resolve(request, &field, &err);
+  if (!resolved) std::cerr << err << "\n";
+  assert(resolved);
+  assert(field.level_set);
+
+  std::vector<float> positions;
+  std::vector<int32_t> tri;
+  const bool meshed = cache.MeshLevelSet(field, 0, &positions, &tri, &err);
+  if (!meshed) std::cerr << err << "\n";
+  assert(meshed);
+  fs::remove(path);
+  assert(!positions.empty() && positions.size() % 3 == 0);
+  assert(!tri.empty() && tri.size() % 3 == 0);
+  const size_t nv = positions.size() / 3;
+
+  // Closed two-manifold and outward winding.
+  std::map<std::pair<int32_t, int32_t>, int> edges;
+  double volume6 = 0.0;
+  double min_radius = 1.0e30, max_radius = 0.0;
+  for (size_t f = 0; f + 2 < tri.size(); f += 3) {
+    const int32_t a = tri[f], b = tri[f + 1], c = tri[f + 2];
+    assert(a >= 0 && size_t(a) < nv && b >= 0 && size_t(b) < nv && c >= 0 &&
+           size_t(c) < nv);
+    for (int k = 0; k < 3; ++k) {
+      const int32_t u = tri[f + size_t(k)];
+      const int32_t v = tri[f + size_t((k + 1) % 3)];
+      ++edges[{u, v}];
+    }
+    const float* p0 = &positions[size_t(a) * 3];
+    const float* p1 = &positions[size_t(b) * 3];
+    const float* p2 = &positions[size_t(c) * 3];
+    volume6 += double(p0[0]) * (double(p1[1]) * double(p2[2]) - double(p1[2]) * double(p2[1])) -
+               double(p0[1]) * (double(p1[0]) * double(p2[2]) - double(p1[2]) * double(p2[0])) +
+               double(p0[2]) * (double(p1[0]) * double(p2[1]) - double(p1[1]) * double(p2[0]));
+  }
+  for (const auto& e : edges) {
+    auto opposite = edges.find({e.first.second, e.first.first});
+    assert(e.second == 1 && opposite != edges.end() && opposite->second == 1);
+  }
+  for (size_t i = 0; i < nv; ++i) {
+    const double r = std::sqrt(double(positions[3 * i]) * positions[3 * i] +
+                               double(positions[3 * i + 1]) * positions[3 * i + 1] +
+                               double(positions[3 * i + 2]) * positions[3 * i + 2]);
+    min_radius = std::min(min_radius, r);
+    max_radius = std::max(max_radius, r);
+  }
+  const double volume = volume6 / 6.0;
+  const double expected = 4.0 * M_PI / 3.0;
+  assert(volume > 0.0);
+  assert(std::fabs(volume - expected) / expected < 0.05);
+  const double tolerance = 4.0 * kSphereLevelSetVoxel;
+  assert(min_radius > 1.0 - tolerance && max_radius < 1.0 + tolerance);
+  const size_t triangles = tri.size() / 3;
+
+  // A fog field must not claim a surface.
+  request.field_class = "fogVolume";
+  ResolvedField fog;
+  std::string fog_err;
+  if (cache.Resolve(request, &fog, &fog_err)) {
+    assert(!fog.level_set);
+    assert(!cache.MeshLevelSet(fog, 0, &positions, &tri, &fog_err));
+  }
+  std::cout << "  level set -> " << triangles << " triangles, volume " << volume
+            << ", radius [" << min_radius << ", " << max_radius << "]\n";
+}
+
+// ResolveWithFirstGridFallback only falls back when fieldName was defaulted,
+// never for an authored name or a named grid the filter rejects; and the
+// dense box of a grid is cell-centred (a sphere at the origin stays there).
+// ReadLevelSetVDB reads every header first, then decodes only what it needs:
+// the first float grid classed "level set", else the first float grid with a
+// positive background.
+static void TestLevelSetGridChoice() {
+  std::cout << "Level-set grid choice\n";
+  namespace fs = std::filesystem;
+  namespace ia = lightusd::tydra::import_asset;
+  const fs::path path = WriteSphereLevelSet("grid_choice");
+  std::vector<uint8_t> sphere;
+  {
+    std::ifstream in(path, std::ios::binary);
+    sphere.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  fs::remove(path);
+  assert(!sphere.empty());
+  // Two copies of the sphere grid, re-classed and tagged "first"/"second".
+  auto two_grids = [&](const char* class0, const char* class1, bool negative_first = false) {
+    const char* classes[2] = {class0, class1};
+    const char* tags[2] = {"first", "second"};
+    tvdb_file_t files[2];
+    tvdb_grid_t grids[2];
+    for (int i = 0; i < 2; ++i) {
+      tvdb_error_t e{};
+      assert(tvdb_file_open_memory(&files[i], sphere.data(), sphere.size(), nullptr, &e) ==
+             TVDB_OK);
+      assert(tvdb_read_grid(&files[i], 0, &e) == TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "class", classes[i], &e) ==
+             TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "tag", tags[i], &e) == TVDB_OK);
+      if (i == 0 && negative_first) {
+        tvdb_value_t background{};
+        background.type = TVDB_VALUE_FLOAT;
+        background.u.f = -1.0f;
+        tvdb_grid_set_background(&files[i].grids[0], background);
+      }
+      grids[i] = files[i].grids[0];  // shallow copy, only written
+    }
+    tvdb_file_t out;
+    tvdb_file_init_for_write(&out, nullptr);
+    out.grids = grids;
+    out.num_grids = 2;
+    uint8_t* data = nullptr;
+    size_t size = 0;
+    tvdb_error_t e{};
+    assert(tvdb_write_to_memory(&out, TVDB_COMPRESS_ZIP, 0, &data, &size, &e) == TVDB_OK);
+    std::vector<uint8_t> bytes(data, data + size);
+    std::free(data);
+    for (tvdb_file_t& f : files) tvdb_file_close(&f);
+    return bytes;
+  };
+  auto chosen = [](std::vector<uint8_t> bytes, size_t budget = 0) {
+    ia::LevelSet level_set;
+    std::string err;
+    if (!ia::ReadLevelSetVDB(bytes.data(), bytes.size(), &level_set, &err, budget))
+      return "error: " + err;
+    std::fill(bytes.begin(), bytes.end(), uint8_t(0));  // the level set owns its grid
+    bytes.clear();
+    bytes.shrink_to_fit();
+    const double p[3] = {0, 0, 0};
+    float inside = 1;
+    assert(ia::SampleLevelSet(level_set, p, 1, &inside, &err) && inside < 0);
+    const tvdb_meta_entry_t* tag = tvdb_grid_find_metadata(level_set.grid(), "tag");
+    return std::string(tag && tag->value.type == TVDB_VALUE_STRING ? tag->value.u.s.str : "?");
+  };
+  assert(chosen(two_grids("fog volume", "level set")) == "second");  // the class wins
+  assert(chosen(two_grids("level set", "level set")) == "first");
+  assert(chosen(two_grids("fog volume", "unknown")) == "first");  // positive background
+  assert(chosen(two_grids("unknown", "unknown", true), 64 * 1024 * 1024) == "second");
+  {
+    // Bounded decoding preserves an existing result on failure and retains
+    // the allocator correctly through move construction and assignment.
+    ia::LevelSet level_set;
+    std::string err;
+    constexpr size_t limit = 64 * 1024 * 1024;
+    assert(ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, limit));
+    const size_t peak = level_set.decode_peak_bytes();
+    assert(peak > 0 && peak <= limit);
+    const auto* original = level_set.grid();
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, 1024));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, peak - 1));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    const uint8_t malformed[] = {'n', 'o', 't', 'v', 'd', 'b'};
+    assert(!ia::ReadLevelSetVDB(malformed, sizeof(malformed), &level_set, &err, limit));
+    assert(level_set.grid() == original);
+    ia::LevelSet moved(std::move(level_set));
+    assert(level_set.empty() && moved.grid() == original && moved.decode_peak_bytes() == peak);
+    ia::LevelSet assigned;
+    assigned = std::move(moved);
+    assert(moved.empty() && assigned.grid() == original && assigned.decode_peak_bytes() == peak);
+    const double p[3] = {0, 0, 0}; float value = 1;
+    assert(ia::SampleLevelSet(assigned, p, 1, &value, &err) && value < 0);
+  }
+  std::cout << "  Level-set grid choice: PASSED\n";
+}
+
+static void TestFieldFallbackAndDenseBox() {
+  std::cout << "Field fallback rules and dense box\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+  using lightusd::tydra::vol::ResolveWithFirstGridFallback;
+
+  const fs::path path = WriteSphereLevelSet("field_fallback");
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "density";
+  request.field_prim = "/V/density";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "density";  // the file only has "sdf"
+
+  ResolvedField field;
+  std::string err;
+  // Authored fieldName: a missing grid is an error.
+  assert(!ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(err.find("no grid 'density'") != std::string::npos);
+  // Defaulted fieldName: the first grid, with a warning.
+  request.field_name_defaulted = true;
+  err.clear();
+  assert(ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(field.grid.name == "sdf");
+  assert(!field.warnings.empty() &&
+         field.warnings.back().find("fieldName not authored") != std::string::npos);
+  // A grid that resolves but is unusable is an error, not a fallback.
+  request.field_name = "sdf";
+  int filtered = 0;
+  const auto reject = [&](const ResolvedField&) {
+    ++filtered;
+    return false;
+  };
+  err.clear();
+  assert(!ResolveWithFirstGridFallback(cache, request, reject, &field, &err));
+  assert(filtered == 1);
+  assert(err.find("could not be loaded") != std::string::npos);
+
+  // Dense box: cell-centred, so the symmetric sphere grid is centred at 0.
+  request.field_name_defaulted = false;
+  assert(cache.Resolve(request, &field, &err));
+  lightusd::usdVol::VDBReadOptions options;
+  const lightusd::usdVol::VDBGrid* grid = cache.Dense(field, options, nullptr, &err);
+  assert(grid && grid->stride == 1);
+  double bmin[3], bmax[3];
+  assert(lightusd::usdVol::DenseGridBox(*grid, bmin, bmax));
+  for (int a = 0; a < 3; ++a) {
+    const double voxel = grid->voxel_size[a];
+    assert(std::fabs(bmax[a] - bmin[a] - grid->dim[a] * voxel) < 1e-9);
+    assert(std::fabs(0.5 * (bmin[a] + bmax[a])) < 1e-6);
+  }
+  // Dense and NanoVDB built from a sparse tree already decoded for sampling
+  // equal the ones decoded from the file.
+  {
+    FieldCache sampled;
+    ResolvedField f2;
+    assert(sampled.Resolve(request, &f2, &err));
+    const double origin[3] = {0, 0, 0};
+    std::vector<float> values;
+    assert(sampled.SampleWorld(f2, origin, 1, true, &values, nullptr, &err));
+    const lightusd::usdVol::VDBGrid* reused = sampled.Dense(f2, options, nullptr, &err);
+    assert(reused && reused->data == grid->data && reused->origin[0] == grid->origin[0]);
+    const std::vector<uint8_t>* nano_reused = sampled.NanoVDB(f2, nullptr, &err);
+    const std::vector<uint8_t>* nano_file = cache.NanoVDB(field, nullptr, &err);
+    assert(nano_reused && nano_file && *nano_reused == *nano_file);
+  }
+  fs::remove(path);
+#if defined(__linux__) || defined(__APPLE__)
+  // Field files come from the stage: a FIFO (or device) is not read.
+  const fs::path fifo = fs::temp_directory_path() /
+                        ("lightusd_fifo_" + std::to_string(reinterpret_cast<uintptr_t>(&cache)));
+  if (::mkfifo(fifo.c_str(), 0600) == 0) {
+    std::vector<uint8_t> bytes;
+    std::string why;
+    const bool read = lightusd::tydra::vol::ReadFileAsset(fifo.string(), &bytes, &why);
+    fs::remove(fifo);
+    assert(!read && bytes.empty());
+  }
+#endif
+}
+
+static void TestAuthoredPlaneTextureDomain() {
+  auto loaded = LoadUSDAFromString(R"(#usda 1.0
+ def Plane "Plane" {
+  uniform token axis = "Z"
+  double width = 2
+  double length = 2
+  texCoord2f[] primvars:st = [(2,3),(5,7),(11,13),(17,19)] (interpolation = "vertex")
+ }
+)");
+  assert(loaded.success);
+  lightusd::tydra::next::ConverterConfig config;
+  config.mesh.triangulate = false;
+  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::next::RenderMesh mesh;
+  assert(converter.ConvertRenderableMesh(loaded.stage,
+      loaded.stage.GetPrimAtPath("/Plane"), &mesh));
+  assert(mesh.face_vertex_indices.size() == 4 && mesh.texcoords_0.size() == 8);
+  const float expected[4][2] = {{2,3},{5,7},{11,13},{17,19}};
+  for (size_t corner = 0; corner < 4; ++corner) {
+    const size_t index = mesh.face_vertex_indices[corner];
+    const float x = mesh.points[index * 3], y = mesh.points[index * 3 + 1];
+    const size_t canonical = y > 0 ? (x > 0 ? 0 : 1) : (x > 0 ? 3 : 2);
+    assert(mesh.texcoords_0[corner * 2] == expected[canonical][0]);
+    assert(mesh.texcoords_0[corner * 2 + 1] == expected[canonical][1]);
+  }
+}
+
+static void TestGeneratedSmoothNormals() {
+  using namespace lightusd::tydra::next;
+  auto policy = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "Default" {}
+ def Mesh "Polygon" { uniform token subdivisionScheme = "none" }
+ def Mesh "Loop" { uniform token subdivisionScheme = "loop" }
+ def Mesh "Bilinear" { uniform token subdivisionScheme = "bilinear" }
+)");
+  assert(policy.success);
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Bilinear")));
+  const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 4, 4, 4};
+  const int32_t face_counts[] = {3, 3};
+  const int32_t face_indices[] = {0, 1, 2, 0, 1, 3};
+  ValueArrayRead<float> points;
+  points.view = {positions, 15, false};
+  ValueArrayRead<int32_t> counts;
+  counts.view = {face_counts, 2, false};
+  ValueArrayRead<int32_t> indices;
+  indices.view = {face_indices, 6, false};
+  std::vector<float> normals;
+  assert(ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  const float inv = 1.0f / std::sqrt(5.0f);
+  for (size_t point : {size_t(0), size_t(1)}) {
+    assert(std::abs(normals[point * 3]) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 1] + 2 * inv) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 2] - inv) < 1e-6f);
+  }
+  assert(normals[8] == 1.0f && normals[10] == -1.0f);
+  assert(normals[12] == 0 && normals[13] == 0 && normals[14] == 0);
+  assert(ComputeMeshSmoothNormals(points, counts, indices, true, &normals));
+  assert(std::abs(normals[1] - 2 * inv) < 1e-6f);
+  const int32_t invalid[] = {0, -1, 2, 0, 1, 3};
+  indices.view = {invalid, 6, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  assert(normals.empty());
+  indices.view = {face_indices, 5, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+}
+
 int main() {
+  TestAuthoredPlaneTextureDomain();
+  TestGeneratedSmoothNormals();
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
   // ChunkedArray tests
@@ -7260,18 +8985,22 @@ int main() {
   // RenderData tests
   TestRenderMesh();
   TestRenderScene();
+  TestRenderMemoryAccounting();
 
   std::cout << "\n";
 
   // Scene Access tests
   TestSceneAccess();
   TestDeepSceneAccess();
+  TestSkinnedPointEvaluation();
   TestRenderExtract();
 
   std::cout << "\n";
 
   // Converter tests
+  TestAnalyticPrimitiveTime();
   TestRenderConverter();
+  TestLowMemoryCustomPrimvarRetention();
   TestRenderConverterHalfGaussian();
   TestRenderConverterMaterials();
   TestRenderConverterNestedMaterialXGraph();
@@ -7284,6 +9013,8 @@ int main() {
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
   TestExternalMaterialXImageGraph();
+  TestForwardedTextureAssetAnchor();
+  TestPxrDisneyRiSurfaceMaterial();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
@@ -7312,10 +9043,19 @@ int main() {
   TestP2AuditFixes();
   TestLegacyParityExtraction();
   TestRenderColorManagement();
+  TestIncrementalRenderSessionDependencies();
   TestIncrementalRenderSession();
+  TestRenderSessionTimeCode();
+  TestRenderSessionResidentCap();
   TestPtexMaterialInterfaceAsset();
   TestSurfaceUnlitMaterialXConversion();
   TestParallelMaterialTextureRemapAndCallbackPolicy();
+  TestStrictConversionDiagnostics();
+  TestSparseUDIMTextureRetention();
+  TestOpenUsdVdbVolumeFixtures();
+  TestLevelSetFieldMesh();
+  TestFieldFallbackAndDenseBox();
+  TestLevelSetGridChoice();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

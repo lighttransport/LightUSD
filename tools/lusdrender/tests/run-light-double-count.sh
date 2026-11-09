@@ -16,7 +16,7 @@
 # An escaping bounce now contributes nothing, and an indirect hit on an
 # area-light triangle contributes no emission (TriInfo::area_light).
 #
-# LUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior; the test A/Bs against it,
+# -lightDoubleCount restores the old behavior; the test A/Bs against it,
 # and also pins the absolute physics where it can:
 #
 #   - FURNACE: a white Lambert quad under a uniform dome of radiance 1 must come
@@ -130,7 +130,8 @@ USDA
 render() {  # $1 = scene, $2 = out, $3 = shading, $4 = DOUBLE_COUNT, $5.. = flags
   local scene="$1" out="$2" shading="$3" dbl="$4"
   shift 4
-  LUSDR_LIGHT_DOUBLE_COUNT="$dbl" "$LUSDRENDER" "$scene" "$out" \
+  if [ "$dbl" = 1 ]; then set -- -lightDoubleCount "$@"; fi
+  "$LUSDRENDER" "$scene" "$out" \
     -viewDir 0,0,1 -bg 0,0,0 -ambient 0 -w 96 -height 96 -samples 64 \
     -materialShading "$shading" "$@" > "$out.log" 2>&1
   if [ ! -s "$out" ]; then
@@ -247,7 +248,7 @@ if bsdf > 1.15:
           f"both prefiltered environments.")
     sys.exit(1)
 if dbl < bsdf * 1.3:
-    print(f"FAIL: LUSDR_LIGHT_DOUBLE_COUNT=1 gave {dbl:.2f}x vs {bsdf:.2f}x -- "
+    print(f"FAIL: -lightDoubleCount gave {dbl:.2f}x vs {bsdf:.2f}x -- "
           f"the A/B lever is not restoring the old behavior, so this test is not "
           f"actually proving the fix.")
     sys.exit(1)

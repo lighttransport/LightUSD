@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="arm">
+  <link name="base">
+    <inertial>
+      <mass value="2"/>
+      <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+    </inertial>
+    <collision><geometry><box size="1 1 1"/></geometry></collision>
+  </link>
+  <link name="arm">
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="0.2" ixy="0" ixz="0" iyy="0.2" iyz="0" izz="0.2"/>
+    </inertial>
+    <collision><geometry><box size="0.5 0.2 0.2"/></geometry></collision>
+  </link>
+  <joint name="hinge" type="revolute">
+    <parent link="base"/><child link="arm"/>
+    <origin xyz="0 0 0.5"/><axis xyz="0 1 0"/>
+    <limit lower="-1" upper="1" effort="10" velocity="2"/>
+  </joint>
+</robot>

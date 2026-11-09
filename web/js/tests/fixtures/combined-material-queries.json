@@ -1,0 +1,950 @@
+{
+  "wasm32": {
+    "textured": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "c557b1cbe11def2b57bf2a8f25757d2c8f9588ab73507606da4ef1fed9df9162"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "5a7bd81d452eed0ed7e12d0a0110fb45df1cde155389a08f87ede59b793edf8b"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 1,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 1,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "1245465b2da8a7d560a30674c348af750819ca1fe8c3a2b145420856ae9fa1d3"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "93bca7e290b6a7d7edd9085b637499ac2c9c15ec8ecb922c76a92128c5d80e1a"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 2,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 3,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 2,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 3,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        }
+      }
+    ],
+    "c-core-material-queries.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "893dd86ea5ceeefbe1c60cc8ccd9f07dc608fd3cc8bd48932577986836c42d18"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "0cc82b8c95feace6d3b28894a5f12909e30ba10377e52a8bcc1194e92ae2f397"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "\u6750\u8cea",
+            "colorspace": "lin_rec709",
+            "sourceUri": "material.mtlx"
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ],
+          "useSpecularWorkflow": true,
+          "specularColor": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "roughness": 0.5,
+          "roughnessTextureId": 1,
+          "clearcoat": 0.30000001192092896,
+          "clearcoatRoughness": 0.4000000059604645,
+          "opacity": 0.800000011920929,
+          "opacityThreshold": 0.10000000149011612,
+          "ior": 1.600000023841858,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": -0.20000000298023224,
+          "occlusion": 0.8999999761581421
+        },
+        "": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "\u6750\u8cea",
+            "colorspace": "lin_rec709",
+            "sourceUri": "material.mtlx"
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ],
+          "useSpecularWorkflow": true,
+          "specularColor": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "roughness": 0.5,
+          "roughnessTextureId": 1,
+          "clearcoat": 0.30000001192092896,
+          "clearcoatRoughness": 0.4000000059604645,
+          "opacity": 0.800000011920929,
+          "opacityThreshold": 0.10000000149011612,
+          "ior": 1.600000023841858,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": -0.20000000298023224,
+          "occlusion": 0.8999999761581421
+        }
+      }
+    ],
+    "colorspace-materialx-config-render.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "d227f3a8786adbbce501d4825d0509a7f4820cc12cac2365c7d3c56ee77d78b5"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "435fdf644f1046391242ff048273205b1197e8509d3f6dadcd36ad0b54e9caff"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "",
+            "colorspace": "lin_ap1_scene",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "",
+            "colorspace": "lin_ap1_scene",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      }
+    ],
+    "lusdrender-openpbr-lobe-golden.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "2a4baff343154cb08893647ff594664cb00a897953bb79a131f7da6414776b82"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "8991323cbc9f24507a786ca60bc7cc94718c9b55a25f65dc6bcea7ebe27ca3f8"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "9815d60189036cfe92b43fc6e900f9343e619a31c3f97781ed23ccaaf09caf57"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "241b1e77552e3b3b23fd029855f80f2289145f96e788b5864604aadd53f9189c"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "c293dc008d11223a4e9f8fab58bdb02ef5e5ce15a838dc03097d5c59ea2db1b6"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "5331b017dad7ad93eb556680acf8c8b753ece0d6e5fef5ff88a3997100876c5e"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "b91e7b83d67fa3379a3a9035a71d91657a4673d208874bdb014ccba5bba5de27"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "c6c407b4acafa2b520e405b18066b4bd691a63e6dd1b18f2c1af97861613b2c0"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "786c8b6ba63392c3251a84ecceaeca59f2abcfc9613d3b3177ea5a52df99e914"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "cc3f000d0453118e8c2e52793fd0a9ca0511a762b22ec3cde3c4a7ae366b7327"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "9acc778d0cd0e97de18e0cdd192645a0ee3f34e1200291544b25085bcff35767"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "fd9adb3902950d2ca4574c11607768de049d53ea13a7447c37baf62469a8eb63"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      }
+    ]
+  },
+  "wasm64": {
+    "textured": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "c557b1cbe11def2b57bf2a8f25757d2c8f9588ab73507606da4ef1fed9df9162"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "5a7bd81d452eed0ed7e12d0a0110fb45df1cde155389a08f87ede59b793edf8b"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 1,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 1,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "1245465b2da8a7d560a30674c348af750819ca1fe8c3a2b145420856ae9fa1d3"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "93bca7e290b6a7d7edd9085b637499ac2c9c15ec8ecb922c76a92128c5d80e1a"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 2,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 3,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 2,
+          "emissiveColor": [
+            0,
+            0,
+            0
+          ],
+          "useSpecularWorkflow": false,
+          "metallic": 0,
+          "roughness": 0.5,
+          "clearcoat": 0,
+          "clearcoatRoughness": 0.009999999776482582,
+          "opacity": 1,
+          "opacityTextureId": 3,
+          "opacityThreshold": 0,
+          "ior": 1.5,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": 0,
+          "occlusion": 1
+        }
+      }
+    ],
+    "c-core-material-queries.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "893dd86ea5ceeefbe1c60cc8ccd9f07dc608fd3cc8bd48932577986836c42d18"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "0cc82b8c95feace6d3b28894a5f12909e30ba10377e52a8bcc1194e92ae2f397"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "\u6750\u8cea",
+            "colorspace": "lin_rec709",
+            "sourceUri": "material.mtlx"
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ],
+          "useSpecularWorkflow": true,
+          "specularColor": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "roughness": 0.5,
+          "roughnessTextureId": 1,
+          "clearcoat": 0.30000001192092896,
+          "clearcoatRoughness": 0.4000000059604645,
+          "opacity": 0.800000011920929,
+          "opacityThreshold": 0.10000000149011612,
+          "ior": 1.600000023841858,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": -0.20000000298023224,
+          "occlusion": 0.8999999761581421
+        },
+        "": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "\u6750\u8cea",
+            "colorspace": "lin_rec709",
+            "sourceUri": "material.mtlx"
+          },
+          "diffuseColor": [
+            0.18000000715255737,
+            0.18000000715255737,
+            0.18000000715255737
+          ],
+          "diffuseColorTextureId": 0,
+          "emissiveColor": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ],
+          "useSpecularWorkflow": true,
+          "specularColor": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "roughness": 0.5,
+          "roughnessTextureId": 1,
+          "clearcoat": 0.30000001192092896,
+          "clearcoatRoughness": 0.4000000059604645,
+          "opacity": 0.800000011920929,
+          "opacityThreshold": 0.10000000149011612,
+          "ior": 1.600000023841858,
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "displacement": -0.20000000298023224,
+          "occlusion": 0.8999999761581421
+        }
+      }
+    ],
+    "colorspace-materialx-config-render.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "d227f3a8786adbbce501d4825d0509a7f4820cc12cac2365c7d3c56ee77d78b5"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "435fdf644f1046391242ff048273205b1197e8509d3f6dadcd36ad0b54e9caff"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "",
+            "colorspace": "lin_ap1_scene",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": true,
+            "version": "1.39",
+            "namespace": "",
+            "colorspace": "lin_ap1_scene",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      }
+    ],
+    "lusdrender-openpbr-lobe-golden.usda": [
+      {
+        "json": {
+          "format": "json",
+          "sha256": "2a4baff343154cb08893647ff594664cb00a897953bb79a131f7da6414776b82"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "8991323cbc9f24507a786ca60bc7cc94718c9b55a25f65dc6bcea7ebe27ca3f8"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "9815d60189036cfe92b43fc6e900f9343e619a31c3f97781ed23ccaaf09caf57"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "241b1e77552e3b3b23fd029855f80f2289145f96e788b5864604aadd53f9189c"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "c293dc008d11223a4e9f8fab58bdb02ef5e5ce15a838dc03097d5c59ea2db1b6"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "5331b017dad7ad93eb556680acf8c8b753ece0d6e5fef5ff88a3997100876c5e"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "b91e7b83d67fa3379a3a9035a71d91657a4673d208874bdb014ccba5bba5de27"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "c6c407b4acafa2b520e405b18066b4bd691a63e6dd1b18f2c1af97861613b2c0"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "786c8b6ba63392c3251a84ecceaeca59f2abcfc9613d3b3177ea5a52df99e914"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "cc3f000d0453118e8c2e52793fd0a9ca0511a762b22ec3cde3c4a7ae366b7327"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      },
+      {
+        "json": {
+          "format": "json",
+          "sha256": "9acc778d0cd0e97de18e0cdd192645a0ee3f34e1200291544b25085bcff35767"
+        },
+        "xml": {
+          "format": "xml",
+          "sha256": "fd9adb3902950d2ca4574c11607768de049d53ea13a7447c37baf62469a8eb63"
+        },
+        "legacy": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        },
+        "": {
+          "materialXConfig": {
+            "authored": false,
+            "version": "1.38",
+            "namespace": "",
+            "colorspace": "lin_rec709",
+            "sourceUri": ""
+          },
+          "error": "Material does not have UsdPreviewSurface shader"
+        }
+      }
+    ]
+  }
+}

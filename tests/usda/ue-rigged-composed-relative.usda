@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    subLayers = [@TutorialTPP.usda@, @Tutorial_Walk_Fwd.usda@]
+)
+
+over "TutorialTPP"
+{
+    over "Skel"
+    {
+        rel skel:animationSource = </Tutorial_Walk_Fwd>
+    }
+}

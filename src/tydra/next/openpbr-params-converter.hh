@@ -38,6 +38,15 @@ inline bool BuildRealtimePbrMaterial(
     const PreviewSurfaceShader &s = *rm.preview_surface;
     CopyShaderParam3ToOpenPBR(s.diffuse_color, p.baseColor);
     CopyShaderParam3ToOpenPBR(s.specular_color, p.specularColor);
+    // UsdPreviewSurface consults inputs:specularColor only when
+    // useSpecularWorkflow is on, and its schema fallback is (0,0,0). Carrying
+    // that zero into the packed block tinted the whole specular lobe to black
+    // in the default metallic workflow, which removed the specular response
+    // (and made roughness unobservable) for every preview-surface material.
+    // A bound texture is a multiplicative fallback, so neutralise it there too.
+    if (!s.use_specular_workflow || s.specular_color.texture_id >= 0) {
+      p.specularColor[0] = p.specularColor[1] = p.specularColor[2] = 1.0f;
+    }
     p.metalness = s.metallic.value.x;
     p.specularRoughness = s.roughness.value.x;
     p.specularIor = s.ior.value.x > 0.0f ? s.ior.value.x : 1.5f;
@@ -55,6 +64,7 @@ inline bool BuildRealtimePbrMaterial(
         &s.roughness, &s.clearcoat, &s.clearcoat_roughness, &s.opacity,
         &s.normal, &s.displacement, &s.occlusion});
     p.hasNormalInput = ShaderParamHasTexture(s.normal);
+    p.previewSurfaceMetallicWorkflow = !s.use_specular_workflow;
   } else if (rm.shader_type == RenderMaterial::ShaderType::OpenPBR &&
              rm.openpbr) {
     const OpenPBRSurfaceShader &s = *rm.openpbr;
@@ -77,9 +87,13 @@ inline bool BuildRealtimePbrMaterial(
     CopyShaderParam3ToOpenPBR(s.coat_color, p.coatColor);
     p.coatRoughness = s.coat_roughness.value.x;
     p.coatIor = s.coat_ior.value.x > 0.0f ? s.coat_ior.value.x : 1.5f;
-    p.sheenWeight = s.sheen_weight.value.x;
-    CopyShaderParam3ToOpenPBR(s.sheen_color, p.sheenColor);
-    p.sheenRoughness = s.sheen_roughness.value.x;
+    const ShaderParam& sheen_weight = s.fuzz_authored ? s.fuzz_weight : s.sheen_weight;
+    const ShaderParam& sheen_color = s.fuzz_authored ? s.fuzz_color : s.sheen_color;
+    const ShaderParam& sheen_roughness =
+        s.fuzz_authored ? s.fuzz_roughness : s.sheen_roughness;
+    p.sheenWeight = sheen_weight.value.x;
+    CopyShaderParam3ToOpenPBR(sheen_color, p.sheenColor);
+    p.sheenRoughness = sheen_roughness.value.x;
     p.thinFilmWeight = s.thin_film_weight.value.x;
     p.thinFilmThicknessNm = s.thin_film_thickness.value.x;
     p.thinFilmIor = s.thin_film_ior.value.x;
@@ -95,8 +109,8 @@ inline bool BuildRealtimePbrMaterial(
         &s.transmission_depth, &s.subsurface_weight, &s.subsurface_color,
         &s.subsurface_radius, &s.subsurface_scale, &s.coat_weight,
         &s.coat_color, &s.coat_roughness, &s.coat_ior, &s.sheen_weight,
-        &s.sheen_color,
-        &s.sheen_roughness, &s.thin_film_weight, &s.thin_film_thickness,
+        &s.sheen_color, &s.sheen_roughness, &s.fuzz_weight, &s.fuzz_color,
+        &s.fuzz_roughness, &s.thin_film_weight, &s.thin_film_thickness,
         &s.thin_film_ior, &s.emission_luminance, &s.emission_color,
         &s.opacity, &s.thin_walled, &s.normal, &s.coat_normal,
         &s.displacement});

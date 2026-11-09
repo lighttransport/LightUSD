@@ -114,7 +114,7 @@ layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
   int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
-  int ptexRectTexelOffset; int ptexFaceCount;
+  int ptexRectTexelOffset; int ptexFaceCount; int ptexMipLevels;
   int mipCount; int firstMip;
   int imageSlot;
   int udimLayer[100];
@@ -718,7 +718,7 @@ vec2 ptexAtlasUv(RtTexDesc td, vec2 uv, uint face) {
   if (td.isPtex == 0 || face >= uint(td.ptexFaceCount)) return uv;
   uint values[4];
   for (uint c = 0u; c < 4u; ++c) {
-    uint lo = uint(td.ptexRectTexelOffset) + face * 8u + c * 2u;
+    uint lo = uint(td.ptexRectTexelOffset) + face * 10u + c * 2u;
     uint a = (texelWords[uint(td.offset / 4) + lo] >> 24u) & 255u;
     uint b = (texelWords[uint(td.offset / 4) + lo + 1u] >> 24u) & 255u;
     values[c] = a | (b << 8u);
@@ -759,20 +759,21 @@ vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
   // the CPU before this shader is selected.  Keeping this tiny lowering here
   // avoids instantiating the 64-node interpreter (and its very expensive
   // driver JIT) for ordinary MaterialX texture materials.
-  const uint STRIDE = 1394u;
+  const uint STRIDE = 1395u;
   uint base = mid * STRIDE;
-  if (base + 44u >= uint(graphRows.length()) || route < 0 || route > 43)
+  if (route < 0 || route >= 49 ||
+      base + 1u + uint(route) >= uint(graphRows.length()))
     return vec4(0.0);
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   if (wanted < 0 || wanted >= count) return vec4(0.0);
-  uint p = base + 50u + uint(wanted) * 21u;
+  uint p = base + 51u + uint(wanted) * 21u;
   int op = int(graphRows[p] + 0.5);
   bool normalMap = op == 3;
   if (normalMap) {
     wanted = int(graphRows[p + 1u] + 0.5);
     if (wanted < 0 || wanted >= count) return vec4(0.0);
-    p = base + 50u + uint(wanted) * 21u;
+    p = base + 51u + uint(wanted) * 21u;
     op = int(graphRows[p] + 0.5);
   }
   if (op != 1 && op != 2) return vec4(0.0);
@@ -796,9 +797,10 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
                                float sceneTime, float sceneFrame,
                                MeshDesc geomMesh, uint geomI0, uint geomI1,
                                uint geomI2, vec2 geomBc) {
-  const uint STRIDE = 1394u;
+  const uint STRIDE = 1395u;
   uint base = mid * STRIDE;
-  if (base + 44u >= uint(graphRows.length()) || route < 0 || route > 43) return vec4(0.0);
+  if (route < 0 || route >= 49 ||
+      base + 1u + uint(route) >= uint(graphRows.length())) return vec4(0.0);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
@@ -806,7 +808,7 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
   // The CPU packer guarantees dependency-first order. One runtime-bounded pass
   // avoids the former fixed-point nest and its pathological driver-JIT cost.
   [[dont_unroll]] for (int i = 0; i < count; ++i) {
-      uint p = base + 50u + uint(i) * 21u;
+      uint p = base + 51u + uint(i) * 21u;
       int op = int(graphRows[p] + 0.5);
       int a = int(graphRows[p + 1u] + 0.5);
       int b = int(graphRows[p + 2u] + 0.5);
@@ -950,14 +952,14 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
         v[i] = vec4(0.5, 0.5, 1.0, 1.0);
         int source = a;
         for (int hop = 0; hop < 4 && source >= 0 && source < count; ++hop) {
-          uint qp = base + 50u + uint(source) * 21u;
+          uint qp = base + 51u + uint(source) * 21u;
           int qop = int(round(graphRows[qp]));
           if (qop == 45 || qop == 46)
             source = int(floor(graphRows[qp + 1u] + 0.5));
           else break;
         }
         if (source >= 0 && source < count) {
-          uint sp = base + 50u + uint(source) * 21u;
+          uint sp = base + 51u + uint(source) * 21u;
           int sourceOp = int(round(graphRows[sp]));
           int sourceTexture = int(floor(graphRows[sp + 16u] + 0.5));
           if ((sourceOp == 1 || sourceOp == 2) && sourceTexture >= 0 &&
@@ -1335,7 +1337,7 @@ bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
     alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
              fetchCol(cbuff, i2).a * bc.y;
   }
-  uint gb = mid * 1394u;
+  uint gb = mid * 1395u;
   if (gb + 4u < uint(graphRows.length()) && graphRows[gb + 4u] >= 0.0)
     alpha = evalMaterialXGraph(mid, 3, uv0, uv1, uint(max(prim, 0))).x *
             ii.tint.a;
@@ -1391,7 +1393,7 @@ float materialOpacityAtHit(uint iid, int prim, vec2 bc, bool frontFace,
     alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
              fetchCol(cbuff, i2).a * bc.y;
   }
-  uint gb = mid * 1394u;
+  uint gb = mid * 1395u;
   if (gb + 4u < uint(graphRows.length()) && graphRows[gb + 4u] >= 0.0)
     alpha = evalMaterialXGraph(mid, 3, uv0, uv1, uint(max(prim, 0))).x *
             ii.tint.a;
@@ -1489,7 +1491,7 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
       emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
     }
     uint face = uint(max(prim, 0));
-    uint gb = mid * 1394u;
+    uint gb = mid * 1395u;
     if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 1u] >= 0.0)
         base = evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb;
@@ -1809,7 +1811,8 @@ struct PtSurface {
   float metallic; float roughness; float transmission; float ior;
   float subsurface; float specularWeight;
   float coatWeight; float coatRoughness; float coatIor;
-  float sheenWeight; float sheenRoughness; float subsurfaceAnisotropy;
+  float sheenWeight; float sheenRoughness;
+  float subsurfaceAnisotropy; float subsurfaceScatterAnisotropy;
   float anisotropy; float anisotropyRotation;
   float coatAnisotropy; float coatRotation;
   float thinFilmWeight; float thinFilmThickness; float thinFilmIor;
@@ -1869,7 +1872,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   s.ior = 1.5; s.subsurface = 0.0; s.specularWeight = 1.0;
   s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
   s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
-  s.subsurfaceAnisotropy = 0.0;
+  s.subsurfaceAnisotropy = 0.0; s.subsurfaceScatterAnisotropy = 0.0;
   s.anisotropy = 0.0; s.anisotropyRotation = 0.0;
   s.coatAnisotropy = 0.0; s.coatRotation = 0.0;
   s.thinFilmWeight = 0.0; s.thinFilmThickness = 0.0; s.thinFilmIor = 1.5;
@@ -1924,7 +1927,8 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     s.coatRoughness = clamp(lrt(mid, 11u).x, 0.02, 1.0);
     s.coatIor = max(lrt(mid, 11u).y, 1.0001);
     s.sheenRoughness = clamp(lrt(mid, 11u).z, 0.02, 1.0);
-    s.subsurfaceAnisotropy = clamp(lrt(mid, 16u).x, -0.95, 0.95);
+    s.subsurfaceAnisotropy = clamp(lrt(mid, 15u).w, -0.95, 0.95);
+    s.subsurfaceScatterAnisotropy = clamp(lrt(mid, 16u).x, -0.95, 0.95);
     s.anisotropy = clamp(lrt(mid, 14u).y + 0.5 * lrt(mid, 14u).w,
                          -0.95, 0.95);
     s.anisotropyRotation = lrt(mid, 14u).z;
@@ -1940,14 +1944,14 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     s.volumeDensity = max(lrt(mid, 18u).w, 0.0);
     s.volumeEmission = max(lrt(mid, 19u).rgb * lrt(mid, 19u).w, vec3(0.0));
   }
-  uint gb = mid * 1394u, face = uint(max(prim, 0));
+  uint gb = mid * 1395u, face = uint(max(prim, 0));
 #if !LUSDVIEW_RT_DISABLE_MTLX
 #define evalMaterialXGraph(mid_, route_, uv0_, uv1_, face_)                  \
   evalMaterialXGraphContext(mid_, route_, uv0_, uv1_, face_, s.n, s.p,      \
                             normalize(pc.camPos.xyz - s.p),                  \
                             pc.context.x, pc.context.y, md, i0, i1, i2, bc)
 #endif
-  if (gb + 9u < uint(graphRows.length())) {
+  if (gb + 49u < uint(graphRows.length())) {
     if (graphRows[gb + 1u] >= 0.0)
       s.base = max(evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb, vec3(0.0));
     if (graphRows[gb + 2u] >= 0.0)
@@ -1998,6 +2002,12 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
                                0.02, 1.0);
     if (graphRows[gb + 20u] >= 0.0)
       s.ior = max(evalMaterialXGraph(mid, 19, uv0, uv1, face).x, 1.0001);
+    if (graphRows[gb + 27u] >= 0.0)
+      s.subsurfaceAnisotropy = clamp(
+          evalMaterialXGraph(mid, 26, uv0, uv1, face).x, -0.95, 0.95);
+    if (graphRows[gb + 49u] >= 0.0)
+      s.subsurfaceScatterAnisotropy = clamp(
+          evalMaterialXGraph(mid, 48, uv0, uv1, face).x, -0.95, 0.95);
   }
 #if !LUSDVIEW_RT_DISABLE_MTLX
 #undef evalMaterialXGraph
@@ -2659,10 +2669,13 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
           sqrt(vec3(9.59217) + vec3(41.6808) * color +
                vec3(17.7126) * color * color);
       vec3 similarity2 = similarity * similarity;
+      float scatterG = clamp(s.subsurfaceAnisotropy +
+                                 0.5 * s.subsurfaceScatterAnisotropy,
+                             -0.95, 0.95);
       subsurfaceAlbedo = clamp((vec3(1.0) - similarity2) /
-          max(vec3(1.0) - s.subsurfaceAnisotropy * similarity2,
-              vec3(1.0e-6)), vec3(0.0), vec3(0.999999));
-      subsurfaceG = s.subsurfaceAnisotropy;
+          max(vec3(1.0) - scatterG * similarity2, vec3(1.0e-6)),
+          vec3(0.0), vec3(0.999999));
+      subsurfaceG = scatterG;
       ro = s.p - s.n * 1.0e-4;
       rd = ptCosineDirection(-s.n, seed);
       throughput *= max(weight, vec3(0.0));
@@ -3170,7 +3183,7 @@ void main() {
       }
 
 #if !LUSDVIEW_RT_FAST_MATERIAL
-      uint graphBase = mid * 1394u;
+      uint graphBase = mid * 1395u;
       if (graphBase + 20u < uint(graphRows.length())) {
         if (graphRows[graphBase + 1u] >= 0.0)
           base = evalMaterialXGraph(mid, 0, uv0h, uv1h, sourceFace).rgb;
@@ -3331,8 +3344,24 @@ void main() {
     else if (rmode == 39) outc = clamp(materialF0, 0.0, 1.0);
     else if (rmode == 40) outc = vec3(f0 * f0);
     else if (rmode == 3) outc = idColor(mid);
+    else if (rmode == 4) {
+      vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
+      if (dot(Ng, dir) > 0.0) Ng = -Ng;
+      outc = Ng * 0.5 + 0.5;
+    }
     else if (rmode == 5) outc = vec3(fract(uv0h), 0.0);
+    else if (rmode == 6) {
+      // Match the full shader and raster's camera-distance diagnostic. Leaving
+      // this mode out made every triangle keep the background color.
+      float d = clamp(length(pc.camPos.xyz - hit) /
+                      max(pc.lightDir.w, 1e-3), 0.0, 1.0);
+      outc = vec3(1.0 - d);
+    }
     else if (rmode == 7) outc = base;
+    else if (rmode == 8) {
+      outc = dot(cross(wp1 - wp0, wp2 - wp0), dir) < 0.0
+                 ? vec3(0.1, 0.7, 0.1) : vec3(0.7, 0.1, 0.1);
+    }
     else if (rmode == 9) outc = vec3(roughness);
     else if (rmode == 10) outc = vec3(metallic);
     else if (rmode == 11) outc = emissive;
@@ -3707,7 +3736,7 @@ void main() {
       }
     }
     if (hasMaterial(ii) && mid != 0xffffffffu) {
-      uint gb = mid * 1394u;
+      uint gb = mid * 1395u;
       if (gb + 9u < uint(graphRows.length())) {
         if (graphRows[gb + 1u] >= 0.0)
           base = evalMaterialXGraph(uint(mid), 0, uv0h, uv1h, sourceFace).rgb;

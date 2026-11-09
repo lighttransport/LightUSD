@@ -49,7 +49,7 @@ def test_zero_copy_view_under_5ms():
     a = np.asarray(arr)
     t_view = (time.perf_counter() - t0) * 1000
     # zero-copy: same pointer, no copy time
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     assert a.shape == (n, 3)
     print(f"[perf] view {t_view:.2f} ms for n={n} (expect <5 ms)")
     assert t_view < 5.0, f"zero-copy view too slow: {t_view:.2f} ms"
@@ -138,7 +138,7 @@ def test_tydra_zero_copy_after_flatten(tmp_path):
     assert len(scene.meshes) == 1
     a = np.asarray(scene.meshes[0].points)
     # tydra mesh also zero-copy
-    assert a.__array_interface__["data"][0] == scene.meshes[0].points.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(scene.meshes[0].points).__array_interface__["data"][0]
     print(f"[perf] tydra points {a.shape} zero-copy ok")
 
 

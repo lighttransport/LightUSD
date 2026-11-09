@@ -13,14 +13,17 @@
 
 #pragma once
 
-#include "../parser/ascii-parser.hh"
+#include "../crate/crate-limits.hh"
+#include "../parser/parse-options.hh"
 #include "arc-types.hh"
 #include "../composition/expression-variables.hh"
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
 #include "../strfmt.hh"
+#include "core/security-policy.hh"
 
+#include "core/host-services.hh"
 #include <deque>
 #include <functional>
 #include <map>
@@ -92,6 +95,10 @@ struct StackRelocates {
 /// and is refcount-shared across every node/index that uses it (parse-once).
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
+  // Layers containing clip metadata need ancestral opinions during value
+  // composition, including layers with no spec at the requested child path.
+  std::vector<bool> layer_has_value_clips;
+  bool has_value_clips = false;
   std::vector<std::string> layer_identifiers;  // resolved id for each layer
   // Per-layer time offset RELATIVE TO THE STACK ROOT, accumulated through
   // nested sublayer `(offset = ..; scale = ..)` annotations. Parallel to
@@ -105,6 +112,24 @@ struct LayerStack {
   // expressions can resolve differently). Equals `identifier` when no
   // variables were inherited.
   std::string cache_key;
+  // For USDA inline variant-content stacks, retain the introducing site.
+  // Stable keys survive parallel cache adoption without index remapping.
+  std::string variant_owner_key;
+  std::string variant_owner_site;
+  // Provenance of a variant-content stack, for pxr-style site spelling
+  // (`/Owner{set=name}child`) in diagnostics (Cache::GetPrimStack /
+  // GetPropertyStack). `variant_owner_stack` is the stack hosting the owner
+  // site (itself possibly variant content for nested sets); UINT32_MAX for
+  // every non-variant stack. `variant_authoring_layer` is the resolved id of
+  // the layer whose spec authored the selected option.
+  uint32_t variant_owner_stack = 0xFFFFFFFFu;
+  std::string variant_set_name;
+  std::string variant_name;
+  // `{set=name}` with the enclosing nested selections in front, e.g.
+  // `{standin=anim}{shadingVariant=spooky}` for an option nested inside an
+  // option (pxr spells nested variant sites that way).
+  std::string variant_selection;
+  std::string variant_authoring_layer;
   LayerOffset offset;                           // cumulative time offset to root
   // Variables authored by this stack, composed weakest-to-strongest.
   Value expression_variables;
@@ -204,10 +229,31 @@ struct CompositionOptions {
   // Zero selects the library default. Smaller values improve load balance;
   // larger values reduce scheduler/atomic overhead.
   size_t opinion_batch_size = 0;
+  // When true, BuildStage frees each prim's cached composition sources as
+  // soon as its opinions are filled and drops the sources cache afterwards,
+  // so the transient compose state does not coexist in full with the finished
+  // stage (reference scene: ~400 MB lower peak RSS). Composed output is unaffected; a
+  // later per-prim query (GetPropertyStack, ComputePrimIndex, ...) re-resolves
+  // the sources it needs instead of hitting the cache. Off by default so a
+  // long-lived Cache (e.g. a StageSession with full cache retention) stays
+  // warm; the one-shot ComposeStageFromLayer/File always enable it.
+  bool release_build_sources = false;
+
+  // Experimental (LIGHTUSD_NEXT_DEFERRED_FILL builds only): build the stage
+  // as a skeleton layer and compose each prim's opinions on demand through
+  // the layer's PrimFiller (the USDC writer fills, encodes and releases prim
+  // by prim). For a stage that is written once (flatten to USDC). Ignored
+  // otherwise, for the ExtractedPrototypes instance mode, and for stages
+  // under 64 K prims (filled eagerly).
+  bool defer_opinion_fill = false;
 
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
+  size_t max_array_elements = size_t(16) * 1024 * 1024;
+  size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
+  // USDC structural table-count limits forwarded to every crate layer load.
+  CrateLimits usdc_limits = {};
 
   // USDC backing policy for every file-backed layer loaded by PCP. With both
   // enabled, lazy array Values retain shared mmap-backed CrateDataSources as
@@ -225,6 +271,20 @@ struct CompositionOptions {
   // read so the composition core takes no implicit process-environment input;
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;
+
+  // ComposeStageFromLayer/File: free the composition cache (source layers,
+  // sources, instancing maps) on a background thread instead of before
+  // returning, so the caller's next step (e.g. the write) overlaps it. Call
+  // pcp::WaitForBackgroundReclaim() before tearing down the process. Threaded
+  // builds only; otherwise the reclaim stays synchronous.
+  bool background_reclaim = false;
+
+  // With release_build_sources (ComposeStageFromLayer/File): free each source
+  // layer's prims during the opinion fill once the fill is past the last prim
+  // whose sources read it, instead of keeping every layer until the cache
+  // dies. Lowers the composition peak; the layers are unusable afterwards
+  // (root layer stack excluded). Threaded builds only.
+  bool release_layers_during_fill = false;
 
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
@@ -260,6 +320,8 @@ struct CompositionOptions {
   /// the inner map is variantSet -> selection. An exact path-scoped override
   /// wins over the global variant_overrides entry for the same set.
   VariantSelectionMap variant_overrides_by_path;
+  // Optional allocator trimming, explicitly supplied by the application.
+  std::shared_ptr<const HostServices> host_services;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

@@ -8,6 +8,6 @@ mkdir build_msvc26
 
 call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
 
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -Bbuild_msvc26 -H.
+cmake -DLIGHTUSD_NATIVE_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -Bbuild_msvc26 -H.
 
 cmake --build build_msvc26 --parallel

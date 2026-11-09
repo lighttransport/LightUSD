@@ -50,7 +50,7 @@ jobs:
       - name: Configure WASM32
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+          emcmake cmake -S web -B web/cmake-build -DLIGHTUSD_WASM_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
 
       - name: Build WASM32
         run: |
@@ -60,7 +60,7 @@ jobs:
       - name: Configure WASM64
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=1
+          emcmake cmake -S web -B web/cmake-build64 -DLIGHTUSD_WASM_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=1
 
       - name: Build WASM64
         run: |

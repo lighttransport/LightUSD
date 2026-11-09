@@ -30,6 +30,9 @@ inline std::string FormatMilliseconds(double ms) {
 inline bool IsPathAtOrUnder(const std::string& child,
                             const std::string& base) {
   if (child == base) return true;
+  // The pseudo-root already ends in a separator. Requiring another one would
+  // miss every descendant when a batch's common ancestor is "/".
+  if (base == "/") return !child.empty() && child[0] == '/';
   return child.size() > base.size() &&
          child.compare(0, base.size(), base) == 0 && child[base.size()] == '/';
 }

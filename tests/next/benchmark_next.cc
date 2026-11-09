@@ -17,13 +17,13 @@
 #include <unistd.h>
 #endif
 
-#include "next/lightusd-next.hh"
 #include "next/layer/layer.hh"
 #include "next/pcp/prim-index.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace lightusd::next;
@@ -448,8 +448,8 @@ int print_memstats(int num_prims) {
   printf("LightUSD Next - Memory Stats\n");
   printf("sizeof(Value)=%zu\n", sizeof(Value));
   printf("sizeof(PrimSpec)=%zu\n", sizeof(PrimSpec));
-  printf("sizeof(PrimSpecMeta)=%zu\n", sizeof(PrimSpecMeta));
-  printf("sizeof(PrimSpecMetaExt)=%zu\n", sizeof(PrimSpecMetaExt));
+  printf("sizeof(PrimMetadata)=%zu\n", sizeof(PrimMetadata));
+  printf("sizeof(PrimMetadataCold)=%zu\n", sizeof(PrimMetadataCold));
   printf("sizeof(pcp::CompNode)=%zu\n", sizeof(pcp::CompNode));
 
   Layer layer;

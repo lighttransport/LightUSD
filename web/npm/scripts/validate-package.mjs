@@ -27,10 +27,35 @@ const REQUIRED_STAGED_FILES = [
   'lightusd_next_64.js',
   'lightusd_next_64.wasm',
   'lightusd_next_64.wasm.zst',
+  'lightusd_geometry.js',
+  'lightusd_geometry.wasm',
+  'lightusd_geometry.wasm.zst',
+  'lightusd_geometry_64.js',
+  'lightusd_geometry_64.wasm',
+  'lightusd_geometry_64.wasm.zst',
+  'lightusd_raytrace.js',
+  'lightusd_raytrace.wasm',
+  'lightusd_raytrace.wasm.zst',
+  'lightusd_raytrace_64.js',
+  'lightusd_raytrace_64.wasm',
+  'lightusd_raytrace_64.wasm.zst',
+  'lightusd_validator.js',
+  'lightusd_validator.wasm',
+  'lightusd_validator.wasm.zst',
+  'lightusd_validator_64.js',
+  'lightusd_validator_64.wasm',
+  'lightusd_validator_64.wasm.zst',
+  'lightusd_exr.js',
+  'lightusd_exr.wasm',
+  'lightusd_exr.wasm.zst',
+  'lightusd_exr_64.js',
+  'lightusd_exr_64.wasm',
+  'lightusd_exr_64.wasm.zst',
   'LightUSDLoader.js',
   'LightUSDLoaderUtils.js',
   'LightUSDWorkerLoader.js',
   'usdzconvert.js',
+  'udim-bake.js',
   'texture-memory-budget.mjs'
 ];
 
@@ -116,11 +141,16 @@ assert.equal(require.resolve('lightusd/lightusd_next_64.wasm').endsWith('lightus
 assert.equal(require.resolve('lightusd/lightusd_next_64.wasm.zst').endsWith('lightusd_next_64.wasm.zst'), true);
 
 // Instantiate the lean next-only modules (wasm32 + wasm64) and check the
-// embind API surface used by the next-first LightUSDLoader.
+// C API surface and independently linked features used by the next-first loader.
 for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
   const factory = (await import(nextModule)).default;
   assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
   const instance = await factory();
+  for (const name of ['geometry', 'raytrace', 'validator', 'exr']) {
+    const feature = await instance.loadFeature(name);
+    assert.notEqual(feature.HEAPU8.buffer, instance.HEAPU8.buffer);
+    assert.deepEqual(feature.featureInfo, instance.featureInfo);
+  }
   for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
     assert.equal(typeof instance[api], 'function', nextModule + ' exposes ' + api);
   }

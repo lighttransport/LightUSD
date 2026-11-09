@@ -1,3 +1,34 @@
+/* LightUSD patch: select the large-file (64-bit) stdio entry points.
+ *
+ * glibc only declares fopen64/ftello64/fseeko64/stat64 when
+ * _LARGEFILE64_SOURCE is defined, and __USE_LARGEFILE64 -- which the
+ * file-I/O dispatch below keys off -- is likewise gated on it. Without
+ * this, every glibc build silently fell through to the un-suffixed
+ * fallback and emitted a "#pragma message" about limited large-file
+ * support. These are feature-test macros, so they must be set before
+ * the first header include.
+ *
+ * 32-bit wasm is the one target that genuinely has no 64-bit stdio API
+ * (off_t is 32-bit), so it keeps the plain ftell()/fseek() path.
+ *
+ * The target test below deliberately avoids __GLIBC__: that macro is only
+ * predefined once a libc header has been included, so it is always false
+ * here. Requesting _LARGEFILE64_SOURCE on every target except 32-bit wasm
+ * is harmless where it is unsupported (MSVC ignores it) and is what
+ * actually flips __USE_LARGEFILE64 on for glibc and declares __stat64 /
+ * _wstat64 for mingw-w64.
+ */
+#if !defined(MINIZ_NO_STDIO) && \
+    !defined(__EMSCRIPTEN__) && \
+    !(defined(__wasm__) && !defined(__wasm64__))
+#  ifndef _LARGEFILE64_SOURCE
+#    define _LARGEFILE64_SOURCE 1
+#  endif
+#  ifndef _LARGEFILE_SOURCE
+#    define _LARGEFILE_SOURCE 1
+#  endif
+#endif
+
 #include "miniz.h"
 /**************************************************************************
  *
@@ -3098,7 +3129,7 @@ static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
   return err ? NULL : pFile;
 }
 
-#if defined(__MINGW32__)
+#if defined(__MINGW32__) && !defined(__MINGW64__)
 static int mz_stat(const char *path, struct _stat *buffer)
 {
   WCHAR* wPath = mz_utf8z_to_widechar(path);
@@ -3125,7 +3156,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #define MZ_FWRITE fwrite
 #define MZ_FTELL64 _ftelli64
 #define MZ_FSEEK64 _fseeki64
-#if defined(__MINGW32__)
+#if defined(__MINGW32__) && !defined(__MINGW64__)
 #define MZ_FILE_STAT_STRUCT _stat
 #define MZ_FILE_STAT mz_stat
 #else
@@ -3168,7 +3199,25 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #define MZ_FREOPEN(f, m, s) freopen(f, m, s)
 #define MZ_DELETE_FILE remove
 
-#elif defined(__USE_LARGEFILE64) /* gcc, clang */
+#elif defined(__EMSCRIPTEN__) || (defined(__wasm__) && !defined(__wasm64__))
+/* 32-bit wasm: off_t is 32-bit and libc exposes no LFS-suffixed entry
+ * points, so the plain 32-bit stdio API is the correct (and only) choice. */
+#ifndef MINIZ_NO_TIME
+#include <utime.h>
+#endif
+#define MZ_FOPEN(f, m) fopen(f, m)
+#define MZ_FCLOSE fclose
+#define MZ_FREAD fread
+#define MZ_FWRITE fwrite
+#define MZ_FTELL64 ftell
+#define MZ_FSEEK64 fseek
+#define MZ_FILE_STAT_STRUCT stat
+#define MZ_FILE_STAT stat
+#define MZ_FFLUSH fflush
+#define MZ_FREOPEN(f, m, s) freopen(f, m, s)
+#define MZ_DELETE_FILE remove
+
+#elif defined(__USE_LARGEFILE64) /* gcc, clang with _LARGEFILE64_SOURCE */
 #ifndef MINIZ_NO_TIME
 #include <utime.h>
 #endif
@@ -3201,7 +3250,9 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #define MZ_DELETE_FILE remove
 
 #else
-#pragma message("Using fopen, ftello, fseeko, stat() etc. path for file I/O - this path may not support large files.")
+/* Remaining POSIX targets (musl, Solaris, ...): off_t is 64-bit there, so
+ * the unsuffixed fopen/ftello/fseeko/stat entry points are already
+ * large-file capable. */
 #ifndef MINIZ_NO_TIME
 #include <utime.h>
 #endif

@@ -11,6 +11,7 @@
 #include "nonstd/optional.hpp"
 #include "path.hh"
 #include "attr-metas.hh"
+#include "prim-enums.hh"
 #include "animatable.hh"
 #include "value-types.hh"
 
@@ -190,7 +191,23 @@ class TypedAttribute {
     return _actual_type_name;
   }
 
+
+  // Authored `uniform` qualifier. The typed wrappers model a schema property's
+  // VALUE; variability is authored data that pxr stores per spec, so keep it
+  // here for the writer (a `uniform` opinion silently becoming `varying` makes
+  // an intentionally constant attribute animatable, and pxr prints the
+  // difference). `has_variability()` is false when the layer said nothing, so
+  // the writer can fall back to the schema default instead of inventing one.
+  void set_variability(Variability v) {
+    _variability = v;
+    _variability_authored = true;
+  }
+  Variability variability() const { return _variability; }
+  bool has_variability() const { return _variability_authored; }
+
  private:
+  Variability _variability{Variability::Varying};
+  bool _variability_authored{false};
   AttrMeta _metas;
   bool _value_empty{false};  // applies `_attrib`
   std::vector<Path> _paths;
@@ -236,7 +253,23 @@ class TypedTerminalAttribute {
   const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
   AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
+
+  // Authored `uniform` qualifier. The typed wrappers model a schema property's
+  // VALUE; variability is authored data that pxr stores per spec, so keep it
+  // here for the writer (a `uniform` opinion silently becoming `varying` makes
+  // an intentionally constant attribute animatable, and pxr prints the
+  // difference). `has_variability()` is false when the layer said nothing, so
+  // the writer can fall back to the schema default instead of inventing one.
+  void set_variability(Variability v) {
+    _variability = v;
+    _variability_authored = true;
+  }
+  Variability variability() const { return _variability; }
+  bool has_variability() const { return _variability_authored; }
+
  private:
+  Variability _variability{Variability::Varying};
+  bool _variability_authored{false};
   AttrMeta _metas;
   bool _authored{false};
   std::string _actual_type_name;
@@ -389,7 +422,23 @@ class TypedAttributeWithFallback {
     return _actual_type_name;
   }
 
+
+  // Authored `uniform` qualifier. The typed wrappers model a schema property's
+  // VALUE; variability is authored data that pxr stores per spec, so keep it
+  // here for the writer (a `uniform` opinion silently becoming `varying` makes
+  // an intentionally constant attribute animatable, and pxr prints the
+  // difference). `has_variability()` is false when the layer said nothing, so
+  // the writer can fall back to the schema default instead of inventing one.
+  void set_variability(Variability v) {
+    _variability = v;
+    _variability_authored = true;
+  }
+  Variability variability() const { return _variability; }
+  bool has_variability() const { return _variability_authored; }
+
  private:
+  Variability _variability{Variability::Varying};
+  bool _variability_authored{false};
   AttrMeta _metas;
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;

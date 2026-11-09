@@ -128,7 +128,7 @@ def test_large_scene_lightweight_measure():
         if "points" in prim:
             arr = prim["points"]
             a = np.asarray(arr)
-            assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+            assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
             assert a.nbytes == arr.nbytes
             print(f"[large] zero-copy verified {prim.path} points {a.shape} {a.dtype}")
             break
@@ -143,7 +143,7 @@ def test_large_scene_lightweight_measure():
             m = scene.meshes[0]
             if m.points is not None:
                 a2 = np.asarray(m.points)
-                assert a2.__array_interface__["data"][0] == m.points.__array_interface__["data"][0]
+                assert np.asarray(a2).__array_interface__["data"][0] == np.asarray(m.points).__array_interface__["data"][0]
                 print(f"[large] tydra zero-copy mesh {m.prim_path} points {a2.shape}")
     except Exception as e:
         pytest.skip(f"tydra conversion failed (expected for some large scenes): {e}")
@@ -184,7 +184,7 @@ def test_large_scene_individual_elements(scene_name):
         if "points" in prim:
             arr = prim["points"]
             a = np.asarray(arr)
-            assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+            assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
             break
     st.close()
 
@@ -211,7 +211,7 @@ def test_synthetic_stress_zero_copy_and_timing():
     t_load = time.perf_counter() - t0
     arr = st2.prim_at("/Stress")["points"]
     a = np.asarray(arr)
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     assert a.shape == (n, 3)
     # Tydra
     t0 = time.perf_counter()
@@ -221,4 +221,4 @@ def test_synthetic_stress_zero_copy_and_timing():
     # Ensure tydra mesh also zero-copy
     if scene.meshes and scene.meshes[0].points is not None:
         am = np.asarray(scene.meshes[0].points)
-        assert am.__array_interface__["data"][0] == scene.meshes[0].points.__array_interface__["data"][0]
+        assert np.asarray(am).__array_interface__["data"][0] == np.asarray(scene.meshes[0].points).__array_interface__["data"][0]

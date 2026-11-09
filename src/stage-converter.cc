@@ -10,9 +10,11 @@
 #include "crate-writer.hh"
 #include "sconv-detail.hh"
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 #include "layer.hh"
 #include "common-macros.inc"
@@ -87,6 +89,14 @@ const std::map<std::string, Property> *GetShaderNodeProps(
   GET_SHADER_NODE_PROPS(UsdPrimvarReader_matrix)
   GET_SHADER_NODE_PROPS(OpenPBRSurface)
   GET_SHADER_NODE_PROPS(MtlxOpenPBRSurface)
+  // MaterialX standard_surface. Its `props` map holds every authored input
+  // that is not a typed field AND the `outputs:surface`/`outputs:out`
+  // declarations; without this entry they were silently dropped on write.
+  GET_SHADER_NODE_PROPS(MtlxAutodeskStandardSurface)
+  GET_SHADER_NODE_PROPS(MtlxUniformEdf)
+  GET_SHADER_NODE_PROPS(MtlxConicalEdf)
+  GET_SHADER_NODE_PROPS(MtlxMeasuredEdf)
+  GET_SHADER_NODE_PROPS(MtlxLight)
   GET_SHADER_NODE_PROPS(ShaderNode)  // generic fallback (info:id-only shaders)
 #undef GET_SHADER_NODE_PROPS
   return nullptr;
@@ -101,6 +111,9 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(Model)
   GET_PRIM_PROPS(Scope)
   GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(VolumeFieldBase)
+  GET_PRIM_PROPS(FieldBase)
+  GET_PRIM_PROPS(VolumeFieldAsset)
   GET_PRIM_PROPS(OpenVDBAsset)
   GET_PRIM_PROPS(Field3DAsset)
   GET_PRIM_PROPS(RenderSettings)
@@ -111,6 +124,9 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(GPrim)
   GET_PRIM_PROPS(GeomMesh)
   GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(VolumeFieldBase)
+  GET_PRIM_PROPS(FieldBase)
+  GET_PRIM_PROPS(VolumeFieldAsset)
   GET_PRIM_PROPS(FieldAsset)
   GET_PRIM_PROPS(OpenVDBAsset)
   GET_PRIM_PROPS(Field3DAsset)
@@ -274,10 +290,15 @@ const Collection *GetPrimCollection(const value::Value &v) {
     return static_cast<const Collection *>(p); \
   }
 
+  GET_PRIM_COLLECTION(Model)
+  GET_PRIM_COLLECTION(Scope)
   GET_PRIM_COLLECTION(Xform)
   GET_PRIM_COLLECTION(GPrim)
   GET_PRIM_COLLECTION(GeomMesh)
   GET_PRIM_COLLECTION(Volume)
+  GET_PRIM_COLLECTION(VolumeFieldBase)
+  GET_PRIM_COLLECTION(FieldBase)
+  GET_PRIM_COLLECTION(VolumeFieldAsset)
   GET_PRIM_COLLECTION(FieldAsset)
   GET_PRIM_COLLECTION(OpenVDBAsset)
   GET_PRIM_COLLECTION(Field3DAsset)
@@ -550,10 +571,14 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
 
   // Add layer-level relocates (AOUSD Core Spec 10.3.2.6). Stored as the crate
   // SdfRelocates value type (58); the writer bumps the crate version to 0.11.0.
+  //
+  // The crate FIELD is `layerRelocates` (renamed from the deprecated
+  // `relocates` in crate 0.11.0); pxr only decodes the new name into
+  // SdfLayer's relocates map, and renders the old one as an unformatted blob.
   if (!metas.layerRelocates.empty()) {
     crate::CrateValue relocates_value;
     relocates_value.Set(metas.layerRelocates);
-    root_fields.push_back({"relocates", relocates_value});
+    root_fields.push_back({"layerRelocates", relocates_value});
   }
 
   // Add primChildren listing root prim names
@@ -671,11 +696,9 @@ bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
     }
   }
 
-  if (const char* e = ::getenv("LIGHTUSD_FLATTEN_TIMING")) {
-    if (e[0] == '1') {
-      std::cerr << "[lightusd] parallel stage->specs: " << units.size()
-                << " units\n";
-    }
+  if (options_.profile_crate) {
+    std::cerr << "[lightusd] parallel stage->specs: " << units.size()
+              << " units\n";
   }
 
   // Run units on workers. Each worker redirects AddSpec into the unit's own
@@ -887,13 +910,22 @@ bool CrateWriter::ConvertSinglePrim(
     bool is_spline = false;
     bool is_conn = false;
     bool is_decl_type = false;
+    bool is_uniform_flag = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     const std::string spline_suffix = ".spline";
     const std::string conn_suffix = ".connect";
     const std::string decl_suffix = ".typeName";
-    if (base_name.size() > conn_suffix.size() &&
+    const std::string uniform_suffix = ".uniform";
+    if (base_name.size() > uniform_suffix.size() &&
+        base_name.compare(base_name.size() - uniform_suffix.size(),
+                          uniform_suffix.size(), uniform_suffix) == 0) {
+      // Authored `uniform` qualifier carried out of a typed attribute (see
+      // sconv_detail::EmitAttrVariability). `<name>.uniform = true/false`.
+      base_name = base_name.substr(0, base_name.size() - uniform_suffix.size());
+      is_uniform_flag = true;
+    } else if (base_name.size() > conn_suffix.size() &&
         base_name.compare(base_name.size() - conn_suffix.size(),
                           conn_suffix.size(), conn_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - conn_suffix.size());
@@ -965,6 +997,9 @@ bool CrateWriter::ConvertSinglePrim(
     if (is_conn) {
       entry->conn_val = std::move(fv.second);
       entry->has_conn = true;
+    } else if (is_uniform_flag) {
+      entry->variability_val = std::move(fv.second);
+      entry->has_variability = true;
     } else if (is_decl_type) {
       if (auto tok = fv.second.get_value<value::token>()) {
         entry->decl_type_name = tok.value().str();
@@ -1032,8 +1067,6 @@ bool CrateWriter::ConvertSinglePrim(
     "subdivisionScheme", "interpolateBoundary", "faceVaryingLinearInterpolation",
     "triangleSubdivisionRule",  // Mesh
     "elementType", "familyName",  // GeomSubset
-    "projection", "stereoRole",  // Camera
-    "type", "basis", "wrap",  // BasisCurves
     "joints", "jointNames", "bindTransforms", "restTransforms",  // Skeleton
     "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
@@ -1086,7 +1119,18 @@ bool CrateWriter::ConvertSinglePrim(
         (pe.name.size() > kFamilyTypeSuffix.size()) &&
         (pe.name.compare(pe.name.size() - kFamilyTypeSuffix.size(),
                          kFamilyTypeSuffix.size(), kFamilyTypeSuffix) == 0);
-    const bool is_uniform = kUniformProps.count(pe.name) || is_family_type;
+    // Authored variability wins; only fall back to the schema heuristics when
+    // the layer said nothing (typed attributes carry it via `.uniform`).
+    bool is_uniform = false;
+    if (pe.has_variability) {
+      bool authored_uniform = false;
+      if (auto ub = pe.variability_val.get_value<bool>()) {
+        authored_uniform = *ub;
+      }
+      is_uniform = authored_uniform;
+    } else {
+      is_uniform = kUniformProps.count(pe.name) || is_family_type;
+    }
 
     if (is_uniform && !pe.has_ts) {
       crate::CrateValue var_value;
@@ -1235,6 +1279,19 @@ bool CrateWriter::ConvertSinglePrim(
           if (err) *err = "Failed to add MtlxOpenPBRSurface input specs: " + *err;
           return false;
         }
+      } else if (auto* open_pbr = shader->value.as<OpenPBRSurface>()) {
+        // Plain OpenPBRSurface node (same input set as the MaterialX carrier).
+        if (!AddOpenPBRSurfaceInputSpecs(open_pbr, prim_path, err)) {
+          if (err) *err = "Failed to add OpenPBRSurface input specs: " + *err;
+          return false;
+        }
+      } else if (auto* mtlx_std = shader->value.as<MtlxAutodeskStandardSurface>()) {
+        // MaterialX standard_surface (`MtlxAutodeskStandardSurface` and
+        // `ND_standard_surface_surfaceshader`).
+        if (!AddMtlxAutodeskStandardSurfaceInputSpecs(mtlx_std, prim_path, err)) {
+          if (err) *err = "Failed to add MtlxAutodeskStandardSurface input specs: " + *err;
+          return false;
+        }
       }
     }
   }
@@ -1301,7 +1358,7 @@ bool CrateWriter::ConvertSinglePrim(
   // This covers ALL prim types and handles properties not extracted by type-specific handlers.
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
   // Re-emit Collection (`collection:<inst>:{includes,excludes,
-  // includeRoot,expansionRule}`) from the typed Collection storage.
+  // includeRoot,expansionRule,membershipExpression}`) from typed storage.
   // The reconstruct path consumed these from the props map and stored
   // them on `Collection::instances()`; without this re-emit, USDC
   // round-trip would drop them.
@@ -1314,6 +1371,26 @@ bool CrateWriter::ConvertSinglePrim(
         continue;
       }
       const std::string prefix = "collection:" + inst_name;
+
+      if (inst.membershipExpression.authored()) {
+        const auto &expr = inst.membershipExpression;
+        Attribute a;
+        a.variability() = Variability::Uniform;
+        a.set_type_name(expr.has_actual_type()
+                            ? expr.get_actual_type_name() : "pathExpression");
+        if (expr.has_value()) {
+          a.set_value(expr.get_value_ref().value());
+        }
+        a.set_blocked(expr.is_blocked());
+        a.metas() = expr.metas();
+        if (expr.has_connections()) {
+          a.set_connections(expr.get_connections());
+        }
+        if (!ConvertAttributeToFields(prefix + ":membershipExpression", a,
+                                      prim_path, /*is_custom=*/false, err)) {
+          return false;
+        }
+      }
 
       if (inst.includes.authored()) {
         std::string ce;
@@ -1357,7 +1434,13 @@ bool CrateWriter::ConvertSinglePrim(
       if (inst.includeRoot.authored()) {
         bool b = false;
         if (inst.includeRoot.get_value().get_scalar(&b)) {
-          Attribute a = Attribute::Uniform(b);
+          // UsdCollectionAPI declares includeRoot uniform, but keep the authored
+          // qualifier: a layer that wrote plain `bool ...:includeRoot` must not
+          // gain a `uniform` on write.
+          Attribute a = inst.includeRoot.has_variability() &&
+                                inst.includeRoot.variability() == Variability::Uniform
+                            ? Attribute::Uniform(b)
+                            : Attribute(b);
           a.set_type_name("bool");
           std::string ce;
           if (!ConvertAttributeToFields(prefix + ":includeRoot", a,
@@ -1886,19 +1969,30 @@ void CrateWriter::ExtractPrimMeta(
   auto convert_payload_listop = [](
       const std::vector<std::pair<ListEditQual, std::vector<Payload>>>& src) {
     ListOp<Payload> out;
+    // `payload = None` is an empty explicit list-op on the wire; a none-payload
+    // placeholder item would be written as a real (empty) payload and pxr
+    // would read back `payload = <>`. Drop such placeholders.
+    auto drop_none = [](const std::vector<Payload>& in) {
+      std::vector<Payload> kept;
+      kept.reserve(in.size());
+      for (const auto& p : in) {
+        if (!p.is_none()) kept.push_back(p);
+      }
+      return kept;
+    };
     for (const auto& op : src) {
       switch (op.first) {
         case ListEditQual::ResetToExplicit:
           out.ClearAndMakeExplicit();
-          out.SetExplicitItems(op.second);
+          out.SetExplicitItems(drop_none(op.second));
           break;
-        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
-        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
-        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
-        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        case ListEditQual::Append:  out.SetAppendedItems(drop_none(op.second)); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(drop_none(op.second)); break;
+        case ListEditQual::Add:     out.SetAddedItems(drop_none(op.second)); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(drop_none(op.second)); break;
         default:
           out.ClearAndMakeExplicit();
-          out.SetExplicitItems(op.second);
+          out.SetExplicitItems(drop_none(op.second));
           break;
       }
     }
@@ -1968,6 +2062,9 @@ bool CrateWriter::ExtractPrimProperties(
     GET_SPEC(Xform)
     GET_SPEC(GeomMesh)
     GET_SPEC(Volume)
+    GET_SPEC(VolumeFieldBase)
+    GET_SPEC(FieldBase)
+    GET_SPEC(VolumeFieldAsset)
     GET_SPEC(FieldAsset)
     GET_SPEC(OpenVDBAsset)
     GET_SPEC(Field3DAsset)
@@ -2070,6 +2167,12 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMeshProperties(prim, prim_path, fields, err);
   } else if (type_name == "Volume") {
     return ExtractVolumeProperties(prim, prim_path, fields, err);
+  } else if (type_name == "VolumeFieldBase") {
+    return ExtractVolumeFieldBaseProperties(prim, prim_path, fields, err);
+  } else if (type_name == "FieldBase") {
+    return ExtractFieldBaseProperties(prim, prim_path, fields, err);
+  } else if (type_name == "VolumeFieldAsset") {
+    return ExtractVolumeFieldAssetProperties(prim, prim_path, fields, err);
   } else if (type_name == "FieldAsset") {
     return ExtractFieldAssetProperties(prim, prim_path, fields, err);
   } else if (type_name == "OpenVDBAsset") {
@@ -2894,10 +2997,16 @@ bool CrateWriter::ConvertRelationshipToFields(
   };
 
   if (rel.is_blocked()) {
-    // Add ValueBlock for the relationship
-    crate::CrateValue blocked_value;
-    blocked_value.Set(value::ValueBlock());
-    rel_fields.push_back({"targetPaths", blocked_value});
+    // `<rel> = None` is an authored "no targets" opinion, which pxr stores as
+    // an explicit EMPTY PathListOp (`SdfPathListOp(Explicit Items: [])`), not
+    // as a ValueBlock. A ValueBlock on targetPaths is silently dropped by
+    // pxr's reader (usdcat printed a bare `rel material:binding`, losing the
+    // None), while the explicit empty list-op round-trips as `= None`.
+    crate::CrateValue empty_value;
+    ListOp<Path> listop;
+    listop.SetExplicitItems(std::vector<Path>{});
+    empty_value.Set(listop);
+    rel_fields.push_back({"targetPaths", empty_value});
   } else if (rel.is_path()) {
     crate::CrateValue path_value;
     ListOp<Path> listop;
@@ -3159,12 +3268,13 @@ bool CrateWriter::ConvertVariantToFields(
   DCOUT("[ConvertVariantToFields] Creating Variant spec: "
             << v_path.full_path_name());
 
-  // Variant spec contains variant metadata and prim children
+  // Variant spec contains variant metadata, properties and prim children
   crate::FieldValuePairVector v_fields;
 
-  // Add variant specifier (always "def" for variants)
+  // pxr writes every Variant spec as `over`: a variant statement is an
+  // overlay on the prim, never a new prim (its `def`s live in primChildren).
   crate::CrateValue spec_value;
-  spec_value.Set(Specifier::Def);
+  spec_value.Set(Specifier::Over);
   v_fields.push_back({"specifier", spec_value});
 
   // A variant statement carries its own Prim metadata block -- `active`,
@@ -3190,6 +3300,27 @@ bool CrateWriter::ConvertVariantToFields(
         if (err) *err = "Failed to convert variant relationship: " + prop_name;
         return false;
       }
+    }
+  }
+
+  // "properties" on the VARIANT spec: without it pxr never reaches the
+  // attribute/relationship specs below the variant -- the specs are in the
+  // crate, but `SdfVariantSpec::GetProperties()` (and therefore usdcat,
+  // sdfdump and anything composing through the variant) sees an empty
+  // variant. Our own reader walks spec paths, so round-trips never missed
+  // it; a pxr-written crate of the same layer always carries the field.
+  {
+    std::vector<value::token> property_tokens;
+    for (const auto& prop_item : variant.properties()) {
+      const auto& prop = prop_item.second;
+      if (prop.is_attribute() || prop.is_relationship()) {
+        property_tokens.push_back(value::token(prop_item.first));
+      }
+    }
+    if (!property_tokens.empty()) {
+      crate::CrateValue props_value;
+      props_value.Set(property_tokens);
+      v_fields.push_back({"properties", props_value});
     }
   }
 

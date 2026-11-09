@@ -58,6 +58,9 @@
   bool TryPassThrough(const Value& val, ValueRep* out_rep) {
     const LazyArrayRef* lr = val.lazy_ref();
     if (!lr || !lr->source) return false;
+    // Pass-through aliases the source bytes. A paged source has no resident
+    // buffer after parsing, so let the generic path materialize and re-encode.
+    if (!lr->source->can_borrow()) return false;
     // Need a known, in-bounds block (empty arrays / unknown layouts decline).
     if (lr->block_len == 0) return false;
     // Only self-contained numeric POD blocks (never token/string/asset/dict).
@@ -69,6 +72,22 @@
 
     const size_t sz = lr->source->size();
     if (lr->block_offset > sz || lr->block_len > sz - lr->block_offset) return false;
+
+    // Streaming write: a range already emitted (instance copies of one source
+    // array) resolves to its output offset without building a DataBlock (a
+    // shared_ptr copy) -- the same answer StreamInternBlock's cache gives.
+    // In worker mode the probe is skipped here (the commit thread owns the
+    // shared range table); the logged op replays the full probe + intern
+    // serially, byte-identically.
+    if (stream_values_ && !CurWorker()) {
+      if (const uint64_t* cached = stream_source_ranges_.find(
+              lr->source->identity(), lr->block_offset, lr->block_len)) {
+        ++blocks_deduped_;
+        *out_rep = ValueRep::Make(lr->crate_type, *cached, /*array=*/true,
+                                  /*inlined=*/false, lr->rep.is_compressed());
+        return true;
+      }
+    }
 
     // Reference the source block in place; bytes are copied to the output buffer
     // only at WriteValueSection time (no intermediate staging copy).

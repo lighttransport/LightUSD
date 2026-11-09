@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "cpu/ptex-sample.hh"
 #include "displacement_bake.hh"
 #include "ptex_atlas.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -216,10 +218,10 @@ void RunType(uint32_t type, uint16_t channels = 1) {
   if (rects.size() != 2) return;
   CHECK(rects[0].width == 4 && rects[0].height == 2);
   CHECK(rects[1].width == 2 && rects[1].height == 4);
-  CHECK(stats.rectTexelOffset + rects.size() * 8u <=
+  CHECK(stats.rectTexelOffset + rects.size() * 10u <=
         static_cast<size_t>(atlas.width) * atlas.height);
   for (uint32_t face = 0; face < rects.size(); ++face) {
-    const size_t base = stats.rectTexelOffset + face * 8u;
+    const size_t base = stats.rectTexelOffset + face * 10u;
     auto value = [&](size_t component) {
       const uint32_t lo = atlas.data[(base + component * 2u) * 4u + 3u];
       const uint32_t hi = atlas.data[(base + component * 2u + 1u) * 4u + 3u];
@@ -227,6 +229,7 @@ void RunType(uint32_t type, uint16_t channels = 1) {
     };
     CHECK(value(0) == rects[face].x && value(1) == rects[face].y);
     CHECK(value(2) == rects[face].width && value(3) == rects[face].height);
+    CHECK(value(4) == rects[face].baseMip);
     const auto pixel = [&](uint32_t x, uint32_t y, uint32_t channel) {
       return atlas.data[(size_t(y) * atlas.width + x) * 4u + channel];
     };
@@ -423,7 +426,8 @@ void RunMalformedTileTable() {
   std::vector<lusdview::DrawPtexFaceRectCPU> rects;
   CHECK(!lusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
                                   nullptr, &error));
-  CHECK(error.find("tile") != std::string::npos);
+  // tptex reports malformed containers as a generic corrupt-file status.
+  CHECK(!error.empty());
 }
 
 void RunPhysicalCacheReservation() {
@@ -463,11 +467,13 @@ void RunPhysicalCacheReservation() {
   encoded.y = 0x5678u;
   encoded.width = 0x9abcu;
   encoded.height = 0xdef0u;
-  uint8_t texels[8u * 4u];
+  encoded.baseMip = 0x1234u;
+  uint8_t texels[10u * 4u];
   lusdview::EncodePtexFaceRectTexels(encoded, texels);
-  const uint8_t expected[8] = {0x34u, 0x12u, 0x78u, 0x56u,
-                               0xbcu, 0x9au, 0xf0u, 0xdeu};
-  for (size_t i = 0; i < 8; ++i) {
+  const uint8_t expected[10] = {0x34u, 0x12u, 0x78u, 0x56u,
+                                0xbcu, 0x9au, 0xf0u, 0xdeu,
+                                0x34u, 0x12u};
+  for (size_t i = 0; i < 10; ++i) {
     CHECK(texels[i * 4u + 0u] == 0u);
     CHECK(texels[i * 4u + 1u] == 0u);
     CHECK(texels[i * 4u + 2u] == 0u);
@@ -523,6 +529,168 @@ void RunVirtualFallbackDownsample() {
   CHECK(rects[0].reserved == 1 || rects[1].reserved == 1);
   CHECK(atlas.data.size() <= options.maxAtlasBytes);
 }
+// The CPU preview samples per-face mips from the source with a streamed page
+// cache. The reference texels were produced by OpenPtex 2.4.3 (see
+// tests/usdc/ptex-mip/manifest.json); this check is byte-exact.
+void RunCpuPtexMipSampler() {
+  const char* env = std::getenv("LIGHTUSD_PTEX_TEST_ASSET");
+  const std::string asset =
+      env ? env
+          : "/mnt/nvme02/data/island/textures/isMountainA/Color/mountain_geo.ptx";
+  if (!std::ifstream(asset).good()) {
+    std::printf("SKIP: pinned Island PTex asset not found (%s)\n",
+                asset.c_str());
+    return;
+  }
+#ifndef LIGHTUSD_PTEX_MIP_FIXTURE_DIR
+#define LIGHTUSD_PTEX_MIP_FIXTURE_DIR "tests/usdc/ptex-mip"
+#endif
+  const std::string fixture = LIGHTUSD_PTEX_MIP_FIXTURE_DIR;
+  auto read_fixture = [&](const char* name, std::vector<uint8_t>* out) {
+    std::ifstream in(fixture + "/" + name, std::ios::binary);
+    out->assign(std::istreambuf_iterator<char>(in),
+                std::istreambuf_iterator<char>());
+    return in.good() || in.eof();
+  };
+
+  lusdview::CpuPtexSampler sampler(4ull * 1024ull * 1024ull);
+  std::string error;
+  if (!sampler.OpenFile(asset, &error)) {
+    std::printf("FAIL: CPU PTex sampler open: %s\n", error.c_str());
+    ++failures;
+    return;
+  }
+  const auto& info = sampler.info();
+  CHECK(info.levels >= 3 && info.faces > 0);
+
+  struct Case { uint32_t mip; uint32_t w; uint32_t h; const char* file; };
+  const Case cases[] = {{1, 16, 8, "mountain-face0-mip1.rgba"},
+                        {2, 8, 4, "mountain-face0-mip2.rgba"}};
+  for (const Case& c : cases) {
+    std::vector<uint8_t> reference;
+    CHECK(read_fixture(c.file, &reference));
+    const uint8_t* raw = nullptr;
+    const auto* page = sampler.RawFace(0, c.mip, &raw, &error);
+    CHECK(page != nullptr);
+    if (!page || !raw) continue;
+    CHECK(page->width == c.w && page->height == c.h);
+    CHECK(page->channels == 3);
+    CHECK(reference.size() == size_t(c.w) * c.h * 3);
+    CHECK(reference.size() == page->data.size());
+    CHECK(std::memcmp(reference.data(), raw, reference.size()) == 0);
+
+    // Sampling at the texel centers returns exactly the non-base mip texel.
+    for (uint32_t y = 0; y < c.h && y < 2; ++y) {
+      for (uint32_t x = 0; x < c.w && x < 2; ++x) {
+        float rgb[3] = {0.0f, 0.0f, 0.0f};
+        CHECK(sampler.Sample(0, c.mip, (x + 0.5f) / float(c.w),
+                             (y + 0.5f) / float(c.h), false, rgb));
+        const size_t base = (size_t(y) * c.w + x) * 3;
+        CHECK(std::lround(rgb[0] * 255.0f) == reference[base + 0]);
+        CHECK(std::lround(rgb[1] * 255.0f) == reference[base + 1]);
+        CHECK(std::lround(rgb[2] * 255.0f) == reference[base + 2]);
+      }
+    }
+  }
+
+  // Mip selection is per face resolution. Face 0 is 32 texels wide and the
+  // file has four levels, so an 8-texel footprint clamps to mip 3.
+  CHECK(sampler.ChooseMip(0, 0.0f) == 0);
+  CHECK(sampler.ChooseMip(0, 1.0f / 32.0f) == 0);
+  CHECK(sampler.ChooseMip(0, 2.0f / 32.0f) == 1);
+  CHECK(sampler.ChooseMip(0, 4.0f / 32.0f) == 2);
+  CHECK(sampler.ChooseMip(0, 8.0f / 32.0f) == 3);
+
+  // Streamed residency: a 4 KiB budget holds two 32x16x3 pages (1536 B each),
+  // so four fetches evict and the resident/peak footprint stays bounded.
+  lusdview::CpuPtexSampler small(4ull * 1024ull);
+  CHECK(small.OpenFile(asset, &error));
+  for (uint32_t face = 0; face < 4 && face < info.faces; ++face) {
+    const uint8_t* raw = nullptr;
+    CHECK(small.RawFace(face, 0, &raw, &error) != nullptr);
+  }
+  const auto& st = small.stats();
+  CHECK(st.evictions > 0);
+  CHECK(st.residentBytes <= 4ull * 1024ull);
+  CHECK(st.peakResidentBytes <= 4ull * 1024ull);
+  std::printf("  CPU Ptex mip sampler: PASSED (face 0 mips 1-2 vs OpenPtex, "
+              "cache evictions=%llu, resident=%llu)\n",
+              static_cast<unsigned long long>(st.evictions),
+              static_cast<unsigned long long>(st.residentBytes));
+}
+
+void RunCpuPtexAnisotropicSampler() {
+  // Two-level synthetic Ptex (face 0 = 4x2) with a row-varying value so a
+  // wrong mip or tap placement changes the result.
+  const std::vector<uint8_t> bytes =
+      SyntheticPtex(0, 1, /*verticalGradient=*/true, 1);
+  lusdview::CpuPtexSampler sampler(1ull * 1024ull * 1024ull);
+  std::string error;
+  CHECK(sampler.OpenMemory(bytes.data(), bytes.size(), &error));
+  CHECK(sampler.info().levels == 2 && sampler.info().faces == 2);
+
+  // Isotropic footprint: one texel in both directions selects mip 0 and a
+  // single bilinear tap, identical to the plain Sample path.
+  const float iso_gu[3] = {1.0f, 0.0f, 0.0f};
+  const float iso_gv[3] = {0.0f, 1.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint iso =
+      sampler.ComputeFootprint(0, iso_gu, iso_gv, 0.25f);
+  CHECK(iso.taps == 1);
+  CHECK(!iso.anisotropic());
+  CHECK(iso.mip == sampler.ChooseMip(0, 0.25f));
+  float plain[3], filtered[3];
+  CHECK(sampler.Sample(0, iso.mip, 0.375f, 0.25f, false, plain));
+  CHECK(sampler.SampleFootprint(0, iso, 0.375f, 0.25f, false, filtered));
+  for (int c = 0; c < 3; ++c) CHECK(std::fabs(plain[c] - filtered[c]) < 1e-6f);
+
+  // Anisotropic footprint: 4 texels along u, 1 along v. The mip must come from
+  // the minor (v) axis and the taps run along u; the old isotropic rule used
+  // max(|gu|,|gv|) and picked the coarser mip.
+  const float aniso_gu[3] = {4.0f, 0.0f, 0.0f};
+  const float aniso_gv[3] = {0.0f, 1.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint fp =
+      sampler.ComputeFootprint(0, aniso_gu, aniso_gv, 0.25f);
+  CHECK(fp.taps == 4);
+  CHECK(fp.anisotropic());
+  CHECK(std::fabs(fp.major - 1.0f) < 1e-6f);
+  CHECK(std::fabs(fp.minor - 0.25f) < 1e-6f);
+  CHECK(fp.mip == sampler.ChooseMip(0, fp.minor));
+  CHECK(fp.mip != sampler.ChooseMip(0, fp.major));
+  CHECK(std::fabs(fp.dir_u) > 0.99f && std::fabs(fp.dir_v) < 1e-6f);
+
+  // The filter output must equal the tent-weighted tap average computed with
+  // the plain sampler at the selected mip.
+  const float u = 0.3f, v = 0.25f;
+  float expected = 0.0f, weight_sum = 0.0f;
+  const float center = 0.5f * float(fp.taps - 1u);
+  for (uint32_t i = 0; i < fp.taps; ++i) {
+    const float offset = (float(i) - center) * fp.minor;
+    const float weight = float(fp.taps) * 0.5f - std::fabs(float(i) - center);
+    float tap[3] = {0.0f, 0.0f, 0.0f};
+    CHECK(sampler.Sample(0, fp.mip, u + offset * fp.dir_u,
+                         v + offset * fp.dir_v, false, tap));
+    expected += tap[0] * weight;
+    weight_sum += weight;
+  }
+  expected /= weight_sum;
+  CHECK(sampler.SampleFootprint(0, fp, u, v, false, filtered));
+  CHECK(std::fabs(filtered[0] - expected) < 2e-6f);
+
+  float channel = 0.0f;
+  CHECK(sampler.SampleChannelFootprint(0, fp, u, v, 0, &channel));
+  CHECK(std::fabs(channel - expected) < 2e-6f);
+
+  // Clamp: a very stretched footprint never exceeds eight taps.
+  const float stretch_gu[3] = {64.0f, 0.0f, 0.0f};
+  const lusdview::CpuPtexSampler::Footprint clamped =
+      sampler.ComputeFootprint(0, stretch_gu, aniso_gv, 0.25f);
+  CHECK(clamped.taps == 8);
+  CHECK(clamped.mip == sampler.ChooseMip(0, clamped.minor));
+
+  std::printf("  CPU Ptex anisotropic footprint: PASSED "
+              "(mip from minor, %u taps, tent-weighted)\n", fp.taps);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -551,6 +719,8 @@ int main(int argc, char** argv) {
   RunPhysicalCacheReservation();
   RunPhysicalCacheCannotStarveFallback();
   RunVirtualFallbackDownsample();
+  RunCpuPtexMipSampler();
+  RunCpuPtexAnisotropicSampler();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;

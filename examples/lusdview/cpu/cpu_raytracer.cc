@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -10,6 +12,8 @@
 
 #include "lightrt_c_tri.h"
 #include "lightrt_mtlx_bridge.hh"  // kRtMaterialTexSlots
+#include "ptex-sample.hh"
+#include "shading-normal.hh"
 
 namespace lusdview {
 
@@ -29,11 +33,59 @@ inline float FresnelDielectric(float cosThetaI, float etaI, float etaT) {
                    std::max(etaT * ci + etaI * ct, 1.0e-6f);
   return 0.5f * (rs * rs + rp * rp);
 }
+
+// Packed per-material texture parameters (`PackRtMaterialTextureParams`):
+// slots 0-5 carry six floats of UV transform each (m00, m01, tx, m10, m11, ty),
+// and float 69 bit-packs which slot samples the second UV set.
+const float* CpuTextureParams(const HostScene& scene, int material_id) {
+  if (material_id < 0) return nullptr;
+  const size_t base =
+      static_cast<size_t>(material_id) * kRtMaterialTextureParamFloats;
+  if (base + kRtMaterialTextureParamFloats > scene.matTexParam.size()) {
+    return nullptr;
+  }
+  return &scene.matTexParam[base];
+}
+
+bool CpuSlotUsesSecondUvSet(const float* params, int slot) {
+  if (!params) return false;
+  return (static_cast<int>(params[69] + 0.5f) & (1 << slot)) != 0;
+}
+
+void CpuXformUvAt(const float* params, int offset, float u, float v,
+                  float* out) {
+  if (!params) {
+    out[0] = u;
+    out[1] = v;
+    return;
+  }
+  const float* p = params + offset;
+  out[0] = p[0] * u + p[1] * v + p[2];
+  out[1] = p[3] * u + p[4] * v + p[5];
+}
+
+void CpuXformSlotUv(const float* params, int slot, float u, float v,
+                    float* out) {
+  CpuXformUvAt(params, slot * 6, u, v, out);
+}
+
 }
 
 CpuRayTracer::~CpuRayTracer() { freeScene(); }
 
 void CpuRayTracer::freeScene() {
+  if (tlas_) {
+    lrt_tlas_free(tlas_);
+    tlas_ = nullptr;
+  }
+  for (lrt_tri_scene* blas : blasScenes_) {
+    if (blas) lrt_tri_scene_free(blas);
+  }
+  blasScenes_.clear();
+  tlasBlasTris_.clear();
+  tlasPrimToGlobal_.clear();
+  tlasRootToGroup_.clear();
+  tlasValid_ = false;
   if (scene_) {
     lrt_tri_scene_free(scene_);
     scene_ = nullptr;
@@ -47,18 +99,140 @@ void CpuRayTracer::freeScene() {
   cpuSourceTri_.clear();
 }
 
+int CpuRayTracer::SrcForInstancePrim(int inst, uint32_t prim) const {
+  if (inst < 0 || static_cast<size_t>(inst) >= hs_.instances.size()) return -1;
+  const int root = hs_.instances[static_cast<size_t>(inst)].blasRoot;
+  if (root < 0 || static_cast<size_t>(root) >= tlasRootToGroup_.size())
+    return -1;
+  const int g = tlasRootToGroup_[static_cast<size_t>(root)];
+  if (g < 0 || static_cast<size_t>(g) >= tlasPrimToGlobal_.size()) return -1;
+  const std::vector<int>& map = tlasPrimToGlobal_[static_cast<size_t>(g)];
+  return prim < map.size() ? map[prim] : -1;
+}
+
+bool CpuRayTracer::Intersect(const lrt_ray& ray, float* t, float* u, float* v,
+                             int* inst, int* src) const {
+  if (!tlas_) return false;
+  lrt_tlas_hit h{};
+  if (!lrt_tlas_intersect1(tlas_, &ray, 0xFFFFFFFFu, &h)) return false;
+  *t = h.t;
+  *u = h.u;
+  *v = h.v;
+  *inst = static_cast<int>(h.inst_id);
+  *src = SrcForInstancePrim(*inst, h.prim_id);
+  return *src >= 0;
+}
+
+namespace {
+// Extract the six clip planes of a column-major projection*view (zero-to-one
+// depth) and test instance bounds against them.
+struct InstanceFrustum {
+  float plane[6][4];
+  bool valid = false;
+
+  explicit InstanceFrustum(const float* m) {
+    if (!m) return;
+    // Row vectors of the column-major matrix.
+    const float r0[4] = {m[0], m[4], m[8], m[12]};
+    const float r1[4] = {m[1], m[5], m[9], m[13]};
+    const float r2[4] = {m[2], m[6], m[10], m[14]};
+    const float r3[4] = {m[3], m[7], m[11], m[15]};
+    for (int c = 0; c < 4; ++c) {
+      plane[0][c] = r3[c] + r0[c];  // left
+      plane[1][c] = r3[c] - r0[c];  // right
+      plane[2][c] = r3[c] + r1[c];  // bottom
+      plane[3][c] = r3[c] - r1[c];  // top
+      plane[4][c] = r2[c];          // near (zero-to-one depth)
+      plane[5][c] = r3[c] - r2[c];  // far
+    }
+    valid = true;
+  }
+
+  // True when the box is entirely outside at least one plane.
+  bool culls(const float bmin[3], const float bmax[3]) const {
+    if (!valid) return false;
+    for (int p = 0; p < 6; ++p) {
+      // Positive vertex: the corner furthest along the plane normal.
+      float x = plane[p][0] >= 0.0f ? bmax[0] : bmin[0];
+      float y = plane[p][1] >= 0.0f ? bmax[1] : bmin[1];
+      float z = plane[p][2] >= 0.0f ? bmax[2] : bmin[2];
+      if (plane[p][0] * x + plane[p][1] * y + plane[p][2] * z +
+              plane[p][3] <
+          0.0f) {
+        return true;
+      }
+    }
+    return false;
+  }
+};
+
+// World-space bounds of one instance, from its BLAS root bounds.
+bool InstanceWorldBounds(const HostScene& hs, const Inst& inst, float bmin[3],
+                         float bmax[3]) {
+  if (inst.blasRoot < 0 || static_cast<size_t>(inst.blasRoot) >= hs.blas.size())
+    return false;
+  const Node& root = hs.blas[static_cast<size_t>(inst.blasRoot)];
+  if (!(root.bmax[0] >= root.bmin[0])) return false;
+  bmin[0] = bmin[1] = bmin[2] = 1.0e30f;
+  bmax[0] = bmax[1] = bmax[2] = -1.0e30f;
+  for (int corner = 0; corner < 8; ++corner) {
+    const float c[3] = {(corner & 1) ? root.bmax[0] : root.bmin[0],
+                        (corner & 2) ? root.bmax[1] : root.bmin[1],
+                        (corner & 4) ? root.bmax[2] : root.bmin[2]};
+    float w[3];
+    TransformPoint(inst.o2w, c, w);
+    for (int i = 0; i < 3; ++i) {
+      bmin[i] = std::min(bmin[i], w[i]);
+      bmax[i] = std::max(bmax[i], w[i]);
+    }
+  }
+  return true;
+}
+}  // namespace
+
 bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                          std::string* err, float displacementScale,
                          BuildProgress* progress,
-                         uint32_t purposeVisibleMask) {
+                         uint32_t purposeVisibleMask,
+                         const float* viewProj16) {
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
-                      purposeVisibleMask)) {
+                      purposeVisibleMask, /*nativePointCarriers=*/false)) {
     return false;
   }
   truncated_ = hs_.truncated;
+  // One streamed source per packed PTex table entry. The loader's coarse atlas
+  // stays as the fallback when the source cannot be opened (USDZ package
+  // entries, non-UINT8 data), while the source path provides per-face mips and
+  // a bounded on-demand page cache.
+  ptex_.clear();
+  ptex_.resize(hs_.textures.size());
+  ptexAsset_.clear();
+  ptexAsset_.resize(hs_.textures.size());
+  for (size_t src = 0; src < hs_.sourceToTable.size() &&
+                       src < scene.textures.size(); ++src) {
+    const int tid = hs_.sourceToTable[src];
+    if (tid < 0 || static_cast<size_t>(tid) >= hs_.textures.size() ||
+        !hs_.textures[static_cast<size_t>(tid)].isPtex) {
+      continue;
+    }
+    const DrawTextureCPU& dt = scene.textures[src];
+    auto sampler = std::make_unique<CpuPtexSampler>(16ull * 1024ull * 1024ull);
+    std::string ptexErr;
+    bool ok = false;
+    if (dt.ptexSourceDataShared && !dt.ptexSourceDataShared->empty()) {
+      ok = sampler->OpenMemory(dt.ptexSourceDataShared->data(),
+                               dt.ptexSourceDataShared->size(), &ptexErr);
+    } else if (!dt.assetIdentifier.empty()) {
+      ok = sampler->OpenFile(dt.assetIdentifier, &ptexErr);
+    }
+    if (ok) {
+      ptex_[static_cast<size_t>(tid)] = std::move(sampler);
+      ptexAsset_[static_cast<size_t>(tid)] = dt.assetIdentifier;
+    }
+  }
   if (hs_.triCount == 0 || hs_.instances.empty()) {
     if (err) *err = "no triangles";
     return false;
@@ -70,105 +244,132 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   // see the same transforms as the GPU paths. Traverse each instance's BLAS
   // rather than assuming a mesh's triangles occupy one contiguous range: the
   // assembled BLAS is global and leaf order is part of its contract.
-  size_t expandedCount = 0;
+  // CPU RT flattens every instance into one triangle stream because lightrt_c's
+  // builder takes a single world-space stream. Highly instanced scenes (e.g.
+  // isBeach: ~1.9M instances, ~8B effective triangles) cannot be flattened in
+  // full without exhausting memory, so cap the expansion to a bounded budget and
+  // mark the build truncated instead of throwing std::bad_alloc.
+  // ---------------------------------------------------------------------
+  // Instance-aware traversal.
+  //
+  // Every shading attribute the renderer needs is `hs_`-indexed by source
+  // triangle: the old flat stream was a per-instance, world-space *copy* of
+  // exactly these arrays. Indexing `hs_` directly and resolving the instance
+  // per hit removes the expansion entirely, so no instance is ever flattened
+  // and nothing is truncated (isBeach: 8.09e9 effective triangles).
+  // ---------------------------------------------------------------------
+  const InstanceFrustum frustum(viewProj16);
+  size_t culledInstances = 0, visibleInstances = 0;
   for (const Inst& inst : hs_.instances) {
-    if (inst.blasRoot < 0 || static_cast<size_t>(inst.blasRoot) >= hs_.blas.size())
-      continue;
-    std::vector<int> stack(1, inst.blasRoot);
-    while (!stack.empty()) {
-      const int nodeIndex = stack.back();
-      stack.pop_back();
-      if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= hs_.blas.size()) continue;
-      const Node& node = hs_.blas[static_cast<size_t>(nodeIndex)];
-      if (node.count > 0) {
-        if (node.left >= 0 && node.count <= static_cast<int>(hs_.triCount) - node.left)
-          expandedCount += static_cast<size_t>(node.count);
-      } else {
-        stack.push_back(node.left);
-        stack.push_back(node.right);
-      }
+    float ibmin[3], ibmax[3];
+    if (InstanceWorldBounds(hs_, inst, ibmin, ibmax) &&
+        frustum.culls(ibmin, ibmax)) {
+      ++culledInstances;
+    } else {
+      ++visibleInstances;
     }
   }
-  if (expandedCount == 0) {
-    if (err) *err = "no instance triangles";
-    return false;
-  }
-  cpuTris_.reserve(expandedCount * 9);
-  cpuNrms_.reserve(expandedCount * 9);
-  cpuUv_.reserve(expandedCount * 6);
-  cpuUv1_.reserve(expandedCount * 6);
-  cpuMat_.reserve(expandedCount);
-  cpuInstance_.reserve(expandedCount);
-  cpuSourceTri_.reserve(expandedCount);
+  culledInstances_ = culledInstances;
+  expandedInstances_ = visibleInstances;
 
-  for (size_t instanceIndex = 0; instanceIndex < hs_.instances.size(); ++instanceIndex) {
-    const Inst& inst = hs_.instances[instanceIndex];
-    if (inst.blasRoot < 0 || static_cast<size_t>(inst.blasRoot) >= hs_.blas.size()) continue;
-    std::vector<int> stack(1, inst.blasRoot);
-    while (!stack.empty()) {
-      const int nodeIndex = stack.back();
-      stack.pop_back();
-      if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= hs_.blas.size()) continue;
-      const Node& node = hs_.blas[static_cast<size_t>(nodeIndex)];
-      if (node.count <= 0) {
-        stack.push_back(node.left);
-        stack.push_back(node.right);
-        continue;
-      }
-      if (node.left < 0 || node.count > static_cast<int>(hs_.triCount) - node.left) continue;
-      for (int t = 0; t < node.count; ++t) {
-        const size_t src = static_cast<size_t>(node.left + t);
-        const float* srcTri = &hs_.tris[src * 9];
-        for (int v = 0; v < 3; ++v) {
-          float p[3];
-          TransformPoint(inst.o2w, srcTri + v * 3, p);
-          cpuTris_.insert(cpuTris_.end(), p, p + 3);
-        }
-        if (src * 9 + 9 <= hs_.nrms.size()) {
-          for (int v = 0; v < 3; ++v) {
-            float n[3];
-            TransformNormal(inst.w2o, &hs_.nrms[src * 9 + v * 3], n);
-            cpuNrms_.insert(cpuNrms_.end(), n, n + 3);
-          }
-        } else {
-          cpuNrms_.insert(cpuNrms_.end(), 9, 0.0f);
-        }
-        if (src * 6 + 6 <= hs_.uv.size())
-          cpuUv_.insert(cpuUv_.end(), hs_.uv.begin() + static_cast<ptrdiff_t>(src * 6),
-                        hs_.uv.begin() + static_cast<ptrdiff_t>(src * 6 + 6));
-        else
-          cpuUv_.insert(cpuUv_.end(), 6, 0.0f);
-        if (src * 6 + 6 <= hs_.uv1.size())
-          cpuUv1_.insert(cpuUv1_.end(), hs_.uv1.begin() + static_cast<ptrdiff_t>(src * 6),
-                         hs_.uv1.begin() + static_cast<ptrdiff_t>(src * 6 + 6));
-        else
-          cpuUv1_.insert(cpuUv1_.end(), 6, 0.0f);
-        cpuMat_.push_back(src < hs_.mat.size() ? hs_.mat[src] : -1);
-        cpuInstance_.push_back(static_cast<int>(instanceIndex));
-        cpuSourceTri_.push_back(static_cast<int>(src));
-      }
-    }
-  }
-  // Keep the public count consistent with CUDA/HIP: it reports the unique
-  // prototype stream accepted by --max-tris, not the private expanded copy.
+  cpuTris_ = hs_.tris;
+  cpuNrms_ = hs_.nrms;
+  cpuUv_ = hs_.uv;
+  cpuUv1_ = hs_.uv1;
+  cpuMat_ = hs_.mat;
+  cpuTan_ = hs_.tan;
+  cpuBin_ = hs_.bin;
+  cpuSourceTri_.resize(hs_.triCount);
+  for (size_t i = 0; i < cpuSourceTri_.size(); ++i)
+    cpuSourceTri_[i] = static_cast<int>(i);
+  cpuInstance_.clear();
   triCount_ = hs_.triCount;
-  const size_t expandedTriCount = cpuTris_.size() / 9;
+  truncated_ = false;
 
   lrt_tri_build_options opts{};
-  // CPU RT is the correctness/reference path. Use binned SAH rather than the
-  // preview-oriented LBVH. Spatial-split HQ is serial and can take minutes on
-  // overlapping production meshes; it changes traversal cost, not hit
-  // correctness, so DEFAULT is the better reference-render tradeoff.
   opts.quality = LRT_TRI_BUILD_DEFAULT;
   opts.layout = LRT_TRI_LAYOUT_AUTO;
   opts.max_leaf_size = 0;  // default
   opts.num_threads = static_cast<unsigned>(
       std::max(1u, std::thread::hardware_concurrency()));
 
-  lrt_result lrtErr;
-  scene_ = lrt_tri_scene_build(cpuTris_.data(), expandedTriCount, &opts, &lrtErr);
-  if (!scene_) {
-    if (err) *err = "lrt_tri_scene_build failed";
+  // One BLAS per distinct instance blasRoot. Instances that report the same
+  // prototype do NOT necessarily share a BLAS subtree (measured on the beach:
+  // two instances of prototype 1 referenced subtrees of 7040 and 1664
+  // triangles over disjoint source ranges), so the root is the sharing key.
+  tlasRootToGroup_.assign(hs_.blas.size(), -1);
+  std::vector<int> distinctRoots;
+  for (const Inst& in : hs_.instances) {
+    if (in.blasRoot < 0 || static_cast<size_t>(in.blasRoot) >= hs_.blas.size())
+      continue;
+    if (tlasRootToGroup_[static_cast<size_t>(in.blasRoot)] < 0) {
+      tlasRootToGroup_[static_cast<size_t>(in.blasRoot)] =
+          static_cast<int>(distinctRoots.size());
+      distinctRoots.push_back(in.blasRoot);
+    }
+  }
+  blasScenes_.assign(distinctRoots.size(), nullptr);
+  tlasBlasTris_.assign(distinctRoots.size(), {});
+  tlasPrimToGlobal_.assign(distinctRoots.size(), {});
+  for (size_t g = 0; g < distinctRoots.size(); ++g) {
+    std::vector<int> stack(1, distinctRoots[g]);
+    while (!stack.empty()) {
+      const int nodeIndex = stack.back();
+      stack.pop_back();
+      if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= hs_.blas.size())
+        continue;
+      const Node& node = hs_.blas[static_cast<size_t>(nodeIndex)];
+      if (node.count <= 0) {
+        stack.push_back(node.left);
+        stack.push_back(node.right);
+        continue;
+      }
+      if (node.left < 0 ||
+          node.count > static_cast<int>(hs_.triCount) - node.left)
+        continue;
+      for (int t = 0; t < node.count; ++t) {
+        const size_t src = static_cast<size_t>(node.left + t);
+        tlasBlasTris_[g].insert(
+            tlasBlasTris_[g].end(),
+            hs_.tris.begin() + static_cast<ptrdiff_t>(src * 9),
+            hs_.tris.begin() + static_cast<ptrdiff_t>(src * 9 + 9));
+        tlasPrimToGlobal_[g].push_back(static_cast<int>(src));
+      }
+    }
+    if (tlasPrimToGlobal_[g].empty()) continue;
+    lrt_result berr = LRT_RESULT_OK;
+    blasScenes_[g] = lrt_tri_scene_build(
+        tlasBlasTris_[g].data(), tlasPrimToGlobal_[g].size(), &opts, &berr);
+  }
+
+  std::vector<lrt_instance> tlInstances;
+  tlInstances.reserve(hs_.instances.size());
+  for (size_t i = 0; i < hs_.instances.size(); ++i) {
+    const Inst& in = hs_.instances[i];
+    const int root = in.blasRoot;
+    if (root < 0 || static_cast<size_t>(root) >= tlasRootToGroup_.size() ||
+        tlasRootToGroup_[static_cast<size_t>(root)] < 0)
+      continue;
+    const int group = tlasRootToGroup_[static_cast<size_t>(root)];
+    if (static_cast<size_t>(group) >= blasScenes_.size() ||
+        !blasScenes_[static_cast<size_t>(group)])
+      continue;
+    lrt_instance li{};
+    li.blas_id = static_cast<uint32_t>(group);
+    std::memcpy(li.obj2world, in.o2w, sizeof(li.obj2world));
+    li.instance_id = static_cast<uint32_t>(i);
+    li.mask = 0xFFFFFFFFu;
+    tlInstances.push_back(li);
+  }
+  if (!tlInstances.empty()) {
+    lrt_result terr = LRT_RESULT_OK;
+    tlas_ = lrt_tlas_build(blasScenes_.data(), blasScenes_.size(),
+                           tlInstances.data(), tlInstances.size(), &opts,
+                           &terr);
+  }
+  tlasValid_ = tlas_ != nullptr;
+  if (!tlasValid_) {
+    if (err) *err = "lrt_tlas_build failed";
     return false;
   }
   return true;
@@ -184,6 +385,25 @@ inline void Interp9(const float* base9, float u, float v, float out[3]) {
   for (int c = 0; c < 3; ++c) {
     out[c] = w * base9[c] + u * base9[3 + c] + v * base9[6 + c];
   }
+}
+
+// World-space vertices of a source triangle placed by one instance. Shading
+// attributes are stored object-space and indexed by source triangle; only the
+// hit's instance transform turns them into world space.
+inline void WorldVerts9(const HostScene& hs, const Inst& in, int src,
+                        float out[9]) {
+  for (int v = 0; v < 3; ++v)
+    TransformPoint(in.o2w, &hs.tris[static_cast<size_t>(src) * 9 + v * 3],
+                   out + v * 3);
+}
+
+// Interpolate an object-space 3-vector array (normals/tangents/binormals) at a
+// hit and rotate it into world space with the instance's normal transform.
+inline void WorldVec9(const std::vector<float>& obj, const Inst& in, int src,
+                      float bu, float bv, float out[3]) {
+  float t[3];
+  Interp9(&obj[static_cast<size_t>(src) * 9], bu, bv, t);
+  TransformNormal(in.w2o, t, out);
 }
 
 // Same convention as Interp9 but for HostScene::uv/uv1 (2 floats/vertex).
@@ -245,6 +465,45 @@ inline void TransformNormal(const float m[12], const float p[3], float out[3]) {
   Normalize3(out);
 }
 
+// Ptex atlases store one rectangle per face and a face-rect table in the
+// atlas alpha texels (8 RGBA texels per face: x/y/width/height as u16 LE, two
+// bytes per texel). Remap an intrinsic face (u,v) into the atlas exactly as
+// the shaders' ptexUv() does: clamp inside the inner rectangle so bilinear
+// taps cannot bleed into another face.
+inline bool PtexRemapUv(const std::vector<HostTextureDesc>& textures,
+                        const std::vector<uint8_t>& texels, int texId,
+                        int face, float* u, float* v) {
+  if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) return false;
+  const HostTextureDesc& tex = textures[static_cast<size_t>(texId)];
+  if (!tex.isPtex || face < 0 || face >= tex.ptexFaceCount ||
+      tex.width <= 0 || tex.height <= 0 || tex.ptexRectTexelOffset < 0) {
+    return false;
+  }
+  const size_t texel_count =
+      static_cast<size_t>(tex.width) * static_cast<size_t>(tex.height);
+  const size_t first = static_cast<size_t>(tex.ptexRectTexelOffset) +
+                       static_cast<size_t>(face) * 8u;
+  const size_t base = static_cast<size_t>(tex.offset);
+  if (first + 8u > texel_count || base > texels.size()) return false;
+  uint16_t values[4] = {0, 0, 0, 0};
+  for (size_t byte = 0; byte < 8u; ++byte) {
+    const size_t index = base + (first + byte) * 4u + 3u;
+    if (index >= texels.size()) return false;
+    values[byte / 2u] |= static_cast<uint16_t>(texels[index])
+                         << ((byte & 1u) * 8u);
+  }
+  if (values[2] == 0 || values[3] == 0) return false;
+  const float span_u = static_cast<float>(values[2] - 1u);
+  const float span_v = static_cast<float>(values[3] - 1u);
+  const float pu = std::clamp(*u, 0.0f, 1.0f);
+  const float pv = std::clamp(*v, 0.0f, 1.0f);
+  const float px = static_cast<float>(values[0]) + pu * span_u;
+  const float py = static_cast<float>(values[1]) + (1.0f - pv) * span_v;
+  *u = (px + 0.5f) / static_cast<float>(tex.width);
+  *v = (py + 0.5f) / static_cast<float>(tex.height);
+  return true;
+}
+
 // Bilinear-sample an RGBA8 HostTextureDesc at
 // its base mip. Deliberately mirrors sampleTexLevel/wrapCoord in
 // raytracer_kernel_src.txt (the CUDA/HIP kernel) so CPU RT matches the GPU
@@ -255,10 +514,33 @@ inline void TransformNormal(const float m[12], const float p[3], float out[3]) {
 // alpha remains an unmodified coverage/value channel.
 inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const std::vector<uint8_t>& texels, int texId,
-                                  float u, float v, float out[3]) {
+                                  float u, float v, float out[3],
+                                  int ptex_face = -1,
+                                  const CpuPtexSampler* ptex = nullptr,
+                                  uint32_t ptex_mip = 0,
+                                  const CpuPtexSampler::Footprint* ptex_fp =
+                                      nullptr) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
+  }
+  if (ptex && ptex_face >= 0 && ptex->valid()) {
+    float rgb[3];
+    const bool srgb = textures[static_cast<size_t>(texId)].srgb != 0;
+    const bool ok = ptex_fp
+        ? ptex->SampleFootprint(static_cast<uint32_t>(ptex_face), *ptex_fp,
+                                u, v, srgb, rgb)
+        : ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
+                       srgb, rgb);
+    if (ok) {
+      out[0] = rgb[0];
+      out[1] = rgb[1];
+      out[2] = rgb[2];
+      return;
+    }
+  }
+  if (ptex_face >= 0) {
+    PtexRemapUv(textures, texels, texId, ptex_face, &u, &v);
   }
   const HostTextureDesc* desc = &textures[static_cast<size_t>(texId)];
   if (desc->isUdim) {
@@ -275,7 +557,9 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     v -= static_cast<float>(tileV);
     desc = &textures[static_cast<size_t>(texId)];
   }
-  if (desc->isPtex || desc->width <= 0 || desc->height <= 0) {
+  // Ptex atlases are sampled with the remapped face-rect UV above; the atlas
+  // itself is an ordinary RGBA image from here on.
+  if (desc->width <= 0 || desc->height <= 0) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
   }
@@ -326,6 +610,46 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
   }
 }
 
+// Optional PTex page-cache diagnostics for tests: one line per compiled PTex
+// source with hit/miss/eviction counts and the mip histogram.
+inline void LogCpuPtexStats(
+    const std::vector<std::unique_ptr<CpuPtexSampler>>& sources) {
+  if (!std::getenv("LIGHTUSD_CPU_PTEX_STATS")) return;
+  for (size_t i = 0; i < sources.size(); ++i) {
+    const CpuPtexSampler* source = sources[i].get();
+    if (!source) continue;
+    const auto& st = source->stats();
+    std::fprintf(stderr,
+                 "[cpu-ptex] tex=%zu hits=%llu misses=%llu evictions=%llu "
+                 "resident=%llu peak=%llu samples=%llu aniso=%llu taps=%llu "
+                 "mips=",
+                 i, static_cast<unsigned long long>(st.hits),
+                 static_cast<unsigned long long>(st.misses),
+                 static_cast<unsigned long long>(st.evictions),
+                 static_cast<unsigned long long>(st.residentBytes),
+                 static_cast<unsigned long long>(st.peakResidentBytes),
+                 static_cast<unsigned long long>(st.samples),
+                 static_cast<unsigned long long>(st.anisotropicSamples),
+                 static_cast<unsigned long long>(st.anisotropicTaps));
+    for (int m = 0; m < 16; ++m) {
+      std::fprintf(stderr, "%s%llu", m ? "," : "",
+                   static_cast<unsigned long long>(st.mipSamples[m]));
+    }
+    std::fprintf(stderr, "\n");
+  }
+}
+
+// Per-pixel diagnostic of the PTex base-colour sample: an element-scale
+// oracle can decode the same (face, mip, u, v) with an independent decoder.
+struct CpuPtexProbe {
+  uint32_t tex{~0u};
+  uint32_t face{~0u};
+  int mip{0};
+  int srgb{0};
+  float u{0.0f}, v{0.0f};
+  float rgb[3]{0.0f, 0.0f, 0.0f};
+};
+
 inline uint32_t HashColor(uint32_t id) {
   uint32_t x = id * 2654435761u + 1u;
   x ^= x >> 16; x *= 0x85ebca6bu; x ^= x >> 13; x *= 0xc2b2ae35u; x ^= x >> 16;
@@ -337,8 +661,24 @@ inline uint32_t HashColor(uint32_t id) {
 inline float SampleTextureBilinearChannel(
     const std::vector<HostTextureDesc>& textures,
     const std::vector<uint8_t>& texels, int texId, float u, float v,
-    int channel) {
+    int channel, int ptex_face = -1, const CpuPtexSampler* ptex = nullptr,
+    uint32_t ptex_mip = 0,
+    const CpuPtexSampler::Footprint* ptex_fp = nullptr) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) return 1.0f;
+  if (ptex && ptex_face >= 0 && ptex->valid()) {
+    float value = 0.0f;
+    const bool ok = ptex_fp
+        ? ptex->SampleChannelFootprint(static_cast<uint32_t>(ptex_face),
+                                       *ptex_fp, u, v, channel, &value)
+        : ptex->SampleChannel(static_cast<uint32_t>(ptex_face), ptex_mip, u,
+                              v, channel, &value);
+    if (ok) {
+      return value;
+    }
+  }
+  if (ptex_face >= 0) {
+    PtexRemapUv(textures, texels, texId, ptex_face, &u, &v);
+  }
   const HostTextureDesc* desc = &textures[static_cast<size_t>(texId)];
   if (desc->isUdim) {
     const int tileU = static_cast<int>(std::floor(u));
@@ -351,7 +691,7 @@ inline float SampleTextureBilinearChannel(
     v -= static_cast<float>(tileV);
     desc = &textures[static_cast<size_t>(texId)];
   }
-  if (desc->isPtex || desc->width <= 0 || desc->height <= 0) return 1.0f;
+  if (desc->width <= 0 || desc->height <= 0) return 1.0f;
   const HostTextureDesc& d = *desc;
   channel = std::clamp(channel, 0, 3);
   auto srgbToLinear = [](float x) {
@@ -388,6 +728,64 @@ inline float SampleTextureBilinearChannel(
   const float top = texel(x0, y0) * (1.0f - tx) + texel(x1, y0) * tx;
   const float bot = texel(x0, y1) * (1.0f - tx) + texel(x1, y1) * tx;
   return top * (1.0f - ty) + bot * ty;
+}
+
+// Interpolated, transformed UV for one semantic lane.
+bool CpuLaneUv(const HostScene& scene, int material_id, int tri, float bu,
+               float bv, bool use_second_set, int xform_offset,
+               const std::vector<float>& uv0, const std::vector<float>& uv1,
+               float* out) {
+  if (static_cast<size_t>(tri) * 6 + 5 >= uv0.size()) return false;
+  const bool use_uv1 = use_second_set &&
+                       static_cast<size_t>(tri) * 6 + 5 < uv1.size();
+  const float* src = (use_uv1 ? uv1 : uv0).data() +
+                     static_cast<size_t>(tri) * 6;
+  float uv[2];
+  Interp6(src, bu, bv, uv);
+  CpuXformUvAt(CpuTextureParams(scene, material_id), xform_offset, uv[0],
+               uv[1], out);
+  return true;
+}
+
+bool CpuSampleSemanticScalar(const HostScene& scene, int material_id, int tex,
+                             int tri, float bu, float bv,
+                             bool use_second_set, int xform_offset,
+                             int channel, const std::vector<float>& uv0,
+                             const std::vector<float>& uv1, float* out,
+                             int ptex_face = -1,
+                             const CpuPtexSampler* ptex = nullptr,
+                             uint32_t ptex_mip = 0,
+                             const CpuPtexSampler::Footprint* ptex_fp =
+                                 nullptr) {
+  if (tex < 0) return false;
+  float uv[2];
+  if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
+                 xform_offset, uv0, uv1, uv)) {
+    return false;
+  }
+  *out = SampleTextureBilinearChannel(scene.textures, scene.texels, tex,
+                                      uv[0], uv[1], channel, ptex_face, ptex,
+                                      ptex_mip, ptex_fp);
+  return true;
+}
+
+bool CpuSampleSemanticRgb(const HostScene& scene, int material_id, int tex,
+                          int tri, float bu, float bv, bool use_second_set,
+                          int xform_offset, const std::vector<float>& uv0,
+                          const std::vector<float>& uv1, float out[3],
+                          int ptex_face = -1,
+                          const CpuPtexSampler* ptex = nullptr,
+                          uint32_t ptex_mip = 0,
+                          const CpuPtexSampler::Footprint* ptex_fp = nullptr) {
+  if (tex < 0) return false;
+  float uv[2];
+  if (!CpuLaneUv(scene, material_id, tri, bu, bv, use_second_set,
+                 xform_offset, uv0, uv1, uv)) {
+    return false;
+  }
+  SampleTextureBilinear(scene.textures, scene.texels, tex, uv[0], uv[1], out,
+                        ptex_face, ptex, ptex_mip, ptex_fp);
+  return true;
 }
 
 uint32_t MtlxRotl32(uint32_t x, int k) {
@@ -580,7 +978,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
     float u1, float v1, const float* normal = nullptr,
     const float* position = nullptr, const float* viewDirection = nullptr,
-    float time = 0.0f, float frame = 0.0f, int geomPropTri = -1) {
+    float time = 0.0f, float frame = 0.0f, int geomPropTri = -1,
+    const float* tangent = nullptr, const float* bitangent = nullptr) {
   constexpr int kStride = kRtMaterialGraphFloats;
   std::array<float, 4> zero{0.0f, 0.0f, 0.0f, 0.0f};
   const size_t base = static_cast<size_t>(materialId) * kStride;
@@ -776,7 +1175,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = normal ? std::array<float, 4>{normal[0], normal[1], normal[2], 1.0f}
                      : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeometricTangent)) {
-        dst = {1.0f, 0.0f, 0.0f, 1.0f};
+        dst = tangent ? std::array<float, 4>{tangent[0], tangent[1], tangent[2], 1.0f}
+                      : std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Rotate3D)) {
         const float al = a[0] * 0.0174532925199433f;
         const float alen = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
@@ -1028,7 +1428,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeomColor)) {
         dst={1,1,1,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Bitangent)) {
-        dst={0,1,0,1};
+        dst = bitangent
+                  ? std::array<float, 4>{bitangent[0], bitangent[1],
+                                         bitangent[2], 1.0f}
+                  : std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::SetAlpha)) {
         dst = {a[0], a[1], a[2], b[0]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::CellNoise2D) ||
@@ -1098,7 +1501,19 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
         const int interpolation=static_cast<int>(std::floor(b[0]+.5f)),num=std::clamp(static_cast<int>(std::floor(c[0]+.5f)),2,10);const float x=a[0];
         auto blend=[&](float lo,float hi,const std::array<float,4>& c0,const std::array<float,4>& c1){float t=std::fabs(hi-lo)>1e-8f?std::clamp((std::clamp(x,lo,hi)-lo)/(hi-lo),0.0f,1.0f):0;if(interpolation==1)t=t*t*(3-2*t);if(interpolation==2)t=x>=hi?1.0f:0.0f;std::array<float,4> q;for(int lane=0;lane<4;lane++)q[lane]=c0[lane]+t*(c1[lane]-c0[lane]);return q;};
-        if(op==static_cast<int>(MaterialXGraphOpCPU::Ramp)){dst=values[std::min(start+1,count-1)];for(int interval=1;interval<=9;interval++){if(interval>=num)continue;const int base=start+(interval-1)*2;const float lo=values[std::min(base,count-1)][0],hi=values[std::min(base+2,count-1)][0];const auto q=blend(lo,hi,values[std::min(base+1,count-1)],values[std::min(base+3,count-1)]);if(x>lo)dst=q;}}
+        if (op == static_cast<int>(MaterialXGraphOpCPU::Ramp)) {
+          dst = values[std::min(start + 1, count - 1)];
+          for (int interval = 1; interval <= 9; interval++) {
+            if (interval >= num) continue;
+            const int intervalBase = start + (interval - 1) * 2;
+            const float lo = values[std::min(intervalBase, count - 1)][0];
+            const float hi = values[std::min(intervalBase + 2, count - 1)][0];
+            const auto q = blend(lo, hi,
+                values[std::min(intervalBase + 1, count - 1)],
+                values[std::min(intervalBase + 3, count - 1)]);
+            if (x > lo) dst = q;
+          }
+        }
         else{const float lo=values[start][0],hi=values[std::min(start+1,count-1)][0];const int intervalNum=static_cast<int>(values[std::min(start+5,count-1)][0]);dst=values[std::min(start+4,count-1)];if(intervalNum<num&&x>lo)dst=blend(lo,hi,values[std::min(start+2,count-1)],values[std::min(start+3,count-1)]);}
       } else if(op==static_cast<int>(MaterialXGraphOpCPU::Flake)){
         const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
@@ -1166,18 +1581,26 @@ std::array<float, 4> EvalCpuMaterialXGraph(
 
 }  // namespace
 
-bool CpuRayTracer::trace(const float invViewProj[16], const float /*viewProj*/[16],
+bool CpuRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                          const float camPos[3], const float lightDir[3],
                          const float clearColor[3], float exposure, int renderMode,
                          float depthScale, const float /*sceneMin*/[3],
                          const float /*sceneExtent*/[3], int w, int h,
                          std::vector<uint8_t>* rgba, std::string* err,
                          int spp, const RtCameraLens* lens) {
+  // Vertical world size of one pixel at unit distance. Projection element 5
+  // is cot(fovY/2) for the perspective camera; zero keeps the atlas path.
+  const float pixelAngle =
+      (viewProj[5] != 0.0f && h > 0)
+          ? 2.0f / (std::fabs(viewProj[5]) * static_cast<float>(h))
+          : 0.0f;
   const int sampleCount = std::max(1, lens && lens->enabled() ? std::max(spp, 8) : spp);
   if (sampleCount == 1) {
-    return traceSingle(invViewProj, camPos, lightDir, clearColor, exposure,
-                       renderMode, depthScale, w, h, 0.0f, 0.0f, lens, rgba,
-                       err);
+    const bool ok = traceSingle(invViewProj, camPos, lightDir, clearColor,
+                                 exposure, renderMode, depthScale, w, h, 0.0f,
+                                 0.0f, pixelAngle, lens, rgba, err);
+    LogCpuPtexStats(ptex_);
+    return ok;
   }
   std::vector<uint32_t> accum(static_cast<size_t>(w) * h * 4, 0);
   std::vector<uint8_t> sample;
@@ -1193,7 +1616,8 @@ bool CpuRayTracer::trace(const float invViewProj[16], const float /*viewProj*/[1
     const float y = std::fmod(static_cast<float>(bits) * 2.3283064365386963e-10f +
                                   0.11f, 1.0f) - 0.5f;
     if (!traceSingle(invViewProj, camPos, lightDir, clearColor, exposure,
-                     renderMode, depthScale, w, h, x, y, lens, &sample, err))
+                     renderMode, depthScale, w, h, x, y, pixelAngle, lens,
+                     &sample, err))
       return false;
     for (size_t p = 0; p < accum.size(); ++p)
       accum[p] += sample[p];
@@ -1203,6 +1627,7 @@ bool CpuRayTracer::trace(const float invViewProj[16], const float /*viewProj*/[1
     (*rgba)[p] = static_cast<uint8_t>((accum[p] +
                                        static_cast<uint32_t>(sampleCount / 2)) /
                                       static_cast<unsigned>(sampleCount));
+  LogCpuPtexStats(ptex_);
   return true;
 }
 
@@ -1210,11 +1635,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                const float camPos[3], const float lightDir[3],
                                const float clearColor[3], float exposure,
                                int renderMode, float depthScale, int w, int h,
-                               float sampleX, float sampleY,
+                               float sampleX, float sampleY, float pixelAngle,
                                const RtCameraLens* lens,
                                std::vector<uint8_t>* rgba, std::string* err) {
-  if (!scene_ || w < 1 || h < 1) {
-    if (err) *err = "no scene / invalid size";
+  if (!tlas_ || w < 1 || h < 1) {
+    if (err) *err = "no instance TLAS / invalid size";
     return false;
   }
   rgba->assign(static_cast<size_t>(w) * h * 4, 0);
@@ -1255,8 +1680,28 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   const unsigned nThreads = std::max(1u, std::thread::hardware_concurrency());
   std::atomic<int> nextRow{0};
   uint8_t* pixels = rgba->data();
+  const char* probe_path = std::getenv("LIGHTUSD_CPU_PTEX_PROBE");
+  const bool probe_enabled = probe_path && probe_path[0] &&
+                             sampleX == 0.0f && sampleY == 0.0f;
+  // Diagnostic A/B for the anisotropic PTex footprint: the probe needs the
+  // single-tap addressing contract, and this env switch restores the previous
+  // isotropic max-gradient mip + one bilinear tap for comparison.
+  const bool force_isotropic_ptex =
+      std::getenv("LIGHTUSD_CPU_PTEX_ISOTROPIC") != nullptr;
+  const bool use_ptex_footprint = !probe_enabled && !force_isotropic_ptex;
+  std::vector<CpuPtexProbe> probes(
+      probe_enabled ? static_cast<size_t>(w) * static_cast<size_t>(h)
+                    : 0);
+  // Ptex face id for a triangle in the expanded CPU stream. The source face id
+  // is texture-local, so instance expansion reuses it unchanged.
+  auto ptexFaceFor = [&](int t) -> int {
+    if (t < 0 || static_cast<size_t>(t) >= cpuSourceTri_.size()) return -1;
+    const int src = cpuSourceTri_[static_cast<size_t>(t)];
+    if (src < 0 || static_cast<size_t>(src) >= hs_.face.size()) return -1;
+    return hs_.face[static_cast<size_t>(src)];
+  };
 
-  auto cpuLayerAlpha = [&](int tri, float bu, float bv) {
+  auto cpuLayerAlpha = [&](int tri, int inst, float bu, float bv) {
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return 1.0f;
     const int mid = cpuMat_[static_cast<size_t>(tri)];
     if (mid < 0 || static_cast<size_t>(mid) * 6 + 5 >= hs_.matPbr.size())
@@ -1277,11 +1722,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                hs_.cols[static_cast<size_t>(tri) * 12 + 7] * bu +
                hs_.cols[static_cast<size_t>(tri) * 12 + 11] * bv;
     }
-    if (tri < static_cast<int>(cpuInstance_.size())) {
-      const int instance = cpuInstance_[static_cast<size_t>(tri)];
-      if (instance >= 0 && static_cast<size_t>(instance) < hs_.instances.size())
-        alpha *= hs_.instances[static_cast<size_t>(instance)].tint[3];
-    }
+    if (inst >= 0 && static_cast<size_t>(inst) < hs_.instances.size())
+      alpha *= hs_.instances[static_cast<size_t>(inst)].tint[3];
     int opacityTex = -1;
     if (mid >= 0 && !hs_.matTex.empty() &&
         static_cast<size_t>(mid) * kRtMaterialTexSlots + 5 < hs_.matTex.size() &&
@@ -1289,22 +1731,27 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       opacityTex = hs_.matTex[static_cast<size_t>(mid) *
                               kRtMaterialTexSlots + 5];
       if (opacityTex >= 0) {
+        const float* param = CpuTextureParams(hs_, mid);
+        const bool uv_set1 = CpuSlotUsesSecondUvSet(param, 5) &&
+                             static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+        const float* src_uv = uv_set1
+            ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+            : &cpuUv_[static_cast<size_t>(tri) * 6];
         float uv[2];
-        Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], bu, bv, uv);
+        Interp6(src_uv, bu, bv, uv);
+        float slot_uv[2];
+        CpuXformSlotUv(param, 5, uv[0], uv[1], slot_uv);
         int channel = 0;
         float scale = 1.0f;
         float bias = 0.0f;
-        const size_t paramBase = static_cast<size_t>(mid) *
-                                 kRtMaterialTextureParamFloats;
-        if (paramBase + 68 < hs_.matTexParam.size()) {
-          const float* param = &hs_.matTexParam[paramBase];
+        if (param) {
           channel = static_cast<int>(param[66] + 0.5f);
           scale = param[67];
           bias = param[68];
         }
         alpha *= SampleTextureBilinearChannel(
-            hs_.textures, hs_.texels, opacityTex, uv[0], uv[1], channel) *
-                      scale + bias;
+            hs_.textures, hs_.texels, opacityTex, slot_uv[0], slot_uv[1],
+            channel, ptexFaceFor(tri)) * scale + bias;
       }
     }
     alpha = std::clamp(alpha, 0.0f, 1.0f);
@@ -1326,7 +1773,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     return alpha;
   };
 
-  auto cpuLayerColor = [&](int tri, float bu, float bv) {
+  auto cpuLayerColor = [&](int tri, int inst, float bu, float bv) {
     float color[3] = {0.6f, 0.6f, 0.6f};
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size())
       return std::array<float, 3>{color[0], color[1], color[2]};
@@ -1344,8 +1791,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         if (!hs_.matTex.empty() && static_cast<size_t>(mid) * kRtMaterialTexSlots <
                                       hs_.matTex.size()) {
           const int tex = hs_.matTex[static_cast<size_t>(mid) * kRtMaterialTexSlots];
+          const float* tp = CpuTextureParams(hs_, mid);
+          const bool uv1_used =
+              CpuSlotUsesSecondUvSet(tp, 0) &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+          const float* src_uv = uv1_used
+              ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+              : &cpuUv_[static_cast<size_t>(tri) * 6];
+          float lane_uv[2];
+          Interp6(src_uv, bu, bv, lane_uv);
+          float slot_uv[2];
+          CpuXformSlotUv(tp, 0, lane_uv[0], lane_uv[1], slot_uv);
           float sampled[3];
-          SampleTextureBilinear(hs_.textures, hs_.texels, tex, uv[0], uv[1], sampled);
+          SampleTextureBilinear(hs_.textures, hs_.texels, tex, slot_uv[0],
+                                slot_uv[1], sampled, ptexFaceFor(tri));
           color[0] *= sampled[0]; color[1] *= sampled[1]; color[2] *= sampled[2];
         }
         const size_t graphBase = static_cast<size_t>(mid) * kRtMaterialGraphFloats;
@@ -1379,8 +1838,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       }
     }
     float normal[3] = {0.0f, 0.0f, 1.0f};
+    float cwb2[9];
     if (static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size()) {
-      const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+      WorldVerts9(hs_, hs_.instances[static_cast<size_t>(inst)], tri,
+                  cwb2);
+      const float* tv = cwb2;
       const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1], tv[5] - tv[2]};
       const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1], tv[8] - tv[2]};
       normal[0] = e1[1] * e2[2] - e1[2] * e2[1];
@@ -1427,8 +1889,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       }
     }
     float hit[3] = {0.0f, 0.0f, 0.0f};
+    float cwb[9];
     if (static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size()) {
-      const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+      WorldVerts9(hs_, hs_.instances[static_cast<size_t>(inst)], tri,
+                  cwb);
+      const float* tv = cwb;
       const float w0 = 1.0f - bu - bv;
       for (int c = 0; c < 3; ++c)
         hit[c] = tv[c] * w0 + tv[3 + c] * bu + tv[6 + c] * bv;
@@ -1507,7 +1972,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     return tint;
   };
 
-  auto cpuLayerTransmissionWeight = [&](int tri, float bu, float bv) {
+  auto cpuLayerTransmissionWeight = [&](int tri, int inst, float bu,
+                                         float bv) {
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return 0.0f;
     const int mid = cpuMat_[static_cast<size_t>(tri)];
     if (mid < 0) return 0.0f;
@@ -1519,7 +1985,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                       : hs_.matPbr[static_cast<size_t>(mid) * 6 + 5];
     if (hs_.matLightRt[base + 54] > 1.5f &&
         hs_.matLightRt[base + 43] > 1.01f && authoredOpacity < 0.999f)
-      transmission = std::max(transmission, 1.0f - cpuLayerAlpha(tri, bu, bv));
+      transmission =
+        std::max(transmission, 1.0f - cpuLayerAlpha(tri, inst, bu, bv));
     return transmission;
   };
 
@@ -1534,20 +2001,25 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     std::array<float, 3> continuationDir{0.0f, 0.0f, -1.0f};
     bool hasContinuation{false};
   };
-  auto cpuLayerRefracted = [&](int tri, float bu, float bv,
-                               const float rayOrigin[3], const float rayDir[3]) {
+  auto cpuLayerRefracted = [&](int tri, int inst, float bu, float bv,
+                               const float rayOrigin[3],
+                               const float rayDir[3]) {
     CpuRefractResult result;
     std::copy(rayOrigin, rayOrigin + 3, result.origin.begin());
     std::copy(rayDir, rayDir + 3, result.dir.begin());
     std::array<float, 3> throughput{1.0f, 1.0f, 1.0f};
     int currentTri = tri;
+    int currentInst = inst;
     float currentBu = bu, currentBv = bv;
     float currentDir[3] = {rayDir[0], rayDir[1], rayDir[2]};
     for (int bounce = 0; bounce < 3; ++bounce) {
       if (currentTri < 0 ||
           static_cast<size_t>(currentTri) * 9 + 8 >= cpuTris_.size())
         return result;
-      const float* tv = &cpuTris_[static_cast<size_t>(currentTri) * 9];
+      float rwb[9];
+      WorldVerts9(hs_, hs_.instances[static_cast<size_t>(currentInst)],
+                  currentTri, rwb);
+      const float* tv = rwb;
       const float p0[3] = {tv[0], tv[1], tv[2]};
       const float p1[3] = {tv[3], tv[4], tv[5]};
       const float p2[3] = {tv[6], tv[7], tv[8]};
@@ -1562,8 +2034,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       for (float& v : n) v /= nl;
       if (static_cast<size_t>(currentTri) * 9 + 8 < cpuNrms_.size()) {
         float smooth[3];
-        Interp9(&cpuNrms_[static_cast<size_t>(currentTri) * 9], currentBu,
-                currentBv, smooth);
+        WorldVec9(hs_.nrms, hs_.instances[static_cast<size_t>(currentInst)],
+                  currentTri, currentBu, currentBv, smooth);
         const float smoothLen = std::sqrt(smooth[0] * smooth[0] +
                                           smooth[1] * smooth[1] +
                                           smooth[2] * smooth[2]);
@@ -1631,20 +2103,21 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       if (bounce == 0) result.hasContinuation = true;
       nextRay.tmin = 1.0e-4f;
       nextRay.tmax = 1.0e30f;
-      lrt_hit nextHit{};
-      if (!lrt_tri_intersect1(scene_, &nextRay, &nextHit) ||
-          nextHit.prim_id == LRT_TRI_NO_HIT)
-        return result;
-      const auto tint = cpuLayerTransmission(currentTri, nextHit.t);
+      float nt = 0.0f, nu = 0.0f, nv = 0.0f;
+      int nInst = -1, nSrc = -1;
+      if (!Intersect(nextRay, &nt, &nu, &nv, &nInst, &nSrc)) return result;
+      const auto tint = cpuLayerTransmission(currentTri, nt);
       for (int c = 0; c < 3; ++c) throughput[c] *= tint[c];
-      currentTri = static_cast<int>(nextHit.prim_id);
-      currentBu = nextHit.u;
-      currentBv = nextHit.v;
+      currentTri = nSrc;
+      currentInst = nInst;
+      currentBu = nu;
+      currentBv = nv;
       std::copy(refr, refr + 3, currentDir);
-      if (cpuLayerTransmissionWeight(currentTri, currentBu, currentBv) <=
-              1.0e-4f ||
+      if (cpuLayerTransmissionWeight(currentTri, currentInst, currentBu,
+                                     currentBv) <= 1.0e-4f ||
           bounce == 2) {
-        const auto color = cpuLayerColor(currentTri, currentBu, currentBv);
+        const auto color =
+            cpuLayerColor(currentTri, currentInst, currentBu, currentBv);
         result.color = {color[0] * throughput[0], color[1] * throughput[1],
                         color[2] * throughput[2]};
         return result;
@@ -1787,7 +2260,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
 
         uint8_t* px = pixels + (static_cast<size_t>(y) * w + x) * 4;
         lrt_hit hit{};
-        if (!lrt_tri_intersect1(scene_, &ray, &hit) || hit.prim_id == LRT_TRI_NO_HIT) {
+        int hitInst = -1, hitSrc = -1;
+        const bool flatHit = Intersect(ray, &hit.t, &hit.u, &hit.v, &hitInst,
+                                       &hitSrc);
+        if (flatHit) hit.prim_id = static_cast<uint32_t>(hitSrc);
+        if (!flatHit) {
           const auto environment = cpuEnvironment(dir);
           const auto encode = [](float value) {
             value = std::max(value, 0.0f);
@@ -1808,7 +2285,8 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
 
         const uint32_t tri = hit.prim_id;
         float nrm[3];
-        Interp9(&cpuNrms_[static_cast<size_t>(tri) * 9], hit.u, hit.v, nrm);
+        WorldVec9(hs_.nrms, hs_.instances[static_cast<size_t>(hitInst)],
+                  static_cast<int>(tri), hit.u, hit.v, nrm);
         const float nlen = std::sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
         if (nlen > 1e-8f) { nrm[0] /= nlen; nrm[1] /= nlen; nrm[2] /= nlen; }
 
@@ -1828,6 +2306,112 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           outCol[0] = outCol[1] = outCol[2] = d;
         } else {  // Shaded (default) -- flat Lambertian, one directional light + ambient
           const int matId = (tri < cpuMat_.size()) ? cpuMat_[tri] : -1;
+          // Per-hit intrinsic-UV footprint. Triangle UVs are affine, so the
+          // world-space UV gradients give |duv/dpixel| at the hit distance; a
+          // PTex sampler turns that into a per-face mip level.
+          float uvPerPixel = 0.0f;
+          float grad_u[3] = {0.0f, 0.0f, 0.0f};
+          float grad_v[3] = {0.0f, 0.0f, 0.0f};
+          float worldFootprint = 0.0f;
+          bool have_grad = false;
+          if (matId >= 0 &&
+              static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size() &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size() &&
+              pixelAngle > 0.0f) {
+            float wv1[9];
+            WorldVerts9(hs_, hs_.instances[static_cast<size_t>(hitInst)],
+                        static_cast<int>(tri), wv1);
+            const float* tv = wv1;
+            const float* uv = &cpuUv_[static_cast<size_t>(tri) * 6];
+            const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1], tv[5] - tv[2]};
+            const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1], tv[8] - tv[2]};
+            const float du1 = uv[2] - uv[0], dv1 = uv[3] - uv[1];
+            const float du2 = uv[4] - uv[0], dv2 = uv[5] - uv[1];
+            const float det = du1 * dv2 - du2 * dv1;
+            if (std::fabs(det) > 1.0e-9f) {
+              const float gu[3] = {(dv2 * e1[0] - dv1 * e2[0]) / det,
+                                   (dv2 * e1[1] - dv1 * e2[1]) / det,
+                                   (dv2 * e1[2] - dv1 * e2[2]) / det};
+              const float gv[3] = {(-du2 * e1[0] + du1 * e2[0]) / det,
+                                   (-du2 * e1[1] + du1 * e2[1]) / det,
+                                   (-du2 * e1[2] + du1 * e2[2]) / det};
+              const float lu = std::sqrt(gu[0] * gu[0] + gu[1] * gu[1] +
+                                         gu[2] * gu[2]);
+              const float lv = std::sqrt(gv[0] * gv[0] + gv[1] * gv[1] +
+                                         gv[2] * gv[2]);
+              worldFootprint = pixelAngle * std::max(hit.t, 1.0e-4f);
+              uvPerPixel = worldFootprint * std::max(lu, lv);
+              for (int k = 0; k < 3; ++k) {
+                grad_u[k] = gu[k];
+                grad_v[k] = gv[k];
+              }
+              have_grad = true;
+            }
+          }
+          auto ptexAt = [&](int tex) -> const CpuPtexSampler* {
+            return (tex >= 0 && static_cast<size_t>(tex) < ptex_.size())
+                       ? ptex_[static_cast<size_t>(tex)].get()
+                       : nullptr;
+          };
+          auto ptexMipOf = [&](const CpuPtexSampler* sampler,
+                               int face) -> uint32_t {
+            return (sampler && face >= 0)
+                       ? sampler->ChooseMip(static_cast<uint32_t>(face),
+                                            uvPerPixel)
+                       : 0u;
+          };
+          auto ptexFpOf = [&](const CpuPtexSampler* sampler,
+                              int face) -> CpuPtexSampler::Footprint {
+            CpuPtexSampler::Footprint fp;
+            if (sampler && face >= 0 && have_grad)
+              fp = sampler->ComputeFootprint(static_cast<uint32_t>(face),
+                                             grad_u, grad_v, worldFootprint);
+            return fp;
+          };
+          // One hit frame serves the graph's tangent/bitangent nodes and the
+          // material normal map. Only pay for it when either could be used.
+          ShadingTangentFrame shading_frame;
+          bool have_shading_frame = false;
+          bool authored_tangent_frame = false;
+          if (matId >= 0 &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
+            const size_t graph_base =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            const bool has_graph =
+                graph_base + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size();
+            const bool has_normal_tex =
+                static_cast<size_t>(matId) * kRtMaterialTexSlots + 3 <
+                    hs_.matTex.size() &&
+                hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3] >= 0;
+            if (has_graph || has_normal_tex) {
+              // Authored primvars:tangents take precedence when present; the
+              // triangle-derived frame remains the fallback (and the shader's
+              // behavior for meshes without authored tangents).
+              if (static_cast<size_t>(tri) * 9 + 8 < cpuTan_.size() &&
+                  static_cast<size_t>(tri) * 9 + 8 < cpuBin_.size()) {
+                float at[3], ab[3];
+                WorldVec9(hs_.tan, hs_.instances[static_cast<size_t>(hitInst)],
+                          static_cast<int>(tri), hit.u, hit.v, at);
+                WorldVec9(hs_.bin, hs_.instances[static_cast<size_t>(hitInst)],
+                          static_cast<int>(tri), hit.u, hit.v, ab);
+                authored_tangent_frame =
+                    BuildAuthoredShadingFrame(at, ab, nrm, &shading_frame);
+              }
+              if (!authored_tangent_frame) {
+                float wv2[9];
+                WorldVerts9(hs_, hs_.instances[static_cast<size_t>(hitInst)],
+                            static_cast<int>(tri), wv2);
+                const float* tv = wv2;
+                const float* tuv = &cpuUv_[static_cast<size_t>(tri) * 6];
+                const float uv0[2] = {tuv[0], tuv[1]};
+                const float uv1[2] = {tuv[2], tuv[3]};
+                const float uv2[2] = {tuv[4], tuv[5]};
+                BuildShadingTangentFrame(tv, tv + 3, tv + 6, uv0, uv1, uv2, nrm,
+                                         &shading_frame);
+              }
+              have_shading_frame = true;
+            }
+          }
           float base[3] = {0.8f, 0.8f, 0.8f};
           if (matId >= 0 && static_cast<size_t>(matId) * 3 + 3 <= hs_.matBase.size()) {
             base[0] = hs_.matBase[static_cast<size_t>(matId) * 3 + 0];
@@ -1842,10 +2426,41 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               static_cast<size_t>(matId) * kRtMaterialTexSlots < hs_.matTex.size()) {
             const int baseTex = hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 0];
             if (baseTex >= 0 && tri * 6 + 5 < cpuUv_.size()) {
+              const float* tex_params = CpuTextureParams(hs_, matId);
+              const bool uv_set1 =
+                  CpuSlotUsesSecondUvSet(tex_params, 0) &&
+                  static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
               float uv[2];
-              Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv);
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformSlotUv(tex_params, 0, uv[0], uv[1], slot_uv);
               float texCol[3];
-              SampleTextureBilinear(hs_.textures, hs_.texels, baseTex, uv[0], uv[1], texCol);
+              const int base_face = ptexFaceFor(static_cast<int>(tri));
+              const CpuPtexSampler* base_src = ptexAt(baseTex);
+              const uint32_t base_mip = ptexMipOf(base_src, base_face);
+              const CpuPtexSampler::Footprint base_fp =
+                  ptexFpOf(base_src, base_face);
+              SampleTextureBilinear(hs_.textures, hs_.texels, baseTex,
+                                    slot_uv[0], slot_uv[1], texCol, base_face,
+                                    base_src, base_mip,
+                                    use_ptex_footprint ? &base_fp : nullptr);
+              if (probe_enabled && base_src && base_face >= 0) {
+                CpuPtexProbe& probe =
+                    probes[static_cast<size_t>(y) * static_cast<size_t>(w) +
+                           static_cast<size_t>(x)];
+                probe.tex = static_cast<uint32_t>(baseTex);
+                probe.face = static_cast<uint32_t>(base_face);
+                probe.mip = static_cast<int>(base_mip);
+                probe.srgb = hs_.textures[static_cast<size_t>(baseTex)].srgb;
+                probe.u = slot_uv[0];
+                probe.v = slot_uv[1];
+                probe.rgb[0] = texCol[0];
+                probe.rgb[1] = texCol[1];
+                probe.rgb[2] = texCol[2];
+              }
               base[0] *= texCol[0]; base[1] *= texCol[1]; base[2] *= texCol[2];
             }
           }
@@ -1870,14 +2485,16 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                                                   0.0f, 0.0f,
                                                                   (static_cast<size_t>(tri) < cpuSourceTri_.size())
                                                                       ? cpuSourceTri_[static_cast<size_t>(tri)]
-                                                                      : -1);
+                                                                      : -1,
+                                                                  have_shading_frame ? shading_frame.tangent : nullptr,
+                                                                  have_shading_frame ? shading_frame.bitangent : nullptr);
               base[0] = graphBaseColor[0];
               base[1] = graphBaseColor[1];
               base[2] = graphBaseColor[2];
             }
           }
-          if (tri < cpuInstance_.size()) {
-            const int instanceIndex = cpuInstance_[tri];
+          if (hitInst >= 0) {
+            const int instanceIndex = hitInst;
             if (instanceIndex >= 0 && static_cast<size_t>(instanceIndex) < hs_.instances.size()) {
               const Inst& inst = hs_.instances[static_cast<size_t>(instanceIndex)];
               base[0] *= inst.tint[0];
@@ -1888,7 +2505,164 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           const float hitP[3] = {rayOrg[0] + dir[0] * hit.t,
                                  rayOrg[1] + dir[1] * hit.t,
                                  rayOrg[2] + dir[2] * hit.t};
+          // Perturb the shading normal from the material's normal map. The
+          // Vulkan RT shader already rebuilds a tangent frame from the
+          // triangle's UVs; the CPU preview used to shade with the geometric
+          // normal, which silently ignored normal maps. The frame is rebuilt
+          // from the lane's own UV set/transform when the map is sampled.
+          if (have_shading_frame) {
+            float tangent_normal[3] = {0.0f, 0.0f, 1.0f};
+            float map_uv[2];
+            Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, map_uv);
+            bool have_normal = false;
+            ShadingTangentFrame normal_frame = shading_frame;
+            const size_t graph_base =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            const float graphPosition[3] = {hitP[0], hitP[1], hitP[2]};
+            const float graphViewDirection[3] = {-dir[0], -dir[1], -dir[2]};
+            if (graph_base + kRtMaterialGraphHeaderFloats <=
+                    hs_.matGraph.size() &&
+                hs_.matGraph[graph_base + 1 + 5] >= 0.0f) {
+              // Route 5 is the MaterialX normal output: a unit tangent-space
+              // normal encoded in [0,1].
+              const auto gn = EvalCpuMaterialXGraph(
+                  hs_, matId, 5, map_uv[0], map_uv[1], map_uv[0], map_uv[1], nrm,
+                  graphPosition, graphViewDirection, 0.0f, 0.0f,
+                  (static_cast<size_t>(tri) < cpuSourceTri_.size())
+                      ? cpuSourceTri_[static_cast<size_t>(tri)]
+                      : -1,
+                  shading_frame.tangent, shading_frame.bitangent);
+              tangent_normal[0] = gn[0] * 2.0f - 1.0f;
+              tangent_normal[1] = gn[1] * 2.0f - 1.0f;
+              tangent_normal[2] = gn[2] * 2.0f - 1.0f;
+              have_normal = true;
+            } else if (static_cast<size_t>(matId) * kRtMaterialTexSlots + 3 <
+                           hs_.matTex.size() &&
+                       hs_.matTex[static_cast<size_t>(matId) *
+                                      kRtMaterialTexSlots + 3] >= 0) {
+              const int normal_tex =
+                  hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 3];
+              const float* tex_params = CpuTextureParams(hs_, matId);
+              const bool uv_set1 =
+                  CpuSlotUsesSecondUvSet(tex_params, 3) &&
+                  static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
+              float uv[2];
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformSlotUv(tex_params, 3, uv[0], uv[1], slot_uv);
+              float rgb[3];
+              const int normal_face = ptexFaceFor(static_cast<int>(tri));
+              const CpuPtexSampler* normal_src = ptexAt(normal_tex);
+              const CpuPtexSampler::Footprint normal_fp =
+                  ptexFpOf(normal_src, normal_face);
+              SampleTextureBilinear(hs_.textures, hs_.texels, normal_tex,
+                                    slot_uv[0], slot_uv[1], rgb, normal_face,
+                                    normal_src,
+                                    ptexMipOf(normal_src, normal_face),
+                                    use_ptex_footprint ? &normal_fp : nullptr);
+              tangent_normal[0] = rgb[0] * 2.0f - 1.0f;
+              tangent_normal[1] = rgb[1] * 2.0f - 1.0f;
+              tangent_normal[2] = rgb[2] * 2.0f - 1.0f;
+              have_normal = true;
+              // The frame must use the same UV set and transformed
+              // coordinates as the normal sample, matching the shaders.
+              float frame_uv[6];
+              for (int c = 0; c < 3; ++c) {
+                float corner[2];
+                CpuXformSlotUv(tex_params, 3, src_uv[c * 2],
+                               src_uv[c * 2 + 1], corner);
+                frame_uv[c * 2] = corner[0];
+                frame_uv[c * 2 + 1] = corner[1];
+              }
+              if (!authored_tangent_frame) {
+                float wv3[9];
+                WorldVerts9(hs_, hs_.instances[static_cast<size_t>(hitInst)],
+                            static_cast<int>(tri), wv3);
+                const float* tv = wv3;
+                BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
+                                         frame_uv + 2, frame_uv + 4, nrm,
+                                         &normal_frame);
+              }
+            }
+            if (have_normal) {
+              float world[3];
+              ApplyShadingTangentNormal(normal_frame, tangent_normal, world);
+              nrm[0] = world[0];
+              nrm[1] = world[1];
+              nrm[2] = world[2];
+            }
+          }
+          // OpenPBR applies a separate coat normal (matTex slot 11) with its
+          // own UV set/transform and tangent frame. The CPU preview shaded the
+          // coat lobe with the surface normal, so an authored coat map was
+          // silently ignored. Sample it here; without one the coat lobe uses
+          // the surface normal.
+          float coatNrm[3] = {nrm[0], nrm[1], nrm[2]};
+          if (matId >= 0 &&
+              static_cast<size_t>(matId) * kRtMaterialTexSlots + 11 <
+                  hs_.matTex.size()) {
+            const int coat_tex =
+                hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots +
+                           11];
+            if (coat_tex >= 0 && static_cast<size_t>(tri) * 6 + 5 <
+                                     cpuUv_.size()) {
+              const float* tp = CpuTextureParams(hs_, matId);
+              const bool uv_set1 = tp != nullptr &&
+                                   static_cast<int>(tp[146] + 0.5f) == 1 &&
+                                   static_cast<size_t>(tri) * 6 + 5 <
+                                       cpuUv1_.size();
+              const float* src_uv = uv_set1
+                  ? &cpuUv1_[static_cast<size_t>(tri) * 6]
+                  : &cpuUv_[static_cast<size_t>(tri) * 6];
+              float uv[2];
+              Interp6(src_uv, hit.u, hit.v, uv);
+              float slot_uv[2];
+              CpuXformUvAt(tp, 140, uv[0], uv[1], slot_uv);
+              float rgb[3];
+              const int coat_face = ptexFaceFor(static_cast<int>(tri));
+              const CpuPtexSampler* coat_src = ptexAt(coat_tex);
+              const CpuPtexSampler::Footprint coat_fp =
+                  ptexFpOf(coat_src, coat_face);
+              SampleTextureBilinear(hs_.textures, hs_.texels, coat_tex,
+                                    slot_uv[0], slot_uv[1], rgb, coat_face,
+                                    coat_src, ptexMipOf(coat_src, coat_face),
+                                    use_ptex_footprint ? &coat_fp : nullptr);
+              // Packed coat-normal scale/bias (147/151); the loader stores the
+              // usual 2/-1 when the texture authors defaults.
+              float co_n[3];
+              for (int c = 0; c < 3; ++c) {
+                const float scale = tp ? tp[147 + c] : 2.0f;
+                const float bias = tp ? tp[151 + c] : -1.0f;
+                co_n[c] = rgb[c] * scale + bias;
+              }
+              float frame_uv[6];
+              for (int c = 0; c < 3; ++c) {
+                float corner[2];
+                CpuXformUvAt(tp, 140, src_uv[c * 2], src_uv[c * 2 + 1],
+                             corner);
+                frame_uv[c * 2] = corner[0];
+                frame_uv[c * 2 + 1] = corner[1];
+              }
+              float wv4[9];
+              WorldVerts9(hs_, hs_.instances[static_cast<size_t>(hitInst)],
+                          static_cast<int>(tri), wv4);
+              const float* tv = wv4;
+              ShadingTangentFrame coat_frame;
+              BuildShadingTangentFrame(tv, tv + 3, tv + 6, frame_uv,
+                                       frame_uv + 2, frame_uv + 4, nrm,
+                                       &coat_frame);
+              float world[3];
+              ApplyShadingTangentNormal(coat_frame, co_n, world);
+              coatNrm[0] = world[0];
+              coatNrm[1] = world[1];
+              coatNrm[2] = world[2];
+            }
+          }
           float direct = 0.0f;
+          float directCoat = 0.0f;
           bool hadDirectLight = false;
           const int lightCount = hs_.numLights;
           for (int li = 0; li < lightCount; ++li) {
@@ -1897,7 +2671,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             const int lightType = static_cast<int>(lp[0] + 0.5f);
             if (lightType == static_cast<int>(DrawLightCPU::Type::Dome) ||
                 lp[1] <= 0.5f) continue;
-            const int instanceIndex = tri < cpuInstance_.size() ? cpuInstance_[tri] : -1;
+            const int instanceIndex = hitInst;
             if (li < 32 && instanceIndex >= 0 &&
                 static_cast<size_t>(instanceIndex) < hs_.instances.size() &&
                 (hs_.instances[static_cast<size_t>(instanceIndex)].directLightMask &
@@ -1952,7 +2726,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                       emitterN[1] * -L[1] + emitterN[2] * -L[2]);
             }
             const float nl = std::max(0.0f, nrm[0] * L[0] + nrm[1] * L[1] + nrm[2] * L[2]);
-            if (nl <= 0.0f || shape <= 0.0f) continue;
+            const float nlCoat = std::max(0.0f, coatNrm[0] * L[0] +
+                                                    coatNrm[1] * L[1] +
+                                                    coatNrm[2] * L[2]);
+            if ((nl <= 0.0f && nlCoat <= 0.0f) || shape <= 0.0f) continue;
             float shadow = 1.0f;
             if ((static_cast<int>(lp[1] + 0.5f) & (1 << 1)) != 0) {
               lrt_ray shadowRay{};
@@ -1981,9 +2758,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 int mediumDepth = 0;
                 for (int layer = 0; layer < 12; ++layer) {
                   shadowRay.tmin = cursor;
-                  lrt_hit shadowHit{};
-                  if (!lrt_tri_intersect1(scene_, &shadowRay, &shadowHit) ||
-                      shadowHit.prim_id == LRT_TRI_NO_HIT) {
+                  float shadowT = 0.0f, shadowU = 0.0f, shadowV = 0.0f;
+                  int shadowInst = -1, shadowSrc = -1;
+                  if (!Intersect(shadowRay, &shadowT, &shadowU, &shadowV,
+                                 &shadowInst, &shadowSrc)) {
                     // Finite local/area lights can end inside a volume. Apply
                     // the remaining segment; an unmatched directional-light
                     // shell is treated as malformed/open and keeps fallback
@@ -1997,32 +2775,30 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                     }
                     break;
                   }
-                  const int shadowTri = static_cast<int>(shadowHit.prim_id);
+                  const int shadowTri = shadowSrc;
                   if (mediumDepth > 0) {
                     const auto volumeTint = cpuLayerTransmission(
                         media[static_cast<size_t>(mediumDepth)].entryTri,
-                        std::max(0.0f, shadowHit.t - cursor));
+                        std::max(0.0f, shadowT - cursor));
                     for (int c = 0; c < 3; ++c)
                       transmittance[c] *= volumeTint[c];
                   }
-                  const float alpha = cpuLayerAlpha(shadowTri, shadowHit.u,
-                                                    shadowHit.v);
+                  const float alpha = cpuLayerAlpha(shadowTri, shadowInst,
+                                                    shadowU, shadowV);
                   // Zero-depth OpenPBR color is an interface tint. For a
                   // positive depth this is unity; attenuation was applied to
                   // the measured segment above.
                   const auto tint = cpuLayerTransmission(shadowTri, 0.0f);
                   const float transmissionWeight =
-                      cpuLayerTransmissionWeight(shadowTri, shadowHit.u,
-                                                 shadowHit.v);
+                      cpuLayerTransmissionWeight(shadowTri, shadowInst,
+                                                 shadowU, shadowV);
                   for (int c = 0; c < 3; ++c) {
                     const float through = transmissionWeight > 0.0f
                                               ? tint[c] * (1.0f - alpha)
                                               : (1.0f - alpha);
                     transmittance[c] *= std::clamp(through, 0.0f, 1.0f);
                   }
-                  const int shadowInstance =
-                      static_cast<size_t>(shadowTri) < cpuInstance_.size()
-                          ? cpuInstance_[static_cast<size_t>(shadowTri)] : -1;
+                  const int shadowInstance = shadowInst;
                   const int shadowMaterial =
                       static_cast<size_t>(shadowTri) < cpuMat_.size()
                           ? cpuMat_[static_cast<size_t>(shadowTri)] : -1;
@@ -2033,9 +2809,13 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                   const bool thinWalled = shadowMb + 71 < hs_.matLightRt.size() &&
                       hs_.matLightRt[shadowMb + 71] >= 0.5f;
                   bool frontFacing = true;
+                  float swb[9];
                   const size_t tb = static_cast<size_t>(shadowTri) * 9;
                   if (tb + 8 < cpuTris_.size()) {
-                    const float* tv = &cpuTris_[tb];
+                    WorldVerts9(hs_,
+                                hs_.instances[static_cast<size_t>(shadowInst)],
+                                shadowTri, swb);
+                    const float* tv = swb;
                     const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1],
                                          tv[5] - tv[2]};
                     const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1],
@@ -2069,7 +2849,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                   if (transmittance[0] + transmittance[1] +
                           transmittance[2] < 0.003f)
                     break;
-                  cursor = shadowHit.t + 1.0e-4f;
+                  cursor = shadowT + 1.0e-4f;
                   if (cursor >= shadowRay.tmax) break;
                 }
                 shadow = 0.2126f * transmittance[0] +
@@ -2081,12 +2861,18 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             const float radiance = std::max(0.0f, emitter[0]) * 0.3333333f +
                                    std::max(0.0f, emitter[1]) * 0.3333333f +
                                    std::max(0.0f, emitter[2]) * 0.3333333f;
-            direct += nl * attenuation * shape * shadow * radiance *
-                      PackedIesFactor(lp, lightToPoint) * lp[29];
+            const float lightTerm = attenuation * shape * shadow * radiance *
+                                    PackedIesFactor(lp, lightToPoint) * lp[29];
+            direct += nl * lightTerm;
+            directCoat += nlCoat * lightTerm;
           }
           const float diff = hadDirectLight ? direct :
               std::max(0.0f, nrm[0] * lightDirN[0] + nrm[1] * lightDirN[1] +
                              nrm[2] * lightDirN[2]);
+          const float diffCoat = hadDirectLight ? directCoat :
+              std::max(0.0f, coatNrm[0] * lightDirN[0] +
+                             coatNrm[1] * lightDirN[1] +
+                             coatNrm[2] * lightDirN[2]);
           // Keep the CPU preview on the same compact OpenPBR material lanes
           // as the CUDA/Vulkan paths.  It remains a single-light preview, but
           // no longer collapses metallic, transmission, coat, and subsurface
@@ -2150,6 +2936,187 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
             }
           }
+          // Sample the semantic texture lanes the CPU preview consumes with
+          // the same packed UV-set/transform/channel/scale-bias rules as the
+          // shaders. The loader neutralizes a lane's constant to 1 whenever a
+          // texture is bound, so constant * sample is the right combine.
+          float occlusion = 1.0f;
+          if (matId >= 0) {
+            const float* tp = CpuTextureParams(hs_, matId);
+            const size_t tex_base =
+                static_cast<size_t>(matId) * kRtMaterialTexSlots;
+            auto lane_tex = [&](size_t slot) -> int {
+              return tex_base + slot < hs_.matTex.size()
+                         ? hs_.matTex[tex_base + slot]
+                         : -1;
+            };
+            auto lane_set1 = [&](int uvset_float, int bit) {
+              return tp != nullptr &&
+                     ((static_cast<int>(tp[uvset_float] + 0.5f) &
+                       (1 << bit)) != 0);
+            };
+            auto lane_channel = [&](int offset) {
+              return tp ? static_cast<int>(tp[offset] + 0.5f) : 0;
+            };
+            auto lane_scale = [&](int offset, int c) {
+              return tp ? tp[offset + c] : 1.0f;
+            };
+            auto lane_bias = [&](int offset, int c) {
+              return tp ? tp[offset + c] : 0.0f;
+            };
+            const int tri_i = static_cast<int>(tri);
+            const int lane_face = ptexFaceFor(tri_i);
+            auto lane_src = [&](size_t slot) -> const CpuPtexSampler* {
+              return ptexAt(lane_tex(slot));
+            };
+            auto lane_mip = [&](size_t slot) -> uint32_t {
+              const CpuPtexSampler* sampler = lane_src(slot);
+              return ptexMipOf(sampler, lane_face);
+            };
+            CpuPtexSampler::Footprint lane_fps[16];
+            auto lane_fp = [&](size_t slot)
+                -> const CpuPtexSampler::Footprint* {
+              if (!use_ptex_footprint) return nullptr;
+              lane_fps[slot] = ptexFpOf(lane_src(slot), lane_face);
+              return &lane_fps[slot];
+            };
+            float v = 0.0f;
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(1), tri_i, hit.u,
+                                        hit.v, lane_set1(69, 1), 6,
+                                        lane_channel(60), cpuUv_, cpuUv1_,
+                                        &v, lane_face, lane_src(1),
+                                        lane_mip(1), lane_fp(1))) {
+              metallic = std::clamp(
+                  metallic * (v * lane_scale(61, 0) + lane_bias(62, 0)),
+                  0.0f, 1.0f);
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(2), tri_i, hit.u,
+                                        hit.v, lane_set1(69, 2), 12,
+                                        lane_channel(63), cpuUv_, cpuUv1_,
+                                        &v, lane_face, lane_src(2),
+                                        lane_mip(2), lane_fp(2))) {
+              roughness = std::clamp(
+                  roughness * (v * lane_scale(64, 0) + lane_bias(65, 0)),
+                  0.03f, 1.0f);
+            }
+            float rgb[3];
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(4), tri_i, hit.u,
+                                     hit.v, lane_set1(69, 4), 24, cpuUv_,
+                                     cpuUv1_, rgb, lane_face, lane_src(4),
+                                     lane_mip(4), lane_fp(4))) {
+              for (int c = 0; c < 3; ++c) {
+                emission[c] = std::max(
+                    0.0f, emission[c] *
+                              (rgb[c] * lane_scale(52, c) + lane_bias(56, c)));
+              }
+            }
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(10), tri_i, hit.u,
+                                     hit.v,
+                                     tp != nullptr &&
+                                         static_cast<int>(tp[130] + 0.5f) == 1,
+                                     124, cpuUv_, cpuUv1_, rgb, lane_face,
+                                     lane_src(10), lane_mip(10), lane_fp(10))) {
+              for (int c = 0; c < 3; ++c) {
+                specColor[c] = std::max(
+                    0.0f, specColor[c] *
+                              (rgb[c] * lane_scale(132, c) + lane_bias(136, c)));
+              }
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(7), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 1), 78,
+                                        lane_channel(97), cpuUv_, cpuUv1_,
+                                        &v, lane_face, lane_src(7),
+                                        lane_mip(7), lane_fp(7))) {
+              coatWeight = std::clamp(
+                  coatWeight * (v * lane_scale(100, 0) + lane_bias(104, 0)),
+                  0.0f, 1.0f);
+            }
+            if (CpuSampleSemanticRgb(hs_, matId, lane_tex(8), tri_i, hit.u,
+                                     hit.v, lane_set1(99, 2), 84, cpuUv_,
+                                     cpuUv1_, rgb, lane_face, lane_src(8),
+                                     lane_mip(8), lane_fp(8))) {
+              for (int c = 0; c < 3; ++c) {
+                coatColor[c] = std::max(
+                    0.0f, coatColor[c] * (rgb[c] * lane_scale(108, c) +
+                                          lane_bias(112, c)));
+              }
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(9), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 3), 90,
+                                        lane_channel(98), cpuUv_, cpuUv1_,
+                                        &v, lane_face, lane_src(9),
+                                        lane_mip(9), lane_fp(9))) {
+              coatRoughness = std::clamp(
+                  coatRoughness * (v * lane_scale(116, 0) + lane_bias(120, 0)),
+                  0.03f, 1.0f);
+            }
+            if (CpuSampleSemanticScalar(hs_, matId, lane_tex(6), tri_i, hit.u,
+                                        hit.v, lane_set1(99, 0), 72,
+                                        lane_channel(96), cpuUv_, cpuUv1_,
+                                        &v, lane_face, lane_src(6),
+                                        lane_mip(6), lane_fp(6))) {
+              occlusion = std::clamp(
+                  v * lane_scale(70, 0) + lane_bias(71, 0), 0.0f, 1.0f);
+            }
+            // MaterialX graph lanes override the constant/texture result,
+            // matching the shaders' hasGraphRoute checks.
+            const size_t gb =
+                static_cast<size_t>(matId) * kRtMaterialGraphFloats;
+            if (gb + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size()) {
+              float guv[2];
+              Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, guv);
+              float guv1[2] = {guv[0], guv[1]};
+              if (static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size()) {
+                Interp6(&cpuUv1_[static_cast<size_t>(tri) * 6], hit.u, hit.v,
+                        guv1);
+              }
+              const float graph_position[3] = {hitP[0], hitP[1], hitP[2]};
+              const float graph_view[3] = {-dir[0], -dir[1], -dir[2]};
+              const int source_tri =
+                  static_cast<size_t>(tri) < cpuSourceTri_.size()
+                      ? cpuSourceTri_[static_cast<size_t>(tri)]
+                      : -1;
+              auto graph_route = [&](int route) {
+                return EvalCpuMaterialXGraph(
+                    hs_, matId, route, guv[0], guv[1], guv1[0], guv1[1], nrm,
+                    graph_position, graph_view, 0.0f, 0.0f, source_tri,
+                    have_shading_frame ? shading_frame.tangent : nullptr,
+                    have_shading_frame ? shading_frame.bitangent : nullptr);
+              };
+              if (hs_.matGraph[gb + 1 + 1] >= 0.0f) {
+                metallic = std::clamp(graph_route(1)[0], 0.0f, 1.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 2] >= 0.0f) {
+                roughness = std::clamp(graph_route(2)[0], 0.03f, 1.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 4] >= 0.0f) {
+                const auto g = graph_route(4);
+                emission[0] = std::max(g[0], 0.0f);
+                emission[1] = std::max(g[1], 0.0f);
+                emission[2] = std::max(g[2], 0.0f);
+              }
+              // Route 10 is OpenPBR specular_color, route 14 coat_color and
+              // route 13 coat_weight. They were previously reachable only
+              // through a *texture* lane, so a MaterialX graph driving them
+              // changed nothing (measured: coat_color low/high rendered
+              // byte-identically). Evaluate them like metallic/roughness.
+              if (hs_.matGraph[gb + 1 + 10] >= 0.0f) {
+                const auto g = graph_route(10);
+                specColor[0] = std::max(g[0], 0.0f);
+                specColor[1] = std::max(g[1], 0.0f);
+                specColor[2] = std::max(g[2], 0.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 13] >= 0.0f) {
+                coatWeight = std::clamp(graph_route(13)[0], 0.0f, 1.0f);
+              }
+              if (hs_.matGraph[gb + 1 + 14] >= 0.0f) {
+                const auto g = graph_route(14);
+                coatColor[0] = std::max(g[0], 0.0f);
+                coatColor[1] = std::max(g[1], 0.0f);
+                coatColor[2] = std::max(g[2], 0.0f);
+              }
+            }
+          }
           const float viewLen = std::sqrt(
               (camPos[0] - hitP[0]) * (camPos[0] - hitP[0]) +
               (camPos[1] - hitP[1]) * (camPos[1] - hitP[1]) +
@@ -2163,7 +3130,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           if (std::fabs(anisotropy) > 1.0e-4f &&
               static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size() &&
               static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size()) {
-            const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+            float wv5[9];
+            WorldVerts9(hs_, hs_.instances[static_cast<size_t>(hitInst)],
+                        static_cast<int>(tri), wv5);
+            const float* tv = wv5;
             const float* uv = &cpuUv_[static_cast<size_t>(tri) * 6];
             const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1], tv[5] - tv[2]};
             const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1], tv[8] - tv[2]};
@@ -2188,14 +3158,18 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 const float rb[3] = {-t[0] * sr + b[0] * cr,
                                      -t[1] * sr + b[1] * cr,
                                      -t[2] * sr + b[2] * cr};
-                float h[3] = {lightDirN[0] + (camPos[0] - hitP[0]) / viewLen,
+                float halfVector[3] = {lightDirN[0] + (camPos[0] - hitP[0]) / viewLen,
                               lightDirN[1] + (camPos[1] - hitP[1]) / viewLen,
                               lightDirN[2] + (camPos[2] - hitP[2]) / viewLen};
-                const float hn = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+                const float hn = std::sqrt(halfVector[0] * halfVector[0] +
+                                           halfVector[1] * halfVector[1] +
+                                           halfVector[2] * halfVector[2]);
                 if (hn > 1.0e-6f) {
-                  for (float& c : h) c /= hn;
-                  const float ht = h[0] * rt[0] + h[1] * rt[1] + h[2] * rt[2];
-                  const float hb = h[0] * rb[0] + h[1] * rb[1] + h[2] * rb[2];
+                  for (float& c : halfVector) c /= hn;
+                  const float ht = halfVector[0] * rt[0] + halfVector[1] * rt[1] +
+                                   halfVector[2] * rt[2];
+                  const float hb = halfVector[0] * rb[0] + halfVector[1] * rb[1] +
+                                   halfVector[2] * rb[2];
                   directionalRoughness = std::clamp(
                       roughness * (1.0f + anisotropy * (ht * ht - hb * hb)),
                       0.03f, 1.0f);
@@ -2244,18 +3218,25 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               (0.25f + 0.75f * (1.0f - diff) * radiusGain);
           const float specular = specWeight * (fresnel + metallic) *
               diff / std::max(0.08f, directionalRoughness * directionalRoughness * 4.0f);
-          const float coat = coatWeight * 0.04f * diff /
+          const float coat = coatWeight * 0.04f * diffCoat /
                              std::max(0.08f, lobeRoughness * lobeRoughness);
           const float sheen = sheenWeight *
               (0.5f + 0.5f * sheenRoughness) *
               std::pow(1.0f - std::clamp(nv, 0.0f, 1.0f), 2.0f) * diff;
-          const float lit = 0.15f + 0.85f * diff * diffuseWeight + diffusion;
+          const float lit = 0.15f * occlusion +
+                            0.85f * diff * diffuseWeight + diffusion;
+          // The coat lobe's Fresnel F0 is tinted by coat_color, matching
+          // raytrace.comp (`coatF0 = coatColor * coatDielectric`). A scalar
+          // coat term made a coat_color route or texture invisible here.
           outCol[0] = (base[0] * lit + specColor[0] * specular +
-                       sheenColor[0] * sheen + coat + emission[0]) * exposureMul;
+                       sheenColor[0] * sheen + coatColor[0] * coat +
+                       emission[0]) * exposureMul;
           outCol[1] = (base[1] * lit + specColor[1] * specular +
-                       sheenColor[1] * sheen + coat + emission[1]) * exposureMul;
+                       sheenColor[1] * sheen + coatColor[1] * coat +
+                       emission[1]) * exposureMul;
           outCol[2] = (base[2] * lit + specColor[2] * specular +
-                       sheenColor[2] * sheen + coat + emission[2]) * exposureMul;
+                       sheenColor[2] * sheen + coatColor[2] * coat +
+                       emission[2]) * exposureMul;
           // Dome diffuse irradiance and view-dependent reflection make CPU RT
           // a useful visual reference for the raster and ray-query paths. SH
           // supplies the low-frequency diffuse term; the authored dome texture
@@ -2275,7 +3256,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               (fresnel * (1.0f - metallic) + metallic) *
               (1.0f - 0.75f * roughness);
           for (int c = 0; c < 3; ++c) {
-            outCol[c] += exposureMul *
+            outCol[c] += exposureMul * occlusion *
                 (base[c] * diffuseWeight * domeDiffuse[c] * 0.31830988618f +
                  specColor[c] * domeSpecular[c] * envSpecWeight);
           }
@@ -2286,18 +3267,19 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                hs_.matLightRt.size())
               alphaMode = hs_.matLightRt[static_cast<size_t>(mid) *
                                          kLightRtOpenPBRFloats + 54];
-            const float topAlpha = cpuLayerAlpha(static_cast<int>(tri), hit.u, hit.v);
+            const float topAlpha =
+                cpuLayerAlpha(static_cast<int>(tri), hitInst, hit.u, hit.v);
             if (alphaMode > 0.5f && alphaMode < 1.5f && topAlpha <= 0.0f) {
               outCol[0] = clearColor[0]; outCol[1] = clearColor[1];
               outCol[2] = clearColor[2];
             } else if (alphaMode > 1.5f && topAlpha < 1.0f) {
               const float topColor[3] = {outCol[0], outCol[1], outCol[2]};
               const auto refracted = cpuLayerRefracted(
-                  static_cast<int>(tri), hit.u, hit.v, rayOrg, dir);
+                  static_cast<int>(tri), hitInst, hit.u, hit.v, rayOrg, dir);
               const auto topTint =
                   cpuLayerTransmission(static_cast<int>(tri), 0.0f);
               const float topTransmission = cpuLayerTransmissionWeight(
-                  static_cast<int>(tri), hit.u, hit.v);
+                  static_cast<int>(tri), hitInst, hit.u, hit.v);
               float underAccum[3] = {0.0f, 0.0f, 0.0f};
               float throughput[3] = {1.0f, 1.0f, 1.0f};
               // Continue the underlayer walk from the last refracted interface.
@@ -2324,12 +3306,16 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 nextRay.dir[0] = walkDir[0]; nextRay.dir[1] = walkDir[1];
                 nextRay.dir[2] = walkDir[2];
                 nextRay.tmin = cursor; nextRay.tmax = 1.0e30f;
-                lrt_hit nextHit{};
-                if (!lrt_tri_intersect1(scene_, &nextRay, &nextHit) ||
-                    nextHit.prim_id == LRT_TRI_NO_HIT) break;
-                const int nextTri = static_cast<int>(nextHit.prim_id);
-                const float layerAlpha = cpuLayerAlpha(nextTri, nextHit.u, nextHit.v);
-                const auto layerColor = cpuLayerColor(nextTri, nextHit.u, nextHit.v);
+                float nextT = 0.0f, nextU = 0.0f, nextV = 0.0f;
+                int nextInst = -1, nextSrc = -1;
+                if (!Intersect(nextRay, &nextT, &nextU, &nextV, &nextInst,
+                               &nextSrc))
+                  break;
+                const int nextTri = nextSrc;
+                const float layerAlpha =
+                    cpuLayerAlpha(nextTri, nextInst, nextU, nextV);
+                const auto layerColor =
+                    cpuLayerColor(nextTri, nextInst, nextU, nextV);
                 underAccum[0] += layerColor[0] * throughput[0] * layerAlpha;
                 underAccum[1] += layerColor[1] * throughput[1] * layerAlpha;
                 underAccum[2] += layerColor[2] * throughput[2] * layerAlpha;
@@ -2340,17 +3326,17 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 // direction of the remaining walk.  Propagate that bounded
                 // refraction instead of continuing every layer along the
                 // previous ray; opaque/alpha-only layers remain straight.
-                if (cpuLayerTransmissionWeight(nextTri, nextHit.u,
-                                               nextHit.v) > 0.0f) {
+                if (cpuLayerTransmissionWeight(nextTri, nextInst, nextU,
+                                               nextV) > 0.0f) {
                   const auto layerRefracted = cpuLayerRefracted(
-                      nextTri, nextHit.u, nextHit.v, walkOrigin, walkDir);
+                      nextTri, nextInst, nextU, nextV, walkOrigin, walkDir);
                   std::copy(layerRefracted.origin.begin(),
                             layerRefracted.origin.end(), walkOrigin);
                   std::copy(layerRefracted.dir.begin(),
                             layerRefracted.dir.end(), walkDir);
                 } else {
                   for (int c = 0; c < 3; ++c)
-                    walkOrigin[c] += walkDir[c] * nextHit.t + walkDir[c] * 1.0e-4f;
+                    walkOrigin[c] += walkDir[c] * nextT + walkDir[c] * 1.0e-4f;
                 }
                 cursor = 1.0e-4f;
                 if (layerAlpha >= 0.999f) break;
@@ -2400,7 +3386,30 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
   for (unsigned i = 1; i < nThreads; ++i) pool.emplace_back(worker);
   worker();
   for (auto& t : pool) t.join();
-  return true;
+  if (probe_enabled) {
+    std::FILE* out = std::fopen(probe_path, "w");
+    if (out) {
+      for (size_t i = 0; i < ptexAsset_.size(); ++i) {
+        if (!ptex_[i]) continue;
+        std::fprintf(out, "# texture %zu %s\n", i,
+                     ptexAsset_[i].empty() ? "<memory>" : ptexAsset_[i].c_str());
+      }
+      std::fprintf(out, "# x y tex face mip srgb u v r g b\n");
+      for (int py = 0; py < h; ++py) {
+        for (int px = 0; px < w; ++px) {
+          const CpuPtexProbe& probe =
+              probes[static_cast<size_t>(py) * static_cast<size_t>(w) +
+                     static_cast<size_t>(px)];
+          if (probe.face == ~0u) continue;
+          std::fprintf(out, "%d %d %u %u %d %d %.9g %.9g %.9g %.9g %.9g\n",
+                       px, py, probe.tex, probe.face, probe.mip, probe.srgb,
+                       probe.u, probe.v, probe.rgb[0], probe.rgb[1],
+                       probe.rgb[2]);
+        }
+      }
+      std::fclose(out);
+    }
+  }  return true;
 }
 
 }  // namespace lusdview

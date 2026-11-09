@@ -216,9 +216,14 @@ def Xform "root" (
 )
 {
     variantSet "lod" = {
-        "high" { float a = 1
-                 def Mesh "Extra" { float b = 2 } }
-        "low" { float a = 0 }
+        "high" {
+            float a = 1
+            def Mesh "Extra" {
+                float b = 2
+            }
+        }
+        "low" { float a = 0
+        }
     }
 }
 '''
@@ -252,13 +257,20 @@ def test_variant_cross_format_chain(tmp_path):
 
 
 NESTED_VARIANT_SRC = '''#usda 1.0
-def Xform "p" (variants = { string outer = "o1" } prepend variantSets = ["outer"]) {
+def Xform "p" (variants = { string outer = "o1" }
+    prepend variantSets = ["outer"]) {
     variantSet "outer" = {
         "o1" (variants = { string inner = "i2" }) {
             float a = 1
-            variantSet "inner" = { "i1" { float b = 2 } "i2" { float b = 3 } }
+            variantSet "inner" = {
+                "i1" { float b = 2
+                }
+                "i2" { float b = 3
+                }
+            }
         }
-        "o2" { float a = 0 }
+        "o2" { float a = 0
+        }
     }
 }
 '''
@@ -279,14 +291,18 @@ def test_nested_variants_compose(tmp_path, ext):
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_variant_timesamples_and_connect(tmp_path, ext):
     st = lightusd.loads('''#usda 1.0
-def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
+def Material "m" (variants = { string s = "a" }
+    prepend variantSets = ["s"]) {
     variantSet "s" = {
         "a" { double h = 0
               double h.timeSamples = { 0: 1.0, 10: 11.0 }
-              token outputs:surface.connect = </m/sh.outputs:out> }
+              token outputs:surface.connect = </m/sh.outputs:out>
+        }
         "b" { }
     }
-    def Shader "sh" { token outputs:out }
+        def Shader "sh" {
+            token outputs:out
+        }
 }
 ''')
     fn = tmp_path / f"tc.{ext}"
@@ -302,8 +318,13 @@ def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_variant_active_false_prunes(tmp_path, ext):
     st = lightusd.loads('''#usda 1.0
-def Xform "p" (variants = { string s = "off" } prepend variantSets = ["s"]) {
-    variantSet "s" = { "on" { float a = 1 } "off" (active = false) { } }
+def Xform "p" (variants = { string s = "off" }
+    prepend variantSets = ["s"]) {
+    variantSet "s" = {
+        "on" { float a = 1
+        }
+        "off" (active = false) { }
+    }
 }
 ''')
     fn = tmp_path / f"act.{ext}"
@@ -315,11 +336,13 @@ def Xform "p" (variants = { string s = "off" } prepend variantSets = ["s"]) {
 
 def test_variant_arrays_and_qualified_rel(tmp_path):
     st = lightusd.loads('''#usda 1.0
-def Mesh "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
+def Mesh "p" (variants = { string s = "a" }
+    prepend variantSets = ["s"]) {
     variantSet "s" = {
         "a" { point3f[] points = [(0,0,0),(1,1,1)]
               custom rel myrel = </p>
-              float after = 3 }
+              float after = 3
+        }
         "b" { }
     }
 }
@@ -341,8 +364,12 @@ def test_variant_delete_reference_arc(tmp_path):
         '#usda 1.0\ndef Sphere "Ball" { double radius = 42 }\n')
     scene = tmp_path / "s.usda"
     scene.write_text('''#usda 1.0
-def Xform "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
-    variantSet "s" = { "a" (delete references = @./ref.usda@</Ball>) { } "b" { } }
+def Xform "p" (variants = { string s = "a" }
+    prepend variantSets = ["s"]) {
+    variantSet "s" = {
+        "a" (delete references = @./ref.usda@</Ball>) { }
+        "b" { }
+    }
 }
 ''')
     comp = lightusd.load(scene)
@@ -355,8 +382,16 @@ def Xform "p" (
     variants = { string shape = "a"  string color = "red" }
     prepend variantSets = ["shape", "color"]
 ) {
-    variantSet "shape" = { "a" { float radius = 5 } "b" { } }
-    variantSet "color" = { "red" { float tint = 1 } "blue" { } }
+    variantSet "shape" = {
+        "a" { float radius = 5
+        }
+        "b" { }
+    }
+    variantSet "color" = {
+        "red" { float tint = 1
+        }
+        "blue" { }
+    }
 }
 ''')
     usda2 = lightusd.load_bytes(st.export_usdc()).export_usda()
@@ -366,8 +401,14 @@ def Xform "p" (
 
 def test_dotted_variant_names_crate():
     st = lightusd.loads('''#usda 1.0
-def Xform "p" (variants = { string lod = "hi_res-2.0" } prepend variantSets = ["lod"]) {
-    variantSet "lod" = { "hi_res-2.0" { float a = 1 } "low.1" { float a = 0 } }
+def Xform "p" (variants = { string lod = "hi_res-2.0" }
+    prepend variantSets = ["lod"]) {
+    variantSet "lod" = {
+        "hi_res-2.0" { float a = 1
+        }
+        "low.1" { float a = 0
+        }
+    }
 }
 ''')
     st2 = lightusd.load_bytes(st.export_usdc())
@@ -383,7 +424,8 @@ def test_selection_only_prim_crate(tmp_path):
 (
   defaultPrim = "Chair"
 )
-def Xform "Chair" (prepend variantSets = ["model"] variants = { string model = "A" }) {
+def Xform "Chair" (prepend variantSets = ["model"]
+ variants = { string model = "A" }) {
     variantSet "model" = { "A" { float w = 1 } "B" { float w = 2 } }
 }
 ''')
@@ -416,3 +458,15 @@ def Xform "p" (
     flat = lightusd.load(dst)
     assert flat.prim_at("/p").get("va") == 1.0
     assert flat.prim_at("/p").get("vb") == 4.0
+
+
+def test_token_array_metadata_and_usdz_assets(tmp_path):
+    st = lightusd.Stage.create()
+    prim = st.define_prim("/World/Body", "Xform")
+    prim.set_metadata("apiSchemas", ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    assert prim.metadata("apiSchemas") == ("PhysicsRigidBodyAPI", "PhysicsCollisionAPI")
+    out = tmp_path / "scene.usdz"
+    st.save_usdz(str(out), {"textures/albedo.bin": b"fixture"})
+    import zipfile
+    with zipfile.ZipFile(out) as archive:
+        assert set(archive.namelist()) == {"root.usdc", "textures/albedo.bin"}

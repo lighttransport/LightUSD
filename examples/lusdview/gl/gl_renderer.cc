@@ -44,6 +44,15 @@ std::string UpgradeFiniteLightSamples(std::string source) {
       pos += replacement.size();
     }
   };
+  // PortalLight carries the same width/height/orientation payload as RectLight.
+  // Extend the legacy inline shader expressions before expanding their sample
+  // pattern so every GL draw path treats a portal as a rectangular opening.
+  replaceAll("int(pt.w+0.5)==4)?4:1",
+             "int(pt.w+0.5)==4||int(pt.w+0.5)==7||int(pt.w+0.5)==8)?4:1");
+  replaceAll("lt==4)?4:1", "lt==4||lt==7||lt==8)?4:1");
+  replaceAll("if(int(pt.w+0.5)==3){",
+             "if(int(pt.w+0.5)==3||int(pt.w+0.5)==8){");
+  replaceAll("if(lt==3){", "if(lt==3||lt==8){");
   replaceAll(")?4:1", ")?8:1");
   replaceAll("((si&1)==0?-0.25:0.25)",
              "((float(si%4)+0.5)*0.25-0.5)");
@@ -53,6 +62,20 @@ std::string UpgradeFiniteLightSamples(std::string source) {
              "float k=0.5,a=6.28318530718*(float(si)+0.5)/8.0;");
   replaceAll("(((si&1)==0?-k:k)*", "(cos(a)*k*");
   replaceAll("(((si&2)==0?-k:k)*", "(sin(a)*k*");
+  replaceAll(
+      "void main(){",
+      "float geometrySampleCoord(int li,int si,int axis){int f=si*3+axis;"
+      "return uLightIesProfile[li*6+f/4][f%4];}\nvoid main(){");
+  replaceAll(
+      "vec3 samplePos=pt.xyz;vec3 ax=",
+      "vec3 samplePos=int(pt.w+0.5)==7?vec3(geometrySampleCoord(li,si,0),"
+      "geometrySampleCoord(li,si,1),geometrySampleCoord(li,si,2)):pt.xyz;vec3 ax=");
+  replaceAll(
+      "vec3 samplePos=pt.xyz,ax=",
+      "vec3 samplePos=lt==7?vec3(geometrySampleCoord(li,si,0),"
+      "geometrySampleCoord(li,si,1),geometrySampleCoord(li,si,2)):pt.xyz,ax=");
+  replaceAll("float ies=sampleIes(",
+             "float ies=lt==7?1.0:sampleIes(");
   return source;
 }
 
@@ -102,12 +125,22 @@ void UploadRasterLightArray(GLuint program, const RasterLightSet& lights) {
 
 void UploadRasterLightMask(GLuint program, const RasterLightSet& lights,
                            int meshIndex) {
-  glUniform1ui(glGetUniformLocation(program, "uLightMask"),
-               RasterLightMaskForMesh(lights, meshIndex));
+  const uint32_t mask = RasterLightMaskForMesh(lights, meshIndex);
+  glUniform1ui(glGetUniformLocation(program, "uLightMask"), mask);
 }
 
 void UploadRasterLightMaskValue(GLuint program, uint32_t mask) {
   glUniform1ui(glGetUniformLocation(program, "uLightMask"), mask);
+}
+
+void UploadClippingPlanes(GLuint program, const RenderFrameParams& params) {
+  const int count = std::clamp(params.clippingPlaneCount, 0,
+                               RenderFrameParams::kMaxClippingPlanes);
+  glUniform1i(glGetUniformLocation(program, "uClippingPlaneCount"), count);
+  if (count > 0) {
+    glUniform4fv(glGetUniformLocation(program, "uClippingPlanes"), count,
+                 params.clippingPlanes);
+  }
 }
 
 // Compressed-format enum values that may be absent from older glad headers.
@@ -261,8 +294,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
     caps_.supportsETC2 = has("GL_ARB_ES3_compatibility") || GLAD_GL_VERSION_4_3;
   }
 
-  program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
-                                    light3d::getMaterialFragmentShaderGL330(), err);
+  // The complete graph interpreter is intentionally kept for capable hardware,
+  // but software GL drivers are disproportionately sensitive to the register
+  // pressure from its 64-node arrays plus the full OpenPBR lobe stack. The
+  // compact path retains the baked MaterialX semantic lanes and shared direct
+  // light packet, so llvmpipe/softpipe get deterministic raster output without
+  // sacrificing the high-feature path on hardware GL.
+  const bool useCompactMaterial = caps_.device_type == "cpu";
+  program_ = glutil::CompileProgram(
+      light3d::getMaterialVertexShaderGL330(),
+      useCompactMaterial ? light3d::getMaterialFragmentShaderGL330Fallback()
+                          : light3d::getMaterialFragmentShaderGL330(),
+      err);
   if (!program_) {
     // Low-sampler GL implementations (notably software Mesa) can reject the
     // full MaterialX/OpenPBR shader before scene initialization. Keep the
@@ -373,10 +416,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uCoatNormalUdimSlot_ =
       glGetUniformLocation(program_, "uCoatNormalUdimSlot");
   uGraphNodeCount_ = glGetUniformLocation(program_, "uGraphNodeCount");
-  uGraphOutputs0_ = glGetUniformLocation(program_, "uGraphOutputs0");
-  uGraphOutputs1_ = glGetUniformLocation(program_, "uGraphOutputs1");
-  uGraphOutputs2_ = glGetUniformLocation(program_, "uGraphOutputs2");
-  uGraphOutputs3_ = glGetUniformLocation(program_, "uGraphOutputs3");
+  uGraphOutputs_ = glGetUniformLocation(program_, "uGraphOutputs[0]");
   uGraphUsable_ = glGetUniformLocation(program_, "uGraphUsable");
   uGraphNode0_ = glGetUniformLocation(program_, "uGraphNode0");
   uGraphNode1_ = glGetUniformLocation(program_, "uGraphNode1");
@@ -392,6 +432,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
     // even when the graph route is disabled.
     if (uGraphTex_[i] >= 0) glUniform1i(uGraphTex_[i], 33 + i);
   }
+  uGraphUdimRoutes_ = glGetUniformLocation(program_, "uGraphUdimRoutes[0]");
   uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
   uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
   uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
@@ -400,6 +441,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uTransmissionColor_ = glGetUniformLocation(program_, "uTransmissionColor");
   uTransmissionDepth_ = glGetUniformLocation(program_, "uTransmissionDepth");
   uTransmissionScatter_ = glGetUniformLocation(program_, "uTransmissionScatter");
+  uTransmissionScatterAnisotropy_ =
+      glGetUniformLocation(program_, "uTransmissionScatterAnisotropy");
   uVolumeDensity_ = glGetUniformLocation(program_, "uVolumeDensity");
   uVolumeAlbedo_ = glGetUniformLocation(program_, "uVolumeAlbedo");
   uVolumeEmission_ = glGetUniformLocation(program_, "uVolumeEmission");
@@ -807,6 +850,8 @@ void main() {
       "in vec3 vColor;\n"
       "in float vOpacity;\n"
       "flat in int vInstanceId;\n"
+      "uniform int uClippingPlaneCount;\n"
+      "uniform vec4 uClippingPlanes[8];\n"
       "uniform vec3 uCameraPos;\n"
       "uniform vec3 uLightDir;\n"
       "uniform vec3 uLightColor;\n"
@@ -869,6 +914,7 @@ void main() {
       "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
       "float shadowVis(vec3 wp,vec3 n,vec3 l){if(uHasPointShadowMap){vec3 d=wp-uPointShadowLightPos,a=abs(d);int f=a.x>=a.y&&a.x>=a.z?(d.x>=0?0:1):(a.y>=a.z?(d.y>=0?2:3):(d.z>=0?4:5));vec4 c=uPointShadowViewProj[f]*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1)return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0)));return (p.z-b<=texture(uPointShadowMap,normalize(d)).r)?1.0:0.0;}if(!uHasShadowMap)return 1.0;vec4 c=uShadowViewProj*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1||any(lessThan(p.xy,vec2(0)))||any(greaterThan(p.xy,vec2(1))))return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0))),v=0;vec2 t=1.0/vec2(textureSize(uShadowMap,0));for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)v+=p.z-b<=texture(uShadowMap,p.xy+vec2(x,y)*t).r?1:0;return v/9;}\n"
       "void main(){\n"
+      "  for(int i=0;i<uClippingPlaneCount;++i) if(dot(vec4(vWorldPos,1.0),uClippingPlanes[i])<0.0) discard;\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
       "  vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));\n"
@@ -986,7 +1032,6 @@ void main() {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glBindTexture(GL_TEXTURE_2D, 0);
-
   glGenTextures(1, &boneTex_);
   glBindTexture(GL_TEXTURE_2D, boneTex_);
   const float ident[16] = {
@@ -1061,6 +1106,8 @@ void main() {
         "uniform float uDensityScale;\n"
         "uniform vec3 uAlbedo; uniform vec3 uEmission;\n"
         "uniform float uBackground;\n"
+        "uniform bool uIsLevelSet; uniform float uIsovalue;\n"
+        "uniform mat4 uVP; uniform mat4 uModel;\n"
         "vec3 blackbody(float value){\n"
         "  float k=value>100.0?value:1000.0+5500.0*max(value,0.0);\n"
         "  float t=clamp(k/100.0,10.0,400.0);\n"
@@ -1084,6 +1131,45 @@ void main() {
         "  if(!rayAABB(oo,od,uBmin,uBmax,t0,t1)) discard;\n"
         "  t0=max(t0,0.0);\n"
         "  vec3 ext=uBmax-uBmin;\n"
+        "  gl_FragDepth=gl_FragCoord.z;\n"
+        "  if(uIsLevelSet){\n"
+        "    vec3 invExt=1.0/max(ext,vec3(1e-20));\n"
+        "    float ds=max((t1-t0)/512.0,min(ext.x,min(ext.y,ext.z))/256.0);\n"
+        "    float prev=texture(uDensity,(oo+od*t0-uBmin)*invExt).r-uIsovalue;\n"
+        "    float t=t0, hit=-1.0;\n"
+        "    for(int i=0;i<512;i++){\n"
+        "      float tn=min(t0+float(i+1)*ds,t1);\n"
+        "      float f=texture(uDensity,(oo+od*tn-uBmin)*invExt).r-uIsovalue;\n"
+        "      if((f<0.0&&prev>0.0)||(f>0.0&&prev<0.0)){\n"
+        "        float lo=t,hi=tn,flo=prev;\n"
+        "        for(int k=0;k<16;k++){\n"
+        "          float mid=0.5*(lo+hi);\n"
+        "          float fm=texture(uDensity,(oo+od*mid-uBmin)*invExt).r-uIsovalue;\n"
+        "          if(fm==0.0){lo=hi=mid;break;}\n"
+        "          if((fm>0.0)==(flo>0.0)){lo=mid;flo=fm;}else{hi=mid;}\n"
+        "        }\n"
+        "        hit=0.5*(lo+hi);break;\n"
+        "      }\n"
+        "      if(f!=0.0){prev=f;t=tn;}\n"
+        "      else if(prev==0.0)t=tn;\n"
+        "      if(tn>=t1)break;\n"
+        "    }\n"
+        "    if(hit<0.0)discard;\n"
+        "    vec3 p=oo+od*hit,uvw=(p-uBmin)*invExt;\n"
+        "    vec3 e=1.0/vec3(textureSize(uDensity,0));\n"
+        "    vec3 g=vec3(texture(uDensity,uvw+vec3(e.x,0,0)).r-texture(uDensity,uvw-vec3(e.x,0,0)).r,\n"
+        "                texture(uDensity,uvw+vec3(0,e.y,0)).r-texture(uDensity,uvw-vec3(0,e.y,0)).r,\n"
+        "                texture(uDensity,uvw+vec3(0,0,e.z)).r-texture(uDensity,uvw-vec3(0,0,e.z)).r)*invExt/e;\n"
+        "    vec3 worldPoint=(uModel*vec4(p,1)).xyz;\n"
+        "    vec3 viewDir=normalize(uCameraPos-worldPoint);\n"
+        "    vec3 n=transpose(mat3(uInvModel))*g;\n"
+        "    n=dot(n,n)>0.0?normalize(n):viewDir;\n"
+        "    if(dot(n,viewDir)<0.0)n=-n;\n"
+        "    fragColor=vec4(uAlbedo*(0.15+0.85*max(dot(n,viewDir),0.0))+uEmission,1.0);\n"
+        "    vec4 clip=uVP*vec4(worldPoint,1);\n"
+        "    gl_FragDepth=0.5*(clip.z/clip.w)+0.5;\n"
+        "    return;\n"
+        "  }\n"
         "  float step=min(ext.x,min(ext.y,ext.z))/128.0;\n"
         "  if(step<=0.0) step=(t1-t0)/256.0;\n"
         "  float T=1.0; vec3 L=vec3(0.0);\n"
@@ -1126,6 +1212,8 @@ void main() {
       uVolAlbedo_ = glGetUniformLocation(volumeProgram_, "uAlbedo");
       uVolEmission_ = glGetUniformLocation(volumeProgram_, "uEmission");
       uVolBackground_ = glGetUniformLocation(volumeProgram_, "uBackground");
+      uVolIsLevelSet_ = glGetUniformLocation(volumeProgram_, "uIsLevelSet");
+      uVolIsovalue_ = glGetUniformLocation(volumeProgram_, "uIsovalue");
     }
     static const float kCube[24] = {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
                                     0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1};
@@ -1367,6 +1455,7 @@ void GLRenderer::buildTessProgram() {
   static const char* kFS =
       "#version 410 core\n"
       "in vec3 vWorldPos; in vec3 vNormal; in vec2 vUV;\n"
+      "uniform int uClippingPlaneCount; uniform vec4 uClippingPlanes[8];\n"
       "uniform vec3 uCameraPos; uniform vec3 uBaseColor;\n"
       "uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
       "uniform int uLightCount; uniform uint uLightMask;\n"
@@ -1384,6 +1473,7 @@ void GLRenderer::buildTessProgram() {
       "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
       "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
       "void main(){\n"
+      "  for(int i=0;i<uClippingPlaneCount;++i) if(dot(vec4(vWorldPos,1.0),uClippingPlanes[i])<0.0) discard;\n"
       "  vec3 base=uBaseColor;\n"
       "  if(uHasBaseColorTex) base*=texture(uBaseColorTex,vUV).rgb;\n"
       // Geometric normal of the displaced surface (screen derivatives) so the new
@@ -1542,8 +1632,7 @@ void main(){
   nmRenderMode_ = glGetUniformLocation(nonMeshProgram_, "uRenderMode");
 }
 
-void GLRenderer::destroyScene() {
-  for (auto& m : meshes_) {
+void GLRenderer::destroyMesh(GLMesh& m) {
     if (m.ebo) glDeleteBuffers(1, &m.ebo);
     if (m.influenceTex) glDeleteTextures(1, &m.influenceTex);
     if (m.influenceVbo) glDeleteBuffers(1, &m.influenceVbo);
@@ -1567,7 +1656,11 @@ void GLRenderer::destroyScene() {
     if (m.wireEbo) glDeleteBuffers(1, &m.wireEbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
-  }
+    m = GLMesh{};
+}
+
+void GLRenderer::destroyScene() {
+  for (auto& m : meshes_) destroyMesh(m);
   meshes_.clear();
   for (GLNonMeshBatch& b : nonMeshBatches_) {
     if (b.vbo) glDeleteBuffers(1, &b.vbo);
@@ -1747,6 +1840,143 @@ bool GLRenderer::updateMaterialConstants(int materialId,
     return false;
   }
   materials_[static_cast<size_t>(materialId)] = makeMaterial(material);
+  return true;
+}
+
+bool GLRenderer::applyMaterialUpdatesTransactional(
+    const std::vector<MaterialSlotUpdate>& updates, std::string* error) {
+  for (const MaterialSlotUpdate& update : updates) {
+    if (!update.material || update.materialIndex >= materials_.size()) {
+      if (error) *error = "OpenGL material transaction slot is invalid";
+      return false;
+    }
+  }
+  for (const MaterialSlotUpdate& update : updates) {
+    materials_[update.materialIndex] = makeMaterial(*update.material);
+  }
+  return true;
+}
+
+bool GLRenderer::replaceTextureSlotsTransactional(
+    const std::vector<TextureSlotReplacement>& replacements,
+    std::string* error) {
+  struct Staged {
+    size_t index{0};
+    GLTexture texture;
+  };
+  std::vector<Staged> staged;
+  staged.reserve(replacements.size());
+  auto destroy_staged = [&]() {
+    for (Staged& item : staged) {
+      if (item.texture.tex2d) glDeleteTextures(1, &item.texture.tex2d);
+      if (item.texture.arrayTex) glDeleteTextures(1, &item.texture.arrayTex);
+    }
+  };
+  while (glGetError() != GL_NO_ERROR) {}
+  for (size_t replacement_index = 0;
+       replacement_index < replacements.size(); ++replacement_index) {
+    const TextureSlotReplacement& replacement = replacements[replacement_index];
+    if (!replacement.texture || replacement.textureIndex >= textures_.size() ||
+        replacement.texture->isUdim || replacement.texture->isPtex ||
+        textures_[replacement.textureIndex].isUdim) {
+      destroy_staged();
+      if (error) *error = "OpenGL texture transaction requires an ordinary valid slot";
+      return false;
+    }
+    for (size_t prior = 0; prior < replacement_index; ++prior) {
+      if (replacements[prior].textureIndex == replacement.textureIndex) {
+        destroy_staged();
+        if (error) *error = "OpenGL texture transaction contains a duplicate slot";
+        return false;
+      }
+    }
+    const DrawTextureCPU& source = *replacement.texture;
+    GLTexture gpu;
+    glGenTextures(1, &gpu.tex2d);
+    glBindTexture(GL_TEXTURE_2D, gpu.tex2d);
+    const GLenum compressed_format =
+        GLCompressedFormat(source.compressed.format, source.srgb);
+    const bool compressed = source.requestedCompressed &&
+                            compressed_format != 0 &&
+                            !source.compressed.data.empty();
+    const GLenum format = source.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+    if (compressed) {
+      glCompressedTexImage2D(GL_TEXTURE_2D, 0, compressed_format,
+                             source.compressed.width, source.compressed.height,
+                             0, static_cast<GLsizei>(source.compressed.data.size()),
+                             source.compressed.data.data());
+      for (size_t level = 0; level < source.compressed.mips.size(); ++level) {
+        const DrawCompressedMipCPU& mip = source.compressed.mips[level];
+        glCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(level + 1),
+                               compressed_format, mip.width, mip.height, 0,
+                               static_cast<GLsizei>(mip.data.size()), mip.data.data());
+      }
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, format, source.image.width,
+                   source.image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                   source.image.data.empty() ? nullptr : source.image.data.data());
+      for (size_t level = 0; level < source.mipImages.size(); ++level) {
+        const light3d::Image& mip = source.mipImages[level];
+        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(level + 1), format,
+                     mip.width, mip.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     mip.data.empty() ? nullptr : mip.data.data());
+      }
+    }
+    const size_t mip_count = compressed ? source.compressed.mips.size()
+                                        : source.mipImages.size();
+    if (mip_count > 0) {
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+                      static_cast<GLint>(mip_count));
+    } else if (!source.streamingMutable) {
+      glGenerateMipmap(GL_TEXTURE_2D);
+    } else {
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(source.wrapS));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(source.wrapT));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    (mip_count > 0 || !source.streamingMutable)
+                        ? GL_LINEAR_MIPMAP_LINEAR
+                        : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (maxTextureAnisotropy_ > 1.0f)
+      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+                      maxTextureAnisotropy_);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (glGetError() != GL_NO_ERROR) {
+      if (gpu.tex2d) glDeleteTextures(1, &gpu.tex2d);
+      destroy_staged();
+      if (error) *error = "OpenGL failed to stage a texture replacement";
+      return false;
+    }
+    gpu.width = source.image.width;
+    gpu.height = source.image.height;
+    gpu.srgb = source.srgb;
+    gpu.regionUpdatable = !compressed && source.image.width > 0 &&
+                          source.image.height > 0 &&
+                          (!source.image.data.empty() || source.streamingMutable);
+    if (compressed) {
+      gpu.residentBytes = source.compressed.data.size();
+      for (const DrawCompressedMipCPU& mip : source.compressed.mips)
+        gpu.residentBytes += mip.data.size();
+    } else {
+      gpu.residentBytes = source.image.data.empty()
+                              ? size_t(std::max(source.image.width, 0)) *
+                                    size_t(std::max(source.image.height, 0)) * 4u
+                              : source.image.data.size();
+      for (const light3d::Image& mip : source.mipImages)
+        gpu.residentBytes += mip.data.size();
+      if (source.mipImages.empty() && !source.streamingMutable)
+        gpu.residentBytes += gpu.residentBytes / 3u;
+    }
+    staged.push_back({replacement.textureIndex, std::move(gpu)});
+  }
+  for (Staged& item : staged) {
+    GLTexture& old = textures_[item.index];
+    if (old.tex2d) glDeleteTextures(1, &old.tex2d);
+    if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
+    old = std::move(item.texture);
+  }
   return true;
 }
 
@@ -2036,7 +2266,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (t.isPtex && t.compressed.data.empty() && t.ptexRectTexelOffset <
                       static_cast<uint32_t>(t.image.width * t.image.height)) {
     size_t linear = t.ptexRectTexelOffset;
-    size_t remaining = t.ptexFaceRects.size() * 8u;
+    size_t remaining = t.ptexFaceRects.size() * 10u;
     while (remaining > 0) {
       const int x = static_cast<int>(linear % size_t(t.image.width));
       const int y = static_cast<int>(linear / size_t(t.image.width));
@@ -2161,9 +2391,12 @@ void GLRenderer::destroyIblTextures() {
 void GLRenderer::setLights(const std::vector<DrawLightCPU>& lights,
                            size_t meshCount) {
   rasterLights_ = PackRasterLights(lights, meshCount);
-  if (std::getenv("LUSDVIEW_DEBUG_LIGHTS"))
-    std::fprintf(stderr, "[raster-lights] GL source=%zu direct=%d meshes=%zu\n",
-                 lights.size(), rasterLights_.count, meshCount);
+  if (rasterLights_.omittedGeometryLights > 0) {
+    std::fprintf(stderr,
+                 "[lusdview] raster lighting: omitted %d GeometryLight(s); "
+                 "triangle-source sampling is available in Vulkan RT\n",
+                 rasterLights_.omittedGeometryLights);
+  }
   if (rasterLights_.truncated > 0) {
     std::fprintf(stderr,
                  "[lusdview] raster lighting: evaluating first %d direct lights; "
@@ -2304,6 +2537,18 @@ void GLRenderer::updateMeshVertices(int meshIndex,
                   static_cast<GLsizeiptr>(verts.size() * sizeof(DrawVertex)),
                   verts.data());
   glBindBuffer(GL_ARRAY_BUFFER, 0);
+  if (!verts.empty()) {
+    float lo[3] = {verts[0].px, verts[0].py, verts[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : verts) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      gm.localCentroid[axis] = 0.5f * (lo[axis] + hi[axis]);
+    }
+  }
 }
 
 void GLRenderer::updateMorphWeights(int meshIndex,
@@ -2325,6 +2570,131 @@ void GLRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
   // world is enough.
   std::memcpy(meshes_[static_cast<size_t>(meshIndex)].world, world,
               sizeof(float) * 16);
+}
+
+bool GLRenderer::applyMeshSlotUpdatesTransactional(
+    const std::vector<MeshSlotUpdate>& updates, std::string* error) {
+  for (const MeshSlotUpdate& update : updates) {
+    if (update.meshIndex >= meshes_.size()) {
+      if (error) *error = "OpenGL mesh transaction index is out of range";
+      return false;
+    }
+    const GLMesh& mesh = meshes_[update.meshIndex];
+    if (update.vertices &&
+        (!mesh.vbo || update.vertices->size() != mesh.vertexCount)) {
+      if (error) *error = "OpenGL mesh transaction vertex layout changed";
+      return false;
+    }
+    if (update.instanceXforms &&
+        (!mesh.instanceVbo || mesh.instanceCount <= 0 ||
+         update.instanceXforms->size() !=
+             static_cast<size_t>(mesh.instanceCount) * 12u)) {
+      if (error) *error = "OpenGL instance transaction layout changed";
+      return false;
+    }
+    if (update.instanceColors && !update.instanceColors->empty() &&
+        (!mesh.instanceColorVbo || update.instanceColors->size() !=
+             static_cast<size_t>(mesh.instanceCount) * 3u)) {
+      if (error) *error = "OpenGL instance color layout changed";
+      return false;
+    }
+    if (update.instanceOpacities && !update.instanceOpacities->empty() &&
+        (!mesh.instanceOpacityVbo || update.instanceOpacities->size() !=
+             static_cast<size_t>(mesh.instanceCount))) {
+      if (error) *error = "OpenGL instance opacity layout changed";
+      return false;
+    }
+  }
+  // No allocation occurs below: all buffer sizes and slots were validated, so
+  // the batch cannot fail halfway through its commit.
+  for (const MeshSlotUpdate& update : updates) {
+    if (update.vertices) {
+      updateMeshVertices(static_cast<int>(update.meshIndex), *update.vertices);
+    }
+    if (update.world) {
+      updateMeshWorld(static_cast<int>(update.meshIndex), update.world);
+    }
+    if (update.instanceXforms) {
+      updateInstanceVisibility(update.meshIndex, update.instanceXforms->data(),
+                               update.instanceColors && !update.instanceColors->empty()
+                                   ? update.instanceColors->data() : nullptr,
+                               update.instanceOpacities && !update.instanceOpacities->empty()
+                                   ? update.instanceOpacities->data() : nullptr,
+                               static_cast<uint32_t>(
+                                   update.instanceXforms->size() / 12u));
+      GLMesh& mesh = meshes_[update.meshIndex];
+      if (update.instanceOpacities) {
+        mesh.hasTranslucentInstances = mesh.flatOpacity < 1.0f - 1.0e-6f;
+        for (float opacity : *update.instanceOpacities) {
+          if (opacity < 1.0f - 1.0e-6f) {
+            mesh.hasTranslucentInstances = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+bool GLRenderer::replaceMeshSlotsTransactional(
+    const std::vector<MeshSlotReplacement>& replacements,
+    std::string* error) {
+  size_t append_count = 0;
+  for (size_t i = 0; i < replacements.size(); ++i) {
+    const MeshSlotReplacement& replacement = replacements[i];
+    const bool append = replacement.meshIndex >= meshes_.size();
+    if (!replacement.mesh ||
+        (append && replacement.meshIndex != meshes_.size() + append_count)) {
+      if (error) *error = "OpenGL mesh replacement slot is invalid";
+      return false;
+    }
+    if (append) ++append_count;
+    for (size_t j = 0; j < i; ++j) {
+      if (replacements[j].meshIndex == replacement.meshIndex) {
+        if (error) *error = "OpenGL mesh replacement contains a duplicate slot";
+        return false;
+      }
+    }
+    std::string validation_error;
+    if (!ValidateDrawMesh(*replacement.mesh, materials_.size(),
+                          &validation_error)) {
+      if (error) *error = validation_error;
+      return false;
+    }
+  }
+
+  while (glGetError() != GL_NO_ERROR) {}
+  std::vector<GLMesh> staged;
+  staged.reserve(replacements.size());
+  for (const MeshSlotReplacement& replacement : replacements) {
+    const size_t before = meshes_.size();
+    appendMeshImpl(*replacement.mesh, true);
+    if (meshes_.size() != before + 1) {
+      for (GLMesh& mesh : staged) destroyMesh(mesh);
+      if (error) *error = "OpenGL mesh replacement was not staged";
+      return false;
+    }
+    staged.push_back(std::move(meshes_.back()));
+    meshes_.pop_back();
+  }
+  const GLenum gl_error = glGetError();
+  if (gl_error != GL_NO_ERROR) {
+    for (GLMesh& mesh : staged) destroyMesh(mesh);
+    if (error) *error = "OpenGL mesh replacement allocation failed";
+    return false;
+  }
+
+  for (size_t i = 0; i < replacements.size(); ++i) {
+    if (replacements[i].meshIndex == meshes_.size()) {
+      meshes_.push_back(std::move(staged[i]));
+    } else {
+      GLMesh& resident = meshes_[replacements[i].meshIndex];
+      destroyMesh(resident);
+      resident = std::move(staged[i]);
+    }
+  }
+  return true;
 }
 
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
@@ -2573,11 +2943,9 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   gm.rasterDisplacementBaked = sm.rasterDisplacementBaked;
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
-  // Per-vertex displayColor (divisor 0). Non-instanced meshes bind it at attrib 9
-  // (the shared material shader's aColor); instanced meshes bind it at attrib 10
-  // (the instanced shader multiplies per-vertex x per-instance color, since attrib
-  // 9 there carries the per-instance color set below). Default white (set per draw)
-  // when absent so the base color is unmodulated.
+  // Per-vertex displayColor/displayOpacity. Non-instanced material draws use
+  // attrib 9; instanced meshes use attrib 10 because attrib 9 carries the
+  // per-instance color in the separate flat shader.
   const bool gmInstanced = !sm.instanceXforms.empty();
   const GLuint vtxColorAttrib = gmInstanced ? 10u : 9u;
   const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
@@ -2607,13 +2975,24 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
                  static_cast<GLsizeiptr>(rgba.size() * sizeof(float)),
                  rgba.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(vtxColorAttrib);
-    glVertexAttribPointer(vtxColorAttrib, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                          (void*)0);
+    glVertexAttribPointer(vtxColorAttrib, 4, GL_FLOAT, GL_FALSE,
+                          4 * sizeof(float), (void*)0);
     glVertexAttribDivisor(vtxColorAttrib, 0);
   } else {
-    glDisableVertexAttribArray(vtxColorAttrib);  // constant white set per draw
+    if (gmInstanced) {
+      // The instanced shader consumes this as a per-vertex value at location 10.
+      // A one-element divisor-0 array would run out of bounds on every vertex;
+      // the disabled-array generic value is constant across all instances.
+      glDisableVertexAttribArray(vtxColorAttrib);
+      glVertexAttrib4f(vtxColorAttrib, 1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+      // A disabled array's generic value is constant for every vertex and is
+      // recorded in the mesh VAO while it is bound here. This avoids an
+      // out-of-range fetch from a one-element divisor-0 stream.
+      glDisableVertexAttribArray(vtxColorAttrib);
+      glVertexAttrib4f(vtxColorAttrib, 1.0f, 1.0f, 1.0f, 1.0f);
+    }
   }
-
   // Multi-UV (attrib 6) + blendshape influence (attrib 7), non-instanced only --
   // instanced meshes reuse attribs 6-8 for the per-instance rows (separate
   // program). Default 0 when the mesh lacks the data so modes read as zero.
@@ -2965,7 +3344,9 @@ void GLRenderer::ensureFbo(int w, int h) {
   vpH_ = h;
   if (!fbo_) glGenFramebuffers(1, &fbo_);
   if (!colorTex_) glGenTextures(1, &colorTex_);
-  if (!depthRbo_) glGenRenderbuffers(1, &depthRbo_);
+  if (!depthTex_) glGenTextures(1, &depthTex_);
+  if (!dofFbo_) glGenFramebuffers(1, &dofFbo_);
+  if (!dofTex_) glGenTextures(1, &dofTex_);
 
   glBindTexture(GL_TEXTURE_2D, colorTex_);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -2974,15 +3355,39 @@ void GLRenderer::ensureFbo(int w, int h) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-  glBindRenderbuffer(GL_RENDERBUFFER, depthRbo_);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+  glBindTexture(GL_TEXTURE_2D, depthTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0,
+               GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex_, 0);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthRbo_);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                         GL_TEXTURE_2D, depthTex_, 0);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    std::fprintf(stderr,
+                 "[lusdview][warn] OpenGL scene framebuffer is incomplete\n");
+  }
+  glBindTexture(GL_TEXTURE_2D, dofTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindFramebuffer(GL_FRAMEBUFFER, dofFbo_);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         dofTex_, 0);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    std::fprintf(stderr,
+                 "[lusdview][warn] OpenGL raster DOF framebuffer is incomplete\n");
+  }
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glBindTexture(GL_TEXTURE_2D, 0);
-  glBindRenderbuffer(GL_RENDERBUFFER, 0);
+  dofApplied_ = false;
 }
 
 void GLRenderer::resizeViewport(int width, int height) { ensureFbo(width, height); }
@@ -3160,7 +3565,8 @@ void GLRenderer::buildWireProgram() {
   }
 }
 
-void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
+void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3],
+                               bool xray) {
   if (!wireProgram_ && !wireInstProgram_) return;
   // Do not apply a constant NDC lift: under perspective it can represent meters
   // of world-space pull at interior-scene distances and expose edges through
@@ -3170,6 +3576,11 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
+  // X-ray draws every edge regardless of the depth buffer. Otherwise keep the
+  // depth test on so hidden-line removal works against the depth prepass (wire
+  // only) or the shaded fill (wire over shaded).
+  if (xray) glDisable(GL_DEPTH_TEST);
+  else glEnable(GL_DEPTH_TEST);
   // The GS expands each edge into a thin screen-space quad and the FS feathers it
   // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
   // blend for the feathered edge; LEQUAL accepts the edge's exact surface depth,
@@ -3254,6 +3665,7 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   }
   glBindVertexArray(0);
   // Restore default state for the rest of the frame (ImGui / next passes).
+  glEnable(GL_DEPTH_TEST);
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
   glDisable(GL_BLEND);
@@ -3269,6 +3681,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
   glActiveTexture(GL_TEXTURE0);
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
+  glUseProgram(program_);
+  UploadClippingPlanes(program_, params);
 
   auto ptexGrid = [&](const DrawTexSampleCPU& sample) {
     float offset = static_cast<float>(sample.ptexRectTexelOffset);
@@ -3343,9 +3757,6 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glBindTexture(GL_TEXTURE_BUFFER, mesh.faceIdTex);
       glActiveTexture(GL_TEXTURE0);
     }
-    // Default per-vertex color to white when the mesh has none (so uBaseColor is
-    // unmodulated); the VAO supplies the array when vertexColorVbo is set.
-    if (!mesh.vertexColorVbo) glVertexAttrib4f(9, 1.0f, 1.0f, 1.0f, 1.0f);
     const bool skinOn = mesh.skinned && skinningFrameEnabled_;
     glUniform1i(uSkinningEnabled_, skinOn ? 1 : 0);
     glUniform1i(uExtendedSkinningEnabled_,
@@ -3386,6 +3797,12 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     }
 
     glBindVertexArray(mesh.vao);
+    if (!mesh.vertexColorVbo) {
+      // Generic attribute values are context state rather than VAO state on
+      // several GL implementations. Re-assert the white fallback after the
+      // mesh VAO is bound so a preceding instanced draw cannot leak its color.
+      glVertexAttrib4f(9, 1.0f, 1.0f, 1.0f, 1.0f);
+    }
     for (const auto& sub : mesh.submeshes) {
       const bool splitBack =
           !wireframe && sub.backfaceMaterialId >= 0 &&
@@ -3463,6 +3880,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUseProgram(tessProgram_);
         UploadRasterLightArray(tessProgram_, rasterLights_);
         UploadRasterLightMask(tessProgram_, rasterLights_, static_cast<int>(mi));
+        UploadClippingPlanes(tessProgram_, params);
         glUniformMatrix4fv(tMVP_, 1, GL_FALSE, MVP.m);
         glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
         glUniformMatrix3fv(tNormalMat_, 1, GL_FALSE, nmat);
@@ -3554,6 +3972,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uTransmissionColor_, 1.0f, 1.0f, 1.0f);
         glUniform1f(uTransmissionDepth_, 0.0f);
         glUniform3f(uTransmissionScatter_, 0.0f, 0.0f, 0.0f);
+        glUniform1f(uTransmissionScatterAnisotropy_, 0.0f);
         glUniform1f(uVolumeDensity_, 0.0f);
         glUniform3f(uVolumeAlbedo_, 1.0f, 1.0f, 1.0f);
         glUniform3f(uVolumeEmission_, 0.0f, 0.0f, 0.0f);
@@ -3636,6 +4055,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3fv(uTransmissionColor_, 1, p.transmissionColor);
         glUniform1f(uTransmissionDepth_, p.transmissionDepth);
         glUniform3fv(uTransmissionScatter_, 1, p.transmissionScatter);
+        glUniform1f(uTransmissionScatterAnisotropy_,
+                    p.transmissionScatterAnisotropy);
         glUniform1f(uVolumeDensity_, p.volumeDensity);
         glUniform3fv(uVolumeAlbedo_, 1, p.volumeAlbedo);
         glUniform3fv(uVolumeEmission_, 1, p.volumeEmission);
@@ -3870,12 +4291,31 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                             uHasOcclusionTex_, uOcclusionTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);
       }
-      // Native MaterialX graph upload. Keep graph images in a separate high
-      // texture-unit range so semantic bindings remain valid for mixed graphs.
-      // UDIM/over-limit graphs deliberately use the existing baked fallback.
+      // Native MaterialX graph upload. Keep ordinary graph images in a separate
+      // high texture-unit range so semantic bindings remain valid for mixed
+      // graphs. A graph UDIM image reuses the matching semantic UDIM array route
+      // (GL 3.3 has no portable bindless sampler); graph-only UDIMs use the
+      // deterministic semantic fallback.
       {
         const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
         std::vector<int> graphTextureIds;
+        std::array<int, 8> graphUdimRoutes{};
+        graphUdimRoutes.fill(-1);
+        const int graphCoreSlots[7] = {
+            mat.baseColorTex, mat.metallicTex, mat.normalTex, mat.opacityTex,
+            mat.emissiveTex, mat.roughnessTex, mat.occlusionTex};
+        auto graphTextureIsUdim = [&](int slot) {
+          return slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
+                 textures_[static_cast<size_t>(slot)].isUdim &&
+                 textures_[static_cast<size_t>(slot)].arrayTex != 0;
+        };
+        auto graphUdimRoute = [&](int slot) {
+          for (int route = 0; route < 7; ++route) {
+            if (graphCoreSlots[route] == slot &&
+                graphTextureIsUdim(slot)) return route;
+          }
+          return -1;
+        };
         // The native graph interpreter is for MaterialX/OpenPBR graphs. A
         // UsdPreviewSurface network is already lowered into the semantic slots
         // above (including its named primvar reader); interpreting its retained
@@ -3884,12 +4324,25 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                            graph.nodes.size() <= 64;
         if (graphUsable) {
           for (const MaterialXGraphNodeCPU& node : graph.nodes) {
-            if (node.isUdim) { graphUsable = false; break; }
             if (node.textureId < 0) continue;
             if (std::find(graphTextureIds.begin(), graphTextureIds.end(),
                           node.textureId) == graphTextureIds.end()) {
               graphTextureIds.push_back(node.textureId);
-              if (graphTextureIds.size() > 8) { graphUsable = false; break; }
+              // The GL 3.3 shader reserves four ordinary graph samplers so it
+              // stays within the 32-fragment-sampler limit after semantic,
+              // UDIM, shadow, and Ptex bindings are linked. Vulkan supports
+              // the full eight-image graph budget independently.
+              if (graphTextureIds.size() > 4) { graphUsable = false; break; }
+            }
+            const bool nodeUdim = node.isUdim ||
+                                  graphTextureIsUdim(node.textureId);
+            if (nodeUdim) {
+              const size_t local = static_cast<size_t>(
+                  std::find(graphTextureIds.begin(), graphTextureIds.end(),
+                            node.textureId) - graphTextureIds.begin());
+              const int route = graphUdimRoute(node.textureId);
+              if (route < 0) { graphUsable = false; break; }
+              graphUdimRoutes[local] = route;
             }
           }
         }
@@ -3898,20 +4351,27 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
           GLuint tex = whiteTex_;
           if (graphUsable && i < static_cast<int>(graphTextureIds.size())) {
             const int slot = graphTextureIds[static_cast<size_t>(i)];
-            if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
-                textures_[static_cast<size_t>(slot)].tex2d)
+            if (graphUdimRoutes[static_cast<size_t>(i)] >= 0) {
+              // The corresponding semantic sampler2DArray was bound above.
+              tex = whiteTex_;
+            } else if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
+                       textures_[static_cast<size_t>(slot)].tex2d)
               tex = textures_[static_cast<size_t>(slot)].tex2d;
             else
               graphUsable = false;
           }
           glBindTexture(GL_TEXTURE_2D, tex);
         }
+        if (uGraphUdimRoutes_ >= 0)
+          glUniform1iv(uGraphUdimRoutes_, 8, graphUdimRoutes.data());
         glUniform1i(uGraphUsable_, graphUsable ? 1 : 0);
         glUniform1i(uGraphNodeCount_, graphUsable ? static_cast<GLint>(graph.nodes.size()) : 0);
-        glUniform4iv(uGraphOutputs0_, 1, graph.output.data());
-        glUniform2i(uGraphOutputs1_, graph.output[4], graph.output[5]);
-        glUniform2i(uGraphOutputs2_, graph.output[6], graph.output[7]);
-        glUniform1i(uGraphOutputs3_, graph.output[8]);
+        std::array<GLint, MaterialXGraphRuntimeCPU::kOutputCount> graphOutputs{};
+        for (size_t i = 0; i < graphOutputs.size(); ++i)
+          graphOutputs[i] = graph.output[i];
+        glUniform1iv(uGraphOutputs_,
+                     static_cast<GLsizei>(graphOutputs.size()),
+                     graphOutputs.data());
         if (graphUsable) {
           std::vector<GLfloat> n0(graph.nodes.size() * 4, 0.0f);
           std::vector<GLfloat> n1(graph.nodes.size() * 4, 0.0f);
@@ -3938,12 +4398,16 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                           ? -1
                           : static_cast<int>(it - graphTextureIds.begin());
             }
-            n4[i * 4 + 0] = static_cast<float>(local);
+            const bool nodeUdim = local >= 0 &&
+                                  graphUdimRoutes[static_cast<size_t>(local)] >= 0;
+            n4[i * 4 + 0] = nodeUdim ? -static_cast<float>(local + 1)
+                                     : static_cast<float>(local);
             n4[i * 4 + 1] = node.uvScale[0];
             n4[i * 4 + 2] = node.uvScale[1];
             n4[i * 4 + 3] = node.uvOffset[0];
             n5[i * 4 + 0] = node.uvOffset[1];
             n5[i * 4 + 1] = node.value[2][3];
+            n5[i * 4 + 2] = nodeUdim ? static_cast<float>(node.textureId) : -1.0f;
           }
           glUniform4fv(uGraphNode0_, static_cast<GLsizei>(graph.nodes.size()), n0.data());
           glUniform4fv(uGraphNode1_, static_cast<GLsizei>(graph.nodes.size()), n1.data());
@@ -3972,6 +4436,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
   if (anyInstanced && instProgram_) {
     light3d::Mat4 VP = P * V;
     glUseProgram(instProgram_);
+    UploadClippingPlanes(instProgram_, params);
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
     glUniform1f(iExposure_, params.exposure);
@@ -4039,10 +4504,6 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(iSkinningEnabled_, instSkinOn ? 1 : 0);
       glUniform1i(iBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
       glUniform1i(iBoneMatrixCount_, boneMatrixCount_);
-      if (!mesh.jointVbo) {  // no skin attrs: constant zero weights
-        glVertexAttribI4ui(6, 0, 0, 0, 0);
-        glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
-      }
       // Only touch cull state on a transition: across tens of thousands of
       // prototypes the back-face cull flag almost never changes, so the per-draw
       // glEnable/glDisable/glCullFace was pure redundant driver traffic.
@@ -4053,13 +4514,20 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         cullState = wantCull;
       }
       glBindVertexArray(mesh.vao);
+      if (!mesh.jointVbo) {  // no skin attrs: constant zero weights
+        glVertexAttribI4ui(6, 0, 0, 0, 0);
+        glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
+      }
       // Constant per-draw color when there is no per-instance color array (the
       // generic vertex-attribute value feeds aColor for every instance).
-      if (!mesh.hasInstanceColors) glVertexAttrib3fv(9, mesh.flatColor);
+      if (!mesh.hasInstanceColors) glVertexAttrib4f(
+          9, mesh.flatColor[0], mesh.flatColor[1], mesh.flatColor[2], 1.0f);
+      if (!mesh.vertexColorVbo) {
+        // Attribute 10 is the per-vertex color input of the instanced shader;
+        // keep its generic fallback local to this VAO/draw as well.
+        glVertexAttrib4f(10, 1.0f, 1.0f, 1.0f, 1.0f);
+      }
       if (!mesh.hasInstanceOpacities) glVertexAttrib1f(11, mesh.flatOpacity);
-      // Default per-vertex color to white when the prototype has none (the VAO
-      // supplies attrib 10 from vertexColorVbo otherwise).
-      if (!mesh.vertexColorVbo) glVertexAttrib4f(10, 1.0f, 1.0f, 1.0f, 1.0f);
       // GPU blendshape morph for a morphed prototype: bind its delta/coeff/chan
       // texture-buffers (units 8/9/10, matching the instanced program's samplers)
       // and enable the in-shader morph. Same as the non-instanced material pass.
@@ -4128,6 +4596,8 @@ void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
   }
   gv.densityScale = v.densityScale;
   gv.background = v.background;
+  gv.isLevelSet = v.isLevelSet;
+  gv.isovalue = v.isovalue;
 
   glGenTextures(1, &gv.tex3d);
   glBindTexture(GL_TEXTURE_3D, gv.tex3d);
@@ -4398,8 +4868,132 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
 }
 
+void GLRenderer::applyRasterDof(const RenderFrameParams& params) {
+  if (params.mode != RenderMode::Shaded || !params.cameraLens.enabled() ||
+      !colorTex_ || !depthTex_ || !dofFbo_) {
+    return;
+  }
+  if (!dofProgram_) {
+    static const char* kVs = R"glsl(#version 330 core
+out vec2 vUv;
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)glsl";
+    static const char* kFs = R"glsl(#version 330 core
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uColor;
+uniform sampler2D uDepth;
+uniform mat4 uInvProj;
+uniform float uProjY;
+uniform float uFocusDistance;
+uniform float uApertureRadius;
+uniform vec2 uExtent;
+
+float viewDepth(vec2 uv) {
+  float d = texture(uDepth, uv).r;
+  if (d >= 0.999999) return 1.0e30;
+  vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  return abs(p.z / max(abs(p.w), 1.0e-8));
+}
+float cocPixels(float z) {
+  if (z > 1.0e20) return 0.0;
+  float angular = uApertureRadius * abs(1.0 / max(z, 1.0e-5) -
+                                             1.0 / uFocusDistance);
+  return clamp(0.5 * uExtent.y * abs(uProjY) * angular, 0.0, 14.0);
+}
+vec3 toLinear(vec3 c) {
+  bvec3 lo = lessThanEqual(c, vec3(0.04045));
+  return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lo);
+}
+vec3 toSrgb(vec3 c) {
+  bvec3 lo = lessThanEqual(c, vec3(0.0031308));
+  return mix(1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
+             c * 12.92, lo);
+}
+void main() {
+  const vec2 disk[16] = vec2[16](
+    vec2(0.000, 0.000), vec2(0.527, 0.085), vec2(-0.368, 0.284),
+    vec2(0.145, -0.547), vec2(-0.705, -0.184), vec2(0.724, -0.438),
+    vec2(-0.192, 0.765), vec2(0.423, 0.681), vec2(-0.817, 0.409),
+    vec2(0.891, 0.214), vec2(-0.521, -0.691), vec2(0.218, 0.934),
+    vec2(-0.941, -0.307), vec2(0.649, -0.724), vec2(-0.070, -0.947),
+    vec2(0.982, -0.121));
+  float radius = cocPixels(viewDepth(vUv));
+  if (radius < 0.5) {
+    fragColor = texture(uColor, vUv);
+    return;
+  }
+  vec3 sum = vec3(0.0);
+  float alpha = 0.0;
+  float weight = 0.0;
+  for (int i = 0; i < 16; ++i) {
+    vec2 uv = clamp(vUv + disk[i] * radius / uExtent,
+                    vec2(0.0), vec2(1.0));
+    vec4 sampleColor = texture(uColor, uv);
+    float sampleCoc = cocPixels(viewDepth(uv));
+    float support = smoothstep(length(disk[i]) * radius - 1.0,
+                               length(disk[i]) * radius + 1.0,
+                               max(radius, sampleCoc));
+    sum += toLinear(sampleColor.rgb) * support;
+    alpha += sampleColor.a * support;
+    weight += support;
+  }
+  fragColor = vec4(toSrgb(sum / max(weight, 1.0e-5)),
+                   alpha / max(weight, 1.0e-5));
+}
+)glsl";
+    std::string error;
+    dofProgram_ = glutil::CompileProgram(kVs, kFs, &error);
+    if (!dofProgram_) {
+      std::fprintf(stderr,
+                   "[lusdview][warn] OpenGL raster depth of field disabled: %s\n",
+                   error.c_str());
+      return;
+    }
+    glGenVertexArrays(1, &dofVao_);
+    glUseProgram(dofProgram_);
+    glUniform1i(glGetUniformLocation(dofProgram_, "uColor"), 0);
+    glUniform1i(glGetUniformLocation(dofProgram_, "uDepth"), 1);
+  }
+
+  const light3d::Mat4 projection = ToMat4(params.proj);
+  const light3d::Mat4 inverseProjection = projection.inverse();
+  glBindFramebuffer(GL_FRAMEBUFFER, dofFbo_);
+  glViewport(0, 0, vpW_, vpH_);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_CULL_FACE);
+  glUseProgram(dofProgram_);
+  glUniformMatrix4fv(glGetUniformLocation(dofProgram_, "uInvProj"), 1,
+                     GL_FALSE, inverseProjection.m);
+  glUniform1f(glGetUniformLocation(dofProgram_, "uProjY"), projection.m[5]);
+  glUniform1f(glGetUniformLocation(dofProgram_, "uFocusDistance"),
+              params.cameraLens.focusDistance);
+  glUniform1f(glGetUniformLocation(dofProgram_, "uApertureRadius"),
+              params.cameraLens.apertureRadius);
+  glUniform2f(glGetUniformLocation(dofProgram_, "uExtent"),
+              static_cast<float>(vpW_), static_cast<float>(vpH_));
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, colorTex_);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, depthTex_);
+  glBindVertexArray(dofVao_);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glBindVertexArray(0);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glUseProgram(0);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  dofApplied_ = true;
+}
+
 void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (!fbo_ || !program_ || !params.view || !params.proj) return;
+  dofApplied_ = false;
   renderShadowMap(params);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
   glViewport(0, 0, vpW_, vpH_);
@@ -4462,12 +5056,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   const float wireCol[3] = {0.04f, 0.24f, 0.10f};  // dark green
 
   if (wireMode == 1 && haveWire) {
-    // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so
-    // occluded edges are hidden, then draw the polygon edges over the background.
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    drawMeshes(params, /*wireframe=*/false, nullptr);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    drawWireframe(params, wireCol);
+    // Wireframe only. By default render the fill into DEPTH ONLY so occluded
+    // edges are hidden, then draw the polygon edges over the background. X-ray
+    // skips the depth fill and disables the depth test for the edges.
+    if (!params.wireXray) {
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+      drawMeshes(params, /*wireframe=*/false, nullptr);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    drawWireframe(params, wireCol, params.wireXray);
   } else {
     // Shaded fill. In the lit mode (RenderMode 0), draw opaque geometry first,
     // then translucent (Blend) materials in a separate back-to-front, blended,
@@ -4492,13 +5089,19 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     } else {
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);
     }
-    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
+    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol, params.wireXray);
   }
   if (wireMode != 1) drawNonMesh(params);
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
+  // Instanced selections are excluded: this overlay draws the prototype once at
+  // its mesh transform, not per placement, so the GUI provides world-space cage
+  // lines for every instance instead (drawn by the line path below).
   if (params.highlightMeshIndex >= 0 &&
-      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() && !wire) {
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      !wire &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount ==
+          0) {
     // drawNonMesh() leaves its own shader bound. Uniform locations below belong
     // to the material mesh program; without rebinding it the outline was drawn
     // by the helper shader from rest positions and all skin uniforms were
@@ -4605,6 +5208,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
       glUniform3fv(uVolAlbedo_, 1, gv.albedo);
       glUniform3fv(uVolEmission_, 1, gv.emission);
       glUniform1f(uVolBackground_, gv.background);
+      glUniform1i(uVolIsLevelSet_, gv.isLevelSet);
+      glUniform1f(uVolIsovalue_, gv.isovalue);
       glUniform1i(uVolHasEmissionField_, gv.emissionTex3d != 0);
       glUniform1i(uVolHasTemperatureField_, gv.temperatureTex3d != 0);
       glActiveTexture(GL_TEXTURE1);
@@ -4652,8 +5257,14 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   // same params also carry CPU-built world-space lines for Vulkan (which lacks
   // that overlay); drawing them here duplicates the highlight in rest pose for
   // skinned/morphed meshes. Keep this line path only for native Points/Curves,
-  // represented by highlightMeshIndex < 0.
-  if (params.highlightMeshIndex < 0 && params.highlightLines &&
+  // represented by highlightMeshIndex < 0, and for instanced selections (which
+  // the polygon overlay cannot draw per placement).
+  const bool highlightMeshInstanced =
+      params.highlightMeshIndex >= 0 &&
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount > 0;
+  if ((params.highlightMeshIndex < 0 || highlightMeshInstanced) &&
+      params.highlightLines &&
       params.highlightLineVertexCount > 0 && lineProgram_) {
     glUseProgram(lineProgram_);
     const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
@@ -4701,10 +5312,45 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
 
   glUseProgram(0);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  applyRasterDof(params);
 }
 
 ViewportTexHandle GLRenderer::viewportTexture() const {
-  return static_cast<ViewportTexHandle>(colorTex_);
+  return static_cast<ViewportTexHandle>(dofApplied_ ? dofTex_ : colorTex_);
+}
+
+ViewportTexHandle GLRenderer::comparisonImage(int slot, const light3d::Image* image) {
+  if (slot < 0 || slot >= 4) return 0;
+  auto& target = comparisonTextures_[static_cast<size_t>(slot)];
+  if (!image) return static_cast<ViewportTexHandle>(target);
+  if (image->width < 1 || image->height < 1 || image->width > 4096 || image->height > 4096 ||
+      image->channels != 4 || image->data.size() != static_cast<size_t>(image->width)*static_cast<size_t>(image->height)*4) return 0;
+  GLint previous = 0, unpack = 0, alignment = 0, rowLength = 0;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+  glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);
+  GLuint texture = 0;
+  glGenTextures(1,&texture);
+  glBindTexture(GL_TEXTURE_2D,texture);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,image->width,image->height,0,GL_RGBA,GL_UNSIGNED_BYTE,image->data.data());
+  GLint width = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&width);
+  glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(previous));
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,static_cast<GLuint>(unpack));
+  glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,rowLength);
+  if (width != image->width) { glDeleteTextures(1,&texture); return 0; }
+  if (target) glDeleteTextures(1,&target);
+  target = texture;
+  return static_cast<ViewportTexHandle>(target);
 }
 
 bool GLRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
@@ -4716,6 +5362,7 @@ bool GLRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
   // against.
   if (!rgba || w < 1 || h < 1) return false;
   ensureFbo(w, h);
+  dofApplied_ = false;
   // colorTex_ is bottom-up (GL framebuffer convention; see captureViewport's
   // flip and caps_.flipViewportV=true, which tells gui.cc to flip the display
   // UVs to compensate). `rgba` is top-down, so flip rows going in rather than
@@ -4817,7 +5464,7 @@ bool GLRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   *h = vpH_;
   const size_t rowBytes = static_cast<size_t>(vpW_) * 4;
   std::vector<uint8_t> tmp(rowBytes * static_cast<size_t>(vpH_));
-  glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+  glBindFramebuffer(GL_FRAMEBUFFER, dofApplied_ ? dofFbo_ : fbo_);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
   glReadPixels(0, 0, vpW_, vpH_, GL_RGBA, GL_UNSIGNED_BYTE, tmp.data());
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -4846,11 +5493,16 @@ bool GLRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
 }
 
 void GLRenderer::shutdown() {
+  for (auto& texture : comparisonTextures_) { if (texture) glDeleteTextures(1,&texture); texture = 0; }
   destroyScene();
   if (whiteTex_) { glDeleteTextures(1, &whiteTex_); whiteTex_ = 0; }
   if (boneTex_) { glDeleteTextures(1, &boneTex_); boneTex_ = 0; }
   if (colorTex_) { glDeleteTextures(1, &colorTex_); colorTex_ = 0; }
-  if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
+  if (depthTex_) { glDeleteTextures(1, &depthTex_); depthTex_ = 0; }
+  if (dofTex_) { glDeleteTextures(1, &dofTex_); dofTex_ = 0; }
+  if (dofFbo_) { glDeleteFramebuffers(1, &dofFbo_); dofFbo_ = 0; }
+  if (dofProgram_) { glDeleteProgram(dofProgram_); dofProgram_ = 0; }
+  if (dofVao_) { glDeleteVertexArrays(1, &dofVao_); dofVao_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
   if (program_) { glDeleteProgram(program_); program_ = 0; }
   if (shadowProgram_) { glDeleteProgram(shadowProgram_); shadowProgram_ = 0; }

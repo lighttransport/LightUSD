@@ -1,3 +1,4 @@
+#include "next/reader/usdz-reader.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
@@ -10,9 +11,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#ifndef LUSDCHECKER_MEMORY_ONLY
 #include <fstream>
 #include <filesystem>
 #include <iostream>
+#endif
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -26,6 +29,12 @@
 #include "next/reader/usdz-reader.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/validation/usd-validation.hh"
+#include "report.hh"
+#include "checker-options.hh"
+using lusdchecker::KeywordToGroups;
+#include "next/layer/asset-anchor.hh"
+#include <deque>
+#include <set>
 
 namespace {
 
@@ -41,351 +50,12 @@ using lightusd::next::ValidationOptions;
 constexpr int kExitValid = 0;
 constexpr int kExitInvalid = 1;
 constexpr int kExitError = 2;
-constexpr size_t kDefaultMaxMemoryMb = 1024;
+using lusdchecker::Split;
 
-struct Args {
-  std::string input;
-  std::string output = "stdout";
-  ValidationOptions groups;
-  size_t max_memory_mb = kDefaultMaxMemoryMb;
-  bool json = false;
-  bool strict = false;
-  bool strict_parse = false;
-  bool composed = false;
-  bool require_all_groups = false;
-  bool verbose = false;
-  bool usdchecker_compat = false;
-  bool root_package_only = false;
-  // Variant sweep (usdchecker parity). With --composed the checker validates
-  // every combination of authored variant selections (capped) unless
-  // --skip-variants; --variants/--variant-sets restrict the sweep.
-  bool skip_variants = false;
-  bool disable_variant_limit = false;
-  bool no_asset_checks = false;
-  std::vector<std::string> variant_sets;  // --variant-sets NAME (repeatable)
-  // Each --variants occurrence is one validation pass of set:variant pairs.
-  std::vector<std::vector<std::pair<std::string, std::string>>>
-      variant_selections;
-};
+using Args = lusdchecker::CheckerOptions;
 
 constexpr size_t kVariantValidationLimit = 1000;
 
-ValidationOptions AllAvailableGroups() {
-  return lightusd::next::MakeValidateAllOptions();
-}
-
-void PrintUsage(std::ostream& os) {
-  os << "Usage: lusdchecker [options] FILE\n"
-        "\n"
-        "Validate USDA, USDC, USDZ, or MaterialX (.mtlx) against AOUSD Core\n"
-        "1.0.1 and LightUSD's structural schema rules. FILE may be '-' for\n"
-        "stdin.\n"
-        "\n"
-        "Options:\n"
-        "  -g, --groups LIST     Comma-separated rule groups: "
-        "core,geom,shade,\n"
-        "                        lux,physics,render,package,crate,arkit (default: "
-        "all\n"
-        "                        defect-class groups; arkit is opt-in)\n"
-        "      --core-only       Run AOUSD Core rules only\n"
-        "      --all             Run all defect-class rule groups (default)\n"
-        "      --arkit           ARKit/RealityKit USDZ profile "
-        "(arkit + core,\n"
-        "                        geom,shade,package), like usdchecker "
-        "--arkit\n"
-        "  -t, --strict          Treat validation and parser warnings as "
-        "failure\n"
-        "      --strict-parse    Reject non-conforming/unsupported format "
-        "data\n"
-        "      --composed        Compose external arcs and validate the "
-        "flattened stage\n"
-        "      --require-all-groups\n"
-        "                        Fail if a requested group is inapplicable\n"
-        "      --usdchecker-compat\n"
-        "                        Report usdchecker-mapped rules at OpenUSD\n"
-        "                        usdchecker severities (several warnings\n"
-        "                        become errors)\n"
-        "      --no-asset-checks Skip referenceable-asset checks, like\n"
-        "                        usdchecker --noAssetChecks\n"
-        "  -p, --root-package-only\n"
-        "                        Do not follow or validate dependencies\n"
-        "                        outside the given file/package\n"
-        "  -s, --skip-variants   With --composed, validate only the\n"
-        "                        authored variant selections instead of\n"
-        "                        every combination\n"
-        "      --variants LIST   ','-separated set:variant pairs checked\n"
-        "                        together; repeat for separate passes\n"
-        "                        (implies --composed)\n"
-        "      --variant-sets NAME\n"
-        "                        Validate every variant of the named set\n"
-        "                        (repeatable; implies --composed)\n"
-        "      --disable-variant-validation-limit\n"
-        "                        Lift the 1000-combination sweep cap\n"
-        "  -d, --dump-rules      Dump the rule registry (id, group, doc)\n"
-        "  -v, --verbose         Report per-pass progress on stderr\n"
-        "      --json            Emit stable machine-readable JSON\n"
-        "  -o, --out FILE        Write report to FILE, stdout, or stderr\n"
-        "      --max-memory-mb N Bound input/parser memory (default: 1024)\n"
-        "  -h, --help            Show this help\n"
-        "      --version         Show validator/spec version\n"
-        "      --list-groups     List rule groups and their coverage\n"
-        "\n"
-        "Exit status: 0 valid, 1 validation failed, 2 usage/I/O/parse error.\n";
-}
-
-bool ParseSize(const std::string& text, size_t* value) {
-  if (!value || text.empty() || text[0] == '-') return false;
-  errno = 0;
-  char* end = nullptr;
-  const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
-  if (errno != 0 || !end || *end != '\0' || parsed == 0 ||
-      parsed > std::numeric_limits<size_t>::max()) {
-    return false;
-  }
-  *value = static_cast<size_t>(parsed);
-  return true;
-}
-
-std::vector<std::string> Split(const std::string& text, char separator) {
-  std::vector<std::string> values;
-  size_t start = 0;
-  while (start <= text.size()) {
-    const size_t end = text.find(separator, start);
-    values.emplace_back(text.substr(
-        start, end == std::string::npos ? std::string::npos : end - start));
-    if (end == std::string::npos) break;
-    start = end + 1;
-  }
-  return values;
-}
-
-// Map an OpenUSD usdchecker validator keyword to lightusd group names, so
-// `--include-keywords UsdGeomValidators` style invocations work verbatim.
-// Returns an empty list for a non-keyword (regular group name).
-std::vector<std::string> KeywordToGroups(const std::string& keyword) {
-  std::string lower = keyword;
-  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  if (lower == "usdcorevalidators") return {"core"};
-  if (lower == "usdgeomvalidators") return {"geom"};
-  if (lower == "usdshadevalidators") return {"shade"};
-  if (lower == "usdskelvalidators") return {"geom"};   // skel runs under geom
-  if (lower == "usdluxvalidators") return {"lux"};
-  if (lower == "usdphysicsvalidators") return {"physics"};
-  if (lower == "usdutilsvalidators" || lower == "usdzvalidators")
-    return {"package", "crate"};
-  if (lower == "usdgeomsubset") return {"geom", "shade"};
-  return {};
-}
-
-bool SetGroups(const std::string& text, ValidationOptions* groups,
-               std::string* error) {
-  if (!groups) return false;
-  *groups = ValidationOptions();
-  groups->core = false;
-  std::vector<std::string> names;
-  for (const std::string& entry : Split(text, ',')) {
-    const std::vector<std::string> mapped = KeywordToGroups(entry);
-    if (!mapped.empty()) {
-      names.insert(names.end(), mapped.begin(), mapped.end());
-    } else {
-      names.push_back(entry);
-    }
-  }
-  for (const std::string& name : names) {
-    bool* flag = nullptr;
-    if (name == "core")
-      flag = &groups->core;
-    else if (name == "geom")
-      flag = &groups->geom;
-    else if (name == "shade")
-      flag = &groups->shade;
-    else if (name == "lux")
-      flag = &groups->lux;
-    else if (name == "physics")
-      flag = &groups->physics;
-    else if (name == "render")
-      flag = &groups->render;
-    else if (name == "package")
-      flag = &groups->package;
-    else if (name == "crate")
-      flag = &groups->crate;
-    else if (name == "arkit")
-      flag = &groups->arkit;
-    else {
-      if (error) *error = "unknown or empty validation group: '" + name + "'";
-      return false;
-    }
-    *flag = true;
-  }
-  return true;
-}
-
-enum class ParseArgsResult { Run, ExitSuccess, Error };
-
-ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
-                          std::string* error) {
-  if (!args) return ParseArgsResult::Error;
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg(argv[i]);
-    const auto next_value = [&](const char* option, std::string* value) {
-      if (i + 1 >= argc) {
-        if (error) *error = std::string("missing value for ") + option;
-        return false;
-      }
-      *value = argv[++i];
-      return true;
-    };
-    if (arg == "-h" || arg == "--help") {
-      PrintUsage(std::cout);
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--version") {
-      std::cout << "lusdchecker 0.1 (" << GetAOUSDCoreSpecVersionString()
-                << ")\n";
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--list-groups") {
-      std::cout
-          << "core      AOUSD layer, composition, metadata, and value rules\n"
-          << "geom      UsdGeom, UsdSkel, and UsdVol structural rules\n"
-          << "shade     UsdShade, preview-surface, and MaterialX rules\n"
-          << "lux       UsdLux structural and value rules\n"
-          << "physics   UsdPhysics placement, joint, and extension rules\n"
-          << "render    UsdRender settings/product/var structural rules\n"
-          << "package   USDZ layout, path, portability, and dependency rules\n"
-          << "crate     USDC decode and cross-table structural rules\n"
-          << "arkit     ARKit/RealityKit USDZ delivery profile (opt-in; not "
-             "part of --all)\n";
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--json") {
-      args->json = true;
-    } else if (arg == "-t" || arg == "--strict") {
-      args->strict = true;
-    } else if (arg == "--strict-parse") {
-      args->strict_parse = true;
-    } else if (arg == "--composed") {
-      args->composed = true;
-    } else if (arg == "--require-all-groups") {
-      args->require_all_groups = true;
-    } else if (arg == "--usdchecker-compat") {
-      args->usdchecker_compat = true;
-    } else if (arg == "--no-asset-checks" || arg == "--noAssetChecks") {
-      args->no_asset_checks = true;
-    } else if (arg == "-p" || arg == "--root-package-only" ||
-               arg == "--rootPackageOnly") {
-      args->root_package_only = true;
-    } else if (arg == "-s" || arg == "--skip-variants" ||
-               arg == "--skipVariants") {
-      args->skip_variants = true;
-    } else if (arg == "--disable-variant-validation-limit" ||
-               arg == "--disableVariantValidationLimit") {
-      args->disable_variant_limit = true;
-    } else if (arg == "-v" || arg == "--verbose") {
-      args->verbose = true;
-    } else if (arg == "-d" || arg == "--dump-rules" || arg == "--dumpRules") {
-      size_t count = 0;
-      const auto* rules = lightusd::next::GetValidationRuleTable(&count);
-      for (size_t i = 0; i < count; ++i) {
-        const lightusd::next::ValidationRuleInfo& rule = rules[i];
-        std::cout << "[" << rule.group << ":" << rule.id << "]:\n"
-                  << "\tDoc: " << rule.doc << "\n";
-      }
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--variants") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) {
-        return ParseArgsResult::Error;
-      }
-      std::vector<std::pair<std::string, std::string>> pairs;
-      for (const std::string& entry : Split(value, ',')) {
-        const size_t colon = entry.find(':');
-        if (colon == std::string::npos || colon == 0 ||
-            colon + 1 >= entry.size()) {
-          if (error) {
-            *error = "--variants entries must be set:variant pairs, got '" +
-                     entry + "'";
-          }
-          return ParseArgsResult::Error;
-        }
-        pairs.emplace_back(entry.substr(0, colon), entry.substr(colon + 1));
-      }
-      args->variant_selections.push_back(std::move(pairs));
-      args->composed = true;
-    } else if (arg == "--variant-sets" || arg == "--variantSets") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) {
-        return ParseArgsResult::Error;
-      }
-      for (const std::string& name : Split(value, ',')) {
-        if (!name.empty()) args->variant_sets.push_back(name);
-      }
-      args->composed = true;
-    } else if (arg == "--include-keywords" || arg == "--includeKeywords") {
-      // usdchecker spelling of the group selector.
-      std::string value;
-      if (!next_value(arg.c_str(), &value) ||
-          !SetGroups(value, &args->groups, error)) {
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "--core-only") {
-      args->groups = ValidationOptions();
-    } else if (arg == "--all") {
-      args->groups = AllAvailableGroups();
-    } else if (arg == "--arkit") {
-      // The ARKit profile: the ARKit-only rules plus the base rule groups that
-      // OpenUSD's `usdchecker --arkit` always runs (stage metadata, prim
-      // encapsulation, textures, material bindings, package layout).
-      args->groups.arkit = true;
-      args->groups.core = true;
-      args->groups.geom = true;
-      args->groups.shade = true;
-      args->groups.package = true;
-    } else if (arg == "-g" || arg == "--groups") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value) ||
-          !SetGroups(value, &args->groups, error)) {
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "-o" || arg == "--out") {
-      if (!next_value(arg.c_str(), &args->output)) {
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "--max-memory-mb") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value) ||
-          !ParseSize(value, &args->max_memory_mb)) {
-        if (error && error->empty()) {
-          *error = "--max-memory-mb requires a positive integer";
-        }
-        return ParseArgsResult::Error;
-      }
-    } else if (!arg.empty() && arg[0] == '-' && arg != "-") {
-      if (error) *error = "unknown option: " + arg;
-      return ParseArgsResult::Error;
-    } else if (!args->input.empty()) {
-      if (error) *error = "only one input file may be specified";
-      return ParseArgsResult::Error;
-    } else {
-      args->input = arg;
-    }
-  }
-  if (args->input.empty()) {
-    if (error) *error = "an input FILE is required";
-    return ParseArgsResult::Error;
-  }
-  // The ARKit profile's package-layout rules (arkit.package.fileExtension /
-  // .rootLayer) live in the package container check, which only runs when the
-  // package group reads the raw bytes. Selecting `arkit` therefore implies
-  // `package`, so `-g arkit` on a .usdz enforces the ARKit package rules rather
-  // than silently skipping them while still reporting arkit as checked. (The
-  // `--arkit` flag already sets this explicitly.)
-  if (args->groups.arkit) args->groups.package = true;
-  // Applied after the loop: --groups/--all/--core-only rebuild the options
-  // struct, which would otherwise silently discard an earlier
-  // --no-asset-checks depending on flag order.
-  args->groups.asset_checks = !args->no_asset_checks;
-  return ParseArgsResult::Run;
-}
 
 std::string JsonEscape(const std::string& text) {
   static const char kHex[] = "0123456789abcdef";
@@ -500,7 +170,82 @@ std::string JsonReport(const Args& args, const USDValidationResult& result,
   return os.str();
 }
 
+lightusd::minijson::Value MakeReport(const Args& args,
+    const USDValidationResult& result, const std::string& warnings,
+    bool valid, size_t passes, bool limit) {
+  using Json = lightusd::minijson::Value;
+  Json report;
+  lightusd::minijson::Parse(JsonReport(args, result, warnings, valid, passes, limit), &report);
+  report["reportVersion"] = 2;
+  report["profile"] = args.profile;
+  report["conformanceScope"] =
+      std::string("implemented AOUSD Core ") +
+      (args.profile == "aousd-core-1.0.1" ? "1.0.1" : "1.1.0") +
+      " document constraints";
+  report["complete"] = result.complete && !limit;
+  report["executionSuccessful"] = true;
+  report["allTimeSamples"] = args.all_samples;
+  report["maxSamples"] = uint64_t(args.max_samples);
+  report["referenceRevision"] = "2095fafafd033fa23386d7ec6d58c7cc33974518";
+  bool normative_failure = false;
+  const auto ordered = GetOrderedValidationIssues(result);
+  for (size_t i = 0; i < ordered.size(); ++i) {
+    const auto& issue = *ordered[i];
+    auto meta = lightusd::next::GetValidationRuleMetadata(issue.rule_id);
+    if (args.groups.registry) for (const auto& rule : args.groups.registry->validators())
+      if (rule.id == issue.rule_id) meta = rule.metadata;
+    Json& row = report["issues"][i];
+    row["category"] = meta.category;
+    row["specification"] = meta.specification;
+    if (!meta.lean_ref.empty()) row["leanRef"] = meta.lean_ref;
+    row["referenceErrors"] = Json::array();
+    for (const auto& reference : meta.reference_errors) row["referenceErrors"].push_back(reference);
+    row["sourceAsset"] = issue.source_asset.empty() ? args.input : issue.source_asset;
+    row["variants"] = issue.variants;
+    if (issue.has_time) row["time"] = issue.time;
+    normative_failure |= meta.category == "normative" && issue.severity == USDValidationSeverity::Error;
+  }
+  report["conformance"] = args.profile == "default" ? "notRequested" :
+      normative_failure ? "failed" : !report["complete"].get_bool() ? "incomplete" : "passed";
+  return report;
+}
+
+int ReportError(const Args& args, const std::string& rule, const std::string& message) {
+  USDValidationResult result;
+  result.checked_groups.core = false;
+  result.complete = false;
+  result.issues.push_back({USDValidationSeverity::Error, rule, "<input>", message});
+  auto report = MakeReport(args, result, "", false, 0, false);
+  report["executionSuccessful"] = false;
+  report["gatePassed"] = false;
+  report["newIssueCount"] = uint64_t(1);
+  report["existingIssueCount"] = uint64_t(0);
+  if (rule == "parser.error" && args.profile != "default") report["conformance"] = "failed";
+  if (args.environment && args.environment->report) {
+    *args.environment->report = std::move(report);
+    return kExitError;
+  }
+#ifndef LUSDCHECKER_MEMORY_ONLY
+  std::ofstream file;
+  std::ostream* output = args.output == "stderr" ? &std::cerr : &std::cout;
+  if (args.output != "stdout" && args.output != "stderr") {
+    file.open(args.output);
+    if (!file) { std::cerr << "cannot write report: " << args.output << '\n'; return kExitError; }
+    output = &file;
+  }
+  if (args.json || args.sarif)
+    *output << (args.sarif ? lusdchecker::ToSarif(report).dump(2) : report.dump()) << '\n';
+  else *output << "lusdchecker: " << rule << ": " << message << '\n';
+#endif
+  return kExitError;
+}
+
 bool ReadStdin(size_t limit, std::string* data, std::string* error) {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  (void)limit; (void)data;
+  if (error) *error = "stdin is unavailable in memory-only validation";
+  return false;
+#else
   if (!data) return false;
   char buffer[64 * 1024];
   while (std::cin) {
@@ -520,10 +265,16 @@ bool ReadStdin(size_t limit, std::string* data, std::string* error) {
     return false;
   }
   return true;
+#endif
 }
 
 bool ReadFile(const std::string& filename, size_t limit, std::string* data,
-              std::string* error) {
+              std::string* error, const lusdchecker::Environment* environment = nullptr) {
+  if (environment) return environment->read(filename, limit, data, error);
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  if (error) *error = "filesystem is unavailable in memory-only validation";
+  return false;
+#else
   if (!data) return false;
   std::ifstream stream(filename, std::ios::binary | std::ios::ate);
   if (!stream) {
@@ -543,6 +294,19 @@ bool ReadFile(const std::string& filename, size_t limit, std::string* data,
     return false;
   }
   return true;
+#endif
+}
+
+std::shared_ptr<Layer> LoadInput(const std::string& path, std::string* warnings,
+    std::string* errors, const lightusd::next::pcp::LayerLoadOptions& options,
+    const lusdchecker::Environment* environment) {
+#ifndef LUSDCHECKER_MEMORY_ONLY
+  if (!environment) return lightusd::next::pcp::LoadLayerFromFile(path, warnings, errors, options);
+#endif
+  std::string bytes;
+  if (!ReadFile(path, options.max_memory, &bytes, errors, environment)) return {};
+  return lightusd::next::pcp::LoadLayerFromMemory(path,
+      reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), warnings, errors, options);
 }
 
 void AddIssue(USDValidationResult* result, USDValidationSeverity severity,
@@ -754,7 +518,7 @@ std::vector<PackageEntry> ParsePackageEntries(const uint8_t* bytes, size_t size,
                "package contains a duplicate entry name");
     }
     static const std::unordered_set<std::string> kPortableExtensions = {
-        "usd", "usda", "usdc", "png", "jpg", "jpeg", "exr",
+        "usd", "usda", "usdc", "usdz", "png", "jpg", "jpeg", "exr",
         "avif", "m4a", "mp3", "wav"};
     const std::string ext = LowerExtension(entry.name);
     if (arkit) {
@@ -907,23 +671,23 @@ void ValidatePackageCentralDirectory(const uint8_t* bytes, size_t size,
 }
 
 void CollectValueDependencies(
-    const lightusd::next::Value& value,
+    lightusd::next::ValueView value,
     std::unordered_set<std::string>* dependencies) {
   if (!dependencies) return;
-  if (const std::string* asset = value.as_asset_path()) {
+  if (auto asset = value.as_asset_path()) {
     if (!asset->empty()) dependencies->insert(*asset);
     return;
   }
   if (value.is_array() &&
       value.type_id() == lightusd::next::TypeId::AssetPath) {
-    if (const auto* assets = value.as_token_array()) {
+    if (const auto assets = value.as_token_array()) {
       for (const std::string& asset : *assets) {
         if (!asset.empty()) dependencies->insert(asset);
       }
     }
     return;
   }
-  if (const lightusd::next::Dict* dict = value.as_dictionary()) {
+  if (const auto dict = value.as_dictionary()) {
     for (const auto& entry : dict->entries()) {
       CollectValueDependencies(entry.second, dependencies);
     }
@@ -1094,34 +858,31 @@ void ValidateCrate(const uint8_t* bytes, size_t size,
 
 std::string ResolveDependencyPath(const std::string& anchor,
                                   const std::string& asset) {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  using Resolver = lightusd::next::AssetResolver;
+  return Resolver::NormalizePath(Resolver::JoinPath(Resolver::GetDirectory(anchor), asset));
+#else
   namespace fs = std::filesystem;
   fs::path path(asset);
   if (path.is_relative()) path = fs::path(anchor).parent_path() / path;
   return path.lexically_normal().string();
+#endif
 }
 
-bool HasResolvableUdimTile(const std::string& resolved_template) {
-  namespace fs = std::filesystem;
-  constexpr char kUdimToken[] = "<UDIM>";
-  constexpr int kFirstUdimTile = 1001;
-  constexpr int kLastUdimTile = 1100;
-
-  const fs::path path(resolved_template);
-  const std::string filename = path.filename().string();
-  const size_t token_pos = filename.find(kUdimToken);
-  if (token_pos == std::string::npos) return false;
-
-  const fs::path directory = path.parent_path().empty()
-                                 ? fs::path(".")
-                                 : path.parent_path();
-  const std::string prefix = filename.substr(0, token_pos);
-  const std::string suffix =
-      filename.substr(token_pos + std::strlen(kUdimToken));
-  for (int tile = kFirstUdimTile; tile <= kLastUdimTile; ++tile) {
-    const std::string candidate =
-        prefix + std::to_string(tile) + suffix;
-    std::error_code ec;
-    if (fs::exists(directory / candidate, ec) && !ec) return true;
+bool HasResolvableUdimTile(const std::string& resolved_template,
+    const lusdchecker::Environment* environment) {
+  const size_t slash = resolved_template.find_last_of("/\\");
+  const size_t token = resolved_template.find("<UDIM>", slash == std::string::npos ? 0 : slash + 1);
+  if (token == std::string::npos) return false;
+  for (int tile = 1001; tile <= 1100; ++tile) {
+    std::string candidate = resolved_template;
+    candidate.replace(token, 6, std::to_string(tile));
+    if (environment) {
+      if (environment->resolver->Exists(candidate)) return true;
+    }
+#ifndef LUSDCHECKER_MEMORY_ONLY
+    else { std::error_code ec; if (std::filesystem::exists(candidate, ec) && !ec) return true; }
+#endif
   }
   return false;
 }
@@ -1196,17 +957,19 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
 void AuditLayerTypesRecursive(
     const Layer& layer, const std::string& anchor,
     const lightusd::next::pcp::LayerLoadOptions& options,
-    std::unordered_set<std::string>* visited, USDValidationResult* result) {
+    std::unordered_set<std::string>* visited, USDValidationResult* result,
+    const lusdchecker::Environment* environment) {
   if (!visited || !result) return;
   const auto load_and_audit = [&](const std::string& asset,
                                   const std::string& source_prefix,
                                   const std::string& target_prefix) {
     if (asset.empty()) return;
-    const std::string resolved = ResolveDependencyPath(anchor, asset);
+    const std::string resolved = environment
+        ? environment->resolver->ResolvePath(asset, anchor, false)
+        : ResolveDependencyPath(anchor, asset);
     std::string warnings, errors;
     std::shared_ptr<Layer> dependency =
-        lightusd::next::pcp::LoadLayerFromFile(
-            resolved, &warnings, &errors, options);
+        LoadInput(resolved, &warnings, &errors, options, environment);
     if (!dependency) return;
     std::string effective_prefix = source_prefix;
     if (effective_prefix.empty()) {
@@ -1222,7 +985,7 @@ void AuditLayerTypesRecursive(
                         result);
     }
     if (visited->insert(resolved).second) {
-      AuditLayerTypesRecursive(*dependency, resolved, options, visited, result);
+      AuditLayerTypesRecursive(*dependency, resolved, options, visited, result, environment);
     }
   };
 
@@ -1249,39 +1012,87 @@ void AuditLayerTypesRecursive(
 // ---------------------------------------------------------------------------
 void ValidateDependencyResolution(const Layer& layer,
                                   const std::string& anchor,
-                                  USDValidationResult* result) {
-  std::unordered_set<std::string> dependencies;
+                                  USDValidationResult* result,
+                                  bool require_complete,
+                                  size_t max_memory,
+                                  const lusdchecker::Environment* environment) {
+  lightusd::next::ResolverConfig resolver_config;
+  resolver_config.enable_suffix_fallback = false;
+  lightusd::next::AssetResolver resolver = environment
+      ? *environment->resolver : lightusd::next::AssetResolver(resolver_config);
+  const auto package_exists = [&](const lightusd::next::ResolvedAsset& asset) {
+    lightusd::next::USDZReadOptions options;
+    options.max_archive_size = options.max_entry_size = max_memory;
+    lightusd::next::USDZReader archive;
+    std::string package_bytes, read_error;
+    if (environment) {
+      if (!ReadFile(asset.package_path, max_memory, &package_bytes, &read_error, environment) ||
+          !archive.Open(reinterpret_cast<const uint8_t*>(package_bytes.data()), package_bytes.size(), options)) return false;
+    } else if (!archive.OpenFile(asset.package_path, options)) return false;
+    std::function<bool(const lightusd::next::USDZReader&, const std::string&, size_t)> contains;
+    contains = [&](const lightusd::next::USDZReader& zip, const std::string& path, size_t depth) {
+      if (depth > 32) return false;
+      const size_t bracket = path.find('[');
+      const std::string name = path.substr(0, bracket);
+      for (size_t i = 0; i < zip.NumEntries(); ++i) if (zip.EntryName(i) == name) {
+        if (bracket == std::string::npos) return true;
+        if (path.back() != ']') return false;
+        lightusd::next::USDZReader inner;
+        return inner.Open(zip.EntryData(i), zip.EntrySize(i), options) &&
+            contains(inner, path.substr(bracket+1, path.size()-bracket-2), depth+1);
+      }
+      return false;
+    };
+    return contains(archive, asset.asset_in_package, 0);
+  };
+  std::unordered_set<std::string> dependencies, missing;
   CollectLayerDependencies(layer, &dependencies);
   std::vector<std::string> ordered(dependencies.begin(), dependencies.end());
   std::sort(ordered.begin(), ordered.end());
   for (const std::string& authored : ordered) {
-    // URIs and package/search-path identifiers require a resolver that this
-    // dependency-free tool does not model. UDIM templates are different: pxr's
-    // MissingReferenceValidator checks tiles 1001..1100 and reports the
-    // template unresolved when none exists, so mirror that behavior here.
-    if (authored.find("://") != std::string::npos ||
-        authored.find('[') != std::string::npos) {
-      continue;
+    if (!environment && authored.find("://") != std::string::npos) {
+      if (require_complete) {
+        result->complete = false;
+        AddIssue(result, USDValidationSeverity::Error, "checker.coverage.resolver", "<layer>",
+                 "Dependency requires an unavailable resolver: " + authored);
+      }
     }
     const std::string resolved = ResolveDependencyPath(anchor, authored);
-    if (authored.find("<UDIM>") != std::string::npos) {
-      if (!HasResolvableUdimTile(resolved)) {
-        AddIssue(result, USDValidationSeverity::Warning,
-                 "core.dependency.unresolvable", "<layer>",
-                 "authored dependency `" + authored +
-                     "` does not resolve to an existing file (" + resolved +
-                     ")");
-      }
-      continue;
+    bool exists = false;
+    const auto asset = resolver.Resolve(authored, anchor, false);
+    if (asset.is_package) exists = asset.exists && package_exists(asset);
+    else if (authored.find("<UDIM>") != std::string::npos) exists = HasResolvableUdimTile(resolved, environment);
+    else {
+      exists = asset.exists;
+#ifndef LUSDCHECKER_MEMORY_ONLY
+      if (!environment) { std::error_code ec; exists = std::filesystem::is_regular_file(resolved, ec); }
+#endif
     }
-    if (authored.find('<') != std::string::npos) continue;
-    std::error_code ec;
-    if (!std::filesystem::exists(resolved, ec)) {
+    if (!exists) {
+      if (require_complete) {
+        result->complete = false;
+        AddIssue(result, USDValidationSeverity::Error, "checker.coverage.dependencies", "<layer>",
+                 "Required dependency is unavailable: " + authored);
+      }
+      missing.insert(authored);
       AddIssue(result, USDValidationSeverity::Warning,
                "core.dependency.unresolvable", "<layer>",
-               "authored dependency `" + authored +
-                   "` does not resolve to an existing file (" + resolved +
-                   ")");
+               "authored dependency `" + authored + "` does not resolve to an existing file (" + resolved + ")");
+    }
+  }
+  // Preserve a useful prim site for the reference normal-texture validator.
+  for (const auto& prim : layer.prims()) {
+    const auto* id = prim.property_value("info:id");
+    if (!id || !id->as_token() || *id->as_token() != "UsdPreviewSurface") continue;
+    const auto* connections = prim.connection("inputs:normal");
+    if (!connections) continue;
+    for (const auto& target : *connections) {
+      const auto* texture = layer.prim_at_path(target.str().substr(0, target.str().find('.')));
+      if (!texture) continue;
+      const auto* file = texture->property_value("inputs:file");
+      if (file && file->as_asset_path() && missing.count(*file->as_asset_path()))
+        AddIssue(result, USDValidationSeverity::Warning, "shade.normalMap.file",
+                 texture->path().str() + ".inputs:file", "Normal texture asset does not resolve");
     }
   }
 }
@@ -1290,115 +1101,25 @@ void ValidateDependencyResolution(const Layer& layer,
 // Variant sweep (usdchecker parity): enumerate authored variant selections.
 // ---------------------------------------------------------------------------
 struct VariantChoice {
-  std::string key;  // prim-scoped compositor override key: "<primPath>{set}"
-  std::string set_name;
+  std::string key, set_name, selected;
   std::vector<std::string> options;
 };
 
-std::vector<VariantChoice> CollectVariantChoices(const Layer& layer) {
-  std::vector<VariantChoice> choices;
-  for (const auto& prim : layer.prims()) {
-    for (const auto& vset : prim.meta().variantSets()) {
-      VariantChoice choice;
-      choice.key = prim.path().str() + "{" + vset.name + "}";
-      choice.set_name = vset.name;
-      for (const auto& variant : vset.variants) {
-        choice.options.push_back(variant.name);
-      }
-      if (!choice.options.empty()) {
-        choices.push_back(std::move(choice));
-      }
-    }
-  }
-  // Deterministic sweep order regardless of prim-map iteration order.
-  std::sort(choices.begin(), choices.end(),
-            [](const VariantChoice& a, const VariantChoice& b) {
-              return a.key < b.key;
-            });
-  return choices;
+std::string SelectionKey(const std::map<std::string, std::string>& selections) {
+  // Length-framed keys cannot collide on delimiters in asset-authored text.
+  std::string result;
+  for (const auto& selection : selections)
+    result += std::to_string(selection.first.size()) + ":" + selection.first +
+              std::to_string(selection.second.size()) + ":" + selection.second;
+  return result;
 }
-
-// Build the list of override maps to validate. An empty map means "authored
-// selections". `limit_hit` reports cap truncation (never silent).
-std::vector<std::map<std::string, std::string>> BuildVariantPasses(
-    const Args& args, const std::vector<VariantChoice>& choices,
-    bool* limit_hit) {
-  if (limit_hit) *limit_hit = false;
-
-  // Base passes: each --variants occurrence is its own pass; none -> one
-  // empty base.
-  std::vector<std::map<std::string, std::string>> bases;
-  if (args.variant_selections.empty()) {
-    bases.emplace_back();
-  } else {
-    for (const auto& pairs : args.variant_selections) {
-      std::map<std::string, std::string> base;
-      for (const auto& pair : pairs) {
-        base[pair.first] = pair.second;  // bare set-name key
-      }
-      bases.push_back(std::move(base));
-    }
+std::string SelectionDescription(const std::map<std::string, std::string>& selections) {
+  std::string result;
+  for (const auto& selection : selections) {
+    if (!result.empty()) result += ",";
+    result += selection.first + "=" + selection.second;
   }
-
-  // Which choices get swept: all of them by default; only the named sets when
-  // --variant-sets restricts; none when --skip-variants.
-  std::vector<const VariantChoice*> swept;
-  if (!args.skip_variants) {
-    for (const VariantChoice& choice : choices) {
-      if (!args.variant_sets.empty() &&
-          std::find(args.variant_sets.begin(), args.variant_sets.end(),
-                    choice.set_name) == args.variant_sets.end()) {
-        continue;
-      }
-      // Explicit --variants selections pin a set; do not sweep it too.
-      bool pinned = false;
-      for (const auto& base : bases) {
-        if (base.count(choice.set_name)) pinned = true;
-      }
-      if (pinned) continue;
-      // Default sweep (no --variant-sets): every authored set.
-      if (args.variant_sets.empty() && args.variant_selections.empty()) {
-        swept.push_back(&choice);
-      } else if (!args.variant_sets.empty()) {
-        swept.push_back(&choice);
-      }
-    }
-  }
-
-  const size_t cap =
-      args.disable_variant_limit ? SIZE_MAX : kVariantValidationLimit;
-  std::vector<std::map<std::string, std::string>> passes;
-  for (const auto& base : bases) {
-    // Cartesian product over the swept choices, seeded with the base.
-    std::vector<std::map<std::string, std::string>> partial = {base};
-    for (const VariantChoice* choice : swept) {
-      std::vector<std::map<std::string, std::string>> next;
-      for (const auto& current : partial) {
-        for (const std::string& option : choice->options) {
-          if (passes.size() + next.size() >= cap * 2) break;  // soft guard
-          std::map<std::string, std::string> extended = current;
-          extended[choice->key] = option;
-          next.push_back(std::move(extended));
-        }
-      }
-      partial = std::move(next);
-      if (partial.size() > cap) {
-        partial.resize(cap);
-        if (limit_hit) *limit_hit = true;
-      }
-    }
-    for (auto& pass : partial) {
-      if (passes.size() >= cap) {
-        if (limit_hit) *limit_hit = true;
-        break;
-      }
-      passes.push_back(std::move(pass));
-    }
-  }
-  if (passes.empty()) {
-    passes.emplace_back();
-  }
-  return passes;
+  return result;
 }
 
 // Merge `src` into `dst`, dropping issues already present (the same defect
@@ -1409,10 +1130,12 @@ void MergeDedupedIssues(USDValidationResult* dst,
   if (!dst || !seen) return;
   USDValidationResult unique;
   unique.checked_groups = src.checked_groups;
+  unique.complete = src.complete;
   for (const USDValidationIssue& issue : src.issues) {
-    const std::string key =
-        (issue.severity == USDValidationSeverity::Error ? "E|" : "W|") +
-        issue.rule_id + "|" + issue.location + "|" + issue.message;
+    const std::string key = lightusd::minijson::Value::array({
+        issue.severity == USDValidationSeverity::Error ? "error" : "warning",
+        issue.rule_id, issue.location, issue.message, issue.source_asset,
+        issue.variants, issue.has_time, issue.time}).dump();
     if (seen->insert(key).second) {
       unique.issues.push_back(issue);
     }
@@ -1422,24 +1145,72 @@ void MergeDedupedIssues(USDValidationResult* dst,
 
 }  // namespace
 
-int main(int argc, char** argv) {
-  Args args;
-  args.groups = AllAvailableGroups();
+int lusdchecker::RunConfiguredChecker(CheckerOptions args,
+    const lightusd::next::ValidationRegistry& initial_registry,
+    const Environment* environment) {
+  args.environment = environment;
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  if (!environment || !environment->report) return kExitError;
+#endif
+  if (environment && (!environment->read || !environment->resolver))
+    return ReportError(args, "checker.usage", "checker environment requires a reader and resolver");
   std::string error;
-  const ParseArgsResult parsed = ParseArgs(argc, argv, &args, &error);
-  if (parsed == ParseArgsResult::ExitSuccess) return kExitValid;
-  if (parsed == ParseArgsResult::Error) {
-    std::cerr << "lusdchecker: error: " << error << "\n\n";
-    PrintUsage(std::cerr);
+  if (!args.usage_error.empty()) return ReportError(args, "checker.usage", args.usage_error);
+
+  if (args.json && args.sarif) {
+    return ReportError(args, "checker.usage", "--json and --sarif are mutually exclusive");
     return kExitError;
   }
-
   if (args.max_memory_mb >
       std::numeric_limits<size_t>::max() / (size_t{1024} * 1024)) {
-    std::cerr << "lusdchecker: error: --max-memory-mb is too large\n";
-    return kExitError;
+    return ReportError(args, "checker.usage", "--max-memory-mb is too large");
   }
   const size_t max_memory = args.max_memory_mb * size_t{1024} * 1024;
+  lightusd::next::ValidationRegistry registry = initial_registry;
+  for (const auto& file : args.schema_files) {
+    std::string text;
+    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
+      return ReportError(args, "checker.definitions", error);
+    auto loaded = registry.LoadSchemaDefinitions(text);
+    // The registry enforces AOUSD 1.1 L8300-8306 at manifest load time; report
+    // that rejection under its rule id rather than the generic usage error.
+    if (!loaded)
+      return ReportError(args,
+                         loaded.error().find("inherits from its own schema family") != std::string::npos
+                             ? "core.schema.selfFamilyInherit" : "checker.definitions",
+                         loaded.error());
+  }
+  for (const auto& file : args.shader_files) {
+    std::string text;
+    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
+      return ReportError(args, "checker.definitions", error);
+    auto loaded = registry.LoadShaderDefinitions(text);
+    if (!loaded) return ReportError(args, "checker.definitions", loaded.error());
+  }
+  args.groups.registry = &registry;
+  for (const auto& keyword : args.keywords) {
+    bool known = !KeywordToGroups(keyword).empty();
+    for (const auto& rule : registry.validators())
+      known |= std::find(rule.keywords.begin(), rule.keywords.end(), keyword) != rule.keywords.end();
+    if (!known) return ReportError(args, "checker.usage", "unknown validator keyword: " + keyword);
+  }
+#ifndef LUSDCHECKER_MEMORY_ONLY
+  if (args.dump_rules) {
+    size_t count = 0;
+    const auto* rules = lightusd::next::GetValidationRuleTable(&count);
+    for (size_t i = 0; i < count; ++i) {
+      const auto metadata = lightusd::next::GetValidationRuleMetadata(rules[i].id);
+      std::cout << "[" << rules[i].group << ":" << rules[i].id << "]:\n\tDoc: " << rules[i].doc
+                << "\n\tCategory: " << metadata.category << '\n';
+      if (!metadata.lean_ref.empty()) std::cout << "\tLean: " << metadata.lean_ref << '\n';
+    }
+    for (const auto& rule : registry.validators())
+      std::cout << "[extension:" << rule.id << "]:\n\tDoc: " << rule.description << '\n';
+    return kExitValid;
+  }
+
+#endif
+
   lightusd::next::pcp::LayerLoadOptions load_options;
   load_options.max_memory = max_memory;
   load_options.strict_aousd_conformance = args.strict_parse;
@@ -1450,174 +1221,290 @@ int main(int argc, char** argv) {
   std::shared_ptr<Layer> layer;
   if (args.input == "-") {
     if (!ReadStdin(max_memory, &input_bytes, &error)) {
-      std::cerr << "lusdchecker: error: " << error << '\n';
-      return kExitError;
+      return ReportError(args, "checker.io", error);
     }
     layer = lightusd::next::pcp::LoadLayerFromMemory(
         "stdin.usda", reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors,
         load_options);
   } else if (args.groups.package || args.groups.crate) {
-    if (!ReadFile(args.input, max_memory, &input_bytes, &error)) {
-      std::cerr << "lusdchecker: error: " << error << '\n';
-      return kExitError;
+    if (!ReadFile(args.input, max_memory, &input_bytes, &error, environment)) {
+      return ReportError(args, "checker.io", error);
     }
     layer = lightusd::next::pcp::LoadLayerFromMemory(
         args.input, reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors, load_options);
   } else {
-    layer = lightusd::next::pcp::LoadLayerFromFile(
-        args.input, &parser_warnings, &parser_errors, load_options);
+    layer = LoadInput(args.input, &parser_warnings, &parser_errors, load_options, environment);
   }
-  if (!layer) {
-    std::cerr << "lusdchecker: failed to parse " << args.input;
-    if (!parser_errors.empty())
-      std::cerr << ":\n" << parser_errors;
-    else
-      std::cerr << '\n';
-    return kExitError;
-  }
+  if (!layer) return ReportError(args, "parser.error", parser_errors.empty() ? "failed to parse input" : parser_errors);
 
-  // One composition pass per variant combination (usdchecker parity). A
-  // single pass with no overrides reproduces the previous behavior.
-  auto compose_pass =
-      [&](const std::map<std::string, std::string>& variant_overrides,
-          std::vector<lightusd::next::CompositionError>* errors)
-      -> std::unique_ptr<Layer> {
-    lightusd::next::ResolverConfig resolver_config;
-    resolver_config.enable_suffix_fallback = !args.strict_parse;
-    lightusd::next::AssetResolver resolver(resolver_config);
+  USDValidationResult result;
+  result.checked_groups.core = false;
+  std::map<std::string, std::shared_ptr<Layer>> loaded_layers;
+  loaded_layers[args.input] = layer;
+  size_t cached_bytes = layer->memory_usage();
+  bool resource_limit_hit = false;
+  auto load_cached = [&](const std::string& path, std::string* load_error) -> std::shared_ptr<Layer> {
+    const auto existing = loaded_layers.find(path);
+    if (existing != loaded_layers.end()) return existing->second;
+    std::string warnings, errors;
+    auto loaded = LoadInput(path, &warnings, &errors, load_options, environment);
+    if (!warnings.empty()) parser_warnings += warnings;
+    if (!loaded) { if (load_error) *load_error = errors; return {}; }
+    const size_t bytes = loaded->memory_usage();
+    if (bytes > max_memory - std::min(cached_bytes, max_memory)) {
+      resource_limit_hit = true;
+      if (load_error) *load_error = "validation layer cache exceeds --max-memory-mb";
+      return {};
+    }
+    cached_bytes += bytes;
+    loaded_layers[path] = loaded;
+    return loaded;
+  };
+  std::map<std::string, VariantChoice> discovered;
+  auto compose_pass = [&](const std::map<std::string, std::string>& overrides,
+      std::vector<lightusd::next::CompositionError>* errors) -> std::unique_ptr<Layer> {
+    lightusd::next::ResolverConfig config;
+    config.enable_suffix_fallback = !args.strict_parse;
+    lightusd::next::AssetResolver resolver = environment
+        ? *environment->resolver : lightusd::next::AssetResolver(config);
+    resolver.SetConfig(config);
     lightusd::next::Compositor compositor(&resolver);
-    lightusd::next::CompositionOptions composition_options;
-    composition_options.strict_aousd_conformance = args.strict_parse;
-    composition_options.max_layer_memory = max_memory;
-    composition_options.variant_overrides = variant_overrides;
-    compositor.SetOptions(composition_options);
-    compositor.SetLayerLoader([&](const std::string& resolved_path,
-                                  std::string* load_error) {
-      std::string dependency_warnings;
-      std::string dependency_errors;
-      std::shared_ptr<Layer> loaded =
-          lightusd::next::pcp::LoadLayerFromFile(
-              resolved_path, &dependency_warnings, &dependency_errors,
-              load_options);
-      if (!dependency_warnings.empty()) parser_warnings += dependency_warnings;
-      if (!loaded) {
-        if (load_error) *load_error = dependency_errors;
-        return std::unique_ptr<Layer>();
-      }
-      return std::make_unique<Layer>(loaded->Clone());
+    lightusd::next::CompositionOptions options;
+    options.strict_aousd_conformance = args.strict_parse;
+    options.max_layer_memory = max_memory;
+    options.variant_overrides = overrides;
+    options.variant_observer = [&](const std::string& path,
+        const lightusd::next::PrimVariantSetData& set, const std::string& chosen) {
+      auto& choice = discovered[path + "{" + set.name + "}"];
+      choice.key = path + "{" + set.name + "}";
+      choice.set_name = set.name; choice.selected = chosen;
+      for (const auto& variant : set.variants)
+        if (std::find(choice.options.begin(), choice.options.end(), variant.name) == choice.options.end())
+          choice.options.push_back(variant.name);
+      std::sort(choice.options.begin(), choice.options.end());
+    };
+    compositor.SetOptions(options);
+    compositor.SetLayerLoader([&](const std::string& path, std::string* error) {
+      auto loaded = load_cached(path, error);
+      return loaded ? std::make_unique<Layer>(loaded->Clone()) : std::unique_ptr<Layer>();
     });
-    std::unique_ptr<Layer> composed =
-        compositor.Compose(*layer, args.input == "-" ? "" : args.input);
+    auto composed = compositor.Compose(*layer, args.input == "-" ? "" : args.input);
     if (errors) *errors = compositor.GetErrors();
     return composed;
   };
-
-  USDValidationResult result;
   std::vector<lightusd::next::CompositionError> composition_errors;
   size_t variant_pass_count = 1;
   bool variant_limit_hit = false;
   bool any_pass_composed = false;
 
+  std::unordered_set<std::string> seen_issue_keys;
+  auto validate_stage = [&](std::unique_ptr<Layer> composed, const std::string& selections) {
+    lightusd::next::Stage stage;
+    stage.SetRootLayer(std::move(*composed));
+    auto options = args.groups;
+    options.stage_presence_checks = false;
+    options.run_callbacks = false;
+    auto pass_result = lightusd::next::ValidateLayerAgainstAOUSDCore(*stage.GetRootLayer(), options);
+    lightusd::next::ValidationContext context;
+    context.layer = stage.GetRootLayer(); context.stage = &stage;
+    context.options = options; context.source_asset = args.input; context.variants = selections;
+    context.limits.max_value_clip_samples = args.max_samples;
+    context.limits.max_resident_bytes = max_memory;
+    registry.RunCallbacks(lightusd::next::ValidationScope::Stage, context, nullptr, &pass_result);
+    for (const auto& prim : stage.GetRootLayer()->prims())
+      registry.RunCallbacks(lightusd::next::ValidationScope::Prim, context, &prim, &pass_result);
+    for (auto& issue : pass_result.issues) {
+      issue.source_asset = args.input; issue.variants = selections;
+    }
+    MergeDedupedIssues(&result, &seen_issue_keys, pass_result);
+    if (args.all_samples) {
+      lightusd::next::EvalOptions eval;
+      eval.clip_stage_cache = std::make_shared<lightusd::next::ValueClipStageCache>();
+      eval.clip_stage_loader = [&](const std::string& path, lightusd::next::Stage* out,
+                                    std::string*, std::string* error) {
+        lightusd::next::AssetResolver resolver = environment
+            ? *environment->resolver : lightusd::next::AssetResolver();
+        const std::string resolved = resolver.ResolvePath(path, args.input);
+        auto loaded = load_cached(resolved.empty() ? path : resolved, error);
+        if (!loaded) return false;
+        out->SetRootLayer(loaded->Clone());
+        return true;
+      };
+      MergeDedupedIssues(&result, &seen_issue_keys,
+          lightusd::next::ValidateStageSamples(stage, context, eval));
+    }
+  };
   if (!args.composed) {
     result = lightusd::next::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
+    if (args.all_samples) validate_stage(std::make_unique<Layer>(layer->Clone()), "");
+    else {
+      lightusd::next::Stage stage;
+      stage.SetRootLayer(layer->Clone());
+      lightusd::next::ValidationContext context;
+      context.layer = stage.GetRootLayer(); context.stage = &stage;
+      context.options = args.groups; context.source_asset = args.input;
+      context.limits.max_resident_bytes = max_memory;
+      registry.RunCallbacks(lightusd::next::ValidationScope::Stage, context, nullptr, &result);
+    }
   } else {
-    const std::vector<VariantChoice> choices = CollectVariantChoices(*layer);
-    const std::vector<std::map<std::string, std::string>> passes =
-        BuildVariantPasses(args, choices, &variant_limit_hit);
-    variant_pass_count = passes.size();
-    if (variant_limit_hit) {
-      std::cerr << "lusdchecker: variant combinations exceed the validation "
-                   "limit of "
-                << kVariantValidationLimit << "; validating the first "
-                << passes.size()
-                << " (use --disable-variant-validation-limit to lift)\n";
+    struct Pass { std::map<std::string, std::string> selections; size_t base; };
+    std::vector<std::map<std::string, std::string>> bases;
+    if (args.variant_selections.empty()) bases.emplace_back();
+    else for (const auto& pairs : args.variant_selections) {
+      std::map<std::string, std::string> base;
+      for (const auto& pair : pairs) base[pair.first] = pair.second;
+      bases.push_back(std::move(base));
     }
-    if (args.verbose && (passes.size() > 1 || !passes[0].empty())) {
-      std::cerr << "lusdchecker: validating " << passes.size()
-                << " variant combination(s)\n";
+    std::deque<Pass> pending;
+    std::set<std::pair<size_t, std::string>> scheduled, expanded;
+    for (size_t i = 0; i < bases.size(); ++i) {
+      pending.push_back({bases[i], i}); scheduled.emplace(i, SelectionKey(bases[i]));
     }
-    std::unordered_set<std::string> seen_issue_keys;
-    std::unordered_set<std::string> seen_composition_errors;
-    // usdchecker resolves stage-metadata presence against the ROOT layer; a
-    // composed layer's metas may have merged sublayer opinions, so check the
-    // authored layer here and disable the per-pass check.
-    lightusd::next::ValidationOptions pass_groups = args.groups;
-    pass_groups.stage_presence_checks = false;
-    {
-      USDValidationResult presence;
-      lightusd::next::ValidateStageMetadataPresence(*layer, args.groups,
-                                                    &presence);
-      MergeDedupedIssues(&result, &seen_issue_keys, presence);
-    }
-    for (size_t pass_index = 0; pass_index < passes.size(); ++pass_index) {
-      if (args.verbose && passes.size() > 1) {
-        std::cerr << "lusdchecker: [" << (pass_index + 1) << "/"
-                  << passes.size() << "]";
-        for (const auto& kv : passes[pass_index]) {
-          std::cerr << ' ' << kv.first << '=' << kv.second;
-        }
-        std::cerr << '\n';
+    variant_pass_count = 0;
+    const size_t cap = args.disable_variant_limit ? SIZE_MAX : kVariantValidationLimit;
+    if (args.groups.stage_presence_checks)
+      lightusd::next::ValidateStageMetadataPresence(*layer, args.groups, &result);
+    while (!pending.empty()) {
+      if (variant_pass_count >= cap) { variant_limit_hit = true; break; }
+      Pass pass = std::move(pending.front()); pending.pop_front();
+      discovered.clear();
+      std::vector<lightusd::next::CompositionError> errors;
+      auto composed = compose_pass(pass.selections, &errors);
+      composition_errors.insert(composition_errors.end(), errors.begin(), errors.end());
+      ++variant_pass_count;
+      std::map<std::string, std::string> effective = pass.selections;
+      for (const auto& item : discovered)
+        if (!item.second.selected.empty()) effective[item.first] = item.second.selected;
+      const bool new_selection = expanded.emplace(pass.base, SelectionKey(effective)).second;
+#ifndef LUSDCHECKER_MEMORY_ONLY
+      if (args.verbose) std::cerr << "lusdchecker: variant pass " << variant_pass_count << " "
+                                 << SelectionDescription(effective) << '\n';
+#endif
+      if (composed && new_selection) {
+        any_pass_composed = true;
+        validate_stage(std::move(composed), SelectionDescription(effective));
       }
-      std::vector<lightusd::next::CompositionError> pass_errors;
-      std::unique_ptr<Layer> composed =
-          compose_pass(passes[pass_index], &pass_errors);
-      for (auto& composition_error : pass_errors) {
-        const std::string key =
-            composition_error.prim_path + "|" + composition_error.message;
-        if (seen_composition_errors.insert(key).second) {
-          composition_errors.push_back(std::move(composition_error));
+      if (!new_selection || args.skip_variants) continue;
+      for (const auto& item : discovered) {
+        const auto& choice = item.second;
+        if (bases[pass.base].count(choice.set_name) || bases[pass.base].count(choice.key)) continue;
+        if (!args.variant_sets.empty() && std::find(args.variant_sets.begin(), args.variant_sets.end(),
+            choice.set_name) == args.variant_sets.end()) continue;
+        // Explicit selections sweep only explicitly requested additional sets.
+        if (!args.variant_selections.empty() && args.variant_sets.empty()) continue;
+        for (const auto& variant : choice.options) {
+          if (variant == choice.selected) continue;
+          auto next = effective; next[choice.key] = variant;
+          const auto key = std::make_pair(pass.base, SelectionKey(next));
+          if (expanded.count(key) || scheduled.count(key)) continue;
+          if (scheduled.size() >= cap) { variant_limit_hit = true; continue; }
+          scheduled.insert(key);
+          pending.push_back({std::move(next), pass.base});
         }
       }
-      if (!composed) continue;
-      any_pass_composed = true;
-      const USDValidationResult pass_result =
-          lightusd::next::ValidateLayerAgainstAOUSDCore(*composed,
-                                                        pass_groups);
-      MergeDedupedIssues(&result, &seen_issue_keys, pass_result);
     }
+    // Check authored declarations before flattening can conceal a type mismatch.
+    for (const auto& entry : loaded_layers) {
+      auto options = args.groups;
+      options.geom = options.shade = options.lux = options.physics = options.render = options.arkit = false;
+      options.stage_presence_checks = false;
+      options.require_complete = false; // incomplete fragments may inherit their type/API
+      options.run_callbacks = false;
+      auto authored = lightusd::next::ValidateLayerAgainstAOUSDCore(*entry.second, options);
+      authored.issues.erase(std::remove_if(authored.issues.begin(), authored.issues.end(),
+          [](const USDValidationIssue& issue) {
+            const auto category = lightusd::next::GetValidationRuleMetadata(issue.rule_id).category;
+            return category != "normative" && issue.rule_id != "core.schema.attributeType" &&
+                   issue.rule_id != "core.schema.propertyKind";
+          }), authored.issues.end());
+      lightusd::next::ValidationContext context;
+      context.layer = entry.second.get(); context.options = options; context.source_asset = entry.first;
+      registry.RunCallbacks(lightusd::next::ValidationScope::Layer, context, nullptr, &authored);
+      for (auto& issue : authored.issues) issue.source_asset = entry.first;
+      MergeDedupedIssues(&result, &seen_issue_keys, authored);
+    }
+  }
+  if (resource_limit_hit) {
+    result.complete = false;
+    AddIssue(&result, USDValidationSeverity::Error, "checker.coverage.memory", "<stage>",
+             "Validation exceeded the layer cache memory limit");
   }
 
   if (args.groups.core && !args.root_package_only && args.input != "-" &&
       LowerExtension(args.input) != "usdz") {
-    ValidateDependencyResolution(*layer, args.input, &result);
+    for (const auto& entry : loaded_layers) {
+      if (entry.first.find('[') != std::string::npos || LowerExtension(entry.first) == "usdz") continue;
+      USDValidationResult dependencies;
+      dependencies.checked_groups.core = false;
+      ValidateDependencyResolution(*entry.second, entry.first, &dependencies, args.groups.require_complete, max_memory, environment);
+      for (auto& issue : dependencies.issues) issue.source_asset = entry.first;
+      MergeDedupedIssues(&result, &seen_issue_keys, dependencies);
+    }
   }
   if (args.composed && args.groups.core && !args.root_package_only &&
       args.input != "-") {
     std::unordered_set<std::string> visited;
-    visited.insert(std::filesystem::path(args.input).lexically_normal().string());
+    visited.insert(ResolveDependencyPath("", args.input));
     AuditLayerTypesRecursive(*layer, args.input, load_options, &visited,
-                             &result);
+                             &result, environment);
   }
-  const uint8_t* raw = reinterpret_cast<const uint8_t*>(input_bytes.data());
-  const bool is_package = input_bytes.size() >= 4 && raw[0] == 0x50 &&
-                          raw[1] == 0x4b && raw[2] == 0x03 && raw[3] == 0x04;
-  const bool is_crate = input_bytes.size() >= 8 &&
-                        std::memcmp(raw, "PXR-USDC", 8) == 0;
-  std::vector<PackageEntry> package_entries;
-  if (args.groups.package && is_package) {
-    ValidatePackage(raw, input_bytes.size(), *layer, args.groups.arkit, &result,
-                    &package_entries);
-  }
-  if (args.groups.crate) {
-    if (is_crate) {
-      ValidateCrate(raw, input_bytes.size(), args.input, max_memory, &result);
-    } else if (is_package) {
-      if (package_entries.empty()) {
-        USDValidationResult ignored;
-        package_entries = ParsePackageEntries(raw, input_bytes.size(),
-                                              /* arkit */ false, &ignored);
+  // Inspect every loaded file container and every stored nested member. Magic
+  // bytes also identify crates whose portable filename ends in .usd.
+  std::function<void(const uint8_t*, size_t, const std::string&, const Layer*, size_t)> audit_container;
+  audit_container = [&](const uint8_t* raw, size_t size, const std::string& source,
+                        const Layer* root_layer, size_t depth) {
+    if (depth > 32) {
+      result.complete = false;
+      AddIssue(&result, USDValidationSeverity::Error, "checker.coverage.package", source,
+               "Nested package validation exceeds depth limit");
+      return;
+    }
+    const bool package = size >= 4 && raw[0] == 0x50 && raw[1] == 0x4b && raw[2] == 3 && raw[3] == 4;
+    const bool crate = size >= 8 && std::memcmp(raw, "PXR-USDC", 8) == 0;
+    USDValidationResult local;
+    local.checked_groups.core = false;
+    if (args.profile != "default" && size >= 5 && std::memcmp(raw, "#usda", 5) == 0) {
+      size_t first = 5;
+      while (first < size && (raw[first] == ' ' || raw[first] == '\t')) ++first;
+      size_t end = first;
+      while (end < size && end-first < 64 && raw[end] != ' ' && raw[end] != '\t' && raw[end] != '\r' && raw[end] != '\n') ++end;
+      const std::string version(reinterpret_cast<const char*>(raw + first), end-first);
+      if (version != "1.0") {
+        local.complete = false;
+        AddIssue(&local, USDValidationSeverity::Error, "checker.coverage.version", source,
+                 "AOUSD Core 1.1.0 covers USDA 1.0; this document declares " + version);
       }
-      for (const PackageEntry& entry : package_entries) {
-        if (entry.compression == 0 && LowerExtension(entry.name) == "usdc" &&
-            entry.data_offset <= input_bytes.size() &&
-            entry.size <= input_bytes.size() - entry.data_offset) {
-          ValidateCrate(raw + entry.data_offset, entry.size,
-                        args.input + "[" + entry.name + "]", max_memory,
-                        &result);
-        }
+    }
+    if (crate && args.groups.crate) ValidateCrate(raw, size, source, max_memory, &local);
+    if (package) {
+      std::vector<PackageEntry> entries;
+      Layer empty;
+      if (args.groups.package)
+        ValidatePackage(raw, size, root_layer ? *root_layer : empty, args.groups.arkit, &local, &entries);
+      else { USDValidationResult ignored; entries = ParsePackageEntries(raw, size, false, &ignored); }
+      for (const auto& entry : entries) {
+        if (entry.compression != 0 || entry.data_offset > size || entry.size > size - entry.data_offset) continue;
+        const uint8_t* member = raw + entry.data_offset;
+        const std::string location = source + "[" + entry.name + "]";
+        audit_container(member, entry.size, location, nullptr, depth + 1);
       }
+    }
+    for (auto& issue : local.issues) issue.source_asset = source;
+    MergeDedupedIssues(&result, &seen_issue_keys, local);
+  };
+  if (args.groups.package || args.groups.crate) {
+    audit_container(reinterpret_cast<const uint8_t*>(input_bytes.data()), input_bytes.size(), args.input, layer.get(), 0);
+    if (!args.root_package_only) for (const auto& entry : loaded_layers) {
+      if (entry.first == args.input || entry.first.find('[') != std::string::npos) continue;
+      std::string bytes, read_error;
+      if (!ReadFile(entry.first, max_memory, &bytes, &read_error, environment)) {
+        result.complete = false;
+        AddIssue(&result, USDValidationSeverity::Error, "checker.coverage.io", entry.first, read_error);
+        continue;
+      }
+      audit_container(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), entry.first, entry.second.get(), 0);
     }
   }
   for (const auto& composition_error : composition_errors) {
@@ -1651,13 +1538,54 @@ int main(int argc, char** argv) {
       }
     }
   }
+  if (args.groups.core) {
+    lightusd::next::AddParserDiagnosticsToResult(parser_warnings, &result);
+  }
   if (args.usdchecker_compat) {
     lightusd::next::ApplyUsdcheckerCompatSeverities(&result);
   }
   const bool warnings_fail =
       args.strict && (result.warning_count() > 0 || !parser_warnings.empty());
-  const bool valid = result.ok() && !warnings_fail;
+  if (variant_limit_hit) {
+    result.complete = false;
+    AddIssue(&result, USDValidationSeverity::Error, "checker.coverage.variants", "<stage>",
+             "Variant validation limit reached before all selections were checked");
+  }
+  if (args.groups.normative_only) {
+    result.issues.erase(std::remove_if(result.issues.begin(), result.issues.end(),
+        [](const USDValidationIssue& issue) {
+          const auto category = lightusd::next::GetValidationRuleMetadata(issue.rule_id).category;
+          return category != "normative" && category != "coverage";
+        }), result.issues.end());
+  }
+  const bool valid = result.ok() && !warnings_fail && result.complete;
+  auto report = MakeReport(args, result, parser_warnings, valid,
+                           variant_pass_count, variant_limit_hit);
+  bool baseline_ok = false;
+  if (environment && !args.baseline.empty()) {
+    std::string bytes;
+    lightusd::minijson::Value baseline;
+    if (ReadFile(args.baseline, size_t(16) << 20, &bytes, &error, environment) &&
+        lightusd::minijson::Parse(bytes, &baseline)) {
+      baseline_ok = lusdchecker::ApplyBaselineReport(&report, &baseline, &error);
+    }
+    if (!baseline_ok && error.empty()) error = "baseline must be a lusdchecker JSON report";
+  } else {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+    baseline_ok = lusdchecker::ApplyBaselineReport(&report, nullptr, &error);
+#else
+    baseline_ok = lusdchecker::ApplyBaseline(&report, args.baseline, &error);
+#endif
+  }
+  if (!baseline_ok) return ReportError(args, "checker.baseline", error);
 
+  if (environment && environment->report) {
+    const bool passed = report["gatePassed"].get_bool();
+    *environment->report = std::move(report);
+    return passed ? kExitValid : kExitInvalid;
+  }
+
+#ifndef LUSDCHECKER_MEMORY_ONLY
   std::ofstream file_output;
   std::ostream* output = &std::cout;
   if (args.output == "stderr") {
@@ -1672,9 +1600,8 @@ int main(int argc, char** argv) {
     output = &file_output;
   }
 
-  if (args.json) {
-    *output << JsonReport(args, result, parser_warnings, valid,
-                          variant_pass_count, variant_limit_hit);
+  if (args.json || args.sarif) {
+    *output << (args.sarif ? lusdchecker::ToSarif(report).dump(2) : report.dump()) << '\n';
   } else {
     *output << "Input: " << args.input << '\n';
     if (!parser_warnings.empty()) {
@@ -1685,10 +1612,16 @@ int main(int argc, char** argv) {
     if (warnings_fail && result.ok()) {
       *output << "Strict result: FAILED - warnings are errors\n";
     }
+    if (!args.baseline.empty()) {
+      *output << "Baseline: " << report["existingIssueCount"].get_uint64()
+              << " existing, " << report["newIssueCount"].get_uint64() << " new findings\n"
+              << "Baseline gate: " << (report["gatePassed"].get_bool() ? "PASSED" : "FAILED") << '\n';
+    }
   }
   if (!*output) {
     std::cerr << "lusdchecker: error: failed while writing report\n";
     return kExitError;
   }
-  return valid ? kExitValid : kExitInvalid;
+#endif
+  return report["gatePassed"].get_bool() ? kExitValid : kExitInvalid;
 }

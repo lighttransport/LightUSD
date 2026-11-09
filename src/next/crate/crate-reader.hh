@@ -7,19 +7,21 @@
 #pragma once
 
 #include "crate-format.hh"
+#include "crate-limits.hh"
 #include "../stage/stage.hh"
 #include <functional>
 #include <string>
 #include <vector>
 #include <memory>
 
-#include "../../security-policy.hh"
+#include "core/security-policy.hh"
 
 namespace lightusd {
 namespace next {
 
-/// Options for reading crate files
-struct CrateReadOptions {
+/// Options for reading crate files. The structural table-count limits
+/// (max_tokens ... max_path_depth) come from CrateLimits.
+struct CrateReadOptions : CrateLimits {
   /// Fail closed when any field/value must be ignored or approximated. This
   /// turns reader warnings into errors for AOUSD conformance-sensitive loads.
   bool strict_aousd_conformance = false;
@@ -29,36 +31,34 @@ struct CrateReadOptions {
   std::function<bool(const char* phase, size_t current, size_t total)>
       progress_callback;
 
-  /// Maximum number of tokens allowed
-  size_t max_tokens = 1024 * 1024;
-
-  /// Maximum number of strings allowed
-  size_t max_strings = 1024 * 1024;
-
-  /// Maximum number of fields allowed
-  size_t max_fields = 10 * 1024 * 1024;
-
-  /// Maximum number of specs allowed
-  size_t max_specs = 10 * 1024 * 1024;
-
-  /// Maximum number of paths allowed
-  size_t max_paths = 10 * 1024 * 1024;
-
   /// Maximum number of elements in a single value array
   /// (mirrors pxrUSD/legacy core's 1<<30 cap; guards against a malformed
   /// count triggering an enormous allocation).
   size_t max_array_elements = 16 * 1024 * 1024;
 
-  /// Maximum recursion depth for path decoding
-  size_t max_path_depth = 256;
-
-  /// Maximum memory budget (bytes, 0 = unlimited)
+  /// Cumulative allocation budget for the read and later lazy materializations
+  /// (bytes, 0 disables the explicit budget; file-relative guards remain).
+  /// Temporary decode buffers count too. Deferred copies of a value share the
+  /// retained source's budget, which outlives the reader and is not refunded.
   size_t max_memory = security_policy::kDefaultInputLimitBytes;
 
   /// Keep numeric POD arrays as lazy references into the retained source buffer
   /// instead of eagerly decoding them (low-memory load/compose/write path).
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
+
+  /// Log per-phase wall times ("[next_crate_read] ...", "[next_crate_stage]
+  /// ...") at INFO through lightusd::logging.
+  bool enable_timing = false;
+
+  /// Worker-thread hint for the parallel stage build (0 = auto min(hw, 8),
+  /// 1 = serial, >1 = fixed, clamped). Output is identical at every count;
+  /// small crates always build serially. Ignored without LIGHTUSD_ENABLE_THREAD.
+  int num_threads = 0;
+
+  /// Sources below this byte size build serially (0 leaves the hint unchanged).
+  /// The retained source size is used; no extra filesystem probe is needed.
+  size_t min_parallel_parse_bytes = 0;
 
   /// When reading from a file path, memory-map the crate read-only instead of
   /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
@@ -76,7 +76,25 @@ struct CrateReadOptions {
   /// up front and is immune. A truncation noticed during the load is reported
   /// as a warning (see CrateDataSource::MappedFileShrank), but that is
   /// after-the-fact detection, not protection.
+  ///
+  /// Setting this false selects the secure owned path: by default it captures
+  /// into a private paged snapshot (see `paged_snapshot`); setting
+  /// `paged_snapshot = false` keeps the whole layer in anonymous memory.
   bool use_mmap = true;
+
+  /// With `use_mmap = false`, capture the file into an unlinked private
+  /// snapshot and release the parse copy after the structural read. Lazy array
+  /// values then materialize by ranged reads from the snapshot instead of
+  /// pinning the whole layer in anonymous memory. The source is still read
+  /// exactly once and never aliased; only the storage form of the retained
+  /// copy changes (anonymous pages -> an unlinked temp file). Falls back to
+  /// the owned anonymous snapshot when a snapshot file cannot be created or
+  /// does not fit. Ignored when `use_mmap` is true or for memory loads.
+  bool paged_snapshot = true;
+
+  /// Directory for the paged snapshot file. Empty means `$TMPDIR`, then
+  /// `/tmp`. The file is created 0600 and unlinked before it is written.
+  std::string paged_snapshot_directory;
 };
 
 /// Error from crate reading
@@ -129,8 +147,8 @@ public:
   // tokens pooled, see TokenPool in the .cc).
   std::vector<std::string> tokens() const;
 
-  /// Get paths table
-  const std::vector<std::string>& paths() const;
+  /// Get paths table (materialized copy; the reader stores paths pooled)
+  std::vector<std::string> paths() const;
 
   /// Get fields table
   const std::vector<CrateField>& fields() const;

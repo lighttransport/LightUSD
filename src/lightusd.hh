@@ -44,7 +44,7 @@
 // directly.
 #include "stage.hh"
 #include "asset-resolution.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 
 namespace lightusd {
@@ -207,6 +207,8 @@ struct USDLoadOptions {
   ///
   std::function<bool(float progress, void *userptr)> progress_callback{nullptr};
   void *progress_userptr{nullptr};
+  // Emit crate phase timings to stderr. Disabled by default.
+  bool profile_crate{false};
 };
 
 
@@ -240,6 +242,8 @@ struct USDWriteOptions {
   /// doc/crate-writer.md). Default OFF: such arrays are written uncompressed.
   ///
   bool compress_float_arrays{false};
+  // Emit crate phase timings to stderr. Disabled by default.
+  bool profile_crate{false};
 };
 
 //

@@ -250,7 +250,7 @@ lightusd_sources = files(
   'src/usdLux.cc',
   'src/mtlx-xml-tokenizer.cc',
   'src/mtlx-xml-parser.cc',
-  'src/mtlx-dom.cc',
+  'src/core/mtlx-dom.cc',
   'src/mtlx-simple-parser.cc',
   'src/usdMtlx.cc',
   'src/usdMtlx-write.cc',

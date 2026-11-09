@@ -1,0 +1,123 @@
+[
+  {
+    "legacyMethod": "loadLayerFromJSON",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "loadJSON",
+    "workflow": [
+      "loadJSON"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportAsUSDA",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportAsUSDC",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCToBufferWithOptions",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "load",
+      "exportUSDCToBuffer"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCWithOptions",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDZWithOptions",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDZ",
+    "workflow": [
+      {
+        "surface": "NextLayerDocument",
+        "method": "load"
+      },
+      {
+        "surface": "NextAssetStore",
+        "method": "setAsset"
+      },
+      {
+        "surface": "NextLayerDocument",
+        "method": "exportUSDZ"
+      }
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportStageAsUSDCToBufferWithOptions",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "begin",
+      "exportUSDCToBuffer"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenLayer",
+    "nextSurface": "NextFlattenSession",
+    "nextEquivalent": "step",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToString",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToJSON",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportJSON",
+    "workflow": [
+      "load",
+      "exportJSON"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToJSONWithOptions",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportJSONWithOptions",
+    "workflow": [
+      "load",
+      "exportJSONWithOptions"
+    ],
+    "parityStatus": "behavior_verified"
+  }
+]

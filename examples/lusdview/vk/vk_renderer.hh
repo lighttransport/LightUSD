@@ -13,6 +13,7 @@
 // volkInitialize()/volkLoadInstance()/volkLoadDevice() populate.
 #include "volk.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <future>
@@ -75,6 +76,7 @@ class VulkanRenderer final : public Renderer {
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void setStaticChunkCullPx(float cullPx) override;
   void appendPoints(const DrawPointsCPU& points) override;
   void appendCurves(const DrawCurvesCPU& curves) override;
   void appendPoints(DrawPointsCPU&& points) override;
@@ -123,11 +125,23 @@ class VulkanRenderer final : public Renderer {
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
+  bool applyMeshSlotUpdatesTransactional(
+      const std::vector<MeshSlotUpdate>& updates, std::string* error) override;
+  bool replaceMeshSlotsTransactional(
+      const std::vector<MeshSlotReplacement>& replacements,
+      std::string* error) override;
+  bool applyMaterialUpdatesTransactional(
+      const std::vector<MaterialSlotUpdate>& updates,
+      std::string* error) override;
+  bool replaceTextureSlotsTransactional(
+      const std::vector<TextureSlotReplacement>& replacements,
+      std::string* error) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
+  ViewportTexHandle comparisonImage(int slot, const light3d::Image* image = nullptr) override;
   void present() override;
 #if defined(LUSDVIEW_ENABLE_GL_THREAD)
   void presentThreaded(ImDrawData* drawData, int fbW, int fbH) override;
@@ -141,7 +155,9 @@ class VulkanRenderer final : public Renderer {
   bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   bool captureLinearViewport(std::vector<float>* rgba, int* w, int* h) override;
-  bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
+  void requestWindowCapture() override { wantWindowCapture_=true; }
+  bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;
+  bool readCompositeImage(uint32_t imageIndex, std::vector<uint8_t>* rgba, int* w, int* h);
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
@@ -158,7 +174,7 @@ class VulkanRenderer final : public Renderer {
       std::shared_ptr<AsyncShaderReloadResult> result,
       std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
-  bool rayTracingUsesProceduralMaterialX() const {
+  bool rayTracingUsesProceduralMaterialX() const override {
     return rtUsesProceduralMaterialX_;
   }
   void setMaterialXVulkanShaderLimits(size_t maxSourceBytes,
@@ -193,17 +209,25 @@ class VulkanRenderer final : public Renderer {
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
     VkDeviceMemory vboMem{VK_NULL_HANDLE};
+    // Persistent host mapping when the buffer is pool-suballocated (*Mem stays
+    // VK_NULL_HANDLE then): CPU skinning and the RT deform rewrite these
+    // vertices through the pointer instead of vkMapMemory, which also lets
+    // dynamic meshes join the shared pool instead of paying one allocation
+    // each.
+    void* vboMapped{nullptr};
     // Optional ray-tracing vertex buffer: the BLAS + ray-query hit read this
     // (via vboAddr) for displacement-baked or dynamically-skinned RT geometry,
     // while the raster path keeps using `vbo` as rest geometry.
     VkBuffer vboDisp{VK_NULL_HANDLE};
     VkDeviceMemory vboDispMem{VK_NULL_HANDLE};
+    void* vboDispMapped{nullptr};
     VkBuffer jointVbo{VK_NULL_HANDLE};
     VkDeviceMemory jointVboMem{VK_NULL_HANDLE};
     VkBuffer weightVbo{VK_NULL_HANDLE};
     VkDeviceMemory weightVboMem{VK_NULL_HANDLE};
     VkBuffer influenceVbo{VK_NULL_HANDLE};
     VkDeviceMemory influenceVboMem{VK_NULL_HANDLE};
+    void* influenceVboMapped{nullptr};
     VkBuffer uv1Vbo{VK_NULL_HANDLE};         // 2nd texcoord set (binding 4, vec2/vtx)
     VkDeviceMemory uv1VboMem{VK_NULL_HANDLE};
     VkBuffer morphInflVbo{VK_NULL_HANDLE};   // blendshape influence (binding 5, float/vtx)
@@ -374,6 +398,26 @@ class VulkanRenderer final : public Renderer {
     // lazily on the first LOD-enabled rebuild; instance transforms are static.
     RtLodGrid lodGrid;
     bool lodGridTried{false};
+    // Chunked static draw. A merged static/material batch spans the whole scene,
+    // so a per-mesh frustum/size test can only answer "all" or "nothing" for it.
+    // Splitting its index range into fixed-size triangle runs, each with its own
+    // world AABB, restores culling at chunk granularity: the static pass issues
+    // ONE vkCmdDrawIndexedIndirect over staticIndirectBuf and the renderer sets a
+    // culled chunk's instanceCount to 0. Only single-submesh, world-baked,
+    // undeformed meshes are chunked (everything else keeps the per-submesh loop).
+    VkBuffer staticIndirectBuf{VK_NULL_HANDLE};
+    VkDeviceMemory staticIndirectMem{VK_NULL_HANDLE};
+    void* staticIndirectMapped{nullptr};
+    std::vector<float> staticChunkBounds;  // 6 floats/chunk: world AABB
+    // Chunk command ranges, parallel to `submeshes` (each submesh has its own
+    // material, so it needs its own indirect call over its own range). Entries are
+    // empty for submeshes too small to split.
+    std::vector<uint32_t> staticChunkFirst;
+    std::vector<uint32_t> staticChunkCount;
+    uint32_t staticChunkTotal{0};
+    uint32_t staticVisibleChunks{0};  // chunks the last cull kept
+    uint32_t staticVisibleTris{0};    // triangles those chunks cover
+    bool staticChunked{false};
   };
 
   // setup helpers
@@ -398,6 +442,8 @@ class VulkanRenderer final : public Renderer {
   bool createOffscreenRenderPass(std::string* err);
   bool createOitRenderPass(std::string* err);
   bool createOitCompositePipeline(std::string* err, bool compile = true);
+  bool createRasterDofPipeline(std::string* err);
+  void recordRasterDof(VkCommandBuffer cb);
   bool beginOitPromotion(std::string* err);
   void serviceOitPromotion();
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
@@ -469,6 +515,9 @@ class VulkanRenderer final : public Renderer {
   bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
+  void destroyMeshResources(VkMeshGPU& mesh);
+  void finishMeshVertexUpdate(VkMeshGPU& mesh,
+                              const std::vector<DrawVertex>& vertices);
   bool meshHasAlphaMask(const VkMeshGPU& m) const;
   bool meshHasBoundMaterial(const VkMeshGPU& m) const;
   void buildBlas(VkMeshGPU& m);
@@ -502,6 +551,9 @@ class VulkanRenderer final : public Renderer {
   // populated slots untouched (std::vector::resize only fills NEW entries).
   void growTextureSlots(int textureCount);
 
+  const VkPhysicalDeviceMemoryProperties& memoryProperties() const;
+  mutable VkPhysicalDeviceMemoryProperties memProps_{};
+  mutable bool memPropsCached_{false};
   uint32_t findMemoryTypeOrInvalid(uint32_t typeBits,
                                   VkMemoryPropertyFlags props) const;
   // Latched once a device-local host-visible allocation fails (small BAR full),
@@ -516,6 +568,13 @@ class VulkanRenderer final : public Renderer {
   // through `mappedOut` (a persistent host pointer to the sub-allocation); never for
   // buffers whose *mem is later vkMapMemory'd/updated. Pool blocks are freed in
   // destroyScene() after every per-buffer vkDestroyBuffer.
+  // Build the chunk table + indirect command buffer for one static batch (see
+  // VkMeshGPU::staticIndirectBuf). No-op unless the mesh is a single-submesh,
+  // world-baked, undeformed, non-instanced batch big enough to split.
+  void buildStaticChunks(const DrawMeshCPU& sm, VkMeshGPU* gm);
+  // Refresh the per-chunk instanceCount of every chunked batch from the current
+  // camera (frustum, plus projected-size culling when the LOD policy is on).
+  void patchStaticChunks();
   bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
                         VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false,
                         bool poolable = false, void** mappedOut = nullptr);
@@ -561,19 +620,58 @@ class VulkanRenderer final : public Renderer {
   // so one submit per buffer would stall the streaming upload path once per mesh.
   // Flushed on a byte threshold, before any BLAS build, and before each frame.
   struct PendingBufferUpload {
+    // A null `staging` means the source is a slice of `stagingRing_` starting
+    // at `stagingOffset`; otherwise this upload owns a dedicated staging
+    // buffer.
     VkBuffer staging{VK_NULL_HANDLE};
     VkDeviceMemory stagingMem{VK_NULL_HANDLE};
+    VkDeviceSize stagingOffset{0};
     VkBuffer dst{VK_NULL_HANDLE};
     VkDeviceSize size{0};
   };
   std::vector<PendingBufferUpload> pendingUploads_;
   VkDeviceSize pendingUploadBytes_{0};
+  // Staged texture uploads, flushed with the buffer copies above in one submit.
+  // Per-image one-shot submits (each ending in vkQueueWaitIdle) dominated scene
+  // upload on scenes with hundreds of textures.
+  struct PendingImageUpload {
+    VkImage image{VK_NULL_HANDLE};
+    VkBuffer staging{VK_NULL_HANDLE};  // null => stagingRing_ + stagingOffset
+    VkDeviceMemory stagingMem{VK_NULL_HANDLE};
+    VkDeviceSize stagingOffset{0};
+    std::vector<VkBufferImageCopy> regions;
+  };
+  std::vector<PendingImageUpload> pendingImageUploads_;
+  // One persistently mapped host ring feeds every staged copy. A dedicated
+  // VkBuffer + VkDeviceMemory per attribute buffer made the allocation storm
+  // the dominant cost of loading a scene built from many mid-sized meshes; the
+  // ring turns each upload into a memcpy into a mapped slice plus a recorded
+  // copy region, with a single vkAllocateMemory for the whole scene.
+  VkBuffer stagingRing_{VK_NULL_HANDLE};
+  VkDeviceMemory stagingRingMem_{VK_NULL_HANDLE};
+  VkDeviceSize stagingRingSize_{0};
+  VkDeviceSize stagingRingUsed_{0};
+  void* stagingRingMapped_{nullptr};
+  bool ensureStagingRing(VkDeviceSize need);
+  void destroyStagingRing();
+  // Copy `size` bytes into the ring and return its ring offset. False means the
+  // caller must stage the data itself (odd size or an oversized request).
+  bool stageInRing(VkDeviceSize size, const void* data,
+                   VkDeviceSize* outOffset);
   void flushPendingUploads();
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
+  struct ComparisonTexture {
+    VkImage image{VK_NULL_HANDLE};
+    VkDeviceMemory memory{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+    VkDescriptorSet descriptor{VK_NULL_HANDLE};
+  };
+  std::array<ComparisonTexture,4> comparisonTextures_{};
+  void destroyComparisonTexture(ComparisonTexture& texture);
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
                           const std::vector<light3d::Image>* mips = nullptr,
-                          bool srgb = false);
+                          bool srgb = false, bool deferUpload = false);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);
@@ -618,6 +716,9 @@ class VulkanRenderer final : public Renderer {
   int winFbW_{0}, winFbH_{0};
   bool headless_{false};       // windowless: no surface/swapchain, render offscreen
   int headlessW_{1280}, headlessH_{800};  // composite size when headless
+  bool wantWindowCapture_{false}, windowCaptureSupported_{false};
+  std::vector<uint8_t> windowCapture_;
+  int windowCaptureWidth_{0}, windowCaptureHeight_{0};
   uint32_t lastSwapIndex_{0};  // last composite image written (for captureWindow)
   RendererCaps caps_{};
   bool imguiInited_{false};
@@ -676,6 +777,15 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet oitCompositeSet_{VK_NULL_HANDLE};
   VkPipelineLayout oitCompositeLayout_{VK_NULL_HANDLE};
   VkPipeline oitCompositePipeline_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout dofSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool dofPool_{VK_NULL_HANDLE};
+  VkDescriptorSet dofSet_{VK_NULL_HANDLE};
+  VkPipelineLayout dofLayout_{VK_NULL_HANDLE};
+  VkPipeline dofPipeline_{VK_NULL_HANDLE};
+  VkImage dofImg_{VK_NULL_HANDLE};
+  VkDeviceMemory dofMem_{VK_NULL_HANDLE};
+  VkImageView dofView_{VK_NULL_HANDLE};
+  bool dofImageInitialized_{false};
   VkSampler sampler_{VK_NULL_HANDLE};
   // Material samplers are keyed by DrawTextureCPU wrapS/wrapT (4x4). Scene
   // helpers keep using `sampler_`; material descriptors select from this cache.
@@ -688,9 +798,18 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  // Same as pipeline_ but with the static-batch vertex shader (no joint/weight/
+  // influence/morph streams). Null when the variant failed to build; the draw
+  // loop then falls back to pipeline_.
+  VkPipeline meshStaticPipeline_{VK_NULL_HANDLE};
+  VkPipeline meshSkinPipeline_{VK_NULL_HANDLE};
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
-  VkPipeline wireOccludedPipeline_{VK_NULL_HANDLE};
+  // Color-write-disabled fill used as the hidden-line depth prepass in
+  // wireframe-only mode.
+  VkPipeline wireDepthPipeline_{VK_NULL_HANDLE};
+  // Wire pipeline with depth testing disabled (x-ray wireframe).
+  VkPipeline wireXrayPipeline_{VK_NULL_HANDLE};
   VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
@@ -718,7 +837,12 @@ class VulkanRenderer final : public Renderer {
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
+  // Authored-cage wireframe for instanced prototypes (LINE_LIST, per-instance
+  // transform rows). Null when the shader/pipeline is unavailable.
+  VkPipeline wireInstPipeline_{VK_NULL_HANDLE};
   VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
+  // Color-write-disabled instanced fill for the wireframe-only depth prepass.
+  VkPipeline instDepthPipeline_{VK_NULL_HANDLE};
   VkPipeline oitInstPipeline_{VK_NULL_HANDLE};
   VkPipeline instShadowPipeline_{VK_NULL_HANDLE};
 
@@ -730,6 +854,9 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorPool lineDepthPool_{VK_NULL_HANDLE};
   VkDescriptorSet lineDepthSet_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
+  // Depth-tested selection-highlight lines (LESS_OR_EQUAL, no depth write) so
+  // coplanar cage edges stay visible over the shaded surface.
+  VkPipeline highlightLinePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
   VkPipeline lineDepthPipeline_{VK_NULL_HANDLE};
   // Camera-facing native Points/Curves raster carrier. The persistent Vulkan
@@ -795,6 +922,8 @@ class VulkanRenderer final : public Renderer {
     float emission[3], background;
     bool hasEmissionField{false};
     bool hasTemperatureField{false};
+    bool isLevelSet{false};
+    float isovalue{0.0f};
   };
   bool createVolumePipeline(std::string* err);
   // Record the volume raymarch draws (UBO update + proxy boxes) with `pipe`.
@@ -922,6 +1051,12 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
   size_t dispMatCapacity_{0};
+  // Backend-neutral OpenPBR constants for the raster fragment path. The packet
+  // is indexed by the same canonical material id as dispMatSsbo_ and remains
+  // persistently mapped so live material edits do not rebuild descriptors.
+  VkBuffer rasterMatPbrBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rasterMatPbrMem_{VK_NULL_HANDLE};
+  void* rasterMatPbrMapped_{nullptr};
   // Set 3 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
   // entry per mesh plus a trailing slot for the shared box proxy. The fragment
   // shader indexes it by (baseDraw + gl_DrawIDARB), so a multi-draw-indirect batch
@@ -952,6 +1087,7 @@ class VulkanRenderer final : public Renderer {
   };
   static_assert(sizeof(int32_t) * 4 + sizeof(uint64_t) * 2 == 32, "DrawMeta 32B");
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
+  void refreshMdiDrawMeta();
 
   // ---- Multi-draw-indirect instanced path (large-scene --next) ----
   // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
@@ -983,7 +1119,11 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkBufferCopy> mdiInstPendingXf_, mdiInstPendingCol_;
   // One indirect command per (eligible mesh, submesh); meshIndex ties it back to the
   // prototype for the per-frame instanceCount patch + visibility gate.
-  struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
+  struct MdiCmd {
+    uint32_t meshIndex;
+    bool disabled;
+    VkDrawIndexedIndirectCommand cmd;
+  };
   std::vector<MdiCmd> mdiCmds_;
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
@@ -997,6 +1137,9 @@ class VulkanRenderer final : public Renderer {
   uint32_t mdiDrawCount_{0};               // number of indirect commands
   bool mdiBuilt_{false};                   // buffers built for the current scene
   bool mdiActive_{false};                  // any eligible mesh -> use the indirect draw
+  // Runtime mesh replacements must not extend the immutable shared MDI buffers.
+  // Stage them with owned per-mesh buffers and draw them through the fallback loop.
+  bool forceDedicatedInstanceUpload_{false};
   void buildInstMdi();                     // upload staging -> shared buffers (once)
   void patchMdiIndirect();                 // refresh per-frame instanceCount + meta
   void destroyMdiBuffers();                // free shared buffers (reload/shutdown)
@@ -1142,6 +1285,7 @@ class VulkanRenderer final : public Renderer {
   std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
   std::vector<float> matGraph_;    // fixed-size MaterialX graph runtime blocks
   std::vector<float> rasterMatGraph_; // local image slots for raster graph evaluation
+  std::vector<float> rasterMatPbr_; // canonical 20-vec4 OpenPBR raster packet
   std::vector<float> lightParams_;  // packed DrawLightCPU params
   std::vector<uint32_t> rtDirectLightMasks_;
   std::vector<uint32_t> rtShadowLightMasks_;
@@ -1159,10 +1303,23 @@ class VulkanRenderer final : public Renderer {
   float view_[16];
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
+  // Projected-size cull threshold for merged static batches (0 = frustum only).
+  // Written from the GUI thread each frame, read while recording, hence atomic.
+  std::atomic<float> staticChunkCullPx_{0.0f};
+  // Last camera the chunk cull ran for, so a still camera costs nothing.
+  float staticCullVP_[16]{};
+  float staticCullPxLast_{-1.0f};
+  bool staticCullValid_{false};
+  int staticCullHeightLast_{-1};
+  uint32_t maxDrawIndirectCount_{1};
   float exposure_{0.0f};
   float materialXTime_{0.0f};
   float materialXFrame_{0.0f};
+  std::array<float, RenderFrameParams::kMaxClippingPlanes * 4>
+      clippingPlanes_{};
+  int clippingPlaneCount_{0};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
   PathTraceSettings pathTrace_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
@@ -1207,6 +1364,7 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   int wireMode_{0};           // 0 shaded, 1 wire only, 2 wire over shaded
+  bool wireXray_{false};      // draw wireframe through surfaces
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
   float displacementScale_{1.0f};  // global displacement multiplier
@@ -1291,6 +1449,8 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtMatGraphMem_{VK_NULL_HANDLE};
   VkBuffer rasterMatGraphBuf_{VK_NULL_HANDLE};
   VkDeviceMemory rasterMatGraphMem_{VK_NULL_HANDLE};
+  void* rasterMatGraphMapped_{nullptr};
+  size_t rasterMatGraphCapacity_{0};
   VkDeviceSize rtMatCap_{0};
   VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
   VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};
@@ -1337,6 +1497,8 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+  bool rtTemporalPose_{false};      // shutter pose belongs to one base-view sequence
+  bool rtTemporalReset_{false};     // first pose after base sequence changed
   double rtInitMs_{0.0};            // lazy ray-query pipeline creation time
 
   // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.

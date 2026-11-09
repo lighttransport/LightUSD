@@ -4579,7 +4579,8 @@ static void stbir__decode_scanline(stbir__info const * stbir_info, int n, float 
   stbir_edge edge_horizontal = stbir_info->horizontal.edge;
   stbir_edge edge_vertical = stbir_info->vertical.edge;
   int row = stbir__edge_wrap(edge_vertical, n, stbir_info->vertical.scale_info.input_full_size);
-  const void* input_plane_data = ( (char *) stbir_info->input_data ) + (size_t)row * (size_t) stbir_info->input_stride_bytes;
+  // LightUSD: callback-only input has no backing image pointer.
+  const void* input_plane_data = stbir_info->input_data ? ( (char *) stbir_info->input_data ) + (size_t)row * (size_t) stbir_info->input_stride_bytes : 0;
   stbir__span const * spans = stbir_info->scanline_extents.spans;
   float * full_decode_buffer = output_buffer - stbir_info->scanline_extents.conservative.n0 * effective_channels;
   float * last_decoded = 0;
@@ -4603,14 +4604,15 @@ static void stbir__decode_scanline(stbir__info const * stbir_info, int n, float 
     end_decode = full_decode_buffer + ( spans->n1 + 1 ) * effective_channels;
     width_times_channels = width * channels;
 
-    // read directly out of input plane by default
-    input_data = ( (char*)input_plane_data ) + spans->pixel_offset_for_input * input_sample_in_bytes;
-
     // if we have an input callback, call it to get the input data
     if ( stbir_info->in_pixels_cb )
     {
       // call the callback with a temp buffer (that they can choose to use or not).  the temp is just right aligned memory in the decode_buffer itself
       input_data = stbir_info->in_pixels_cb( ( (char*) end_decode ) - ( width * input_sample_in_bytes ) + sizeof(float)*STBIR_INPUT_CALLBACK_PADDING, input_plane_data, width, spans->pixel_offset_for_input, row, stbir_info->user_data );
+    }
+    else
+    {
+      input_data = ( (char*)input_plane_data ) + spans->pixel_offset_for_input * input_sample_in_bytes;
     }
 
     STBIR_PROFILE_START( decode );
@@ -6246,7 +6248,7 @@ static void stbir__resample_vertical_gather(stbir__info const * stbir_info, stbi
     stbir__resample_horizontal_gather(stbir_info, encode_buffer, decode_buffer  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
   }
 
-  stbir__encode_scanline( stbir_info, ( (char *) stbir_info->output_data ) + ((size_t)n * (size_t)stbir_info->output_stride_bytes),
+  stbir__encode_scanline( stbir_info, stbir_info->output_data ? ( (char *) stbir_info->output_data ) + ((size_t)n * (size_t)stbir_info->output_stride_bytes) : 0,
                           encode_buffer, n  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
 }
 
@@ -6341,7 +6343,7 @@ static void stbir__encode_first_scanline_from_scatter(stbir__info const * stbir_
   float* ring_buffer_entry = stbir__get_ring_buffer_entry(stbir_info, split_info, split_info->ring_buffer_begin_index );
 
   // dump the scanline out
-  stbir__encode_scanline( stbir_info, ( (char *)stbir_info->output_data ) + ( (size_t)split_info->ring_buffer_first_scanline * (size_t)stbir_info->output_stride_bytes ), ring_buffer_entry, split_info->ring_buffer_first_scanline  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
+  stbir__encode_scanline( stbir_info, stbir_info->output_data ? ( (char *)stbir_info->output_data ) + ( (size_t)split_info->ring_buffer_first_scanline * (size_t)stbir_info->output_stride_bytes ) : 0, ring_buffer_entry, split_info->ring_buffer_first_scanline  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
 
   // mark it as empty
   ring_buffer_entry[ 0 ] = STBIR__FLOAT_EMPTY_MARKER;
@@ -6362,7 +6364,7 @@ static void stbir__horizontal_resample_and_encode_first_scanline_from_scatter(st
   stbir__resample_horizontal_gather( stbir_info, split_info->vertical_buffer, ring_buffer_entry  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
 
   // dump the scanline out
-  stbir__encode_scanline( stbir_info, ( (char *)stbir_info->output_data ) + ( (size_t)split_info->ring_buffer_first_scanline * (size_t)stbir_info->output_stride_bytes ), split_info->vertical_buffer, split_info->ring_buffer_first_scanline  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
+  stbir__encode_scanline( stbir_info, stbir_info->output_data ? ( (char *)stbir_info->output_data ) + ( (size_t)split_info->ring_buffer_first_scanline * (size_t)stbir_info->output_stride_bytes ) : 0, split_info->vertical_buffer, split_info->ring_buffer_first_scanline  STBIR_ONLY_PROFILE_SET_SPLIT_INFO );
 
   // mark it as empty
   ring_buffer_entry[ 0 ] = STBIR__FLOAT_EMPTY_MARKER;
@@ -7399,7 +7401,7 @@ static void stbir__update_info_from_resize( stbir__info * info, STBIR_RESIZE * r
     info->output_stride_bytes = info->channels * info->horizontal.scale_info.output_sub_size * stbir__type_size[output_type];
 
   // calc offset
-  info->output_data = ( (char*) resize->output_pixels ) + ( (size_t) info->offset_y * (size_t) resize->output_stride_in_bytes ) + ( info->offset_x * info->channels * stbir__type_size[output_type] );
+  info->output_data = resize->output_pixels ? ( (char*) resize->output_pixels ) + ( (size_t) info->offset_y * (size_t) resize->output_stride_in_bytes ) + ( info->offset_x * info->channels * stbir__type_size[output_type] ) : 0;
 
   info->in_pixels_cb = resize->input_cb;
   info->user_data = resize->user_data;
@@ -8713,42 +8715,43 @@ static float * STBIR__CODER_NAME(stbir__decode_uint8_srgb)( float * decodep, int
     stbir__simdi_32shr( i, i, 16 ); \
 }
 
-#define stbir__simdi_table_lookup2( v0,v1, table ) \
+// LightUSD: bias indices instead of forming a pointer before the sRGB table.
+#define stbir__simdi_table_lookup2( v0,v1, table, offset ) \
 { \
   stbir__simdi_u32 temp0,temp1; \
   temp0.m128i_i128 = v0; \
   temp1.m128i_i128 = v1; \
-  temp0.m128i_u32[0] = table[temp0.m128i_i32[0]]; temp0.m128i_u32[1] = table[temp0.m128i_i32[1]]; temp0.m128i_u32[2] = table[temp0.m128i_i32[2]]; temp0.m128i_u32[3] = table[temp0.m128i_i32[3]]; \
-  temp1.m128i_u32[0] = table[temp1.m128i_i32[0]]; temp1.m128i_u32[1] = table[temp1.m128i_i32[1]]; temp1.m128i_u32[2] = table[temp1.m128i_i32[2]]; temp1.m128i_u32[3] = table[temp1.m128i_i32[3]]; \
+  temp0.m128i_u32[0] = (table)[temp0.m128i_i32[0] - (offset)]; temp0.m128i_u32[1] = (table)[temp0.m128i_i32[1] - (offset)]; temp0.m128i_u32[2] = (table)[temp0.m128i_i32[2] - (offset)]; temp0.m128i_u32[3] = (table)[temp0.m128i_i32[3] - (offset)]; \
+  temp1.m128i_u32[0] = (table)[temp1.m128i_i32[0] - (offset)]; temp1.m128i_u32[1] = (table)[temp1.m128i_i32[1] - (offset)]; temp1.m128i_u32[2] = (table)[temp1.m128i_i32[2] - (offset)]; temp1.m128i_u32[3] = (table)[temp1.m128i_i32[3] - (offset)]; \
   v0 = temp0.m128i_i128; \
   v1 = temp1.m128i_i128; \
 }
 
-#define stbir__simdi_table_lookup3( v0,v1,v2, table ) \
+#define stbir__simdi_table_lookup3( v0,v1,v2, table, offset ) \
 { \
   stbir__simdi_u32 temp0,temp1,temp2; \
   temp0.m128i_i128 = v0; \
   temp1.m128i_i128 = v1; \
   temp2.m128i_i128 = v2; \
-  temp0.m128i_u32[0] = table[temp0.m128i_i32[0]]; temp0.m128i_u32[1] = table[temp0.m128i_i32[1]]; temp0.m128i_u32[2] = table[temp0.m128i_i32[2]]; temp0.m128i_u32[3] = table[temp0.m128i_i32[3]]; \
-  temp1.m128i_u32[0] = table[temp1.m128i_i32[0]]; temp1.m128i_u32[1] = table[temp1.m128i_i32[1]]; temp1.m128i_u32[2] = table[temp1.m128i_i32[2]]; temp1.m128i_u32[3] = table[temp1.m128i_i32[3]]; \
-  temp2.m128i_u32[0] = table[temp2.m128i_i32[0]]; temp2.m128i_u32[1] = table[temp2.m128i_i32[1]]; temp2.m128i_u32[2] = table[temp2.m128i_i32[2]]; temp2.m128i_u32[3] = table[temp2.m128i_i32[3]]; \
+  temp0.m128i_u32[0] = (table)[temp0.m128i_i32[0] - (offset)]; temp0.m128i_u32[1] = (table)[temp0.m128i_i32[1] - (offset)]; temp0.m128i_u32[2] = (table)[temp0.m128i_i32[2] - (offset)]; temp0.m128i_u32[3] = (table)[temp0.m128i_i32[3] - (offset)]; \
+  temp1.m128i_u32[0] = (table)[temp1.m128i_i32[0] - (offset)]; temp1.m128i_u32[1] = (table)[temp1.m128i_i32[1] - (offset)]; temp1.m128i_u32[2] = (table)[temp1.m128i_i32[2] - (offset)]; temp1.m128i_u32[3] = (table)[temp1.m128i_i32[3] - (offset)]; \
+  temp2.m128i_u32[0] = (table)[temp2.m128i_i32[0] - (offset)]; temp2.m128i_u32[1] = (table)[temp2.m128i_i32[1] - (offset)]; temp2.m128i_u32[2] = (table)[temp2.m128i_i32[2] - (offset)]; temp2.m128i_u32[3] = (table)[temp2.m128i_i32[3] - (offset)]; \
   v0 = temp0.m128i_i128; \
   v1 = temp1.m128i_i128; \
   v2 = temp2.m128i_i128; \
 }
 
-#define stbir__simdi_table_lookup4( v0,v1,v2,v3, table ) \
+#define stbir__simdi_table_lookup4( v0,v1,v2,v3, table, offset ) \
 { \
   stbir__simdi_u32 temp0,temp1,temp2,temp3; \
   temp0.m128i_i128 = v0; \
   temp1.m128i_i128 = v1; \
   temp2.m128i_i128 = v2; \
   temp3.m128i_i128 = v3; \
-  temp0.m128i_u32[0] = table[temp0.m128i_i32[0]]; temp0.m128i_u32[1] = table[temp0.m128i_i32[1]]; temp0.m128i_u32[2] = table[temp0.m128i_i32[2]]; temp0.m128i_u32[3] = table[temp0.m128i_i32[3]]; \
-  temp1.m128i_u32[0] = table[temp1.m128i_i32[0]]; temp1.m128i_u32[1] = table[temp1.m128i_i32[1]]; temp1.m128i_u32[2] = table[temp1.m128i_i32[2]]; temp1.m128i_u32[3] = table[temp1.m128i_i32[3]]; \
-  temp2.m128i_u32[0] = table[temp2.m128i_i32[0]]; temp2.m128i_u32[1] = table[temp2.m128i_i32[1]]; temp2.m128i_u32[2] = table[temp2.m128i_i32[2]]; temp2.m128i_u32[3] = table[temp2.m128i_i32[3]]; \
-  temp3.m128i_u32[0] = table[temp3.m128i_i32[0]]; temp3.m128i_u32[1] = table[temp3.m128i_i32[1]]; temp3.m128i_u32[2] = table[temp3.m128i_i32[2]]; temp3.m128i_u32[3] = table[temp3.m128i_i32[3]]; \
+  temp0.m128i_u32[0] = (table)[temp0.m128i_i32[0] - (offset)]; temp0.m128i_u32[1] = (table)[temp0.m128i_i32[1] - (offset)]; temp0.m128i_u32[2] = (table)[temp0.m128i_i32[2] - (offset)]; temp0.m128i_u32[3] = (table)[temp0.m128i_i32[3] - (offset)]; \
+  temp1.m128i_u32[0] = (table)[temp1.m128i_i32[0] - (offset)]; temp1.m128i_u32[1] = (table)[temp1.m128i_i32[1] - (offset)]; temp1.m128i_u32[2] = (table)[temp1.m128i_i32[2] - (offset)]; temp1.m128i_u32[3] = (table)[temp1.m128i_i32[3] - (offset)]; \
+  temp2.m128i_u32[0] = (table)[temp2.m128i_i32[0] - (offset)]; temp2.m128i_u32[1] = (table)[temp2.m128i_i32[1] - (offset)]; temp2.m128i_u32[2] = (table)[temp2.m128i_i32[2] - (offset)]; temp2.m128i_u32[3] = (table)[temp2.m128i_i32[3] - (offset)]; \
+  temp3.m128i_u32[0] = (table)[temp3.m128i_i32[0] - (offset)]; temp3.m128i_u32[1] = (table)[temp3.m128i_i32[1] - (offset)]; temp3.m128i_u32[2] = (table)[temp3.m128i_i32[2] - (offset)]; temp3.m128i_u32[3] = (table)[temp3.m128i_i32[3] - (offset)]; \
   v0 = temp0.m128i_i128; \
   v1 = temp1.m128i_i128; \
   v2 = temp2.m128i_i128; \
@@ -8780,7 +8783,7 @@ static void STBIR__CODER_NAME( stbir__encode_uint8_srgb )( void * outputp, int w
       stbir__min_max_shift20( i2, f2 );
       stbir__min_max_shift20( i3, f3 );
 
-      stbir__simdi_table_lookup4( i0, i1, i2, i3, ( fp32_to_srgb8_tab4 - (127-13)*8 ) );
+      stbir__simdi_table_lookup4( i0, i1, i2, i3, fp32_to_srgb8_tab4, (127-13)*8 );
 
       stbir__linear_to_srgb_finish( i0, f0 );
       stbir__linear_to_srgb_finish( i1, f1 );
@@ -8885,7 +8888,7 @@ static void STBIR__CODER_NAME( stbir__encode_uint8_srgb4_linearalpha )( void * o
       stbir__min_max_shift20( i2, f2 );
       stbir__scale_and_convert( i3, f3 );
 
-      stbir__simdi_table_lookup3( i0, i1, i2, ( fp32_to_srgb8_tab4 - (127-13)*8 ) );
+      stbir__simdi_table_lookup3( i0, i1, i2, fp32_to_srgb8_tab4, (127-13)*8 );
 
       stbir__linear_to_srgb_finish( i0, f0 );
       stbir__linear_to_srgb_finish( i1, f1 );
@@ -8979,7 +8982,7 @@ static void STBIR__CODER_NAME( stbir__encode_uint8_srgb2_linearalpha )( void * o
       stbir__min_max_shift20( i2, f2 );
       stbir__scale_and_convert( i3, f3 );
 
-      stbir__simdi_table_lookup2( i0, i2, ( fp32_to_srgb8_tab4 - (127-13)*8 ) );
+      stbir__simdi_table_lookup2( i0, i2, fp32_to_srgb8_tab4, (127-13)*8 );
 
       stbir__linear_to_srgb_finish( i0, f0 );
       stbir__linear_to_srgb_finish( i2, f2 );

@@ -19,4 +19,6 @@ void dedup_nan_signed_zero_roundtrip_test(void);
 void dedup_blocked_timesamples_roundtrip_test(void);
 void dedup_blocked_array_timesamples_roundtrip_test(void);
 void dedup_empty_array_roundtrip_test(void);
+void dedup_variable_array_size_roundtrip_test(void);
+void dedup_variable_array_size_cross_attr_test(void);
 void inline_inf_double_test(void);

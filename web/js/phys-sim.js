@@ -187,7 +187,9 @@ async function usdaText() {
 
 async function loadLightUSDScene() {
   setStatus('Loading LightUSD WASM...');
-  state.lightusdLoader = await createConfiguredLightUSDLoader();
+  // Still on the legacy product: physics extraction reads LightUSDLoaderNative's
+  // physics JSON contract. Pinned while next is the default.
+  state.lightusdLoader = await createConfiguredLightUSDLoader({ backend: 'legacy' });
   LightUSDLoaderUtils.setLightUSD(state.lightusdLoader.native_);
   state.lightusdNative = new state.lightusdLoader.native_.LightUSDLoaderNative();
 

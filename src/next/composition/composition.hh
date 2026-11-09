@@ -7,10 +7,12 @@
 
 #pragma once
 
+#include "../crate/crate-limits.hh"
 #include "../layer/layer.hh"
 #include "expression-variables.hh"
-#include "../parser/ascii-parser.hh"
+#include "../parser/parse-options.hh"
 #include "../resolver/asset-resolver.hh"
+#include "core/security-policy.hh"
 #include <string>
 #include <vector>
 #include <map>
@@ -66,6 +68,10 @@ struct CompositionOptions {
   // Flatten pipeline memory/parse policy for external USDA layers loaded by the
   // low-memory compositing path.
   size_t max_layer_memory = 0;
+  size_t max_array_elements = size_t(16) * 1024 * 1024;
+  size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
+  // USDC structural table-count limits for every crate layer loaded.
+  CrateLimits usdc_limits = {};
   ParseOptions usda_parse_options = {};
 
   // Strongest variant selections for flattening. Keys are either a bare
@@ -74,6 +80,10 @@ struct CompositionOptions {
   // prim only and wins over the bare-set key; pxr keys selections per prim).
   // Empty keeps authored selections.
   std::map<std::string, std::string> variant_overrides;
+  // Borrowed, synchronous observer of reachable sets after namespace mapping.
+  // Called before flattening consumes the set, including nested selections.
+  std::function<void(const std::string&, const PrimVariantSetData&,
+                     const std::string&)> variant_observer;
 };
 
 /// Composition error
@@ -320,7 +330,7 @@ private:
                      size_t pending_graft_begin);
   void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
                        const std::string& anchor_path, int depth,
-                       const VariantData& variant);
+                       const PrimVariantData& variant);
 
   // Resolve every remaining sparse array edit in the fully composed layer
   // against its (absent -> empty) base array, like pxr's flatten. Runs only
@@ -365,6 +375,10 @@ std::vector<CompositionArc> GetPayloads(const Layer& layer);
 
 /// Check if a prim has any composition arcs
 bool HasCompositionArcs(const PrimSpec& prim);
+
+/// Whether returning the authored layer directly would skip stage composition,
+/// including local edits, namespace changes and inactive-subtree pruning.
+bool LayerNeedsComposition(const Layer& layer);
 
 }  // namespace next
 }  // namespace lightusd

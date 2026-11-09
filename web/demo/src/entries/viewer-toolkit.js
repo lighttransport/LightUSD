@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildNextDemoScene } from '../next-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -317,7 +318,7 @@ async function ensureLoader() {
   setStatus('Initializing LightUSD WASM...');
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -334,20 +335,14 @@ async function loadURL(url, label) {
   setStatus(`Parsing ${label}...`);
   const usd = await new Promise((resolve, reject) => {
     loader.parse(data, filename, resolve, reject, {
-      backend: 'legacy', maxMemoryLimitMB: 512,
+      backend: 'next', maxMemoryLimitMB: 512,
     });
   });
 
   setStatus(`Building scene...`);
   originalMaterials = [];
   world.clear();
-  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
-  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
-    usd.getDefaultRootNode(), defaultMat, usd, {
-      preferredMaterialType: 'usdpreviewsurface',
-      textureCache: new Map(),
-    }
-  );
+  const { node: threeNode } = await buildNextDemoScene(usd, { sourceUrl: url });
   world.add(threeNode);
 
   // Count triangles
@@ -410,14 +405,11 @@ async function loadLocalFile(file) {
   await ensureLoader();
   const data = new Uint8Array(await file.arrayBuffer());
   const usd = await new Promise((resolve, reject) => {
-    loader.parse(data, file.name, resolve, reject, { backend: 'legacy', maxMemoryLimitMB: 512 });
+    loader.parse(data, file.name, resolve, reject, { backend: 'next', maxMemoryLimitMB: 512 });
   });
   originalMaterials = [];
   world.clear();
-  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
-  const threeNode = await LightUSDLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), defaultMat, usd, {
-    preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
-  });
+  const { node: threeNode } = await buildNextDemoScene(usd);
   world.add(threeNode);
   let tris = 0;
   world.traverse((obj) => { if (obj.isMesh && obj.geometry) { const idx = obj.geometry.index; if (idx) tris += idx.count / 3; else tris += obj.geometry.attributes.position.count / 3; } });

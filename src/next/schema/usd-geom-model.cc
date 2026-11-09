@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "usd-geom-model.hh"
+#include "../layer/prim-spec.hh"
 
 #include "../eval/attribute-eval.hh"
 

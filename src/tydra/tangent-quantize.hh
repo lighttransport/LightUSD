@@ -40,8 +40,17 @@
 #include <string>
 #include <vector>
 
-#include "value-types.hh"
-#include "../safe-arithmetic.hh"
+// Only value::float3 (std::array<float, 3>) is used here, so declare it locally
+// instead of pulling the legacy value-type layer. Redeclaring the alias is
+// legal even where value-types.hh is also included: they name the same type.
+#include <array>
+
+namespace lightusd {
+namespace value {
+using float3 = std::array<float, 3>;
+}  // namespace value
+}  // namespace lightusd
+#include "core/safe-arithmetic.hh"
 #include "../nonstd/expected.hpp"
 
 namespace lightusd {

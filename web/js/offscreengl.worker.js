@@ -31,9 +31,10 @@ if (typeof document === 'undefined') {
 
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
+import { LightUSDLoader, NextRenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from './src/lightusd/LightUSDLoaderUtils.js';
 import { setLightUSD as setMaterialXLightUSD } from './src/lightusd/LightUSDMaterialX.js';
+import { buildNextThreeNode } from './src/lightusd/NextRenderSceneUtils.js';
 
 // ─── Worker-compatible image loading patch ─────────────────────────────────
 // THREE.ImageLoader normally calls document.createElementNS('...', 'img')
@@ -204,10 +205,10 @@ function initThreeJS(offscreenCanvas, width, height, pixelRatio) {
 // ─── LightUSD WASM loader setup ────────────────────────────────────────────
 
 async function initLoader() {
-    // The combined WASM module exposes both the legacy loader and next
-    // RenderStream APIs. Auto selects it here; the next-only module does not
-    // expose LightUSDLoaderNative, which this worker uses for file loading.
-    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'auto' });
+    // The worker renders through the next backend: the next-only module and
+    // its RenderStream, presented to the scene builders by
+    // NextRenderSceneAdapter (the legacy loader interface).
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'next' });
     await loaderState.loader.init({ useMemory64: USE_MEMORY64 });
 
     const wasmModule = loaderState.loader.native_;
@@ -316,10 +317,11 @@ async function loadUSDFromData(data, filename) {
 
     sendStatus(`Parsing: ${filename}…`);
 
-    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
-    const success = loaderState.nativeLoader.loadFromBinary(data, filename);
-    if (!success) {
-        sendError(`Failed to parse USD file: ${filename}`);
+    try {
+        loaderState.nativeLoader = await NextRenderSceneAdapter.create(
+            loaderState.loader.native_, data, filename);
+    } catch (err) {
+        sendError(`Failed to parse USD file: ${filename}: ${err?.message || err}`);
         return;
     }
 
@@ -366,35 +368,14 @@ async function buildSceneGraph() {
     sceneState.materials = [];
     sceneState.textureCache.clear();
 
-    const usdRootNode = loaderState.nativeLoader.getDefaultRootNode
-        ? loaderState.nativeLoader.getDefaultRootNode()
-        : null;
-
-    const defaultMtl = new THREE.MeshPhysicalMaterial({
-        color: 0x888888,
-        roughness: 0.5,
-        metalness: 0.0,
-        envMap: three.envMap,
+    // The next adapter carries next render records (materials, renderables
+    // attached by prim path), so build with the next scene builder rather
+    // than the legacy node-tree converter.
+    const built = buildNextThreeNode(loaderState.nativeLoader, {
+        skipTextures: false,
+        lazyTextures: true,
     });
-
-    if (usdRootNode) {
-        sceneState.root = await LightUSDLoaderUtils.buildThreeNode(
-            usdRootNode,
-            defaultMtl,
-            loaderState.nativeLoader,
-            {
-                overrideMaterial: false,
-                envMap: three.envMap,
-                envMapIntensity: 1.0,
-                preferredMaterialType: 'auto',
-                textureCache: sceneState.textureCache,
-            }
-        );
-    } else {
-        // Minimal fallback — just a group; buildThreeNode will handle empty case
-        sceneState.root = new THREE.Group();
-    }
-
+    sceneState.root = built.node;
     three.scene.add(sceneState.root);
 
     // Collect materials from scene graph
@@ -406,6 +387,18 @@ async function buildSceneGraph() {
         }
     });
     sceneState.materials = Array.from(matSet);
+    sceneState.materials.forEach(mat => {
+        mat.envMap = three.envMap;
+        mat.needsUpdate = true;
+    });
+
+    if (built.textureManager && built.textureManager.total > 0) {
+        await built.textureManager.startLoading({
+            onTextureLoaded: (material) => { material.needsUpdate = true; },
+            concurrency: 16,
+            yieldInterval: 16,
+        });
+    }
 }
 
 // ─── Scene cleanup / dispose ───────────────────────────────────────────────
@@ -428,9 +421,7 @@ function clearScene() {
     sceneState.textureCache.clear();
 
     if (loaderState.nativeLoader) {
-        try { loaderState.nativeLoader.reset(); } catch (_) {
-            try { loaderState.nativeLoader.clearAssets(); } catch (_2) { /* ignore */ }
-        }
+        try { loaderState.nativeLoader.delete(); } catch (_) { /* already released */ }
         loaderState.nativeLoader = null;
     }
 }
@@ -440,6 +431,9 @@ function clearScene() {
 function fitCameraToScene() {
     if (!sceneState.root) return;
 
+    // Box3.setFromObject reads child world matrices, which are stale until
+    // the first render; refresh them so scaled prims are measured correctly.
+    sceneState.root.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(sceneState.root);
     if (box.isEmpty()) return;
 

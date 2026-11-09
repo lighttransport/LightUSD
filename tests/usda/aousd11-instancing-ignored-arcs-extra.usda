@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    defaultPrim = "Extra"
+)
+
+def "Extra"
+{
+    double z = 5
+    def "FromExtra"
+    {
+    }
+}

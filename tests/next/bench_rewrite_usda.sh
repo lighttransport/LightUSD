@@ -2,7 +2,7 @@
 # RAW USDA parse/write throughput benchmark (compose-free), staged in /dev/shm.
 #
 # Unlike bench_roundtrip_usda.sh (which flatten=compose+writes then re-parses, so
-# the numbers mix compose into the load), this drives `next_usdcat --rewrite-layer`
+# the numbers mix compose into the load), this drives `lusdcat --rewrite-layer`
 # = LoadLayerFromFile (parse only, NO composition) -> WriteLayer. It reports raw
 # parse MB/s and raw write MB/s separately, both with disk I/O excluded (files
 # live in tmpfs /dev/shm), and checks the idempotency oracle:
@@ -12,14 +12,14 @@
 # flattening the scene root with `-f` into $TMP (skipped if already present).
 #
 # Usage:
-#   tests/next/bench_rewrite_usda.sh [--bin <next_usdcat>] [--tmp <dir>]
+#   tests/next/bench_rewrite_usda.sh [--bin <lusdcat>] [--tmp <dir>]
 #                                    [--threads N] [--keep] [--no-idem] [scene ...]
 #
 # Scenes default to: house island caldera. External scene paths come from
 # HOUSE_USD, ISLAND_USD, and CALDERA_USD; none are hard-coded here.
 set -u
 
-BIN="${BIN:-build_next_thr/next_usdcat}"
+BIN="${BIN:-build_next_thr/lusdcat}"
 TMP="${TMP:-/dev/shm}"
 THREADS=""          # empty = auto
 KEEP=0

@@ -10,9 +10,20 @@
 #include <vector>
 #include <cmath>
 #include <array>
+#include <map>
+#include <utility>
 
-#include "../../src/math-util.inc"
-#include "../../src/value-types.hh"
+// Only the POD vector types are used here, so declare them locally instead of
+// including the legacy value-type layer. Redeclaring the aliases is legal even
+// where value-types.hh is also included: they name the same type.
+#include <array>
+
+namespace lightusd {
+namespace value {
+using float2 = std::array<float, 2>;
+using float3 = std::array<float, 3>;
+}  // namespace value
+}  // namespace lightusd
 
 namespace lightusd {
 namespace tydra {

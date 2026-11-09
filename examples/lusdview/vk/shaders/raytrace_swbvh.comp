@@ -90,7 +90,7 @@ vec2 swGeomPropBc = vec2(0.0);
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
   int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
-  int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip;
+  int ptexRectTexelOffset; int ptexFaceCount; int ptexMipLevels; int mipCount; int firstMip;
   int imageSlot; int udimLayer[100];
 };
 layout(set = 0, binding = 11, scalar) readonly buffer RtTexels { uint texelWords[]; };
@@ -369,7 +369,7 @@ vec2 swPtexUv(RtTexDesc td, vec2 uv, uint face) {
   if (td.isPtex == 0 || face >= uint(td.ptexFaceCount)) return uv;
   uint value[4];
   for (uint c = 0u; c < 4u; ++c) {
-    uint lo = uint(td.offset / 4 + td.ptexRectTexelOffset) + face * 8u + c * 2u;
+    uint lo = uint(td.offset / 4 + td.ptexRectTexelOffset) + face * 10u + c * 2u;
     value[c] = ((texelWords[lo] >> 24u) & 255u) |
               (((texelWords[lo + 1u] >> 24u) & 255u) << 8u);
   }
@@ -437,16 +437,17 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
 }
 #else
 vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
-  const uint STRIDE = 1394u;
+  const uint STRIDE = 1395u;
   uint base = mid * STRIDE;
-  if (base + 44u >= uint(graphRows.length()) || route < 0 || route > 43) return vec4(0.0);
+  if (route < 0 || route >= 49 ||
+      base + 1u + uint(route) >= uint(graphRows.length())) return vec4(0.0);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
   vec4 v[64];
   // Nodes are packed dependency-first, so one bounded pass is sufficient.
   [[dont_unroll]] for (int i = 0; i < count; ++i) {
-      uint p = base + 50u + uint(i) * 21u;
+      uint p = base + 51u + uint(i) * 21u;
       int op = int(graphRows[p] + 0.5);
       int a = int(graphRows[p + 1u] + 0.5);
       int b = int(graphRows[p + 2u] + 0.5);
@@ -637,7 +638,7 @@ float swOpacityAtHit(int iid, int tri, vec2 bc, out float alphaMode) {
     float channel = ch == 1 ? ot.g : (ch == 2 ? ot.b : (ch == 3 ? ot.a : ot.r));
     alpha *= channel * matTexParams[pb + 67u] + matTexParams[pb + 68u];
   }
-  uint graphBase = uint(mid) * 1394u;
+  uint graphBase = uint(mid) * 1395u;
 #if !LUSDVIEW_SW_DISABLE_MTLX
   if (graphBase + 4u < uint(graphRows.length()) &&
       graphRows[graphBase + 4u] >= 0.0) {
@@ -687,7 +688,7 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
     if (lrt(mid, 12u).w > 0.5)
       base *= lrt(mid, 0u).rgb;
     tint *= vec3(1.0);
-  uint gb = uint(mid) * 1394u;
+    uint gb = uint(mid) * 1395u;
 #if !LUSDVIEW_SW_DISABLE_MTLX
     if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 1u] >= 0.0)
@@ -1089,7 +1090,8 @@ struct SwPtSurface {
   float subsurface; float specularWeight;
   float coatWeight; float coatRoughness; float coatIor; float coatAnisotropy;
   float coatRotation; float sheenWeight; float sheenRoughness;
-  float subsurfaceAnisotropy; float thinFilmWeight;
+  float subsurfaceAnisotropy; float subsurfaceScatterAnisotropy;
+  float thinFilmWeight;
   float thinFilmThickness; float thinFilmIor;
   float volumeDensity; vec3 volumeAlbedo; vec3 volumeEmission;
 };
@@ -1184,7 +1186,8 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
   s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
   s.coatAnisotropy = 0.0; s.coatRotation = 0.0;
   s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
-  s.subsurfaceAnisotropy = 0.0; s.thinFilmWeight = 0.0;
+  s.subsurfaceAnisotropy = 0.0; s.subsurfaceScatterAnisotropy = 0.0;
+  s.thinFilmWeight = 0.0;
   s.thinFilmThickness = 0.0; s.thinFilmIor = 1.5;
   s.volumeDensity = 0.0; s.volumeAlbedo = vec3(1.0);
   s.volumeEmission = vec3(0.0);
@@ -1258,7 +1261,8 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
     s.anisotropyRotation = lrt(mid, 14u).z;
     s.dispersion = max(lrt(mid, 15u).x * lrt(mid, 15u).z, 0.0);
     s.dispersionAbbe = max(lrt(mid, 15u).y, 0.0);
-    s.subsurfaceAnisotropy = clamp(lrt(mid, 16u).x, -0.95, 0.95);
+    s.subsurfaceAnisotropy = clamp(lrt(mid, 15u).w, -0.95, 0.95);
+    s.subsurfaceScatterAnisotropy = clamp(lrt(mid, 16u).x, -0.95, 0.95);
     s.coatAnisotropy = clamp(lrt(mid, 16u).y + 0.5 * lrt(mid, 17u).y,
                              -0.95, 0.95);
     s.coatRotation = lrt(mid, 16u).z;
@@ -1266,9 +1270,9 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
     s.volumeDensity = max(lrt(mid, 18u).w, 0.0);
     s.volumeEmission = max(lrt(mid, 19u).rgb * lrt(mid, 19u).w, vec3(0.0));
   }
-  uint gb = uint(mid) * 1394u, sourceFace = uint(max(faceIds[tri], 0));
+  uint gb = uint(mid) * 1395u, sourceFace = uint(max(faceIds[tri], 0));
 #if !LUSDVIEW_SW_DISABLE_MTLX
-  if (gb + 20u < uint(graphRows.length())) {
+  if (gb + 49u < uint(graphRows.length())) {
     if (graphRows[gb + 1u] >= 0.0)
       s.base = max(swEvalMaterialXGraph(uint(mid), 0, uv0, uv1, sourceFace).rgb,
                    vec3(0.0));
@@ -1326,6 +1330,14 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
     if (graphRows[gb + 20u] >= 0.0)
       s.ior = max(swEvalMaterialXGraph(uint(mid), 19, uv0, uv1,
                                       sourceFace).x, 1.0001);
+    if (graphRows[gb + 27u] >= 0.0)
+      s.subsurfaceAnisotropy = clamp(
+          swEvalMaterialXGraph(uint(mid), 26, uv0, uv1, sourceFace).x,
+          -0.95, 0.95);
+    if (graphRows[gb + 49u] >= 0.0)
+      s.subsurfaceScatterAnisotropy = clamp(
+          swEvalMaterialXGraph(uint(mid), 48, uv0, uv1, sourceFace).x,
+          -0.95, 0.95);
   }
 #endif
   vec3 tangentNormal = vec3(0.0, 0.0, 1.0);
@@ -1886,7 +1898,9 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
     } else if ((xi -= ws) < 0.0) {
       float prob = ws / sum;
       weight = subsurfaceC / max(prob, 1.0e-6);
-      scatterG = s.subsurfaceAnisotropy;
+      scatterG = clamp(s.subsurfaceAnisotropy +
+                           0.5 * s.subsurfaceScatterAnisotropy,
+                       -0.95, 0.95);
       vec3 color = clamp(s.subsurfaceColor, vec3(0.0), vec3(0.999999));
       vec3 similarity = vec3(4.09712) + vec3(4.20863) * color -
           sqrt(vec3(9.59217) + vec3(41.6808) * color +
@@ -2308,7 +2322,7 @@ void main() {
                                      vec4(1.0)).rgb;
       }
     }
-    uint graphBase = uint(mid) * 1394u;
+    uint graphBase = uint(mid) * 1395u;
 #if !LUSDVIEW_SW_DISABLE_MTLX
     if (graphBase + 9u < uint(graphRows.length())) {
       if (graphRows[graphBase + 1u] >= 0.0)

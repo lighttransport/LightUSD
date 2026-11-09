@@ -3,8 +3,8 @@
 //
 // Tydra Next - Mesh triangulation and normals
 
-#include "render-converter.hh"
-#include "safe-arithmetic.hh"
+#include "render-converter-internal.hh"
+#include "core/safe-arithmetic.hh"
 #include <cstring>
 #include "external/mapbox/earcut/earcut.hpp"
 
@@ -21,16 +21,9 @@ namespace {
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
 constexpr uint32_t kEarcutMaxVertices = 16384;
-bool WouldOverflowSizeMul(size_t a, size_t b) {
-  return a != 0 && b > std::numeric_limits<size_t>::max() / a;
-}
-size_t SaturatingMul(size_t a, size_t b) {
-  return a && b > (std::numeric_limits<size_t>::max() / a)
-             ? std::numeric_limits<size_t>::max() : a * b;
-}
 }  // namespace
 
-bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::TriangulateMesh(RenderMesh* mesh) {
   if (mesh->face_vertex_counts.empty()) return false;
 
   // Triangulation roughly doubles the index storage (triangulated_indices +
@@ -70,8 +63,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                           "' triangulated index allocation too large; skipping");
       return false;
     }
-    if (!mesh->triangulated_indices.resize(n) ||
-        !mesh->triangulated_face_vertex_indices.resize(n)) {
+    if (!mesh->triangulated_indices.resize_exact(n) ||
+        !mesh->triangulated_face_vertex_indices.resize_exact(n)) {
       AddWarning("Out of memory triangulating mesh '" +
                           mesh->prim_path + "'");
       return false;
@@ -117,8 +110,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     return false;
   }
 
-  if (!mesh->triangulated_indices.reserve(tri_corner_count) ||
-      !mesh->triangulated_face_vertex_indices.reserve(tri_corner_count)) {
+  if (!mesh->triangulated_indices.reserve_exact(tri_corner_count) ||
+      !mesh->triangulated_face_vertex_indices.reserve_exact(tri_corner_count)) {
     AddWarning("Out of memory triangulating mesh '" +
                         mesh->prim_path + "'");
     return false;
@@ -337,7 +330,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   return true;
 }
 
-bool RenderSceneConverter::TriangulateFan(
+bool RenderSceneConverter::Impl::TriangulateFan(
     const uint32_t* face_vertex_counts, size_t face_count,
     const uint32_t* indices, size_t index_count,
     UInt32Chunked* out_indices) {
@@ -398,7 +391,7 @@ bool RenderSceneConverter::TriangulateFan(
 // Normal computation
 //
 
-bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ComputeVertexNormals(RenderMesh* mesh) {
   if (mesh->points.empty() || !mesh->is_triangulated) {
     // Need triangulated mesh for normal computation
     if (!mesh->is_triangulated) {
@@ -411,7 +404,7 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
   size_t num_tris = mesh->triangulated_indices.size() / 3;
 
   // Initialize normals to zero
-  if (!mesh->normals.resize(num_points * 3, 0.0f)) {
+  if (!mesh->normals.resize_exact(num_points * 3, 0.0f)) {
     AddWarning("Out of memory computing normals for mesh '" +
                         mesh->prim_path + "'");
     return false;

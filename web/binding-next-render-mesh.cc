@@ -1,10 +1,56 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "tydra/next/render-extract.hh"
+#include "tydra/next/render-converter-clip.hh"
 namespace lightusd {
 namespace web_next {
+int RenderStream::meshCopyScope(int mesh_id, bool begin) {
+    if (mesh_id < 0) return -1;
+    if (begin) {
+      if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount() ||
+          mesh_copy_scope_id_ != -1) return -1;
+      mesh_copy_scope_id_ = mesh_id;
+    } else {
+      if (mesh_copy_scope_id_ != mesh_id) return -1;
+      mesh_copy_scope_id_ = -1;
+    }
+    invalidateCopyPreparation_();
+    return 0;
+}
+
+bool RenderStream::prepareCopyMesh_(int mesh_id, int source_index,
+                                    bool* soup_out, std::string* err) {
+    if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size())
+      return false;
+    const uint8_t flags = static_cast<uint8_t>(
+        (build_vertex_indices_ ? 1 : 0) |
+        (build_vertex_indices_set_ ? 2 : 0) | (enable_value_clips_ ? 4 : 0));
+    if (mesh_copy_scope_id_ == mesh_id && mesh_copy_prepared_ &&
+        mesh_copy_source_index_ == source_index && mesh_copy_build_flags_ == flags) {
+      if (soup_out) *soup_out = mesh_copy_soup_;
+      return true;
+    }
+    bool soup = false;
+    const bool ok = buildRenderMesh_(meshes_[static_cast<size_t>(source_index)].GetPrim(),
+                                     &soup, err);
+    if (ok && mesh_copy_scope_id_ == mesh_id) {
+      mesh_copy_source_index_ = source_index;
+      mesh_copy_build_flags_ = flags;
+      mesh_copy_soup_ = soup;
+      mesh_copy_prepared_ = true;
+    }
+    if (soup_out) *soup_out = soup;
+    return ok;
+}
+
 bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
+    // Every real build replaces shared scratch, including unscoped callers
+    // (merge, other mesh views and failures). Only a successful scoped
+    // preparation may publish it for reuse.
+    invalidateCopyPreparation_();
+    mesh_view_source_id_ = -1;
     if (soup_out) *soup_out = false;
     tr::ValueArrayRead<float> P;
     tr::ValueArrayRead<int32_t> fvc;
@@ -12,7 +58,10 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
     tr::ValueArrayRead<float> N;
     tr::ValueArrayRead<float> UV;
     tr::ValueArrayRead<int32_t> stIdx;
-    (void)readFloatArray_(prim, "points", &P);
+    if (!readFloatArray_(prim, "points", &P)) {
+      tr::ReadFloatArrayFromValueClips(prim, "points", 0.0,
+                                      valueClipLoader_(), &P);
+    }
     (void)readIntArray_(prim, "faceVertexCounts", &fvc);
     (void)readIntArray_(prim, "faceVertexIndices", &fvi);
     (void)readFloatArray_(prim, "normals", &N);
@@ -31,6 +80,36 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
     const size_t faceVtx = fvi.size();
     const size_t uvCount = UV.size() / 2;
     const size_t nCount = N.size() / 3;
+
+    auto fail = [&](const std::string &msg) {
+      if (err) *err = msg;
+      return false;
+    };
+    // RenderStream lazily materializes geometry from Stage on demand. Bound
+    // this path too: the converter's retained-scene budget does not cover the
+    // scratch vectors used by mesh views and per-buffer copies.
+    size_t materialize_bytes = 0;
+    const size_t max_materialize_bytes = remainingMemoryLimitBytes();
+    auto addEstimate = [&](size_t count, size_t element_size) {
+      if (element_size != 0 &&
+          count > (std::numeric_limits<size_t>::max)() / element_size) {
+        return false;
+      }
+      const size_t bytes = count * element_size;
+      if (bytes > max_materialize_bytes - materialize_bytes) return false;
+      materialize_bytes += bytes;
+      return true;
+    };
+    if (!addEstimate(P.size(), sizeof(float)) ||
+        !addEstimate(fvc.size(), sizeof(int32_t)) ||
+        !addEstimate(fvi.size(), sizeof(int32_t)) ||
+        !addEstimate(N.size(), sizeof(float)) ||
+        !addEstimate(UV.size(), sizeof(float)) ||
+        !addEstimate(stIdx.size(), sizeof(int32_t)) ||
+        !addEstimate(vtxCount, 8 * sizeof(float) + sizeof(uint32_t)) ||
+        !addEstimate(faceVtx, 3 * sizeof(uint32_t))) {
+      return fail("Mesh materialization exceeds configured memory limit");
+    }
 
     // The next render converter already performs robust earcut triangulation,
     // handles left-handed winding, holes and topology sanitization, and keeps
@@ -63,10 +142,6 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
       }
     }
 
-    auto fail = [&](const std::string &msg) {
-      if (err) *err = msg;
-      return false;
-    };
     if ((P.size() % 3) != 0) {
       return fail("Mesh points array length is not divisible by 3");
     }
@@ -135,7 +210,7 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
       }
       if (const lightusd::next::Value *orientation =
               prim.GetPropertyValue("orientation")) {
-        if (const std::string *token = orientation->as_token()) {
+        if (auto token = orientation->as_token()) {
           mesh_only_triangulation.left_handed = (*token == "leftHanded");
         }
       }

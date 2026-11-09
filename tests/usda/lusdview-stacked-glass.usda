@@ -1,0 +1,133 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+
+    def Mesh "Backdrop"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1.4, -1, -0.15), (1.4, -1, -0.15), (1.4, 1, -0.15), (-1.4, 1, -0.15)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Looks/Backdrop>
+    }
+
+    def Mesh "GlassA"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, -0.8, 0), (1, -0.8, 0), (1, 0.8, 0), (-1, 0.8, 0)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Looks/GlassA>
+    }
+
+    def Mesh "GlassB"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-0.75, -0.65, 0.22), (0.95, -0.65, 0.42), (0.95, 0.65, 0.42), (-0.75, 0.65, 0.22)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Looks/GlassB>
+    }
+
+    def Mesh "GlassC"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-0.55, -0.5, 0.48), (0.65, -0.5, 0.33), (0.65, 0.5, 0.33), (-0.55, 0.5, 0.48)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Looks/GlassC>
+    }
+
+    def Mesh "AlphaOverlay"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-0.35, -0.35, 0.62), (0.85, -0.35, 0.62), (0.85, 0.35, 0.62), (-0.35, 0.35, 0.62)]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Looks/AlphaOverlay>
+    }
+
+    def Scope "Looks"
+    {
+
+        def Material "Backdrop"
+        {
+            token outputs:surface.connect = </World/Looks/Backdrop/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.08, 0.18, 0.35)
+                float inputs:roughness = 0.7
+                token outputs:surface
+            }
+        }
+
+        def Material "GlassA"
+        {
+            token outputs:surface.connect = </World/Looks/GlassA/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.9, 0.25, 0.15)
+                float inputs:ior = 1.45
+                float inputs:opacity = 0.45
+                float inputs:roughness = 0.12
+                float inputs:transmission = 0.75
+                token outputs:surface
+            }
+        }
+
+        def Material "GlassB"
+        {
+            token outputs:surface.connect = </World/Looks/GlassB/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.15, 0.85, 0.35)
+                float inputs:ior = 1.52
+                float inputs:opacity = 0.5
+                float inputs:roughness = 0.16
+                float inputs:transmission = 0.8
+                token outputs:surface
+            }
+        }
+
+        def Material "GlassC"
+        {
+            token outputs:surface.connect = </World/Looks/GlassC/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.15, 0.35, 1)
+                float inputs:ior = 1.38
+                float inputs:opacity = 0.5
+                float inputs:roughness = 0.1
+                float inputs:transmission = 0.7
+                token outputs:surface
+            }
+        }
+
+        def Material "AlphaOverlay"
+        {
+            token outputs:surface.connect = </World/Looks/AlphaOverlay/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (1, 0.75, 0.08)
+                float inputs:opacity = 0.3
+                float inputs:roughness = 0.45
+                token outputs:surface
+            }
+        }
+    }
+}

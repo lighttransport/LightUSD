@@ -6,7 +6,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpError, ErrorCode, ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, CompleteRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import initLightUSDNative from "lightusd/lightusd.js";
 
 import cors from 'cors';
 
@@ -94,9 +93,29 @@ const transports = {};
 
 const session = new Map();
 
-initLightUSDNative().then(function (LightUSD) {
+// The MCP server product (lightusd_mcp module, next backend) is the default;
+// set LIGHTUSD_MCP_BACKEND=legacy, or use a lightusd package without
+// lightusd_mcp.js, to serve the legacy LightUSDLoaderNative MCP tools. Both
+// expose the same mcp* session functions.
+async function loadMCPBackend() {
+  if (process.env.LIGHTUSD_MCP_BACKEND !== 'legacy') {
+    try {
+      const { default: createLightUSDMCP } = await import("lightusd/lightusd_mcp.js");
+      const mcp = await createLightUSDMCP();
+      console.log("LightUSD MCP backend: next (lightusd_mcp)");
+      return mcp;
+    } catch (e) {
+      console.warn("lightusd_mcp.js unavailable; falling back to the legacy MCP backend:", e.message);
+    }
+  }
+  const { default: initLightUSDNative } = await import("lightusd/lightusd.js");
+  const LightUSD = await initLightUSDNative();
+  console.log("LightUSD MCP backend: legacy (LightUSDLoaderNative)");
+  return new LightUSD.LightUSDLoaderNative();
+}
 
-  const lightusd = new LightUSD.LightUSDLoaderNative();
+loadMCPBackend().then(function (lightusd) {
+
   // Handle POST requests for client-to-server communication
   app.post('/mcp', async (req, res) => {
     // NOTE: do not log req.headers — the Authorization header carries the

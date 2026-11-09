@@ -1,0 +1,15 @@
+#usda 1.0
+ def Xform "Asset" (
+  variants = { string view = "preview" }
+  prepend variantSets = "view"
+ ) {
+  float strength = 0
+  variantSet "view" = {
+   "default" {
+ def Mesh "Render" {}
+ }
+   "preview" {
+ def Mesh "Proxy" {}
+ }
+  }
+ }

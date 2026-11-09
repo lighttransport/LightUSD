@@ -4816,3 +4816,141 @@ def Cube "BodyB" {}
     }
   }
 }
+
+#include "usdObj.hh"
+#include "tydra/obj-export.hh"
+void physics_obj_c11_import_test(void) {
+  lightusd::GPrim mesh;
+  std::string error;
+  const char* text =
+      "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn "
+      "0 0 -1\nf 1/1/1 2/2/1 3/3/1 4/4/1\n";
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(text, &mesh, &error));
+  auto counts = mesh.props.at("faceVertexCounts")
+                    .get_attribute()
+                    .get_value<std::vector<int32_t>>();
+  TEST_CHECK(counts && counts->size() == 1 && (*counts)[0] == 4);
+  auto normals = mesh.props.at("normals")
+                     .get_attribute()
+                     .get_value<std::vector<lightusd::value::normal3f>>();
+  TEST_CHECK(normals && normals->size() == 4 && (*normals)[0][2] == -1);
+  TEST_CHECK(mesh.props.count("primvars:st") == 1);
+  lightusd::tydra::RenderScene scene;
+  lightusd::tydra::RenderMesh rendered;
+  rendered.points = {{0,0,0}, {1,0,0}, {0,1,0}};
+  rendered.usdFaceVertexCounts = {3};
+  rendered.usdFaceVertexIndices = {0,1,2};
+  rendered.joint_and_weights.elementSize = 2;
+  rendered.joint_and_weights.jointIndices = {0,1,1,0,0,1};
+  rendered.joint_and_weights.jointWeights = {.123456789f,.876543211f,2,0,-.5f,1.5f};
+  scene.meshes.push_back(std::move(rendered));
+  std::string exported, mtl, warning;
+  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, exported, mtl, &warning, &error));
+  TEST_CHECK(exported.find("vw 0 0 ") != std::string::npos);
+  lightusd::GPrim reloaded;
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(exported, &reloaded, &error));
+  auto weights = reloaded.props.at("primvars:skel:jointWeights")
+                      .get_attribute().get_value<std::vector<float>>();
+  TEST_CHECK(weights && *weights == scene.meshes[0].joint_and_weights.jointWeights);
+}
+
+// USD -> OBJ export: face-varying corners are 1-based corner indices, subset
+// groups follow face order, materials are written once, and the result
+// reloads with the same topology and attributes.
+void physics_obj_export_facevarying_test(void) {
+  lightusd::tydra::RenderScene scene;
+  lightusd::tydra::RenderMesh rendered;
+  rendered.prim_name = "quads";
+  rendered.points = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {2, 0, 0}, {2, 1, 0}};
+  rendered.usdFaceVertexCounts = {4, 4, 3};
+  rendered.usdFaceVertexIndices = {0, 1, 2, 3, 1, 4, 5, 2, 0, 1, 3};
+  std::vector<float> uv;
+  std::vector<float> normals;
+  for (size_t corner = 0; corner < 11; corner++) {
+    uv.push_back(float(corner) * 0.1f);
+    uv.push_back(1.0f - float(corner) * 0.05f);
+    normals.insert(normals.end(), {0.0f, 0.0f, corner % 2 ? 1.0f : -1.0f});
+  }
+  lightusd::tydra::VertexAttribute texcoord;
+  texcoord.format = lightusd::tydra::VertexAttributeFormat::Vec2;
+  texcoord.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  texcoord.set_buffer(reinterpret_cast<const uint8_t *>(uv.data()), uv.size() * sizeof(float));
+  rendered.texcoords[0] = texcoord;
+  rendered.normals.format = lightusd::tydra::VertexAttributeFormat::Vec3;
+  rendered.normals.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  rendered.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
+                              normals.size() * sizeof(float));
+  for (const char *name : {"red", "blue"}) {
+    lightusd::tydra::RenderMaterial material;
+    material.name = name;
+    scene.materials.push_back(material);
+  }
+  // Subsets listed out of face order; face 0 has no subset.
+  lightusd::tydra::MaterialSubset late, early;
+  late.material_id = 0;
+  late.usdIndices = {2};
+  early.material_id = 1;
+  early.usdIndices = {1};
+  rendered.material_subsetMap["zz_late"] = late;
+  rendered.material_subsetMap["aa_early"] = early;
+  rendered.material_id = 0;
+  scene.meshes.push_back(std::move(rendered));
+  std::string obj, mtl, warning, error;
+  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+  // Corner (not face) offsets, 1-based, in face order.
+  TEST_CHECK(obj.find("f 1/1/1 2/2/2 3/3/3 4/4/4\n") != std::string::npos);
+  TEST_CHECK(obj.find("g aa_early\nusemtl blue\nf 2/5/5 5/6/6 6/7/7 3/8/8\n") != std::string::npos);
+  TEST_CHECK(obj.find("g zz_late\nusemtl red\nf 1/9/9 2/10/10 4/11/11\n") != std::string::npos);
+  TEST_CHECK(obj.find("g aa_early") < obj.find("g zz_late"));
+  // Each material once, even when used by two groups.
+  TEST_CHECK(mtl.find("newmtl red") == mtl.rfind("newmtl red"));
+  TEST_CHECK(mtl.find("# 2 materials.") != std::string::npos);
+  lightusd::GPrim reloaded;
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(obj, &reloaded, &error));
+  // Out-of-range subset faces are rejected, not read past the array.
+  scene.meshes[0].material_subsetMap["zz_late"].usdIndices = {7};
+  TEST_CHECK(!lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+}
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include "composition.hh"
+#include "asset-resolution.hh"
+#include "layer.hh"
+void physics_obj_composition_test(void) {
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+      ("lightusd-obj-" + std::to_string(
+          std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  const std::string obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nvw 0 0 1\nf 1 2 3\nl 1 2\np 3\n";
+  { std::ofstream file(dir / "mesh.obj"); file << obj; }
+  for (const char* arc : {"references", "payload", "subLayers"}) {
+    std::string text = "#usda 1.0\n";
+    if (std::string(arc) == "subLayers")
+      text += "(subLayers = [@mesh.obj@])\n";
+    else
+      text += std::string("def Xform \"Rig\" (prepend ") + arc + " = @mesh.obj@) {}\n";
+    { std::ofstream file(dir / "root.usda"); file << text; }
+    Stage stage;
+    Layer layer, stacked, composed;
+    AssetResolutionResolver resolver;
+    std::string warning, error;
+    const bool ok = LoadLayerFromFile((dir / "root.usda").string(), &layer,
+                                     &warning, &error) &&
+                    CompositeSublayers(resolver, layer, &stacked, &warning, &error) &&
+                    CompositeAllArcs(resolver, stacked, &composed, &warning, &error) &&
+                    LayerToStage(std::move(composed), &stage, &warning, &error);
+    TEST_CHECK(ok);
+    TEST_MSG("%s: %s", arc, error.c_str());
+    if (ok) {
+      const std::string root = std::string(arc) == "subLayers" ? "/World" : "/Rig";
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh", ""))));
+      TEST_MSG("arc: %s; warnings: %s", arc, warning.c_str());
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh_curves", ""))));
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh_points", ""))));
+    }
+  }
+  fs::remove_all(dir);
+}

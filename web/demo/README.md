@@ -1,18 +1,20 @@
 # LightUSD Web Demos
 
-24 interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
+Interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
 physics simulation, composition, export, and more.
 
 ## Quick Start
 
 ```bash
-# Production path (no build tools needed)
+# Production build (local next WASM)
 npm install
-npx vite build
+npm run prepare:openchess
+npm run build
 npx vite preview          # or serve dist/ with any static server
 
-# Development path (requires Emscripten + CMake)
+# Development server
 npm install
+npm run prepare:openchess
 npm run dev               # builds local WASM + starts Vite dev server
 ```
 
@@ -20,13 +22,14 @@ npm run dev               # builds local WASM + starts Vite dev server
 
 | Mode | Tools |
 |------|-------|
-| **Production** (npm package) | Node.js 18+, npm |
-| **Development** (local WASM) | Node.js 18+, npm, CMake, Ninja, Emscripten (`emcmake`) |
+| **Production and development** | Node.js 18+, npm, CMake, Ninja, Emscripten (`emcmake`) |
 
 ## Development Path
 
 The dev server (`npm run dev`) builds LightUSD WASM from source using the
 local Emscripten toolchain, then serves the demo from the local source tree.
+The production build uses the same next module and keeps the deprecated
+combined module for explicit compatibility demos.
 
 ```bash
 # One-time: verify Emscripten + CMake
@@ -42,6 +45,10 @@ npm run dev
 npm run prepare:local-lightusd
 vite --mode development
 ```
+
+Large optional hair fixtures are generated separately. Run
+`npm run check:optional-assets` when validating those fixtures; they are not
+required to build the site.
 
 ### OpenChessSet MaterialX showcase
 
@@ -242,6 +249,21 @@ xvfb-run -a node generate-previews.js --output ./previews --timeout 180000
 Camera positions and clear colors are controlled by
 `../batch-runner/usd-assets-settings.json`. Resolution defaults to 1280×720.
 
+## Online USD Viewer
+
+`usd-viewer.html` accepts USD/USDA/USDC/USDZ files, folder uploads, and direct
+HTTP URLs. Folder uploads preserve relative asset paths and prefer `root.*`,
+`default.*`, `scene.*`, or `main.*` as the root. Each load is capped at 200 MiB
+of unique USD and asset bytes across layers, references, payloads, and textures.
+
+References compose first. Deferred payloads are exposed through a button, and
+the material selector can rebuild the current scene with automatic,
+UsdPreviewSurface, or MaterialX/OpenPBR shading. Animation clips expose a
+small playback timeline. GitHub-hosted files are rewritten to the GitHub
+Contents API, which works from GitHub Pages without a proxy; unauthenticated
+GitHub API usage is still subject to rate limits. Other remote hosts must allow
+CORS, and 403/429 responses are reported in the viewer.
+
 ## Demo List
 
 | # | Demo | Key Feature |
@@ -269,3 +291,11 @@ Camera positions and clear colors are controlled by
 | 21 | USDZ Packager | Export with bundle visualization |
 | 22 | USD Diff | Side-by-side comparison |
 | 23 | Backend Comparison | Legacy vs next rendering comparison |
+| 24 | Online USD Viewer | File/folder upload, deferred payloads, materials, and animation |
+
+### USD validation
+
+Open `validation.html` for the same validation UI as `web/js/validation.html`.
+It shares the worker and full next-WASM lusdchecker API, including strict and
+AOUSD profiles, dependency folders, custom JSON definitions, coverage reporting,
+and JSON/SARIF downloads. See [the checker API guide](../../tools/lusdchecker/README.md#javascript--wasm).

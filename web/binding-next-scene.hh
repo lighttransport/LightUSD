@@ -3,12 +3,11 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "minijson.hh"
-#include "next/prim/path.hh"
+#include "core/minijson.hh"
 namespace lightusd {
-namespace next { class Value; class UsdPrim; class Stage; }
+namespace next { class Path; class Value; class ValueView; class UsdPrim; class Stage; }
 namespace web_next {
-minijson::Value NextValueJSON(const next::Value& value);
+minijson::Value NextValueJSON(next::ValueView value);
 const std::vector<next::Path>* NextPropertyConnections(
     const next::UsdPrim& prim, const std::string& property_name);
 std::string NextConnectionPrimPath(const std::string& connection);

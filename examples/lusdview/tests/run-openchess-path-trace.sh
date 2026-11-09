@@ -92,6 +92,7 @@ PY
 VK_DEVICE_ARGS=()
 [ -z "${LUSDVIEW_VK_DEVICE:-}" ] || VK_DEVICE_ARGS=(--vk-device "$LUSDVIEW_VK_DEVICE")
 COMMON=(--headless --backend vk --path-trace --pt-quality final
+        --allow-parent-paths
         --pt-max-depth "$MAX_DEPTH" --pt-rr-depth 5 --pt-seed "$SEED"
         --pt-denoise off --pt-variance 0 --pt-motion-segments 8 --no-rt-lod
         --no-grid --size "$SIZE"
@@ -118,8 +119,13 @@ run_render() {
     }
   [ -s "$OUT/$name.png" ] && [ -s "$OUT/$name.exr" ] &&
     [ -s "$OUT/$name.json" ] || {
-      echo "FAIL: $backend did not produce PNG, EXR, and report"; return 1;
-    }
+    echo "FAIL: $backend did not produce PNG, EXR, and report"; return 1;
+  }
+  if grep -Eq 'load failed:|no renderable geometry produced' "$OUT/$name.log"; then
+    echo "FAIL: $backend did not load the production scene"
+    tail -40 "$OUT/$name.log"
+    return 1
+  fi
   if grep -Eq 'unsupported_mtlx=[1-9]|missing_textures=[1-9]|degraded_materials=[1-9]' \
       "$OUT/$name.log"; then
     echo "FAIL: $backend degraded an OpenChessSet material or texture"
@@ -135,6 +141,8 @@ diagnostics = report.get("load_diagnostics", {})
 assert report.get("schema_version", 0) >= 2, "old render report schema"
 assert render.get("integrator") == "path", "production integrator not active"
 assert render.get("target_samples") == int(sys.argv[2]), "sample target mismatch"
+assert render.get("samples", 0) >= int(sys.argv[2]), "sample target not completed"
+assert report.get("scene_stats", {}).get("meshes", 0) > 0, "empty production scene"
 assert render.get("max_depth", 0) >= 1, "invalid path depth"
 assert render.get("motion_segments") == 8, "motion segment setting lost"
 assert not render.get("rt_build_incomplete", False), "incomplete RT build"

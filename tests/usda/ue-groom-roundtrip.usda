@@ -1,0 +1,22 @@
+#usda 1.0
+
+def BasisCurves "Groom" {
+    token type = "linear"
+    token wrap = "nonperiodic"
+    int[] curveVertexCounts = [3, 3]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (0, 0, 1), (0, 0, 2), (1, 0, 0), (1, 0, 1), (1, 0, 2)],
+        1: [(0.2, 0, 0), (0.2, 0, 1), (0.2, 0, 2), (1.2, 0, 0), (1.2, 0, 1), (1.2, 0, 2)]
+    }
+    float[] widths.timeSamples = {
+        0: [0.02, 0.018, 0.01, 0.02, 0.018, 0.01],
+        1: [0.02, 0.018, 0.01, 0.02, 0.018, 0.01]
+    }
+    color3f[] primvars:groom_color = [(0.2, 0.4, 0.8), (0.2, 0.4, 0.8), (0.2, 0.4, 0.8),
+                                       (0.8, 0.4, 0.2), (0.8, 0.4, 0.2), (0.8, 0.4, 0.2)] (
+        interpolation = "vertex"
+    )
+    float[] primvars:groom_roughness = [0.37, 0.37, 0.37, 0.37, 0.37, 0.37] (
+        interpolation = "vertex"
+    )
+}

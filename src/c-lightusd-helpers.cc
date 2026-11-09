@@ -581,16 +581,41 @@ static bool lookup_shade_typed(const Prim &prim, const std::string &name,
   uint32_t tid = prim.data().type_id();
   if (tid == value::TYPE_ID_MATERIAL) {
     const auto *m = prim.data().as<Material>();
-    if (!m || !m->materialXConfig.has_value()) return false;
-    const auto &cfg = m->materialXConfig.value();
-    if (name == "config:mtlx:version")
-      return fill_attr_from_typed_fb(cfg.mtlx_version, "string", name, out);
-    if (name == "config:mtlx:namespace")
-      return fill_attr_from_typed_fb(cfg.mtlx_namespace, "string", name, out);
-    if (name == "config:mtlx:colorspace")
-      return fill_attr_from_typed_fb(cfg.mtlx_colorspace, "string", name, out);
-    if (name == "config:mtlx:sourceUri")
-      return fill_attr_from_typed_fb(cfg.mtlx_sourceUri, "string", name, out);
+    if (!m) return false;
+    if (m->materialXConfig.has_value()) {
+      const auto &cfg = m->materialXConfig.value();
+      if (name == "config:mtlx:version")
+        return fill_attr_from_typed_fb(cfg.mtlx_version, "string", name, out);
+      if (name == "config:mtlx:namespace")
+        return fill_attr_from_typed_fb(cfg.mtlx_namespace, "string", name, out);
+      if (name == "config:mtlx:colorspace")
+        return fill_attr_from_typed_fb(cfg.mtlx_colorspace, "string", name, out);
+      if (name == "config:mtlx:sourceUri")
+        return fill_attr_from_typed_fb(cfg.mtlx_sourceUri, "string", name, out);
+    }
+    if (m->materialUEConfig.has_value()) {
+      const auto &cfg = m->materialUEConfig.value();
+      if (name == "config:unreal:version")
+        return fill_attr_from_typed_fb(cfg.version, "string", name, out);
+      if (name == "config:unreal:engineVersion")
+        return fill_attr_from_typed_fb(cfg.engineVersion, "string", name, out);
+      if (name == "config:unreal:sourceAsset")
+        return fill_attr_from_typed_fb(cfg.sourceAsset, "string", name, out);
+      if (name == "config:unreal:graphAuthority")
+        return fill_attr_from_typed_fb(cfg.graphAuthority, "string", name, out);
+      if (name == "config:unreal:materialDomain")
+        return fill_attr_from_typed_fb(cfg.materialDomain, "string", name, out);
+      if (name == "config:unreal:blendMode")
+        return fill_attr_from_typed_fb(cfg.blendMode, "string", name, out);
+      if (name == "config:unreal:shadingModels")
+        return fill_attr_from_typed_fb(cfg.shadingModels, "string", name, out);
+      if (name == "config:unreal:twoSided")
+        return fill_attr_from_typed_fb(cfg.twoSided, "bool", name, out);
+      if (name == "config:unreal:opacityMaskClipValue")
+        return fill_attr_from_typed_fb(cfg.opacityMaskClipValue, "float", name, out);
+      if (name == "config:unreal:propertyArchive")
+        return fill_attr_from_typed_fb(cfg.propertyArchive, "string", name, out);
+    }
   }
   return false;
 }
@@ -627,23 +652,23 @@ static bool lookup_physics_typed(const Prim &prim, const std::string &name,
   }
   if (!jb) return false;
   if (name == "physics:localPos0")
-    return fill_attr_from_typed(jb->localPos0, "point3f", name, out);
+    return fill_attr_from_typed_fb(jb->localPos0, "point3f", name, out);
   if (name == "physics:localPos1")
-    return fill_attr_from_typed(jb->localPos1, "point3f", name, out);
+    return fill_attr_from_typed_fb(jb->localPos1, "point3f", name, out);
   if (name == "physics:localRot0")
-    return fill_attr_from_typed(jb->localRot0, "quatf", name, out);
+    return fill_attr_from_typed_fb(jb->localRot0, "quatf", name, out);
   if (name == "physics:localRot1")
-    return fill_attr_from_typed(jb->localRot1, "quatf", name, out);
+    return fill_attr_from_typed_fb(jb->localRot1, "quatf", name, out);
   if (name == "physics:jointEnabled")
-    return fill_attr_from_typed(jb->jointEnabled, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->jointEnabled, "bool", name, out);
   if (name == "physics:collisionEnabled")
-    return fill_attr_from_typed(jb->collisionEnabled, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->collisionEnabled, "bool", name, out);
   if (name == "physics:breakForce")
-    return fill_attr_from_typed(jb->breakForce, "float", name, out);
+    return fill_attr_from_typed_fb(jb->breakForce, "float", name, out);
   if (name == "physics:breakTorque")
-    return fill_attr_from_typed(jb->breakTorque, "float", name, out);
+    return fill_attr_from_typed_fb(jb->breakTorque, "float", name, out);
   if (name == "physics:excludeFromArticulation")
-    return fill_attr_from_typed(jb->excludeFromArticulation, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->excludeFromArticulation, "bool", name, out);
   // Joint-type-specific typed attributes.
   if (tid == value::TYPE_ID_PHYSICS_REVOLUTE_JOINT) {
     const auto *r = prim.data().as<PhysicsRevoluteJoint>();

@@ -4,6 +4,10 @@
 
 #include "py-internal.h"
 
+#include <string.h>
+
+#include "lightusd-render-c.h"
+
 /* ============================================================
  * Generic helpers
  * ============================================================ */
@@ -175,29 +179,86 @@ static int parse_format(const char* format, uint32_t* out) {
   return 0;
 }
 
+/* Keep the secure policy by default; trusted enables the existing C reader
+ * mmap policy only when explicitly requested by the caller. */
+static int parse_execution_options(PyObject* threads_obj, const char* policy,
+                                   lightusd_load_options* opts) {
+  if (threads_obj) {
+    unsigned long long threads = PyLong_AsUnsignedLongLong(threads_obj);
+    if (PyErr_Occurred()) return -1;
+    if (threads > INT32_MAX) {
+      PyErr_SetString(PyExc_OverflowError, "max_threads exceeds int32 range");
+      return -1;
+    }
+    opts->max_threads = (int32_t)threads;
+  }
+  if (strcmp(policy, "untrusted") == 0) opts->input_policy = LIGHTUSD_INPUT_UNTRUSTED;
+  else if (strcmp(policy, "trusted") == 0) opts->input_policy = LIGHTUSD_INPUT_TRUSTED;
+  else {
+    PyErr_SetString(PyExc_ValueError, "input_policy must be untrusted or trusted");
+    return -1;
+  }
+  return 0;
+}
+
 static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   static char* kwlist[] = {"path",     "format",       "composed",
-                           "variants", "load_payloads", "max_memory", NULL};
+                           "variants", "load_payloads", "max_memory",
+                           "max_crate_elements", "resolver", "preserve_native_instances", "max_array_elements", "max_threads", "input_policy", NULL};
   const char* path;
   const char* format = NULL;
   int composed = 1;
   PyObject* variants = Py_None;
   int load_payloads = 1;
+  PyObject* max_memory_obj = NULL;
+  PyObject* max_crate_obj = NULL;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpK:load", kwlist,
+  unsigned long long max_crate_elements = 0;
+  PyObject* max_array_obj = NULL;
+  unsigned long long max_array_elements = 0;
+  PyObject* threads_obj = NULL;
+  const char* input_policy = "untrusted";
+  PyObject* resolver_obj = Py_None;
+  int preserve_native_instances = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpOOOpOOs:load", kwlist,
                                    &path, &format, &composed, &variants,
-                                   &load_payloads, &max_memory)) {
+                                   &load_payloads, &max_memory_obj,
+                                   &max_crate_obj, &resolver_obj, &preserve_native_instances, &max_array_obj, &threads_obj, &input_policy)) {
     return NULL;
+  }
+  if (max_memory_obj) {
+    max_memory = PyLong_AsUnsignedLongLong(max_memory_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_crate_obj) {
+    max_crate_elements = PyLong_AsUnsignedLongLong(max_crate_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_array_obj) {
+    max_array_elements = PyLong_AsUnsignedLongLong(max_array_obj);
+    if (PyErr_Occurred()) return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
 
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
+  if (parse_execution_options(threads_obj, input_policy, &opts) != 0) return NULL;
   if (parse_format(format, &opts.format) != 0) return NULL;
   opts.composed = composed ? 1 : 0;
   opts.load_payloads = load_payloads ? 1 : 0;
-  opts.max_memory = max_memory;
+  opts.preserve_native_instances = preserve_native_instances ? 1 : 0;
+  lightusd_asset_resolver* resolver =
+      lightusd_resolver_handle(st, resolver_obj);
+  if (resolver_obj != Py_None && !resolver) return NULL;
+  opts.resolver = resolver;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
+  opts.max_crate_elements = max_crate_elements;
+  if (max_array_elements) opts.max_array_elements = max_array_elements;
 
   variant_overrides vo;
   if (variants_from_dict(variants, &vo) != 0) return NULL;
@@ -207,21 +268,37 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
 
   lightusd_stage* stage = NULL;
   lightusd_status status;
+  lightusd_resolver_clear_error(resolver_obj);
   Py_BEGIN_ALLOW_THREADS
   status = lightusd_stage_load(path, &opts, &stage);
   Py_END_ALLOW_THREADS
   variants_clear(&vo);
+  if (lightusd_resolver_restore_error(resolver_obj)) {
+    if (stage) lightusd_stage_destroy(stage);
+    return NULL;
+  }
   if (status != LIGHTUSD_OK) return lightusd_raise(st, status, path);
   return lightusd_wrap_stage(st, stage);
 }
 
 static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
                                   size_t size, const char* format,
-                                  unsigned long long max_memory) {
+                                  unsigned long long max_memory,
+                                  unsigned long long max_crate_elements,
+                                  unsigned long long max_array_elements,
+                                  int32_t max_threads, uint32_t input_policy) {
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
+  opts.max_threads = max_threads;
+  opts.input_policy = input_policy;
   if (parse_format(format, &opts.format) != 0) return NULL;
-  opts.max_memory = max_memory;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
+  opts.max_crate_elements = max_crate_elements;
+  if (max_array_elements) opts.max_array_elements = max_array_elements;
 
   lightusd_stage* stage = NULL;
   lightusd_status status;
@@ -242,23 +319,48 @@ static PyObject* mod_loads(PyObject* module, PyObject* args) {
   if (!data) return NULL;
   Py_ssize_t size = PyBytes_Size(tmp);
   PyObject* res = load_from_buffer(st, (const uint8_t*)data, (size_t)size,
-                                   "usda", 0);
+                                   "usda", 0, 0, 0, 0, LIGHTUSD_INPUT_UNTRUSTED);
   Py_XDECREF(tmp);
   return res;
 }
 
 static PyObject* mod_load_bytes(PyObject* module, PyObject* args,
                                 PyObject* kwargs) {
-  static char* kwlist[] = {"data", "format", "max_memory", NULL};
+  static char* kwlist[] = {"data", "format", "max_memory",
+                           "max_crate_elements", "max_array_elements", "max_threads", "input_policy", NULL};
   PyObject* data_obj;
   const char* format = NULL;
+  PyObject* max_memory_obj = NULL;
+  PyObject* max_crate_obj = NULL;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|zK:load_bytes", kwlist,
-                                   &data_obj, &format, &max_memory)) {
+  unsigned long long max_crate_elements = 0;
+  PyObject* max_array_obj = NULL;
+  unsigned long long max_array_elements = 0;
+  PyObject* threads_obj = NULL;
+  const char* input_policy = "untrusted";
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|zOOOOs:load_bytes", kwlist,
+                                   &data_obj, &format, &max_memory_obj,
+                                   &max_crate_obj, &max_array_obj, &threads_obj, &input_policy)) {
     return NULL;
+  }
+  if (max_memory_obj) {
+    max_memory = PyLong_AsUnsignedLongLong(max_memory_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_crate_obj) {
+    max_crate_elements = PyLong_AsUnsignedLongLong(max_crate_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_array_obj) {
+    max_array_elements = PyLong_AsUnsignedLongLong(max_array_obj);
+    if (PyErr_Occurred()) return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
+
+  lightusd_load_options execution_options;
+  lightusd_load_options_init(&execution_options);
+  if (parse_execution_options(threads_obj, input_policy, &execution_options) != 0) return NULL;
 
   /* Accept bytes / bytearray / any buffer via bytes(); the C loader copies
    * into its own structures anyway. */
@@ -271,26 +373,54 @@ static PyObject* mod_load_bytes(PyObject* module, PyObject* args,
     return NULL;
   }
   PyObject* res = load_from_buffer(st, (const uint8_t*)buf, (size_t)size,
-                                   format, max_memory);
+                                   format, max_memory, max_crate_elements, max_array_elements, execution_options.max_threads, execution_options.input_policy);
   Py_DECREF(bytes);
   return res;
 }
 
 static PyObject* mod_flatten_file(PyObject* module, PyObject* args,
                                   PyObject* kwargs) {
-  static char* kwlist[] = {"src", "dst", "max_memory", NULL};
+  static char* kwlist[] = {"src", "dst", "max_memory",
+                           "max_crate_elements", "max_array_elements", "max_threads", "input_policy", NULL};
   const char* src;
   const char* dst;
+  PyObject* max_memory_obj = NULL;
+  PyObject* max_crate_obj = NULL;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ss|K:flatten_file", kwlist,
-                                   &src, &dst, &max_memory)) {
+  unsigned long long max_crate_elements = 0;
+  PyObject* max_array_obj = NULL;
+  unsigned long long max_array_elements = 0;
+  PyObject* threads_obj = NULL;
+  const char* input_policy = "untrusted";
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ss|OOOOs:flatten_file", kwlist,
+                                   &src, &dst, &max_memory_obj,
+                                   &max_crate_obj, &max_array_obj, &threads_obj, &input_policy)) {
     return NULL;
+  }
+  if (max_memory_obj) {
+    max_memory = PyLong_AsUnsignedLongLong(max_memory_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_crate_obj) {
+    max_crate_elements = PyLong_AsUnsignedLongLong(max_crate_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (max_array_obj) {
+    max_array_elements = PyLong_AsUnsignedLongLong(max_array_obj);
+    if (PyErr_Occurred()) return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
-  opts.max_memory = max_memory;
+  if (parse_execution_options(threads_obj, input_policy, &opts) != 0) return NULL;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
+  opts.max_crate_elements = max_crate_elements;
+  if (max_array_elements) opts.max_array_elements = max_array_elements;
   lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
   status = lightusd_flatten_file_to_usdc(src, dst, &opts);
@@ -315,6 +445,19 @@ static PyObject* mod_set_normalizer(PyObject* module, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* mod_type_descriptor(PyObject* module, PyObject* args) {
+  unsigned int type;
+  lu_type_descriptor desc;
+  (void)module;
+  if (!PyArg_ParseTuple(args, "I:_type_descriptor", &type)) return NULL;
+  if (type > UINT16_MAX || !lightusd_type_describe((lightusd_type)type, 0, &desc) || !desc.storage) {
+    PyErr_SetString(PyExc_TypeError, "type has no numeric storage"); return NULL;
+  }
+  const lu_component_info* info = lightusd_component_get(desc.storage);
+  char format[2] = {info->format, 0};
+  return Py_BuildValue("(is)", (int)desc.components, format);
+}
+
 static PyObject* mod_type_from_name(PyObject* module, PyObject* args) {
   (void)module;
   const char* name;
@@ -329,7 +472,245 @@ static PyObject* mod_type_name(PyObject* module, PyObject* args) {
   return PyUnicode_FromString(lightusd_type_name((lightusd_type)type));
 }
 
+
+/* ============================================================
+ * Portable light-filter registration
+ * ============================================================ */
+
+/* Slots keep Python callables alive for the lifetime of the registration. The
+ * parser can run on conversion worker threads, so it acquires the GIL. */
+typedef struct {
+  PyObject* callable;
+  int used;
+} lightusd_py_filter_slot;
+
+static lightusd_py_filter_slot g_py_filters[32];
+
+static int lightusd_py_filter_parse(const lightusd_light_filter_params* params,
+                                    void* user, float* intensity,
+                                    float* color) {
+  lightusd_py_filter_slot* slot = (lightusd_py_filter_slot*)user;
+  if (!slot || !slot->callable) return 0;
+  PyGILState_STATE gil = PyGILState_Ensure();
+  int accepted = 0;
+  PyObject* dict = Py_BuildValue(
+      "{s:s,s:s,s:f,s:(fff),s:[ffffffff]}", "kind",
+      params && params->kind ? params->kind : "", "prim_path",
+      params && params->prim_path ? params->prim_path : "", "intensity",
+      params ? (double)params->intensity : 1.0, "color",
+      params ? (double)params->color[0] : 1.0,
+      params ? (double)params->color[1] : 1.0,
+      params ? (double)params->color[2] : 1.0, "values",
+      params ? (double)params->values[0] : 0.0,
+      params ? (double)params->values[1] : 0.0,
+      params ? (double)params->values[2] : 0.0,
+      params ? (double)params->values[3] : 0.0,
+      params ? (double)params->values[4] : 0.0,
+      params ? (double)params->values[5] : 0.0,
+      params ? (double)params->values[6] : 0.0,
+      params ? (double)params->values[7] : 0.0);
+  if (!dict) {
+    PyErr_Print();
+    PyGILState_Release(gil);
+    return 0;
+  }
+  PyObject* result = PyObject_CallFunctionObjArgs(slot->callable, dict, NULL);
+  Py_DECREF(dict);
+  if (result) {
+    Py_ssize_t size = PyTuple_Check(result) ? PyTuple_Size(result) : -1;
+    double value = PyFloat_AsDouble(
+        size == 4 ? PyTuple_GetItem(result, 0)
+                  : (size == 2 ? PyTuple_GetItem(result, 0) : result));
+    if (!PyErr_Occurred() && value >= 0.0) {
+      *intensity = (float)value;
+      if (size == 4) {
+        for (int k = 0; k < 3; ++k) {
+          PyObject* channel = PyTuple_GetItem(result, k + 1);
+          color[k] = (float)PyFloat_AsDouble(channel);
+        }
+        accepted = !PyErr_Occurred();
+      } else if (size == 2) {
+        PyObject* rgb = PyTuple_GetItem(result, 1);
+        if (rgb && PyTuple_Check(rgb) && PyTuple_Size(rgb) == 3) {
+          for (int k = 0; k < 3; ++k)
+            color[k] = (float)PyFloat_AsDouble(PyTuple_GetItem(rgb, k));
+          accepted = !PyErr_Occurred();
+        }
+      } else {
+        accepted = 1;
+      }
+    }
+    Py_DECREF(result);
+  }
+  if (!accepted && PyErr_Occurred()) PyErr_Print();
+  PyGILState_Release(gil);
+  return accepted;
+}
+
+static PyObject* lightusd_py_register_light_filter(PyObject* self,
+                                                   PyObject* args) {
+  (void)self;
+  const char* kind = NULL;
+  PyObject* callable = NULL;
+  if (!PyArg_ParseTuple(args, "sO:register_light_filter", &kind, &callable))
+    return NULL;
+  if (!PyCallable_Check(callable)) {
+    PyErr_SetString(PyExc_TypeError, "register_light_filter expects a callable");
+    return NULL;
+  }
+  int slot_index = -1;
+  for (int i = 0; i < 32; ++i)
+    if (!g_py_filters[i].used) {
+      slot_index = i;
+      break;
+    }
+  if (slot_index < 0) {
+    PyErr_SetString(PyExc_RuntimeError, "too many registered light filters");
+    return NULL;
+  }
+  Py_INCREF(callable);
+  g_py_filters[slot_index].callable = callable;
+  g_py_filters[slot_index].used = 1;
+  const lightusd_status status = lightusd_register_light_filter(
+      kind, lightusd_py_filter_parse, &g_py_filters[slot_index]);
+  if (status != LIGHTUSD_OK) {
+    Py_DECREF(callable);
+    g_py_filters[slot_index].callable = NULL;
+    g_py_filters[slot_index].used = 0;
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  Py_RETURN_NONE;
+}
+
+static PyObject* lightusd_py_unregister_light_filter(PyObject* self,
+                                                     PyObject* args) {
+  (void)self;
+  const char* kind = NULL;
+  if (!PyArg_ParseTuple(args, "s:unregister_light_filter", &kind)) return NULL;
+  const lightusd_status status = lightusd_unregister_light_filter(kind);
+  if (status != LIGHTUSD_OK) {
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  for (int i = 0; i < 32; ++i) {
+    /* The C layer keys registrations by kind; clear the first free slot whose
+     * kind is no longer registered. */
+    if (!g_py_filters[i].used) continue;
+    int still_registered = 0;
+    const size_t count = lightusd_light_filter_kind_count();
+    char name[64];
+    for (size_t k = 0; k < count; ++k) {
+      size_t required = 0;
+      if (lightusd_light_filter_kind(k, name, sizeof name, &required) ==
+              LIGHTUSD_OK &&
+          strcmp(name, kind) == 0) {
+        still_registered = 1;
+        break;
+      }
+    }
+    if (still_registered) break;
+    Py_DECREF(g_py_filters[i].callable);
+    g_py_filters[i].callable = NULL;
+    g_py_filters[i].used = 0;
+    break;
+  }
+  Py_RETURN_NONE;
+}
+
+static PyObject* lightusd_py_light_filter_kinds(PyObject* self, PyObject* ignored) {
+  (void)self;
+  (void)ignored;
+  const size_t count = lightusd_light_filter_kind_count();
+  PyObject* list = PyList_New((Py_ssize_t)count);
+  if (!list) return NULL;
+  for (size_t i = 0; i < count; ++i) {
+    char name[64];
+    size_t required = 0;
+    if (lightusd_light_filter_kind(i, name, sizeof name, &required) !=
+        LIGHTUSD_OK) {
+      Py_DECREF(list);
+      PyErr_SetString(PyExc_RuntimeError, "light filter kind enumeration failed");
+      return NULL;
+    }
+    PyObject* item = PyUnicode_FromString(name);
+    if (!item || PyList_SetItem(list, (Py_ssize_t)i, item) != 0) {
+      Py_XDECREF(item);
+      Py_DECREF(list);
+      return NULL;
+    }
+  }
+  return list;
+}
+
+/* light_filter_effective(stage, prim_path, time=0.0) -> (intensity, (r, g, b)) */
+static PyObject* lightusd_py_light_filter_effective(PyObject* self,
+                                                    PyObject* args) {
+  (void)self;
+  PyObject* stage_obj = NULL;
+  const char* path = NULL;
+  double time = 0.0;
+  if (!PyArg_ParseTuple(args, "Os|d:light_filter_effective", &stage_obj, &path,
+                        &time))
+    return NULL;
+  lightusd_stage* stage = lightusd_stage_handle(stage_obj);
+  if (!stage) {
+    PyErr_SetString(PyExc_ValueError, "invalid stage");
+    return NULL;
+  }
+  const lightusd_prim prim = lightusd_stage_prim_at_path(stage, path);
+  float intensity = 1.0f, color[3] = {1.0f, 1.0f, 1.0f};
+  if (lightusd_light_filter_parse(stage, prim, time, &intensity, color) !=
+      LIGHTUSD_OK) {
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  return Py_BuildValue("f(fff)", (double)intensity, (double)color[0],
+                       (double)color[1], (double)color[2]);
+}
+
 static PyMethodDef module_methods[] = {
+    {"register_light_filter", lightusd_py_register_light_filter, METH_VARARGS,
+     "register_light_filter(kind, callable) -> None; the callable receives the "
+     "authored filter parameters and returns an intensity or (intensity, rgb)."},
+    {"unregister_light_filter", lightusd_py_unregister_light_filter,
+     METH_VARARGS, "unregister_light_filter(kind) -> None"},
+    {"light_filter_kinds", lightusd_py_light_filter_kinds, METH_NOARGS,
+     "light_filter_kinds() -> list[str]"},
+    {"light_filter_effective", lightusd_py_light_filter_effective, METH_VARARGS,
+     "light_filter_effective(stage, prim_path, time=0.0) -> (intensity, (r, g, b))"},
+    {"_validate_physics", (PyCFunction)(void (*)(void))lightusd_validate_physics,
+     METH_VARARGS | METH_KEYWORDS, "Validate physics through the native semantic validator."},
+    {"_physics_schema_definitions", lightusd_physics_schema_definitions, METH_NOARGS,
+     "Return generated native UsdPhysics schema/property descriptors."},
+    {"_physics_schema_provenance", lightusd_physics_schema_provenance, METH_NOARGS,
+     "Return generated schema provenance as JSON."},
+    {"_query_physics", (PyCFunction)(void (*)(void))lightusd_query_physics,
+     METH_VARARGS | METH_KEYWORDS, "Query owned authored physics values through the native snapshot API."},
+    {"_convert_units", (PyCFunction)(void (*)(void))lightusd_convert_units,
+     METH_VARARGS | METH_KEYWORDS, "Physics-aware native unit conversion (in place)."},
+    {"_mesh_to_level_set", lightusd_py_mesh_to_level_set, METH_VARARGS,
+     "_mesh_to_level_set(points_f32, indices_i32, counts_i32_or_None, settings) -> level set"},
+    {"_level_set_from_vdb", lightusd_py_level_set_from_vdb, METH_VARARGS,
+     "_level_set_from_vdb(vdb) -> level set (decoded once)"},
+    {"_level_set_write_vdb", lightusd_py_level_set_write_vdb, METH_VARARGS,
+     "_level_set_write_vdb(level_set) -> VDB bytes"},
+    {"_vdb_inspect", lightusd_py_vdb_inspect, METH_VARARGS,
+     "_vdb_inspect(vdb) -> JSON bytes describing the grids"},
+    {"_level_set_info", lightusd_py_level_set_info, METH_VARARGS,
+     "_level_set_info(level_set) -> (voxel_size, background, active_voxels)"},
+    {"_level_set_sample", lightusd_py_level_set_sample, METH_VARARGS,
+     "_level_set_sample(level_set, points_f64) -> float32 bytes"},
+    {"_level_set_to_mesh", lightusd_py_level_set_to_mesh, METH_VARARGS,
+     "_level_set_to_mesh(level_set, max_cells) -> (points_f32, indices_i32) bytes"},
+    {"_level_set_to_tet_mesh", lightusd_py_level_set_to_tet_mesh, METH_VARARGS,
+     "_level_set_to_tet_mesh(level_set, settings) -> (points_f32, tets_i32, surface_i32) bytes"},
+    {"_tet_mesh_quality", lightusd_py_tet_mesh_quality, METH_VARARGS,
+     "_tet_mesh_quality(points_f32, tets_i32) -> mesh quality metrics"},
+    {"_volumetric_device", lightusd_py_volumetric_device, METH_VARARGS,
+     "_volumetric_device(device) -> 'cpu' | 'cuda' | 'hip' (raises UsdError when unavailable)"},
+    {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
+     METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,
      METH_VARARGS | METH_KEYWORDS,
      "load(path, *, format=None, composed=True, variants=None, "
@@ -347,12 +728,13 @@ static PyMethodDef module_methods[] = {
      "to_render_scene(stage, *, triangulate=True, compute_normals=True, "
      "compute_tangents=False, load_textures=True, time=0.0, "
      "duplicate_instance_meshes=False) -> RenderScene"},
+    {"_type_descriptor", mod_type_descriptor, METH_VARARGS,
+     "Numeric type layout."},
     {"_set_normalizer", mod_set_normalizer, METH_VARARGS,
      "Register the value normalizer used by authoring APIs (internal)."},
     {"type_from_name", mod_type_from_name, METH_VARARGS,
      "type_from_name(usd_type_name) -> int"},
-    {"type_name", mod_type_name, METH_VARARGS,
-     "type_name(type_id) -> str"},
+    {"type_name", mod_type_name, METH_VARARGS, "type_name(type_id) -> str"},
     {NULL, NULL, 0, NULL},
 };
 
@@ -406,6 +788,7 @@ static int module_exec(PyObject* module) {
   if (lightusd_register_prim_types(module, st) < 0) return -1;
   if (lightusd_register_stage_type(module, st) < 0) return -1;
   if (lightusd_register_render_types(module, st) < 0) return -1;
+  if (lightusd_register_resolver_types(module, st) < 0) return -1;
 
   /* ValueBlock sentinel */
   {
@@ -452,6 +835,9 @@ static int module_traverse(PyObject* module, visitproc visit, void* arg) {
   Py_VISIT(st->RenderNodeType);
   Py_VISIT(st->RenderLightType);
   Py_VISIT(st->RenderCameraType);
+  Py_VISIT(st->ResolverType);
+  Py_VISIT(st->ResolverBindingType);
+  Py_VISIT(st->ResolverCacheScopeType);
   Py_VISIT(st->ValueBlock);
   Py_VISIT(st->normalizer);
   return 0;
@@ -482,6 +868,9 @@ static int module_clear(PyObject* module) {
   Py_CLEAR(st->RenderNodeType);
   Py_CLEAR(st->RenderLightType);
   Py_CLEAR(st->RenderCameraType);
+  Py_CLEAR(st->ResolverType);
+  Py_CLEAR(st->ResolverBindingType);
+  Py_CLEAR(st->ResolverCacheScopeType);
   Py_CLEAR(st->ValueBlock);
   Py_CLEAR(st->normalizer);
   return 0;

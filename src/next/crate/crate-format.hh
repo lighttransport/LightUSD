@@ -8,10 +8,12 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "../strfmt.hh"
+#include "../c/lightusd-core-c.h"  // lu_half_to_float / lu_float_to_half
 
 namespace lightusd {
 namespace next {
@@ -26,64 +28,9 @@ namespace next {
 // (round-to-nearest-even). Half-origin values round-trip byte-exact: a float
 // widened from a half has zero low mantissa bits, so narrowing reproduces it.
 
-inline float HalfToFloat(uint16_t h) {
-  uint32_t sign = static_cast<uint32_t>(h >> 15) & 1u;
-  uint32_t exp = static_cast<uint32_t>(h >> 10) & 0x1Fu;
-  uint32_t mant = static_cast<uint32_t>(h) & 0x3FFu;
-  uint32_t f;
-  if (exp == 0) {
-    if (mant == 0) {
-      f = sign << 31;  // +/- zero
-    } else {
-      // Subnormal half -> normalized float.
-      exp = 1;
-      while ((mant & 0x400u) == 0) {
-        mant <<= 1;
-        exp--;
-      }
-      mant &= 0x3FFu;
-      f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mant << 13);
-    }
-  } else if (exp == 0x1Fu) {
-    f = (sign << 31) | (0xFFu << 23) | (mant << 13);  // inf / nan
-  } else {
-    f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mant << 13);
-  }
-  float out;
-  std::memcpy(&out, &f, sizeof(out));
-  return out;
-}
+inline float HalfToFloat(uint16_t h) { return lu_half_to_float(h); }
 
-inline uint16_t FloatToHalf(float value) {
-  uint32_t f;
-  std::memcpy(&f, &value, sizeof(f));
-  uint16_t sign = static_cast<uint16_t>((f >> 16) & 0x8000u);
-  uint32_t fexp = (f >> 23) & 0xFFu;
-  uint32_t mant = f & 0x7FFFFFu;
-
-  if (fexp == 0xFFu) {  // inf / nan
-    return static_cast<uint16_t>(sign | 0x7C00u | (mant ? 0x200u : 0u));
-  }
-  int32_t exp = static_cast<int32_t>(fexp) - 127 + 15;
-  if (exp >= 0x1F) {
-    return static_cast<uint16_t>(sign | 0x7C00u);  // overflow -> inf
-  }
-  if (exp <= 0) {
-    if (exp < -10) return sign;  // underflow -> zero
-    mant |= 0x800000u;
-    uint32_t shift = static_cast<uint32_t>(14 - exp);
-    uint32_t hm = mant >> shift;
-    uint32_t rem = mant & ((1u << shift) - 1u);
-    uint32_t half = 1u << (shift - 1);
-    if (rem > half || (rem == half && (hm & 1u))) hm++;  // round to nearest even
-    return static_cast<uint16_t>(sign | hm);
-  }
-  uint16_t h = static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp) << 10) |
-                                     (mant >> 13));
-  uint32_t rem = mant & 0x1FFFu;
-  if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) h++;  // round to nearest even
-  return h;
-}
+inline uint16_t FloatToHalf(float value) { return lu_float_to_half(value); }
 
 // ============================================================
 // Crate file constants
@@ -280,9 +227,7 @@ struct CrateSection {
   int64_t start;      // File offset
   int64_t size;       // Section size in bytes
 
-  std::string name_str() const {
-    return std::string(name, strnlen(name, 15));
-  }
+  std::string name_str() const;
 };
 
 /// Table of contents
@@ -290,14 +235,7 @@ struct CrateTOC {
   std::vector<CrateSection> sections;
 
   /// Find section by name
-  const CrateSection* find(const char* name) const {
-    for (const auto& s : sections) {
-      if (strncmp(s.name, name, 15) == 0) {
-        return &s;
-      }
-    }
-    return nullptr;
-  }
+  const CrateSection* find(const char* name) const;
 };
 
 /// File version
@@ -306,29 +244,14 @@ struct CrateVersion {
   uint8_t minor;
   uint8_t patch;
 
-  bool is_valid() const {
-    // Check minimum version
-    if (major < kCrateMinVersionMajor) return false;
-    if (major == kCrateMinVersionMajor) {
-      if (minor < kCrateMinVersionMinor) return false;
-      if (minor == kCrateMinVersionMinor && patch < kCrateMinVersionPatch) return false;
-    }
-    // Check maximum version
-    if (major > kCrateMaxVersionMajor) return false;
-    if (major == kCrateMaxVersionMajor) {
-      if (minor > kCrateMaxVersionMinor) return false;
-    }
-    return true;
-  }
+  bool is_valid() const;
 
-  std::string to_string() const {
-    return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
-  }
+  std::string to_string() const;
 
   /// Crate files older than 0.7.0 store array element counts as uint32 (pxr
   /// crateFile.cpp _Write/_ReadUncompressedArray:
   /// `(ver < CrateFile::Version(0,7,0)) ? Read<uint32_t>() : Read<uint64_t>()`).
-  bool is_pre_070() const { return major == 0 && minor < 7; }
+  bool is_pre_070() const;
 };
 
 // ============================================================
@@ -338,25 +261,25 @@ struct CrateVersion {
 /// Token index
 struct TokenIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// String index
 struct StringIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// Path index
 struct PathIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// Fieldset index
 struct FieldsetIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 // ============================================================
@@ -428,7 +351,6 @@ struct CompressResult {
 };
 
 /// Compress data with LZ4
-CompressResult CompressLZ4(const uint8_t* src, size_t src_size);
 
 /// Encode integers using USD's integer compression (inverse of DecompressIntegers)
 /// Returns the compressed byte representation.
@@ -445,8 +367,24 @@ std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count);
 /// Compress with CompressCrateBlob (adds prefix).
 /// Decompress with DecompressCrateBlob (strips prefix).
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size);
+/// Compress and synchronously emit borrowed encoded bytes once. The bytes
+/// remain valid only during emit. On compression failure emit is never called;
+/// destination errors belong to the emitter. Avoids an intermediate result
+/// vector when the destination already owns its output buffer.
+bool CompressCrateBlobTo(const uint8_t* src, size_t src_size,
+                         const std::function<void(const uint8_t*, size_t)>& emit,
+                         std::string* error = nullptr);
+/// Decompress a crate blob whose header declares an exact uncompressed size.
+/// A valid-but-short LZ4 stream is rejected.
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
                                      size_t uncompressed_size);
+/// Decompress a crate blob into a capacity-bounded buffer. The decoded length
+/// may be shorter than `capacity`; use when the caller only has an upper bound.
+DecompressResult DecompressCrateBlobUpto(const uint8_t* src, size_t src_size,
+                                         size_t capacity);
+/// Compatibility wrapper for the exact-size policy.
+DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
+                                          size_t expected_size);
 DecompressResult DecompressCrateBlobWithCapacityHint(
     const uint8_t* src, size_t src_size, size_t uncompressed_size_limit,
     size_t initial_capacity);
@@ -464,6 +402,12 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 /// Encode uint32_t values using pxrUSD delta-coding format.
 /// Returns the raw (uncompressed) delta-coded byte sequence.
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count);
+
+/// Encode an immutable projected column without materializing its u32 values.
+/// The accessor may be called concurrently, repeatedly, and out of order;
+/// its inputs must stay alive and unchanged until this call returns.
+std::vector<uint8_t> EncodeDeltaU32Projected(
+    size_t count, const std::function<uint32_t(size_t)>& value_at);
 
 /// Decode uint32_t values from pxrUSD delta-coded format.
 /// buffer points to the raw (already decompressed) delta-coded data.

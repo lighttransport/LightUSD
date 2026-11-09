@@ -5,9 +5,10 @@
 // from the catalog/orchestration TU: streaming callers use these without
 // compiling material, hierarchy, or full scene conversion machinery.
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 #include "render-extract.hh"
-#include "value-types.hh"
+#include "next/types/vec-pod.hh"  // value::float2 / float3 only
 
 #include <algorithm>
 #include <string>
@@ -22,27 +23,7 @@ using ::lightusd::next::Value;
 
 namespace {
 
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) {
-    *out = *result;
-    return true;
-  }
-  if (const std::string* result = value->as_string()) {
-    *out = *result;
-    return true;
-  }
-  return false;
-}
 
 bool ReadExtent(const UsdPrim& prim, double time, value::float3* minimum,
                 value::float3* maximum) {
@@ -62,12 +43,12 @@ void FillProxyMesh(const UsdPrim& prim,
                    const std::vector<int>& face_indices, RenderMesh* out) {
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  out->face_vertex_counts.reserve(face_counts.size());
+  out->face_vertex_counts.reserve_exact(face_counts.size());
   for (int count : face_counts) {
     out->face_vertex_counts.push_back(
         count < 0 ? uint32_t{0} : static_cast<uint32_t>(count));
   }
-  out->face_vertex_indices.reserve(face_indices.size());
+  out->face_vertex_indices.reserve_exact(face_indices.size());
   for (int index : face_indices) {
     out->face_vertex_indices.push_back(
         index < 0 ? uint32_t{0} : static_cast<uint32_t>(index));
@@ -78,10 +59,10 @@ void FillProxyMesh(const UsdPrim& prim,
     out->points.push_back(point[2]);
   }
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
-  GetBool(prim, "doubleSided", &out->double_sided);
+  GetPropBool(prim, "doubleSided", &out->double_sided);
   out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
   out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
   for (const value::float3& point : points) {
@@ -127,7 +108,7 @@ bool FillExtentProxyMesh(const UsdPrim& prim, double time, RenderMesh* out) {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertExtentProxy(const UsdPrim& prim,
                                               RenderMesh* out) {
   if (!FillExtentProxyMesh(prim, config_.time_code, out)) return false;
   if (config_.mesh.triangulate && !TriangulateMesh(out)) return false;
@@ -137,7 +118,7 @@ bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim,
   return !out->has_alloc_failure();
 }
 
-bool RenderSceneConverter::ConvertBoundsProxy(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertBoundsProxy(const UsdPrim& prim,
                                               const Float3& minimum,
                                               const Float3& maximum,
                                               RenderMesh* out) {

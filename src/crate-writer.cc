@@ -2,6 +2,7 @@
 // Copyright 2025, Light Transport Entertainment Inc.
 //
 // Experimental USDC (Crate) File Writer Implementation
+#include "core/native-io.hh"
 #include "crate-writer.hh"
 
 #include <algorithm>
@@ -38,7 +39,7 @@
 // Direct LZ4 API for OpenUSD compatibility
 #include "lz4/lz4.h"
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "spline-binary.hh"  // SplineBinaryFormatVersion
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
@@ -101,6 +102,8 @@ class FileOutputStream : public IOutputStream {
 public:
   explicit FileOutputStream(const std::string& filepath) : filepath_(filepath) {}
   bool Open(std::string* err) override {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
     file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
     if (!file_.is_open()) {
       if (err) *err = "Failed to open file: " + filepath_;
@@ -312,7 +315,16 @@ namespace {
 
 // Flattened crate-path sort key; plain byte comparison of two keys reproduces
 // pathlib::CompareParsedPaths ordering (see the sort in Finalize).
-std::string BuildCratePathSortKey(const lightusd::Path& path) {
+//
+// Specs are grouped the way pxr groups them, because the SPECS section's
+// integer compression works on the fieldset-offset column: identical prims must
+// be ADJACENT for their shared fieldset to show up as a constant run. pxr writes
+// every prim spec first, then the property specs grouped by property name, so
+// `/World/m0, /World/m1, ..., m0.points, m1.points, ...` (not our previous
+// prim-then-its-own-properties interleave, which made the column cycle). On a
+// 4000-mesh layer this is the difference between a 24 KB and a sub-KB SPECS
+// section. Property specs are leaves, so their relative order is free.
+std::string BuildCratePathSortKeyImpl(const lightusd::Path& path) {
   const std::string& prim = path.prim_part();
   const std::string& prop = path.prop_part();
   std::string key;
@@ -342,6 +354,23 @@ std::string BuildCratePathSortKey(const lightusd::Path& path) {
     key.push_back('\x01');
     key.append(prop);
   }
+  return key;
+}
+
+std::string BuildCratePathSortKey(const lightusd::Path& path) {
+  const bool is_property = !path.prop_part().empty();
+  std::string key;
+  key.reserve(path.prim_part().size() + path.prop_part().size() + 4);
+  // Class byte: prim-ish specs (0) before property specs (1).
+  key.push_back(is_property ? '\x01' : '\x00');
+  if (is_property) {
+    // Group by property name first (all `points` specs adjacent), then by the
+    // owning prim path, so equal values share a fieldset AND land next to each
+    // other.
+    key.append(path.prop_part());
+    key.push_back('\x00');
+  }
+  key.append(BuildCratePathSortKeyImpl(path));
   return key;
 }
 
@@ -486,11 +515,11 @@ bool CrateWriter::Finalize(std::string* err) {
     return false;
   }
 
-  // Finalize phase profiling (LIGHTUSD_CRATE_PROFILE=1): stderr report of the
+  // Caller-controlled finalize phase profiling: stderr report of the
   // sort / path-rebuild / field-pack split, with PackValue further split into
   // inline/dedup/write/other. Timer overhead inflates the profiled run; use
   // the shares, not the absolute wall.
-  profile_finalize_ = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
+  profile_finalize_ = options_.profile_crate;
   const auto prof_now = []() { return std::chrono::steady_clock::now(); };
   const auto prof_ns = [](std::chrono::steady_clock::time_point a,
                           std::chrono::steady_clock::time_point b) -> uint64_t {
@@ -684,7 +713,7 @@ bool CrateWriter::Finalize(std::string* err) {
       if ((fname == "primChildren" || fname == "properties" ||
            fname == "variantSetChildren" || fname == "variantChildren") &&
           field_pair.second.as<std::vector<value::token>>()) {
-        field.value_rep = PackTokenVectorValue(
+        field.value_rep = PackTokenVectorValueDeduped(
             *field_pair.second.as<std::vector<value::token>>(), err);
       } else if (fname == "subLayers" &&
                  field_pair.second.as<std::vector<std::string>>()) {
@@ -2587,6 +2616,17 @@ crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::F
 // ============================================================================
 // Compressed Array Helpers
 // ============================================================================
+
+int64_t CrateWriter::WriteIndexArray32(
+    const uint32_t* data, uint64_t count, const char* typeName, std::string* err) {
+  for (uint64_t i = 0; i < count; ++i) {
+    if (!Write(data[i])) {
+      if (err) { *err = "Failed to write "; *err += typeName; *err += " array element"; }
+      return -1;
+    }
+  }
+  return 0;
+}
 
 int64_t CrateWriter::WriteCompressedArray32(
     const uint32_t* data, uint64_t count,

@@ -4,11 +4,17 @@
 // LightUSD Next - Path implementation
 
 #include "path.hh"
+#include "../c/lightusd-core-c.h"  // lu_path_*
+#include <ostream>
 
 #include "identifier.hh"
 
 namespace lightusd {
 namespace next {
+
+std::ostream& operator<<(std::ostream& os, const Path& path) {
+  return os << path.str();
+}
 
 bool Path::is_valid() const {
   return !path_.empty() && IsValidPathString(path_);
@@ -16,6 +22,23 @@ bool Path::is_valid() const {
 
 Path Path::Parse(const std::string& path_str) {
   if (path_str.empty() || !IsValidPathString(path_str)) return Path();
+  // The grammar allows inline padding inside a variant selection
+  // (`{ set = variant }`); the canonical form has none (OpenUSD SdfPath, and
+  // usdspec-conformance `PathGrammar.printPath`). Padding is only legal inside braces
+  // of a path that already validated, so dropping it there is exact.
+  if (path_str.find('{') != std::string::npos &&
+      path_str.find_first_of(" \t") != std::string::npos) {
+    std::string out;
+    out.reserve(path_str.size());
+    bool in_sel = false;
+    for (char c : path_str) {
+      if (c == '{') in_sel = true;
+      else if (c == '}') in_sel = false;
+      if (in_sel && (c == ' ' || c == '\t')) continue;
+      out.push_back(c);
+    }
+    return Path(std::move(out));
+  }
   return Path(path_str);
 }
 
@@ -38,83 +61,70 @@ bool Path::has_property() const {
 }
 
 Path Path::parent() const {
-  if (path_.empty() || is_root()) {
-    return Path();
-  }
-
-  // Find property separator first
-  size_t dot_pos = path_.find('.');
-  std::string prim_part = (dot_pos != std::string::npos) ? path_.substr(0, dot_pos) : path_;
-
-  // Find last '/'
-  size_t last_slash = prim_part.rfind('/');
-  if (last_slash == std::string::npos) {
-    return Path();
-  }
-  if (last_slash == 0) {
-    return Path("/");
-  }
-  return Path(prim_part.substr(0, last_slash));
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  if (!lu_path_parent(path_.data(), n, &out[0], out.size(), &len)) return Path();
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 std::string Path::name() const {
-  if (path_.empty()) {
-    return "";
-  }
-
-  // Get prim part (before any property)
-  size_t dot_pos = path_.find('.');
-  std::string prim_part = (dot_pos != std::string::npos) ? path_.substr(0, dot_pos) : path_;
-
-  size_t last_slash = prim_part.rfind('/');
-  if (last_slash == std::string::npos) {
-    return prim_part;
-  }
-  return prim_part.substr(last_slash + 1);
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_name(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return out;
 }
 
 std::string Path::property_name() const {
-  size_t dot_pos = path_.find('.');
-  if (dot_pos == std::string::npos) {
-    return "";
-  }
-  return path_.substr(dot_pos + 1);
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_property_name(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return out;
 }
 
 Path Path::prim_path() const {
-  size_t dot_pos = path_.find('.');
-  if (dot_pos == std::string::npos) {
-    return *this;
-  }
-  return Path(path_.substr(0, dot_pos));
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_prim_path(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 std::vector<std::string> Path::elements() const {
   std::vector<std::string> result;
-  if (path_.empty()) {
-    return result;
+  const std::string prim = prim_path().str();
+  size_t count = 0;
+  lu_path_element_count(prim.data(), prim.size(), &count);
+  result.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    std::string e(prim.size() ? prim.size() : 1, '\0');
+    size_t len = 0;
+    lu_path_element(prim.data(), prim.size(), i, &e[0], e.size(), &len);
+    e.resize(len);
+    result.push_back(std::move(e));
   }
-
-  // Get prim part only
-  std::string prim_part = prim_path().str();
-
-  size_t start = 0;
-  if (prim_part[0] == '/') {
-    start = 1;
-  }
-
-  while (start < prim_part.size()) {
-    size_t end = prim_part.find('/', start);
-    if (end == std::string::npos) {
-      result.push_back(prim_part.substr(start));
-      break;
-    }
-    result.push_back(prim_part.substr(start, end - start));
-    start = end + 1;
-  }
-
   return result;
 }
+
+namespace {
+// a + sep + b, allocated at exactly its length: `x + "/" + y` grows its
+// temporary by doubling, and a composed stage keeps ~10M of these path
+// strings (full-LOD benchmark scene: 2.7 GiB of heap for 1.7 GiB of text).
+std::string JoinExact(const std::string& a, const char* sep,
+                      const std::string& b) {
+  const size_t sl = std::char_traits<char>::length(sep);
+  std::string out;
+  out.reserve(a.size() + sl + b.size());
+  out.append(a).append(sep, sl).append(b);
+  return out;
+}
+}  // namespace
 
 Path Path::append_child(const std::string& child_name) const {
   // Authoring boundary: an appended component must be a valid identifier
@@ -123,12 +133,22 @@ Path Path::append_child(const std::string& child_name) const {
     return Path();
   }
   if (path_.empty()) {
-    return Path("/" + child_name);
+    return Path(JoinExact(std::string(), "/", child_name));
   }
   if (path_.back() == '/') {
-    return Path(path_ + child_name);
+    return Path(JoinExact(path_, "", child_name));
   }
-  return Path(path_ + "/" + child_name);
+  return Path(JoinExact(path_, "/", child_name));
+}
+
+Path Path::append_child_unchecked(const std::string& child_name) const {
+  if (path_.empty()) {
+    return Path(JoinExact(std::string(), "/", child_name));
+  }
+  if (path_.back() == '/') {
+    return Path(JoinExact(path_, "", child_name));
+  }
+  return Path(JoinExact(path_, "/", child_name));
 }
 
 Path Path::append_property(const std::string& prop_name) const {
@@ -139,30 +159,20 @@ Path Path::append_property(const std::string& prop_name) const {
   }
   if (has_property()) {
     // Already has property - replace it
-    return Path(prim_path().str() + "." + prop_name);
+    return Path(JoinExact(prim_path().str(), ".", prop_name));
   }
-  return Path(path_ + "." + prop_name);
+  return Path(JoinExact(path_, ".", prop_name));
 }
 
 Path Path::make_relative_to(const Path& base) const {
-  if (!is_absolute() || !base.is_absolute()) {
-    return *this;  // Can't make relative
-  }
-
-  const std::string& base_str = base.str();
-  if (path_.find(base_str) != 0) {
-    return *this;  // Not a descendant
-  }
-
-  if (path_.size() == base_str.size()) {
-    return Path(".");
-  }
-
-  size_t offset = base_str.size();
-  if (path_[offset] == '/') {
-    offset++;
-  }
-  return Path(path_.substr(offset));
+  const size_t n = path_.size();
+  const std::string& b = base.str();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_make_relative_to(path_.data(), n, b.data(), b.size(), &out[0],
+                           out.size(), &len);
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 const Path& Path::root() {
@@ -174,6 +184,14 @@ const Path& Path::empty_path() {
   static Path empty;
   return empty;
 }
+
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+bool Path::empty() const { return path_.empty(); }
+const std::string& Path::str() const { return path_; }
+const char* Path::c_str() const { return path_.c_str(); }
 
 }  // namespace next
 }  // namespace lightusd

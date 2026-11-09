@@ -18,8 +18,7 @@
 #include "lightusd.hh"
 #include "mmap-array-ref.hh"
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-#include "next/lightusd-next.hh"
-#include "tydra/next/render-converter.hh"
+#include "lightusd-render-cpp.hh"
 #endif
 #include "tydra/obj-export.hh"
 #include "tydra/render-data.hh"
@@ -385,7 +384,7 @@ int main(int argc, char **argv) {
   bool use_next_pipeline = false;
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   use_next_pipeline = use_next;
-  lightusd::next::Stage next_stage;
+  lightusd::api::Stage next_stage;
 #endif
   lightusd::Stage stage;
 
@@ -410,18 +409,25 @@ int main(int argc, char **argv) {
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   if (use_next_pipeline) {
     config_info.push_back({"load_pipeline", "next"});
-    lightusd::next::LoadUSDOptions load_options;
+    lightusd_load_options load_options;
+    lightusd::api::InitLoadOptions(&load_options);
+    load_options.preserve_native_instances = 1;
     if (mmap_lowmem) {
       config_info.push_back({"mmap_zero_copy", "true"});
     }
     config_info.push_back({"asset_resolver", no_assetresolver ? "null" : "default"});
 
-    lightusd::next::pcp::CompositionOptions comp_opts;
-    comp_opts.num_threads = compose_threads;
-    comp_opts.load_payloads = next_load_payloads;
-    ret = lightusd::next::LoadUSDComposed(filepath, &next_stage,
-                                          load_options, &warn, &err,
-                                          &comp_opts);
+    load_options.max_threads = compose_threads < 0 ? 0 : compose_threads;
+    load_options.load_payloads = next_load_payloads;
+    ret = next_stage.load(filepath.c_str(), &load_options) == LIGHTUSD_OK;
+    if (!ret) err = lightusd::api::LastError();
+    else {
+      lightusd::api::String warnings;
+      if (next_stage.take_warnings(&warnings) == LIGHTUSD_OK) {
+        const auto text = lightusd::api::StringView(warnings);
+        warn.assign(text.data ? text.data : "", text.len);
+      }
+    }
     if (compose_threads == -1) {
       config_info.push_back({"compose_threads", "auto"});
     } else {
@@ -485,7 +491,8 @@ int main(int argc, char **argv) {
     size_t stage_mem = 0;
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline) {
-      stage_mem = next_stage.GetMemoryUsage();
+      lightusd_stage_stats stats{};
+      if (next_stage.stats(&stats) == LIGHTUSD_OK) stage_mem = stats.memory_bytes;
     } else
 #endif
     {
@@ -513,7 +520,7 @@ int main(int argc, char **argv) {
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   lightusd::tydra::RenderScene render_scene;
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-  lightusd::tydra::next::RenderScene next_render_scene;
+  lightusd::api::RenderScene next_render_scene;
   bool next_render_scene_ready = false;
 #endif
 
@@ -531,30 +538,20 @@ int main(int argc, char **argv) {
       config_info.push_back({"tangent_storage", "unsupported_in_next"});
     }
 
-    lightusd::next::AssetResolver next_asset_resolver;
-    lightusd::tydra::next::ConverterConfig conv_cfg;
+    lightusd_render_config conv_cfg;
+    lightusd::api::InitRenderConfig(&conv_cfg);
     conv_cfg.time_code = timecode;
-    conv_cfg.asset_base_dir = usd_basedir;
-    conv_cfg.mesh.triangulate = triangulate;
-    conv_cfg.mesh.triangulation_method =
-        use_triangle_fan
-            ? lightusd::tydra::next::MeshConfig::TriangulationMethod::Fan
-            : lightusd::tydra::next::MeshConfig::TriangulationMethod::Earcut;
-    conv_cfg.mesh.build_vertex_indices = build_indices;
-    conv_cfg.mesh.compute_normals = !no_tangent;
-    conv_cfg.mesh.compute_tangents = !no_tangent;
-    conv_cfg.mesh.retain_geometry = !lowmem;
-    conv_cfg.point_instancer.retain_source_arrays = false;
-    conv_cfg.material.load_textures = texload && !no_assetresolver;
-    conv_cfg.animation.enabled = !no_animation;
-
-    if (!no_assetresolver) {
-      lightusd::next::ResolverConfig resolver_config;
-      resolver_config.working_directory = usd_basedir;
-      resolver_config.search_paths.push_back(usd_basedir);
-      next_asset_resolver.SetConfig(resolver_config);
-      conv_cfg.asset_resolver = &next_asset_resolver;
-    }
+    conv_cfg.triangulate = triangulate;
+    conv_cfg.triangulation_method = use_triangle_fan ? 1 : 0;
+    conv_cfg.build_vertex_indices = build_indices;
+    conv_cfg.compute_normals = !no_tangent;
+    conv_cfg.compute_tangents = !no_tangent;
+    conv_cfg.discard_geometry = lowmem;
+    conv_cfg.discard_instance_source_arrays = 1;
+    conv_cfg.load_textures = texload && !no_assetresolver;
+    conv_cfg.disable_animation = no_animation;
+    conv_cfg.target_color_space = 0;  // Preserve the converter's sRGB default.
+    conv_cfg.use_default_asset_resolver = !no_assetresolver;
 
     if (!lightusd::value::TimeCode(timecode).is_default()) {
       config_info.push_back({"timecode", std::to_string(timecode)});
@@ -569,36 +566,33 @@ int main(int argc, char **argv) {
 
     switch (tangent_method) {
       case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel:
-        conv_cfg.mesh.tangent_method =
-            lightusd::tydra::next::MeshConfig::TangentComputationMethod::Lengyel;
+        conv_cfg.tangent_method = 1;
         break;
       case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace:
-        conv_cfg.mesh.tangent_method =
-            lightusd::tydra::next::MeshConfig::TangentComputationMethod::MikkTSpace;
+        conv_cfg.tangent_method = 2;
         break;
       case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace:
       case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Hybrid:
-        conv_cfg.mesh.tangent_method =
-            lightusd::tydra::next::MeshConfig::TangentComputationMethod::FastMikkTSpace;
+        conv_cfg.tangent_method = 3;
         break;
     }
 
     const char* method_names[] = {"lengyel", "mikktspace", "fast-mikktspace", "hybrid"};
     config_info.push_back({"tangent_method", method_names[int(tangent_method)]});
 
-    lightusd::tydra::next::RenderSceneConverter converter(conv_cfg);
-    auto result = converter.Convert(next_stage);
-    ret = result.success;
+    ret = lightusd::api::Convert(next_stage, &next_render_scene, &conv_cfg) == LIGHTUSD_OK;
+    next_render_scene_ready = ret;
     if (ret) {
-      next_render_scene = std::move(result.scene);
-      next_render_scene_ready = true;
-    }
-    for (const auto& w : result.warnings) {
-      config_info.push_back({"converter_warning", w});
-    }
-    if (!ret) {
+      lightusd::api::StringList warnings;
+      if (lightusd::api::RenderSceneWarnings(next_render_scene, &warnings) == LIGHTUSD_OK) {
+        for (size_t i = 0; i < lightusd::api::StringListSize(warnings); ++i) {
+          const auto text = lightusd::api::StringListGet(warnings, i);
+          config_info.push_back({"converter_warning", std::string(text.data ? text.data : "", text.len)});
+        }
+      }
+    } else {
       std::cerr << "Failed to convert next Stage to RenderScene: "
-                << result.error << "\n";
+                << lightusd::api::LastError() << "\n";
     }
 #else
     (void)snorm8;
@@ -734,7 +728,8 @@ int main(int argc, char **argv) {
     std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline) {
-      const auto next_stats = next_render_scene.get_stats();
+      lightusd_render_stats next_stats{};
+      lightusd::api::RenderSceneStats(next_render_scene, &next_stats);
       std::cerr << "[timing] Next RenderScene nodes: " << next_stats.node_count
                 << ", meshes: " << next_stats.mesh_count
                 << ", triangles: " << next_stats.total_triangles << "\n";
@@ -749,8 +744,9 @@ int main(int argc, char **argv) {
   if (memstat) {
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline && next_render_scene_ready) {
-      const auto& stats = next_render_scene.get_stats();
-      size_t render_mem = next_render_scene.memory_usage();
+      lightusd_render_stats stats{};
+      lightusd::api::RenderSceneStats(next_render_scene, &stats);
+      size_t render_mem = lightusd::api::RenderSceneMemoryBytes(next_render_scene);
       std::cout << "# Memory Statistics (RenderScene)\n";
       std::cout << "  RenderScene memory usage: " << format_memory_size(render_mem)
                 << " (" << render_mem << " bytes)\n";

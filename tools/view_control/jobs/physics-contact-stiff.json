@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "frictionless-stiff-contact",
+      "kind": "contact",
+      "dt": 0.0001,
+      "steps": 10000,
+      "sample_every": 10,
+      "penetration_max": 0.02,
+      "horizontal_drift_max": 0.0001,
+      "contact_gap": 0,
+      "contact_solref": [0.005, 1]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure clean Ninja targets or isolated translation units without shell eval.
+"""Measure clean/incremental Ninja builds or isolated translation units.
 
 Configure with CMAKE_EXPORT_COMPILE_COMMANDS=ON first. Reports and temporary
 objects belong in ignored build directories. Run timing passes without other
@@ -68,6 +68,19 @@ def summarize(samples):
                   "max": max(s[key] for s in samples)} for key in samples[0]}
 
 
+def source_path(entry):
+    path = Path(entry["file"])
+    return (path if path.is_absolute() else Path(entry["directory"]) / path).resolve()
+
+
+def rebuild_outputs(build, offset):
+    """Read only this invocation's Ninja log entries (including relinks)."""
+    with (build / ".ninja_log").open() as stream:
+        stream.seek(offset)
+        return [parts[3] for line in stream
+                if len(parts := line.rstrip().split("\t")) == 5]
+
+
 def artifact(path, size_tool):
     data = path.read_bytes()
     result = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -93,6 +106,8 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--source", action="append", help="Exact repo-relative source; repeatable")
     mode.add_argument("--target", action="append", help="Ninja target to clean and rebuild; repeatable")
+    parser.add_argument("--changed", action="append", default=[],
+                        help="With --target, measure a rebuild after touching this repo-relative file; repeatable")
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--jobs", type=int, default=16)
     parser.add_argument("--artifact", type=Path, action="append", default=[])
@@ -101,6 +116,8 @@ def main():
     args = parser.parse_args()
     if args.repeat < 1 or args.jobs < 1:
         parser.error("repeat and jobs must be positive")
+    if args.changed and not args.target:
+        parser.error("--changed requires --target")
     root = Path(capture(["git", "rev-parse", "--show-toplevel"], Path.cwd()))
     build = args.build_dir.resolve()
     if not (build / "build.ninja").is_file():
@@ -111,6 +128,9 @@ def main():
     logs.mkdir(exist_ok=True)
     database = build / "compile_commands.json"
     entries = json.loads(database.read_text()) if database.exists() else []
+    changed = [(root / name).resolve() for name in args.changed]
+    if any(not p.is_file() or root.resolve() not in p.parents for p in changed):
+        parser.error("--changed must name an existing file inside the repository")
     compilers = sorted({(e.get("arguments") or shlex.split(e["command"]))[0]
                         for e in entries})
     report = {"snapshot": snapshot(root), "platform": platform.platform(),
@@ -118,6 +138,8 @@ def main():
               "compiler_versions": {c: capture([c, "--version"], root) for c in compilers},
               "cache_sha256": hashlib.sha256((build / "CMakeCache.txt").read_bytes()).hexdigest(),
               "measurements": {}, "artifacts": {},
+              "compile_graph": {"commands": len(entries),
+                                "unique_sources": len({source_path(e) for e in entries})},
               "notes": ["RSS is the largest child process, not aggregate parallel-build RSS.",
                         "Timed commands disable ccache hits and force sccache recompilation.",
                         "Object file bytes include metadata; compare sections and final artifacts too."]}
@@ -125,7 +147,7 @@ def main():
         directory = Path(temp)
         if args.source:
             for index, source in enumerate(args.source):
-                matches = [e for e in entries if Path(e["file"]).resolve() == (root / source).resolve()]
+                matches = [e for e in entries if source_path(e) == (root / source).resolve()]
                 if not matches:
                     raise RuntimeError(f"No compile command for {source}")
                 # A shared support source can belong to several targets with
@@ -153,6 +175,30 @@ def main():
                         "samples": samples, "summary": summarize(samples),
                         "command": argv, "compiler": capture([argv[0], "--version"], root),
                         "object": artifact(obj, args.size_tool)}
+        elif changed:
+            command = ["cmake", "--build", str(build), "--parallel",
+                       str(args.jobs), "--target", *args.target]
+            timed(command, root, logs, "incremental-warmup")
+            for index, path in enumerate(changed):
+                original = path.stat()
+                samples, outputs = [], []
+                try:
+                    for r in range(args.repeat):
+                        os.utime(path, None)
+                        # Compact explicitly so the measured invocation does
+                        # not truncate the log after we record its offset.
+                        capture(["ninja", "-C", str(build), "-t", "recompact"], root)
+                        offset = (build / ".ninja_log").stat().st_size
+                        sample = timed(command, root, logs, f"incremental-{index}-{r}")
+                        rebuilt = rebuild_outputs(build, offset)
+                        sample["compile_count"] = sum(p.endswith((".o", ".obj")) for p in rebuilt)
+                        samples.append(sample)
+                        outputs.append(rebuilt)
+                finally:
+                    os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+                report["measurements"][str(path.relative_to(root.resolve()))] = {
+                    "targets": args.target, "samples": samples,
+                    "summary": summarize(samples), "rebuilt_outputs": outputs}
         else:
             samples = []
             for r in range(args.repeat):

@@ -84,6 +84,7 @@ struct EvalResult {
   std::string source_path;          // Path where value was found
   std::string source_asset;         // Value-clip asset, when applicable
   std::string source_clip_set;      // Named clip set, when applicable
+  ValueClipResolutionInfo clip_resolution;
   std::string error;
 };
 
@@ -256,7 +257,7 @@ T AttributeEval::EvalOr(const UsdPrim& prim, const std::string& attr_name, T fal
     const double* v = result.value.as_double();
     return v ? *v : fallback;
   } else if constexpr (std::is_same_v<T, std::string>) {
-    const std::string* v = result.value.as_string();
+    auto v = result.value.as_string();
     if (v) return *v;
     v = result.value.as_token();
     return v ? *v : fallback;

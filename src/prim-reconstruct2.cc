@@ -105,7 +105,7 @@ bool ReconstructPrim<SkelRoot>(
   (void)references;
   (void)options;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &root->xformOps, err)) {
     return false;
   }
@@ -168,7 +168,7 @@ bool ReconstructPrim<Skeleton>(
   (void)warn;
   (void)references;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &skel->xformOps, err)) {
     return false;
   }
@@ -234,7 +234,7 @@ bool ReconstructPrim<SkelAnimation>(
   (void)references;
   (void)options;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -274,7 +274,7 @@ bool ReconstructPrim<BlendShape>(
 
   DCOUT("Reconstruct BlendShape");
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
 #if defined(__clang__)
 #pragma clang diagnostic push

@@ -47,19 +47,22 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
 /// @param[in] max_memory_bytes Override the writer's max memory estimate limit
 ///            (0 = keep built-in default).
 ///
+/// @param[in] profile_crate Emit conversion/finalization timings to stderr.
 /// @return true upon success.
 ///
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes = 0,
                         int64_t max_memory_bytes = 0,
-                        bool compress_float_arrays = false);
+                        bool compress_float_arrays = false,
+                        bool profile_crate = false);
 
 bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes = 0,
                         int64_t max_memory_bytes = 0,
-                        bool compress_float_arrays = false);
+                        bool compress_float_arrays = false,
+                        bool profile_crate = false);
 
 }  // namespace usdc
 }  // namespace lightusd

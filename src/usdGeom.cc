@@ -21,7 +21,7 @@
 #include "math-util.inc"
 #include "str-util.hh"
 #include "value-pprint.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \

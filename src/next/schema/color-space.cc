@@ -2,6 +2,8 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "color-space.hh"
+#include "schema-predicates.hh"
+#include "../layer/prim-spec.hh"
 
 #include <cmath>
 #include <vector>
@@ -17,23 +19,17 @@ void Append(std::string *dst, const std::string &message) {
   *dst += message;
 }
 
-bool HasApplied(const UsdPrim &prim, const std::string &schema) {
-  for (const std::string &entry : prim.GetMeta().apiSchemas()) {
-    if (entry == schema) return true;
-  }
-  return false;
-}
 
 bool GetStringLike(const UsdPrim &prim, const std::string &property,
                    std::string *out) {
   if (!out) return false;
   const Value *v = prim.GetPropertyValue(property);
   if (!v) return false;
-  if (const std::string *s = v->as_token()) {
+  if (auto s = v->as_token()) {
     *out = *s;
     return true;
   }
-  if (const std::string *s = v->as_string()) {
+  if (auto s = v->as_string()) {
     *out = *s;
     return true;
   }
@@ -143,9 +139,19 @@ bool ComputeColorSpaceName(const UsdPrim &prim, const std::string &property,
         return true;
       }
     }
+    // Property-scoped UsdColorSpaceAPI form: a `<property>:colorSpace:name`
+    // attribute on the same prim (e.g. `inputs:file:colorSpace:name`). It needs
+    // no applied schema; it names the color space of that one attribute.
+    std::string token;
+    if (GetStringLike(prim, property + ":colorSpace:name", &token) &&
+        !token.empty()) {
+      *name = ::lightusd::color::CanonicalizeToken(token);
+      if (authored) *authored = true;
+      return true;
+    }
   }
   for (UsdPrim current = prim; current.IsValid(); current = current.GetParent()) {
-    if (!HasApplied(current, "ColorSpaceAPI")) continue;
+    if (!HasAPISchema(current, "ColorSpaceAPI")) continue;
     std::string token;
     if (GetStringLike(current, "colorSpace:name", &token) && !token.empty()) {
       *name = ::lightusd::color::CanonicalizeToken(token);

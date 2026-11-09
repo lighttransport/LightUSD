@@ -145,6 +145,17 @@ class CrateDataType
 std::string GetCrateDataTypeRepr(CrateDataType dty); // for debug cout
 
 nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id);
+
+/// Cheap "does this crate type id name a known type" query for the per-value
+/// hot loops in the reader. Equivalent to GetCrateDataType(type_id).has_value()
+/// but does not build the CrateDataType record (name + supports_array), which
+/// is the only thing those loops do not need from the type table.
+inline bool IsKnownCrateDataTypeId(int32_t type_id) {
+  // The eternal map in GetCrateDataType() covers every enumerator, so the id
+  // range check is exact: 0 (INVALID) .. NumDataTypes-1.
+  return type_id >= 0 &&
+         type_id < static_cast<int32_t>(CrateDataTypeId::NumDataTypes);
+}
 std::string GetCrateDataTypeName(int32_t type_id);
 std::string GetCrateDataTypeName(CrateDataTypeId type_id);
 

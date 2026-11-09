@@ -1,0 +1,652 @@
+{
+  "wasm32": [
+    {
+      "format": "png",
+      "channels": 1,
+      "value": {
+        "length": 71,
+        "sha256": "2273cdd82c3a7e0f25b0514ac1ae0ba70169ddf6788c0162bea372e82ccda956"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 2,
+      "value": {
+        "length": 75,
+        "sha256": "5e7814dbde16e198f7c917df82528769e0aa3b091eabc8e52a5948bed075f39b"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 3,
+      "value": {
+        "length": 99,
+        "sha256": "c1bcc6da92e3e9e03926a91ad5b2864d4498c429696db7c32dfbf8be2cf1d2f6"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 4,
+      "value": {
+        "length": 103,
+        "sha256": "e3f84357055a3932504e10588cd96d5b8fdd867b05abd6019944fc7688757536"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 1,
+      "value": {
+        "length": 70,
+        "sha256": "6e6a9031fc03dd5608325b13f3b672ef64cdb9eae4d3b0a6754159ebf8437e78"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 2,
+      "value": {
+        "length": 70,
+        "sha256": "57b675a0b4cb39a9909a144eb3186518d1c2cc0dcfe56f6133fa708505f4eb1a"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 3,
+      "value": {
+        "length": 70,
+        "sha256": "fe06629e848aa7f98bc9069e5c5457f72d7893083a9153e5f5ba110afbef42c8"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 4,
+      "value": {
+        "length": 138,
+        "sha256": "119f6745725b9617a047b94dfc25cea6d9d8418e38df7c4badf897f64793f540"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 1,
+      "value": {
+        "length": 162,
+        "sha256": "635e521d20f0ae401089660d6853ec7bbba3ded46af81d8a5a24ad17612dc503"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 2,
+      "value": {
+        "length": 166,
+        "sha256": "b07244c7585152420419677e5cdef40947b8dafe79da33bf2605b07377c5e538"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 3,
+      "value": {
+        "length": 182,
+        "sha256": "b28682267742b746a986f23dc3de97c0affbcae0ec8570fcfc98c62b2baa7e3b"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 4,
+      "value": {
+        "length": 190,
+        "sha256": "9f34d0b032e17f389d1ebc8469815691bf93a329066dcccfe367e8ebbbf20b6a"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 1,
+      "value": {
+        "length": 162,
+        "sha256": "635e521d20f0ae401089660d6853ec7bbba3ded46af81d8a5a24ad17612dc503"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 2,
+      "value": {
+        "length": 166,
+        "sha256": "b07244c7585152420419677e5cdef40947b8dafe79da33bf2605b07377c5e538"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 3,
+      "value": {
+        "length": 182,
+        "sha256": "b28682267742b746a986f23dc3de97c0affbcae0ec8570fcfc98c62b2baa7e3b"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 4,
+      "value": {
+        "length": 190,
+        "sha256": "9f34d0b032e17f389d1ebc8469815691bf93a329066dcccfe367e8ebbbf20b6a"
+      },
+      "error": ""
+    },
+    {
+      "format": "exr",
+      "channels": 1,
+      "value": {
+        "length": 317,
+        "sha256": "557b6bbb3f48d55f46f5e57f88032db43d8436cd016f93cfeaacdab0a5199d6d"
+      },
+      "error": ""
+    },
+    {
+      "format": "exr",
+      "channels": 2,
+      "value": null,
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "exr",
+      "channels": 3,
+      "value": {
+        "length": 369,
+        "sha256": "300a864bae4fdb4e34a87d431ecbb5935a94869309f30134362173d0979e11ce"
+      },
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "exr",
+      "channels": 4,
+      "value": {
+        "length": 395,
+        "sha256": "4471d211b7314a9f249b5d704e3b2db037c2b10cd47f0baccf4ba1a103617b20"
+      },
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "jpeg",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "PNG",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 0,
+      "height": 1,
+      "channels": 4,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 0,
+      "channels": 4,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 65537,
+      "height": 1,
+      "channels": 4,
+      "format": "bad",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 0,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 5,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 2,
+      "height": 2,
+      "channels": 4,
+      "format": "png",
+      "value": null,
+      "error": "Image encoding failed: Image pixel buffer is smaller than width*height*channels*bytesPerChannel."
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 4,
+      "format": "bmp",
+      "value": {
+        "length": 126,
+        "sha256": "98e36639a03ed8041248cfd5f6e3716dfc035ec67368ec7ea6a8f7b0d19278c5"
+      },
+      "error": "Image encoding failed: Image pixel buffer is smaller than width*height*channels*bytesPerChannel."
+    }
+  ],
+  "wasm64": [
+    {
+      "format": "png",
+      "channels": 1,
+      "value": {
+        "length": 71,
+        "sha256": "2273cdd82c3a7e0f25b0514ac1ae0ba70169ddf6788c0162bea372e82ccda956"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 2,
+      "value": {
+        "length": 75,
+        "sha256": "5e7814dbde16e198f7c917df82528769e0aa3b091eabc8e52a5948bed075f39b"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 3,
+      "value": {
+        "length": 99,
+        "sha256": "c1bcc6da92e3e9e03926a91ad5b2864d4498c429696db7c32dfbf8be2cf1d2f6"
+      },
+      "error": ""
+    },
+    {
+      "format": "png",
+      "channels": 4,
+      "value": {
+        "length": 103,
+        "sha256": "e3f84357055a3932504e10588cd96d5b8fdd867b05abd6019944fc7688757536"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 1,
+      "value": {
+        "length": 70,
+        "sha256": "6e6a9031fc03dd5608325b13f3b672ef64cdb9eae4d3b0a6754159ebf8437e78"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 2,
+      "value": {
+        "length": 70,
+        "sha256": "57b675a0b4cb39a9909a144eb3186518d1c2cc0dcfe56f6133fa708505f4eb1a"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 3,
+      "value": {
+        "length": 70,
+        "sha256": "fe06629e848aa7f98bc9069e5c5457f72d7893083a9153e5f5ba110afbef42c8"
+      },
+      "error": ""
+    },
+    {
+      "format": "bmp",
+      "channels": 4,
+      "value": {
+        "length": 138,
+        "sha256": "119f6745725b9617a047b94dfc25cea6d9d8418e38df7c4badf897f64793f540"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 1,
+      "value": {
+        "length": 162,
+        "sha256": "635e521d20f0ae401089660d6853ec7bbba3ded46af81d8a5a24ad17612dc503"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 2,
+      "value": {
+        "length": 166,
+        "sha256": "b07244c7585152420419677e5cdef40947b8dafe79da33bf2605b07377c5e538"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 3,
+      "value": {
+        "length": 182,
+        "sha256": "b28682267742b746a986f23dc3de97c0affbcae0ec8570fcfc98c62b2baa7e3b"
+      },
+      "error": ""
+    },
+    {
+      "format": "tiff",
+      "channels": 4,
+      "value": {
+        "length": 190,
+        "sha256": "9f34d0b032e17f389d1ebc8469815691bf93a329066dcccfe367e8ebbbf20b6a"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 1,
+      "value": {
+        "length": 162,
+        "sha256": "635e521d20f0ae401089660d6853ec7bbba3ded46af81d8a5a24ad17612dc503"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 2,
+      "value": {
+        "length": 166,
+        "sha256": "b07244c7585152420419677e5cdef40947b8dafe79da33bf2605b07377c5e538"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 3,
+      "value": {
+        "length": 182,
+        "sha256": "b28682267742b746a986f23dc3de97c0affbcae0ec8570fcfc98c62b2baa7e3b"
+      },
+      "error": ""
+    },
+    {
+      "format": "dng",
+      "channels": 4,
+      "value": {
+        "length": 190,
+        "sha256": "9f34d0b032e17f389d1ebc8469815691bf93a329066dcccfe367e8ebbbf20b6a"
+      },
+      "error": ""
+    },
+    {
+      "format": "exr",
+      "channels": 1,
+      "value": {
+        "length": 317,
+        "sha256": "557b6bbb3f48d55f46f5e57f88032db43d8436cd016f93cfeaacdab0a5199d6d"
+      },
+      "error": ""
+    },
+    {
+      "format": "exr",
+      "channels": 2,
+      "value": null,
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "exr",
+      "channels": 3,
+      "value": {
+        "length": 369,
+        "sha256": "300a864bae4fdb4e34a87d431ecbb5935a94869309f30134362173d0979e11ce"
+      },
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "exr",
+      "channels": 4,
+      "value": {
+        "length": 395,
+        "sha256": "4471d211b7314a9f249b5d704e3b2db037c2b10cd47f0baccf4ba1a103617b20"
+      },
+      "error": "Image encoding failed: EXR: channels must be 1, 3 or 4."
+    },
+    {
+      "format": "jpeg",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "jpeg",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: jpeg"
+    },
+    {
+      "format": "PNG",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "PNG",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: PNG"
+    },
+    {
+      "format": "",
+      "channels": 1,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 2,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 3,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "format": "",
+      "channels": 4,
+      "value": null,
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 0,
+      "height": 1,
+      "channels": 4,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 0,
+      "channels": 4,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 65537,
+      "height": 1,
+      "channels": 4,
+      "format": "bad",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 0,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 5,
+      "format": "png",
+      "value": {
+        "success": false,
+        "error": "Invalid image dimensions."
+      },
+      "error": "Unsupported image format: "
+    },
+    {
+      "width": 2,
+      "height": 2,
+      "channels": 4,
+      "format": "png",
+      "value": null,
+      "error": "Image encoding failed: Image pixel buffer is smaller than width*height*channels*bytesPerChannel."
+    },
+    {
+      "width": 1,
+      "height": 1,
+      "channels": 4,
+      "format": "bmp",
+      "value": {
+        "length": 126,
+        "sha256": "98e36639a03ed8041248cfd5f6e3716dfc035ec67368ec7ea6a8f7b0d19278c5"
+      },
+      "error": "Image encoding failed: Image pixel buffer is smaller than width*height*channels*bytesPerChannel."
+    }
+  ]
+}

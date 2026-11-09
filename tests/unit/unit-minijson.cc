@@ -7,7 +7,7 @@
 
 #include "unit-minijson.h"
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "tydra/value-to-json.hh"
 
 #include <cmath>

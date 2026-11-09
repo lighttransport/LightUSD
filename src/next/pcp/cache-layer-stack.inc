@@ -5,10 +5,7 @@
 // Included inside Cache::Impl.
 
   void AddIssue(ErrorCode code, const std::string &site,
-                const std::string &message, std::string *err) {
-    issues_.push_back(CompositionIssue{code, site, message});
-    if (err) *err += message + "\n";
-  }
+                const std::string &message, std::string *err) ;
   // --- layer stacks -------------------------------------------------------
 
   static constexpr uint32_t kInvalidStack =
@@ -21,7 +18,7 @@
   // expressions can resolve differently). Keys sort for stability; scalar
   // kinds render directly, nested dictionaries recurse, other kinds render
   // their type id (identity-conservative: distinct enough to split).
-  static void AppendExpressionVarsFingerprint(const Value &vars,
+  static void AppendExpressionVarsFingerprint(ValueView vars,
                                               std::string *out);
 
   uint32_t InternLayerStack(

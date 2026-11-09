@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "byte-budget.hh"
+
 namespace lusdql {
 
 void QlAabb::Expand(const float p[3]) {
@@ -40,10 +42,17 @@ float QlAabb::Radius() const {
   return 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-size_t QlMesh::byte_size() const {
-  return positions.size() * sizeof(float) + normals.size() * sizeof(float) +
-         uvs.size() * sizeof(float) + tangents.size() * sizeof(float) +
-         indices.size() * sizeof(uint32_t);
+uint64_t QlMesh::byte_size() const {
+  using budget_detail::SaturatingAdd;
+  using budget_detail::SaturatingMul;
+  uint64_t total = 0;
+  total = SaturatingAdd(total, SaturatingMul(positions.size(), sizeof(float)));
+  total = SaturatingAdd(total, SaturatingMul(normals.size(), sizeof(float)));
+  total = SaturatingAdd(total, SaturatingMul(uvs.size(), sizeof(float)));
+  total = SaturatingAdd(total, SaturatingMul(tangents.size(), sizeof(float)));
+  total = SaturatingAdd(total,
+                        SaturatingMul(indices.size(), sizeof(uint32_t)));
+  return total;
 }
 
 void QlScene::Clear() {
@@ -66,8 +75,12 @@ void QlScene::RecomputeBounds() {
 
 uint64_t QlScene::ByteSize() const {
   uint64_t total = 0;
-  for (const QlMesh& m : meshes) total += m.byte_size();
-  for (const QlTexture& t : textures) total += t.rgba.size();
+  for (const QlMesh& m : meshes) {
+    total = budget_detail::SaturatingAdd(total, m.byte_size());
+  }
+  for (const QlTexture& t : textures) {
+    total = budget_detail::SaturatingAdd(total, t.rgba.size());
+  }
   return total;
 }
 

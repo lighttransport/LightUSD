@@ -1,3 +1,4 @@
+#include "optix_launch_abi.hh"
 // SPDX-License-Identifier: Apache-2.0
 #include <optix_device.h>
 #include <math.h>
@@ -40,7 +41,14 @@ struct LusdviewOptixLaunchParams {
   unsigned int pathSeed;
   unsigned int numLights;
   unsigned int numInstances;
+  const float* volumeDensity;
+  const struct VolParam* volumes;
+  unsigned int numVolumes;
+  unsigned int volumePadding;
 };
+
+static_assert(sizeof(LusdviewOptixLaunchParams) == lusdview::kOptixLaunchParamsBytes,
+              "OptiX device launch parameter layout mismatch");
 
 struct LusdviewTextureDesc {
   int offset, width, height, wrapS, wrapT, srgb, isUdim, isPtex;
@@ -78,6 +86,132 @@ static __forceinline__ __device__ float dot3(const float3 a, const float3 b) {
 static __forceinline__ __device__ float3 normalize3(const float3 a) {
   return scale3(a, rsqrtf(fmaxf(dot3(a, a), 1.0e-30f)));
 }
+static __forceinline__ __device__ float3 sub3(float3 a, float3 b) {
+  return make_float3(a.x-b.x,a.y-b.y,a.z-b.z);
+}
+// Keep this sampler in sync with raytracer_kernel_src.txt.
+// CUDA and OptiX consume the same packed host buffers.
+struct VolParam {
+  float invModel[16];
+  float bmin[4];      // .xyz aabb min, .w level-set selector
+  float bmax[4];      // .xyz aabb max, .w isovalue
+  int   dim[4];       // .xyz dims, .w = data offset (floats) into volDens
+  float albedo[4];    // .xyz albedo, .w densityScale
+  float emission[4];  // .xyz emission, .w background
+};
+__device__ float3 xfPt4(const float* m, float3 p){  // column-major mat4 * point
+  float x = m[0]*p.x + m[4]*p.y + m[8]*p.z + m[12];
+  float y = m[1]*p.x + m[5]*p.y + m[9]*p.z + m[13];
+  float z = m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14];
+  float w = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
+  if (w==0.f) w=1.f;
+  return make_float3(x/w, y/w, z/w);
+}
+__device__ float3 xfDir4(const float* m, float3 v){
+  return make_float3(m[0]*v.x + m[4]*v.y + m[8]*v.z,
+            m[1]*v.x + m[5]*v.y + m[9]*v.z,
+            m[2]*v.x + m[6]*v.y + m[10]*v.z);
+}
+__device__ float volFetch(const float* dens, int off, int dx, int dy, int dz,
+                          int x, int y, int z){
+  x = x<0?0:(x>=dx?dx-1:x);
+  y = y<0?0:(y>=dy?dy-1:y);
+  z = z<0?0:(z>=dz?dz-1:z);
+  return dens[off + x + dx*(y + dy*z)];
+}
+__device__ float sampleVol(const float* dens, const VolParam* vp, float3 p){
+  float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
+  if (ex<=0.f||ey<=0.f||ez<=0.f) return 0.f;
+  int dx=vp->dim[0], dy=vp->dim[1], dz=vp->dim[2], off=vp->dim[3];
+  float gx=(p.x-vp->bmin[0])/ex*dx-0.5f;
+  float gy=(p.y-vp->bmin[1])/ey*dy-0.5f;
+  float gz=(p.z-vp->bmin[2])/ez*dz-0.5f;
+  int x0=(int)floorf(gx), y0=(int)floorf(gy), z0=(int)floorf(gz);
+  float fx=gx-x0, fy=gy-y0, fz=gz-z0;
+  float c00=volFetch(dens,off,dx,dy,dz,x0,y0,z0)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0,z0)*fx;
+  float c10=volFetch(dens,off,dx,dy,dz,x0,y0+1,z0)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0+1,z0)*fx;
+  float c01=volFetch(dens,off,dx,dy,dz,x0,y0,z0+1)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0,z0+1)*fx;
+  float c11=volFetch(dens,off,dx,dy,dz,x0,y0+1,z0+1)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0+1,z0+1)*fx;
+  float c0=c00*(1-fy)+c10*fy, c1=c01*(1-fy)+c11*fy;
+  return c0*(1-fz)+c1*fz;
+}
+// Emission/absorption composite of one volume over background color `bg`.
+__device__ float3 compositeVolume(const float* dens, const VolParam* vp, float3 worg, float3 wdir, float3 bg, float* nearest){
+  float3 oo=xfPt4(vp->invModel, worg);
+  float3 od=normalize3(xfDir4(vp->invModel, wdir));
+  float3 inv=make_float3(1.f/od.x, 1.f/od.y, 1.f/od.z);
+  float t1a=(vp->bmin[0]-oo.x)*inv.x, t2a=(vp->bmax[0]-oo.x)*inv.x;
+  float tmin=fminf(t1a,t2a), tmax=fmaxf(t1a,t2a);
+  t1a=(vp->bmin[1]-oo.y)*inv.y; t2a=(vp->bmax[1]-oo.y)*inv.y;
+  tmin=fmaxf(tmin,fminf(t1a,t2a)); tmax=fminf(tmax,fmaxf(t1a,t2a));
+  t1a=(vp->bmin[2]-oo.z)*inv.z; t2a=(vp->bmax[2]-oo.z)*inv.z;
+  tmin=fmaxf(tmin,fminf(t1a,t2a)); tmax=fminf(tmax,fmaxf(t1a,t2a));
+  if (tmax<=fmaxf(tmin,0.f)) return bg;
+  float t0=fmaxf(tmin,0.f);
+  float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
+  float vmin=fminf(ex/vp->dim[0], fminf(ey/vp->dim[1], ez/vp->dim[2]));
+  float step=vmin*0.5f; if (step<=0.f) step=(tmax-t0)/256.f;
+  if(vp->bmin[3]>0.5f){
+    float3 objectDirection=xfDir4(vp->invModel,wdir);
+    float speed=sqrtf(dot3(objectDirection,objectDirection));
+    if(speed<=0.f||!isfinite(speed))return bg;
+    tmax=fminf(tmax,(*nearest)*speed);
+    if(tmax<=t0)return bg;
+    float ds=fmaxf((tmax-t0)/512.f,vmin*.5f);
+    float iso=vp->bmax[3],previous=sampleVol(dens,vp,add3(oo,scale3(od,t0)))-iso;
+    float previousT=t0,hit=-1.f;
+    for(int i=0;i<512;i++){
+      float tn=fminf(t0+(i+1)*ds,tmax);
+      float f=sampleVol(dens,vp,add3(oo,scale3(od,tn)))-iso;
+      if((f<0.f&&previous>0.f)||(f>0.f&&previous<0.f)){
+        float lo=previousT,hi=tn,flo=previous;
+        for(int k=0;k<16;k++){
+          float mid=.5f*(lo+hi);
+          float fm=sampleVol(dens,vp,add3(oo,scale3(od,mid)))-iso;
+          if(fm==0.f){lo=hi=mid;break;}
+          if((fm>0.f)==(flo>0.f)){lo=mid;flo=fm;}else hi=mid;
+        }
+        hit=.5f*(lo+hi);break;
+      }
+      if(f!=0.f){previous=f;previousT=tn;}
+      else if(previous==0.f)previousT=tn;
+      if(tn>=tmax)break;
+    }
+    if(hit<0.f||hit/speed>=*nearest)return bg;
+    float3 p=add3(oo,scale3(od,hit));
+    float hx=ex/vp->dim[0],hy=ey/vp->dim[1],hz=ez/vp->dim[2];
+    float3 g=make_float3((sampleVol(dens,vp,add3(p,make_float3(hx,0,0)))-sampleVol(dens,vp,sub3(p,make_float3(hx,0,0))))/hx,
+            (sampleVol(dens,vp,add3(p,make_float3(0,hy,0)))-sampleVol(dens,vp,sub3(p,make_float3(0,hy,0))))/hy,
+            (sampleVol(dens,vp,add3(p,make_float3(0,0,hz)))-sampleVol(dens,vp,sub3(p,make_float3(0,0,hz))))/hz);
+    const float* m=vp->invModel;
+    float3 n=normalize3(make_float3(m[0]*g.x+m[1]*g.y+m[2]*g.z,
+                  m[4]*g.x+m[5]*g.y+m[6]*g.z,
+                  m[8]*g.x+m[9]*g.y+m[10]*g.z));
+    float3 view=scale3(normalize3(wdir),-1.f);
+    if(dot3(n,n)==0.f)n=view;
+    float light=.15f+.85f*fabsf(dot3(n,view));
+    *nearest=hit/speed;
+    return add3(scale3(make_float3(vp->albedo[0],vp->albedo[1],vp->albedo[2]),light),
+               make_float3(vp->emission[0],vp->emission[1],vp->emission[2]));
+  }
+  float scaleD=vp->albedo[3], background=vp->emission[3];
+  float T=1.f; float3 L=make_float3(0.f,0.f,0.f);
+  float t=t0;
+  for (int i=0;i<256 && t<tmax;i++,t+=step){
+    float3 p=add3(oo, scale3(od, t+0.5f*step));
+    float dn=(sampleVol(dens,vp,p)-background)*scaleD;
+    if (dn>0.f){
+      float a=1.f-expf(-dn*step);
+      L=add3(L, scale3(add3(scale3(make_float3(vp->albedo[0],vp->albedo[1],vp->albedo[2]),a),
+                         scale3(make_float3(vp->emission[0],vp->emission[1],vp->emission[2]),dn*step)), T));
+      T*=(1.f-a);
+      if (T<0.003f) break;
+    }
+  }
+  return add3(L, scale3(bg, T));
+}
+
+
 static __forceinline__ __device__ float3 cross3(const float3 a,
                                                  const float3 b) {
   return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
@@ -307,6 +441,8 @@ extern "C" __global__ void __raygen__lusdview() {
     direction = make_float3(delta.x * inverseLength, delta.y * inverseLength,
                             delta.z * inverseLength);
   }
+  const float3 volumeOrigin = origin, volumeDirection = direction;
+  float volumeDepth = 1.0e30f;
   float3 radiance = make_float3(0.0f, 0.0f, 0.0f);
   float3 throughput = make_float3(1.0f, 1.0f, 1.0f);
   unsigned int mediumInstances[8];
@@ -333,6 +469,7 @@ extern "C" __global__ void __raygen__lusdview() {
     const float3 geometricNormal = normalize3(make_float3(
         __uint_as_float(gnx), __uint_as_float(gny), __uint_as_float(gnz)));
     const float t = __uint_as_float(hitT);
+    if (depth == 0u) volumeDepth = t;
     const float bu = __uint_as_float(baryU), bv = __uint_as_float(baryV);
     const float3 hit = add3(origin, scale3(direction, t));
     float hitU = 0.0f, hitV = 0.0f;
@@ -870,6 +1007,12 @@ extern "C" __global__ void __raygen__lusdview() {
       if (random01(rng) > survival) break;
       throughput = scale3(throughput, 1.0f / survival);
     }
+  }
+  if (lusdviewOptixLaunchParams.renderMode == 0u) {
+    for (unsigned int i=0; i<lusdviewOptixLaunchParams.numVolumes; ++i)
+      radiance = compositeVolume(lusdviewOptixLaunchParams.volumeDensity,
+          &lusdviewOptixLaunchParams.volumes[i], volumeOrigin, volumeDirection,
+          radiance, &volumeDepth);
   }
   const unsigned int outputIndex =
       index.y * lusdviewOptixLaunchParams.width + index.x;

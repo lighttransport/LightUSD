@@ -21,7 +21,15 @@ if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   if(NOT TARGET tydra_next)
     add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next ${CMAKE_BINARY_DIR}/tydra_to_renderscene_tydra_next_build)
   endif()
-  target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_next tydra_next)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c)
+  if(LIGHTUSD_BUILD_TESTS)
+    add_test(NAME tydra-next-c-api-smoke
+      COMMAND ${CMAKE_COMMAND}
+        -DAPP=$<TARGET_FILE:${EXAMPLE_TARGET}>
+        -DROOT=${PROJECT_SOURCE_DIR}
+        -P ${PROJECT_SOURCE_DIR}/tests/tydra_to_renderscene/c-api-smoke.cmake)
+    set_tests_properties(tydra-next-c-api-smoke PROPERTIES LABELS "next;c-api")
+  endif()
 endif()
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

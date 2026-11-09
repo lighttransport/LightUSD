@@ -1,6 +1,6 @@
 # lusdview — build & GPU debugging
 
-`lusdview` is the interactive OpenGL/Vulkan USD viewer example
+`lusdview` is the interactive OpenGL/Vulkan/Metal USD viewer example
 (`examples/lusdview/`). This page covers building it and the Vulkan
 **validation-layer** workflow used to debug the GPU/threaded paths. For the
 feature set, CLI flags, config and MCP server, see
@@ -15,10 +15,16 @@ unaffected:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
   -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build_ninja -j16 --target lusdview
 ```
+
+The viewer is currently configured by the compatibility product. It also builds
+and links the refactored `lightusd_next`, `tydra_next` and public C API libraries;
+the viewer's default next loader uses those libraries. The next-only top-level
+product does not create the `lusdview` target.
 
 - **Vulkan** is ON by default (`-DLUSDVIEW_WITH_VULKAN=ON`) and needs **no Vulkan
   SDK, no `libvulkan-dev`, and no `glslangValidator`**: the API is resolved at
@@ -63,6 +69,61 @@ cmake --build build_ninja -j16 --target lusdview
 
   See [`threading-stage2.md`](../examples/lusdview/doc/threading-stage2.md). When
   OFF, the thread flags are no-ops and the single-threaded path is unchanged.
+
+## Native Metal on macOS
+
+On macOS, `-DLUSDVIEW_WITH_METAL=ON` (the default) builds a native Metal
+renderer and selects it by default, including with the next loader. It uses the
+already vendored Apple `examples/common/metalcpp/Metal/Metal.hpp` C++ binding
+([Apple metal-cpp](https://developer.apple.com/metal/cpp/)). GPU commands dispatch
+directly through the Objective-C runtime. A small Objective-C++ file attaches a
+`CAMetalLayer` to the GLFW Cocoa window; no MoltenVK or Vulkan SDK is involved.
+Shaders compile from embedded Metal source at startup, so the Xcode command-line
+shader compiler is not required.
+
+```sh
+cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy -DLIGHTUSD_BUILD_EXAMPLES=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLUSDVIEW_WITH_METAL=ON -DLUSDVIEW_WITH_VULKAN=OFF
+cmake --build build_ninja --target lusdview lusdview_metal_renderer_test -j8
+./build_ninja/lusdview --backend metal models/suzanne-pbr.usda
+./build_ninja/lusdview --backend metal --headless --frames 4 \
+  --size 640x480 --screenshot /tmp/metal.ppm models/suzanne-pbr.usda
+ctest --test-dir build_ninja -R '^lusdview-metal-' --output-on-failure
+```
+
+`--backend mtl` is an alias. View → Render Technique → Metal Raster switches
+backends at runtime when the current owner is running without `--threaded`.
+Cocoa UI sizes use logical points; the Retina framebuffer scales raster targets
+without doubling the default font/widget sizes. Explicit `--ui-scale` remains
+available. Metal runs on the main thread; `--threaded` applies to GL/Vulkan only.
+The bundled GLFW retries missing Cocoa screens and falls back to Core Graphics
+display bounds for workarea queries during display reconfiguration or remote
+sessions. Menu-bar and Dock insets are used when an `NSScreen` is available.
+Headless Metal renders both the viewport and ImGui composite into readable offscreen
+textures without a Cocoa window. CPU ray tracing can upload its image to the
+Metal viewport through the common renderer interface.
+
+The initial Metal renderer supports indexed polygon meshes, material subsets,
+GPU instancing and per-instance colors/opacity, vertex colors, constant
+metallic/roughness/emissive materials, base-color RGBA8 textures (including sRGB
+decode), live texture region updates/eviction, CPU-deformed vertex updates,
+world transforms, visibility, user clipping planes, wireframe, helper/selection
+lines, common debug AOVs, Retina presentation and screenshot readback. Shading
+uses a directional-light GGX preview; it does not yet match the full GL/Vulkan
+lighting and MaterialX pipelines. Points/curves/volumes, Metal ray tracing,
+GPU skinning, advanced texture semantics, mipmapped filtering and sorted/OIT
+transparency are not implemented. Alpha blending currently follows draw order.
+The backend reports these GPU features as unavailable.
+
+The `lusdview-metal-viewer` integration test also checks default backend selection,
+both CLI aliases, USD loading, capability reporting and full UI screenshots.
+The GPU regression checks actual readback pixels for occlusion, visibility,
+transforms, instancing, texture streaming/eviction, clipping, target resize and
+ImGui's dynamic font atlas. It skips only when no Metal device is visible; shader
+or render failures fail the test. Sandboxed sessions may hide the GPU: run the
+same test with GPU access before treating a skip as hardware verification.
 
 ## Vulkan run test (verified working on NVIDIA)
 
@@ -120,6 +181,78 @@ For AMD, omit the NVIDIA-specific variables and set
 available. A missing `/dev/kfd` or `/dev/dri/renderD*` requires device
 passthrough at container/VM launch and cannot be fixed by creating repository
 files.
+
+### UsdVol level sets and density volumes
+
+`vk/shaders/volume.frag` has two modes, selected by `VolumeUBO::params.x`. A
+fog/density field (`fieldClass` "fogVolume") is emission/absorption marched as
+before. A level-set field (`fieldClass` "levelSet", propagated from the
+resolved field as `DrawVolumeCPU::isLevelSet`) is treated as an isosurface: the
+shader marches to the first sign change of the field against `params.y` (0 for
+the UsdVol convention), refines it by bisection, and shades the hit with the
+field gradient as the normal, so a signed distance field renders as its surface
+instead of a thin density shell. OpenGL now carries `isLevelSet`/`isovalue`
+into matching shader uniforms. CUDA software BVH and OptiX consume the same
+packed volume buffers: `HostVolParam::bmin.w` selects an isosurface and `bmax.w`
+carries its isovalue, preserving the existing volume-buffer layout. OptiX's
+launch-parameter byte count is shared between host upload, pipeline creation
+and device layout assertions. Auto transport can select OptiX for level-set
+scenes with triangle acceleration; density volumes retain their software-BVH
+fallback. Volume-only scenes without an OptiX IAS continue using CUDA software
+traversal unless an explicit transport is requested.
+
+These are primary-ray, headlight-shaded surface previews; they do not add
+secondary-ray or participating-media integration to the path tracer. Surface
+normals use the inverse transpose with per-axis voxel spacing, including
+nonuniform scale. Raster paths output the refined hit depth, and RT surfaces
+respect the closest mesh/volume depth. Exact-zero plateaus do not create false
+hits or stall the sampler. Fog/density emission-absorption marching is retained.
+The packed Vulkan volume image and its view both use RGBA32F; validation found
+and fixed the previous invalid R32F view of the RGBA image.
+The embedded SPIR-V headers are regenerated with
+`examples/lusdview/vk/shaders/build-shaders.sh` and committed.
+
+A reproducible NVIDIA check is `examples/lusdview/tests/check-level-set-gpu.py`.
+It uses a small generated sphere, checks plain/transformed/occluded images and
+actual backend/transport JSON reports, and monitors VRAM while running one
+renderer at a time. Its renderer planning cap is 8 GiB; it stops its own renderer
+if aggregate use grows by more than 9 GiB or free memory drops below 512 MiB.
+Other GPU jobs are left running. OpenGL uses a window under Xvfb: `--headless`
+forces Vulkan and must not be used to validate the OpenGL renderer.
+
+With an explicitly GPU-enabled legacy build, generate the fixture and run:
+
+```sh
+cmake --build build_ninja/sdf-legacy -j2 --target lusdview profile-gpu-level-set
+./build_ninja/sdf-legacy/profile-gpu-level-set 32 fast /tmp/level-set-sphere.vdb
+xvfb-run -a -s "-screen 0 640x480x24" env \
+  __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  python3 examples/lusdview/tests/check-level-set-gpu.py \
+  build_ninja/sdf-legacy/lusdview /tmp/level-set-sphere.vdb /tmp/level-set-images
+```
+
+OptiX needs the optional build described below. For Vulkan checks, also set
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and the source-built layer paths
+from the validation section. The generated images, render reports, logs and
+VRAM measurements remain in the requested output directory.
+
+The bounded `profile-gpu-level-set` benchmark uses a 1,106-vertex/2,208-triangle
+sphere, a two-million-candidate cap and no large assets. It warms CUDA kernels,
+measures three builds, and compares counts and 4,096 samples with one CPU worker.
+Use `32 fast` and `32 exact` under `nsys profile --trace=cuda --sample=none
+--cpuctxsw=none` for reproducible traces. On the RTX 5060 Ti with a concurrent GPU
+workload, the initial fast builds took 38–43 ms versus 980 ms for one CPU worker;
+Nsight reported about 9.5 ms (fast) and 5.5 ms (exact) per combined distance/winding
+kernel across four launches including warm-up. The NanoVDB sampling kernel took
+about 29 microseconds for 4,096 points. Sample differences were zero. These are
+one-workload measurements under contention, not unloaded or general speed claims.
+
+The 2026-10-29 NVIDIA run passed all 20 image cases across OpenGL, Vulkan,
+CUDA software traversal and forced OptiX. Five Vulkan cases also passed
+GPU-Assisted Validation; the CUDA numerical marcher check passed Compute
+Sanitizer with zero errors. Peak additional renderer residency was 533 MiB
+(6,295 MiB total alongside an existing GPU workload); GPU-AV added 134 MiB.
 
 ## Production path tracing
 
@@ -403,8 +536,79 @@ a deterministic thin-lens model. The aperture radius is derived from USD's
 tenths-of-a-scene-unit focal length, and rays converge on the authored focus
 plane. Vulkan progressively accumulates lens samples while `--rt-samples`
 controls CUDA/HIP sampling. Orthographic cameras and `fStop = 0` retain the
-exact pinhole path. `lusdview-camera-dof-{vulkan,cuda}` compare the two modes
-and capability-skip when their backend is unavailable.
+exact pinhole path. Shaded GL and Vulkan raster use the same lens record in a
+deterministic depth-aware postprocess; AOV and wireframe modes stay unfiltered.
+`lusdview-camera-dof-raster` checks both raster backends, while
+`lusdview-camera-dof-{vulkan,cuda}` cover the ray-traced paths and
+capability-skip when their backend is unavailable.
+
+An authored open shutter (`shutter:close > shutter:open`) drives the headless
+CPU, CUDA, and HIP tracers when the next loader is active. Each tracer evaluates
+animated camera transforms, object transforms, skinning, and blend shapes at
+deterministic midpoint-stratified times; `--pt-motion-segments` selects the
+number of temporal samples (two by default). Each pose gets its own conservative
+acceleration build and the resulting images are averaged in linear light. A
+closed shutter retains the single-pose path. The
+`lusdview-camera-motion-{cpu,cuda,hip}` regressions compare open- and
+closed-shutter captures for both geometry-only and camera-only motion; GPU tests
+capability-skip when their runtime is unavailable. Paused native GL and Vulkan
+raster views also advance one midpoint shutter pose per frame, average the
+captured viewport in linear light, and hold the completed image. The legacy
+loader evaluates animated camera xforms directly from its retained Stage so it
+uses the same schedule without reconverting geometry. The render report records
+`raster_interactive_segments_sampled`. Use `--no-raster-motion` when an
+external tool owns temporal sampling. Vulkan RT keeps one progressive
+accumulation while cycling the same midpoint poses; its report records
+`vulkan_interactive_segments_sampled`.
+
+For raster output, `examples/lusdview/render-motion.py` reads the selected
+camera's authored shutter, evaluates deterministic scene-time snapshots through
+either GL or Vulkan, and averages PPM samples in linear light:
+
+```sh
+python3 examples/lusdview/render-motion.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
+```
+
+A closed shutter automatically takes the single-render path. The companion
+passes `--no-raster-motion` to each viewer process so its explicit temporal
+samples do not trigger native accumulation a second time. The
+`lusdview-camera-motion-raster-{export,gl}` regressions compare the native and
+companion results and verify closed-shutter behavior; the
+`lusdview-camera-motion-raster-legacy` case checks loader parity, while
+`lusdview-camera-motion-vulkan` checks that Vulkan RT's accumulated sample count
+advances across the cycle.
+
+Windowed CUDA/HIP path tracing cycles animated authored camera poses, optics,
+object transforms, and deformation across the same midpoint-stratified shutter
+segments as accumulation advances. Transform/deformation updates use retained
+RT refit maps, including refreshed instance transforms and BLAS/TLAS bounds.
+Changing the view, frame, shutter interval, segment count, or integrator resets
+the sequence. Render reports expose both camera and scene segment coverage.
+
+`--stereo` resolves authored `stereoRole = "left"` / `"right"` cameras with the
+same rules in both loaders. Selecting either eye with `--camera` prefers the
+opposite role under the same parent; without an explicit camera, the scene must
+contain exactly one unambiguous same-parent pair. Mono selections, missing eyes,
+and ambiguous pairs are reported instead of silently guessing. The render report
+records both resolved paths. A headless raster `--screenshot` renders both eyes
+through GL or Vulkan and writes them side by side. Windowed GL and Vulkan render
+each eye into a half-width target, compose the captures into the live viewport,
+and report `stereo.live_viewport`; the same path is covered for legacy and next
+loaders. `examples/lusdview/render-stereo.py` provides the same side-by-side
+workflow for raster and external CPU/CUDA/HIP tracing modes without third-party
+Python packages:
+
+```sh
+python3 examples/lusdview/render-stereo.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk \
+  --size 960x540 --output stereo.ppm scene.usda
+```
+
+`--size` is the per-eye resolution, so this example writes `1920x540`.
+Use repeated `--viewer-arg` options to select another tracing mode, for example
+`--viewer-arg=--cuda`.
 
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 
@@ -861,6 +1065,86 @@ while a separate encounter-order list preserves deterministic draw ordering.
 The follow-up hardware run measured 6.83 s mesh conversion/batching, 27.35 s
 full CPU conversion, 27.60 s full upload/presentation, and 4.07 GiB peak RSS.
 
+#### Merged batches for skinned and geometry-property meshes
+
+The batch key used to isolate every mesh that was skinned or carried a generic
+primvar, which on open-world content degenerates to one draw per mesh: a
+476k-mesh, 39.4M-triangle map composed to 50,424 draws and spent ~70 ms per
+frame recording them on the CPU.
+
+Neither feature actually needs that isolation:
+
+* Bone rows are absolute indices into the shared skinning palette, and the
+  append path already zero-fills the joint/weight lanes for vertices of an
+  unskinned mesh, so a batch can mix skinned and unskinned geometry.
+* Generic primvars only feed the ray-traced geometry-property lookup; the raster
+  shader never reads them. They are now grouped by a name/component *signature*
+  in the batch key, and their per-vertex values are appended alongside the
+  vertices so a merged batch stays parallel. The retained UV sets are also
+  excluded from that generic list now; they were being duplicated into it,
+  which doubled UV memory for every textured mesh.
+
+Two append-path costs had to be fixed before merging was viable, both of which
+only appear once a batch holds gigabytes instead of one mesh:
+
+* Batch arrays are reserved to the vertex cap in a single step once a batch is
+  clearly a bulk batch (`reserveVerts`), instead of doubling a
+  multi-hundred-megabyte vector repeatedly.
+* Extended-skin influence texels are written into one pre-sized range rather
+  than appended one influence at a time with `insert()`, which re-checked
+  capacity and re-touched the whole batch buffer per influence.
+
+Result on that scene: 50,424 draws -> 3,615, CPU record+submit ~70 ms -> <1 ms
+(GPU-bound afterwards, 17.4 ms at 1280x720 versus 26 ms before), mesh
+convert/flatten/batch unchanged at ~23 s, and total load 59.4 s -> 55 s. Draw
+counts for other large maps drop from 31k/40k/6.4k to 3.2k/3.6k/0.6k. Fewer
+draws also cuts the per-frame visibility mask rebuild from 3.4 ms to 0.1 ms.
+
+#### Chunked static culling and the lean static vertex stage
+
+Merging is a culling trade-off: one batch per scene has a scene-spanning AABB,
+so the per-mesh frustum/size test can only answer "all" or "nothing". Two
+changes give the static side its granularity and its vertex bandwidth back:
+
+* **Chunked indirect draws.** Each submesh of a world-baked, undeformed batch
+  is split into triangle runs of at most 4096 triangles (further bounded by a
+  world-AABB radius cap of 2 % of the batch extent, so a run stays a local
+  culling unit instead of spanning a district). The runs become one
+  `vkCmdDrawIndexedIndirect` list whose per-chunk `instanceCount` the renderer
+  zeroes for chunks the camera rejects. Frustum culling is always on; the
+  projected-size threshold follows the raster-LOD policy, so `--raster-lod` and
+  the large-scene profiles now also reach static geometry. The patch is skipped
+  entirely while the camera, viewport height, policy and chunk catalog are
+  unchanged. Projected-size tests use nearest view-space sphere depth and an
+  unsigned projection scale; orthographic cameras use constant pixel scale.
+  Devices without enabled multi-draw support retain direct draws, and command
+  lists are split at the device's `maxDrawIndirectCount`. Primitive-ID and
+  source-face-ID diagnostics, plus Ptex materials, retain direct draws because
+  each indirect command restarts `gl_PrimitiveID`.
+* **A lean vertex stage for static batches** (`mesh.vert` with
+  `LUSDVIEW_STATIC_BATCH`). The deform shader read the joint, weight, influence,
+  morph-offset and morph-influence vertex streams unconditionally, so every
+  static vertex fetched ~52 B of zeros on top of its 32 B vertex. The variant
+  drops those inputs (the pipeline keeps the bindings; unused ones cost nothing)
+  and skips the deform include.
+
+On the same scene at 1280x720 that takes the frame from 17.4 ms to 15.7 ms with
+no visual change at all (the render is pixel-identical), 10.5 ms to 7.7 ms from a
+close camera, and 9.7 ms to 7.6 ms under `--raster-lod`.
+
+Two things still keep the static pass above that: it streams ~3 GB/frame of
+vertices and indices at 1.5 vertices per triangle, and **GPU skinning**. A batch
+that carries joint/weight attributes cannot use the lean vertex stage or the
+chunk cull, and on that scene 77 % of the static triangles sit in such batches
+(24.9 M of 32.4 M) even though the pose never changes. `LUSDVIEW_DEBUG_STATIC=1`
+prints the per-batch breakdown (`tris / chunked / skinned`). Loading with
+`--skinning cpu` bakes the pose and drops those streams, which takes the same
+frame to 11.4 ms (88 fps). The baked geometry is identical to the GPU-skinned
+one (verified pixel-for-pixel from a fixed camera); only the auto-fit framing
+differs, because a skinned batch keeps a conservative scene box on purpose.
+Making that the automatic choice for skins whose SkelAnimation has no time
+samples is the obvious next step, followed by a packed static vertex format.
+
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
 collapsing to 39 guide-purpose draws. Its cold full-fidelity path is therefore
@@ -1275,7 +1559,16 @@ three are off unless set, and cost nothing when off.
 
 The `submitted:` line counts the non-instanced mesh loop only; geometry drawn by
 the instanced pass is not tallied, so an instanced scene can legitimately report
-very few triangles.
+very few triangles. `LUSDVIEW_DEBUG_MDI=1` adds the instanced-pass tally
+(`[mdi] supported= active= cmds= | instMeshes= submeshes= eligible= ...`), which
+distinguishes "the scene really has this many draws" from "the per-mesh
+fallback is running instead of the multi-draw-indirect batch".
+
+`LUSDVIEW_DEBUG_BATCH=1` explains the loader's draw count from the other side:
+it counts the per-mesh features that force a batch of their own and prints
+`next: batch keys: plain=... skin=... geomProps=... -> N draws`. A scene that
+reports one draw per mesh there is a batching regression, not a renderer
+problem.
 
 Mesh geometry must live in VRAM: per-frame vertex fetch from host memory crosses
 PCIe on every draw, which cost 86ms versus 2ms on a 3.8M triangle scene. Buffers
@@ -1759,3 +2052,64 @@ scene that would not naturally need paging, set
 When authored mip levels are insufficient to keep every face represented, the
 fallback builder performs an additional bounded coarse resample; native source
 data remains available for requested-quality page upgrades.
+
+### AMD large-map hardware verification (2026-11-02)
+
+The current static-chunk audit was exercised on an AMD Radeon RX 9070 XT
+(16 GiB), RADV/Mesa 26.0.8, and Threadripper 1950X with host GPU device
+passthrough. A public Caldera map provided 476,100 mesh records, 39,402,788
+unique triangles and 162,715 instances, batched to 3,615 meshes. Tests used
+headless Vulkan at 1280×720, full payloads/full fidelity, profile and preview
+cache off, eight compose/conversion workers and 180 frames. The first 30 GPU
+samples were discarded; filesystem cache was uncontrolled.
+
+| Mode | Runs | Median GPU | Median loader | Median peak RSS |
+|---|---:|---:|---:|---:|
+| Default GPU skinning | 3 | 15.23 ms | 58.66 s | 15.09 GiB |
+| Raster LOD | 3 | 8.69 ms | 58.43 s | 14.71 GiB |
+| CPU skinning diagnostic | 1 | 22.68 ms | 64.20 s | 12.74 GiB |
+
+All seven benchmark processes completed with no truncation or swaps. Repeated
+captures within each three-run mode were identical. LOD substitutes proxies;
+its faster rendering trades detail. The auto-fit scene occupies a small part
+of the view because of conservative skin bounds, and this entry has one
+material/zero textures, so these numbers do not predict close-view or textured
+scene performance. CPU skinning was slower on this host; the older NVIDIA
+result alone does not justify baking every static skin automatically.
+These are current-tree measurements, not a before/after speedup measurement or
+progressive first-useful-frame timings. Local logs, exact commands, reports,
+images and binary metadata are in `build_ninja/bench-amd-20261102/`.
+
+A separate small-fixture CPU/GPU skinning comparison still fails its strict
+maximum-pixel threshold. With fixed 1280×800 dimensions, an empty config and no
+grid, only two pixels differ (mean 0.000154/255), but maximum channel delta is
+198 versus the allowed 128. Retain that unresolved gate instead of treating
+successful large-scene rendering as proof of complete hardware skinning parity.
+
+### Skin-only opaque draws (2026-11-02)
+
+Opaque skinned meshes without blendshapes now use a vertex variant that omits
+morph influence and sparse-morph offset/count inputs (12 bytes per vertex).
+It retains the existing skinning math and SkinWeights outputs. Morph-bearing,
+translucent and depth-only draws retain their corresponding pipelines; static
+and skin-only variants cannot override the wireframe depth fill. The omitted
+morph-influence AOV output is explicitly zero. Generated prototype LOD tails
+also skip per-mesh push constants and cull-state commands when no LOD will draw.
+
+A paired AMD RX 9070 XT/RADV run on the same 476,100-mesh-record map and
+1280×720 full-fidelity configuration above measured two runs per binary:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Median GPU frame | 15.23 ms | 14.49 ms |
+| Median per-run GPU p95 | 15.33 ms | 14.58 ms |
+| Median CPU record/submit | 4.95 ms | 4.90 ms |
+
+GPU time falls 4.86%; all four captures are byte-identical with unchanged scene
+counts, no proxies, and GPU skinning retained. No material CPU-record, load-time
+or memory improvement is claimed. The baseline executable, exact commands,
+individual logs/reports/images and aggregation are retained locally under
+`build_ninja/bench-amd-draw-opt/`. The new `lusdview-wire-depth-fill` image gate
+fails on the baseline and passes on the candidate. The deformation parity
+harness now disables the bounds-dependent grid overlay, which had produced
+identical false failures on both binaries despite matching CPU/GPU geometry.

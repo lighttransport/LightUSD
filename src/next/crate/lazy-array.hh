@@ -14,6 +14,7 @@
 #include "crate-format.hh"      // ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
 
+#include <atomic>
 #include <memory>
 #include <cstdint>
 
@@ -23,7 +24,19 @@ namespace next {
 class CrateDataSource;
 class LazyArraySource {
 public:
+  LazyArraySource() noexcept : identity_(NextIdentity()) {}
   virtual ~LazyArraySource() = default;
+  LazyArraySource(const LazyArraySource&) = delete;
+  LazyArraySource& operator=(const LazyArraySource&) = delete;
+  LazyArraySource(LazyArraySource&&) = delete;
+  LazyArraySource& operator=(LazyArraySource&&) = delete;
+
+  // A source identity remains unique after the source is destroyed. Writers
+  // use it for non-owning caches whose entries must not keep a multi-GB crate
+  // buffer alive merely to avoid a repeated hash. Pointer addresses are not
+  // suitable there: consume_values may release the last shared_ptr, allowing
+  // an allocator to reuse the address for a later source.
+  uint64_t identity() const noexcept { return identity_; }
 
   virtual bool MaterializeArray(const struct LazyArrayRef& ref, class Value* out) const = 0;
   virtual const uint8_t* base() const = 0;
@@ -31,15 +44,26 @@ public:
   virtual CrateVersion version() const = 0;
   virtual bool is_mmapped() const = 0;
   virtual bool can_borrow() const { return false; }
+  /// True when the source retains a private snapshot and serves array bytes by
+  /// ranged reads rather than a resident contiguous buffer.
+  virtual bool is_paged() const { return false; }
   virtual void DiscardRange(uint64_t offset, uint64_t length) const {
     (void)offset;
     (void)length;
   }
+
+ private:
+  static uint64_t NextIdentity() noexcept {
+    static std::atomic<uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  const uint64_t identity_;
 };
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.
-/// The on-disk block at `block_offset` is `[count][data...]`; the count header
-/// is u64 for crate >= 0.7.0 and u32 for older versions.
+/// The on-disk block at `block_offset` is `[header][data...]`: header is
+/// [u32 rank=1,u32 count] before 0.5, u32 count in 0.5/0.6, u64 from 0.7.
 struct LazyArrayRef {
   std::shared_ptr<LazyArraySource> source;  // keeps the backing source alive
   ValueRep rep;                             // original on-disk rep (flags+payload)

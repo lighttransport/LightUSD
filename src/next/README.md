@@ -58,7 +58,6 @@ by extraction/downstream layers such as `tydra/next`.
 | UsdShade | ✅ Complete | `schema/usd-shade.{hh,cc}` |
 | **Integration** | | |
 | Unified Header | ✅ Complete | `lightusd-next.{hh,cc}` |
-| Compat Header | ✅ Complete | `compat.hh` |
 | **Tydra/Next** | | |
 | Render Data | ✅ Complete | `../tydra/next/render-data.{hh,cc}` |
 | Scene Access | ✅ Complete | `../tydra/next/scene-access.{hh,cc}` |
@@ -172,7 +171,6 @@ src/next/
 ├── README.md                    # This file
 ├── lightusd-next.hh            # Unified header (includes all components)
 ├── lightusd-next.cc            # High-level API implementation
-├── compat.hh                   # Compatibility header for #ifdef switching
 │
 ├── types/                       # Core type system
 │   ├── type-id.hh              # TypeId enum (~200 lines)
@@ -186,10 +184,7 @@ src/next/
 ├── prim/                        # USD primitives
 │   ├── path.hh                 # Path class
 │   ├── path.cc
-│   ├── attribute.hh            # Attribute types
-│   ├── attribute.cc
-│   ├── prim.hh                 # Prim types
-│   └── prim.cc
+│   └── identifier.hh           # Identifier validation
 │
 ├── layer/                       # Layer system
 │   ├── property-index.hh       # PropNameTable, PropSlot, PropIndex
@@ -304,6 +299,8 @@ current cleanup/refactor queue rather than a historical checklist.
   the next module. The main regression build still excludes `next` by design;
   next tests are run explicitly through the standalone build and web/WASM
   next-product gates.
+- Keep the public C render-session test covering full publication, incremental
+  mesh updates, revision rejection, and ownership of earlier scene snapshots.
 
 ### Memory / Performance
 
@@ -508,27 +505,15 @@ int main() {
 }
 ```
 
-### Using Compatibility Header (#ifdef switching)
+### C and C++ application boundary
 
-```cpp
-// Use -DLIGHTUSD_USE_NEXT=ON to switch architectures
-#include "next/compat.hh"
-
-using namespace lightusd::compat;
-
-int main() {
-  Stage stage;
-  std::string warn, err;
-
-  // Same API works with both old and new architectures
-  if (!LoadUSD("model.usd", &stage, &warn, &err)) {
-    return 1;
-  }
-
-  // ... use stage
-  return 0;
-}
-```
+Use `lightusd-c.h` for the C API and `lightusd-cpp.hh` for the C++17 ownership
+facade. Link the installed CMake target `lightusd::c`; rendering additionally
+uses `lightusd-render-cpp.hh` and `lightusd::render_c`. Configure
+`LIGHTUSD_WITH_TYDRA=OFF` for a parser/composition/writer library without Tydra.
+The old `compat.hh` architecture-switching facade was removed. The internal
+scene model is `Layer`/`PrimSpec`/`Stage`; the unused recursive `Prim` and
+`Attribute` model was removed.
 
 ### Detailed Reader/Writer API
 

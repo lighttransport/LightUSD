@@ -520,7 +520,8 @@ window.addEventListener('resize', () => {
 async function main() {
 	setStatus('loading wasm…');
 	const initLightUSD = await importLightUSDModule();
-	Module = await initLightUSD();
+	const core = await initLightUSD();
+	Module = core.loadFeature ? await core.loadFeature('geometry') : core;
 	streamer = new Module.SubdivStreamer();
 	setStatus('ready');
 	updateMesh();

@@ -22,11 +22,12 @@ Do not infer the active phase from Ninja's abbreviated progress line. A measured
 three-minute rebuild was GCC optimizing `lightrt_mtlx_bridge.cc`, while the
 actual GNU BFD link took less than a second. The MaterialX graph compiler and
 flat GPU ABI packing now use separate translation units, and the graph compiler
-uses source-local `-O1` in Release/RelWithDebInfo to avoid GCC's pathological
-IPA/PTA cost. On the reference Linux build this reduced a cold graph compile
-from about 148 to 71 seconds; ordinary bridge and packing edits rebuild in about
-8 and 1 seconds respectively. Use `/usr/bin/time -v cmake --build ...` plus
-Ninja's `.ninja_log` when diagnosing a regression.
+uses source-local `-O0` in Release/RelWithDebInfo to avoid GCC's pathological
+IPA/PTA cost. On the reference Linux build this reduced GCC Release lowering
+from 82.4 to 12.7 seconds, while the independently compiled packing phase uses
+the target's normal optimization level and takes 4.7 seconds. Use
+`/usr/bin/time -v cmake --build ...` plus Ninja's `.ninja_log` when diagnosing
+a regression.
 
 Disable the target-local selection when diagnosing a linker/toolchain issue:
 
@@ -137,7 +138,7 @@ fallback so the splats are not lost when all geometry shares one flat trace. The
 native Vulkan BVH is deferred until the scene is known to be pure Gaussian, so
 mixed scenes do not build and then discard a second full splat representation.
 The default chunk size is 262,144
-splats; `LUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
+splats; `-gaussianChunk N` tunes it for a smaller VRAM budget. CPU RT
 tests all chunks directly, while the Vulkan and HIP paths upload/trace them
 sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
 soon as that reduction completes; only compact per-splat shading metadata stays
@@ -150,7 +151,7 @@ retaining a CPU BVH for every chunk during load and bounds the acceleration
 structure working set to one chunk. The CPU path still builds its chunks during
 extraction. Pure Gaussian scenes use the native ellipse path on HIP/ROCm as
 well; mixed mesh+splat scenes (and D3D11) use the bounded tessellated fallback,
-with SH/color buckets sharing one global `LUSDR_GPU_TRIANGLE_CHUNK` pending
+with SH/color buckets sharing one global `-gpuTriangleChunk` pending
 budget rather than each of the 64 quantized buckets becoming a separate
 multi-million-triangle allocation.
 The OpenUSD float/half property pairs share float-over-half selection and
@@ -167,11 +168,11 @@ subset-heavy instanced scenes do not retain authored job metadata throughout
 the entire BLAS/TLAS build.
 
 The flat next-loader mesh path also splits its native LightRT triangle BVH when
-needed. `LUSDR_TRIANGLE_CHUNK=N` sets the triangle limit (default 262,144);
+needed. `-triangleChunk N` sets the triangle limit (default 262,144);
 the integrator preserves global material/UV indices while checking every chunk,
 and `-stats` reports aggregate chunk node/memory totals.
 The Vulkan flat GPU path uses the same sequential strategy for oversized uploads;
-`LUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144) bounds each GPU BLAS/AS and
+`-gpuTriangleChunk N` (default 262,144) bounds each GPU BLAS/AS and
 reduces the nearest hit across chunks before shading. This avoids requiring the
 whole flat scene to fit in an 8-GiB device allocation.
 The Direct3D 11 path uses the same chunk limit and nearest-hit reduction, rather
@@ -195,6 +196,18 @@ Multi-field volumes are composited once: `density` controls extinction, while
 shading. CPU rendering samples independently transformed/resolved VDB fields;
 the interactive GL/Vulkan paths resample auxiliary fields onto the density
 lattice before uploading packed 3D textures.
+`fieldClass = "levelSet"` fields are signed distance functions, not densities,
+and are shaded as an isosurface: the CPU integrator sphere-traces the primary
+ray to the first sign change (narrow-band grids included), takes the normal from
+the distance gradient and shades it as a matte surface with the scene's
+punctual lights and the volume's albedo/emission. It is composited only when it
+lies in front of the scene geometry; shadow/indirect light and fog behind the
+surface are not computed by this preview path. `-volumeLevelSet fog` instead
+treats the SDF as a density (`clamp(-sdf)`) and marches it like any other
+field, which for narrow-band grids fills just the band. `fogVolume` and other
+classes keep the emission/absorption march below. A level-set Volume that
+produced a blank image before this (the signed distances were read as a
+density) now renders.
 Inherited UsdShade material bindings are followed through `outputs:volume`.
 Constant MaterialX/OpenPBR volume inputs for density, scattering color,
 emission color, and emission intensity are honored; connected procedural
@@ -224,11 +237,11 @@ Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do
 not hold both a source float array and a second temporary float copy.
 Non-instanced round/flat curve strands are also split into bounded native BVHs;
-`LUSDR_CURVE_CHUNK=N` sets the segment limit (default 262,144). The CPU
+`-curveChunk N` sets the segment limit (default 262,144). The CPU
 integrator checks every chunk, and Vulkan tessellates each chunk independently
 when it needs its triangle upload fallback.
 HermiteCurves use their authored `tangents` for cubic tessellation in both the
-direct scene and instanced curve-BLAS paths; `LUSDR_HERMITE_SEGMENTS=N` selects
+direct scene and instanced curve-BLAS paths; `-hermiteSegments N` selects
 the samples per span (default 8, capped at 1024). Invalid or missing tangents
 fall back to the authored control polygon with a diagnostic warning.
 The round-curve triangle fallback is shared by Vulkan, HIP/ROCm, and D3D11 and
@@ -363,3 +376,53 @@ assembled `island.usda` (all 20 elements + XGen + curves + DomeLight) renders
 directly from raw USD: **5.69 B effective triangles** (22.8 M instances, 56.6 M
 unique) in **1 m 33 s / 25.9 GB** (`-maxMem`). See the doc's analysis and
 follow-ups.
+
+Flat and instanced Vulkan ray-query capture also accept `--aov depth`,
+`--aov geometricNormal`, and `--aov shadingNormal` with one sample per pixel
+and `.pfm` output. These are raw triangle-hit distance and signed world-space
+normals, before material normal mapping or face-forward adjustment. Misses are
+zero. This diagnostic path does not apply material opacity/cutout filtering.
+The explicit `-vkInstancedStream` mode keeps one TLAS slice resident while tracing every placement; it also supports these raw AOVs. `worldNormal`, prim IDs and RenderProducts remain CPU-only.
+The analytic nonuniform-scale fixture has been checked on AMD hardware; CPU
+agreement alone does not establish GPU traversal correctness.
+
+
+`-smooth` respects mesh subdivision semantics: authored polygon normals are
+interpolated when present; absent normals on `none` and `bilinear` meshes remain
+flat, while supported smooth subdivision schemes generate vertex normals.
+Authored +Z Plane texture coordinates are remapped from the canonical USD quad
+order into generated corners. Vulkan mesh chunks preserve the same per-vertex
+UV stream in both indexed and sequential copies.
+
+### Explicit limits and diagnostics
+
+Renderer configuration is carried by `lusdr::Options` and command-line flags.
+Legacy `LUSDR_*` environment variables no longer configure renderer internals.
+All counts below must be positive when provided; omitted flags retain defaults.
+
+| Flag | Default / purpose |
+| --- | --- |
+| `-gpuTriangleChunk N` | 262144 triangles per GPU chunk; explicit use forces the chunk path |
+| `-gpuMaterialPathTriangles N` | 1000000 triangles for the material path |
+| `-triangleChunk N` | 262144 CPU triangles per chunk |
+| `-curveChunk N` | 262144 direct segments or 1048576 prototype segments |
+| `-gaussianChunk N` | 262144 splats per chunk |
+| `-gaussianMax N` | No diagnostic splat cap unless supplied |
+| `-hermiteSegments N` | 8, range 1..1024 |
+| `-instChunkTris N` | 8388608 triangles per prototype BLAS |
+| `-instBatchTris N` | 16000000 triangles per instanced build batch |
+| `-instBudget N` | 16000000 instances, or 64000000 for streaming |
+| `-forceVkrFallback`, `-forceWide` | Explicit backend diagnostic paths |
+| `-noPtex`, `-gpuNoDome` | Disable Ptex or the GPU dome |
+| `-coherentColors` | Store colors in BLAS leaf order |
+| `-lightDoubleCount`, `-noLightNee` | Diagnostic lighting comparisons |
+| `-ptexProbe FILE` | Per-render Ptex sample log |
+| `-vkDumpF32 FILE` | Raw Vulkan RGBA: int32 width/height then float pixels |
+| `-tempDirectory DIR` | Generated LOD wrapper directory |
+
+`-rtDebugAov NAME` accepts `off`, `material`, `uv`, `opacity`,
+`behind_material`, `behind_depth`, `emission`, `lit_diffuse`, `lit_spec`,
+`route4`, `route44`, `route4_tex`, `ptex`, or `base`.
+Preview compute exposes `--preview-software`, `--preview-debug-validate`, and
+`--preview-trace-pipeline`. Pass an explicit preview cache directory when a
+user-specific cache root is required.

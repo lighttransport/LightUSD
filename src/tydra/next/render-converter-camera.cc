@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - camera conversion
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include <cstring>
 #include <string>
@@ -25,18 +27,10 @@ bool GetDouble(const UsdPrim& prim, const char* name, double* out) {
   if (const float* result = value->as_float()) { *out = *result; return true; }
   return false;
 }
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  if (!out) return false;
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value) return false;
-  if (const std::string* result = value->as_token()) { *out = *result; return true; }
-  if (const std::string* result = value->as_string()) { *out = *result; return true; }
-  return false;
-}
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertCamera(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderCamera* out) {
   if (!out || !::lightusd::tydra::next::IsCamera(prim)) {
@@ -49,7 +43,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
 
   // Projection type
   std::string projection;
-  GetToken(prim, "projection", &projection);
+  GetPropToken(prim, "projection", &projection);
   out->type = (projection == "orthographic") ?
               CameraType::Orthographic : CameraType::Perspective;
 
@@ -80,7 +74,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
   GetFloat(prim, "exposure", &out->exposure);
 
   std::string stereo_role;
-  if (GetToken(prim, "stereoRole", &stereo_role)) {
+  if (GetPropToken(prim, "stereoRole", &stereo_role)) {
     if (stereo_role == "left") {
       out->stereo_role = RenderCamera::StereoRole::Left;
     } else if (stereo_role == "right") {
@@ -88,7 +82,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
     }
   }
   if (const Value* planes = GetAttribute(prim, "clippingPlanes")) {
-    if (const std::vector<float>* values = planes->as_float_array()) {
+    if (auto values = planes->as_float_array()) {
       out->clipping_planes.reserve(values->size() / 4);
       for (size_t i = 0; i + 3 < values->size(); i += 4) {
         out->clipping_planes.emplace_back(

@@ -48,6 +48,9 @@ namespace value {
   __FUNC(GeomCamera)            \
   __FUNC(GeomPointInstancer)        \
   __FUNC(Volume)                \
+  __FUNC(VolumeFieldBase)       \
+  __FUNC(FieldBase)             \
+  __FUNC(VolumeFieldAsset)      \
   __FUNC(FieldAsset)            \
   __FUNC(OpenVDBAsset)          \
   __FUNC(Field3DAsset)          \

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildNextDemoScene } from '../next-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
@@ -127,7 +128,7 @@ async function ensureLoader() {
   setStatus('Initializing LightUSD WASM...');
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -250,23 +251,14 @@ async function loadUSD(url, label) {
   setStatus(`Parsing ${label}...`);
   const usd = await new Promise((resolve, reject) => {
     loader.parse(data, filename, resolve, reject, {
-      backend: 'legacy',
+      backend: 'next',
       maxMemoryLimitMB: 512,
       preferredMaterialType: 'usdpreviewsurface',
     });
   });
 
   setStatus(`Building scene...`);
-  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
-  defaultMat.envMap = envMap;
-  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
-    usd.getDefaultRootNode(), defaultMat, usd, {
-      preferredMaterialType: 'usdpreviewsurface',
-      envMap,
-      envMapIntensity: 1.0,
-      textureCache: new Map(),
-    }
-  );
+  const { node: threeNode } = await buildNextDemoScene(usd, { envMap, sourceUrl: url });
 
   // Replace world
   world.clear();
@@ -319,21 +311,12 @@ async function loadLocalFile(file) {
   setStatus(`Reading ${file.name}...`);
   const usd = await new Promise((resolve, reject) => {
     loader.parse(data, file.name, resolve, reject, {
-      backend: 'legacy',
+      backend: 'next',
       maxMemoryLimitMB: 512,
       preferredMaterialType: 'usdpreviewsurface',
     });
   });
-  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
-  defaultMat.envMap = envMap;
-  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
-    usd.getDefaultRootNode(), defaultMat, usd, {
-      preferredMaterialType: 'usdpreviewsurface',
-      envMap,
-      envMapIntensity: 1.0,
-      textureCache: new Map(),
-    }
-  );
+  const { node: threeNode } = await buildNextDemoScene(usd, { envMap });
   world.clear();
   world.add(threeNode);
   scene.environment = envMap;

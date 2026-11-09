@@ -4,7 +4,7 @@
 
 #include "lightusd.hh"
 #include "io-util.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "usdFbx.hh"
 
 //#include "math-util.inc"

@@ -44,11 +44,22 @@ mkdir -p "$OUT"
 # --- raster shaders (mesh / line) ------------------------------------------
 # --vn <sym> emits 'static const uint32_t <sym>[] = {...}', matching the names
 # vk_renderer.cc includes (mesh_vert.spv.h -> mesh_vert_spv, etc.).
-for sh in mesh.vert mesh.frag wire.vert wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
+for sh in mesh.vert mesh.frag wire.vert wire_inst.vert wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
   sym="${sh/./_}"          # mesh.vert -> mesh_vert
   echo "==> $sh -> embedded/${sym}.spv.h (${sym}_spv)"
   "$GLSLANG" -V --vn "${sym}_spv" -o "$OUT/${sym}.spv.h" "$HERE/$sh"
 done
+
+# mesh.vert (static-batch variant): same shader without the joint/weight/
+# influence/morph vertex streams (see LUSDVIEW_STATIC_BATCH in mesh.vert).
+echo "==> mesh.vert (static batch) -> embedded/mesh_static_vert.spv.h"
+"$GLSLANG" -V -DLUSDVIEW_STATIC_BATCH=1 --vn mesh_static_vert_spv \
+  -o "$OUT/mesh_static_vert.spv.h" "$HERE/mesh.vert"
+
+# Skin-only variant: preserve all skinning math, omit dead morph attributes.
+echo "==> mesh.vert (skin only) -> embedded/mesh_skin_vert.spv.h"
+"$GLSLANG" -V -DLUSDVIEW_SKIN_ONLY=1 --vn mesh_skin_vert_spv \
+  -o "$OUT/mesh_skin_vert.spv.h" "$HERE/mesh.vert"
 
 echo "==> mesh.frag (weighted OIT) -> embedded/mesh_oit_frag.spv.h"
 "$GLSLANG" -V -DLUSDVIEW_OIT=1 --vn mesh_oit_frag_spv \
@@ -66,6 +77,9 @@ done
 echo "==> oit_composite.comp -> embedded/oit_composite_comp.spv.h"
 "$GLSLANG" -V --vn oit_composite_comp_spv \
   -o "$OUT/oit_composite_comp.spv.h" "$HERE/oit_composite.comp"
+echo "==> raster_dof.comp -> embedded/raster_dof_comp.spv.h"
+"$GLSLANG" -V --vn raster_dof_comp_spv \
+  -o "$OUT/raster_dof_comp.spv.h" "$HERE/raster_dof.comp"
 
 # --- ray-query compute shader (optional) -----------------------------------
 # Needs a glslang new enough for GL_EXT_ray_query (SPIR-V 1.4 / vulkan1.2).
@@ -90,21 +104,37 @@ elif command -v spirv-val >/dev/null 2>&1 &&
   RAYTRACE_VALID=0
 fi
 
+# glslc does not provide glslang's --vn symbol option. Its C initializer is a
+# word-aligned fallback that keeps generated ray-query modules compact and
+# matches vkCreate*Pipeline's pCode contract.
+emitGlslcCHeader() {
+  local compiler="$1"
+  local symbol="$2"
+  local output="$3"
+  shift 3
+  local initializer="${output}.initializer"
+  rm -f "$initializer"
+  "$compiler" "$@" -mfmt=c -o "$initializer"
+  {
+    printf '#pragma once\nconst uint32_t %s[] =\n' "$symbol"
+    cat "$initializer"
+    printf ';\n'
+  } > "$output"
+  rm -f "$initializer"
+}
+
 if [ "$RAYTRACE_VALID" -eq 1 ] &&
    "$GLSLANG" -V --target-env vulkan1.2 "$RT_SHADER_DEFINE" --vn raytrace_comp_spv \
       -o "$OUT/raytrace_comp.spv.h" "$HERE/raytrace.comp" 2>/dev/null; then
   echo "==> raytrace.comp -> embedded/raytrace_comp.spv.h (ray query ENABLED)"
 else
   # glslc can support ray-query even when the installed glslangValidator is
-  # too old. Emit a byte header and let createShader consume its byte size;
-  # Vulkan requires pCode to be 4-byte aligned, which SPIR-V already is.
+  # too old. Emit a compact word-aligned C header.
   GLSLC="${GLSLC:-$(command -v glslc || true)}"
   if [ -n "$GLSLC" ] && [ -x "$GLSLC" ] &&
      "$GLSLC" --target-env=vulkan1.2 "$RT_SHADER_DEFINE" -o "$RAYTRACE_TMP" "$HERE/raytrace.comp"; then
-    xxd -i -c 12 "$RAYTRACE_TMP" "$OUT/raytrace_comp.spv.h"
-    sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_comp_spv[]/' "$OUT/raytrace_comp.spv.h"
-    sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_comp_spv_len/' "$OUT/raytrace_comp.spv.h"
-    sed -i '1i#pragma once' "$OUT/raytrace_comp.spv.h"
+    emitGlslcCHeader "$GLSLC" raytrace_comp_spv "$OUT/raytrace_comp.spv.h" \
+      --target-env=vulkan1.2 "$RT_SHADER_DEFINE" "$HERE/raytrace.comp"
     echo "==> raytrace.comp -> embedded/raytrace_comp.spv.h (ray query ENABLED via glslc)"
   else
     rm -f "$OUT/raytrace_comp.spv.h"
@@ -131,10 +161,11 @@ if [ -n "$GLSLC_FAST" ] && [ -x "$GLSLC_FAST" ] &&
       -DLUSDVIEW_RT_DISABLE_MTLX=1 -DLUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
       -o "$RAYTRACE_FAST_TMP" \
       "$HERE/raytrace.comp"; then
-  xxd -i -c 12 "$RAYTRACE_FAST_TMP" "$OUT/raytrace_fast_comp.spv.h"
-  sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_fast_comp_spv[]/' "$OUT/raytrace_fast_comp.spv.h"
-  sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_fast_comp_spv_len/' "$OUT/raytrace_fast_comp.spv.h"
-  sed -i '1i#pragma once' "$OUT/raytrace_fast_comp.spv.h"
+  emitGlslcCHeader "$GLSLC_FAST" raytrace_fast_comp_spv \
+    "$OUT/raytrace_fast_comp.spv.h" --target-env=vulkan1.2 \
+    "$RT_SHADER_DEFINE" -DLUSDVIEW_RT_FAST_MATERIAL=1 \
+    -DLUSDVIEW_RT_DISABLE_MTLX=1 -DLUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
+    "$HERE/raytrace.comp"
   echo "==> raytrace.comp (graph-free) -> embedded/raytrace_fast_comp.spv.h"
 else
   rm -f "$OUT/raytrace_fast_comp.spv.h"
@@ -152,13 +183,11 @@ if [ -n "$GLSLC_FAST" ] && [ -x "$GLSLC_FAST" ] &&
       -DLUSDVIEW_RT_DISABLE_MTLX=1 -DLUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
       -DLUSDVIEW_RT_INTERACTIVE_ONLY=1 \
       -o "$RAYTRACE_INTERACTIVE_TMP" "$HERE/raytrace.comp"; then
-  xxd -i -c 12 "$RAYTRACE_INTERACTIVE_TMP" \
-    "$OUT/raytrace_interactive_comp.spv.h"
-  sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_interactive_comp_spv[]/' \
-    "$OUT/raytrace_interactive_comp.spv.h"
-  sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_interactive_comp_spv_len/' \
-    "$OUT/raytrace_interactive_comp.spv.h"
-  sed -i '1i#pragma once' "$OUT/raytrace_interactive_comp.spv.h"
+  emitGlslcCHeader "$GLSLC_FAST" raytrace_interactive_comp_spv \
+    "$OUT/raytrace_interactive_comp.spv.h" --target-env=vulkan1.2 \
+    "$RT_SHADER_DEFINE" -DLUSDVIEW_RT_FAST_MATERIAL=1 \
+    -DLUSDVIEW_RT_DISABLE_MTLX=1 -DLUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
+    -DLUSDVIEW_RT_INTERACTIVE_ONLY=1 "$HERE/raytrace.comp"
   echo "==> raytrace.comp (interactive-only) -> embedded/raytrace_interactive_comp.spv.h"
 else
   rm -f "$OUT/raytrace_interactive_comp.spv.h"

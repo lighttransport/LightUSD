@@ -4,6 +4,8 @@
 // Includes lusdr_math.hh; the RenderContext aggregator lives in lusdr_context.hh.
 #pragma once
 
+#include "cpu/ptex-sample.hh"  // lusdview::CpuPtexSampler (lazy Ptex source)
+#include "core/host-services.hh"
 #include <array>
 #include <memory>
 #include <string>
@@ -12,7 +14,7 @@
 #include <vector>
 
 #include "lusdr_math.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 #include "lightusd.hh"
 #include "value-types.hh"
 #include "xform.hh"
@@ -45,6 +47,41 @@ using lightusd::tydra::RenderScene;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
+// Compact per-triangle Ptex reference for fan-triangulated quads: 4 bytes encode
+// which authored face a triangle came from and which of its two fan triangles it
+// is, so both the GPU shader and the CPU shader can rebuild the face-local (u,v)
+// of its corners. bits 31..2 = face id, bit 1 = winding swapped (left-handed
+// mesh), bit 0 = fan triangle (0: corners 0,1,2; 1: corners 0,2,3).
+// 0xFFFFFFFF marks a triangle without Ptex data (non-quad face).
+constexpr uint32_t kPtexTriInvalid = 0xFFFFFFFFu;
+inline uint32_t MakePtexTriRef(uint32_t face, int fan_triangle, bool swapped) {
+  return face >= (1u << 30) ? kPtexTriInvalid
+                            : (face << 2) | (swapped ? 2u : 0u) |
+                                  uint32_t(fan_triangle & 1);
+}
+inline uint32_t PtexTriFace(uint32_t ref) { return ref >> 2; }
+// Intrinsic (u,v) of a quad's corner ordinal 0..3, as lusdview assigns them
+// ((0,1),(1,1),(1,0),(0,0)); sampling then flips v to address top-first rows.
+inline void PtexCornerUv(uint32_t ordinal, float *u, float *v) {
+  static const float kU[4] = {0, 1, 1, 0}, kV[4] = {1, 1, 0, 0};
+  *u = kU[ordinal & 3u];
+  *v = kV[ordinal & 3u];
+}
+// Face-local (u,v) at barycentric (b1, b2) of the triangle (weights of vertices
+// 1 and 2; vertex 0 gets 1-b1-b2).
+inline void PtexTriUv(uint32_t ref, float b1, float b2, float *u, float *v) {
+  const uint32_t k = (ref & 1u) + 1u;
+  uint32_t i1 = k, i2 = k + 1u;
+  if (ref & 2u) { const uint32_t t = i1; i1 = i2; i2 = t; }
+  float u0, v0, u1, v1, u2, v2;
+  PtexCornerUv(0, &u0, &v0);
+  PtexCornerUv(i1, &u1, &v1);
+  PtexCornerUv(i2, &u2, &v2);
+  const float w0 = 1.0f - b1 - b2;
+  *u = u0 * w0 + u1 * b1 + u2 * b2;
+  *v = v0 * w0 + v1 * b1 + v2 * b2;
+}
+
 struct Texture {
   int width{0}, height{0}, channels{0};
   std::vector<uint8_t> pixels;  // mip 0: width*height*channels, top-left
@@ -69,6 +106,18 @@ struct Texture {
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
+  // Ptex texture (.ptx): a lazy source, no pixels. `ptex` owns the container
+  // reader and a bounded decoded-page cache; the chunked CPU shader samples it
+  // directly (per-face mips, cross-face taps) and the Vulkan descriptor path
+  // builds a face atlas from it on demand. `ptex_bytes` keeps memory-opened data
+  // alive; `ptex_path` labels diagnostics.
+  bool is_ptex{false};
+  uint32_t ptex_faces{0};
+  uint32_t ptex_max_face_edge{512};
+  uint32_t ptex_mip_levels{3};
+  std::shared_ptr<lusdview::CpuPtexSampler> ptex;
+  std::shared_ptr<std::vector<uint8_t>> ptex_bytes;
+  std::string ptex_path;
   // Full authored color transform for color textures. The destination is
   // lusdrender's display-linear Rec.709 shading space. `srgb` remains as the
   // compatibility fallback for legacy textures that do not carry a transform.
@@ -78,7 +127,12 @@ struct Texture {
   Vec3 scale{1.0f, 1.0f, 1.0f};
   Vec3 bias{0.0f, 0.0f, 0.0f};
 
-  static float ApplyWrap(float x, WrapMode m, bool *in_bounds) {
+  Vec3 apply_value_transform(const Vec3& value) const {
+    return {value.x * scale.x + bias.x, value.y * scale.y + bias.y,
+            value.z * scale.z + bias.z};
+  }
+
+  static float ApplyWrap(float x, WrapMode m, bool* in_bounds) {
     *in_bounds = true;
     switch (m) {
       case WrapMode::Repeat:
@@ -361,10 +415,14 @@ struct Texture {
     return bilinear_channel_data(d, w, h, channels, wu, wv, ch);
   }
 
-  // Trilinear single-channel sample (incl. alpha). Raw (scalar inputs are always
-  // sourceColorSpace=raw), so no sRGB. Matches ChannelOf(sample(...)) bit-for-bit
-  // for r/g/b on a raw texture; additionally exposes alpha (ch=3).
+  // RGB outputs retain the texture's authored source color transform even when
+  // connected to a scalar input. Alpha is always linear and bypasses that
+  // transform. Raw data textures keep the single-channel sampling fast path.
   float sample_channel(float u, float v, float lod, int ch) const {
+    if (ch >= 0 && ch < 3 && (srgb || !color_transform.bypass)) {
+      const Vec3 value = sample(u, v, lod);
+      return ch == 0 ? value.x : ch == 1 ? value.y : value.z;
+    }
     if (is_udim) {
       float lu = 0.0f, lv = 0.0f;
       const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
@@ -455,9 +513,18 @@ struct PreviewLight {
   float power{0.0f};
   float cdf{0.0f};
   bool shadow_enable{true};
+  // UsdAppUtilsFrameRecorder's camera light uses GlfSimpleLight attenuation
+  // (1,0,0): constant, no inverse-square falloff. Only the reference camera
+  // light mode sets this.
+  bool constant_attenuation{false};
   int tri_id{-1};
   int texture_id{-1};
   std::string texture_file;
+  // Dome only: lights the scene but is not painted on primary-ray misses.
+  bool camera_hidden{false};
+  // Distant only: UsdLux solid-angle factor (1 when normalized); applied only
+  // under -distantSolidAngle.
+  float solid_angle_scale{1.0f};
 };
 
 struct LightCache {
@@ -536,6 +603,7 @@ struct CameraFrame {
   Vec3 up{0.0f, 1.0f, 0.0f};
   Vec3 forward{0.0f, 0.0f, -1.0f};
   float yfov{45.0f * 3.14159265358979323846f / 180.0f};
+  float shift_x{0.0f}, shift_y{0.0f};  // normalized filmback offsets
   float xmag{1.0f};
   float ymag{1.0f};
   float znear{0.001f};
@@ -543,7 +611,48 @@ struct CameraFrame {
   bool ortho{false};
 };
 
+enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNormal, PrimId };
+enum class MaterialDiagnostic { None, Roughness, Metallic };
+
 struct Options {
+  std::shared_ptr<const lightusd::HostServices> host_services;
+  // Per-render controls. Zero selects the documented automatic limit.
+  size_t gpu_triangle_chunk{262144};
+  bool gpu_triangle_chunk_explicit{false};
+  // Bound the whole-scene MaterialX path before using chunked shading.
+  size_t gpu_material_path_triangles{1000000};
+  size_t triangle_chunk{262144};
+  size_t curve_chunk{0};
+  size_t gaussian_max{0};
+  size_t gaussian_chunk{262144};
+  unsigned hermite_segments{8};
+  uint32_t inst_chunk_tris{8u * 1024u * 1024u};
+  size_t inst_budget{0};
+  uint32_t inst_batch_tris{16000000};
+  bool force_vkr_fallback{false};
+  bool force_wide{false};
+  bool gpu_no_dome{false};
+  bool no_ptex{false};
+  // Per-face minification levels packed into the descriptor Ptex atlas. 1
+  // reproduces the historical single-level atlas; 3 is the default.
+  uint32_t ptex_mip_levels{3};
+  bool coherent_colors{false};
+  bool light_double_count{false};
+  bool light_nee{true};
+  uint32_t rt_debug_aov{0};
+  std::string vk_dump_f32;
+  std::string ptex_probe;
+  std::string temp_directory;
+
+  CaptureAov aov{CaptureAov::Color};
+  // Display transform for the beauty path: false = filmic curve (default),
+  // true = plain sRGB encode, matching usdrecord's colorCorrectionMode=sRGB.
+  bool srgb_display_transform{false};
+  // Exposure applied before the filmic curve (exp2). 1.0 is the historical
+  // default; lower values bring the preview closer to a plain sRGB encode.
+  float exposure{1.0f};
+  bool aov_explicit{false};
+  bool all_render_products{false};
   std::string input;
   std::string output;
   std::string camera;
@@ -578,7 +687,10 @@ struct Options {
   bool rt_lod_full_px_explicit{false};
   bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
+  bool scene_preview_albedo{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
+  bool diagnostic_emission{false}; // unlit channel wrapper, sRGB without tone map
+  MaterialDiagnostic diagnostic_material{MaterialDiagnostic::None};
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
@@ -586,6 +698,11 @@ struct Options {
   MaterialResolver material_resolver{MaterialResolver::TydraNext};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
+  // Level-set volumes (UsdVol fieldClass "levelSet"): shade the isosurface as
+  // a matte surface, or treat the SDF as a density (clamp(-sdf)) and march it
+  // as fog like any other field.
+  enum class VolumeLevelSet { Surface, Fog };
+  VolumeLevelSet volume_level_set{VolumeLevelSet::Surface};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
   int subdivision_level{0};
@@ -601,6 +718,8 @@ struct Options {
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time
   double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
+  uint64_t max_array_elements{16ull * 1024ull * 1024ull};
+  std::map<std::string,std::map<std::string,std::string>> preview_variant_overrides;
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
   // -lodStream: view-dependent district LOD. A cheap proxy pass measures each
   // district's camera distance + proxy size, then promotes the nearest districts
@@ -633,10 +752,27 @@ struct Options {
   bool rt_lod{false};
   bool rt_lod_proxy{true};         // distant -> box proxy (false = Full-or-Cull)
   bool rt_lod_frustum_cull{false}; // GI-unsafe; opt-in speed flag
+  uint32_t curve_segments{8};  // -curveSegments: per cubic span, instanced GPU tubes
   float rt_lod_full_px{64.0f};     // -rtLodFullPx
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  // -referenceCameraLight: ignore authored lights and use only the
+  // UsdAppUtilsFrameRecorder camera light (constant attenuation, radiance 1).
+  bool reference_camera_light{false};
+  // -distantSolidAngle: scale unnormalized DistantLights by their cone's solid
+  // angle (UsdLux/Hydra Storm semantics) instead of treating intensity as
+  // irradiance.
+  bool distant_solid_angle{false};
+  // -distantScale: empirical extra factor on unnormalized distant lights when
+  // -distantSolidAngle is set (calibration against Storm; 1 = none).
+  float distant_scale{1.0f};
+  // -referenceCameraLightAdd: add the reference camera light to the authored
+  // lights instead of replacing them (vkr path).
+  bool reference_camera_light_add{false};
+  // -noLightShadows: authored distant lights cast no shadows (Storm default;
+  // vkr descriptor path).
+  bool no_light_shadows{false};
   int vulkan_device{-1};           // -vkDevice: physical-device index (-1 = auto)
   enum class GpuShadeMode { Auto, Cpu, Preview };
   GpuShadeMode gpu_shade{GpuShadeMode::Auto};  // -gpuShade cpu|preview
@@ -656,6 +792,7 @@ struct Options {
   // sharing). Requires ray query; falls back to the flat path when unavailable or
   // when the scene has no shareable instances. OFF by default.
   bool vulkan_instanced{false};
+  bool vulkan_instanced_stream{false};  // one TLAS slice resident; retain all placements
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
   bool hip{false};                 // -hip: use the HIP/ROCm compute backend
   bool cuda{false};                // -cuda: shared CUDA/NVRTC RT backend
@@ -776,7 +913,15 @@ struct RTPreviewStats {
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> uvs;
+    // Secondary texture-coordinate set, parallel to `uvs` when present. The
+    // vkr material path uploads both sets (pos/nrm/uv/uv1 = 10 floats/vertex);
+    // a graph image node selects its set through the Texcoord node flag.
+    std::vector<float> uvs1;
     std::vector<uint32_t> indices;
+    // Optional Ptex reference per triangle, parallel to `indices` / 3 (empty
+    // unless the mesh binds a Ptex texture). See PtexTriRef below.
+    std::vector<uint32_t> ptex_tri;
+    uint32_t source_material_id{UINT32_MAX}; // survives bounded GPU chunking
   };
   size_t meshes{0};
   size_t meshes_with_mmap_points{0};
@@ -910,8 +1055,16 @@ struct VolumeScalarField {
   float background = 0.0f;
 };
 
+// Optional CPU-side sparse level-set sampler. Implementations own their grid
+// and support concurrent calls from rendering workers.
+struct VolumeSparseSampler {
+  virtual ~VolumeSparseSampler() = default;
+  virtual float Sample(const Vec3 &p) const = 0;
+};
+
 struct VolumeData {
   std::vector<float> density;  // dense grid, x-contiguous
+  std::shared_ptr<const VolumeSparseSampler> sparse_density;
   // Optional scalar fields on the same index-space lattice as `density`.
   // emission modulates the authored emission color. temperature is converted
   // to a blackbody tint (Kelvin when > 100, normalized fire heat otherwise).
@@ -920,13 +1073,58 @@ struct VolumeData {
   int dim[3] = {0, 0, 0};
   Vec3 bmin{0.0f, 0.0f, 0.0f};  // object-space AABB
   Vec3 bmax{0.0f, 0.0f, 0.0f};
+  matrix4d world{matrix4d::identity()};      // object -> world
   matrix4d inv_world{matrix4d::identity()};  // world -> object
+  float voxel_size = 0.0f;  // smallest object-space cell edge
+  // UsdVol fieldClass == "levelSet": `density` holds signed distances (world
+  // units; negative inside per OpenVDB) rather than a density. Such a field is
+  // shaded as an isosurface (sphere tracing) instead of as fog. Narrow-band
+  // level sets store the positive band value inside the solid's core, so the
+  // tracer keys on the first sign change along the ray rather than on an
+  // "inside" hemisphere; the normal is oriented against the view ray, which
+  // also makes a positive-inside file shade correctly.
+  bool level_set = false;
   float density_scale = 1.0f;
   Vec3 albedo{0.6f, 0.6f, 0.65f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float emission_scale = 1.0f;
   float background = 0.0f;
 };
+
+// Trilinear scalar sample of a dense lattice at an object-space point
+// (voxel-center convention, clamped at the lattice edges).
+inline float SampleVolumeField(const std::vector<float> &field, const int dim[3],
+                               const Vec3 &bmin, const Vec3 &bmax, const Vec3 &p) {
+  const float ex = bmax.x - bmin.x;
+  const float ey = bmax.y - bmin.y;
+  const float ez = bmax.z - bmin.z;
+  if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
+  if (dim[0] <= 0 || dim[1] <= 0 || dim[2] <= 0) return 0.0f;
+  float gx = (p.x - bmin.x) / ex * float(dim[0]) - 0.5f;
+  float gy = (p.y - bmin.y) / ey * float(dim[1]) - 0.5f;
+  float gz = (p.z - bmin.z) / ez * float(dim[2]) - 0.5f;
+  int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
+  float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
+  auto fetch = [&](int x, int y, int z) -> float {
+    if (x < 0) x = 0; else if (x >= dim[0]) x = dim[0] - 1;
+    if (y < 0) y = 0; else if (y >= dim[1]) y = dim[1] - 1;
+    if (z < 0) z = 0; else if (z >= dim[2]) z = dim[2] - 1;
+    return field[size_t(x) + size_t(dim[0]) *
+                                  (size_t(y) + size_t(dim[1]) * size_t(z))];
+  };
+  float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
+  float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
+  float c01 = fetch(x0, y0, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0, z0 + 1) * fx;
+  float c11 = fetch(x0, y0 + 1, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0 + 1) * fx;
+  float c0 = c00 * (1 - fy) + c10 * fy;
+  float c1 = c01 * (1 - fy) + c11 * fy;
+  return c0 * (1 - fz) + c1 * fz;
+}
+
+inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
+  if (vd.sparse_density) return vd.sparse_density->Sample(p);
+  return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
+}
 
 struct ResolvedMat;
 
@@ -961,9 +1159,16 @@ struct MeshJobNext {
   // preference list. Used to pick which mesh primvar feeds `st` so a texture
   // bound to a secondary set (e.g. `uvSet1`) is not silently sampled with `st`.
   std::string uv_primvar;
+  // A second UV primvar referenced by another textured lane (first name that
+  // differs from `uv_primvar`). Read into the geometry's secondary stream; the
+  // per-lane `uv_set_bits` below say which lanes sample it.
+  std::string uv_primvar1;
+  // Two bits per RtTexUvLane: 0 = primary stream, 1 = secondary stream.
+  uint32_t uv_set_bits{0};
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   float clearcoat{0.0f};                 // inputs:clearcoat weight
   float clearcoat_roughness{0.01f};      // inputs:clearcoatRoughness
   ScalarTex clearcoat_tex;               // clearcoat-weight texture + channel
@@ -999,7 +1204,37 @@ struct TextureCache {
   size_t *texture_mip_fallbacks{nullptr};
 };
 
+// Semantic texture lanes whose UV set the descriptor material path can select.
+// Two bits per lane; 0 = the job's primary UV stream, 1 = the secondary stream.
+// Matches the DrawTexSampleCPU slots that MakeDrawScene stamps and the
+// MaterialX Texcoord node's second-set flag.
+enum RtTexUvLane : uint32_t {
+  kRtTexUvBase = 0,
+  kRtTexUvSpecular,
+  kRtTexUvNormal,
+  kRtTexUvCoatNormal,
+  kRtTexUvDisplacement,
+  kRtTexUvRoughness,
+  kRtTexUvMetallic,
+  kRtTexUvEmissive,
+  kRtTexUvOcclusion,
+  kRtTexUvOpacity,
+  kRtTexUvCoatWeight,
+  kRtTexUvCoatRoughness,
+  kRtTexUvLaneCount
+};
+inline uint32_t RtTexUvSet(uint32_t bits, uint32_t lane) {
+  return (bits >> (lane * 2u)) & 3u;
+}
+inline void SetRtTexUvSet(uint32_t *bits, uint32_t lane, uint32_t set) {
+  const uint32_t shift = lane * 2u;
+  *bits = (*bits & ~(3u << shift)) | ((set & 3u) << shift);
+}
+
 struct ResolvedMat {
+  std::string uv_primvar;
+  std::string uv_primvar1;
+  uint32_t uv_set_bits{0};
   Vec3 base_color{0.55f, 0.55f, 0.55f};
   int32_t tex_id{-1};
   float roughness{0.55f};
@@ -1017,6 +1252,7 @@ struct ResolvedMat {
   float opacity{1.0f};
   ScalarTex opacity_tex;
   float opacity_threshold{0.0f};
+  bool opacity_presence{true}; // Emissive diagnostic: PreviewSurface presence versus transparent.
   float clearcoat{0.0f};
   float clearcoat_roughness{0.01f};
   ScalarTex clearcoat_tex;

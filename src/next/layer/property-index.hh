@@ -13,6 +13,7 @@
 #include <utility>
 #include <deque>
 #include "../core/string-index.hh"
+#include "intern-table.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <memory>
@@ -27,7 +28,7 @@ namespace next {
 struct PropNameId {
   uint32_t id = UINT32_MAX;
 
-  bool is_valid() const { return id != UINT32_MAX; }
+  bool is_valid() const;
   bool operator==(PropNameId other) const { return id == other.id; }
   bool operator!=(PropNameId other) const { return id != other.id; }
   bool operator<(PropNameId other) const { return id < other.id; }
@@ -36,7 +37,7 @@ struct PropNameId {
 /// Property name interning table
 /// All property names are stored once and referenced by ID
 /// Thread-safe for reads after initial population
-class PropNameTable {
+class PropNameTable : public detail::StringInternTable<PropNameId, UINT32_MAX> {
 public:
   PropNameTable();
   ~PropNameTable();
@@ -55,21 +56,13 @@ public:
   PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
 
-  /// Get total count of interned names
-  size_t size() const {
-#if defined(LIGHTUSD_ENABLE_THREAD)
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-#endif
-    return names_.size();
-  }
-
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
 
   /// Freeze the table for lock-free concurrent reads. After composition the set
   /// of interned names is fixed; rendering does millions of find()/get() calls
   /// across many threads, and the per-call shared_lock then contends purely on
-  /// the lock's own cache line (a measured ~14% of an Island render).
+  /// the lock's own cache line (a measured ~14% of an reference scene render).
   ///
   /// freeze() publishes an IMMUTABLE SNAPSHOT of the table; while one is
   /// published, find()/get() answer from it with no lock at all. A later
@@ -89,6 +82,14 @@ public:
   /// (always false) in non-threaded builds, where freeze() is a no-op.
   bool is_frozen() const;
 
+  /// Publish the lock-free read snapshot now if names were interned since the
+  /// last one. The table republishes it on its own as it grows (geometrically,
+  /// so retained snapshots stay O(names)); a bulk loader that is about to hit
+  /// the table from many threads calls this after interning its names up
+  /// front, so every lookup is served without touching the rwlock. No-op
+  /// without LIGHTUSD_ENABLE_THREAD.
+  void publish_snapshot();
+
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
   PropNameId id_normals;      // "normals"
@@ -107,18 +108,11 @@ public:
   PropNameId id_size;         // "size"
 
 private:
-  // A deque retains the address of existing strings while concurrent intern()
-  // calls append new names. StringIndex avoids a second key copy in the lookup
-  // table; the deque remains until all value-facing name storage is pooled.
-  std::deque<std::string> names_;
-  detail::StringIndex name_to_id_;
-  PropNameId find_live(std::string_view name) const;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
   // lookup takes a shared lock, the rare new-name insert an exclusive one.
   // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
-  mutable std::shared_mutex mu_;
 
   // Immutable lookup snapshot published by freeze(). `by_name` is sorted by
   // name so a lookup is a binary search over flat storage, and `by_id` stores
@@ -134,7 +128,7 @@ private:
   // _Sp_locker, which serializes on one of 16 global mutexes chosen by the
   // ADDRESS of the shared_ptr -- and this table is a singleton, so every thread
   // hashed to the same mutex and every property-name lookup in every worker
-  // serialized on it. On Moana island isCoral that cost ~24% of load
+  // serialized on it. On a large scene that cost ~24% of load
   // (_Sp_locker ctor+dtor inclusive) and showed up as futex traffic.
   //
   // Lifetime: every snapshot ever published is retained in published_ until the
@@ -143,6 +137,30 @@ private:
   // whole codebase, so this retains a couple of MB, not an unbounded set.
   std::atomic<const FrozenIndex*> frozen_ptr_{nullptr};
   std::vector<std::shared_ptr<const FrozenIndex>> published_;  // guarded by mu_
+
+  // Growth snapshot (independent of freeze()): an immutable copy of the id ->
+  // name views plus a hash index over them, published lock-free as a raw
+  // pointer. Read HITS on it never touch mu_ -- parallel USDC stage-build
+  // workers call add_property()/intern()/find() millions of times, and the
+  // shared_lock cache line alone cost ~17% of an reference scene crate load. It is
+  // republished under the exclusive lock whenever the table has grown by half
+  // since the last one (plus on publish_snapshot()), so a miss is always
+  // recent and falls back to the authoritative locked path, and the retained
+  // snapshots total O(names). Snapshots live until the table dies, so a reader
+  // holding a loaded pointer can never see it freed.
+  struct GrowthSnapshot {
+    std::vector<const std::string*> by_id;
+    detail::StringIndex index;
+  };
+  const GrowthSnapshot* snapshot_hit_ptr() const {
+    return snapshot_ptr_.load(std::memory_order_acquire);
+  }
+  static PropNameId SnapshotFind(const GrowthSnapshot& snap,
+                                 std::string_view name);
+  void publish_growth_snapshot_locked();  // caller holds mu_ exclusively
+  std::atomic<const GrowthSnapshot*> snapshot_ptr_{nullptr};
+  std::vector<std::unique_ptr<const GrowthSnapshot>> snapshots_;  // guarded by mu_
+  size_t snapshot_count_ = 0;  // names covered by the latest; guarded by mu_
 #endif
 };
 
@@ -156,6 +174,13 @@ struct PropSlot {
   uint32_t value_offset;      // Offset into value storage
   uint16_t value_type;        // TypeId of the value
   uint16_t flags;             // Property flags
+  // Declared USD type name ("color3f", "float[]") as a TypeNameTable id;
+  // kNoTypeName when none was recorded (PrimSpec then falls back to its cold
+  // string map, used only for names set before the slot existed or past the
+  // table's capacity). Slot-resident so the crate writer and the compose
+  // merge read it without a per-property map lookup or string hash.
+  uint16_t type_name_id = kNoTypeName;
+  static constexpr uint16_t kNoTypeName = UINT16_MAX;
 
   // Flag bits
   static constexpr uint16_t kFlagCustom = 0x0001;
@@ -167,16 +192,14 @@ struct PropSlot {
   static constexpr uint16_t kFlagVariabilityAuthored = 0x0040;
   static constexpr uint16_t kFlagVarying = 0x0080;
 
-  bool is_custom() const { return flags & kFlagCustom; }
-  bool is_uniform() const { return flags & kFlagUniform; }
-  bool is_time_sampled() const { return flags & kFlagTimeSampled; }
-  bool is_connection() const { return flags & kFlagConnection; }
-  bool is_relationship() const { return flags & kFlagRelationship; }
-  bool is_array() const { return flags & kFlagArray; }
-  bool variability_authored() const {
-    return flags & kFlagVariabilityAuthored;
-  }
-  bool is_varying() const { return flags & kFlagVarying; }
+  bool is_custom() const;
+  bool is_uniform() const;
+  bool is_time_sampled() const;
+  bool is_connection() const;
+  bool is_relationship() const;
+  bool is_array() const;
+  bool variability_authored() const;
+  bool is_varying() const;
 };
 
 /// Property index for a single prim
@@ -206,16 +229,18 @@ public:
   bool remove(PropNameId name_id);
 
   /// Get all properties
-  const std::vector<PropSlot>& slots() const { return slots_; }
+  const std::vector<PropSlot>& slots() const;
 
   /// Get property count
-  size_t size() const { return slots_.size(); }
+  size_t size() const;
+  size_t capacity() const { return slots_.capacity(); }
 
-  /// Sort slots by name_id for binary search
+  /// Sort slots by property name (canonical, run-stable order) for binary
+  /// search. No-op while already sorted.
   void sort();
 
   /// Check if sorted
-  bool is_sorted() const { return sorted_; }
+  bool is_sorted() const;
 
 private:
   std::vector<PropSlot> slots_;

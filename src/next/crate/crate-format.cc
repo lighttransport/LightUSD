@@ -4,7 +4,8 @@
 // LightUSD Next - Crate Format Implementation
 
 #include "crate-format.hh"
-#include "safe-arithmetic.hh"
+#include "../c/lightusd-core-c.h"  // lu_crate_decode_*
+#include "core/safe-arithmetic.hh"
 
 // Include LZ4 from existing LightUSD
 #include "../../lz4/lz4.h"
@@ -13,192 +14,40 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <functional>
+#include <thread>
+#endif
+#include <cstdint>
 
 namespace lightusd {
 namespace next {
 
 const char* CrateTypeIdName(CrateTypeId id) {
-  switch (id) {
-    case CrateTypeId::Invalid: return "Invalid";
-    case CrateTypeId::Bool: return "Bool";
-    case CrateTypeId::UChar: return "UChar";
-    case CrateTypeId::Int: return "Int";
-    case CrateTypeId::UInt: return "UInt";
-    case CrateTypeId::Int64: return "Int64";
-    case CrateTypeId::UInt64: return "UInt64";
-    case CrateTypeId::Half: return "Half";
-    case CrateTypeId::Float: return "Float";
-    case CrateTypeId::Double: return "Double";
-    case CrateTypeId::String: return "String";
-    case CrateTypeId::Token: return "Token";
-    case CrateTypeId::AssetPath: return "AssetPath";
-    case CrateTypeId::Matrix2d: return "Matrix2d";
-    case CrateTypeId::Matrix3d: return "Matrix3d";
-    case CrateTypeId::Matrix4d: return "Matrix4d";
-    case CrateTypeId::Quatd: return "Quatd";
-    case CrateTypeId::Quatf: return "Quatf";
-    case CrateTypeId::Quath: return "Quath";
-    case CrateTypeId::Vec2d: return "Vec2d";
-    case CrateTypeId::Vec2f: return "Vec2f";
-    case CrateTypeId::Vec2h: return "Vec2h";
-    case CrateTypeId::Vec2i: return "Vec2i";
-    case CrateTypeId::Vec3d: return "Vec3d";
-    case CrateTypeId::Vec3f: return "Vec3f";
-    case CrateTypeId::Vec3h: return "Vec3h";
-    case CrateTypeId::Vec3i: return "Vec3i";
-    case CrateTypeId::Vec4d: return "Vec4d";
-    case CrateTypeId::Vec4f: return "Vec4f";
-    case CrateTypeId::Vec4h: return "Vec4h";
-    case CrateTypeId::Vec4i: return "Vec4i";
-    case CrateTypeId::Dictionary: return "Dictionary";
-    case CrateTypeId::TokenListOp: return "TokenListOp";
-    case CrateTypeId::StringListOp: return "StringListOp";
-    case CrateTypeId::PathListOp: return "PathListOp";
-    case CrateTypeId::ReferenceListOp: return "ReferenceListOp";
-    case CrateTypeId::IntListOp: return "IntListOp";
-    case CrateTypeId::Int64ListOp: return "Int64ListOp";
-    case CrateTypeId::UIntListOp: return "UIntListOp";
-    case CrateTypeId::UInt64ListOp: return "UInt64ListOp";
-    case CrateTypeId::PathVector: return "PathVector";
-    case CrateTypeId::TokenVector: return "TokenVector";
-    case CrateTypeId::Specifier: return "Specifier";
-    case CrateTypeId::Permission: return "Permission";
-    case CrateTypeId::Variability: return "Variability";
-    case CrateTypeId::VariantSelectionMap: return "VariantSelectionMap";
-    case CrateTypeId::TimeSamples: return "TimeSamples";
-    case CrateTypeId::Payload: return "Payload";
-    case CrateTypeId::DoubleVector: return "DoubleVector";
-    case CrateTypeId::LayerOffsetVector: return "LayerOffsetVector";
-    case CrateTypeId::StringVector: return "StringVector";
-    case CrateTypeId::ValueBlock: return "ValueBlock";
-    case CrateTypeId::Value: return "Value";
-    case CrateTypeId::UnregisteredValue: return "UnregisteredValue";
-    case CrateTypeId::UnregisteredValueListOp: return "UnregisteredValueListOp";
-    case CrateTypeId::PayloadListOp: return "PayloadListOp";
-    case CrateTypeId::TimeCode: return "TimeCode";
-    case CrateTypeId::PathExpression: return "PathExpression";
-    case CrateTypeId::Spline: return "Spline";
-    case CrateTypeId::Relocates: return "Relocates";
-  }
-  return "Unknown";
+  return lu_crate_type_name(static_cast<uint8_t>(id));
 }
 
 size_t CrateTypeIdSize(CrateTypeId id) {
-  switch (id) {
-    case CrateTypeId::Bool: return 1;
-    case CrateTypeId::UChar: return 1;
-    case CrateTypeId::Int: return 4;
-    case CrateTypeId::UInt: return 4;
-    case CrateTypeId::Int64: return 8;
-    case CrateTypeId::UInt64: return 8;
-    case CrateTypeId::Half: return 2;
-    case CrateTypeId::Float: return 4;
-    case CrateTypeId::Double: return 8;
-    case CrateTypeId::Matrix2d: return 4 * 8;   // 4 doubles
-    case CrateTypeId::Matrix3d: return 9 * 8;   // 9 doubles
-    case CrateTypeId::Matrix4d: return 16 * 8;  // 16 doubles
-    case CrateTypeId::Quatd: return 4 * 8;      // 4 doubles
-    case CrateTypeId::Quatf: return 4 * 4;      // 4 floats
-    case CrateTypeId::Quath: return 4 * 2;      // 4 halfs
-    case CrateTypeId::Vec2d: return 2 * 8;
-    case CrateTypeId::Vec2f: return 2 * 4;
-    case CrateTypeId::Vec2h: return 2 * 2;
-    case CrateTypeId::Vec2i: return 2 * 4;
-    case CrateTypeId::Vec3d: return 3 * 8;
-    case CrateTypeId::Vec3f: return 3 * 4;
-    case CrateTypeId::Vec3h: return 3 * 2;
-    case CrateTypeId::Vec3i: return 3 * 4;
-    case CrateTypeId::Vec4d: return 4 * 8;
-    case CrateTypeId::Vec4f: return 4 * 4;
-    case CrateTypeId::Vec4h: return 4 * 2;
-    case CrateTypeId::Vec4i: return 4 * 4;
-    case CrateTypeId::TimeCode: return 8;       // double
-
-    // Variable-size types
-    case CrateTypeId::String:
-    case CrateTypeId::Token:
-    case CrateTypeId::AssetPath:
-    case CrateTypeId::Dictionary:
-    case CrateTypeId::TimeSamples:
-    default:
-      return 0;
-  }
+  return lu_crate_type_size(static_cast<uint8_t>(id));
 }
 
 DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
                                 size_t uncompressed_size) {
   DecompressResult result;
-
-  if (!src || src_size == 0) {
-    result.error = "Empty input";
-    return result;
-  }
-
-  if (uncompressed_size == 0) {
-    result.success = true;
-    return result;
-  }
-
-  // Sanity check - don't allocate absurd amounts
-  if (uncompressed_size > 1024 * 1024 * 1024) {  // 1GB limit
-    result.error = "Uncompressed size too large";
-    return result;
-  }
-
   result.data.resize(uncompressed_size);
-
-  int decoded = LZ4_decompress_safe(
-      reinterpret_cast<const char*>(src),
-      reinterpret_cast<char*>(result.data.data()),
-      static_cast<int>(src_size),
-      static_cast<int>(uncompressed_size));
-
-  if (decoded < 0) {
-    result.error = "LZ4 decompression failed";
-    result.data.clear();
-    return result;
-  }
-
-  if (static_cast<size_t>(decoded) != uncompressed_size) {
-    result.error = "LZ4 decompression size mismatch";
-    result.data.clear();
-    return result;
-  }
-
-  result.success = true;
-  return result;
-}
-
-CompressResult CompressLZ4(const uint8_t* src, size_t src_size) {
-  CompressResult result;
-  if (!src || src_size == 0) {
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_lz4_decompress(src, src_size, result.data.data(), uncompressed_size,
+                        &out_size, &error)) {
+    result.data.resize(out_size);
     result.success = true;
-    return result;
-  }
-
-  int bound = LZ4_compressBound(static_cast<int>(src_size));
-  if (bound <= 0) {
-    result.error = "LZ4_compressBound failed";
-    return result;
-  }
-
-  result.data.resize(static_cast<size_t>(bound));
-  int compressed = LZ4_compress_default(
-      reinterpret_cast<const char*>(src),
-      reinterpret_cast<char*>(result.data.data()),
-      static_cast<int>(src_size),
-      bound);
-
-  if (compressed <= 0) {
-    result.error = "LZ4 compression failed";
+  } else {
     result.data.clear();
-    return result;
+    result.error = error ? error : "LZ4 decompression failed";
   }
-
-  result.data.resize(static_cast<size_t>(compressed));
-  result.success = true;
   return result;
 }
+
 
 // ============================================================
 // TfFastCompression wrappers (pxrUSD crate LZ4 format)
@@ -213,191 +62,75 @@ CompressResult CompressLZ4(const uint8_t* src, size_t src_size) {
 /// Maximum input size for a single LZ4 chunk (~2GB - 32MB safety margin)
 static constexpr size_t kMaxLZ4ChunkSize = 0x7E000000;
 
+bool CompressCrateBlobTo(const uint8_t* src, size_t src_size,
+                         const std::function<void(const uint8_t*, size_t)>& emit,
+                         std::string* error) {
+  if (error) error->clear();
+  if (!emit) {
+    if (error) *error = "Missing compression emitter";
+    return false;
+  }
+  size_t bound = 0;
+  if (!lu_crate_blob_compress_bound(src_size, &bound)) {
+    if (error) *error = "LZ4_compressBound failed";
+    return false;
+  }
+  // The bound stays uninitialized: resizing a vector to it would fault in
+  // input-sized pages even for highly compressible data. Emit directly from
+  // scratch so a section builder need not hold a second compressed copy.
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
+  const char* codec_error = nullptr;
+  size_t out_size = 0;
+  if (lu_crate_blob_compress(src, src_size, scratch.get(), bound, &out_size,
+                             &codec_error)) {
+    emit(scratch.get(), out_size);
+    return true;
+  }
+  if (error) *error = codec_error ? codec_error : "LZ4 compression failed";
+  return false;
+}
+
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
   CompressResult result;
-  if (!src || src_size == 0) {
+  result.success = CompressCrateBlobTo(src, src_size,
+      [&result](const uint8_t* encoded, size_t size) {
+        result.data.assign(encoded, encoded + size);
+      }, &result.error);
+  return result;
+}
+
+DecompressResult DecompressCrateBlobUpto(const uint8_t* src, size_t src_size,
+                                         size_t capacity) {
+  DecompressResult result;
+  result.data.resize(capacity);
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_crate_blob_decompress(src, src_size, result.data.data(), capacity,
+                               &out_size, &error)) {
+    result.data.resize(out_size);
     result.success = true;
-    result.data.push_back(0);  // n_chunks = 0 (empty)
-    return result;
-  }
-
-  // Single chunk for data < 2GB
-  size_t n_chunks = (src_size <= kMaxLZ4ChunkSize) ? 0
-                    : (src_size + kMaxLZ4ChunkSize - 1) / kMaxLZ4ChunkSize;
-
-  // Pre-allocate: 1 byte n_chunks + per-chunk overhead
-  size_t total_bound = 1;
-  if (n_chunks == 0) {
-    int bound = LZ4_compressBound(static_cast<int>(src_size));
-    if (bound <= 0) {
-      result.error = "LZ4_compressBound failed";
-      return result;
-    }
-    total_bound += static_cast<size_t>(bound);
   } else {
-    for (size_t i = 0; i < n_chunks; i++) {
-      size_t chunk_sz = std::min(kMaxLZ4ChunkSize, src_size - i * kMaxLZ4ChunkSize);
-      int bound = LZ4_compressBound(static_cast<int>(chunk_sz));
-      if (bound <= 0) {
-        result.error = "LZ4_compressBound failed for chunk";
-        return result;
-      }
-      total_bound += static_cast<size_t>(bound) + sizeof(int32_t);
-    }
+    result.data.clear();
+    if (error) result.error = error;
   }
-
-  result.data.resize(total_bound);
-  size_t out_pos = 0;
-
-  if (n_chunks > 255) {
-    result.error = "Too many chunks (>255)";
-    return result;
-  }
-  result.data[out_pos++] = static_cast<uint8_t>(n_chunks);
-
-  if (n_chunks == 0) {
-    // Single chunk
-    int compressed = LZ4_compress_default(
-        reinterpret_cast<const char*>(src),
-        reinterpret_cast<char*>(result.data.data() + out_pos),
-        static_cast<int>(src_size),
-        static_cast<int>(total_bound - out_pos));
-
-    if (compressed <= 0) {
-      result.error = "LZ4 compression failed";
-      result.data.clear();
-      return result;
-    }
-    out_pos += static_cast<size_t>(compressed);
-  } else {
-    // Multi-chunk
-    size_t in_offset = 0;
-    for (size_t ci = 0; ci < n_chunks; ci++) {
-      size_t chunk_sz = std::min(kMaxLZ4ChunkSize, src_size - in_offset);
-      int32_t chunk_size_i32 = static_cast<int32_t>(chunk_sz);
-      std::memcpy(result.data.data() + out_pos, &chunk_size_i32, sizeof(int32_t));
-      out_pos += sizeof(int32_t);
-
-      int compressed = LZ4_compress_default(
-          reinterpret_cast<const char*>(src + in_offset),
-          reinterpret_cast<char*>(result.data.data() + out_pos),
-          static_cast<int>(chunk_sz),
-          static_cast<int>(total_bound - out_pos));
-
-      if (compressed <= 0) {
-        result.error = "LZ4 compression failed for chunk";
-        result.data.clear();
-        return result;
-      }
-      out_pos += static_cast<size_t>(compressed);
-      in_offset += chunk_sz;
-    }
-  }
-
-  result.data.resize(out_pos);
-  result.success = true;
   return result;
 }
 
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
                                      size_t uncompressed_size) {
-  DecompressResult result;
-  if (!src || src_size == 0) {
-    result.success = (uncompressed_size == 0);
-    return result;
-  }
-
-  if (src_size < 1) {
-    result.error = "Crate blob too small (missing n_chunks)";
-    return result;
-  }
-
-  uint8_t n_chunks = src[0];
-  const uint8_t* data_start = src + 1;
-  size_t data_size = src_size - 1;
-
-  if (uncompressed_size == 0) {
-    result.success = true;
-    return result;
-  }
-
-  if (uncompressed_size > 1024 * 1024 * 1024) {
-    result.error = "Uncompressed size too large";
-    return result;
-  }
-
-  // LZ4 takes srcSize as `int`. A blob larger than INT_MAX would pass a
-  // NEGATIVE srcSize, making LZ4 compute an end pointer BEHIND src and read
-  // out of bounds. kMaxLZ4ChunkSize is the same bound the compress side uses.
-  if (data_size > kMaxLZ4ChunkSize) {
-    result.error = "Compressed crate blob too large";
-    return result;
-  }
-
-  result.data.resize(uncompressed_size);
-  size_t out_pos = 0;
-
-  if (n_chunks == 0) {
-    // Single chunk
-    int decoded = LZ4_decompress_safe(
-        reinterpret_cast<const char*>(data_start),
-        reinterpret_cast<char*>(result.data.data()),
-        static_cast<int>(data_size),
-        static_cast<int>(uncompressed_size));
-
-    if (decoded < 0) {
-      result.error = "LZ4 decompression failed";
-      result.data.clear();
-      return result;
-    }
-    out_pos = static_cast<size_t>(decoded);
-  } else {
-    // Multi-chunk
-    size_t in_pos = 0;
-    for (uint8_t ci = 0; ci < n_chunks; ci++) {
-      if (in_pos + sizeof(int32_t) > data_size) {
-        result.error = "Truncated crate blob (chunk header)";
-        result.data.clear();
-        return result;
-      }
-
-      int32_t chunk_size;
-      std::memcpy(&chunk_size, data_start + in_pos, sizeof(int32_t));
-      in_pos += sizeof(int32_t);
-
-      if (chunk_size <= 0 || static_cast<size_t>(chunk_size) > data_size - in_pos) {
-        result.error = "Invalid chunk size in crate blob";
-        result.data.clear();
-        return result;
-      }
-
-      size_t remaining = uncompressed_size - out_pos;
-      int decoded = LZ4_decompress_safe(
-          reinterpret_cast<const char*>(data_start + in_pos),
-          reinterpret_cast<char*>(result.data.data() + out_pos),
-          static_cast<int>(chunk_size),
-          static_cast<int>(remaining));
-
-      if (decoded < 0) {
-        result.error = "LZ4 decompression failed for chunk";
-        result.data.clear();
-        return result;
-      }
-      out_pos += static_cast<size_t>(decoded);
-      in_pos += static_cast<size_t>(chunk_size);
-    }
-  }
-
-  if (out_pos > uncompressed_size) {
-    result.error = "LZ4 decompression overflow";
+  DecompressResult result =
+      DecompressCrateBlobUpto(src, src_size, uncompressed_size);
+  if (result.success && result.data.size() != uncompressed_size) {
+    result.success = false;
     result.data.clear();
-    return result;
+    result.error = "LZ4 decompression size mismatch";
   }
-
-  // Trim to actual decompressed size
-  result.data.resize(out_pos);
-  result.success = true;
   return result;
+}
+
+DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
+                                          size_t expected_size) {
+  return DecompressCrateBlob(src, src_size, expected_size);
 }
 
 DecompressResult DecompressCrateBlobWithCapacityHint(
@@ -426,7 +159,7 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 
   const uint8_t n_chunks = src[0];
   if (n_chunks != 0) {
-    return DecompressCrateBlob(src, src_size, uncompressed_size_limit);
+    return DecompressCrateBlobUpto(src, src_size, uncompressed_size_limit);
   }
 
   const uint8_t* data_start = src + 1;
@@ -459,13 +192,11 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 
   for (;;) {
     result.data.resize(capacity);
-    const int decoded = LZ4_decompress_safe(
-        reinterpret_cast<const char*>(data_start),
-        reinterpret_cast<char*>(result.data.data()),
-        static_cast<int>(data_size), static_cast<int>(capacity));
-
-    if (decoded >= 0) {
-      result.data.resize(static_cast<size_t>(decoded));
+    const char* decode_error = nullptr;
+    size_t decoded = 0;
+    if (lu_lz4_decompress_upto(data_start, data_size, result.data.data(),
+                               capacity, &decoded, &decode_error)) {
+      result.data.resize(decoded);
       result.success = true;
       return result;
     }
@@ -487,47 +218,17 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
-
-  // Use common=0 with 0 common bytes for simplicity.
-  // This works well for small values (typical token indices 0-100).
-  uint32_t common = 0;
-  result.push_back(0);  // common_bytes = 0
-
-  for (size_t i = 0; i < count;) {
-    // Count run of identical values
-    size_t run = 1;
-    while (i + run < count && values[i + run] == values[i]) ++run;
-
-    uint32_t value = values[i];
-    uint8_t num_bytes;
-
-    if (value == common) {
-      num_bytes = 0;
-    } else if (value <= 0xFF) {
-      num_bytes = 1;
-    } else if (value <= 0xFFFF) {
-      num_bytes = 2;
-    } else {
-      num_bytes = 3;
-    }
-
-    // Encode in chunks of up to 64 (max run-length per code byte)
-    size_t remaining = run;
-    while (remaining > 0) {
-      size_t chunk = (remaining > 64) ? 64 : remaining;
-      uint8_t code = static_cast<uint8_t>((chunk - 1) << 2) | num_bytes;
-      result.push_back(code);
-      if (num_bytes > 0) {
-        for (int b = 0; b < num_bytes; ++b) {
-          result.push_back(static_cast<uint8_t>(value >> (b * 8)));
-        }
-      }
-      remaining -= chunk;
-    }
-
-    i += run;
+  size_t bound = 0;
+  if (!lu_crate_encode_integers_bound(count, &bound)) return result;
+  result.resize(bound);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_integers(values, count, result.data(), bound, &out_size,
+                               &error)) {
+    result.resize(out_size);
+  } else {
+    result.clear();
   }
-
   return result;
 }
 
@@ -538,66 +239,12 @@ namespace {
 // Decode integers encoded with USD's integer compression
 bool DecodeIntegers(const uint8_t* src, size_t src_size,
                     uint32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!src || src_size == 0) return false;
-
-  size_t src_idx = 0;
-  size_t dst_idx = 0;
-
-  // Read common prefix
-  if (src_idx >= src_size) return false;
-  uint32_t common = 0;
-  uint8_t common_bytes = src[src_idx++];
-  // The prefix is a uint32: more than 4 bytes is malformed input (and i*8
-  // would be an out-of-range shift -> UB).
-  if (common_bytes > 4) return false;
-
-  for (int i = 0; i < common_bytes && src_idx < src_size; i++) {
-    common |= static_cast<uint32_t>(src[src_idx++]) << (i * 8);
-  }
-
-  // Decode each integer
-  while (dst_idx < count && src_idx < src_size) {
-    uint8_t code = src[src_idx++];
-    uint8_t num_bytes = code & 0x03;
-    uint32_t value = common;
-
-    if (num_bytes > 0) {
-      uint32_t suffix = 0;
-      for (int i = 0; i < num_bytes && src_idx < src_size; i++) {
-        suffix |= static_cast<uint32_t>(src[src_idx++]) << (i * 8);
-      }
-      // Shift common and add suffix
-      value = (common << (num_bytes * 8)) | suffix;
-    }
-
-    // Handle run-length encoding
-    uint8_t run_length = (code >> 2) + 1;
-    for (int i = 0; i < run_length && dst_idx < count; i++) {
-      dst[dst_idx++] = value;
-    }
-  }
-
-  return dst_idx == count;
+  return lu_crate_decode_integers(src, src_size, dst, count) != 0;
 }
 
 bool DecodeIntegers64(const uint8_t* src, size_t src_size,
                       uint64_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!src || src_size == 0) return false;
-
-  // For 64-bit, decode as pairs of 32-bit
-  std::vector<uint32_t> lo(count), hi(count);
-
-  size_t half_size = src_size / 2;
-  if (!DecodeIntegers(src, half_size, lo.data(), count)) return false;
-  if (!DecodeIntegers(src + half_size, src_size - half_size, hi.data(), count)) return false;
-
-  for (size_t i = 0; i < count; i++) {
-    dst[i] = (static_cast<uint64_t>(hi[i]) << 32) | lo[i];
-  }
-
-  return true;
+  return lu_crate_decode_integers64(src, src_size, dst, count) != 0;
 }
 
 }  // anonymous namespace
@@ -656,290 +303,355 @@ DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
 
 namespace {
 
-bool ComputeDeltaCodeBytes(size_t count, size_t* out) {
-  if (!out ||
-      count > ((std::numeric_limits<size_t>::max)() - size_t{7}) / size_t{2}) {
+// Column-accessor twin of lu_crate_encode_delta_u32. Large columns use a
+// parallel histogram; projected columns can also use it serially without
+// allocating full input/delta scratch arrays. The byte layout matches the C
+// encoder:
+//  - deltas depend only on the previous value;
+//  - the common delta is the most frequent one, ties to the smallest, which
+//    depends only on the global counts (per-chunk histograms, merged);
+//  - each chunk's value bytes are sized first, so a prefix sum gives every
+//    chunk its exact write position; chunks start on multiples of 4 elements,
+//    so no two chunks share a 2-bit code byte.
+constexpr size_t kParallelDeltaMin = size_t(1) << 22;  // 4M elements
+
+// Open-addressed delta -> count table for deltas outside the flat range
+// (index columns have many large jumps; a node map allocates per entry).
+struct WideDeltaCounts {
+  static constexpr int64_t kEmpty = INT64_MIN;
+  std::vector<int64_t> keys;
+  std::vector<size_t> counts;
+  size_t used = 0;
+  static size_t Hash(int32_t d) {
+    uint64_t x = static_cast<uint32_t>(d);
+    x *= 0x9E3779B97F4A7C15ull;
+    return static_cast<size_t>(x ^ (x >> 29));
+  }
+  void add(int32_t d, size_t n) {
+    if (keys.empty() || (used + 1) * 2 > keys.size()) grow();
+    const size_t mask = keys.size() - 1;
+    for (size_t i = Hash(d) & mask;; i = (i + 1) & mask) {
+      if (keys[i] == d) { counts[i] += n; return; }
+      if (keys[i] == kEmpty) { keys[i] = d; counts[i] = n; ++used; return; }
+    }
+  }
+  void grow() {
+    std::vector<int64_t> ok;
+    std::vector<size_t> oc;
+    ok.swap(keys);
+    oc.swap(counts);
+    const size_t cap = ok.empty() ? 1024 : ok.size() * 2;
+    keys.assign(cap, kEmpty);
+    counts.assign(cap, 0);
+    used = 0;
+    for (size_t i = 0; i < ok.size(); ++i)
+      if (ok[i] != kEmpty) add(static_cast<int32_t>(ok[i]), oc[i]);
+  }
+};
+
+// Misra-Gries summary of one chunk's wide deltas with kK counters: every
+// value occurring more than n/(kK+1) times among the n added survives.
+struct WideDeltaSummary {
+  static constexpr size_t kK = 64;
+  static constexpr size_t kSlots = 256;  // open-addressed, load <= 1/4
+  static constexpr int64_t kEmpty = INT64_MIN;
+  int64_t keys[kSlots];
+  size_t counts[kSlots];
+  size_t live = 0;
+  size_t added = 0;
+  WideDeltaSummary() {
+    for (size_t i = 0; i < kSlots; ++i) keys[i] = kEmpty;
+  }
+  static size_t Slot(int32_t d) { return WideDeltaCounts::Hash(d) & (kSlots - 1); }
+  void add(int32_t d) {
+    ++added;
+    size_t i = Slot(d);
+    for (; keys[i] != kEmpty; i = (i + 1) & (kSlots - 1)) {
+      if (keys[i] == d) {
+        ++counts[i];
+        return;
+      }
+    }
+    if (live < kK) {
+      keys[i] = d;
+      counts[i] = 1;
+      ++live;
+      return;
+    }
+    // Decrement every counter (the new value cancels one of each), dropping
+    // the ones that reach zero; rebuild to keep probe chains intact.
+    int64_t k2[kK];
+    size_t c2[kK];
+    size_t n2 = 0;
+    for (size_t j = 0; j < kSlots; ++j) {
+      if (keys[j] == kEmpty) continue;
+      if (counts[j] > 1) {
+        k2[n2] = keys[j];
+        c2[n2] = counts[j] - 1;
+        ++n2;
+      }
+      keys[j] = kEmpty;
+    }
+    live = 0;
+    for (size_t j = 0; j < n2; ++j) {
+      size_t s = Slot(static_cast<int32_t>(k2[j]));
+      while (keys[s] != kEmpty) s = (s + 1) & (kSlots - 1);
+      keys[s] = k2[j];
+      counts[s] = c2[j];
+      ++live;
+    }
+  }
+};
+
+template <class ValueAt>
+bool EncodeDeltaU32Column(const ValueAt& value_at, size_t count, size_t nt,
+                          std::vector<uint8_t>* out) {
+  size_t code_bytes = 0;
+  size_t bound = 0;
+  if (!lu_crate_delta_code_bytes(count, &code_bytes) ||
+      !lu_crate_encode_delta_u32_bound(count, &bound)) {
     return false;
   }
-  *out = (count * size_t{2} + size_t{7}) / size_t{8};
+  // Chunk boundaries on multiples of 4 elements.
+  std::vector<size_t> bnd(nt + 1);
+  for (size_t t = 0; t <= nt; ++t)
+    bnd[t] = ((count / nt * t + count % nt * t / nt) + 3) & ~size_t(3);
+  bnd[0] = 0;
+  bnd[nt] = count;
+  for (size_t t = 1; t < nt; ++t) bnd[t] = std::min(bnd[t], count);
+
+  auto delta_at = [&value_at](size_t i) -> int32_t {
+    const int32_t prev = i ? static_cast<int32_t>(value_at(i - 1)) : 0;
+    return static_cast<int32_t>(static_cast<int64_t>(value_at(i)) -
+                                static_cast<int64_t>(prev));
+  };
+
+  // Pass 1: per-chunk histograms. Deltas in [-32768, 32767] go to a flat
+  // table; the rest only into a per-chunk Misra-Gries summary (columns like
+  // FIELDSETS have ~one distinct wide delta per sentinel: counting them all
+  // exactly cost seconds and GBs of hash table).
+  constexpr int32_t kSmallMin = -32768;
+  constexpr size_t kSmallSpan = 65536;
+  std::vector<std::vector<size_t>> small(nt);
+  std::vector<WideDeltaSummary> summary(nt);
+  auto run = [nt](const std::function<void(size_t)>& fn) {
+    if (nt == 1) {
+      fn(0);
+      return;
+    }
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::vector<std::thread> pool;
+    pool.reserve(nt);
+    for (size_t t = 0; t < nt; ++t) pool.emplace_back(fn, t);
+    for (std::thread& th : pool) th.join();
+#endif
+  };
+  run([&](size_t t) {
+    small[t].assign(kSmallSpan, 0);
+    for (size_t i = bnd[t]; i < bnd[t + 1]; ++i) {
+      const int32_t d = delta_at(i);
+      if (d >= kSmallMin && d < kSmallMin + static_cast<int32_t>(kSmallSpan)) {
+        ++small[t][static_cast<size_t>(d - kSmallMin)];
+      } else {
+        summary[t].add(d);
+      }
+    }
+  });
+  // Merge and pick: most frequent, ties to the smallest delta.
+  int32_t best = 0;
+  size_t best_count = 0;
+  bool have = false;
+  auto consider = [&](int32_t d, size_t c) {
+    if (c == 0) return;
+    if (!have || c > best_count || (c == best_count && d < best)) {
+      best = d;
+      best_count = c;
+      have = true;
+    }
+  };
+  for (size_t k = 0; k < kSmallSpan; ++k) {
+    size_t c = 0;
+    for (size_t t = 0; t < nt; ++t) c += small[t][k];
+    consider(static_cast<int32_t>(k) + kSmallMin, c);
+  }
+  std::vector<std::vector<size_t>>().swap(small);
+  size_t wide_total = 0;
+  for (size_t t = 0; t < nt; ++t) wide_total += summary[t].added;
+  if (wide_total) {
+    // Exact counts for a set of wide deltas, over all chunks.
+    const bool small_wins_bound =
+        have && best_count > wide_total / (WideDeltaSummary::kK + 1);
+    WideDeltaCounts merged;
+    if (small_wins_bound) {
+      // A wide delta can only win (or tie) with a count >= best_count >
+      // wide_total / (kK + 1). Such a value has, in some chunk, more than
+      // that chunk's share / (kK + 1) occurrences, so it survives that
+      // chunk's summary: count only the survivors, exactly.
+      for (size_t t = 0; t < nt; ++t)
+        for (size_t j = 0; j < WideDeltaSummary::kSlots; ++j)
+          if (summary[t].keys[j] != WideDeltaSummary::kEmpty)
+            merged.add(static_cast<int32_t>(summary[t].keys[j]), 0);
+    }
+    std::vector<WideDeltaCounts> part(nt);
+    run([&](size_t t) {
+      WideDeltaCounts& c = part[t];
+      if (small_wins_bound) {
+        c.keys = merged.keys;  // candidate set, counts start at zero
+        c.counts.assign(merged.counts.size(), 0);
+        c.used = merged.used;
+      }
+      const size_t mask = c.keys.empty() ? 0 : c.keys.size() - 1;
+      for (size_t i = bnd[t]; i < bnd[t + 1]; ++i) {
+        const int32_t d = delta_at(i);
+        if (d >= kSmallMin && d < kSmallMin + static_cast<int32_t>(kSmallSpan))
+          continue;
+        if (!small_wins_bound) {
+          c.add(d, 1);
+          continue;
+        }
+        for (size_t k = WideDeltaCounts::Hash(d) & mask;; k = (k + 1) & mask) {
+          if (c.keys[k] == d) {
+            ++c.counts[k];
+            break;
+          }
+          if (c.keys[k] == WideDeltaCounts::kEmpty) break;  // not a candidate
+        }
+      }
+    });
+    std::vector<WideDeltaSummary>().swap(summary);
+    WideDeltaCounts total;
+    for (size_t t = 0; t < nt; ++t) {
+      const WideDeltaCounts& w = part[t];
+      for (size_t i = 0; i < w.keys.size(); ++i)
+        if (w.keys[i] != WideDeltaCounts::kEmpty && w.counts[i])
+          total.add(static_cast<int32_t>(w.keys[i]), w.counts[i]);
+    }
+    std::vector<WideDeltaCounts>().swap(part);
+    for (size_t i = 0; i < total.keys.size(); ++i)
+      if (total.keys[i] != WideDeltaCounts::kEmpty)
+        consider(static_cast<int32_t>(total.keys[i]), total.counts[i]);
+  }
+  const int32_t common = best;
+
+  // Pass 2: per-chunk value-byte sizes.
+  auto value_bytes = [common](int32_t d) -> size_t {
+    if (d == common) return 0;
+    if (d >= -128 && d <= 127) return 1;
+    if (d >= -32768 && d <= 32767) return 2;
+    return 4;
+  };
+  std::vector<size_t> sizes(nt, 0);
+  run([&](size_t t) {
+    size_t n = 0;
+    for (size_t i = bnd[t]; i < bnd[t + 1]; ++i) n += value_bytes(delta_at(i));
+    sizes[t] = n;
+  });
+  std::vector<size_t> vstart(nt + 1, 0);
+  const size_t codes_start = sizeof(int32_t);
+  vstart[0] = codes_start + code_bytes;
+  for (size_t t = 0; t < nt; ++t) vstart[t + 1] = vstart[t] + sizes[t];
+  const size_t total = vstart[nt];
+  if (total > bound) return false;
+
+  out->assign(total, 0);
+  uint8_t* dst = out->data();
+  std::memcpy(dst, &common, sizeof(int32_t));
+  // Pass 3: write codes and values; chunk t owns code bytes
+  // [bnd[t]/4, ceil(bnd[t+1]/4)) and value bytes [vstart[t], vstart[t+1]).
+  run([&](size_t t) {
+    size_t vpos = vstart[t];
+    for (size_t i = bnd[t]; i < bnd[t + 1]; ++i) {
+      const int32_t d = delta_at(i);
+      uint8_t code;
+      if (d == common) {
+        code = 0;
+      } else if (d >= -128 && d <= 127) {
+        code = 1;
+        const int8_t v = static_cast<int8_t>(d);
+        dst[vpos++] = static_cast<uint8_t>(v);
+      } else if (d >= -32768 && d <= 32767) {
+        code = 2;
+        const int16_t v = static_cast<int16_t>(d);
+        std::memcpy(dst + vpos, &v, sizeof(int16_t));
+        vpos += sizeof(int16_t);
+      } else {
+        code = 3;
+        std::memcpy(dst + vpos, &d, sizeof(int32_t));
+        vpos += sizeof(int32_t);
+      }
+      dst[codes_start + i / 4] |= static_cast<uint8_t>(code << ((i % 4) * 2));
+    }
+  });
   return true;
+}
+
+size_t DeltaColumnThreads(size_t count) {
+  if (count < kParallelDeltaMin) return 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const unsigned hw = std::thread::hardware_concurrency();
+  return std::min<size_t>(hw ? hw : 1, 8);
+#else
+  return 1;
+#endif
 }
 
 }  // namespace
 
+std::vector<uint8_t> EncodeDeltaU32Projected(
+    size_t count, const std::function<uint32_t(size_t)>& value_at) {
+  std::vector<uint8_t> result;
+  if (count && value_at)
+    EncodeDeltaU32Column(value_at, count, DeltaColumnThreads(count), &result);
+  return result;
+}
+
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
-  if (count == 0) return result;
-  size_t codes_bytes = 0;
-  if (!values || !ComputeDeltaCodeBytes(count, &codes_bytes)) return result;
-
-  // Compute deltas
-  std::vector<int32_t> deltas(count);
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    deltas[i] = static_cast<int32_t>(static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
+  if (count == 0 || !values) return result;
+  const size_t nt = DeltaColumnThreads(count);
+  // Large columns need the scratch-free path on one-core/no-thread builds
+  // too; the C fallback retains both full deltas and worst-case output.
+  if (count >= kParallelDeltaMin && EncodeDeltaU32Column(
+                    [values](size_t i) { return values[i]; }, count, nt, &result))
+    return result;
+  result.clear();
+  size_t bound = 0;
+  if (!lu_crate_encode_delta_u32_bound(count, &bound)) return result;
+  // Uninitialized scratch + exact-size copy (see CompressCrateBlob).
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_delta_u32(values, count, scratch.get(), bound, &out_size,
+                                &error)) {
+    result.assign(scratch.get(), scratch.get() + out_size);
   }
-
-  // Find most common delta
-  std::map<int32_t, size_t> freq;
-  for (size_t i = 0; i < count; i++) {
-    freq[deltas[i]]++;
-  }
-  int32_t common_delta = 0;
-  size_t max_freq = 0;
-  for (const auto& p : freq) {
-    if (p.second > max_freq || (p.second == max_freq && p.first < common_delta)) {
-      common_delta = p.first;
-      max_freq = p.second;
-    }
-  }
-
-  // Write common delta
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  // Codes: 2 bits per value, packed LSB-first into bytes
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  // Variable-length integer data appended at end
-  std::vector<uint8_t> vints;
-
-  for (size_t i = 0; i < count; i++) {
-    int32_t d = deltas[i];
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT8_MIN && d <= INT8_MAX) {
-      code = 1;
-      int8_t v = static_cast<int8_t>(d);
-      vints.push_back(*reinterpret_cast<const uint8_t*>(&v));
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 2;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int32_t));
-    }
-
-    // Pack code LSB-first: code for value[i] at bits [(i%4)*2, (i%4)*2+1]
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
-  // Append variable-length integers
-  result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }
 
 bool DecodeDeltaU32(const uint8_t* buffer, size_t buffer_size,
                     uint32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int32_t)) return false;
-
-  // Read common delta
-  int32_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int32_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  size_t codes_start = sizeof(int32_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-
-  if (buffer_size < vints_start) return false;
-
-  int32_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    uint8_t code_byte = buffer[codes_start + i / 4];
-    uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int32_t delta = 0;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int8_t) > buffer_size - vints_pos) return false;
-        int8_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int8_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int8_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        std::memcpy(&delta, buffer + vints_pos, sizeof(int32_t));
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-    }
-
-    // Use unsigned wrapping arithmetic (int32 values stored as uint32
-    // need wrapping, e.g., -2 as uint32 = 0xFFFFFFFE).
-    uint32_t prev_u = static_cast<uint32_t>(prev);
-    uint32_t delta_u = static_cast<uint32_t>(delta);
-    dst[i] = prev_u + delta_u;
-    prev = static_cast<int32_t>(dst[i]);
-  }
-
-  return true;
+  return lu_crate_decode_delta_u32(buffer, buffer_size, dst, count) != 0;
 }
 
 std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
   std::vector<uint8_t> result;
-  if (count == 0) return result;
-  size_t codes_bytes = 0;
-  if (!values || !ComputeDeltaCodeBytes(count, &codes_bytes)) return result;
-
-  // Compute deltas (promote to int64_t to avoid signed overflow UB)
-  std::vector<int64_t> deltas(count);
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    deltas[i] =
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev);
-    prev = values[i];
+  if (count == 0 || !values) return result;
+  size_t bound = 0;
+  if (!lu_crate_encode_delta_s32_bound(count, &bound)) return result;
+  // Uninitialized scratch + exact-size copy (see CompressCrateBlob).
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_delta_s32(values, count, scratch.get(), bound, &out_size,
+                                &error)) {
+    result.assign(scratch.get(), scratch.get() + out_size);
   }
-
-  // The shared/common delta header is only int32; wider deltas use code 3.
-  std::map<int32_t, size_t> freq;
-  for (int64_t delta : deltas) {
-    if (delta >= INT32_MIN && delta <= INT32_MAX) {
-      freq[static_cast<int32_t>(delta)]++;
-    }
-  }
-  int32_t common_delta = 0;
-  size_t max_freq = 0;
-  for (const auto& p : freq) {
-    if (p.second > max_freq || (p.second == max_freq && p.first < common_delta)) {
-      common_delta = p.first;
-      max_freq = p.second;
-    }
-  }
-
-  // Write common delta
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  std::vector<uint8_t> vints;
-
-  // For i32: small = int16_t, medium = int32_t, full = int64_t
-  for (size_t i = 0; i < count; i++) {
-    const int64_t d = deltas[i];
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 1;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else if (d >= INT32_MIN && d <= INT32_MAX) {
-      code = 2;
-      const int32_t v = static_cast<int32_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int32_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int64_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int64_t));
-    }
-
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
-  result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }
 
 bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
                     int32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int32_t)) return false;
-
-  int32_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int32_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  size_t codes_start = sizeof(int32_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-
-  if (buffer_size < vints_start) return false;
-
-  int32_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    uint8_t code_byte = buffer[codes_start + i / 4];
-    uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int64_t delta;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        int32_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
-        delta = v;
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int64_t) > buffer_size - vints_pos) return false;
-        int64_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int64_t));
-        delta = v;
-        vints_pos += sizeof(int64_t);
-        break;
-      }
-      default:
-        return false;
-    }
-
-    const int64_t min_delta =
-        static_cast<int64_t>(INT32_MIN) - static_cast<int64_t>(prev);
-    const int64_t max_delta =
-        static_cast<int64_t>(INT32_MAX) - static_cast<int64_t>(prev);
-    if (delta < min_delta || delta > max_delta) return false;
-    const int64_t acc = static_cast<int64_t>(prev) + delta;
-    dst[i] = static_cast<int32_t>(acc);
-    prev = dst[i];
-  }
-
-  return true;
+  return lu_crate_decode_delta_s32(buffer, buffer_size, dst, count) != 0;
 }
 
 // ============================================================
@@ -1026,65 +738,7 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
 
 bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size, uint64_t* dst,
                     size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int64_t)) return false;
-
-  // Common delta is a full 64-bit value; code widths widen relative to the
-  // 32-bit variant: code 1 = int16, code 2 = int32, code 3 = int64.
-  int64_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int64_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  const size_t codes_start = sizeof(int64_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-  if (buffer_size < vints_start) return false;
-
-  uint64_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    const uint8_t code_byte = buffer[codes_start + i / 4];
-    const uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int64_t delta = 0;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int64_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        int32_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
-        delta = static_cast<int64_t>(v);
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int64_t) > buffer_size - vints_pos) return false;
-        std::memcpy(&delta, buffer + vints_pos, sizeof(int64_t));
-        vints_pos += sizeof(int64_t);
-        break;
-      }
-    }
-
-    // Unsigned wrapping arithmetic (signed values stored as their two's
-    // complement bit pattern).
-    const uint64_t delta_u = static_cast<uint64_t>(delta);
-    dst[i] = prev + delta_u;
-    prev = dst[i];
-  }
-
-  return true;
+  return lu_crate_decode_delta_u64(buffer, buffer_size, dst, count) != 0;
 }
 
 DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
@@ -1123,7 +777,7 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
     return result;
   }
 
-  DecompressResult dr = DecompressCrateBlob(
+  DecompressResult dr = DecompressCrateBlobUpto(
       data + 8, static_cast<size_t>(comp_size), max_delta_size);
   if (!dr.success) {
     result.error = "Failed to decompress compressed integers: " + dr.error;
@@ -1138,6 +792,49 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
   result.success = true;
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+std::string CrateSection::name_str() const {
+    return std::string(name, strnlen(name, 15));
+  }
+const CrateSection* CrateTOC::find(const char* name) const {
+    for (const auto& s : sections) {
+      if (strncmp(s.name, name, 15) == 0) {
+        return &s;
+      }
+    }
+    return nullptr;
+  }
+bool CrateVersion::is_valid() const {
+    // Check minimum version.
+    // Compare as int: major is uint8_t, so `major < 0` is always false and
+    // trips -Wtautological-unsigned-zero-compare under -Weverything. The cast
+    // keeps the check meaningful if kCrateMinVersionMajor ever rises above 0.
+    if (static_cast<int>(major) < kCrateMinVersionMajor) return false;
+    if (major == kCrateMinVersionMajor) {
+      if (minor < kCrateMinVersionMinor) return false;
+      if (minor == kCrateMinVersionMinor &&
+          static_cast<int>(patch) < kCrateMinVersionPatch)
+        return false;
+    }
+    // Check maximum version
+    if (major > kCrateMaxVersionMajor) return false;
+    if (major == kCrateMaxVersionMajor) {
+      if (minor > kCrateMaxVersionMinor) return false;
+    }
+    return true;
+  }
+std::string CrateVersion::to_string() const {
+    return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
+  }
+bool CrateVersion::is_pre_070() const { return major == 0 && minor < 7; }
+bool TokenIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool StringIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool PathIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool FieldsetIndex::is_valid() const { return value != 0xFFFFFFFF; }
 
 }  // namespace next
 }  // namespace lightusd

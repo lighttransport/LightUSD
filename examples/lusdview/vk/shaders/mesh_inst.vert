@@ -76,6 +76,8 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 shadowViewProj;
   vec4 pointShadowLight;
   mat4 pointShadowViewProj[6];
+  vec4 clippingPlanes[8];
+  ivec4 clippingInfo;
 } fr;
 // Per-draw push constant: the base index of this draw in the DrawMeta SSBO. In
 // the per-mesh loop each draw is separate (gl_DrawIDARB == 0) so baseDraw selects

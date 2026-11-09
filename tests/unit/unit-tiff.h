@@ -13,4 +13,5 @@ void tinydng_tiled_packbits_test(void);
 void tinydng_strip_packbits_test(void);
 void tinydng_planar_strip_packbits_test(void);
 void tinydng_multi_layer_writer_test(void);
+void tinydng_odd_offset_probe_test(void);
 void image_loader_callback_test(void);

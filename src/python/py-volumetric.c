@@ -1,0 +1,233 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Level sets and tetrahedral meshes (lightusd-import-c.h volumetric API).
+ * Arrays cross as contiguous buffers in and native-endian bytes out; the
+ * Python wrapper (lightusd.volumetric) adds shapes. */
+#include "py-internal.h"
+
+#include "lightusd-import-c.h"
+
+static int get_buffer(PyObject* obj, Py_buffer* view, Py_ssize_t item, const char* what) {
+  if (PyObject_GetBuffer(obj, view, PyBUF_CONTIG_RO) != 0) return 0;
+  if (view->len % item) {
+    PyBuffer_Release(view);
+    PyErr_Format(PyExc_ValueError, "%s: buffer size is not a multiple of %zd bytes", what, item);
+    return 0;
+  }
+  return 1;
+}
+
+static PyObject* take_string(lightusd_string* s) {
+  lightusd_sv v = lightusd_string_view(s);
+  PyObject* out = PyBytes_FromStringAndSize(v.data, (Py_ssize_t)v.len);
+  lightusd_string_destroy(s);
+  return out;
+}
+
+/* Level sets cross as capsules owning a lightusd_level_set (decoded once). */
+static const char kLevelSetCapsule[] = "lightusd.level_set";
+
+static void level_set_capsule_free(PyObject* capsule) {
+  lightusd_level_set_destroy((lightusd_level_set*)PyCapsule_GetPointer(capsule, kLevelSetCapsule));
+}
+
+static PyObject* wrap_level_set(lightusd_level_set* level_set) {
+  PyObject* out = PyCapsule_New(level_set, kLevelSetCapsule, level_set_capsule_free);
+  if (!out) lightusd_level_set_destroy(level_set);
+  return out;
+}
+
+static const lightusd_level_set* level_set_arg(PyObject* obj) {
+  return (const lightusd_level_set*)PyCapsule_GetPointer(obj, kLevelSetCapsule);
+}
+
+PyObject* lightusd_py_mesh_to_level_set(PyObject* module, PyObject* args) {
+  PyObject *points_obj, *indices_obj, *counts_obj;
+  const char* settings;
+  if (!PyArg_ParseTuple(args, "OOOs:_mesh_to_level_set", &points_obj, &indices_obj, &counts_obj,
+                        &settings))
+    return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  Py_buffer p = {0}, i = {0}, c = {0};
+  if (!get_buffer(points_obj, &p, 12, "points")) return NULL;
+  if (!get_buffer(indices_obj, &i, 4, "indices")) {
+    PyBuffer_Release(&p);
+    return NULL;
+  }
+  if (counts_obj != Py_None && !get_buffer(counts_obj, &c, 4, "counts")) {
+    PyBuffer_Release(&p);
+    PyBuffer_Release(&i);
+    return NULL;
+  }
+  lightusd_level_set* level_set = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status = lightusd_level_set_from_mesh(
+      (const float*)p.buf, (size_t)p.len / 12, (const int32_t*)i.buf, (size_t)i.len / 4,
+      counts_obj != Py_None ? (const int32_t*)c.buf : NULL,
+      counts_obj != Py_None ? (size_t)c.len / 4 : 0, settings, &level_set);
+  Py_END_ALLOW_THREADS PyBuffer_Release(&p);
+  PyBuffer_Release(&i);
+  if (counts_obj != Py_None) PyBuffer_Release(&c);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "mesh_to_level_set");
+  return wrap_level_set(level_set);
+}
+
+PyObject* lightusd_py_level_set_from_vdb(PyObject* module, PyObject* args) {
+  Py_buffer v = {0};
+  if (!PyArg_ParseTuple(args, "y*:_level_set_from_vdb", &v)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_level_set* level_set = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status =
+      lightusd_level_set_from_vdb((const uint8_t*)v.buf, (size_t)v.len, &level_set);
+  Py_END_ALLOW_THREADS PyBuffer_Release(&v);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "level set");
+  return wrap_level_set(level_set);
+}
+
+PyObject* lightusd_py_level_set_info(PyObject* module, PyObject* args) {
+  PyObject* obj;
+  if (!PyArg_ParseTuple(args, "O:_level_set_info", &obj)) return NULL;
+  const lightusd_level_set* level_set = level_set_arg(obj);
+  if (!level_set) return NULL;
+  lightusd_level_set_info info;
+  lightusd_status status = lightusd_level_set_get_info(level_set, &info);
+  if (status != LIGHTUSD_OK)
+    return lightusd_raise(lightusd_state_from_module(module), status, "level set");
+  return Py_BuildValue("(dfK)", info.voxel_size, info.background,
+                       (unsigned long long)info.active_voxels);
+}
+
+PyObject* lightusd_py_level_set_write_vdb(PyObject* module, PyObject* args) {
+  PyObject* obj;
+  if (!PyArg_ParseTuple(args, "O:_level_set_write_vdb", &obj)) return NULL;
+  const lightusd_level_set* level_set = level_set_arg(obj);
+  if (!level_set) return NULL;
+  lightusd_string* vdb = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status = lightusd_level_set_write_vdb(level_set, &vdb);
+  Py_END_ALLOW_THREADS if (status != LIGHTUSD_OK) return lightusd_raise(
+      lightusd_state_from_module(module), status, "level set write");
+  return take_string(vdb);
+}
+
+PyObject* lightusd_py_vdb_inspect(PyObject* module, PyObject* args) {
+  Py_buffer v = {0};
+  if (!PyArg_ParseTuple(args, "y*:_vdb_inspect", &v)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string* json = NULL;
+  lightusd_status status = lightusd_vdb_inspect((const uint8_t*)v.buf, (size_t)v.len, &json);
+  PyBuffer_Release(&v);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "vdb inspect");
+  return take_string(json);
+}
+
+PyObject* lightusd_py_level_set_sample(PyObject* module, PyObject* args) {
+  PyObject *obj, *points_obj;
+  if (!PyArg_ParseTuple(args, "OO:_level_set_sample", &obj, &points_obj)) return NULL;
+  const lightusd_level_set* level_set = level_set_arg(obj);
+  if (!level_set) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  Py_buffer p = {0};
+  if (!get_buffer(points_obj, &p, 24, "points")) return NULL;
+  const size_t count = (size_t)p.len / 24;
+  PyObject* out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(float)));
+  if (!out) {
+    PyBuffer_Release(&p);
+    return NULL;
+  }
+  float* values = (float*)PyBytes_AsString(out);
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status =
+      lightusd_level_set_sample(level_set, (const double*)p.buf, count, values);
+  Py_END_ALLOW_THREADS PyBuffer_Release(&p);
+  if (status != LIGHTUSD_OK) {
+    Py_DECREF(out);
+    return lightusd_raise(st, status, "level set sample");
+  }
+  return out;
+}
+
+PyObject* lightusd_py_level_set_to_mesh(PyObject* module, PyObject* args) {
+  PyObject* obj;
+  unsigned long long max_cells = 0;
+  if (!PyArg_ParseTuple(args, "OK:_level_set_to_mesh", &obj, &max_cells)) return NULL;
+  const lightusd_level_set* level_set = level_set_arg(obj);
+  if (!level_set) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string *points = NULL, *indices = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status = lightusd_level_set_to_mesh(level_set, max_cells, &points, &indices);
+  Py_END_ALLOW_THREADS if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "level set mesh");
+  PyObject* a = take_string(points);
+  PyObject* b = take_string(indices);
+  if (!a || !b) {
+    Py_XDECREF(a);
+    Py_XDECREF(b);
+    return NULL;
+  }
+  return Py_BuildValue("(NN)", a, b);
+}
+
+PyObject* lightusd_py_level_set_to_tet_mesh(PyObject* module, PyObject* args) {
+  PyObject* obj;
+  const char* settings;
+  if (!PyArg_ParseTuple(args, "Os:_level_set_to_tet_mesh", &obj, &settings)) return NULL;
+  const lightusd_level_set* level_set = level_set_arg(obj);
+  if (!level_set) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string *points = NULL, *tets = NULL, *surface = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS status =
+      lightusd_level_set_to_tet_mesh(level_set, settings, &points, &tets, &surface);
+  Py_END_ALLOW_THREADS if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "tet mesh");
+  PyObject* a = take_string(points);
+  PyObject* b = take_string(tets);
+  PyObject* c = take_string(surface);
+  if (!a || !b || !c) {
+    Py_XDECREF(a);
+    Py_XDECREF(b);
+    Py_XDECREF(c);
+    return NULL;
+  }
+  return Py_BuildValue("(NNN)", a, b, c);
+}
+
+PyObject* lightusd_py_tet_mesh_quality(PyObject* module, PyObject* args) {
+  PyObject *points_obj, *tets_obj;
+  if (!PyArg_ParseTuple(args, "OO:_tet_mesh_quality", &points_obj, &tets_obj))
+    return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  Py_buffer positions = {0}, tets = {0};
+  if (!get_buffer(points_obj, &positions, 12, "positions")) return NULL;
+  if (!get_buffer(tets_obj, &tets, 16, "tets")) {
+    PyBuffer_Release(&positions);
+    return NULL;
+  }
+  lightusd_tet_mesh_quality quality = {0};
+  const lightusd_status status = lightusd_tet_mesh_get_quality(
+      (const float*)positions.buf, (size_t)positions.len / 12,
+      (const int32_t*)tets.buf, (size_t)tets.len / 16, &quality);
+  PyBuffer_Release(&positions);
+  PyBuffer_Release(&tets);
+  if (status != LIGHTUSD_OK)
+    return lightusd_raise(st, status, "tet mesh quality");
+  return Py_BuildValue("(ddddK)", quality.min_dihedral_degrees,
+                       quality.max_dihedral_degrees, quality.volume,
+                       quality.min_tet_volume,
+                       (unsigned long long)quality.inverted_tets);
+}
+
+PyObject* lightusd_py_volumetric_device(PyObject* module, PyObject* args) {
+  const char* device;
+  if (!PyArg_ParseTuple(args, "s:_volumetric_device", &device)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string* resolved = NULL;
+  lightusd_status status;
+  /* The first call on a device loads its runtime. */
+  Py_BEGIN_ALLOW_THREADS status = lightusd_volumetric_device_available(device, &resolved);
+  Py_END_ALLOW_THREADS if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "volumetric device");
+  lightusd_sv v = lightusd_string_view(resolved);
+  PyObject* out = PyUnicode_FromStringAndSize(v.data, (Py_ssize_t)v.len);
+  lightusd_string_destroy(resolved);
+  return out;
+}

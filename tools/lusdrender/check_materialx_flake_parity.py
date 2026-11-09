@@ -159,11 +159,17 @@ def main() -> int:
                     continue
                 print(log, file=sys.stderr)
                 return 1
-            # llvmpipe exposes the ray-query entry point but currently emits a
-            # flat path-traced image for this fixture.  It is not evidence for
-            # GPU derivative parity, so leave numerical fallback coverage to
-            # the hermetic evaluator test and require real hardware here.
-            if backend == "vkr" and "llvmpipe" in log.lower():
+            # Some software/non-conformant Vulkan implementations expose the
+            # ray-query entry point but currently emit a flat path-traced image
+            # for this fixture. It is not evidence for GPU derivative parity,
+            # so leave numerical fallback coverage to the hermetic evaluator
+            # test and require a conformant hardware path here.
+            lower_log = log.lower()
+            if backend == "vkr" and (
+                    "llvmpipe" in lower_log or
+                    "lavapipe" in lower_log or
+                    "radv is not a conformant vulkan implementation" in
+                    lower_log):
                 continue
             ran += 1
             graph_stats = (re.search(

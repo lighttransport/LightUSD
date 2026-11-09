@@ -1,0 +1,19 @@
+[
+  "addPrimArc",
+  "addSublayer",
+  "begin",
+  "delete",
+  "end",
+  "error",
+  "inputBytes",
+  "isDeleted",
+  "maxInputBytes",
+  "maxOutputBytes",
+  "provideLayer",
+  "remapLayerAssetPaths",
+  "setAssetPathRemap",
+  "setMaxInputBytes",
+  "setMaxOutputBytes",
+  "setVariantOverride",
+  "step"
+]

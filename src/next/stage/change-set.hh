@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
-#include "stage.hh"
+#include "next/prim/path.hh"
 
 namespace lightusd {
 namespace next {
+
+class Stage;
 
 struct StageSnapshot {
   uint64_t revision = 0;
@@ -67,6 +69,12 @@ struct StageChangeSet {
     return !full_resync && !stage_metadata_changed && prims.empty();
   }
 };
+
+/// Append a consecutive change record into a revision-range aggregate. Prim
+/// flags are ORed and property names are deduplicated. A revision gap marks the
+/// aggregate as a full resync and returns false.
+bool AppendStageChangeSet(const StageChangeSet& incoming,
+                          StageChangeSet* aggregate);
 
 }  // namespace next
 }  // namespace lightusd

@@ -3,6 +3,8 @@
 
 #include "schema-registry.hh"
 
+#include "../stage/stage.hh"
+
 #include <algorithm>
 #include <limits>
 
@@ -57,7 +59,51 @@ bool MatchDefinitionName(const PrimSpec& prim,
   return false;
 }
 
+bool IsAPISchemaTypeName(const std::string& name) {
+  return name.size() > 3 && name.compare(name.size() - 3, 3, "API") == 0;
+}
+
+// Rank of the applied schema `schema` within the prim's apiSchemas (list-op
+// resolved order), or -1. Instance-qualified entries match their family.
+// The Gaussian auto-applies rank after every authored entry.
+int AppliedSchemaRank(const PrimSpec& prim, const std::string& schema) {
+  int rank = 0;
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    if (applied == schema ||
+        (applied.size() > schema.size() &&
+         applied.compare(0, schema.size(), schema) == 0 &&
+         applied[schema.size()] == ':')) {
+      return rank;
+    }
+    ++rank;
+  }
+  if (HasAppliedSchema(prim, schema)) return rank;
+  return -1;
+}
+
 }  // namespace
+
+bool SchemaRegistry::IsAbstractTypedSchemaName(const std::string& name) {
+  // OpenUSD v26.11: every typed schema name in this registry that has no
+  // concrete prim definition (Usd.SchemaRegistry.FindConcretePrimDefinition).
+  static const char* kAbstract[] = {
+      "Typed", "APISchemaBase", "Imageable", "Xformable", "Boundable",
+      "Gprim", "PointBased", "Curves", "BoundableLightBase",
+      "NonboundableLightBase", "VolumeFieldBase", "FieldBase",
+      "VolumeFieldAsset", "FieldAsset", "RenderSettingsBase"};
+  for (const char* a : kAbstract) {
+    if (name == a) return true;
+  }
+  return false;
+}
+
+bool SchemaRegistry::IsConcreteTypedSchemaName(const std::string& name) const {
+  if (name.empty() || IsAbstractTypedSchemaName(name) ||
+      IsAPISchemaTypeName(name)) {
+    return false;
+  }
+  return IsKnownSchema(name);
+}
 
 SchemaRegistry::SchemaRegistry() {
 #define LIGHTUSD_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
@@ -78,6 +124,12 @@ SchemaRegistry::SchemaRegistry() {
       {"Cylinder", "Gprim"}, {"Cone", "Gprim"},
       {"Capsule", "Gprim"}, {"Plane", "Gprim"},
       {"Camera", "Xformable"}, {"PointInstancer", "Boundable"},
+      {"PhysicsJoint", "Imageable"},
+      {"PhysicsFixedJoint", "PhysicsJoint"},
+      {"PhysicsRevoluteJoint", "PhysicsJoint"},
+      {"PhysicsPrismaticJoint", "PhysicsJoint"},
+      {"PhysicsSphericalJoint", "PhysicsJoint"},
+      {"PhysicsDistanceJoint", "PhysicsJoint"},
       {"GeomSubset", "Imageable"}, {"DistantLight", "Xformable"},
       {"DomeLight", "Xformable"}, {"RectLight", "Xformable"},
       {"DiskLight", "Xformable"}, {"SphereLight", "Xformable"},
@@ -104,6 +156,13 @@ SchemaRegistry::SchemaRegistry() {
       {"RenderProduct", "RenderSettingsBase"},
       {"RenderVar", "Typed"},
       {"RenderPass", "Typed"},
+      {"ClipsAPI", "Typed"},
+      {"CollectionAPI", "Typed"},
+      {"MaterialBindingAPI", "Typed"},
+      {"LightListAPI", "Typed"},
+      {"LightAPI", "Typed"},
+      {"GenerativeProcedural", "Boundable"},
+      {"Backdrop", "Typed"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
@@ -193,6 +252,57 @@ SchemaRegistry::SchemaRegistry() {
   add("PhysicsCollisionAPI", "physics:collisionEnabled", "bool", Value(true));
   add("PhysicsMassAPI", "physics:mass", "float", Value(0.0f));
   add("PhysicsMassAPI", "physics:density", "float", Value(0.0f));
+  const float infinity = std::numeric_limits<float>::infinity();
+  // UsdPhysics schema sentinel values request automatic computation. In
+  // particular, mass=0 and principalAxes=(0,0,0,0) are not physical zero-mass
+  // or normalized-rotation assertions.
+  add("PhysicsMassAPI", "physics:centerOfMass", "point3f",
+      Value::MakePoint3f(-infinity, -infinity, -infinity));
+  add("PhysicsMassAPI", "physics:diagonalInertia", "float3",
+      Value::MakeFloat3(0, 0, 0));
+  add("PhysicsMassAPI", "physics:principalAxes", "quatf", Value::MakeQuatf(0, 0, 0, 0));
+  add("PhysicsMaterialAPI", "physics:density", "float", Value(0.0f));
+  add("PhysicsMeshCollisionAPI", "physics:approximation", "token", Token("none"));
+  declare("PhysicsCollisionGroup", "physics:invertFilteredGroups", "bool");
+  declare("PhysicsCollisionGroup", "physics:mergeGroup", "string");
+  declare("PhysicsCollisionGroup", "physics:filteredGroups", "relationship");
+  // CollisionGroup includes CollectionAPI:colliders without an authored API
+  // list. AOUSD Core 1.0.1 / 1.1 define includeRoot's fallback as false;
+  // OpenUSD 26.11's generated schema currently leaves it unset.
+  add("PhysicsCollisionGroup", "collection:colliders:expansionRule", "token",
+      Token("expandPrims"));
+  add("PhysicsCollisionGroup", "collection:colliders:includeRoot", "bool",
+      Value(false));
+  declare("PhysicsCollisionGroup", "collection:colliders:includes", "relationship");
+  declare("PhysicsCollisionGroup", "collection:colliders:excludes", "relationship");
+
+  add("PhysicsJoint", "physics:jointEnabled", "bool", Value(true));
+  add("PhysicsJoint", "physics:collisionEnabled", "bool", Value(false));
+  add("PhysicsJoint", "physics:excludeFromArticulation", "bool", Value(false));
+  add("PhysicsJoint", "physics:breakForce", "float", Value(infinity));
+  add("PhysicsJoint", "physics:breakTorque", "float", Value(infinity));
+  for (const char* name : {"physics:localPos0", "physics:localPos1"})
+    add("PhysicsJoint", name, "point3f", Value::MakePoint3f(0, 0, 0));
+  for (const char* name : {"physics:localRot0", "physics:localRot1"})
+    add("PhysicsJoint", name, "quatf", Value::MakeQuatf(1, 0, 0, 0));
+  for (const char* schema : {"PhysicsRevoluteJoint", "PhysicsPrismaticJoint"}) {
+    add(schema, "physics:axis", "token", Token("X"));
+    add(schema, "physics:lowerLimit", "float", Value(-infinity));
+    add(schema, "physics:upperLimit", "float", Value(infinity));
+  }
+  add("PhysicsSphericalJoint", "physics:axis", "token", Token("X"));
+  add("PhysicsSphericalJoint", "physics:coneAngle0Limit", "float", Value(-1.0f));
+  add("PhysicsSphericalJoint", "physics:coneAngle1Limit", "float", Value(-1.0f));
+  add("PhysicsDistanceJoint", "physics:minDistance", "float", Value(-1.0f));
+  add("PhysicsDistanceJoint", "physics:maxDistance", "float", Value(-1.0f));
+  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:type", "token", Token("force"));
+  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:maxForce", "float", Value(infinity));
+  for (const char* name : {"drive:__INSTANCE__:physics:targetPosition",
+       "drive:__INSTANCE__:physics:targetVelocity", "drive:__INSTANCE__:physics:damping",
+       "drive:__INSTANCE__:physics:stiffness"})
+    add("PhysicsDriveAPI", name, "float", Value(0.0f));
+  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:low", "float", Value(-infinity));
+  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:high", "float", Value(infinity));
 
   // UsdGeom Imageable/Camera/curves/subset fallbacks (values verified
   // against pxr's generated usdGeom schema.usda).
@@ -366,12 +476,6 @@ SchemaRegistry::SchemaRegistry() {
           {"SkelBindingAPI", "skel:jointWeights", "float[]"},
           {"SkelBindingAPI", "skel:skeleton", "relationship"},
           {"SkelBindingAPI", "skel:animationSource", "relationship"},
-          {"PhysicsDriveAPI", "physics:drive:type", "token"},
-          {"PhysicsDriveAPI", "physics:drive:maxForce", "float"},
-          {"PhysicsDriveAPI", "physics:drive:targetPosition", "float"},
-          {"PhysicsDriveAPI", "physics:drive:targetVelocity", "float"},
-          {"PhysicsLimitAPI", "physics:limit:low", "float"},
-          {"PhysicsLimitAPI", "physics:limit:high", "float"},
           // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
           {"TetMesh", "tetVertexIndices", "int4[]"},
           {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},
@@ -401,6 +505,7 @@ SchemaRegistry::SchemaRegistry() {
           {"VolumeFieldAsset", "fieldName", "token"},
           {"VolumeFieldAsset", "fieldIndex", "int"},
           {"VolumeFieldAsset", "fieldDataType", "token"},
+          {"VolumeFieldAsset", "vectorDataRoleHint", "token"},
           {"OpenVDBAsset", "fieldClass", "token"},
           {"Field3DAsset", "fieldPurpose", "token"},
           // UsdVol ParticleField applied API attributes.
@@ -449,7 +554,10 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
   // it ran out of parents).
   const std::string* schemas[16];
   size_t schema_count = 0;
-  const std::string* current = &prim.type_name();
+  // An abstract or API typeName leaves the prim typeless (Core 1.1 "Typed
+  // Schemas"): no typed chain at all.
+  const std::string* current =
+      IsConcreteTypedSchemaName(prim.type_name()) ? &prim.type_name() : nullptr;
   while (current && !current->empty() && schema_count < 16) {
     schemas[schema_count++] = current;
     const std::string* next = nullptr;
@@ -462,25 +570,41 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
     if (!next) break;
     current = next;
   }
-  auto in_chain = [&](const std::string& schema_type) {
+  auto chain_rank = [&](const std::string& schema_type) -> int {
     for (size_t i = 0; i < schema_count; ++i) {
-      if (*schemas[i] == schema_type) return true;
+      if (*schemas[i] == schema_type) return static_cast<int>(i);
     }
-    return false;
+    return -1;
   };
+  // Prim definition order (Core 1.1 "The Prim Definition" / "Fallback Value
+  // Resolution"): the typed schema (most-derived first) is strongest, then
+  // each applied schema in list-op resolved order. Pick the strongest
+  // matching definition rather than the first one registered.
+  const SchemaPropertyDefinition* best = nullptr;
+  int best_rank = 0;
   for (const SchemaPropertyDefinition& def : properties_) {
     if (!MatchDefinitionName(prim, def, property_name)) continue;
-    if (in_chain(def.schema_type)) return &def;
-    if (HasAppliedSchema(prim, def.schema_type)) return &def;
+    int rank = chain_rank(def.schema_type);
+    if (rank == 0) return &def;
+    if (rank < 0) {
+      const int applied = AppliedSchemaRank(prim, def.schema_type);
+      if (applied < 0) continue;
+      rank = 16 + applied;
+    }
+    if (!best || rank < best_rank) {
+      best = &def;
+      best_rank = rank;
+    }
   }
-  return nullptr;
+  return best;
 }
 
 std::vector<std::string> SchemaRegistry::PropertyNames(
     const PrimSpec& prim) const {
   std::vector<std::string> result;
   std::vector<std::string> schemas;
-  std::string current = prim.type_name();
+  std::string current =
+      IsConcreteTypedSchemaName(prim.type_name()) ? prim.type_name() : "";
   while (!current.empty()) {
     schemas.push_back(current);
     auto it = std::find_if(parents_.begin(), parents_.end(),
@@ -570,6 +694,117 @@ std::vector<std::string> SchemaRegistry::SchemaTypes() const {
 const SchemaRegistry& GetSchemaRegistry() {
   static const SchemaRegistry registry;
   return registry;
+}
+
+bool ParseSchemaFamilyAndVersion(const std::string& name, std::string* family,
+                                 uint32_t* version, bool* has_version) {
+  if (family) *family = name;
+  if (version) *version = 0;
+  if (has_version) *has_version = false;
+  if (name.empty()) return false;
+  size_t end = name.size();
+  size_t digits = end;
+  while (digits > 0 && name[digits - 1] >= '0' && name[digits - 1] <= '9') --digits;
+  // Need >= 1 digit, a '_' right before them, and a non-empty family.
+  if (digits == end || digits < 2 || name[digits - 1] != '_') return true;
+  uint64_t v = 0;
+  for (size_t i = digits; i < end; ++i) {
+    v = v * 10u + static_cast<uint64_t>(name[i] - '0');
+    if (v > UINT32_MAX) { v = UINT32_MAX; break; }
+  }
+  if (family) *family = name.substr(0, digits - 1);
+  if (version) *version = static_cast<uint32_t>(v);
+  if (has_version) *has_version = true;
+  return true;
+}
+
+namespace {
+
+bool IsMultipleApplyAPI(const std::string& schema) {
+  static const char* kMulti[] = {
+      "CollectionAPI", "CoordSysAPI", "PhysicsLimitAPI", "PhysicsDriveAPI",
+      "PhysxLimitAPI", "PhysicsMimicJointAPI", "NewtonMimicAPI",
+      "UsdPhysicsLimitAPI", "SemanticsLabelsAPI", "AccessibilityAPI",
+      "PrimvarSamplingAPI"};
+  for (const char* m : kMulti) {
+    if (schema == m) return true;
+  }
+  return false;
+}
+
+// Built-in (typed-schema apiSchemas) and auto-applied API schemas of a prim
+// type, OpenUSD 26.11 parity for the schemas next models.
+std::vector<std::string> BuiltinAPISchemas(const std::string& type) {
+  static const char* kLightTypes[] = {
+      "DistantLight", "DomeLight", "DomeLight_1", "SphereLight", "RectLight",
+      "DiskLight", "CylinderLight", "GeometryLight", "PortalLight",
+      "PluginLight"};
+  for (const char* lt : kLightTypes) {
+    if (type == lt) return {"LightAPI"};
+  }
+  if (type == "ParticleField3DGaussianSplat") {
+    return {"ParticleFieldPositionAttributeAPI",
+            "ParticleFieldOrientationAttributeAPI",
+            "ParticleFieldScaleAttributeAPI",
+            "ParticleFieldOpacityAttributeAPI",
+            "ParticleFieldKernelGaussianEllipsoidAPI",
+            "ParticleFieldSphericalHarmonicsAttributeAPI"};
+  }
+  return {};
+}
+
+// API schemas that themselves include LightAPI (pxr builtin apiSchemas).
+bool IncludesLightAPI(const std::string& api) {
+  return api == "MeshLightAPI" || api == "VolumeLightAPI";
+}
+
+}  // namespace
+
+std::vector<std::string> SchemaRegistry::AppliedSchemas(
+    const PrimSpec& prim) const {
+  std::vector<std::string> out = BuiltinAPISchemas(prim.type_name());
+  auto push = [&out](const std::string& s) {
+    if (std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
+  };
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    push(applied);
+    if (IncludesLightAPI(applied)) push("LightAPI");
+  }
+  return out;
+}
+
+bool SchemaRegistry::HasAPI(const PrimSpec& prim, const std::string& api_schema,
+                            const std::string& instance) const {
+  if (api_schema.empty()) return false;
+  const bool multi = IsMultipleApplyAPI(api_schema);
+  if (!instance.empty() && !multi) return false;
+  for (const std::string& applied : AppliedSchemas(prim)) {
+    if (!multi) {
+      if (applied == api_schema) return true;
+      continue;
+    }
+    if (applied.size() <= api_schema.size() + 1 ||
+        applied.compare(0, api_schema.size(), api_schema) != 0 ||
+        applied[api_schema.size()] != ':') {
+      continue;
+    }
+    if (instance.empty() ||
+        applied.compare(api_schema.size() + 1, std::string::npos, instance) ==
+            0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool UsdPrim::HasAPI(const std::string& api_schema,
+                     const std::string& instance) const {
+  return spec_ && GetSchemaRegistry().HasAPI(*spec_, api_schema, instance);
+}
+
+std::vector<std::string> UsdPrim::GetAppliedSchemas() const {
+  if (!spec_) return {};
+  return GetSchemaRegistry().AppliedSchemas(*spec_);
 }
 
 }  // namespace next

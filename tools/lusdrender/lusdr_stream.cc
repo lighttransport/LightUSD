@@ -469,6 +469,7 @@ class StreamRenderServer {
         rc_->ibl.valid ? &rc_->ibl : nullptr, rc_->camera, rc_->opt, h,
         rc_->textures.empty() ? nullptr : &rc_->textures,
         rc_->tri_uvs.empty() ? nullptr : &rc_->tri_uvs,
+        /*tri_uvs1*/ nullptr,
         rc_->use_tlas ? rc_->tlas : nullptr,
         rc_->use_tlas ? &rc_->blas : nullptr,
         rc_->use_tlas ? &rc_->instances : nullptr,

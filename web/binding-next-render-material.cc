@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
+int32_t RenderStream::materialIdForBoundPrim_(
+    const lightusd::next::UsdPrim& prim) {
+  return registerMaterial_(lightusd::next::GetBoundMaterial(stage_, prim));
+}
+
 RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
       const lightusd::next::UsdPrim &mat) {
     MaterialRecord rec;
@@ -274,8 +280,8 @@ std::string RenderStream::texFile_(const std::string &connPath) {
     if (!tex.IsValid()) return "";
     const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
-    if (const std::string *a = v->as_asset_path()) return *a;
-    if (const std::string *s = v->as_string()) return *s;
+    if (auto a = v->as_asset_path()) return *a;
+    if (auto s = v->as_string()) return *s;
     return "";
   }
 }  // namespace web_next

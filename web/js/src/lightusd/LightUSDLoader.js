@@ -927,10 +927,12 @@ export class NextRenderSceneAdapter {
             index,
             primName: mesh.primName || `mesh_${index}`,
             primPath: mesh.primPath || '',
+            purpose: mesh.purpose || 'default',
             doubleSided: !!mesh.doubleSided,
             points: copy(mesh.points, Float32Array),
             indices: copy(mesh.indices, Uint32Array),
             normals: copy(mesh.normals, Float32Array),
+            vertexColors: copy(mesh.vertexColors, Float32Array),
             tangents: copy(mesh.tangents, Float32Array),
             tangentMethod: mesh.tangentMethod || '',
             uv0: copy(mesh.uv0, Float32Array),
@@ -957,7 +959,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyPoints(native, points, index) {
-        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
+        const copy = (desc, Type) => desc instanceof Type
+            ? (desc.length ? markOwnedFloat32Array(new Float32Array(desc)) : null)
+            : copyWasmArray(native, desc, Type);
         return {
             index,
             name: points.name || `points_${index}`,
@@ -974,7 +978,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyCurves(native, curves, index) {
-        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
+        const copy = (desc, Type) => desc instanceof Type
+            ? (desc.length ? markOwnedFloat32Array(new Float32Array(desc)) : null)
+            : copyWasmArray(native, desc, Type);
         return {
             index,
             name: curves.name || `curves_${index}`,
@@ -987,9 +993,11 @@ export class NextRenderSceneAdapter {
             basis: curves.basis || 'bezier',
             wrap: curves.wrap || 'nonperiodic',
             isNurbs: !!curves.isNurbs,
+            isHermite: !!curves.isHermite,
             materialId: Number.isFinite(curves.materialId) ? curves.materialId : -1,
             widthsInterpolation: curves.widthsInterpolation || 'constant',
             colorsInterpolation: curves.colorsInterpolation || 'constant',
+            opacitiesInterpolation: curves.opacitiesInterpolation || 'constant',
             curveVertexCounts: Array.from(curves.curveVertexCounts || []),
             tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
             points: copy(curves.points, Float32Array),
@@ -998,6 +1006,8 @@ export class NextRenderSceneAdapter {
             tessellatedPoints: copy(curves.tessellatedPoints, Float32Array),
             tessellatedWidths: copy(curves.tessellatedWidths, Float32Array),
             tessellatedColors: copy(curves.tessellatedColors, Float32Array),
+            opacities: copy(curves.opacities, Float32Array),
+            tessellatedOpacities: copy(curves.tessellatedOpacities, Float32Array),
             hasBounds: !!curves.hasBounds,
             bboxMin: Array.isArray(curves.bboxMin) ? curves.bboxMin.slice(0, 3) : null,
             bboxMax: Array.isArray(curves.bboxMax) ? curves.bboxMax.slice(0, 3) : null
@@ -1196,6 +1206,7 @@ export class NextRenderSceneAdapter {
             vertices: mesh.points ? new Float32Array(mesh.points) : null,
             indices: mesh.indices ? new Uint32Array(mesh.indices) : null,
             normals: mesh.normals ? new Float32Array(mesh.normals) : null,
+            vertexColors: mesh.vertexColors ? new Float32Array(mesh.vertexColors) : null,
             uv0: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
             uvs: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
             texcoords: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
@@ -1767,7 +1778,7 @@ class LightUSDLoader extends Loader {
                 this.nextOnlyNative_ = true;
             } else if (use_memory64) {
                 try {
-                    const wasm64Url = new URL('./lightusd_64.js', import.meta.url).href;
+                    const wasm64Url = new URL(/* @vite-ignore */ './lightusd_64.js', import.meta.url).href;
                     const module = await import(/* @vite-ignore */ wasm64Url);
                     initLightUSDNative = module.default;
                     this.nextOnlyNative_ = false;
@@ -1848,7 +1859,10 @@ class LightUSDLoader extends Loader {
               initOptions.onLightUSDDebug = this._makeDebugMemoryCallback(null, this.debugMemory_);
             }
 
+            if (options.locateFeature) initOptions.locateFeature = options.locateFeature;
             this.native_ = await initLightUSDNative(initOptions);
+            if (options.preloadEXR && this.native_?.loadFeature) await this.native_.loadFeature('exr');
+            if (options.preloadValidator && this.native_?.loadFeature) await this.native_.loadFeature('validator');
             if (!this.native_) {
                 throw new Error('LightUSDLoader: Failed to initialize native module.');
             }

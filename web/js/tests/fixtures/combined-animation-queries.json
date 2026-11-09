@@ -1,0 +1,3450 @@
+{
+  "wasm32": {
+    "xform-timesamples-001.usda": {
+      "animations": [
+        {
+          "name": "root_xform",
+          "primName": "root",
+          "absPath": "/root",
+          "displayName": "",
+          "duration": 10,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "vector3",
+              "name": "/root.position",
+              "isCustomProperty": false,
+              "nodeName": "root",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  4,
+                  5,
+                  6,
+                  14,
+                  20,
+                  30
+                ]
+              },
+              "path": "translation"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  4,
+                  5,
+                  6,
+                  14,
+                  20,
+                  30
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "root_xform",
+          "duration": 10,
+          "numTracks": 1,
+          "numSamplers": 1,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "usdskel-001.usda": {
+      "animations": [
+        {
+          "name": "Anim",
+          "primName": "Anim",
+          "absPath": "/Model/Skel/Anim",
+          "displayName": "",
+          "duration": 10,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  2
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.707099974155426,
+                  0,
+                  0,
+                  0.707099974155426
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  2
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.707099974155426,
+                  0,
+                  0,
+                  0.707099974155426
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "Anim",
+          "duration": 10,
+          "numTracks": 3,
+          "numSamplers": 3,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "skelanimation-full-001.usda": {
+      "animations": [
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/AdditiveBlendShapeRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  15
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Weights",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  15
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.5,
+                  0,
+                  0,
+                  1,
+                  0.5,
+                  0.5,
+                  0,
+                  1,
+                  0.5,
+                  0.5,
+                  0.5,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/BlendShapeAnimationRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  5
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Weights",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0.5,
+                  0.5,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/BasicAnimationRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 3,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 4,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 5,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 1,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 2,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 9,
+          "numSamplers": 6,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 3,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "c-core-animation-queries.usda": {
+      "animations": [
+        {
+          "name": "World_xform",
+          "primName": "World",
+          "absPath": "/World",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "vector3",
+              "name": "/World.position",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "type": "quaternion",
+              "name": "/World.quaternion",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.022260025143623352,
+                  0.43967974185943604,
+                  0.36042338609695435,
+                  0.8223631381988525
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "type": "vector3",
+              "name": "/World.scale",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.022260025143623352,
+                  0.43967974185943604,
+                  0.36042338609695435,
+                  0.8223631381988525
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "World_properties",
+          "primName": "World",
+          "absPath": "/World",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "Unknown",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "number",
+              "name": "/World.gain",
+              "isCustomProperty": true,
+              "propertyName": "gain",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0.25,
+                  0.75
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector2",
+              "name": "/World.offset",
+              "isCustomProperty": true,
+              "propertyName": "offset",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector4",
+              "name": "/World.tint",
+              "isCustomProperty": true,
+              "propertyName": "tint",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  1,
+                  0,
+                  1,
+                  0,
+                  0.5
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector3",
+              "name": "/World.velocity",
+              "isCustomProperty": true,
+              "propertyName": "velocity",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              },
+              "path": "custom"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "gain"
+            },
+            {
+              "sampler": 1,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "offset"
+            },
+            {
+              "sampler": 2,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "tint"
+            },
+            {
+              "sampler": 3,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "velocity"
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0.25,
+                  0.75
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  1,
+                  0,
+                  1,
+                  0,
+                  0.5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Child_xform",
+          "primName": "Child",
+          "absPath": "/World/Child",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0
+                ]
+              },
+              "path": "translation"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 1,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "World_xform",
+          "duration": 24,
+          "numTracks": 3,
+          "numSamplers": 3,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 1,
+          "name": "World_properties",
+          "duration": 24,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 1,
+          "sourceType": "Unknown",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 2,
+          "name": "Child_xform",
+          "duration": 24,
+          "numTracks": 1,
+          "numSamplers": 1,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    }
+  },
+  "wasm64": {
+    "xform-timesamples-001.usda": {
+      "animations": [
+        {
+          "name": "root_xform",
+          "primName": "root",
+          "absPath": "/root",
+          "displayName": "",
+          "duration": 10,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "vector3",
+              "name": "/root.position",
+              "isCustomProperty": false,
+              "nodeName": "root",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  4,
+                  5,
+                  6,
+                  14,
+                  20,
+                  30
+                ]
+              },
+              "path": "translation"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  4,
+                  5,
+                  6,
+                  14,
+                  20,
+                  30
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "root_xform",
+          "duration": 10,
+          "numTracks": 1,
+          "numSamplers": 1,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "usdskel-001.usda": {
+      "animations": [
+        {
+          "name": "Anim",
+          "primName": "Anim",
+          "absPath": "/Model/Skel/Anim",
+          "displayName": "",
+          "duration": 10,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  2
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.707099974155426,
+                  0,
+                  0,
+                  0.707099974155426
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  2
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  10
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.707099974155426,
+                  0,
+                  0,
+                  0.707099974155426
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "Anim",
+          "duration": 10,
+          "numTracks": 3,
+          "numSamplers": 3,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "skelanimation-full-001.usda": {
+      "animations": [
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/BlendShapeAnimationRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  5
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Weights",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0.5,
+                  0.5,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/AdditiveBlendShapeRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  15
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 0,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Weights",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  15
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.5,
+                  0,
+                  0,
+                  1,
+                  0.5,
+                  0.5,
+                  0,
+                  1,
+                  0.5,
+                  0.5,
+                  0.5,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Animation",
+          "primName": "Animation",
+          "absPath": "/AnimationTests/BasicAnimationRoot/Animation",
+          "displayName": "",
+          "duration": 48,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 3,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 0,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 4,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 1,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 3,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 5,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": -1,
+              "skeleton_id": 2,
+              "joint_id": 2,
+              "target_type": "SkeletonJoint",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  1,
+                  12,
+                  24,
+                  36,
+                  48
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  -0.2587999999523163,
+                  0,
+                  0,
+                  0.9659000039100647,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 1,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 1,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 2,
+          "name": "Animation",
+          "duration": 48,
+          "numTracks": 9,
+          "numSamplers": 6,
+          "numTargetNodes": 0,
+          "sourceType": "SkelAnimation",
+          "numAnimatedJoints": 3,
+          "numAnimatedNodes": 0,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    },
+    "c-core-animation-queries.usda": {
+      "animations": [
+        {
+          "name": "World_xform",
+          "primName": "World",
+          "absPath": "/World",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "vector3",
+              "name": "/World.position",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ]
+              },
+              "path": "translation"
+            },
+            {
+              "type": "quaternion",
+              "name": "/World.quaternion",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.022260025143623352,
+                  0.43967974185943604,
+                  0.36042338609695435,
+                  0.8223631381988525
+                ]
+              },
+              "path": "rotation"
+            },
+            {
+              "type": "vector3",
+              "name": "/World.scale",
+              "isCustomProperty": false,
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "path": "scale"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 1,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Rotation",
+              "isCustomProperty": false
+            },
+            {
+              "sampler": 2,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Scale",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0.022260025143623352,
+                  0.43967974185943604,
+                  0.36042338609695435,
+                  0.8223631381988525
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  1,
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "World_properties",
+          "primName": "World",
+          "absPath": "/World",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "Unknown",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "type": "number",
+              "name": "/World.gain",
+              "isCustomProperty": true,
+              "propertyName": "gain",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0.25,
+                  0.75
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector2",
+              "name": "/World.offset",
+              "isCustomProperty": true,
+              "propertyName": "offset",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector4",
+              "name": "/World.tint",
+              "isCustomProperty": true,
+              "propertyName": "tint",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  1,
+                  0,
+                  1,
+                  0,
+                  0.5
+                ]
+              },
+              "path": "custom"
+            },
+            {
+              "type": "vector3",
+              "name": "/World.velocity",
+              "isCustomProperty": true,
+              "propertyName": "velocity",
+              "nodeName": "World",
+              "nodeIndex": 0,
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              },
+              "path": "custom"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "gain"
+            },
+            {
+              "sampler": 1,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "offset"
+            },
+            {
+              "sampler": 2,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "tint"
+            },
+            {
+              "sampler": 3,
+              "target_node": 0,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "CustomProperty",
+              "isCustomProperty": true,
+              "propertyName": "velocity"
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  0.25,
+                  0.75
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  1,
+                  0,
+                  1,
+                  0,
+                  0.5
+                ]
+              },
+              "interpolation": "LINEAR"
+            },
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        },
+        {
+          "name": "Child_xform",
+          "primName": "Child",
+          "absPath": "/World/Child",
+          "displayName": "",
+          "duration": 24,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "tracks": [
+            {
+              "interpolation": "LINEAR",
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0
+                ]
+              },
+              "path": "translation"
+            }
+          ],
+          "channels": [
+            {
+              "sampler": 0,
+              "target_node": 1,
+              "skeleton_id": -1,
+              "joint_id": -1,
+              "target_type": "SceneNode",
+              "path": "Translation",
+              "isCustomProperty": false
+            }
+          ],
+          "samplers": [
+            {
+              "times": {
+                "$float32": [
+                  0,
+                  24
+                ]
+              },
+              "values": {
+                "$float32": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0
+                ]
+              },
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": 0,
+          "name": "World_xform",
+          "duration": 24,
+          "numTracks": 3,
+          "numSamplers": 3,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 1,
+          "name": "World_properties",
+          "duration": 24,
+          "numTracks": 4,
+          "numSamplers": 4,
+          "numTargetNodes": 1,
+          "sourceType": "Unknown",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        },
+        {
+          "id": 2,
+          "name": "Child_xform",
+          "duration": 24,
+          "numTracks": 1,
+          "numSamplers": 1,
+          "numTargetNodes": 1,
+          "sourceType": "XformOp",
+          "numAnimatedJoints": 0,
+          "numAnimatedNodes": 1,
+          "hasValueClip": false,
+          "valueClipBaked": false,
+          "valueClipStartTime": 0,
+          "valueClipEndTime": 0,
+          "valueClipSampleRate": 0,
+          "clipAssetPaths": [],
+          "numClipAssetPaths": 0
+        }
+      ]
+    }
+  }
+}

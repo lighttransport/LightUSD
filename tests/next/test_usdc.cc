@@ -19,6 +19,7 @@
 #include "next/reader/usdc-reader.hh"
 #include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/usda-writer.hh"
 
 using namespace lightusd::next;
 
@@ -481,13 +482,13 @@ void test_crate_reader_audit_cluster() {
     USDCLoadResult compat = LoadUSDCFromFile(fx.c_str());
     assert(compat.success);
     auto field = [](const auto& fields, const std::string& name)
-        -> const TypedExtensionField* {
+        -> const DecodedExtensionField* {
       for (const auto& item : fields) if (item.name == name) return &item;
       return nullptr;
     };
     const Layer* root = compat.stage.GetRootLayer();
     assert(root);
-    const TypedExtensionField* layer_probe =
+    const DecodedExtensionField* layer_probe =
         field(root->meta().unknownFields, "extensionLayerProbe");
     assert(layer_probe && layer_probe->unregistered &&
            layer_probe->unregistered_source == "\"kept-by-openusd\"");
@@ -498,15 +499,15 @@ void test_crate_reader_audit_cluster() {
     UsdPrim p = compat.stage.GetPrimAtPath("/P");
     assert(p.IsValid() && !p.HasProperty("extensionPrimProbe") &&
            "unknown Prim metadata must not become a phantom property");
-    const TypedExtensionField* prim_probe =
+    const DecodedExtensionField* prim_probe =
         field(p.GetMeta().unknownFields(), "extensionPrimProbe");
     assert(prim_probe && prim_probe->unregistered_source == "17");
     assert(prim_probe->value.as_int() && *prim_probe->value.as_int() == 17);
     const PropMeta* attr_meta = p.GetPrimSpec()->property_meta("v");
     const PropMeta* rel_meta = p.GetPrimSpec()->property_meta("r");
-    const TypedExtensionField* attr_probe =
+    const DecodedExtensionField* attr_probe =
         attr_meta ? field(attr_meta->unknownFields, "extensionProbe") : nullptr;
-    const TypedExtensionField* rel_probe =
+    const DecodedExtensionField* rel_probe =
         rel_meta ? field(rel_meta->unknownFields, "extensionRelProbe") : nullptr;
     assert(attr_probe && attr_probe->unregistered_source == "42");
     assert(rel_probe &&
@@ -526,8 +527,7 @@ void test_crate_reader_audit_cluster() {
                            "extensionPrimProbe"));
   }
 
-  // Reference with per-arc customData: the ARC must survive (the dict is
-  // skipped). Previously the whole listop was dropped.
+  // Reference customData must survive in both compatibility and strict modes.
   {
     std::string fx = FindUsdcFixture("refs-customdata-001.usdc");
     if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
@@ -539,18 +539,16 @@ void test_crate_reader_audit_cluster() {
     assert(a.GetMeta().references[0].find("b.usda") != std::string::npos);
     assert(a.HasProperty("after"));
 
-    // Compatibility mode preserves the arc while diagnosing the unmodeled
-    // per-reference dictionary. Strict fidelity mode must fail closed instead
-    // of silently presenting the load as lossless.
+    const std::string text = WriteUSDAToString(r.stage);
+    assert(text.find("customData") != std::string::npos);
+    assert(text.find("priority = 7") != std::string::npos);
+    assert(text.find("note = \"hello\"") != std::string::npos);
     USDCLoadOptions strict_options;
     strict_options.crate_options.strict_aousd_conformance = true;
     USDCLoadResult strict = LoadUSDCFromFile(fx.c_str(), strict_options);
-    assert(!strict.success);
-    assert(std::any_of(strict.errors.begin(), strict.errors.end(),
-                       [](const CrateError& error) {
-                         return error.message.find("Reference customData is ignored") !=
-                                std::string::npos;
-                       }));
+    assert(strict.success);
+    assert(strict.warnings.empty());
+
   }
 
   // Explicit-clear (`references = None`, pxr ListOpHeader 0x01 with no
@@ -563,7 +561,7 @@ void test_crate_reader_audit_cluster() {
     UsdPrim a = r.stage.GetPrimAtPath("/A");
     assert(a.IsValid());
     assert(a.GetMeta().references.empty());
-    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    const ArcListOps* edits = a.GetMeta().arc_edits();
     assert(edits);
     assert(edits->references.authored);
     assert(edits->references.is_explicit);
@@ -632,7 +630,7 @@ void test_crate_reader_audit_cluster() {
     assert(r.success);
     UsdPrim a = r.stage.GetPrimAtPath("/A");
     assert(a.IsValid());
-    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    const ArcListOps* edits = a.GetMeta().arc_edits();
     assert(edits && edits->inherits.authored && edits->inherits.is_explicit);
     assert(a.GetMeta().inherits.empty());
     const std::vector<Path>* targets = a.GetRelationship("r");
@@ -653,7 +651,7 @@ void test_crate_reader_audit_cluster() {
     assert(b->as_uchar() && *b->as_uchar() == 255);
     const Value* ba = a.GetPropertyValue("ba");
     assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
-    const std::vector<uint32_t>* lanes = ba->as_uint_array();
+    auto lanes = ba->as_uint_array();
     assert(lanes && lanes->size() == 4 && (*lanes)[2] == 128 &&
            (*lanes)[3] == 255);
   }
@@ -720,7 +718,7 @@ void test_array_edit_rep_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
+    auto d = p->meta().customData().as_dictionary();
     assert(d && d->find("v") && d->find("v")->as_double() &&
            *d->find("v")->as_double() == 10.5);
   }
@@ -734,8 +732,8 @@ void test_array_edit_rep_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
-    const Value* v = d ? d->find("v") : nullptr;
+    auto d = p->meta().customData().as_dictionary();
+    auto v = d ? d->find("v") : nullptr;
     assert(!(v && v->as_double() && *v->as_double() != 10.5) &&
            "array-edit rep must not decode as a garbage scalar");
     bool warned = false;
@@ -801,8 +799,8 @@ void test_inlined_never_types_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
-    const Value* v = d ? d->find("v") : nullptr;
+    auto d = p->meta().customData().as_dictionary();
+    auto v = d ? d->find("v") : nullptr;
     // The value must be dropped/empty — not fabricated from the payload bits.
     assert((!v || v->is_empty()) &&
            "inlined quat/TimeSamples rep must not fabricate a value");
@@ -874,7 +872,7 @@ void test_pre070_array_count() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, CrateVersion{0, 6, 0},
                             no_tokens, 1024, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 3);
     assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
 
@@ -911,7 +909,7 @@ void test_pre070_array_count() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, CrateVersion{0, 8, 0},
                             no_tokens, 1024, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 3);
     assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
   }
@@ -957,7 +955,7 @@ void test_lazy_quat_array_swizzle() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
     assert(out.type_id() == TypeId::Quatf && out.is_array());
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 8);
     const float expect[8] = {4, 1, 2, 3, 8, 5, 6, 7};  // real-first
     for (int i = 0; i < 8; ++i) assert((*fa)[i] == expect[i]);
@@ -975,7 +973,7 @@ void test_lazy_quat_array_swizzle() {
     Value out;
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
-    const std::vector<double>* da = out.as_double_array();
+    auto da = out.as_double_array();
     assert(da && da->size() == 4);
     assert((*da)[0] == 4.0 && (*da)[1] == 1.0 && (*da)[2] == 2.0 &&
            (*da)[3] == 3.0);
@@ -994,7 +992,7 @@ void test_lazy_quat_array_swizzle() {
     Value out;
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 4);
     assert((*fa)[0] == 4.0f && (*fa)[1] == 1.0f && (*fa)[2] == 2.0f &&
            (*fa)[3] == 3.0f);

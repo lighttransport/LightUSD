@@ -17,7 +17,7 @@
 #include "math-util.inc"
 #include "str-util.hh"
 #include "value-pprint.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 

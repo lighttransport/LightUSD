@@ -3,63 +3,27 @@
 //
 // UTF-8 Unicode identifier XID_Start and XID_Continue validation utility.
 //
-// Based on UAX31 Default Identifier and Unicode 5.1.0
+// Based on UAX31 Default Identifier and Unicode 15.1.0. The tables and the
+// lookups live in the C11 module src/unicode-xid-c.{c,h}; this header only
+// forwards to them, so translation units that validate identifiers no longer
+// parse a 1450-line table each.
+//
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
-#include <iterator>
-#include <utility>
-#include <limits>
+
+#include "unicode-xid-c.h"
 
 namespace unicode_xid {
 
 constexpr uint32_t kMaxCodepoint = 0x10FFFF;
 
-namespace detail {
-
-// Assume table is sorted by the first key(range_begin)
-#include "unicode-xid-table.inc"
-
-}
-
 inline bool is_xid_start(uint32_t codepoint) {
-  if (codepoint > kMaxCodepoint) {
-    return false;
-  }
-
-  // first a range(range_begin <= codepoint <= range_end) by comparing the second key(range end).
-  auto it = std::lower_bound(std::begin(detail::kXID_StartTable), std::end(detail::kXID_StartTable), int(codepoint), [](const std::pair<int, int> &a, const int b) {
-    return a.second < b;
-  });
-
-  if (it != std::end(detail::kXID_StartTable)) {
-    if ((int(codepoint) >= it->first) && (int(codepoint) <= it->second)) { // range end is inclusive.
-      return true;
-    }
-  }
-
-  return false;
+  return unicode_xid_is_start(static_cast<unsigned int>(codepoint)) != 0;
 }
 
 inline bool is_xid_continue(uint32_t codepoint) {
-  if (codepoint > kMaxCodepoint) {
-    return false;
-  }
-
-  auto it = std::lower_bound(std::begin(detail::kXID_ContinueTable), std::end(detail::kXID_ContinueTable), int(codepoint), [](const std::pair<int, int> &a, const int b) {
-    return a.second < b;
-  });
-
-  if (it != std::end(detail::kXID_ContinueTable)) {
-    if ((int(codepoint) >= it->first) && (int(codepoint) <= it->second)) { // range end is inclusive.
-      return true;
-    }
-  }
-
-  return false;
+  return unicode_xid_is_continue(static_cast<unsigned int>(codepoint)) != 0;
 }
 
-} // namespace unicode_xid
-
-
+}  // namespace unicode_xid

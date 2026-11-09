@@ -4,6 +4,7 @@
 // LightUSD Next - Time Sample Interpolation Implementation
 
 #include "interpolation.hh"
+#include "../c/lightusd-core-c.h"
 #include "../crate/crate-format.hh"
 #include "type-id.hh"
 #include <cmath>
@@ -13,27 +14,7 @@ namespace lightusd {
 namespace next {
 
 bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
-  switch (type) {
-    case TypeId::Half: case TypeId::Float: case TypeId::Double:
-    case TypeId::TimeCode:
-    case TypeId::Matrix2f: case TypeId::Matrix3f: case TypeId::Matrix4f:
-    case TypeId::Matrix2d: case TypeId::Matrix3d: case TypeId::Matrix4d:
-    case TypeId::Frame4d:
-    case TypeId::Half2: case TypeId::Float2: case TypeId::Double2:
-    case TypeId::Half3: case TypeId::Float3: case TypeId::Double3:
-    case TypeId::Half4: case TypeId::Float4: case TypeId::Double4:
-    case TypeId::Quath: case TypeId::Quatf: case TypeId::Quatd:
-    case TypeId::Point3h: case TypeId::Point3f: case TypeId::Point3d:
-    case TypeId::Vector3h: case TypeId::Vector3f: case TypeId::Vector3d:
-    case TypeId::Normal3h: case TypeId::Normal3f: case TypeId::Normal3d:
-    case TypeId::Color3h: case TypeId::Color3f: case TypeId::Color3d:
-    case TypeId::Color4h: case TypeId::Color4f: case TypeId::Color4d:
-    case TypeId::Texcoord2h: case TypeId::Texcoord2f: case TypeId::Texcoord2d:
-    case TypeId::Texcoord3h: case TypeId::Texcoord3f: case TypeId::Texcoord3d:
-      return true;
-    default:
-      return false;
-  }
+  return lu_type_is_linear_interpolatable(static_cast<uint16_t>(type)) != 0;
 }
 
 // ============================================================
@@ -41,11 +22,11 @@ bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
 // ============================================================
 
 float TimeInterpolator::LerpFloat(float a, float b, float t) {
-  return a + t * (b - a);
+  return lu_lerp_f(a, b, t);
 }
 
 double TimeInterpolator::LerpDouble(double a, double b, double t) {
-  return a + t * (b - a);
+  return lu_lerp_d(a, b, t);
 }
 
 // ============================================================
@@ -53,15 +34,11 @@ double TimeInterpolator::LerpDouble(double a, double b, double t) {
 // ============================================================
 
 void TimeInterpolator::LerpFloatN(float* out, const float* a, const float* b, float t, size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    out[i] = a[i] + t * (b[i] - a[i]);
-  }
+  lu_lerp_fn(out, a, b, t, n);
 }
 
 void TimeInterpolator::LerpDoubleN(double* out, const double* a, const double* b, double t, size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    out[i] = a[i] + t * (b[i] - a[i]);
-  }
+  lu_lerp_dn(out, a, b, t, n);
 }
 
 // ============================================================
@@ -69,87 +46,11 @@ void TimeInterpolator::LerpDoubleN(double* out, const double* a, const double* b
 // ============================================================
 
 void TimeInterpolator::SlerpQuatf(float* out, const float* a, const float* b, float t) {
-  // Quaternion format: x, y, z, w
-
-  // Compute dot product
-  float dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
-
-  // If dot is negative, negate one quaternion to take shorter path
-  float b_sign = 1.0f;
-  if (dot < 0.0f) {
-    dot = -dot;
-    b_sign = -1.0f;
-  }
-
-  float s0, s1;
-
-  // If quaternions are very close, use linear interpolation
-  if (dot > 0.9995f) {
-    s0 = 1.0f - t;
-    s1 = t * b_sign;
-  } else {
-    float theta = std::acos(dot);
-    float sin_theta = std::sin(theta);
-    s0 = std::sin((1.0f - t) * theta) / sin_theta;
-    s1 = std::sin(t * theta) / sin_theta * b_sign;
-  }
-
-  out[0] = s0 * a[0] + s1 * b[0];
-  out[1] = s0 * a[1] + s1 * b[1];
-  out[2] = s0 * a[2] + s1 * b[2];
-  out[3] = s0 * a[3] + s1 * b[3];
-
-  // Normalize result
-  float len = std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2] + out[3]*out[3]);
-  if (len > 0.0f) {
-    float inv_len = 1.0f / len;
-    out[0] *= inv_len;
-    out[1] *= inv_len;
-    out[2] *= inv_len;
-    out[3] *= inv_len;
-  }
+  lu_slerp_quatf(out, a, b, t);
 }
 
 void TimeInterpolator::SlerpQuatd(double* out, const double* a, const double* b, double t) {
-  // Quaternion format: x, y, z, w
-
-  // Compute dot product
-  double dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
-
-  // If dot is negative, negate one quaternion to take shorter path
-  double b_sign = 1.0;
-  if (dot < 0.0) {
-    dot = -dot;
-    b_sign = -1.0;
-  }
-
-  double s0, s1;
-
-  // If quaternions are very close, use linear interpolation
-  if (dot > 0.9995) {
-    s0 = 1.0 - t;
-    s1 = t * b_sign;
-  } else {
-    double theta = std::acos(dot);
-    double sin_theta = std::sin(theta);
-    s0 = std::sin((1.0 - t) * theta) / sin_theta;
-    s1 = std::sin(t * theta) / sin_theta * b_sign;
-  }
-
-  out[0] = s0 * a[0] + s1 * b[0];
-  out[1] = s0 * a[1] + s1 * b[1];
-  out[2] = s0 * a[2] + s1 * b[2];
-  out[3] = s0 * a[3] + s1 * b[3];
-
-  // Normalize result
-  double len = std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2] + out[3]*out[3]);
-  if (len > 0.0) {
-    double inv_len = 1.0 / len;
-    out[0] *= inv_len;
-    out[1] *= inv_len;
-    out[2] *= inv_len;
-    out[3] *= inv_len;
-  }
+  lu_slerp_quatd(out, a, b, t);
 }
 
 // ============================================================
@@ -184,8 +85,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     // rotations between keys (SkelAnimation `rotations` is quatf[]); quath
     // arrays materialize into the float buffer like the other half types.
     if (type == TypeId::Quatf || type == TypeId::Quath) {
-      const std::vector<float>* arr_a = a.as_float_array();
-      const std::vector<float>* arr_b = b.as_float_array();
+      auto arr_a = a.as_float_array();
+      auto arr_b = b.as_float_array();
       if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
           (arr_a->size() % 4) == 0) {
         std::vector<float> result(arr_a->size());
@@ -198,8 +99,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       return Value();
     }
     if (type == TypeId::Quatd) {
-      const std::vector<double>* arr_a = a.as_double_array();
-      const std::vector<double>* arr_b = b.as_double_array();
+      auto arr_a = a.as_double_array();
+      auto arr_b = b.as_double_array();
       if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
           (arr_a->size() % 4) == 0) {
         std::vector<double> result(arr_a->size());
@@ -214,8 +115,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
 
     // Any float-backed array (float/half scalars, vectors, matrices — half
     // element types materialize into the float buffer): lerp all lanes.
-    if (const std::vector<float>* arr_a = a.as_float_array()) {
-      const std::vector<float>* arr_b = b.as_float_array();
+    if (auto arr_a = a.as_float_array()) {
+      auto arr_b = b.as_float_array();
       if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
         std::vector<float> result(arr_a->size());
         LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf,
@@ -230,8 +131,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     }
 
     // Double-backed arrays.
-    if (const std::vector<double>* arr_a = a.as_double_array()) {
-      const std::vector<double>* arr_b = b.as_double_array();
+    if (auto arr_a = a.as_double_array()) {
+      auto arr_b = b.as_double_array();
       if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
         std::vector<double> result(arr_a->size());
         LerpDoubleN(result.data(), arr_a->data(), arr_b->data(), t,

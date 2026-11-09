@@ -18,12 +18,13 @@
 #include <utility>
 
 #include "next/types/value.hh"
+#include "next/core/string-index.hh"
 
 using namespace lightusd::next;
 
 static void TestSmallDict() {
   Value v = Value::MakeDictionary();
-  Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
   assert(d);
 
   // Insertion order is preserved (writer round-trip depends on it).
@@ -58,17 +59,20 @@ static void TestValueCowIndex() {
   // the shared original and the private copy must both answer find() correctly.
   Value v = Value::MakeDictionary();
   {
-    Dict* d = v.as_dictionary();
+    auto d = v.as_dictionary();
+    d->set_typed_json_wrapper(true);
     d->set("a", Value(1));
     d->set("b", Value(2));
     d->set("c", Value(3));
   }
   Value shared = v;  // refcount++ on the same Dict (no deep copy)
+  assert(shared.as_dictionary()->typed_json_wrapper());
   assert(shared.as_dictionary()->find("b") &&
          *shared.as_dictionary()->find("b")->as_int() == 2);
 
   // Mutable access detaches (copies the Dict, rebuilding its index).
-  Dict* det = v.as_dictionary();
+  auto det = v.as_dictionary();
+  assert(det->typed_json_wrapper());
   det->set("d", Value(4));
   assert(det->find("d") && *det->find("d")->as_int() == 4);
   // The detached copy still sees its pre-detach keys.
@@ -86,7 +90,7 @@ static void TestMoveIndex() {
   src.set("x", Value(10));
   src.set("y", Value(20));
   Value v = Value::MakeDictionary(std::move(src));
-  const Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
   assert(d);
   assert(d->find("x") && *d->find("x")->as_int() == 10);
   assert(d->find("y") && *d->find("y")->as_int() == 20);
@@ -97,11 +101,11 @@ static void TestMoveIndex() {
 static void TestControlledEntries() {
   // Iteration cannot reorder/replace keys behind the index. Value mutation
   // remains available through find(), and insertion goes through set().
-  static_assert(std::is_const<typename std::remove_reference<
-      decltype(std::declval<Dict&>().entries())>::type>::value,
-      "Dictionary entries must be read-only");
+  static_assert(std::is_same<decltype(std::declval<Dict&>().entries()[0].second),
+                             ValueView>::value,
+                "Dictionary entries expose read-only value views");
   Value v = Value::MakeDictionary();
-  Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
   d->set("a", Value(1));
   d->set("b", Value(2));
   assert(d->find("b") && *d->find("b")->as_int() == 2);
@@ -164,7 +168,7 @@ static void TestLargeDict() {
   // 100k distinct keys: build + probe in linear time (was O(n^2) string compares).
   const int N = 100000;
   Value v = Value::MakeDictionary();
-  Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
   auto t0 = std::chrono::steady_clock::now();
   for (int i = 0; i < N; ++i) {
     d->set("key_" + std::to_string(i), Value(i));

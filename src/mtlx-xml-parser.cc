@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache 2.0
 
+#include "core/native-io.hh"
 #include "mtlx-xml-parser.hh"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 
 namespace lightusd {
@@ -26,9 +28,11 @@ std::string XMLNode::GetAttribute(const std::string& name, const std::string& de
 bool XMLNode::GetAttributeInt(const std::string& name, int& value) const {
   auto it = attributes_.find(name);
   if (it != attributes_.end()) {
-    char* endptr;
-    long val = std::strtol(it->second.c_str(), &endptr, 10);
-    if (*endptr == '\0') {
+    long val = 0;
+    const auto parsed = std::from_chars(it->second.data(),
+                                        it->second.data() + it->second.size(),
+                                        val, 10);
+    if (parsed.ec == std::errc{} && parsed.ptr == it->second.data() + it->second.size()) {
       value = static_cast<int>(val);
       return true;
     }
@@ -395,6 +399,8 @@ bool MaterialXParser::Parse(const std::string& xml_string) {
 }
 
 bool MaterialXParser::ParseFile(const std::string& filename) {
+  if (!::lightusd::NativeIOAvailable(&error_)) return false;
+
   std::ifstream file(filename, std::ios::binary);
   if (!file) {
     error_ = "Failed to open file: " + filename;

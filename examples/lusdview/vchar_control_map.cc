@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-#include "next/lightusd-next.hh"
+#include "lightusd-cpp.hh"
 #include "stage.hh"
 #include "tydra/scene-access.hh"
 
@@ -45,13 +45,6 @@ bool VisitControls(const lightusd::Path&, const lightusd::Prim& prim,
   return true;
 }
 
-const lightusd::next::Value* NextValue(const lightusd::next::Value& root,
-                                       const std::string& name) {
-  const auto* rootDict = root.as_dictionary();
-  const auto* group = rootDict ? rootDict->find("vchar") : nullptr;
-  const auto* dict = group ? group->as_dictionary() : nullptr;
-  return dict ? dict->find(name) : nullptr;
-}
 }  // namespace
 
 std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage) {
@@ -61,33 +54,50 @@ std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage) {
   return visit.controls;
 }
 
-std::vector<VcharControl> ReadVcharControls(const lightusd::next::Stage& stage) {
+std::vector<VcharControl> ReadVcharControls(const lightusd_stage* stage) {
+  using lightusd::api::StringList;
   std::vector<VcharControl> controls;
-  stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
-    if (!controls.empty()) return true;
-    const auto& data = prim.GetMeta().customData();
-    const auto* namesValue = NextValue(data, "controlNames");
-    const auto* names = namesValue ? namesValue->as_token_array() : nullptr;
-    if (!names) return true;
-    const auto* mapValue = NextValue(data, "controlMappings");
-    const auto* mappings = mapValue ? mapValue->as_token_array() : nullptr;
-    const auto* ranges = NextValue(data, "controlRanges");
-    const auto* defaultsValue = NextValue(data, "controlDefaults");
-    const float* rangeData = ranges ? static_cast<const float*>(ranges->raw_data()) : nullptr;
-    const auto* defaults = defaultsValue ? defaultsValue->as_float_array() : nullptr;
-    for (size_t i = 0; i < names->size(); ++i) {
+  std::vector<lightusd_prim> pending;
+  for (size_t i = lightusd_stage_root_prim_count(stage); i > 0; --i)
+    pending.push_back(lightusd_stage_root_prim(stage, i - 1));
+  while (!pending.empty() && controls.empty()) {
+    const lightusd_prim prim = pending.back();
+    pending.pop_back();
+    for (size_t i = lightusd_prim_child_count(prim); i > 0; --i)
+      pending.push_back(lightusd_prim_child(prim, i - 1));
+    lightusd_dict_ref data{}, group{};
+    if (lightusd_prim_custom_data(prim, &data) != LIGHTUSD_OK ||
+        lightusd_dict_find(data, "vchar", nullptr, nullptr, &group) != LIGHTUSD_OK ||
+        !lightusd_dict_is_valid(group)) continue;
+    StringList names, mappings;
+    if (lightusd_dict_get_token_array(group, "controlNames", names.put()) != LIGHTUSD_OK) continue;
+    lightusd_dict_get_token_array(group, "controlMappings", mappings.put());
+    lightusd_value_view ranges{}, defaults{};
+    lightusd_dict_find(group, "controlRanges", &ranges, nullptr, nullptr);
+    lightusd_dict_find(group, "controlDefaults", &defaults, nullptr, nullptr);
+    const bool valid_ranges = ranges.is_array && ranges.type == LIGHTUSD_TYPE_FLOAT2 &&
+        ranges.data && ranges.nbytes / (2 * sizeof(float)) >= ranges.count;
+    const bool valid_defaults = defaults.is_array && defaults.type == LIGHTUSD_TYPE_FLOAT &&
+        defaults.data && defaults.nbytes / sizeof(float) >= defaults.count;
+    for (size_t i = 0; i < lightusd_strlist_size(names.get()); ++i) {
       VcharControl c;
-      c.name = (*names)[i];
-      c.blendshape = mappings && i < mappings->size() ? (*mappings)[i] : c.name;
-      if (rangeData && ranges->array_size() > i) {
-        c.minimum = rangeData[i * 2u]; c.maximum = rangeData[i * 2u + 1u];
+      const lightusd_sv name = lightusd_strlist_get(names.get(), i);
+      c.name.assign(name.data, name.len);
+      c.blendshape = c.name;
+      if (i < lightusd_strlist_size(mappings.get())) {
+        const lightusd_sv mapping = lightusd_strlist_get(mappings.get(), i);
+        c.blendshape.assign(mapping.data, mapping.len);
+      }
+      if (valid_ranges && i < ranges.count) {
+        const auto* values = static_cast<const float*>(ranges.data);
+        c.minimum = values[i * 2]; c.maximum = values[i * 2 + 1];
         if (c.minimum > c.maximum) std::swap(c.minimum, c.maximum);
       }
-      if (defaults && i < defaults->size()) c.defaultValue = (*defaults)[i];
+      if (valid_defaults && i < defaults.count)
+        c.defaultValue = static_cast<const float*>(defaults.data)[i];
       controls.push_back(std::move(c));
     }
-    return true;
-  });
+  }
   return controls;
 }
 }  // namespace lusdview

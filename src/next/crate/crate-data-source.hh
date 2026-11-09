@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lightusd {
@@ -47,6 +48,17 @@ inline bool SeekToPayload(StreamReader* r, ValueRep rep) {
 
 
 class Value;
+class CrateAllocationBudget;
+class CrateSnapshotPager;
+
+/// Owned file-snapshot storage is either new[] or (large files) a populated
+/// private anonymous mapping; the deleter remembers which.
+struct CrateSnapshotDeleter {
+  size_t mapped_bytes = 0;  // 0 = delete[]
+  void* mapped_base = nullptr;  // start of the mapping (>= the data pointer's page)
+  void operator()(uint8_t* p) const noexcept;
+};
+
 class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
@@ -69,10 +81,57 @@ class CrateDataSource : public LazyArraySource {
   /// set_tables(); version via set_version().
   static std::shared_ptr<CrateDataSource> MmapFile(const std::string& filename);
 
+  /// Copy `filename` into a private owned snapshot (the untrusted-input path:
+  /// the bytes never alias the file, so later writes/truncation by another
+  /// process cannot change or fault what was loaded).
+  ///
+  /// One open + fstat + positional reads straight into an uninitialized
+  /// buffer: no size-probe reopen and no zero-fill pass before the copy (the
+  /// std::string path touched every byte twice). The file must be a regular
+  /// file of 1..`max_bytes` bytes (0 = kMaxReadableFileBytes) and must keep
+  /// exactly its fstat size while being read; a short read or growth is an
+  /// error, never a silently truncated/partial snapshot.
+  ///
+  /// Returns nullptr with `*unavailable = true` on platforms without POSIX
+  /// file descriptors (callers fall back to the stream path); otherwise
+  /// nullptr means failure and `*err` says why.
+  static std::shared_ptr<CrateDataSource> ReadFileSnapshot(
+      const std::string& filename, uint64_t max_bytes, bool* unavailable,
+      std::string* err);
+
+  /// Copy `filename` into an unlinked private snapshot file, keep the bytes in
+  /// memory only while the structural parse runs, then release them.
+  ///
+  /// The retained backing becomes the snapshot descriptor: lazy arrays are
+  /// materialized by ranged `pread` from the (already captured, immutable)
+  /// snapshot instead of holding the whole layer in anonymous memory. This is
+  /// the low-RSS form of the untrusted no-mmap policy: source bytes never alias
+  /// a file another process can rewrite, and no process RSS is charged for
+  /// array data that is never read.
+  ///
+  /// `*unavailable = true` only where POSIX descriptors are unavailable (the
+  /// caller keeps the existing owned-buffer path). Any failure after the
+  /// source has been read degrades to the owned snapshot stored in this same
+  /// object -- never to a second read of the source and never to mmap.
+  /// `temp_directory` empty means `$TMPDIR`, then `/tmp`.
+  static std::shared_ptr<CrateDataSource> PagedFileSnapshot(
+      const std::string& filename, uint64_t max_bytes,
+      const std::string& temp_directory, bool* unavailable, std::string* err);
+
   ~CrateDataSource();
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
   bool is_mmapped() const override { return mmap_base_ != nullptr; }
+
+  /// Whether this source keeps a private snapshot descriptor for ranged
+  /// materialization. True for the untrusted paged path even after the parse
+  /// buffer is released.
+  bool is_paged() const override { return static_cast<bool>(pager_); }
+
+  /// Drop the anonymized copy used for the structural parse. Lazy array
+  /// references created by that parse stay valid: they address the retained
+  /// snapshot descriptor instead. No-op for every other backing mode.
+  void ReleaseParseBuffer();
 
   /// Has the mapped file shrunk (or been replaced by a shorter one) since it
   /// was mapped?
@@ -94,23 +153,39 @@ class CrateDataSource : public LazyArraySource {
   /// Returns false for non-mmap sources and when the size cannot be determined.
   bool MappedFileShrank(size_t* current_size = nullptr) const;
   bool can_borrow() const override {
-    // Both owned buffer and mmap-backed buffers remain stable while the source
-    // object is alive, so array views can safely borrow from them.
-    return true;
+    // Borrowable while a contiguous buffer is resident: mapped, owned, or the
+    // transient parse copy of a paged snapshot. After ReleaseParseBuffer() the
+    // paged source has no `base()`, so views must materialize instead.
+    return base() != nullptr;
   }
 
   const uint8_t* base() const override {
-    return mmap_base_ ? mmap_base_
-                      : reinterpret_cast<const uint8_t*>(bytes_.data());
+    if (mmap_base_) return mmap_base_;
+    if (pager_) return paged_parse_.get();
+    if (snapshot_) return snapshot_.get();
+    return reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  size_t size() const override {
+    if (mmap_base_) return mmap_size_;
+    if (pager_) return paged_size_;
+    if (snapshot_) return snapshot_size_;
+    return bytes_.size();
+  }
   CrateVersion version() const override { return version_; }
   void DiscardRange(uint64_t offset, uint64_t length) const override;
+
+  /// Read `[offset, offset+length)` from the retained snapshot. Only valid for
+  /// paged sources; returns false for every other backing (and on short read).
+  bool ReadRange(uint64_t offset, size_t length,
+                 std::vector<uint8_t>* out) const;
 
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)
   void set_version(CrateVersion v) { version_ = v; }
   void set_max_array_elements(size_t n) { max_array_elements_ = n; }
+  void set_allocation_budget(std::shared_ptr<CrateAllocationBudget> budget) {
+    allocation_budget_ = std::move(budget);
+  }
 
   /// Install the decoded token / string-index tables (used for token-array
   /// materialization and write-time index remapping).
@@ -132,10 +207,18 @@ class CrateDataSource : public LazyArraySource {
   CrateDataSource(const CrateDataSource&) = delete;
   CrateDataSource& operator=(const CrateDataSource&) = delete;
 
-  // Backing is exactly one of: an owned byte string (mmap_base_ == nullptr) or
-  // a read-only memory mapping (mmap_base_ != nullptr). base()/size() abstract
-  // over both so every reader stays backing-agnostic.
+  // Backing is exactly one of: an owned byte string, an owned file snapshot
+  // (snapshot_ != nullptr) or a read-only memory mapping (mmap_base_ !=
+  // nullptr). base()/size() abstract over all three so every reader stays
+  // backing-agnostic.
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
+  std::unique_ptr<uint8_t[], CrateSnapshotDeleter> snapshot_;  // snapshot mode: file copy
+  size_t snapshot_size_ = 0;
+  // Paged mode: the parse copy (released after parsing) plus the retained
+  // private snapshot descriptor lazy arrays read through.
+  std::unique_ptr<uint8_t[], CrateSnapshotDeleter> paged_parse_;
+  std::shared_ptr<CrateSnapshotPager> pager_;
+  size_t paged_size_ = 0;
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
 #if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
@@ -151,6 +234,7 @@ class CrateDataSource : public LazyArraySource {
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
   std::vector<uint32_t> string_indices_;
+  std::shared_ptr<CrateAllocationBudget> allocation_budget_;
   size_t max_array_elements_ = 1024ull * 1024ull * 1024ull;
 };
 
@@ -163,6 +247,24 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                       const std::vector<std::string>& tokens, size_t max_elements,
                       Value* out);
 
+// Internal budget-aware entry point; the existing overload remains available.
+bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
+                      const std::vector<std::string>& tokens, size_t max_elements,
+                      Value* out, CrateAllocationBudget* budget);
+
+/// Decode an array whose block begins at `rep.payload_as_offset()` but which
+/// is presented in a window starting at `base_offset` (a paged source read).
+/// `base`/`size` describe that window; `base_offset` is its absolute file
+/// offset. The relative payload may be zero here (the window starts exactly at
+/// the block header), which the regular entry points reserve for the "empty
+/// array" payload encoding.
+bool DecodeCrateArrayAt(const uint8_t* base, size_t size, ValueRep rep,
+                        uint64_t base_offset, CrateVersion version,
+                        const std::vector<std::string>& tokens,
+                        size_t max_elements, Value* out,
+                        CrateAllocationBudget* budget);
+
 /// Convenience overload assuming the modern (>= 0.7.0) u64 count header.
 inline bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                              const std::vector<std::string>& tokens,
@@ -174,9 +276,9 @@ inline bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
-/// Width of the element-count header at a crate array payload: uint32 for
-/// crate versions < 0.7.0, uint64 for >= 0.7.0. Element data immediately
-/// follows the count. Evidence: pxr crateFile.cpp _WriteUncompressedArray /
+/// Complete array header width: [u32 rank=1, u32 count] before 0.5,
+/// [u32 count] in 0.5/0.6, [u64 count] from 0.7. Element data immediately
+/// follows this header. Evidence: pxr crateFile.cpp UnpackArray and _WriteUncompressedArray /
 /// _ReadUncompressedArray / _Read+_WritePossiblyCompressedArray all gate on
 /// `(ver < CrateFile::Version(0,7,0)) ? <uint32_t> : <uint64_t>`. There is no
 /// "packed count" form (a previous lo/hi-split heuristic here mis-read pre-0.7
@@ -184,7 +286,7 @@ uint32_t CrateArrayElemStride(CrateTypeId id);
 uint32_t CrateArrayCountHeaderBytes(CrateVersion version);
 
 /// Read the version-appropriate element-count header at the current position
-/// of `r`. Returns false on a short read.
+/// of `r`, including the legacy rank word. Rejects short reads/unsupported ranks.
 bool ReadCrateArrayCount(class StreamReader& r, CrateVersion version,
                          uint64_t* count);
 

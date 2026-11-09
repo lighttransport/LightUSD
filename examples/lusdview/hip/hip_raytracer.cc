@@ -325,6 +325,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                          size_t maxInstances, std::string* err,
                          float displacementScale, BuildProgress* progress,
                          bool retainForRefit, uint32_t purposeVisibleMask) {
+  previewAlbedo_=std::any_of(scene.points.begin(),scene.points.end(),[](const DrawPointsCPU& points){return points.previewAlbedo;});
+
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");  // also sets the device on a worker thread
   freeScene();
@@ -589,6 +591,9 @@ bool HipRayTracer::refit(const DrawScene& scene, std::string* err) {
                       hs.blas.size() * sizeof(Node)), "hipMemcpyHtoD(blas)");
   CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dTlasNodes_), hs.tlas.data(),
                       hs.tlas.size() * sizeof(Node)), "hipMemcpyHtoD(tlas)");
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dInstances_), hs.instances.data(),
+                      hs.instances.size() * sizeof(Inst)),
+        "hipMemcpyHtoD(instances)");
   return true;
 }
 
@@ -636,6 +641,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.clear[3] = static_cast<float>(renderMode);
   cam.context[0] = sceneTime;
   cam.context[1] = sceneFrame;
+  cam.context[2] = previewAlbedo_?1.0f:0.0f;
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }

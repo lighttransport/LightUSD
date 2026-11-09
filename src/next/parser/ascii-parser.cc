@@ -3,11 +3,15 @@
 //
 // LightUSD Next - USDA ASCII Parser implementation
 
+#include "core/native-io.hh"
+#include "../layer/int64-listop.hh"
 #include "ascii-parser-internal.hh"
+#include "../crate/crate-timing.hh"
 #include "../safe-file-size.hh"
 #include "../strfmt.hh"
 #include "usda-lazy-source.hh"
 #include "value-parser.hh"
+#include "../writer/value-printer.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
@@ -16,6 +20,7 @@
 #include <fstream>
 #include <system_error>
 #include <limits>
+#include <utility>
 
 namespace lightusd {
 namespace next {
@@ -60,12 +65,307 @@ bool IsNameToken(const Token& tok) {
   }
 }
 
+bool AsciiParser::Impl::ReportProgress(const char* phase, size_t current,
+                                       size_t total) {
+  if (!options_.progress_callback ||
+      options_.progress_callback(phase, current, total)) return true;
+  AddError(std::string("USDA parse cancelled during ") + phase);
+  return false;
+}
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+namespace {
+// Inputs below this size always take the serial path: nothing in them is big
+// enough to dispatch, and the worker pool is not worth waking.
+constexpr size_t kFastParseMinBytes = size_t(64) << 10;  // 64 KiB
+// Parallel prim-subtree window. Blocks below the floor are cheaper to parse
+// inline than to dispatch (fragment + task + splice overhead); blocks above
+// the ceiling are descended inline so their CHILDREN are dispatched
+// individually (bounded worker granularity, short drain tail).
+constexpr size_t kSubtreeMinBytes = size_t(16) << 10;  // 16 KiB
+constexpr size_t kSubtreeMaxBytes = size_t(64) << 20;  // 64 MiB
+// A run of small sibling blocks below this size is parsed inline (task,
+// fragment and splice overhead would exceed the parse itself).
+constexpr size_t kSubtreeRunMinBytes = size_t(4) << 10;  // 4 KiB
+}  // namespace
+#endif
+
+ParseResult AsciiParser::Impl::ParseArrayAttributeValue(TypeId type_id,
+                                                        bool* out_deferred) {
+  ParseArrayContext array_ctx;
+  array_ctx.source = source_;
+  array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
+  array_ctx.max_usda_lazy_array_elements =
+      options_.max_usda_lazy_array_elements;
+  array_ctx.num_threads = options_.num_threads;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  DeferredArrayScheduler* scheduler = deferred_arrays_.get();
+#else
+  DeferredArrayScheduler* scheduler = nullptr;
+#endif
+  return ParseArrayValueMaybeDeferred(*lexer_, type_id, array_ctx, scheduler,
+                                      out_deferred);
+}
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+
+void AsciiParser::Impl::RunSubtreeParse(
+    const ParseOptions& options,
+    std::shared_ptr<DeferredArrayScheduler> arrays, SubtreeParseState* st,
+    const char* data, size_t len, size_t start_line, size_t start_column,
+    size_t base_depth, const std::string& parent_path,
+    SubtreeFragment* fragment) {
+  Impl sub(options);
+  sub.layer_ = std::make_unique<Layer>();
+  sub.builder_ = std::make_unique<LayerBuilder>(*sub.layer_);
+  if (!parent_path.empty()) sub.builder_->set_path_prefix(parent_path);
+  sub.lexer_ = std::make_unique<Lexer>(data, len);
+  sub.lexer_->num_threads = options.num_threads;
+  sub.lexer_->strict_aousd_conformance = options.strict_aousd_conformance;
+  sub.lexer_->set_source_location(start_line, start_column);
+  sub.deferred_arrays_ = std::move(arrays);
+  sub.depth_ = base_depth;
+  sub.parse_length_ = len;
+
+  // The span holds one or more sibling prim blocks separated only by
+  // whitespace/comments; parse them exactly as the enclosing prim-contents
+  // (or root) loop would.
+  bool ok = true;
+  while (ok && sub.lexer_->peek_view().type != TokenType::Eof) {
+    ok = sub.ParsePrim();
+  }
+  // The fragment is only usable when the sub-parse is indistinguishable from
+  // what the serial parser would have done with the same bytes: clean parse,
+  // exactly the captured span consumed, no recoverable lexer error left
+  // behind (it would be sticky in the serial lexer) and no set_position()
+  // rewind (which renumbers lines). Anything else fails the fast attempt and
+  // the whole layer is re-parsed serially.
+  ok = ok && sub.errors_.empty() && !sub.lexer_->has_error() &&
+       !sub.lexer_->position_reset() && sub.layer_->prim_count() > 0 &&
+       !sub.layer_->root_indices().empty();
+  if (ok) {
+    for (uint32_t r : sub.layer_->root_indices()) {
+      const PrimSpec* root = sub.layer_->prim(r);
+      if (!root) {
+        ok = false;
+        break;
+      }
+      fragment->root_paths.push_back(root->path().str());
+    }
+  }
+  if (ok) {
+    for (std::string& d : sub.lexer_->diagnostics)
+      sub.warnings_.push_back(std::move(d));
+    fragment->warnings = std::move(sub.warnings_);
+    fragment->layer = std::move(sub.layer_);
+  } else {
+    st->failed.store(true, std::memory_order_relaxed);
+  }
+}
+
+bool AsciiParser::Impl::WaitSubtreeTasks() {
+  if (!subtree_state_) return true;
+  SubtreeParseState* st = subtree_state_.get();
+  std::unique_lock<std::mutex> lock(st->mu);
+  st->cv.wait(lock, [st]() { return st->inflight == 0; });
+  return !st->failed.load(std::memory_order_relaxed);
+}
+
+bool AsciiParser::Impl::StitchSubtreeFragments() {
+  if (!subtree_state_) return true;
+  SubtreeParseState* st = subtree_state_.get();
+  if (st->fragments.empty()) return true;
+
+  // A fragment root that duplicates a sibling (in the main layer or another
+  // fragment) would have been MERGED into the existing prim by the serial
+  // builder: not reproducible here.
+  std::unordered_set<std::string> roots;
+  roots.reserve(st->fragments.size());
+  std::vector<Layer*> layers;
+  std::vector<size_t> insert_before;
+  layers.reserve(st->fragments.size());
+  insert_before.reserve(st->fragments.size());
+  for (const auto& f : st->fragments) {
+    if (!f->layer) return false;
+    for (const std::string& root_path : f->root_paths) {
+      if (builder_->contains_path(root_path) ||
+          !roots.insert(root_path).second) {
+        return false;
+      }
+    }
+    layers.push_back(f->layer.get());
+    insert_before.push_back(f->prim_pos);
+  }
+  if (!layer_->splice_fragments(layers, insert_before)) return false;
+
+  // Warnings: each fragment's go where the serial parse emitted them (the
+  // main parser emits nothing while a captured block is skipped).
+  size_t extra = 0;
+  for (const auto& f : st->fragments) extra += f->warnings.size();
+  if (extra > 0) {
+    std::vector<std::string> merged;
+    merged.reserve(warnings_.size() + extra);
+    size_t wi = 0;
+    for (const auto& f : st->fragments) {
+      while (wi < f->warning_pos && wi < warnings_.size()) {
+        merged.push_back(std::move(warnings_[wi++]));
+      }
+      for (std::string& w : f->warnings) merged.push_back(std::move(w));
+    }
+    while (wi < warnings_.size()) merged.push_back(std::move(warnings_[wi++]));
+    warnings_ = std::move(merged);
+  }
+  st->fragments.clear();
+  return true;
+}
+
+#endif  // LIGHTUSD_ENABLE_THREAD
+
+bool AsciiParser::Impl::ParsePrimMaybeParallel() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  SubtreeParseState* st = subtree_state_.get();
+  if (st && layer_.get() == dispatch_layer_ &&
+      lexer_->position() >= no_capture_until_ && !lexer_->has_error() &&
+      !st->failed.load(std::memory_order_relaxed)) {
+    // Capture a RUN of consecutive sibling prim blocks (only whitespace /
+    // comments between them) until it reaches the dispatch size: wide
+    // parents with many small children would otherwise leave all of those
+    // children to the main thread.
+    const Lexer::SavedState run_start = lexer_->save_state();
+    const char* block = nullptr;
+    size_t len = 0;
+    size_t line = 0;
+    size_t column = 0;
+    size_t first_end = 0;
+    size_t nblocks = 0;
+    while (true) {
+      const char* b = nullptr;
+      size_t l = 0, bl = 0, bc = 0;
+      bool too_big = false;
+      if (!lexer_->capture_prim_block(0, st->max_block_bytes, &b, &l, &bl, &bc,
+                                      &too_big)) {
+        break;
+      }
+      if (nblocks == 0) {
+        block = b;
+        line = bl;
+        column = bc;
+        first_end = static_cast<size_t>((b + l) - lexer_->input_data());
+      }
+      ++nblocks;
+      len = static_cast<size_t>((b + l) - block);
+      if (len >= kSubtreeMinBytes) break;
+      const TokenType next = lexer_->peek_view().type;
+      if (lexer_->has_error() ||
+          (next != TokenType::Def && next != TokenType::Over &&
+           next != TokenType::Class)) {
+        break;
+      }
+    }
+    if (nblocks > 0 && len < kSubtreeRunMinBytes) {
+      // Too little work to be worth a task: rewind and parse the first block
+      // inline. Its descendants are smaller still — skip their captures.
+      lexer_->restore_state(run_start);
+      if (first_end > no_capture_until_) no_capture_until_ = first_end;
+      nblocks = 0;
+    }
+    if (nblocks > 0) {
+      const uint32_t frag_id = static_cast<uint32_t>(st->fragments.size());
+      auto owned = std::make_unique<SubtreeFragment>();
+      owned->warning_pos = warnings_.size();
+      owned->prim_pos = layer_->prim_count();
+      // Placeholder in authored position (resolved by the splice).
+      std::string parent_path;
+      if (PrimSpec* parent = builder_->current()) {
+        parent->add_child_index(Layer::kPendingIndexBit | frag_id);
+        parent_path = parent->path().str();
+      } else {
+        layer_->add_root_pending(frag_id);
+      }
+      SubtreeFragment* frag = owned.get();
+      st->fragments.push_back(std::move(owned));
+
+      bool run_inline = false;
+      {
+        std::lock_guard<std::mutex> lock(st->mu);
+        if (st->inflight >= st->max_inflight) {
+          run_inline = true;  // backpressure: bound pending fragment memory
+        } else {
+          st->inflight++;
+        }
+      }
+      if (run_inline) {
+        RunSubtreeParse(options_, deferred_arrays_, st, block, len, line,
+                        column, depth_, parent_path, frag);
+      } else {
+        std::shared_ptr<SubtreeParseState> stp = subtree_state_;
+        std::shared_ptr<DeferredArrayScheduler> arrays = deferred_arrays_;
+        const ParseOptions opts = options_;
+        const size_t base_depth = depth_;
+        auto task = [opts, arrays, stp, block, len, line, column, base_depth,
+                     parent_path, frag]() {
+          RunSubtreeParse(opts, arrays, stp.get(), block, len, line, column,
+                          base_depth, parent_path, frag);
+          std::lock_guard<std::mutex> lock(stp->mu);
+          stp->inflight--;
+          if (stp->inflight == 0) stp->cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, std::move(task))) {
+          RunSubtreeParse(options_, deferred_arrays_, st, block, len, line,
+                          column, depth_, parent_path, frag);
+          std::lock_guard<std::mutex> lock(st->mu);
+          st->inflight--;
+          if (st->inflight == 0) st->cv.notify_all();
+        }
+      }
+      // Worker failures surface at the join; the attempt is then re-run
+      // serially, so every diagnostic still comes from the serial parser.
+      return true;
+    }
+    // Not captured (too big, malformed, block comment, or too small): parse
+    // inline; a too-big prim's children get their own capture attempts.
+  }
+#endif
+  return ParsePrim();
+}
+
 bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
                                        std::shared_ptr<LazyArraySource> source) {
+  struct RestoreThreads {
+    int& threads;
+    int saved;
+    ~RestoreThreads() { threads = saved; }
+  } restore_threads{options_.num_threads, options_.num_threads};
+  if (length < options_.min_parallel_parse_bytes) options_.num_threads = 1;
+  source_ = std::move(source);
+  used_fast_path_ = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // The fast attempt (batched deferred arrays + parallel prim subtrees) is an
+  // optimization only: it either produces exactly the serial result or fails,
+  // and a failed attempt is re-run serially so errors, warnings and partial
+  // behavior are those of the serial parser. Lazy-array mode and progress
+  // callbacks (per-prim, in input order) stay serial.
+  const bool fast = (options_.async_arrays || options_.parallel_prims) &&
+                    !options_.enable_usda_lazy_arrays && !source_ &&
+                    !options_.progress_callback &&
+                    length >= kFastParseMinBytes && data != nullptr &&
+                    ResolveUsdaParseThreads(options_.num_threads) > 1;
+  if (fast && ParseAttempt(data, length, /*fast=*/true)) {
+    used_fast_path_ = true;
+    return true;
+  }
+#endif
+  return ParseAttempt(data, length, /*fast=*/false);
+}
+
+bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
+                                     bool fast) {
+  CratePhaseTimer timer(options_.enable_timing, "next_usda_parse");
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
-  source_ = std::move(source);
+  no_capture_until_ = 0;
+  parse_length_ = length;
 
   if (!source_ && length != 0 && !data) {
     AddError("Invalid null USDA input");
@@ -80,6 +380,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   // Create fresh layer and builder
   layer_ = std::make_unique<Layer>();
   builder_ = std::make_unique<LayerBuilder>(*layer_);
+  dispatch_layer_ = layer_.get();
 
   if (source_) {
     // Keep a shared ownership of the full USDA source while parsing so any lazy
@@ -91,6 +392,49 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   }
   lexer_->num_threads = options_.num_threads;
   lexer_->strict_aousd_conformance = options_.strict_aousd_conformance;
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (fast && options_.async_arrays) {
+    deferred_arrays_ = DeferredArrayScheduler::Create(options_.num_threads);
+  }
+  if (fast && options_.parallel_prims) {
+    const int nt = ResolveUsdaParseThreads(options_.num_threads);
+    if (nt > 1) {
+      subtree_state_ = std::make_shared<SubtreeParseState>();
+      subtree_state_->max_inflight = static_cast<size_t>(4 * nt);
+      // Blocks above ~1/(4*threads) of the input are descended inline so
+      // their children spread over the pool: a mid-size file whose content
+      // sits under one root prim would otherwise go to a single worker.
+      subtree_state_->max_block_bytes = std::min(
+          kSubtreeMaxBytes,
+          std::max(length / (4 * static_cast<size_t>(nt)),
+                   4 * kSubtreeMinBytes));
+    }
+  }
+  // Deferred array workers hold spans into `data` and fill payloads committed
+  // into the layer; subtree workers read `data` and enqueue arrays. EVERY exit
+  // from this attempt must therefore join subtree workers FIRST, then drain
+  // the array scheduler, before the input buffer or the layer can die (guards
+  // run in reverse declaration order).
+  struct DrainGuard {
+    std::shared_ptr<DeferredArrayScheduler>& scheduler;
+    ~DrainGuard() {
+      if (scheduler) scheduler->Drain();
+      scheduler.reset();
+    }
+  } drain_guard{deferred_arrays_};
+  struct SubtreeJoinGuard {
+    Impl* impl;
+    ~SubtreeJoinGuard() {
+      impl->WaitSubtreeTasks();
+      impl->subtree_state_.reset();
+    }
+  } subtree_join_guard{this};
+#else
+  (void)fast;
+#endif
+
+  if (!ReportProgress("bootstrap", 0, length)) return false;
 
   // Enforce the `#usda 1.0` magic on the raw bytes BEFORE lexing: the lexer
   // treats '#' as a comment, so a token-level check is dead code and any
@@ -128,7 +472,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   while (!AtEnd()) {
     // Pseudo-root namespace ordering is an authored field and must survive a
     // layer rewrite even when it mentions currently absent prim names.
-    if (lexer_->peek().type == TokenType::Reorder) {
+    if (lexer_->peek_view().type == TokenType::Reorder) {
       lexer_->next();
       std::string what;
       if (!lexer_->expect(TokenType::Identifier, what)) return false;
@@ -144,10 +488,27 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
       }
       continue;
     }
-    if (!ParsePrim()) {
+    if (!ParsePrimMaybeParallel()) {
       return false;
     }
   }
+
+  timer.lap("scan_dispatch");
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Join barrier: splice the parallel prim subtrees (authored order and exact
+  // serial prim order restored), then wait for every deferred array payload,
+  // before anything reads the tree. Any failure fails this (fast) attempt.
+  if (subtree_state_) {
+    if (!WaitSubtreeTasks() || !StitchSubtreeFragments()) {
+      AddError("Parallel USDA prim parse failed");
+      return false;
+    }
+  }
+  if (deferred_arrays_ && !deferred_arrays_->Drain()) {
+    AddError("Deferred USDA array parse failed");
+    return false;
+  }
+#endif
 
   // A fatal lexical malformation (unterminated string/path/asset literal,
   // oversized token) must fail the parse even when the token-level grammar
@@ -158,12 +519,19 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
     return false;
   }
 
+  timer.lap("join_stitch");
+  for (std::string& d : lexer_->diagnostics) warnings_.push_back(std::move(d));
+  lexer_->diagnostics.clear();
   // Finalize the layer
   builder_->finalize();
+  timer.lap("finalize");
+
+  if (!ReportProgress("complete", length, length)) return false;
 
   // Create stage from layer
   stage_ = Stage();
   stage_.SetRootLayer(std::move(*layer_));
+  timer.lap("publish");
 
   lexer_.reset();
   builder_.reset();
@@ -194,6 +562,8 @@ bool AsciiParser::Impl::ParseOwned(std::string&& data) {
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) { AddError(::lightusd::NativeIOUnavailableMessage()); return false; }
+
   if (!filename || !*filename) {
     AddError("Invalid USDA filename");
     return false;
@@ -234,6 +604,21 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
     return ParseWithSource(data, size, std::move(src));
   }
 
+#if LIGHTUSD_NEXT_USDA_LAZY_MMAP
+  // Map the file instead of copying it into the heap: the parse only reads
+  // the bytes, and a large flattened layer would otherwise cost a full
+  // single-threaded read() copy up front. The mapping outlives the parse
+  // (including every deferred-array worker, which the parse joins).
+  {
+    std::string mmap_error;
+    auto mapped = UsdaLazyArraySource::MmapFile(filename, &mmap_error);
+    if (mapped && mapped->size() == size) {
+      const char* data = reinterpret_cast<const char*>(mapped->base());
+      return Parse(size ? data : "", size);
+    }
+  }
+#endif
+
   // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
   // uninitialized, so we skip zero-filling hundreds of MB we immediately
   // overwrite with file.read (the zero-fill was ~8% of a big-file parse).
@@ -252,6 +637,7 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
 // optional token does not eat the next one. Returns false if no arc token.
 bool AsciiParser::Impl::ReadArcRef(std::string* out) {
   std::string ref;
+  std::string prim_path;
   if (Check(TokenType::String)) {
     std::string asset;
     lexer_->expect(TokenType::String, asset);
@@ -259,13 +645,22 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
     if (Check(TokenType::PathRef)) {
       std::string pr;
       lexer_->expect(TokenType::PathRef, pr);
+      prim_path = pr;
       ref += "<" + pr + ">";
     }
   } else if (Check(TokenType::PathRef)) {
     std::string pr;
     lexer_->expect(TokenType::PathRef, pr);
+    prim_path = pr;
     ref = "<" + pr + ">";
   } else {
+    return false;
+  }
+  // Arc targets are prim paths without variant selections, even when the
+  // arc itself is authored inside a selected variant. Check the path token,
+  // not the asset identifier (which may legitimately contain braces).
+  if (prim_path.find('{') != std::string::npos) {
+    AddError("Composition-arc paths cannot contain variant selections");
     return false;
   }
   // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
@@ -275,12 +670,25 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
   if (Check(TokenType::OpenParen)) {
     Match(TokenType::OpenParen);
     double off = 0.0, scl = 1.0;
+    std::string custom_data;
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
       if (Check(TokenType::Identifier)) {
         std::string k;
         lexer_->expect(TokenType::Identifier, k);
         Match(TokenType::Equals);
-        if (Check(TokenType::Number)) {
+        if (k == "customData") {
+          ParseResult parsed = ParseValue(*lexer_, TypeId::Dictionary);
+          if (!parsed.success || !parsed.value.is_dictionary()) {
+            AddError("Invalid reference customData dictionary");
+            return false;
+          }
+          PrintOptions print;
+          print.float_precision = 9;
+          print.double_precision = 17;
+          print.sort_dictionary_keys = true;
+          if (!parsed.value.as_dictionary()->empty())
+            custom_data = PrintValue(parsed.value, print);
+        } else if (Check(TokenType::Number)) {
           std::string num;
           lexer_->expect(TokenType::Number, num);
           // Freestanding double parse (fast_float; no libc strtod).
@@ -295,6 +703,17 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
           }
           if (k == "offset") off = v;
           else if (k == "scale") scl = v;
+        } else if ((k == "offset" || k == "scale") &&
+                   Check(TokenType::Identifier)) {
+          // `nan` / `inf` lex as identifiers; keep them as numbers so the
+          // finiteness check below sees them instead of the default.
+          std::string word;
+          lexer_->expect(TokenType::Identifier, word);
+          const double v =
+              word == "inf" ? std::numeric_limits<double>::infinity()
+                            : std::numeric_limits<double>::quiet_NaN();
+          if (k == "offset") off = v;
+          else scl = v;
         } else {
           // Unknown key with a structured value (customData = { ... } may
           // contain nested parens/braces): balanced skip, or the paren scan
@@ -307,10 +726,12 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
       Match(TokenType::Semicolon);
     }
     Match(TokenType::CloseParen);
-    if (!std::isfinite(off) || !std::isfinite(scl) || !(scl > 0.0)) {
+    // The file format preserves any finite offset/scale (the AOUSD
+    // primmetadata.usda baseline keeps `scale = -2.0`); composition maps a
+    // non-positive scale to identity when it applies the arc.
+    if (!std::isfinite(off) || !std::isfinite(scl)) {
       if (options_.strict_aousd_conformance) {
-        AddError("AOUSD composition-arc offset must be finite and scale must "
-                 "be finite and greater than zero");
+        AddError("AOUSD composition-arc layer offset and scale must be finite");
         return false;
       }
       AddWarning("Invalid composition-arc layer offset; using identity mapping");
@@ -320,6 +741,7 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
     if (off != 0.0 || scl != 1.0) {
       ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
     }
+    if (!custom_data.empty()) ref += '\x1f' + custom_data;
   }
   *out = ref;
   return true;
@@ -341,8 +763,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   enum class ArcQual { Explicit, Add, Prepend, Append, Delete, Reorder };
 
   enum class ArcField { References, Payloads, Inherits, Specializes };
-  auto SelectArc = [](PrimSpecMeta& meta,
-                      ArcField f) -> std::vector<std::string>& {
+  auto SelectArc = [](PrimMetadata& meta,
+                      ArcField f) -> LazyStringList& {
     switch (f) {
       case ArcField::References: return meta.references;
       case ArcField::Payloads: return meta.payloads;
@@ -350,7 +772,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       default: return meta.specializes;
     }
   };
-  auto SelectEdit = [](ArcListOpEdits& e, ArcField f) -> ArcEdit& {
+  auto SelectEdit = [](ArcListOps& e, ArcField f) -> ArcListOp& {
     switch (f) {
       case ArcField::References: return e.references;
       case ArcField::Payloads: return e.payloads;
@@ -362,20 +784,25 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   // Read the bracketed (or single) arc references, then merge into the inline
   // arc vector honoring the list-op qualifier (explicit/bare replaces, prepend
   // front, append/reorder back, delete removes) -- the within-spec effective
-  // list. ALSO record the raw qualifier into the spec's ArcEdit (Phase 7 S5),
+  // list. ALSO record the raw qualifier into the spec's ArcListOp (Phase 7 S5),
   // which cross-layer composition (apply_list_ops) and the writer consume. Even
   // a bare empty list (`references = []`) is authored and must replace weaker
   // opinions.
   auto ReadArcList = [this, &SelectArc, &SelectEdit](
-                         PrimSpecMeta& meta, ArcField field, ArcQual qual) {
+                         PrimMetadata& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Check(TokenType::None)) {
+      if (qual != ArcQual::Explicit) {
+        AddError("None is only valid for an explicit composition-arc list");
+        lexer_->next();
+        return;
+      }
       // `references = None`: an explicit-clear list op. Consume the token
       // (leaving it un-consumed desynchronizes the metadata loop) and record
       // an authored empty explicit edit.
       lexer_->next();
-      ArcEdit& e0 = SelectEdit(meta.ensure_arc_edits(), field);
-      e0 = ArcEdit();
+      ArcListOp& e0 = SelectEdit(meta.ensure_arc_edits(), field);
+      e0 = ArcListOp();
       e0.authored = true;
       SelectArc(meta, field).clear();
       return;
@@ -394,10 +821,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
 
     // Record the list-op edit first (copies items for non-bare qualifiers).
-    ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
+    ArcListOp& e = SelectEdit(meta.ensure_arc_edits(), field);
     switch (qual) {
       case ArcQual::Explicit:
-        e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+        e = ArcListOp();  // explicit replaces: is_explicit=true, lists cleared
         e.authored = true;
         break;
       case ArcQual::Prepend:
@@ -427,7 +854,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         break;
     }
 
-    std::vector<std::string>* target = &SelectArc(meta, field);
+    std::vector<std::string>* target = &SelectArc(meta, field).mut();
     switch (qual) {
       case ArcQual::Explicit:
         *target = std::move(items);
@@ -437,8 +864,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         break;
       case ArcQual::Append:
       case ArcQual::Add:
-      case ArcQual::Reorder:
         target->insert(target->end(), items.begin(), items.end());
+        break;
+      case ArcQual::Reorder:
+        ApplyStringListOrder(items, target);
         break;
       case ArcQual::Delete: {
         // Single O(N+M) pass via a hash set of the deleted entries. A per-entry
@@ -456,8 +885,23 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
   };
 
+  bool need_sep = false;
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
-    if (Match(TokenType::Semicolon)) continue;
+    if (Match(TokenType::Semicolon)) {
+      need_sep = false;
+      continue;
+    }
+    // Entries need a newline or `;` between them (pxr grammar; OpenUSD
+    // rejects `( kind = "a" active = true )`).
+    if (need_sep && !lexer_->newline_before_current()) {
+      // Spec/pxr reject it; lenient mode keeps loading (warns).
+      if (options_.strict_aousd_conformance) {
+        AddError("Expected newline or ';' between prim metadata entries");
+        return false;
+      }
+      AddWarning("Expected newline or ';' between prim metadata entries" " (OpenUSD rejects this)");
+    }
+    need_sep = true;
     // A bare (often triple-quoted) string is the prim COMMENT — pxr's only
     // accepted spelling (26.x rejects `comment = "..."` as a non-metadata
     // field; the bare string maps to `comment`, not `doc`).
@@ -491,6 +935,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
     if (!Match(TokenType::Equals)) {
       AddError("Expected '=' after metadata key");
+      return false;
+    }
+    if (arc_qual != ArcQual::Explicit &&
+        !CheckQualifiedEmptyList(key.c_str())) {
       return false;
     }
 
@@ -544,7 +992,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "displayGroupOrder") {
       ParseResult r = ParseArrayValue(*lexer_, TypeId::String);
       if (r.success && r.value.as_token_array()) {
-        prim->meta().editDisplayGroupOrder() = *r.value.as_token_array();
+        const auto names = r.value.as_token_array();
+            prim->meta().editDisplayGroupOrder().assign(names.begin(), names.end());
         prim->meta().setDisplayGroupOrderAuthored();
       }
     } else if (key == "instanceable") {
@@ -564,17 +1013,55 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (!lexer_->expect(TokenType::PathRef, src)) break;
           if (!Match(TokenType::Colon)) break;
           if (!lexer_->expect(TokenType::PathRef, dst)) break;
+          if (src.find('{') != std::string::npos || dst.find('{') != std::string::npos) {
+            AddError("Relocates paths cannot contain variant selections");
+            return false;
+          }
           if (prim) {
-            auto abs = [&](const std::string& p) {
-              if (p.empty() || p[0] == '/') return p;
-              return prim->path().str() + "/" + p;
-            };
-            prim->meta().relocates().emplace_back(abs(src), abs(dst));
+            std::string absolute_source, absolute_target;
+            if (!ResolveRelocatePath(src, prim->path().str(), &absolute_source) ||
+                !ResolveRelocatePath(dst, prim->path().str(), &absolute_target)) return false;
+            prim->meta().relocates().emplace_back(std::move(absolute_source), std::move(absolute_target));
           }
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBrace);
       }
+    } else if (key == "inactiveIds") {
+      Value ids;
+      const bool clear = Check(TokenType::None);
+      if (clear) { lexer_->next(); ids = Value::MakeInt64Array({}); }
+      else {
+        ParseArrayContext context;
+        context.max_usda_lazy_array_elements = options_.max_usda_lazy_array_elements;
+        context.num_threads = options_.num_threads;
+        ParseResult parsed = ParseArrayValue(*lexer_, TypeId::Int64, context);
+        if (!parsed.success) { AddError("Invalid inactiveIds int64 list"); return false; }
+        ids = std::move(parsed.value);
+      }
+      auto& fields = prim->meta().unknownFields();
+      auto existing = std::find_if(fields.begin(), fields.end(),
+          [](const DecodedExtensionField& f) { return f.name == "inactiveIds"; });
+      Int64ListOp op;
+      if (existing != fields.end() && existing->int64_list_op &&
+          existing->int64_list_op->ops.size() == 1)
+        op = existing->int64_list_op->ops[0];
+      size_t run = 0;
+      switch (arc_qual) {
+        case ArcQual::Add: run = 1; break;
+        case ArcQual::Prepend: run = 2; break;
+        case ArcQual::Append: run = 3; break;
+        case ArcQual::Delete: run = 4; break;
+        case ArcQual::Reorder: run = 5; break;
+        default: break;
+      }
+      if (run == 0 || op.is_explicit()) { op = Int64ListOp(); op.bits = 0; }
+      if (run == 0) op.bits = clear ? 1 : 3;
+      else op.bits |= kInt64ListOpBits[run];
+      op.items[run] = std::move(ids);
+      auto field = MakeInt64ListOpField("inactiveIds", std::move(op));
+      if (existing == fields.end()) fields.push_back(std::move(field));
+      else *existing = std::move(field);
     } else if (key == "apiSchemas") {
       prim->meta().setApiSchemasAuthored();
       std::vector<std::string> schemas;
@@ -603,10 +1090,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           schemas.push_back(schema);
         }
       }
-      StringListOpEdits& edits = prim->meta().apiSchemaEdits();
+      StringListOps& edits = prim->meta().apiSchemaEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -614,7 +1101,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = schemas;
@@ -673,24 +1160,63 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "customData") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().customData() = std::move(r.value);
         prim->meta().setCustomDataAuthored();
       }
     } else if (key == "assetInfo") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().assetInfo() = std::move(r.value);
         prim->meta().setAssetInfoAuthored();
       }
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().sdrMetadata() = std::move(r.value);
         prim->meta().setSdrMetadataAuthored();
       }
+    } else if (key == "uiHints") {
+      // AOUSD Core 1.1 "User Interface Fields": domain-authored UI hints live
+      // in an extension `uiHints` dictionary that takes precedence over the
+      // deprecated core displayName/hidden fields. Keep it a typed dictionary
+      // extension field so USDC writes a real dictionary (not the private
+      // raw-text blob used for unknown prim metadata).
+      ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
+      if (r.success) {
+        auto& fields = prim->meta().unknownFields();
+        fields.erase(std::remove_if(fields.begin(), fields.end(),
+                                    [](const DecodedExtensionField& f) {
+                                      return f.name == "uiHints";
+                                    }),
+                     fields.end());
+        DecodedExtensionField field;
+        field.name = "uiHints";
+        field.value = std::move(r.value);
+        fields.push_back(std::move(field));
+      }
     } else if (key == "clips") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().clips() = std::move(r.value);
         prim->meta().setClipsAuthored();
@@ -719,10 +1245,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
       }
 
-      StringListOpEdits& edits = prim->meta().clipSetEdits();
+      StringListOps& edits = prim->meta().clipSetEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -730,7 +1256,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = names;
@@ -786,10 +1312,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
       }
 
-      StringListOpEdits& edits = prim->meta().variantSetNameEdits();
+      StringListOps& edits = prim->meta().variantSetNameEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -797,7 +1323,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = authored_names;
@@ -843,20 +1369,20 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         reordered.insert(reordered.end(), effective.begin(), effective.end());
         effective = std::move(reordered);
       }
-      std::vector<VariantSetData> old =
+      std::vector<PrimVariantSetData> old =
           std::move(prim->meta().variantSets());
-      std::vector<VariantSetData>& sets = prim->meta().variantSets();
+      std::vector<PrimVariantSetData>& sets = prim->meta().variantSets();
       sets.clear();
       for (const std::string& name : effective) {
         auto it = std::find_if(old.begin(), old.end(),
-                               [&](const VariantSetData& set) {
+                               [&](const PrimVariantSetData& set) {
                                  return set.name == name;
                                });
         if (it != old.end()) {
           sets.push_back(std::move(*it));
           old.erase(it);
         } else {
-          VariantSetData set;
+          PrimVariantSetData set;
           set.name = name;
           sets.push_back(std::move(set));
         }
@@ -924,14 +1450,15 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           // weirdKey = [...]` re-emitted bare).
           std::string qual_prefix;
           switch (arc_qual) {
+            case ArcQual::Add: qual_prefix = "add "; break;
             case ArcQual::Prepend: qual_prefix = "prepend "; break;
             case ArcQual::Append: qual_prefix = "append "; break;
             case ArcQual::Delete: qual_prefix = "delete "; break;
             case ArcQual::Reorder: qual_prefix = "reorder "; break;
             default: break;
           }
-          prim->meta().unknownMeta().emplace_back(
-              qual_prefix + key, std::string(base + vstart, vend - vstart));
+          StoreRawMetadataOpinion(&prim->meta().unknownMeta(), qual_prefix + key,
+                                  std::string(base + vstart, vend - vstart));
         }
       }
       AddWarning("Unknown prim metadata (preserved): " + key);
@@ -979,6 +1506,10 @@ bool AsciiParser::HasErrors() const {
 
 const std::vector<std::string>& AsciiParser::GetWarnings() const {
   return impl_->GetWarnings();
+}
+
+bool AsciiParser::UsedFastPath() const {
+  return impl_->UsedFastPath();
 }
 
 }  // namespace next

@@ -228,7 +228,7 @@ void test_usdc_roundtrip() {
   const Value* read_points = cube.GetPropertyValue("points");
   assert(read_points != nullptr);
   assert(read_points->array_size() == 3);
-  const std::vector<float>* read_points_array = read_points->as_float_array();
+  auto read_points_array = read_points->as_float_array();
   assert(read_points_array != nullptr);
   assert(*read_points_array == points);
   assert(contains(actual_usda, "def Xform \"TestPrim\""));
@@ -445,7 +445,7 @@ void test_usdc_bool_array_roundtrip() {
 
   const Value* bool_array_value = root.GetPropertyValue("boolArray");
   assert(bool_array_value);
-  const std::vector<uint8_t>* bool_array = bool_array_value->as_bool_array();
+  auto bool_array = bool_array_value->as_bool_array();
   assert(bool_array);
   assert((*bool_array) == std::vector<uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}));
 
@@ -598,21 +598,61 @@ void test_usdc_encode_value_fallback_roundtrip() {
   assert(prop("asset")->as_asset_path() &&
          *prop("asset")->as_asset_path() == "model.usda");
 
-  const Dict* rd = prop("dict")->as_dictionary();
+  auto rd = prop("dict")->as_dictionary();
   assert(rd);
-  const Value* name = rd->find("name");
+  auto name = rd->find("name");
   assert(name && name->as_string() && *name->as_string() == "fallback");
-  const Value* asset = rd->find("asset");
+  auto asset = rd->find("asset");
   assert(asset && asset->as_asset_path() &&
          *asset->as_asset_path() == "tex/albedo.png");
-  const Value* nested_value = rd->find("nested");
+  auto nested_value = rd->find("nested");
   assert(nested_value && nested_value->as_dictionary());
-  const Value* label = nested_value->as_dictionary()->find("label");
+  auto label = nested_value->as_dictionary()->find("label");
   assert(label && label->as_string() && *label->as_string() == "inner");
-  const Value* weight = nested_value->as_dictionary()->find("weight");
+  auto weight = nested_value->as_dictionary()->find("weight");
   assert(weight && weight->as_double() && *weight->as_double() == 2.5);
 
   std::cout << "  USDC EncodeValue fallback roundtrip test passed!\n\n";
+}
+
+// More target paths than spec paths force path-table growth. Targets without
+// authored ancestor specs also exercise the deep ancestor hash fallback.
+void test_writer_reuse_and_target_growth() {
+  StageBuilder sb;
+  auto& layer = sb.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("inferred", Value(1.25f));
+  layer.add_property("array", Value::MakeFloatArray({1.0f, 2.0f}));
+  layer.add_property("alias", Value::MakeFloat3(1, 2, 3));
+  layer.current()->set_property_type_name("alias", "color3f");
+  std::string deep;
+  for (int i = 0; i < 48; ++i) deep += "/deep" + std::to_string(i);
+  for (int i = 0; i < 200; ++i) {
+    layer.add_relationship("targets", Path(deep + "/target" +
+                                           std::to_string(i) + ".outputs:surface"));
+  }
+  layer.end_prim();
+  layer.finalize();
+  Stage large = sb.Build();
+  StageBuilder other;
+  auto& small_layer = other.GetLayerBuilder();
+  small_layer.begin_prim("Different", "Scope");
+  small_layer.add_property("token", Value::MakeToken("different_token_order"));
+  small_layer.add_property("float", Value(2.5f));
+  small_layer.end_prim();
+  small_layer.finalize();
+  Stage small = other.Build();
+  CrateWriter reused;
+  for (const Stage* stage : {&large, &small, &large}) {
+    std::vector<uint8_t> actual, expected;
+    CrateWriter fresh;
+    assert(reused.WriteToMemory(actual, *stage).success);
+    assert(fresh.WriteToMemory(expected, *stage).success);
+    assert(actual == expected);
+    auto read = LoadUSDCFromMemory(actual.data(), actual.size());
+    assert(read.success);
+    assert(WriteUSDAToString(read.stage) == WriteUSDAToString(*stage));
+  }
 }
 
 int main() {
@@ -630,6 +670,7 @@ int main() {
     test_usdc_bool_array_roundtrip();
     test_usdc_relationship_connection_roundtrip();
     test_usdc_encode_value_fallback_roundtrip();
+    test_writer_reuse_and_target_growth();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;

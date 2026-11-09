@@ -80,12 +80,13 @@ struct HostPrototype {
 // Per-volume params (must match `VolParam` in the trace kernel).
 struct HostVolParam {
   float invModel[16];
-  float bmin[4];
-  float bmax[4];
+  float bmin[4];  // .w = level-set selector
+  float bmax[4];  // .w = isovalue
   int dim[4];  // .xyz dims, .w = float offset into volDens
   float albedo[4];
   float emission[4];
 };
+static_assert(sizeof(HostVolParam) == 144, "RT volume host/device layout mismatch");
 
 // Compact RT texture descriptor. offset indexes HostScene::texels as RGBA8 bytes.
 struct HostTextureDesc {
@@ -102,6 +103,7 @@ struct HostTextureDesc {
   int ptexTileEdge{0};
   int ptexRectTexelOffset{0};
   int ptexFaceCount{0};
+  int ptexMipLevels{1};  // per-face chain entries packed in the atlas
   int mipCount{1};       // levels including this descriptor's base level
   int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
   int imageSlot{-1};     // source VkImage slot for direct compressed Ptex sampling
@@ -163,7 +165,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
 // previews; full mode preserves the higher-quality legacy proxy.
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact = false,
-                                                  size_t maxTriangles = 0);
+                                                  size_t maxTriangles = 0,
+                                                  bool tessellateAnalytic = false);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -177,6 +180,9 @@ struct HostScene {
   size_t pointCount{0};
   // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  // Optional authored tangent frame (3 floats/triangle corner), world space.
+  // Empty when the mesh has no authored primvars:tangents.
+  std::vector<float> tan, bin;
   std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo;
   // Per-triangle wireframe edge mask (bit0: edge v1v2, bit1: edge v2v0, bit2: edge
@@ -209,6 +215,9 @@ struct HostScene {
   int numMats = 0;
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
+  // Source DrawScene texture index -> packed table index (or -1). The CPU
+  // PTex sampler uses it to pair table entries with their source descriptors.
+  std::vector<int> sourceToTable;
   int numTextures = 0;
   // kRtLightParamFloats/light: type/flags/texture ids, transform basis,
   // derived radiance, shape size, shaping, shadow, dome metadata, IES LUTs,
@@ -234,9 +243,15 @@ struct RefitMeshMap {
   size_t triOffset{0};        // this mesh's block in HostScene.tris (tri index)
   std::vector<int> leafOrder; // output slot i holds original triangle leafOrder[i]
 };
+struct RefitInstanceMap {
+  size_t sceneMesh{~size_t(0)};
+  size_t sceneInstance{0};
+  bool instanced{false};
+};
 struct RefitMap {
   bool valid{false};
   std::vector<RefitMeshMap> meshes;
+  std::vector<RefitInstanceMap> instances;
 };
 
 // Build `out` from `scene`. `maxTris` caps unique prototype triangles, `maxInstances`
@@ -252,14 +267,16 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr,
                     size_t textureBudgetBytes = 0,
                     const std::vector<uint8_t>* meshVisible = nullptr,
-                    uint32_t purposeVisibleMask = 0x3u);
+                    uint32_t purposeVisibleMask = 0x3u,
+                    bool nativePointCarriers = true);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the
 // UNCHANGED tree topology (children are appended after their parent by the
 // builders, so one reverse-index sweep computes children before parents).
-// Instance AABBs are re-derived from each Inst's o2w x its BLAS root bounds --
-// worlds are assumed static (the CUDA/HIP deform path only moves vertices).
+// Instance transforms are refreshed from the current DrawScene before instance
+// AABBs are re-derived, so the same map supports object-transform animation as
+// well as vertex deformation.
 // Returns false (with *err) when the map is invalid or topology changed;
 // the caller should fall back to a full build.
 bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,

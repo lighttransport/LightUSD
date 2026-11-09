@@ -108,6 +108,13 @@ bool IsPhysicsDofName(const std::string &dof) {
   return kDofs.count(dof) > 0;
 }
 
+// DriveAPI additionally names the single DOF of prismatic/revolute joints.
+// LimitAPI's distance token is not a drive instance.
+static bool IsPhysicsDriveDofName(const std::string &dof) {
+  return dof == "linear" || dof == "angular" ||
+         (dof != "distance" && IsPhysicsDofName(dof));
+}
+
 bool HasAppliedPhysicsSchema(const std::vector<AppliedSchema> &schemas) {
   for (const AppliedSchema &schema : schemas) {
     if (IsPhysicsSchemaName(schema.name)) {
@@ -195,11 +202,12 @@ void ValidatePhysicsScene(const PrimSpec &ps,
     return;
   }
   const double len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-  if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2]) ||
-      len2 == 0.0) {
+  // (0, 0, 0) is the schema fallback: "use the negative upAxis".
+  (void)len2;
+  if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2])) {
     AddError(result, "physics.scene.gravity",
              MakePropertyLocation(prim_location, "physics:gravityDirection"),
-             "physics:gravityDirection must be finite and non-zero");
+             "physics:gravityDirection must be finite");
   }
 }
 
@@ -212,7 +220,20 @@ void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                         "physics.inertia", prim_location,
                                         result);
   ValidateQuaternionProperty(ps, "physics:principalAxes",
-                             "physics.quaternion", prim_location, result);
+                             "physics.quaternion", prim_location, result, true);
+  // UsdPhysicsValidators requires the principal moments and the principal
+  // axes to be authored together: a diagonal tensor without a basis (or a
+  // basis without moments) is ambiguous.
+  const bool has_diag = HasProperty(ps, "physics:diagonalInertia");
+  const bool has_axes = HasProperty(ps, "physics:principalAxes");
+  if (has_diag != has_axes) {
+    AddError(result, "physics.inertia",
+             MakePropertyLocation(
+                 prim_location,
+                 has_diag ? "physics:diagonalInertia" : "physics:principalAxes"),
+             "principalAxes and diagonalInertia must both be authored or "
+             "neither authored");
+  }
   ValidateFiniteVec3Property(ps, "physics:velocity", "physics.motion",
                              prim_location, result, false);
   ValidateFiniteVec3Property(ps, "physics:angularVelocity", "physics.motion",
@@ -353,7 +374,9 @@ void ValidatePhysicsDriveAndLimitAPIs(
   for (const AppliedSchema &schema : schemas) {
     if ((schema.name == "PhysicsDriveAPI" ||
          schema.name == "PhysicsLimitAPI") &&
-        !IsPhysicsDofName(schema.instance_name)) {
+        !(schema.name == "PhysicsDriveAPI"
+              ? IsPhysicsDriveDofName(schema.instance_name)
+              : IsPhysicsDofName(schema.instance_name))) {
       AddError(result,
                schema.name == "PhysicsDriveAPI" ? "physics.drive.dof"
                                                 : "physics.limit.dof",
@@ -366,18 +389,46 @@ void ValidatePhysicsDriveAndLimitAPIs(
   std::map<std::string, std::pair<double, bool>> limit_low;
   std::map<std::string, std::pair<double, bool>> limit_high;
   for (const std::string &prop_name : AllPropertyNames(ps)) {
-    if (StartsWith(prop_name, "physics:drive:")) {
-      const std::string rest =
-          prop_name.substr(std::string("physics:drive:").size());
-      const size_t colon = rest.find(':');
-      if (colon == std::string::npos) {
+    // Standard multiple-apply names are drive:<dof>:physics:<field> and
+    // limit:<dof>:physics:<field>. The historical physics:drive:<dof>:<field>
+    // spelling is still checked but flagged as non-standard: UsdPhysics
+    // consumers do not read it.
+    std::string api, dof, field;
+    bool standard = false;
+    for (const char *ns : {"drive", "limit"}) {
+      const std::string prefix = std::string(ns) + ":";
+      const std::string legacy = std::string("physics:") + ns + ":";
+      std::string rest;
+      if (StartsWith(prop_name, prefix)) {
+        rest = prop_name.substr(prefix.size());
+        const size_t colon = rest.find(':');
+        if (colon == std::string::npos ||
+            !StartsWith(rest.substr(colon + 1), "physics:"))
+          continue;
+        dof = rest.substr(0, colon);
+        field = rest.substr(colon + 1 + std::string("physics:").size());
+        standard = true;
+      } else if (StartsWith(prop_name, legacy)) {
+        rest = prop_name.substr(legacy.size());
+        const size_t colon = rest.find(':');
+        if (colon == std::string::npos) continue;
+        dof = rest.substr(0, colon);
+        field = rest.substr(colon + 1);
+      } else {
         continue;
       }
-      const std::string dof = rest.substr(0, colon);
-      const std::string field = rest.substr(colon + 1);
-      const std::string location =
-          MakePropertyLocation(prim_location, prop_name);
-      if (!IsPhysicsDofName(dof)) {
+      api = ns;
+      break;
+    }
+    if (api.empty()) continue;
+    const std::string location = MakePropertyLocation(prim_location, prop_name);
+    if (!standard) {
+      AddWarning(result, "physics.property.nonStandardName", location,
+                 "use " + api + ":" + dof + ":physics:" + field +
+                     "; UsdPhysics does not read " + prop_name);
+    }
+    if (api == "drive") {
+      if (!IsPhysicsDriveDofName(dof)) {
         AddError(result, "physics.drive.dof", location,
                  "PhysicsDriveAPI DOF `" + dof + "` is not supported");
       }
@@ -393,27 +444,20 @@ void ValidatePhysicsDriveAndLimitAPIs(
         ValidateFiniteNumericProperty(ps, prop_name, "physics.drive.value",
                                       prim_location, result);
       }
-    } else if (StartsWith(prop_name, "physics:limit:")) {
-      const std::string rest =
-          prop_name.substr(std::string("physics:limit:").size());
-      const size_t colon = rest.find(':');
-      if (colon == std::string::npos) {
-        continue;
-      }
-      const std::string dof = rest.substr(0, colon);
-      const std::string field = rest.substr(colon + 1);
-      const std::string location =
-          MakePropertyLocation(prim_location, prop_name);
+    } else {
       if (!IsPhysicsDofName(dof)) {
         AddError(result, "physics.limit.dof", location,
                  "PhysicsLimitAPI DOF `" + dof + "` is not supported");
       }
       if (field == "low" || field == "high") {
-        ValidateFiniteNumericProperty(ps, prop_name, "physics.limit.range",
-                                      prim_location, result);
+        // +-inf are the schema fallbacks (unlimited in that direction).
         double value = 0.0;
         const bool have_value =
             GetNumericScalarProperty(ps, prop_name, &value);
+        if (have_value && std::isnan(value)) {
+          AddError(result, "physics.limit.range", location,
+                   "limit bounds must not be NaN");
+        }
         if (field == "low") {
           limit_low[dof] = std::make_pair(value, have_value);
         } else {
@@ -423,17 +467,9 @@ void ValidatePhysicsDriveAndLimitAPIs(
     }
   }
 
-  for (const auto &entry : limit_low) {
-    const auto high_it = limit_high.find(entry.first);
-    if (high_it == limit_high.end()) {
-      continue;
-    }
-    if (entry.second.second && high_it->second.second &&
-        entry.second.first > high_it->second.first) {
-      AddError(result, "physics.limit.range", prim_location,
-               "physics:limit:" + entry.first + " low must be <= high");
-    }
-  }
+  // UsdPhysics: a low limit above the high limit locks the axis. That is the
+  // standard spelling of a locked DOF (e.g. a D6 planar joint), not an error.
+  (void)limit_high;
 }
 
 void ValidateMjcTokenEnums(const PrimSpec &ps,
@@ -441,7 +477,7 @@ void ValidateMjcTokenEnums(const PrimSpec &ps,
                            USDValidationResult *result) {
   static const std::set<std::string> kAutoBool = {"auto", "true", "false"};
   ValidateTokenSetProperty(ps, "mjc:option:integrator",
-                           {"euler", "implicit", "implicitfast", "RK4"},
+                           {"euler", "implicit", "implicitfast", "rk4", "RK4"},
                            "physics.extension.mjc.token", prim_location,
                            result);
   ValidateTokenSetProperty(ps, "mjc:option:cone", {"pyramidal", "elliptic"},
@@ -494,7 +530,7 @@ void ValidateMjcTokenEnums(const PrimSpec &ps,
         {"touch", "accelerometer", "velocimeter", "gyro", "force", "torque",
          "magnetometer", "camprojection", "rangefinder", "jointpos",
          "jointvel", "tendonpos", "tendonvel", "actuatorpos", "actuatorvel",
-         "actuatorfrc", "ballquat", "ballangvel", "jointlimitpos",
+         "actuatorfrc", "jointactuatorfrc", "ballquat", "ballangvel", "jointlimitpos",
          "jointlimitvel", "jointlimitfrc", "tendonlimitpos",
          "tendonlimitvel", "tendonlimitfrc", "framepos", "framequat",
          "framexaxis", "frameyaxis", "framezaxis", "framelinvel",
@@ -527,10 +563,7 @@ void ValidateMjcPhysics(const PrimSpec &ps,
   ValidateMjcTokenEnums(ps, prim_location, result);
 
   for (const char *prop_name :
-       {"mjc:option:timestep", "mjc:option:impratio", "mjc:option:tolerance",
-        "mjc:option:ls_tolerance", "mjc:option:noslip_tolerance",
-        "mjc:option:ccd_tolerance", "mjc:torsionalfriction",
-        "mjc:rollingfriction"}) {
+       {"mjc:option:timestep", "mjc:option:impratio"}) {
     ValidatePositiveNumericProperty(ps, prop_name,
                                     "physics.extension.mjc.range",
                                     prim_location, result);
@@ -538,6 +571,8 @@ void ValidateMjcPhysics(const PrimSpec &ps,
 
   for (const char *prop_name :
        {"mjc:option:density", "mjc:option:viscosity", "mjc:option:o_margin",
+        "mjc:option:tolerance", "mjc:option:ls_tolerance", "mjc:option:noslip_tolerance",
+        "mjc:option:ccd_tolerance", "mjc:torsionalfriction", "mjc:rollingfriction",
         "mjc:compiler:boundMass", "mjc:compiler:boundInertia",
         "mjc:stiffness", "mjc:damping", "mjc:armature", "mjc:frictionloss",
         "mjc:margin", "mjc:solmix", "mjc:gap", "mjc:crankLength",
@@ -629,6 +664,112 @@ void ValidateMjcPhysics(const PrimSpec &ps,
   }
 }
 
+// NewtonMassAPI newton:inertia = [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] about the COM
+// in body axes. Newton ignores a tensor that is not finite and positive
+// semidefinite, and rebalances one that violates the triangle inequality.
+void ValidateNewtonInertia(const PrimSpec &ps, const std::string &prim_location,
+                           USDValidationResult *result) {
+  std::vector<double> t;
+  if (!GetDoubleArrayProperty(ps, "newton:inertia", &t)) return;
+  const std::string location = MakePropertyLocation(prim_location, "newton:inertia");
+  if (t.size() != 6) {
+    AddError(result, "physics.extension.newton.inertia", location,
+             "newton:inertia must have 6 elements [Ixx, Iyy, Izz, Ixy, Ixz, Iyz]");
+    return;
+  }
+  for (double v : t) {
+    if (!std::isfinite(v)) {
+      AddError(result, "physics.extension.newton.inertia", location,
+               "newton:inertia must be finite");
+      return;
+    }
+  }
+  // Eigenvalues of the symmetric tensor (closed form for 3x3).
+  const double a = t[0], b = t[1], c = t[2], d = t[3], e = t[4], f = t[5];
+  const double scale = std::max({std::abs(a), std::abs(b), std::abs(c), 1e-300});
+  const double off = d * d + e * e + f * f;
+  double eig[3];
+  if (off <= 1e-30 * scale * scale) {
+    eig[0] = a; eig[1] = b; eig[2] = c;
+  } else {
+    const double q = (a + b + c) / 3.0;
+    const double p2 = (a - q) * (a - q) + (b - q) * (b - q) + (c - q) * (c - q) + 2.0 * off;
+    const double p = std::sqrt(p2 / 6.0);
+    // det((A - qI) / p) / 2, clamped into acos's domain.
+    const double ba = (a - q) / p, bb = (b - q) / p, bc = (c - q) / p;
+    const double bd = d / p, be = e / p, bf = f / p;
+    double r = (ba * (bb * bc - bf * bf) - bd * (bd * bc - bf * be) +
+                be * (bd * bf - bb * be)) / 2.0;
+    r = std::min(1.0, std::max(-1.0, r));
+    const double phi = std::acos(r) / 3.0;
+    constexpr double kTwoPiOver3 = 2.0943951023931954923;
+    eig[0] = q + 2.0 * p * std::cos(phi);
+    eig[2] = q + 2.0 * p * std::cos(phi + kTwoPiOver3);
+    eig[1] = 3.0 * q - eig[0] - eig[2];
+  }
+  std::sort(eig, eig + 3);
+  const double tol = 1e-9 * std::max(eig[2], 1e-300);
+  if (eig[0] < -tol) {
+    AddError(result, "physics.extension.newton.inertia", location,
+             "newton:inertia must be positive semidefinite");
+    return;
+  }
+  if (eig[0] + eig[1] < eig[2] * (1.0 - 1e-6)) {
+    AddWarning(result, "physics.extension.newton.inertia", location,
+               "newton:inertia principal moments violate the triangle "
+               "inequality; Newton rebalances the tensor");
+  }
+  // The authored principal moments must describe the same tensor.
+  const Value *diag = GetAttrValue(ps, "physics:diagonalInertia");
+  std::array<double, 3> principal{};
+  if (diag && ValueToVec3(*diag, &principal) &&
+      (principal[0] != 0.0 || principal[1] != 0.0 || principal[2] != 0.0)) {
+    const double trace = a + b + c;
+    const double other = principal[0] + principal[1] + principal[2];
+    if (std::abs(trace - other) > 1e-4 * std::max(std::abs(trace), std::abs(other))) {
+      AddWarning(result, "physics.extension.newton.inertia", location,
+                 "newton:inertia and physics:diagonalInertia disagree; "
+                 "Newton uses newton:inertia");
+    }
+  }
+}
+
+// Newton reads -inf as "use the engine default" for the joint limit gains.
+void ValidateNewtonLimitGain(const PrimSpec &ps, const char *name,
+                             const std::string &prim_location,
+                             USDValidationResult *result) {
+  double v = 0.0;
+  if (!GetNumericScalarProperty(ps, name, &v)) return;
+  if (std::isnan(v) || (v < 0.0 && v != -std::numeric_limits<double>::infinity())) {
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, name),
+             std::string(name) + " must be >= 0 or -inf (engine default)");
+  }
+}
+
+// NewtonSDFCollisionAPI: Newton builds the collider SDF from these
+// parameters; lightusd:sdf names LightUSD's precomputed level-set Volume.
+void ValidateNewtonSdf(const PrimSpec &ps, const std::string &prim_location,
+                       const PrimTypeByPath &prim_types, USDValidationResult *result) {
+  double v = 0.0;
+  if (GetNumericScalarProperty(ps, "newton:sdfMaxResolution", &v) && !(v > 0.0))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfMaxResolution"),
+             "newton:sdfMaxResolution must be positive");
+  if (GetNumericScalarProperty(ps, "newton:sdfNarrowBandInner", &v) &&
+      !(v <= 0.0 && std::isfinite(v)))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfNarrowBandInner"),
+             "newton:sdfNarrowBandInner must be finite and <= 0 (inside the surface)");
+  if (GetNumericScalarProperty(ps, "newton:sdfNarrowBandOuter", &v) &&
+      !(v >= 0.0 && std::isfinite(v)))
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, "newton:sdfNarrowBandOuter"),
+             "newton:sdfNarrowBandOuter must be finite and >= 0 (outside the surface)");
+  ValidatePhysicsRelationship(ps, "lightusd:sdf", "physics.extension.newton.relationship",
+                              prim_location, prim_types, {"Volume"}, result);
+}
+
 void ValidateNewtonPhysics(const PrimSpec &ps,
                            const std::vector<AppliedSchema> &schemas,
                            const std::string &prim_location,
@@ -669,11 +810,16 @@ void ValidateNewtonPhysics(const PrimSpec &ps,
         "newton:torsionalFriction", "newton:rollingFriction", "newton:kp",
         "newton:kd", "newton:ki", "newton:maxEffort",
         "newton:maxMotorEffort", "newton:saturationEffort",
-        "newton:velocityLimit"}) {
+        "newton:velocityLimit", "newton:armature", "newton:friction",
+        "newton:damping"}) {
     ValidateNonNegativeNumericProperty(ps, prop_name,
                                        "physics.extension.newton.range",
                                        prim_location, result);
   }
+  ValidateNewtonInertia(ps, prim_location, result);
+  ValidateNewtonLimitGain(ps, "newton:limitStiffness", prim_location, result);
+  ValidateNewtonLimitGain(ps, "newton:limitDamping", prim_location, result);
+  ValidateNewtonSdf(ps, prim_location, prim_types, result);
   ValidateTokenSetProperty(ps, "newton:kamino:padmm:warmstarting",
                            {"none", "containers", "reduced"},
                            "physics.extension.newton.token", prim_location,

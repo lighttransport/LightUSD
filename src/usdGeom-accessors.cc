@@ -25,7 +25,7 @@
 #include "common-macros.inc"
 #include "math-util.inc"
 #include "value-pprint.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 

@@ -20,9 +20,24 @@ namespace simdscan {
 // Scan [p, end) for the first byte in the array-structural set
 //   { '[' , ']' , '"' , '\'' , '@' , '#' }
 // and return a pointer to it, or `end` if none. Adds the number of '\n' bytes in
-// the scanned-over prefix to *newlines (for the lexer's line tracking).
+// the scanned-over prefix to *newlines (for the lexer's line tracking) and the
+// number of ',' bytes to *commas. The comma tally lets the capture predict the
+// scalar count of a simple array (scalars = commas + 1 whether the elements are
+// bare scalars or paren-wrapped tuples — every adjacent scalar pair is separated
+// by exactly one comma), so the parser can pre-size its output vector.
 const char* ScanArrayStructural(const char* p, const char* end,
-                                size_t* newlines);
+                                size_t* newlines, size_t* commas);
+
+// Scan [p, end) for the first byte in the prim-block-structural set
+//   { '{' , '}' , '(' , ')' , '[' , ']' , '"' , '\'' , '@' , '#' , '/' }
+// and return a pointer to it, or `end` if none. Adds the number of '\n' bytes
+// in the scanned-over prefix to *newlines. Used by the prim-block capture
+// (parallel subtree parse) to skip property/value bytes at SIMD speed; parens
+// are structural so the capture can tell a metadata-dict '{' (inside parens)
+// from the prim body '{'. '/' is structural so the capture can detect a C-style
+// block comment (`/* ... */`) and leave that prim to the inline parser.
+const char* ScanPrimStructural(const char* p, const char* end,
+                               size_t* newlines);
 
 // Name of the active scan backend ("sse2" / "scalar" / ...), for logging.
 const char* Backend();

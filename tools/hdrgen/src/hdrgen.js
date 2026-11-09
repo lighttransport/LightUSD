@@ -11,6 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as zlib from 'zlib';
 
 // ============================================================================
 // Math Utilities
@@ -116,6 +117,124 @@ class HDRImage {
       u: (phi + Math.PI) / (Math.PI * 2.0),
       v: theta / Math.PI
     };
+  }
+}
+
+// ============================================================================
+// Environment Importance Sampling
+// ============================================================================
+
+class ImportanceMap {
+  /**
+   * Build a two-level distribution for a lat-long environment map.
+   * Texel weights include sin(theta), so sampling the resulting distribution
+   * is proportional to luminance per unit solid angle.
+   */
+  static build(image) {
+    const { width, height } = image;
+    if (width < 1 || height < 1) {
+      throw new Error('Importance maps require a non-empty image');
+    }
+
+    const rowCdf = new Float64Array(height + 1);
+    const conditionalCdf = new Float64Array(height * (width + 1));
+    const texelWeights = new Float64Array(width * height);
+    const rowWeights = new Float64Array(height);
+    let totalWeight = 0.0;
+
+    for (let y = 0; y < height; y++) {
+      const sinTheta = Math.sin(Math.PI * (y + 0.5) / height);
+      const rowOffset = y * (width + 1);
+      let rowWeight = 0.0;
+      for (let x = 0; x < width; x++) {
+        const pixel = image.getPixel(x, y);
+        const luminance = Math.max(0.0,
+          0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b);
+        const weight = Number.isFinite(luminance) ? luminance * sinTheta : 0.0;
+        texelWeights[y * width + x] = weight;
+        rowWeight += weight;
+        conditionalCdf[rowOffset + x + 1] = rowWeight;
+      }
+
+      // A black row still needs a valid conditional distribution. It will not
+      // be selected unless the entire image is black.
+      if (rowWeight > 0.0) {
+        for (let x = 1; x <= width; x++) {
+          conditionalCdf[rowOffset + x] /= rowWeight;
+        }
+      } else {
+        for (let x = 1; x <= width; x++) {
+          conditionalCdf[rowOffset + x] = x / width;
+        }
+      }
+      rowWeights[y] = rowWeight;
+      totalWeight += rowWeight;
+      rowCdf[y + 1] = totalWeight;
+    }
+
+    if (totalWeight > 0.0) {
+      for (let y = 1; y <= height; y++) rowCdf[y] /= totalWeight;
+    } else {
+      // Uniform radiance over a black image means uniform solid-angle sampling.
+      totalWeight = 0.0;
+      for (let y = 0; y < height; y++) {
+        rowWeights[y] = Math.sin(Math.PI * (y + 0.5) / height) * width;
+        totalWeight += rowWeights[y];
+        rowCdf[y + 1] = totalWeight;
+      }
+      for (let y = 1; y <= height; y++) rowCdf[y] /= totalWeight;
+      for (let i = 0; i < texelWeights.length; i++) {
+        texelWeights[i] = rowWeights[Math.floor(i / width)] / width;
+      }
+    }
+
+    return { width, height, totalWeight, rowCdf, conditionalCdf,
+             rowWeights, texelWeights };
+  }
+
+  static _findInterval(cdf, offset, count, value) {
+    const u = Math.max(0.0, Math.min(1.0 - Number.EPSILON, value));
+    let low = 0;
+    let high = count;
+    while (low + 1 < high) {
+      const mid = (low + high) >> 1;
+      if (cdf[offset + mid] <= u) low = mid;
+      else high = mid;
+    }
+    return low;
+  }
+
+  /** Sample at the texel center and return a PDF per steradian. */
+  static sample(distribution, rowSample, columnSample) {
+    const { width, height, rowCdf, conditionalCdf, texelWeights, totalWeight } = distribution;
+    const y = ImportanceMap._findInterval(rowCdf, 0, height, rowSample);
+    const x = ImportanceMap._findInterval(
+      conditionalCdf, y * (width + 1), width, columnSample);
+    const u = (x + 0.5) / width;
+    const v = (y + 0.5) / height;
+    const theta = Math.PI * v;
+    const texelSolidAngle = (2.0 * Math.PI / width) *
+      (Math.PI / height) * Math.sin(theta);
+    const probability = texelWeights[y * width + x] / totalWeight;
+    return {
+      x, y, u, v,
+      direction: HDRImage.latLongToDir(u, v),
+      pdf: texelSolidAngle > 0.0 ? probability / texelSolidAngle : 0.0
+    };
+  }
+
+  static writeJSON(distribution, filepath) {
+    const payload = {
+      version: 1,
+      projection: 'latlong',
+      width: distribution.width,
+      height: distribution.height,
+      totalWeight: distribution.totalWeight,
+      rowCdf: Array.from(distribution.rowCdf),
+      conditionalCdf: Array.from(distribution.conditionalCdf)
+    };
+    fs.writeFileSync(filepath, JSON.stringify(payload));
+    console.log(`✓ Wrote importance map: ${filepath}`);
   }
 }
 
@@ -339,9 +458,12 @@ class LDRWriter {
    * Simple implementation without compression
    */
   static writePNG(ldrData, width, height, filepath) {
-    // For production, use a PNG library. This is a simplified implementation.
-    // We'll write an uncompressed PNG using filter type 0 (None)
+    const pngBuffer = LDRWriter.encodePNG(ldrData, width, height);
+    fs.writeFileSync(filepath, pngBuffer);
+    console.log(`✓ Wrote PNG file: ${filepath}`);
+  }
 
+  static encodePNG(ldrData, width, height) {
     const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
     // IHDR chunk
@@ -370,20 +492,12 @@ class LDRWriter {
       }
     }
 
-    // Simple zlib compression would go here, but for now use uncompressed
-    // For production, use zlib or a PNG library
-    console.warn('PNG: Using simplified format (consider using sharp/pngjs for production)');
-
-    // Build PNG file
     const chunks = [];
     chunks.push(pngSignature);
     chunks.push(LDRWriter.createPNGChunk('IHDR', ihdr));
-    chunks.push(LDRWriter.createPNGChunk('IDAT', idatRaw));
+    chunks.push(LDRWriter.createPNGChunk('IDAT', zlib.deflateSync(idatRaw)));
     chunks.push(LDRWriter.createPNGChunk('IEND', Buffer.alloc(0)));
-
-    const pngBuffer = Buffer.concat(chunks);
-    fs.writeFileSync(filepath, pngBuffer);
-    console.log(`✓ Wrote PNG file: ${filepath}`);
+    return Buffer.concat(chunks);
   }
 
   /**
@@ -424,6 +538,42 @@ class LDRWriter {
     console.warn('Converting to BMP instead');
     const bmpPath = filepath.replace(/\.jpe?g$/i, '.bmp');
     LDRWriter.writeBMP(ldrData, width, height, bmpPath);
+  }
+}
+
+class PreviewWriter {
+  static writeHTML(image, filepath, tonemapOptions = {}) {
+    const previewWidth = Math.min(image.width, 2048);
+    const previewHeight = Math.max(1, Math.round(image.height * previewWidth / image.width));
+    const preview = previewWidth === image.width ? image : PreviewWriter._resize(image,
+      previewWidth, previewHeight);
+    const ldr = ToneMapper.tonemapToLDR(preview, tonemapOptions);
+    const png = LDRWriter.encodePNG(ldr, preview.width, preview.height).toString('base64');
+    const html = `<!doctype html>
+<meta charset="utf-8"><title>HDRGen panorama preview</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#111}canvas{width:100%;height:100%;cursor:grab}canvas:active{cursor:grabbing}</style>
+<canvas id="view"></canvas><img id="source" hidden src="data:image/png;base64,${png}">
+<script>
+const canvas=document.getElementById('view'),ctx=canvas.getContext('2d'),image=document.getElementById('source');
+let offset=0,drag=false,last=0;
+function draw(){canvas.width=innerWidth*devicePixelRatio;canvas.height=innerHeight*devicePixelRatio;const h=canvas.height,w=h*2,x=((offset%w)+w)%w;ctx.fillStyle='#111';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,-x,0,w,h);ctx.drawImage(image,w-x,0,w,h)}
+image.onload=draw;addEventListener('resize',draw);canvas.onpointerdown=e=>{drag=true;last=e.clientX;canvas.setPointerCapture(e.pointerId)};canvas.onpointermove=e=>{if(drag){offset+=(last-e.clientX)*devicePixelRatio;last=e.clientX;draw()}};canvas.onpointerup=()=>drag=false;
+</script>\n`;
+    fs.mkdirSync(path.dirname(filepath), { recursive: true });
+    fs.writeFileSync(filepath, html);
+    console.log(`✓ Wrote panorama preview: ${filepath}`);
+  }
+
+  static _resize(image, width, height) {
+    const output = new HDRImage(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const color = CubemapGenerator.sampleBilinear(
+          image, (x + 0.5) / width, (y + 0.5) / height);
+        output.setPixel(x, y, color.r, color.g, color.b);
+      }
+    }
+    return output;
   }
 }
 
@@ -492,16 +642,286 @@ class HDRWriter {
     console.log(`✓ Wrote HDR file: ${filepath}`);
   }
 
-  /**
-   * Write OpenEXR format (simplified, uncompressed scanline)
-   * For production use, consider using openexr npm package
-   */
-  static writeEXR(image, filepath) {
-    // For now, write as HDR since proper EXR requires external library
-    // In production, use @openexr/node or similar
-    console.warn('EXR writing requires external library, writing as HDR instead');
-    const hdrPath = filepath.replace(/\.exr$/i, '.hdr');
-    HDRWriter.writeRGBE(image, hdrPath);
+  /** Write an OpenEXR v2 image with float scanlines. */
+  static writeEXR(image, filepath, compression = 'zips') {
+    const { width, height, data } = image;
+    if (width < 1 || height < 1) throw new Error('EXR dimensions must be positive');
+    if (!['none', 'zips'].includes(compression)) {
+      throw new Error(`Unsupported EXR compression: ${compression}`);
+    }
+
+    const cstring = value => Buffer.from(`${value}\0`, 'ascii');
+    const attribute = (name, type, value) => {
+      const size = Buffer.alloc(4);
+      size.writeUInt32LE(value.length, 0);
+      return Buffer.concat([cstring(name), cstring(type), size, value]);
+    };
+    const float32 = value => {
+      const result = Buffer.alloc(4);
+      result.writeFloatLE(value, 0);
+      return result;
+    };
+    const box2i = Buffer.alloc(16);
+    box2i.writeInt32LE(0, 0);
+    box2i.writeInt32LE(0, 4);
+    box2i.writeInt32LE(width - 1, 8);
+    box2i.writeInt32LE(height - 1, 12);
+
+    const channels = [];
+    for (const name of ['B', 'G', 'R']) {
+      // pixel type (2=float), pLinear/reserved, xSampling, ySampling.
+      const descriptor = Buffer.alloc(16);
+      descriptor.writeInt32LE(2, 0);
+      descriptor.writeUInt8(0, 4);
+      descriptor.writeInt32LE(1, 8);
+      descriptor.writeInt32LE(1, 12);
+      channels.push(cstring(name), descriptor);
+    }
+    channels.push(Buffer.from([0]));
+
+    const header = Buffer.concat([
+      attribute('channels', 'chlist', Buffer.concat(channels)),
+      attribute('compression', 'compression', Buffer.from([compression === 'zips' ? 2 : 0])),
+      attribute('dataWindow', 'box2i', box2i),
+      attribute('displayWindow', 'box2i', box2i),
+      attribute('lineOrder', 'lineOrder', Buffer.from([0])),
+      attribute('pixelAspectRatio', 'float', float32(1.0)),
+      attribute('screenWindowCenter', 'v2f', Buffer.alloc(8)),
+      attribute('screenWindowWidth', 'float', float32(1.0)),
+      Buffer.from([0])
+    ]);
+    const prefix = Buffer.alloc(8);
+    prefix.writeUInt32LE(20000630, 0);
+    prefix.writeUInt32LE(2, 4);
+
+    const bytesPerScanline = width * 3 * 4;
+    const blocks = [];
+    for (let y = 0; y < height; y++) {
+      const scanline = Buffer.alloc(bytesPerScanline);
+      let dst = 0;
+      // Channel samples are contiguous and follow chlist order.
+      for (const channel of [2, 1, 0]) {
+        for (let x = 0; x < width; x++) {
+          const value = data[(y * width + x) * 3 + channel];
+          scanline.writeFloatLE(Number.isFinite(value) ? value : 0.0, dst);
+          dst += 4;
+        }
+      }
+      const packed = compression === 'zips' ? HDRWriter._zipEXRBytes(scanline) : scanline;
+      const block = Buffer.alloc(8 + packed.length);
+      block.writeInt32LE(y, 0);
+      block.writeUInt32LE(packed.length, 4);
+      packed.copy(block, 8);
+      blocks.push(block);
+    }
+
+    const offsetTable = Buffer.alloc(height * 8);
+    let blockOffset = BigInt(prefix.length + header.length + offsetTable.length);
+    for (let y = 0; y < height; y++) {
+      offsetTable.writeBigUInt64LE(blockOffset, y * 8);
+      blockOffset += BigInt(blocks[y].length);
+    }
+    fs.writeFileSync(filepath, Buffer.concat([prefix, header, offsetTable, ...blocks]));
+    console.log(`✓ Wrote EXR file (${compression}): ${filepath}`);
+  }
+
+  static _zipEXRBytes(raw) {
+    const reordered = Buffer.alloc(raw.length);
+    let even = 0;
+    let odd = Math.floor((raw.length + 1) / 2);
+    for (let i = 0; i < raw.length; i += 2) reordered[even++] = raw[i];
+    for (let i = 1; i < raw.length; i += 2) reordered[odd++] = raw[i];
+
+    let previous = reordered[0];
+    for (let i = 1; i < reordered.length; i++) {
+      const current = reordered[i];
+      reordered[i] = (current - previous + 128) & 0xff;
+      previous = current;
+    }
+    const compressed = zlib.deflateSync(reordered);
+    // OpenEXR permits an uncompressed block when compression expands the data.
+    return compressed.length < raw.length ? compressed : raw;
+  }
+}
+
+// ============================================================================
+// HDR File Format Readers
+// ============================================================================
+
+class HDRReader {
+  static read(filepath) {
+    const extension = path.extname(filepath).toLowerCase();
+    const bytes = fs.readFileSync(filepath);
+    if (extension === '.hdr' || extension === '.rgbe') return HDRReader.readRGBE(bytes);
+    if (extension === '.exr') return HDRReader.readEXR(bytes);
+    throw new Error(`Unsupported panorama input format: ${extension || '(none)'}`);
+  }
+
+  static readRGBE(bytes) {
+    const marker = Buffer.from('\n\n');
+    const headerEnd = bytes.indexOf(marker);
+    if (headerEnd < 0) throw new Error('Invalid Radiance HDR header');
+    const resolutionEnd = bytes.indexOf(0x0a, headerEnd + 2);
+    if (resolutionEnd < 0) throw new Error('Radiance HDR resolution is missing');
+    const resolution = bytes.toString('ascii', headerEnd + 2, resolutionEnd).trim();
+    const match = /^-Y\s+(\d+)\s+\+X\s+(\d+)$/.exec(resolution);
+    if (!match) throw new Error(`Unsupported Radiance HDR orientation: ${resolution}`);
+    const height = Number(match[1]);
+    const width = Number(match[2]);
+    const rgbe = Buffer.alloc(width * height * 4);
+    let source = resolutionEnd + 1;
+
+    for (let y = 0; y < height; y++) {
+      const isRle = width >= 8 && width <= 0x7fff && source + 4 <= bytes.length &&
+        bytes[source] === 2 && bytes[source + 1] === 2 &&
+        (bytes[source + 2] & 0x80) === 0 &&
+        ((bytes[source + 2] << 8) | bytes[source + 3]) === width;
+      if (!isRle) {
+        const count = width * 4;
+        if (source + count > bytes.length) throw new Error('Truncated Radiance HDR pixels');
+        bytes.copy(rgbe, y * width * 4, source, source + count);
+        source += count;
+        continue;
+      }
+      source += 4;
+      const channels = [Buffer.alloc(width), Buffer.alloc(width),
+                        Buffer.alloc(width), Buffer.alloc(width)];
+      for (let channel = 0; channel < 4; channel++) {
+        let x = 0;
+        while (x < width) {
+          if (source >= bytes.length) throw new Error('Truncated Radiance HDR RLE data');
+          const code = bytes[source++];
+          if (code > 128) {
+            const count = code - 128;
+            if (count === 0 || source >= bytes.length || x + count > width) {
+              throw new Error('Invalid Radiance HDR RLE run');
+            }
+            channels[channel].fill(bytes[source++], x, x + count);
+            x += count;
+          } else {
+            if (code === 0 || source + code > bytes.length || x + code > width) {
+              throw new Error('Invalid Radiance HDR RLE literal');
+            }
+            bytes.copy(channels[channel], x, source, source + code);
+            source += code;
+            x += code;
+          }
+        }
+      }
+      for (let x = 0; x < width; x++) {
+        const target = (y * width + x) * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          rgbe[target + channel] = channels[channel][x];
+        }
+      }
+    }
+
+    const image = new HDRImage(width, height);
+    for (let i = 0; i < width * height; i++) {
+      const exponent = rgbe[i * 4 + 3];
+      if (exponent === 0) continue;
+      const scale = Math.pow(2, exponent - 128) / 255.0;
+      image.data[i * 3] = rgbe[i * 4] * scale;
+      image.data[i * 3 + 1] = rgbe[i * 4 + 1] * scale;
+      image.data[i * 3 + 2] = rgbe[i * 4 + 2] * scale;
+    }
+    return image;
+  }
+
+  static _cstring(bytes, state) {
+    const end = bytes.indexOf(0, state.offset);
+    if (end < 0) throw new Error('Unterminated OpenEXR string');
+    const value = bytes.toString('ascii', state.offset, end);
+    state.offset = end + 1;
+    return value;
+  }
+
+  static _unzipEXRBytes(packed, expectedSize) {
+    if (packed.length === expectedSize) return packed;
+    const predicted = zlib.inflateSync(packed);
+    if (predicted.length !== expectedSize) throw new Error('Invalid OpenEXR ZIPS block size');
+    for (let i = 1; i < predicted.length; i++) {
+      predicted[i] = (predicted[i - 1] + predicted[i] - 128) & 0xff;
+    }
+    const raw = Buffer.alloc(expectedSize);
+    const oddStart = Math.floor((expectedSize + 1) / 2);
+    for (let i = 0; i < expectedSize; i += 2) raw[i] = predicted[i / 2];
+    for (let i = 1; i < expectedSize; i += 2) raw[i] = predicted[oddStart + (i >> 1)];
+    return raw;
+  }
+
+  static readEXR(bytes) {
+    if (bytes.length < 9 || bytes.readUInt32LE(0) !== 20000630) {
+      throw new Error('Invalid OpenEXR magic number');
+    }
+    const state = { offset: 8 };
+    const attributes = new Map();
+    while (state.offset < bytes.length) {
+      const name = HDRReader._cstring(bytes, state);
+      if (!name) break;
+      const type = HDRReader._cstring(bytes, state);
+      if (state.offset + 4 > bytes.length) throw new Error('Truncated OpenEXR attribute');
+      const size = bytes.readUInt32LE(state.offset);
+      state.offset += 4;
+      if (state.offset + size > bytes.length) throw new Error('Truncated OpenEXR attribute value');
+      attributes.set(name, { type, value: bytes.subarray(state.offset, state.offset + size) });
+      state.offset += size;
+    }
+    const window = attributes.get('dataWindow')?.value;
+    const channelList = attributes.get('channels')?.value;
+    const compressionValue = attributes.get('compression')?.value?.[0] ?? 0;
+    if (!window || window.length !== 16 || !channelList) {
+      throw new Error('OpenEXR dataWindow or channels are missing');
+    }
+    if (![0, 2].includes(compressionValue)) {
+      throw new Error(`Unsupported OpenEXR compression code: ${compressionValue}`);
+    }
+    const minX = window.readInt32LE(0);
+    const minY = window.readInt32LE(4);
+    const maxX = window.readInt32LE(8);
+    const maxY = window.readInt32LE(12);
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    const channels = [];
+    const channelState = { offset: 0 };
+    while (channelState.offset < channelList.length && channelList[channelState.offset] !== 0) {
+      const name = HDRReader._cstring(channelList, channelState);
+      if (channelState.offset + 16 > channelList.length) throw new Error('Truncated OpenEXR channel');
+      const pixelType = channelList.readInt32LE(channelState.offset);
+      const xSampling = channelList.readInt32LE(channelState.offset + 8);
+      const ySampling = channelList.readInt32LE(channelState.offset + 12);
+      channelState.offset += 16;
+      if (pixelType !== 2 || xSampling !== 1 || ySampling !== 1) {
+        throw new Error('Only full-resolution float OpenEXR channels are supported');
+      }
+      channels.push(name);
+    }
+    if (!channels.includes('R') || !channels.includes('G') || !channels.includes('B')) {
+      throw new Error('OpenEXR input requires R, G, and B channels');
+    }
+
+    const image = new HDRImage(width, height);
+    const rowBytes = width * channels.length * 4;
+    const offsetTable = state.offset;
+    for (let row = 0; row < height; row++) {
+      const blockOffset = Number(bytes.readBigUInt64LE(offsetTable + row * 8));
+      if (blockOffset + 8 > bytes.length) throw new Error('Invalid OpenEXR scanline offset');
+      const y = bytes.readInt32LE(blockOffset) - minY;
+      const packedSize = bytes.readUInt32LE(blockOffset + 4);
+      const packed = bytes.subarray(blockOffset + 8, blockOffset + 8 + packedSize);
+      const raw = compressionValue === 2 ? HDRReader._unzipEXRBytes(packed, rowBytes) : packed;
+      if (raw.length !== rowBytes || y < 0 || y >= height) throw new Error('Invalid OpenEXR scanline');
+      for (let channel = 0; channel < channels.length; channel++) {
+        const component = channels[channel] === 'R' ? 0 : channels[channel] === 'G' ? 1 :
+          channels[channel] === 'B' ? 2 : -1;
+        if (component < 0) continue;
+        for (let x = 0; x < width; x++) {
+          image.data[(y * width + x) * 3 + component] =
+            raw.readFloatLE((channel * width + x) * 4);
+        }
+      }
+    }
+    return image;
   }
 }
 
@@ -537,6 +957,7 @@ class EnvMapPresets {
       skyIntensity = 0.5,     // Base sky intensity
       horizonColor = new Vec3(0.8, 0.9, 1.0),  // Horizon tint
       zenithColor = new Vec3(0.3, 0.5, 0.9),   // Zenith color
+      sunColor = new Vec3(1.0, 0.95, 0.8),     // Sun disk tint
     } = options;
 
     console.log(`Generating Sun & Sky (${image.width}x${image.height})...`);
@@ -575,7 +996,7 @@ class EnvMapPresets {
         if (angleToSun < sunRadius) {
           // Inside sun disk
           const falloff = 1.0 - (angleToSun / sunRadius);
-          const sunCol = Vec3.mul(new Vec3(1, 0.95, 0.8), sunIntensity);
+          const sunCol = Vec3.mul(sunColor, sunIntensity);
           r += sunCol.x * falloff;
           g += sunCol.y * falloff;
           b += sunCol.z * falloff;
@@ -589,6 +1010,42 @@ class EnvMapPresets {
         }
 
         image.setPixel(x, y, r, g, b);
+      }
+    }
+  }
+
+  /**
+   * CIE-style overcast sky. Luminance rises smoothly toward the zenith while
+   * the lower hemisphere receives a dim, neutral ground bounce.
+   */
+  static overcast(image, options = {}) {
+    const {
+      skyIntensity = 1.0,
+      groundIntensity = 0.08,
+      horizonColor = new Vec3(0.72, 0.78, 0.84),
+      zenithColor = new Vec3(0.45, 0.56, 0.68),
+      groundColor = new Vec3(0.35, 0.36, 0.37)
+    } = options;
+
+    console.log(`Generating Overcast Sky (${image.width}x${image.height})...`);
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const dir = HDRImage.latLongToDir(
+          (x + 0.5) / image.width, (y + 0.5) / image.height);
+        if (dir.y >= 0.0) {
+          const elevationFactor = (1.0 + 2.0 * dir.y) / 3.0;
+          const tint = Vec3.lerp(horizonColor, zenithColor, dir.y);
+          image.setPixel(x, y,
+            tint.x * skyIntensity * elevationFactor,
+            tint.y * skyIntensity * elevationFactor,
+            tint.z * skyIntensity * elevationFactor);
+        } else {
+          const fade = 0.65 + 0.35 * (1.0 + dir.y);
+          image.setPixel(x, y,
+            groundColor.x * groundIntensity * fade,
+            groundColor.y * groundIntensity * fade,
+            groundColor.z * groundIntensity * fade);
+        }
       }
     }
   }
@@ -767,15 +1224,206 @@ class CubemapGenerator {
 }
 
 // ============================================================================
+// IBL Prefiltering
+// ============================================================================
+
+class EnvironmentPrefilter {
+  static _radicalInverse(bits) {
+    bits = ((bits << 16) | (bits >>> 16)) >>> 0;
+    bits = (((bits & 0x55555555) << 1) | ((bits & 0xaaaaaaaa) >>> 1)) >>> 0;
+    bits = (((bits & 0x33333333) << 2) | ((bits & 0xcccccccc) >>> 2)) >>> 0;
+    bits = (((bits & 0x0f0f0f0f) << 4) | ((bits & 0xf0f0f0f0) >>> 4)) >>> 0;
+    bits = (((bits & 0x00ff00ff) << 8) | ((bits & 0xff00ff00) >>> 8)) >>> 0;
+    return bits * 2.3283064365386963e-10;
+  }
+
+  static _basis(normal) {
+    const up = Math.abs(normal.y) < 0.999 ? new Vec3(0, 1, 0) : new Vec3(1, 0, 0);
+    const tangent = Vec3.cross(up, normal).normalize();
+    return { tangent, bitangent: Vec3.cross(normal, tangent) };
+  }
+
+  static _toWorld(local, normal, basis) {
+    return Vec3.add(Vec3.add(
+      Vec3.mul(basis.tangent, local.x),
+      Vec3.mul(basis.bitangent, local.z)),
+      Vec3.mul(normal, local.y)).normalize();
+  }
+
+  static _sampleDirection(image, direction) {
+    const phi = Math.atan2(direction.z, direction.x);
+    const u = phi / (2.0 * Math.PI) - Math.floor(phi / (2.0 * Math.PI));
+    const v = Math.acos(Math.max(-1, Math.min(1, direction.y))) / Math.PI;
+    return CubemapGenerator.sampleBilinear(image, u, v);
+  }
+
+  static diffuse(image, width = 32, height = 16, sampleCount = 64) {
+    const output = new HDRImage(width, height);
+    const count = Math.max(1, Math.floor(sampleCount));
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const normal = HDRImage.latLongToDir((x + 0.5) / width, (y + 0.5) / height);
+        const basis = EnvironmentPrefilter._basis(normal);
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < count; i++) {
+          const u = (i + 0.5) / count;
+          const v = EnvironmentPrefilter._radicalInverse(i);
+          const radius = Math.sqrt(u);
+          const angle = 2.0 * Math.PI * v;
+          const local = new Vec3(
+            radius * Math.cos(angle), Math.sqrt(1.0 - u), radius * Math.sin(angle));
+          const color = EnvironmentPrefilter._sampleDirection(
+            image, EnvironmentPrefilter._toWorld(local, normal, basis));
+          r += color.r;
+          g += color.g;
+          b += color.b;
+        }
+        const scale = Math.PI / count;
+        output.setPixel(x, y, r * scale, g * scale, b * scale);
+      }
+    }
+    return output;
+  }
+
+  static specularLevel(image, roughness, width, height, sampleCount = 64) {
+    const output = new HDRImage(width, height);
+    const count = Math.max(1, Math.floor(sampleCount));
+    const alpha = Math.max(0.001, roughness * roughness);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const normal = HDRImage.latLongToDir((x + 0.5) / width, (y + 0.5) / height);
+        const basis = EnvironmentPrefilter._basis(normal);
+        let r = 0, g = 0, b = 0, weight = 0;
+        for (let i = 0; i < count; i++) {
+          const u = (i + 0.5) / count;
+          const v = EnvironmentPrefilter._radicalInverse(i);
+          const phi = 2.0 * Math.PI * v;
+          const cosTheta = Math.sqrt((1.0 - u) /
+            (1.0 + (alpha * alpha - 1.0) * u));
+          const sinTheta = Math.sqrt(Math.max(0.0, 1.0 - cosTheta * cosTheta));
+          const halfVector = EnvironmentPrefilter._toWorld(
+            new Vec3(sinTheta * Math.cos(phi), cosTheta, sinTheta * Math.sin(phi)),
+            normal, basis);
+          const viewDotHalf = Math.max(0.0, Vec3.dot(normal, halfVector));
+          const light = Vec3.sub(Vec3.mul(halfVector, 2.0 * viewDotHalf), normal).normalize();
+          const nDotL = Math.max(0.0, Vec3.dot(normal, light));
+          if (nDotL <= 0.0) continue;
+          const color = EnvironmentPrefilter._sampleDirection(image, light);
+          r += color.r * nDotL;
+          g += color.g * nDotL;
+          b += color.b * nDotL;
+          weight += nDotL;
+        }
+        const inverseWeight = weight > 0.0 ? 1.0 / weight : 0.0;
+        output.setPixel(x, y, r * inverseWeight, g * inverseWeight, b * inverseWeight);
+      }
+    }
+    return output;
+  }
+
+  static generate(image, options = {}) {
+    const {
+      directory,
+      width = 64,
+      height = Math.max(1, Math.floor(width / 2)),
+      levels = 6,
+      samples = 64,
+      exrCompression = 'zips'
+    } = options;
+    if (!directory) throw new Error('Prefilter output directory is required');
+    fs.mkdirSync(directory, { recursive: true });
+
+    const diffuse = EnvironmentPrefilter.diffuse(
+      image, Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2)), samples);
+    HDRWriter.writeEXR(diffuse, path.join(directory, 'diffuse.exr'), exrCompression);
+
+    const specular = [];
+    const levelCount = Math.max(1, Math.floor(levels));
+    for (let level = 0; level < levelCount; level++) {
+      const roughness = levelCount === 1 ? 0.0 : level / (levelCount - 1);
+      const levelWidth = Math.max(1, Math.floor(width / Math.pow(2, level)));
+      const levelHeight = Math.max(1, Math.floor(height / Math.pow(2, level)));
+      const filtered = EnvironmentPrefilter.specularLevel(
+        image, roughness, levelWidth, levelHeight, samples);
+      const filename = `specular-${String(level).padStart(2, '0')}.exr`;
+      HDRWriter.writeEXR(filtered, path.join(directory, filename), exrCompression);
+      specular.push({ image: filtered, roughness, filename });
+    }
+    const manifest = {
+      version: 1,
+      projection: 'latlong',
+      diffuse: 'diffuse.exr',
+      specular: specular.map(level => ({
+        file: level.filename,
+        roughness: level.roughness,
+        width: level.image.width,
+        height: level.image.height
+      }))
+    };
+    fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+    return { diffuse, specular, manifest };
+  }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
 export class HDRGenerator {
+  static generateTimeSequence(options) {
+    const {
+      start = 6,
+      end = 18,
+      step = 1,
+      output = 'output/sky-####.hdr',
+      presetOptions = {}
+    } = options;
+    if (![start, end, step].every(Number.isFinite) || step === 0 ||
+        (end - start) * step < 0) {
+      throw new Error('Invalid time sequence range');
+    }
+    const frames = [];
+    const forward = step > 0;
+    let frame = 0;
+    for (let hour = start;
+         forward ? hour <= end + 1e-9 : hour >= end - 1e-9;
+         hour += step, frame++) {
+      const daylightPhase = Math.PI * (hour - 6.0) / 12.0;
+      const sunElevation = Math.max(-5.0, 90.0 * Math.sin(daylightPhase));
+      const sunAzimuth = ((hour / 24.0) * 360.0 + 180.0) % 360.0;
+      const match = /(#+)/.exec(output);
+      let filename;
+      if (match) {
+        filename = output.slice(0, match.index) +
+          String(frame).padStart(match[1].length, '0') +
+          output.slice(match.index + match[1].length);
+      } else {
+        const extension = path.extname(output);
+        filename = output.slice(0, output.length - extension.length) +
+          `-${String(frame).padStart(4, '0')}` + extension;
+      }
+      fs.mkdirSync(path.dirname(filename), { recursive: true });
+      HDRGenerator.generate({
+        ...options,
+        preset: 'sun-sky',
+        input: null,
+        output: filename,
+        presetOptions: { sunElevation, sunAzimuth, ...presetOptions },
+        timeSequence: undefined
+      });
+      frames.push({ frame, hour, sunElevation, sunAzimuth, file: filename });
+    }
+    const manifestPath = output.replace(/(#+)/, 'sequence').replace(/\.[^.]+$/, '.json');
+    fs.writeFileSync(manifestPath, JSON.stringify({ version: 1, frames }, null, 2) + '\n');
+    return { frames, manifest: manifestPath };
+  }
+
   /**
    * Generate environment map with specified preset
    *
    * @param {Object} options - Generation options
-   * @param {string} options.preset - Preset name: 'white-furnace', 'sun-sky', 'studio'
+   * @param {string} options.preset - Preset name: 'white-furnace', 'sun-sky',
+   *   'sunset', 'overcast', or 'studio'
    * @param {number} options.width - Width in pixels (default: 2048 for latlong, 512 for cubemap)
    * @param {number} options.height - Height in pixels (default: 1024 for latlong)
    * @param {string} options.projection - 'latlong' or 'cubemap'
@@ -785,6 +1433,11 @@ export class HDRGenerator {
    * @param {number} options.rotation - Rotation angle in degrees (default: 0)
    * @param {number} options.intensityScale - Intensity multiplier (default: 1.0)
    * @param {Object} options.tonemapOptions - Tone mapping options for LDR output
+   * @param {string} options.importanceMap - Optional JSON importance-map path
+   * @param {string} options.exrCompression - 'zips' or 'none'
+   * @param {Object} options.prefilter - Optional IBL prefilter options
+   * @param {string} options.input - Optional existing HDR/EXR panorama
+   * @param {string} options.previewHtml - Optional self-contained preview path
    */
   static generate(options) {
     const {
@@ -797,27 +1450,48 @@ export class HDRGenerator {
       presetOptions = {},
       rotation = 0,
       intensityScale = 1.0,
-      tonemapOptions = {}
+      tonemapOptions = {},
+      importanceMap = null,
+      exrCompression = 'zips',
+      prefilter = null,
+      input = null,
+      previewHtml = null
     } = options;
 
     console.log('\n=== HDR Environment Map Generator ===');
-    console.log(`Preset: ${preset}`);
-    console.log(`Resolution: ${width}x${height}`);
+    console.log(input ? `Input: ${input}` : `Preset: ${preset}`);
     console.log(`Projection: ${projection}`);
     console.log(`Format: ${format.toUpperCase()}`);
     if (rotation !== 0) console.log(`Rotation: ${rotation}°`);
     if (intensityScale !== 1.0) console.log(`Intensity Scale: ${intensityScale}x`);
 
-    // Generate lat-long image first
-    let latLongImage = new HDRImage(width, height);
+    let latLongImage = input ? HDRReader.read(input) : new HDRImage(width, height);
+    console.log(`Resolution: ${latLongImage.width}x${latLongImage.height}`);
 
-    // Apply preset
-    switch (preset) {
+    // Apply a preset when no input panorama was supplied.
+    switch (input ? 'input' : preset) {
+      case 'input':
+        break;
       case 'white-furnace':
         EnvMapPresets.whiteFurnace(latLongImage, presetOptions.intensity || 1.0);
         break;
       case 'sun-sky':
         EnvMapPresets.sunSky(latLongImage, presetOptions);
+        break;
+      case 'sunset':
+        EnvMapPresets.sunSky(latLongImage, {
+          sunElevation: 5,
+          sunAzimuth: 270,
+          sunIntensity: 150.0,
+          skyIntensity: 0.65,
+          horizonColor: new Vec3(1.0, 0.38, 0.12),
+          zenithColor: new Vec3(0.12, 0.16, 0.38),
+          sunColor: new Vec3(1.0, 0.42, 0.12),
+          ...presetOptions
+        });
+        break;
+      case 'overcast':
+        EnvMapPresets.overcast(latLongImage, presetOptions);
         break;
       case 'studio':
         EnvMapPresets.studioLighting(latLongImage, presetOptions);
@@ -835,6 +1509,13 @@ export class HDRGenerator {
       ImageTransform.scaleIntensity(latLongImage, intensityScale);
     }
 
+    const importanceDistribution = importanceMap ? ImportanceMap.build(latLongImage) : null;
+    if (importanceMap) ImportanceMap.writeJSON(importanceDistribution, importanceMap);
+    const prefiltered = prefilter ? EnvironmentPrefilter.generate(latLongImage, {
+      ...prefilter, exrCompression
+    }) : null;
+    if (previewHtml) PreviewWriter.writeHTML(latLongImage, previewHtml, tonemapOptions);
+
     // Determine if output is LDR or HDR
     const isLDR = ['png', 'bmp', 'jpg', 'jpeg'].includes(format.toLowerCase());
 
@@ -843,12 +1524,13 @@ export class HDRGenerator {
       // Direct lat-long output
       if (output) {
         const filepath = output.endsWith(`.${format}`) ? output : `${output}.${format}`;
-        HDRGenerator._writeImage(latLongImage, format, filepath, isLDR, tonemapOptions);
+        HDRGenerator._writeImage(latLongImage, format, filepath, isLDR,
+          tonemapOptions, exrCompression);
       }
-      return { latLongImage };
+      return { latLongImage, importanceMap: importanceDistribution, prefiltered };
     } else if (projection === 'cubemap') {
       // Convert to cubemap
-      const faceSize = Math.min(width, height); // Use smaller dimension for cube face
+      const faceSize = Math.min(latLongImage.width, latLongImage.height);
       const faces = CubemapGenerator.fromLatLong(latLongImage, faceSize);
 
       if (output) {
@@ -857,17 +1539,19 @@ export class HDRGenerator {
 
         for (const face of faces) {
           const facePath = path.join(dir, `${base}_${face.name}.${format}`);
-          HDRGenerator._writeImage(face.image, format, facePath, isLDR, tonemapOptions);
+          HDRGenerator._writeImage(face.image, format, facePath, isLDR,
+            tonemapOptions, exrCompression);
         }
       }
-      return { faces };
+      return { faces, importanceMap: importanceDistribution, prefiltered };
     }
   }
 
   /**
    * Internal helper to write image in appropriate format
    */
-  static _writeImage(image, format, filepath, isLDR, tonemapOptions) {
+  static _writeImage(image, format, filepath, isLDR, tonemapOptions,
+                     exrCompression = 'zips') {
     if (isLDR) {
       // Convert HDR to LDR via tone mapping
       const ldrData = ToneMapper.tonemapToLDR(image, tonemapOptions);
@@ -892,7 +1576,7 @@ export class HDRGenerator {
       if (format === 'hdr') {
         HDRWriter.writeRGBE(image, filepath);
       } else if (format === 'exr') {
-        HDRWriter.writeEXR(image, filepath);
+        HDRWriter.writeEXR(image, filepath, exrCompression);
       } else {
         throw new Error(`Unknown HDR format: ${format}`);
       }
@@ -905,8 +1589,12 @@ export {
   HDRImage,
   CubemapGenerator,
   HDRWriter,
+  HDRReader,
   LDRWriter,
   ToneMapper,
   ImageTransform,
+  ImportanceMap,
+  EnvironmentPrefilter,
+  PreviewWriter,
   Vec3
 };

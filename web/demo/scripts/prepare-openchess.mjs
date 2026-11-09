@@ -15,6 +15,7 @@ const repositoryRoot = path.resolve(demoDir, '..', '..');
 const localAssetsLink = path.join(repositoryRoot, 'usd-assets');
 const outputDir = path.join(demoDir, 'public', 'assets', 'openchess');
 const markerPath = path.join(outputDir, '.lightusd-openchess.json');
+const previousMarkerPath = path.join(outputDir, '.tinyusdz-openchess.json');
 const indexPath = path.join(outputDir, 'asset-index.json');
 const checkOnly = process.argv.includes('--check');
 const force = process.argv.includes('--force');
@@ -24,9 +25,10 @@ function validTree(root) {
 }
 
 function checkPrepared() {
-  if (!validTree(outputDir) || !fs.existsSync(markerPath) || !fs.existsSync(indexPath)) return false;
+  if (!validTree(outputDir) || !fs.existsSync(indexPath)) return false;
   try {
-    return JSON.parse(fs.readFileSync(markerPath, 'utf8')).revision === PIN;
+    const marker = fs.existsSync(markerPath) ? markerPath : previousMarkerPath;
+    return JSON.parse(fs.readFileSync(marker, 'utf8')).revision === PIN;
   } catch {
     return false;
   }

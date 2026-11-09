@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include "texture-fit.hh"
 
 namespace lightusd {
 namespace tydra {
@@ -154,20 +155,6 @@ inline TextureBudget DeriveTextureBudget(const ResourceBudget& budget) {
 // The fractions are of total VRAM *capacity*, not currently-free VRAM, so the
 // same scene decides the same way on the same card regardless of what else is
 // running. --vram-budget rehearses a different capacity.
-enum class TextureFitPolicy : uint8_t {
-  Modest,      // leave textures alone only when clearly small (1/3)
-  Default,     // 2/3
-  Aggressive,  // 90%
-  Never,       // never shrink/compress: assume it fits
-  Always,      // always shrink/compress
-  Absolute,    // explicit byte threshold
-};
-
-struct TextureFit {
-  TextureFitPolicy policy = TextureFitPolicy::Default;
-  uint64_t absolute_bytes = 0;  // Absolute only
-};
-
 // "modest"|"default"|"aggressive"|"never"|"always"|"<N>[KMG]".
 // Suffixes match lusdview's ParseByteCount. Returns false on anything else.
 inline bool ParseTextureFit(const std::string& text, TextureFit* out) {
@@ -184,11 +171,18 @@ inline bool ParseTextureFit(const std::string& text, TextureFit* out) {
   else if (suffix == 'm' || suffix == 'M') { mul = 1024ull * 1024ull; v.pop_back(); }
   else if (suffix == 'g' || suffix == 'G') { mul = 1024ull * 1024ull * 1024ull; v.pop_back(); }
   if (v.empty()) return false;
+  uint64_t n = 0;
   for (char c : v) {
     if (c < '0' || c > '9') return false;
+    const uint64_t digit = static_cast<uint64_t>(c - '0');
+    if (n > ((std::numeric_limits<uint64_t>::max)() - digit) / 10) {
+      return false;
+    }
+    n = n * 10 + digit;
   }
-  const uint64_t n = std::strtoull(v.c_str(), nullptr, 10);
-  if (n == 0) return false;
+  if (n == 0 || n > (std::numeric_limits<uint64_t>::max)() / mul) {
+    return false;
+  }
   *out = {TextureFitPolicy::Absolute, n * mul};
   return true;
 }

@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,8 @@
 
 namespace lightusd {
 namespace next {
+
+class ValidationRegistry;
 
 enum class USDValidationSeverity {
   Error,
@@ -71,6 +74,18 @@ struct ValidationOptions {
   // ValidateStageMetadataPresence on the authored root layer instead.
   bool stage_presence_checks{true};
 
+  // Borrowed immutable definitions/callbacks for this validation run.
+  // Null selects the built-in registry. Existing callers need no changes.
+  const ValidationRegistry* registry{nullptr};
+  bool normative_only{false};
+  bool require_complete{false};
+  bool run_callbacks{true};
+  std::vector<std::string> validator_keywords{};
+  // Retained diagnostic limits; legacy native callers keep their previous
+  // unlimited behavior. Omissions mark the result incomplete, never valid.
+  size_t max_issues{(std::numeric_limits<size_t>::max)()};
+  size_t max_report_bytes{(std::numeric_limits<size_t>::max)()};
+
   // Human-readable list of enabled groups, e.g. "core, geom, shade".
   std::string group_summary() const;
 };
@@ -80,6 +95,10 @@ struct USDValidationIssue {
   std::string rule_id;
   std::string location;
   std::string message;
+  std::string source_asset{};
+  std::string variants{};
+  bool has_time{false};
+  double time{0.0};
 };
 
 struct USDValidationResult {
@@ -88,7 +107,11 @@ struct USDValidationResult {
   // The rule groups that were actually run to produce this result, so a report
   // can state coverage (a core-only "OK" did not check geom/shade).
   ValidationOptions checked_groups;
+  bool complete{true};
+  size_t omitted_issues{0};
+  size_t report_bytes{0};  // Conservative retained-issue accounting.
 
+  void AddIssue(USDValidationIssue issue);
   size_t error_count() const;
   size_t warning_count() const;
   bool ok() const;
@@ -129,6 +152,14 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
 
 void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src);
+
+// Parser-level findings the Layer data model cannot retain: a duplicate
+// dictionary key collapses to its last value at parse time, so USDA and USDC
+// readers report it as a warning line tagged `[core.dict.duplicateKey]`.
+// Scans `parser_warnings` (newline-separated) and adds each tagged line as an
+// error issue. Other warning lines are ignored.
+void AddParserDiagnosticsToResult(const std::string &parser_warnings,
+                                  USDValidationResult *result);
 
 // One row of the rule registry: a stable rule identifier, the group that
 // emits it, and a one-line description. Powers `lusdchecker --dump-rules`

@@ -19,7 +19,7 @@ recursive-include src/external/fast_float/include *.h
 include src/external/dragonbox/dragonbox.h
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-tokenizer.hh
 include src/mtlx-xml-parser.cc src/mtlx-xml-parser.hh
-include src/mtlx-dom.cc src/mtlx-dom.hh
+include src/core/mtlx-dom.cc src/core/mtlx-dom.hh
 
 # Python package + tests.
 recursive-include python *.py *.pyi py.typed README.md
@@ -65,9 +65,10 @@ exclude src/*.cc src/*.cpp
 # Transitive standalone-next inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
 recursive-include src *.h *.hh *.hpp *.inc *.txt
-include src/color-transform.cc
-include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/mtlx-dom.cc
+include src/core/color-transform.cc src/core/logger.cc src/core/minijson.cc
+include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/core/mtlx-dom.cc
 include src/ptx-loader.cc
+recursive-include src/external/textools/ptex/src *.c
 include src/core/path-expression.cc src/core/path-expression-eval.cc
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
@@ -104,3 +105,12 @@ exclude resume-dev.md
 exclude vk_layer_settings.txt
 exclude xmake.lua
 exclude *.bat
+
+# Native scene imports used by the Python wheel (including all parser includes).
+recursive-include src/tydra/asset-import *.cc *.hh
+recursive-include src/external/tinyobjloader-c *.c *.h *.inc *.txt LICENSE
+include src/external/pugixml.cpp
+include src/unicode-xid-c.c
+include src/external/zmij/zmij.cc
+recursive-include cmake *.cmake *.in
+recursive-include src/next *.cmake

@@ -56,11 +56,11 @@ def test_attribute_values_zero_copy(simple_stage):
     a = np.asarray(pts)
     assert a.shape == (4, 3) and a.dtype == np.float32
     # zero-copy: same base pointer
-    assert pts.__array_interface__["data"][0] == a.__array_interface__["data"][0]
+    assert np.asarray(pts).__array_interface__["data"][0] == np.asarray(a).__array_interface__["data"][0]
     assert pts[1] == (1.0, 0.0, 0.0)
     assert pts.tolist()[2] == (1.0, 1.0, 0.0)
-    mv = pts.memoryview()
-    assert len(mv) == pts.nbytes
+    mv = memoryview(pts)
+    assert mv.nbytes == pts.nbytes
 
     assert q["radius"] == 2.5
     assert q["purpose"] == "render"
@@ -155,7 +155,10 @@ def Xform "root" (
 def test_custom_data():
     st = lightusd.loads('''#usda 1.0
 def Xform "a" (
-    customData = { string owner = "me"  int version = 3 }
+    customData = {
+        string owner = "me"
+        int version = 3
+    }
 )
 {
 }

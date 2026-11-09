@@ -312,7 +312,7 @@ async function selectAsset(asset) {
       filename,
       baseUrl: base,
       label,
-      backend: 'legacy',
+      backend: 'next',
       onStatus: (msg) => { status.textContent = msg; },
     });
     const elapsed = performance.now() - loadStart;
@@ -377,7 +377,7 @@ async function loadLocalFile(file) {
       filename: file.name,
       baseUrl: '',
       label: file.name,
-      backend: 'legacy',
+      backend: 'next',
       onStatus: (msg) => { status.textContent = msg; },
     });
     const elapsed = performance.now() - loadStart;

@@ -5,6 +5,8 @@
 
 # App-specific
 .opencode/
+# External regression corpus (directory or local symlink).
+/usd-assets
 
 # UE MetaHuman USD bridge: generated project/build/export data.  The small
 # project descriptor, plugin source and orchestration scripts remain tracked.
@@ -42,6 +44,12 @@ ref/dist*/
 web/demo/dist/
 web/demo/assets-src/
 web/demo/public/assets/openchess/
+# The whole demo asset folder is ignored: it is a staging area for large
+# third-party sample downloads (several tens of MB each), not source.
+# The ~130 fixtures already tracked under it stay tracked -- .gitignore only
+# affects untracked paths. Anything new added here must be force-added:
+#   git add -f web/demo/public/assets/<file>
+web/demo/public/assets/
 web/site/dist/
 web/build_ninja/
 web/cmake-build/
@@ -408,8 +416,13 @@ CMakeUserPresets.json
 # LightUSD/Crate-Writer specific
 *.usdc
 *.usda
-!web/demo/public/assets/metahuman-fixture/
-!web/demo/public/assets/metahuman-fixture/*.usda
+# Note: the former
+#   !web/demo/public/assets/metahuman-fixture/
+#   !web/demo/public/assets/metahuman-fixture/*.usda
+# exemptions were removed as dead rules. web/demo/public/assets/ is now
+# ignored wholesale, and Git cannot re-include a path whose parent directory
+# is excluded. The already-tracked fixtures there are unaffected; new ones
+# need `git add -f`. See the assets/ rule above.
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
@@ -419,6 +432,8 @@ CMakeUserPresets.json
 !tests/usda/validation/valid/*.usda
 !models/concave_ngon.usda
 !examples/lusdview/tests/deform-skin-animation.usda
+!examples/lmetalview/tests/*.usda
+!examples/ld3d12view/tests/*.usda
 # Small authored MaterialX closure/volume fixtures used by the Vulkan RT smoke.
 !examples/lusdview/tests/authored-nested-closures.usda
 !examples/lusdview/tests/authored-volume-material.usda
@@ -437,6 +452,7 @@ CMakeUserPresets.json
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+!tests/feat/value-clip/carrier/*.usda
 !models/lusdview-curves-ribbons.usda
 !models/lusdview-nurbs-patch.usda
 !models/lusdview-transparency.usda
@@ -459,6 +475,7 @@ cmake_install.cmake
 
 # AOUSD spec PDFs (keep local only)
 aousd/*.pdf
+aousd/**/*.pdf
 
 # OpenUSD source tree (should be external)
 aousd/OpenUSD/
@@ -544,3 +561,12 @@ python/lightusd/_core.*.so
 # each machine keeps its own copy and it conflicted in every cross-merge.
 task.md
 @resume.md
+
+# Small authored regression fixtures for ancestor variant strength.
+!tests/usda/pcp-ancestor-variant/*.usda
+
+# MuJoCo writes this warning log next to the tests that import MJCF.
+MUJOCO_LOG.TXT
+
+# Machine-local validation reports and captures.
+/doc/validation/

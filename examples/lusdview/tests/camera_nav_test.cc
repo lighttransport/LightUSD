@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "camera_nav.hh"
+#include "light3d/camera-nav.hh"
 #include "rt_camera.hh"
 
 #include <cmath>
@@ -45,8 +45,19 @@ int main() {
     std::fprintf(stderr, "auto-camera physical aperture scale is incorrect\n");
     return 1;
   }
+  const lusdview::RtCameraShutter shutter{-0.25, 0.5};
+  if (!shutter.enabled() || std::fabs(shutter.width() - 0.75) > 1.0e-12 ||
+      std::fabs(lusdview::RtShutterSampleTime(10.0, shutter, 0, 3) -
+                9.875) > 1.0e-12 ||
+      std::fabs(lusdview::RtShutterSampleTime(10.0, shutter, 2, 3) -
+                10.375) > 1.0e-12 ||
+      lusdview::RtShutterSampleTime(
+          10.0, lusdview::RtCameraShutter{0.0, 0.0}, 0, 8) != 10.0) {
+    std::fprintf(stderr, "camera shutter stratification is incorrect\n");
+    return 1;
+  }
 
-  lusdview::OrbitCamera camera;
+  light3d::OrbitCamera camera;
   const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};
   const float boundsMax[3] = {1.0f, 1.0f, 1.0f};
   camera.setSceneBounds(boundsMin, boundsMax);
@@ -54,7 +65,7 @@ int main() {
   camera.setAutoClip(false);
   camera.setClipPlanes(1.0f, 11.0f);
   camera.setAspect(2.0f);
-  camera.setProjection(lusdview::CameraProjection::Orthographic);
+  camera.setProjection(light3d::CameraProjection::Orthographic);
   camera.setOrthographicHeight(4.0f);
   camera.setLensShift(0.25f, -0.5f);
   camera.setExposure(1.25f);
@@ -71,7 +82,7 @@ int main() {
     std::fprintf(stderr, "authored orthographic projection is incorrect\n");
     return 1;
   }
-  camera.setProjection(lusdview::CameraProjection::Perspective);
+  camera.setProjection(light3d::CameraProjection::Perspective);
   const light3d::Mat4 shiftedPerspective = camera.proj(false);
   if (!Near(shiftedPerspective.m[8], 0.25f) ||
       !Near(shiftedPerspective.m[9], -0.5f)) {
@@ -82,11 +93,11 @@ int main() {
   camera.setAspect(1.0f);
   camera.setAspectOverride(2.0f);
   camera.setAspectOverrideEnabled(true);
-  camera.setConform(lusdview::CameraConform::Fit);
+  camera.setConform(light3d::CameraConform::Fit);
   const light3d::Mat4 fitProjection = camera.proj(false);
-  camera.setConform(lusdview::CameraConform::Vertical);
+  camera.setConform(light3d::CameraConform::Vertical);
   const light3d::Mat4 verticalProjection = camera.proj(false);
-  camera.setConform(lusdview::CameraConform::None);
+  camera.setConform(light3d::CameraConform::None);
   const light3d::Mat4 noneProjection = camera.proj(false);
   if (!Near(fitProjection.m[5] * 2.0f, verticalProjection.m[5]) ||
       !Near(noneProjection.m[0] * 2.0f, noneProjection.m[5])) {
@@ -142,6 +153,21 @@ int main() {
     std::fprintf(stderr, "dolly did not cross the pivot continuously\n");
     return 1;
   }
+
+  // A rolled camera looking exactly along world up must survive import and input.
+  const float polePose[16] = {0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 3, 4, 5, 1};
+  if (!camera.setPose(polePose, 2.0f)) return 1;
+  auto roundtrip = camera.view().inverse();
+  for (int i = 0; i < 16; ++i) if (!Near(roundtrip.m[i], polePose[i])) return 1;
+  camera.pan(3, 4);
+  camera.orbit(10, 20);
+  auto moved = camera.view();
+  for (float v : moved.m) if (!std::isfinite(v)) return 1;
+  float badPose[16];
+  for (int i = 0; i < 16; ++i) badPose[i] = polePose[i];
+  badPose[0] = 4;
+  const auto previousEye = camera.eye();
+  if (camera.setPose(badPose, 2.0f) || light3d::length(camera.eye() - previousEye) > 1e-6f) return 1;
 
   return 0;
 }

@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomPointInstancer Schema Implementation
 
 #include "geom-point-instancer.hh"
+#include "../layer/property-index.hh"
 
 #include "../types/value-view.hh"
 
@@ -281,6 +282,14 @@ std::vector<int64_t> UsdGeomPointInstancer::GetInvisibleIds(double time) const {
 }
 
 std::vector<int64_t> UsdGeomPointInstancer::GetInactiveIds() const {
+  if (const PrimSpec* spec = prim_.GetPrimSpec()) {
+    for (const auto& field : spec->meta().unknownFields()) {
+      if (field.name != "inactiveIds" || !field.int64_list_op) continue;
+      if (auto ids = field.value.as_int64_array())
+        return std::vector<int64_t>(ids->begin(), ids->end());
+    }
+  }
+  // Retain support for older LightUSD scenes that authored it as an attribute.
   return ReadInt64ArrayById(prim_, kIdInactiveIds(), 0.0);
 }
 

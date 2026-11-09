@@ -13,6 +13,7 @@
 
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
+#include "next/eval/xform-eval.hh"
 
 namespace lightusd {
 namespace tydra {
@@ -107,9 +108,9 @@ std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name);
 /// above duplicate the whole array, which for something like
 /// `primvars:skel:jointIndices:indices` on a dense skin is tens of MB copied
 /// and thrown away.
-const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
                                             const std::string& name);
-const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
                                             const std::string& name);
 
 //
@@ -129,16 +130,9 @@ std::string GetBoundSkeleton(const UsdPrim& prim);
 // Transform operations
 //
 
-// Compute local transform matrix from xformOps
-bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time = 0.0);
-bool ComputeLocalTransform(const UsdPrim& prim, double* matrix16, double time = 0.0);
-
-// Compute world transform (including all parent transforms)
-bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matrix16, double time = 0.0);
-bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matrix16, double time = 0.0);
-
-// Check if prim has resetXformStack
-bool HasResetXformStack(const UsdPrim& prim);
+using ::lightusd::next::ComputeLocalTransform;
+using ::lightusd::next::ComputeWorldTransform;
+using ::lightusd::next::HasResetXformStack;
 
 //
 // Hierarchy access
@@ -171,14 +165,10 @@ struct GeomSubset {
   /// full duplicate of every subset's face-index list per mesh, on top of the
   /// working copy the consumer builds anyway. Null when unauthored; use
   /// indices() for an empty-safe read.
-  const std::vector<int32_t>* indices_view = nullptr;
+  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  static const std::vector<int32_t>& empty_indices() {
-    static const std::vector<int32_t> kEmpty;
-    return kEmpty;
-  }
-  const std::vector<int32_t>& indices() const {
-    return indices_view ? *indices_view : empty_indices();
+  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+    return indices_view;
   }
 
   std::string material_path;
@@ -210,14 +200,10 @@ struct Primvar {
   /// Copying every index array here duplicated arrays the caller often throws
   /// away immediately (the render converter skips `skel:`-prefixed primvars
   /// outright). Use indices() for an empty-safe read.
-  const std::vector<int32_t>* indices_view = nullptr;
+  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  static const std::vector<int32_t>& empty_indices() {
-    static const std::vector<int32_t> kEmpty;
-    return kEmpty;
-  }
-  const std::vector<int32_t>& indices() const {
-    return indices_view ? *indices_view : empty_indices();
+  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+    return indices_view;
   }
 };
 

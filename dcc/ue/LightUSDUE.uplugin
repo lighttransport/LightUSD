@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "LightUSD UE Bridge",
+  "Description": "Native UE and LightUSD USD import/export bridge.",
+  "Category": "Importers",
+  "CreatedBy": "Light Transport Entertainment Inc.",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    { "Name": "LightUSDUE", "Type": "Editor", "LoadingPhase": "Default" }
+  ],
+  "Plugins": [
+    { "Name": "USDCore", "Enabled": true },
+    { "Name": "USDImporter", "Enabled": true },
+    { "Name": "Interchange", "Enabled": true },
+    { "Name": "InterchangeOpenUSD", "Enabled": true },
+    { "Name": "ModelContextProtocol", "Enabled": true },
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "HairStrands", "Enabled": true },
+    { "Name": "ControlRig", "Enabled": true }
+  ]
+}
