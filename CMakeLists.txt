@@ -144,6 +144,13 @@ add_library(lightusd::next ALIAS lightusd_core)
 option(LIGHTUSD_BUILD_TOOLS "Build command-line tools (lusdchecker, ...)" OFF)
 if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusdchecker)
+  add_subdirectory(tools/lusddeps)
+endif()
+option(LIGHTUSD_BUILD_QUICKLOOK
+       "Build the minimal portable USD Quick Look viewer 'lusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
+       OFF)
+if(LIGHTUSD_BUILD_QUICKLOOK)
+  add_subdirectory(examples/lusdquicklook)
 endif()
 
 # ---- Legacy (optional; compiled, not tested) -------------------------------

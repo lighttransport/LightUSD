@@ -2094,9 +2094,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
 
     # Independent of LIGHTUSD_BUILD_GUI_VIEWER on purpose: lusdquicklook shares
     # no code with lusdview and needs no window-system or GPU dependency.
-    if (LIGHTUSD_BUILD_QUICKLOOK)
-      add_subdirectory(examples/lusdquicklook)
-    endif()
+    # examples/lusdquicklook is a core app, added by the root CMakeLists.txt.
 
     if (LIGHTUSD_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
@@ -2143,7 +2141,7 @@ if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusddumpcrate)
   add_subdirectory(tools/lusdzconvert)
   # tools/lusdchecker is a core tool, added by the root CMakeLists.txt.
-  add_subdirectory(tools/lusddeps)
+  # tools/lusddeps is a core tool, added by the root CMakeLists.txt.
   # lusddiff uses the Tydra diff-and-compare API.
   if(LIGHTUSD_WITH_TYDRA)
     add_subdirectory(tools/lusddiff)
