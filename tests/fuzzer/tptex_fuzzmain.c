@@ -2,7 +2,7 @@
 /* libFuzzer harness for the vendored tptex Ptex library: container parsing
  * (lazy and eager), face decode at stored and reduced resolutions, metadata,
  * seam-aware sampling and every PtexFilter equivalent. Built with
- * LIGHTUSD_NEXT_BUILD_FUZZERS=ON (clang). */
+ * LIGHTUSD_BUILD_FUZZERS=ON (clang). */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>

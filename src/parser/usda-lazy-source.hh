@@ -14,16 +14,16 @@
 #include <string>
 #include <utility>
 
-#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#define LIGHTUSD_NEXT_USDA_LAZY_MMAP 1
+#define LIGHTUSD_USDA_LAZY_MMAP 1
 #else
-#define LIGHTUSD_NEXT_USDA_LAZY_MMAP 0
+#define LIGHTUSD_USDA_LAZY_MMAP 0
 #endif
 
 namespace lightusd {
@@ -41,7 +41,7 @@ class UsdaLazyArraySource final : public LazyArraySource {
 
   static std::shared_ptr<UsdaLazyArraySource> MmapFile(
       const std::string& filename, std::string* error = nullptr) {
-#if LIGHTUSD_NEXT_USDA_LAZY_MMAP
+#if LIGHTUSD_USDA_LAZY_MMAP
     int fd = ::open(filename.c_str(), O_RDONLY);
     if (fd < 0) {
       if (error) *error = "Failed to open file for mmap";
@@ -83,7 +83,7 @@ class UsdaLazyArraySource final : public LazyArraySource {
   }
 
   ~UsdaLazyArraySource() override {
-#if LIGHTUSD_NEXT_USDA_LAZY_MMAP
+#if LIGHTUSD_USDA_LAZY_MMAP
     if (mapped_) {
       ::munmap(const_cast<uint8_t*>(mapped_), size_);
     }
@@ -124,7 +124,7 @@ class UsdaLazyArraySource final : public LazyArraySource {
   bool can_borrow() const override { return false; }
 
   void DiscardRange(uint64_t offset, uint64_t length) const override {
-#if LIGHTUSD_NEXT_USDA_LAZY_MMAP
+#if LIGHTUSD_USDA_LAZY_MMAP
     if (!mapped_ || length == 0 || offset >= size_) return;
     uint64_t end = offset + length;
     if (end < offset || end > size_) end = size_;

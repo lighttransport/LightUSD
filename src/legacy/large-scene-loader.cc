@@ -3,7 +3,7 @@
 //
 // large-scene-loader.cc - see large-scene-loader.hh.
 //
-// Two backends selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE.
+// Two backends selected at compile time by LIGHTUSD_LEGACY_USE_CORE_PCP.
 
 #include "core/native-io.hh"
 #include "large-scene-loader.hh"
@@ -23,7 +23,7 @@
 #include "layer.hh"
 #include "pcp/layer-registry.hh"
 #include "lightusd.hh"
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 #include "layer/asset-anchor.hh"
 #include "types/value-view.hh"
 #endif
@@ -58,7 +58,7 @@ uint64_t BudgetMiBToBytes(size_t mib) {
 // =========================================================================
 // Old backend (CompositionGraph, enabled by default)
 // =========================================================================
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 
 namespace {
 
@@ -334,7 +334,7 @@ size_t LargeSceneLoader::layer_parse_count() const {
 }
 
 // =========================================================================
-// New backend (::lightusd::pcp::Cache, enabled by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+// New backend (::lightusd::pcp::Cache, enabled by LIGHTUSD_LEGACY_USE_CORE_PCP)
 // =========================================================================
 #else
 
@@ -610,14 +610,14 @@ size_t LargeSceneLoader::layer_parse_count() const {
   return _cache ? _cache->layer_registry().parse_count() : 0;
 }
 
-#endif  // LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
+#endif  // LIGHTUSD_LEGACY_USE_CORE_PCP
 
 // =========================================================================
 // One-shot convenience (old path only; new path users call LargeSceneLoader
 // directly or use ::lightusd::pcp::ComposeStageFromFile).
 // =========================================================================
 
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,
@@ -634,7 +634,7 @@ bool LoadStageFromFile(const std::string &filename, Stage *stage,
   return true;
 }
 
-#endif  // !LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
+#endif  // !LIGHTUSD_LEGACY_USE_CORE_PCP
 
 }  // namespace legacy
 }  // namespace lightusd

@@ -105,9 +105,9 @@ bool SchemaRegistry::IsConcreteTypedSchemaName(const std::string& name) const {
 }
 
 SchemaRegistry::SchemaRegistry() {
-#define LIGHTUSD_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
+#define LIGHTUSD_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
 #include "schema/generated/openusd-supported-schema-names.inc"
-#undef LIGHTUSD_NEXT_SUPPORTED_SCHEMA
+#undef LIGHTUSD_SUPPORTED_SCHEMA
   parents_ = {
       {"Xform", "Xformable"}, {"Xformable", "Imageable"},
       {"Curves", "PointBased"}, {"BasisCurves", "Curves"},

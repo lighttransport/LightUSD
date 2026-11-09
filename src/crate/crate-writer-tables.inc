@@ -629,7 +629,7 @@
     (void)name_table;
     return false;
 #else
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     // Deferred fill interns each prim's names when it is encoded (its table
     // order differs by design), so there is nothing to pre-collect here.
     if (deferred_filler_) return false;
@@ -904,7 +904,7 @@
   // in BuildTables order. Returns the prim name's token.
   uint32_t InternPrimTables(const PrimSpec& prim, PropNameTable& name_table) {
     const uint32_t name_token = InternToken(prim.name());
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     // Deferred fill: only the skeleton exists yet; the rest is interned
     // when each prim is encoded (table order differs, content does not).
     if (deferred_filler_) return name_token;

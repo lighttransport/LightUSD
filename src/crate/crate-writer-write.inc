@@ -51,12 +51,12 @@
     // unordered_map rehashes are a top serial cost (alloc churn, ~18% on reference scene).
     // Each prim yields ~1 prim spec + 1 spec per property; sizes are heuristic
     // (over-reserve is cheaper than rehashing), so this never changes output.
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     deferred_filler_ = layer.prim_filler();
 #endif
     auto reserve = [&]() {
       size_t nprop = 0;
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
       // A deferred-fill layer has no properties yet (sizing hint only).
       if (!deferred_filler_)
 #endif

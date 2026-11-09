@@ -9,7 +9,7 @@
 // authored arcs like `references = @asset_1@</X>` compose without disk I/O.
 // This is the harness that exercises the Phase-1 cycle/recursion hardening.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON
 // Seed corpus: tests/fuzzer/next_compose_seeds/.
 
 #include <cstdint>

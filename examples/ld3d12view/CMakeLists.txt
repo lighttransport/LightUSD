@@ -52,7 +52,7 @@ if(MSVC)
   # Console subsystem on purpose: diagnostics go to stderr; main() is the entry.
 endif()
 
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
   # Hidden window on the WARP software adapter: runs on machines without a GPU.
   add_test(NAME ld3d12view-smoke-warp
       COMMAND ld3d12view --hidden --warp --size 320x200 --frames 5

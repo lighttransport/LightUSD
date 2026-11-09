@@ -13,7 +13,7 @@
 #include <vector>
 
 #if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(_WIN32) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
-#define LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX 1
+#define LIGHTUSD_SOURCE_SNAPSHOT_POSIX 1
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -28,7 +28,7 @@ namespace pcp {
 class LayerSourceSnapshot {
  public:
   ~LayerSourceSnapshot() {
-#if defined(LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX)
+#if defined(LIGHTUSD_SOURCE_SNAPSHOT_POSIX)
     if (fd_ >= 0) ::close(fd_);
 #endif
     if (!path_.empty()) std::remove(path_.c_str());
@@ -58,7 +58,7 @@ class LayerSourceSnapshot {
   }
 
   static bool supported() {
-#if defined(LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX)
+#if defined(LIGHTUSD_SOURCE_SNAPSHOT_POSIX)
     return true;
 #else
     return false;
@@ -68,7 +68,7 @@ class LayerSourceSnapshot {
   static std::shared_ptr<LayerSourceSnapshot> FromMemory(
       const uint8_t* bytes, size_t size, const std::string& directory,
       const std::shared_ptr<AssetPayloadBudget>& budget, std::string* error) {
-#if defined(LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX)
+#if defined(LIGHTUSD_SOURCE_SNAPSHOT_POSIX)
     auto result = Create(size, directory, budget, error);
     if (!result) return {};
     const int fd = result->fd_;
@@ -87,7 +87,7 @@ class LayerSourceSnapshot {
   static std::shared_ptr<LayerSourceSnapshot> FromFile(
       const ResolvedAsset& asset, size_t max_bytes, const std::string& directory,
       const std::shared_ptr<AssetPayloadBudget>& budget, std::string* error) {
-#if defined(LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX)
+#if defined(LIGHTUSD_SOURCE_SNAPSHOT_POSIX)
     const int input = ::open(asset.resolved_path.c_str(),
                              O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (input < 0) { Fail(error, "cannot open snapshot source"); return {}; }
@@ -145,7 +145,7 @@ class LayerSourceSnapshot {
   LayerLoadOptions options_;
   bool content_dispatch_ = true;
   std::shared_ptr<void> reservation_;
-#if defined(LIGHTUSD_NEXT_SOURCE_SNAPSHOT_POSIX)
+#if defined(LIGHTUSD_SOURCE_SNAPSHOT_POSIX)
   int fd_ = -1;
 
   static std::shared_ptr<LayerSourceSnapshot> Create(

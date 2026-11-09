@@ -11,7 +11,7 @@
 // that must return errors rather than crash.
 //
 // Build (clang): cmake -S src/next -B build-fuzz \
-//   -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+//   -DLIGHTUSD_BUILD_FUZZERS=ON
 // Seed from tests/usda/*.usda and tests/usdc/*.usdc.
 
 #include <cstddef>

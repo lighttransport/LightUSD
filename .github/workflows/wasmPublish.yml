@@ -47,7 +47,7 @@ jobs:
           ## with the C++ bindings I have in the repo?
           #./emsdk install 3.1.51
           #./emsdk activate 3.1.51
-      # The npm package ships the next product only: lightusd_next[_64] plus
+      # The npm package ships the next product only: lightusd_core[_64] plus
       # its feature modules (geometry, raytrace, validator, exr) and the MCP
       # server module. Keep this list in sync with web/npm/build-wasm.sh and
       # web/npm/scripts/stage-package.mjs.

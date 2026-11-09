@@ -11,7 +11,7 @@ set(LIGHTUSD_TEST_TARGET "test_lightusd")
 project(${LIGHTUSD_TARGET} C CXX)
 option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
 if(NOT LIGHTUSD_NATIVE_IO)
-  add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NEXT_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
+  add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
 endif()
 option(LIGHTUSD_NATIVE_HOST_SERVICES "Build the explicit native host service provider" ON)
 
@@ -54,7 +54,7 @@ endif()
 # [ccache] Configured before the next-product branch below (which returns
 # early) so both products use it.
 option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
-option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
+option(LIGHTUSD_LEGACY_USE_PCH "Legacy: use a precompiled header (does not help that codebase; opt-in)." OFF)
 if(LIGHTUSD_USE_CCACHE)
   if(MSVC)
     # No ccache support
@@ -68,7 +68,7 @@ if(LIGHTUSD_USE_CCACHE)
       # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
       # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
       set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
+      if((LIGHTUSD_USE_PCH OR LIGHTUSD_USE_PCH OR LIGHTUSD_LEGACY_USE_PCH OR NOT DEFINED LIGHTUSD_USE_PCH) AND CMAKE_HOST_UNIX)
         set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
       endif()
 
@@ -105,48 +105,45 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
     set(CMAKE_EXE_LINKER_FLAGS
         "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
   endif()
+  # Options renamed from LIGHTUSD_NEXT_* / TYDRA_NEXT_* in 1.1.
+  include(${PROJECT_SOURCE_DIR}/cmake/DeprecatedOption.cmake)
+  lightusd_apply_deprecated_core_options()
   option(LIGHTUSD_BUILD_TESTS "Build tests" OFF)
-  option(LIGHTUSD_BUILD_EXAMPLES "Build public next consumer examples" OFF)
-  option(LIGHTUSD_NEXT_BUILD_EXAMPLES "Build next-native consumer examples"
-         ${LIGHTUSD_BUILD_EXAMPLES})
-  option(LIGHTUSD_ENABLE_THREAD "Enable optional parallel paths" OFF)
-  if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TESTS)
-    set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
-  endif()
-  if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TOOLS)
-    # The next-backed `lusdcat` CLI is the default tool for the default
-    # product. WASM/WASI builds have no command line to drive, so they skip it.
+  option(LIGHTUSD_BUILD_EXAMPLES "Build examples" OFF)
+  if(NOT DEFINED LIGHTUSD_BUILD_LUSDCAT)
+    # `lusdcat` is the default CLI. WASM/WASI builds have no command line to
+    # drive, so they skip it.
     if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
-      set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)")
+      set(LIGHTUSD_BUILD_LUSDCAT OFF CACHE BOOL "Build the lusdcat CLI")
     else()
-      set(LIGHTUSD_NEXT_BUILD_TOOLS ON CACHE BOOL "Build next CLI tools (lusdcat)")
+      set(LIGHTUSD_BUILD_LUSDCAT ON CACHE BOOL "Build the lusdcat CLI")
     endif()
   endif()
-  if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
-    # The next core has its own parallel paths (source warm, arc-layer
-    # prefetch, opinion fill, crate-writer build). They are ON by default for
-    # native builds regardless of the legacy LIGHTUSD_ENABLE_THREAD switch,
-    # which stays opt-in for the legacy library.
+  if(NOT DEFINED LIGHTUSD_ENABLE_THREAD)
+    # Parallel paths (source warm, arc-layer prefetch, opinion fill,
+    # crate-writer build) are ON by default for native builds; WASM keeps
+    # std::thread off.
     if(EMSCRIPTEN)
-      set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Enable next parallel paths")
+      set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Enable optional parallel paths")
     else()
-      set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "Enable next parallel paths")
+      set(LIGHTUSD_ENABLE_THREAD ON CACHE BOOL "Enable optional parallel paths")
     endif()
   endif()
-  if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
-    set(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE ON CACHE BOOL
-        "Build the public next C API consumer example")
+  if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_BUILD_C_API_EXAMPLE)
+    set(LIGHTUSD_BUILD_C_API_EXAMPLE ON CACHE BOOL
+        "Build the public C API consumer example")
   endif()
-  if(LIGHTUSD_NEXT_BUILD_TESTS)
+  if(LIGHTUSD_BUILD_TESTS)
     enable_testing()
   endif()
   add_subdirectory(src)
   if(COMMAND add_sanitizers)
-    add_sanitizers(lightusd_next)
+    add_sanitizers(lightusd_core)
   endif()
-  # Explicit next names prevent consumers from silently binding legacy APIs.
-  add_library(lightusd::next ALIAS lightusd_next)
-  option(LIGHTUSD_BUILD_TOOLS "Build next-compatible command-line tools" OFF)
+  add_library(lightusd::core ALIAS lightusd_core)
+  # Pre-1.1 alias; remove after one release.
+  add_library(lightusd::next ALIAS lightusd_core)
+  option(LIGHTUSD_BUILD_TOOLS "Build command-line tools (lusdchecker, ...)" OFF)
   if(LIGHTUSD_BUILD_TOOLS)
     add_subdirectory(tools/lusdchecker)
   endif()
@@ -154,6 +151,8 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
 endif()
 
 # ---- Legacy product -------------------------------------------------------
+# The core (src/) is only a dependency here: skip its own tests/examples.
+set(LIGHTUSD_CORE_AS_DEPENDENCY ON)
 # Legacy-only sources live in src/legacy/ (same relative layout they had under
 # src/). Put it ahead of src/ so legacy `#include "stage.hh"` /
 # "core/prim.hh" / "tydra/render-data.hh" resolve to the legacy copies while
@@ -218,7 +217,7 @@ endif ()
 # compile cost is dominated by template *instantiation* and -O3 codegen, not by
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
 option(LIGHTUSD_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
-option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
+option(LIGHTUSD_LEGACY_ENABLE_THREAD "Legacy: enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
 option(LIGHTUSD_WITH_C_API "Enable C API." ${LIGHTUSD_DEFAULT_WITH_C_API})
 option(LIGHTUSD_BUILD_TESTS "Build tests" ${LIGHTUSD_DEFAULT_BUILD_TESTS})
@@ -251,7 +250,7 @@ option(LIGHTUSD_BUILD_TOOLS "Build tools (lusddumpcrate, etc.)" OFF)
 # jemalloc cut representative large-scene runs by 14-17% at ~+4% RSS with
 # byte-identical output. Tools only -- the library
 # never forces an allocator (apps choose). Same ranking as src
-# (LIGHTUSD_NEXT_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
+# (LIGHTUSD_CORE_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
 # NOTE: unlike src tools, no `malloc_conf` no-purge baking here -- the
 # decay-purge stall does not show on this path (measured a wash, +5% RSS).
 option(LIGHTUSD_WITH_TCMALLOC
@@ -277,8 +276,8 @@ option(LIGHTUSD_WITH_TYDRA
 option(LIGHTUSD_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
-option(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
-       "Use stable next::pcp::Cache backend for LargeSceneLoader (links lightusd_next)."
+option(LIGHTUSD_LEGACY_USE_CORE_PCP
+       "Use stable next::pcp::Cache backend for LargeSceneLoader (links lightusd_core)."
        OFF)
 option(LIGHTUSD_ENABLE_SIMD
        "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
@@ -540,7 +539,7 @@ if (LIGHTUSD_TEST_CIFUZZ)
   enable_fuzz_testing()
 endif()
 
-if (LIGHTUSD_ENABLE_THREAD)
+if (LIGHTUSD_LEGACY_ENABLE_THREAD)
   find_package(Threads REQUIRED)
   # prefer adding "-pthread" compile flag
   set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -1739,7 +1738,7 @@ list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/core/host-services.cc)
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
 target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
 if(NOT LIGHTUSD_NATIVE_IO)
-  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
 endif()
 if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
   target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
@@ -1763,7 +1762,7 @@ if(LIGHTUSD_BUILD_SHARED_LIBS)
     ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
   target_link_libraries(${LIGHTUSD_TARGET} lightusd_asset_import)
   if(NOT LIGHTUSD_NATIVE_IO)
-    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
   endif()
   if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
     target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
@@ -1795,12 +1794,12 @@ endif()
 #
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
-if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+if(LIGHTUSD_LEGACY_USE_CORE_PCP)
   if(LIGHTUSD_BUILD_EXAMPLES)
     # examples/lusdcat defines the legacy `lusdcat`; keep the next subproject
     # from defining its own CLI (and the tests that require it) under that name.
-    set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
-    set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
+    set(LIGHTUSD_BUILD_LUSDCAT OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
+    set(LIGHTUSD_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
   endif()
   add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_next_build)
 endif()
@@ -1817,7 +1816,7 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
   # Precompiled header to amortize parsing of large, stable headers across the
   # many C++ TUs. Guarded with COMPILE_LANGUAGE:CXX because the library also
   # contains C sources (zstd.c, lz4.c, yyjson.c, ...) which cannot use a C++ PCH.
-  if(LIGHTUSD_USE_PCH)
+  if(LIGHTUSD_LEGACY_USE_PCH)
     target_precompile_headers(${LIGHTUSD_LIB_TARGET} PRIVATE
       "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/legacy/lightusd-pch.hh>")
   endif()
@@ -1944,16 +1943,16 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
                                PRIVATE "LIGHTUSD_DISABLE_SIMD")
   endif()
 
-  if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  if(LIGHTUSD_LEGACY_USE_CORE_PCP)
     target_compile_definitions(${LIGHTUSD_LIB_TARGET}
-                               PUBLIC "LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE")
-    target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_next)
+                               PUBLIC "LIGHTUSD_LEGACY_USE_CORE_PCP")
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_core)
   endif()
 
   target_link_libraries(${LIGHTUSD_LIB_TARGET} ${LIGHTUSD_EXT_LIBRARIES}
                         ${CMAKE_DL_LIBS})
 
-  if (LIGHTUSD_ENABLE_THREAD)
+  if (LIGHTUSD_LEGACY_ENABLE_THREAD)
     target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "LIGHTUSD_ENABLE_THREAD")
     target_link_libraries(${LIGHTUSD_LIB_TARGET} Threads::Threads)
@@ -4978,14 +4977,14 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
                          RESOURCE_LOCK render_convert_fixture)
 
-    if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE AND TARGET lightusd_next AND TARGET tydra_next)
+    if(LIGHTUSD_LEGACY_USE_CORE_PCP AND TARGET lightusd_core AND TARGET tydra)
       add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
       add_sanitizers(bench-render-convert-next)
       target_link_libraries(bench-render-convert-next PRIVATE
-        ${LIGHTUSD_TARGET_STATIC} lightusd_next tydra_next)
+        ${LIGHTUSD_TARGET_STATIC} lightusd_core tydra)
       target_include_directories(bench-render-convert-next PRIVATE
         ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src)
-      target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
+      target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_CORE=1)
       add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
       set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
                            RESOURCE_LOCK render_convert_fixture)

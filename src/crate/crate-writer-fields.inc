@@ -1122,7 +1122,7 @@
       // mutate the shared table (and every PropNameId has a token slot).
       PropNameTable& name_table = GetPropNameTable();
       for (const auto& prim : layer.prims()) {
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
         // Deferred fill: no relationships yet; workers intern new names in
         // the (thread-safe) table as they encode -- ids may differ, content
         // does not.
@@ -1135,7 +1135,7 @@
           }
         }
       }
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
       if (deferred_filler_ && any_variant_path) {
         // Variant-owner checks read another prim's metadata, which may sit in
         // a chunk not filled yet: fill everything up front instead.
@@ -2173,7 +2173,7 @@
     const bool wide = fixed_chunks >= kChunksForWideFields && !serial_sections_;
     if (want <= 1) return false;
     bool refine_chunks = wide && options_.spill_columns_bytes == 0;
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     if (deferred_filler_) refine_chunks = false;
 #endif
     CratePhaseTimer chunk_timer(options_.enable_timing, "next_crate_write", options_.host_services);

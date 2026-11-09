@@ -427,8 +427,8 @@ CMakeUserPresets.json
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
-!tests/next/fixtures/*.usda
-!tests/next/fixtures/vr-edge/**/*.usda
+!tests/core/fixtures/*.usda
+!tests/core/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
 !models/concave_ngon.usda
 !examples/lusdview/tests/deform-skin-animation.usda
@@ -516,7 +516,7 @@ aousd/spec/
 # Build directories (CMake / ninja / pip editable extension)
 build_py/
 build_py_ext/
-build_py_ext_next/
+build_py_ext_nothread/
 build-next/
 build_test/
 web/build_ninja/

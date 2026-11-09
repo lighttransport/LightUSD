@@ -152,7 +152,7 @@ function testNative(ctx) {
 
 function testNext(ctx) {
   const build = path.join(ctx.cache, 'next-build');
-  run(ctx.root, 'next configure', 'cmake', ['-S', path.join(ctx.root, 'src'), '-B', build, '-G', 'Ninja', '-DLIGHTUSD_NEXT_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
+  run(ctx.root, 'next configure', 'cmake', ['-S', path.join(ctx.root, 'src'), '-B', build, '-G', 'Ninja', '-DLIGHTUSD_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
   run(ctx.root, 'next build', 'cmake', ['--build', build]);
   run(ctx.root, 'next CTest', 'ctest', ['--test-dir', build, '--output-on-failure']);
 }

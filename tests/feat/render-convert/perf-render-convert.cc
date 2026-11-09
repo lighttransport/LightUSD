@@ -9,7 +9,7 @@
 //
 // Pipeline selection at compile time:
 //   - PERFRC_ENABLE_LEGACY (=1 default): legacy tydra conversion.
-//   - PERFRC_ENABLE_NEXT: tydra-next conversion (requires tydra_next +
+//   - PERFRC_ENABLE_CORE: tydra-next conversion (requires tydra_next +
 //     lightusd_next libs; the standalone src/next tree cannot build the
 //     legacy pipeline, so it sets PERFRC_ENABLE_LEGACY=0).
 // When both are compiled into one binary they are measured back to back on
@@ -35,10 +35,10 @@
 #define PERFRC_ENABLE_LEGACY 1
 #endif
 
-#if defined(PERFRC_ENABLE_NEXT)
-#define PERFRC_HAS_NEXT 1
+#if defined(PERFRC_ENABLE_CORE)
+#define PERFRC_HAS_CORE 1
 #else
-#define PERFRC_HAS_NEXT 0
+#define PERFRC_HAS_CORE 0
 #endif
 
 #if PERFRC_ENABLE_LEGACY
@@ -46,7 +46,7 @@
 #include "tydra/render-data.hh"
 #endif
 
-#if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_NEXT
+#if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_CORE
 // The next pipeline headers live under src/next; consumers add src/ and
 // src/next to their include path.
 #include "lightusd-core.hh"
@@ -412,7 +412,7 @@ BenchResult Bench(const std::string &path, int iters, int num_threads) {
 
 #endif  // PERFRC_ENABLE_LEGACY
 
-#if PERFRC_HAS_NEXT
+#if PERFRC_HAS_CORE
 
 // ---------------------------- next pipeline -----------------------------
 
@@ -508,7 +508,7 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
 
 }  // namespace next_bench
 
-#endif  // PERFRC_HAS_NEXT
+#endif  // PERFRC_HAS_CORE
 
 // -------------------------------- main ----------------------------------
 
@@ -519,7 +519,7 @@ int main(int argc, char **argv) {
   }
 
   constexpr bool have_legacy = (PERFRC_ENABLE_LEGACY != 0);
-  constexpr bool have_next = (PERFRC_HAS_NEXT != 0);
+  constexpr bool have_next = (PERFRC_HAS_CORE != 0);
 
   std::string scene_path = opts.scene;
   std::string cleanup_path;
@@ -552,7 +552,7 @@ int main(int argc, char **argv) {
   if (opts.next_only && !have_next) {
     std::fprintf(stderr,
                  "next converter not compiled in (build with "
-                 "PERFRC_ENABLE_NEXT)\n");
+                 "PERFRC_ENABLE_CORE)\n");
     return 1;
   }
   if (opts.legacy_only && !have_legacy) {
@@ -585,7 +585,7 @@ int main(int argc, char **argv) {
   }
 #endif
 
-#if PERFRC_HAS_NEXT
+#if PERFRC_HAS_CORE
   if (want_next) {
     BenchResult r = next_bench::Bench(scene_path, opts.iters, opts.threads);
     if (!r.ok) {

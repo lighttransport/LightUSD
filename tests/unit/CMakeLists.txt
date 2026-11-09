@@ -158,25 +158,25 @@ set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${
 
 #
 # `next` schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
-# linking lightusd_next into unit-test-lightusd alongside lightusd_static makes
+# linking lightusd_core into unit-test-lightusd alongside lightusd_static makes
 # that binary's concurrency tests flaky (overlapping objects in the two static
 # libs), so these are isolated rather than destabilizing the 997 tests there.
 #
-if(TARGET lightusd_next)
-  set(NEXT_TEST_TARGET unit-test-next)
-  add_executable(${NEXT_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
+if(TARGET lightusd_core)
+  set(CORE_TEST_TARGET unit-test-next)
+  add_executable(${CORE_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
   if(WIN32 AND MSVC)
-    target_compile_options(${NEXT_TEST_TARGET} PRIVATE /wd4005)
+    target_compile_options(${CORE_TEST_TARGET} PRIVATE /wd4005)
   endif()
-  target_link_libraries(${NEXT_TEST_TARGET} PRIVATE lightusd_next ${CMAKE_DL_LIBS})
-  target_include_directories(${NEXT_TEST_TARGET}
+  target_link_libraries(${CORE_TEST_TARGET} PRIVATE lightusd_core ${CMAKE_DL_LIBS})
+  target_include_directories(${CORE_TEST_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src
                                      ${CMAKE_CURRENT_SOURCE_DIR})
-  set_target_properties(${NEXT_TEST_TARGET} PROPERTIES
+  set_target_properties(${CORE_TEST_TARGET} PROPERTIES
                         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-  add_test(NAME ${NEXT_TEST_TARGET} COMMAND ${NEXT_TEST_TARGET}
-           WORKING_DIRECTORY $<TARGET_FILE_DIR:${NEXT_TEST_TARGET}>)
-  set_tests_properties(${NEXT_TEST_TARGET} PROPERTIES
+  add_test(NAME ${CORE_TEST_TARGET} COMMAND ${CORE_TEST_TARGET}
+           WORKING_DIRECTORY $<TARGET_FILE_DIR:${CORE_TEST_TARGET}>)
+  set_tests_properties(${CORE_TEST_TARGET} PROPERTIES
     ENVIRONMENT "LIGHTUSD_TEST_FIXTURE_DIR=${LIGHTUSD_TEST_FIXTURE_DIR}")
 endif()
 

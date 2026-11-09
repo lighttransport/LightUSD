@@ -2,7 +2,7 @@
 # Common next pipeline sources shared by the standalone library and the
 # compatibility combined WASM module. Relative to src/next. Shared legacy
 # support (notably LZ4) is supplied by each parent, not duplicated here.
-set(LIGHTUSD_NEXT_PIPELINE_SOURCES
+set(LIGHTUSD_PIPELINE_SOURCES
     types/type-info.cc
     types/value.cc
     types/value-constructors.cc

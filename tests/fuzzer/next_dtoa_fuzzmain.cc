@@ -4,7 +4,7 @@
 // libFuzzer harness: src/next float->string formatter (writer/dtoa), including
 // the zmij usdcat SIMD fast path.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON
 // No seed corpus needed -- the input bytes ARE the float/double bit patterns, so
 // the fuzzer directly explores nan/inf/subnormal/huge/tiny/edge values.
 //

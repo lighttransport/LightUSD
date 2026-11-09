@@ -10,7 +10,7 @@
 // bounded DAE reader. Inputs are in memory with no anchor, so referenced files
 // are not opened.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON
 // Seed from tests/fuzzer/next_import_seeds.
 
 #include <cstddef>

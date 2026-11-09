@@ -18,11 +18,11 @@
   };
 
   // Temporary internal-breakdown profiling accumulators (ns), summed across all
-  // root subtrees; printed by the top-level BuildStage under LIGHTUSD_NEXT_TIMING.
+  // root subtrees; printed by the top-level BuildStage under LIGHTUSD_TIMING.
   mutable uint64_t prof_sources_ns_ = 0;
   mutable uint64_t prof_compose_ns_ = 0;
   mutable uint64_t prof_reg_ns_ = 0;
-  // Walk-only attribution (temporary, LIGHTUSD_NEXT_TIMING): child-name
+  // Walk-only attribution (temporary, LIGHTUSD_TIMING): child-name
   // composition, instance registration + prototype lookup, prim publication and
   // child-work push.
   mutable uint64_t prof_childnames_ns_ = 0;
@@ -38,7 +38,7 @@
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) ;
 
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
   // Deferred (USD-style) opinion fill: the stage's layer keeps a skeleton per
   // prim and this filler composes opinions on demand (see PrimFiller).
   class DeferredFiller;

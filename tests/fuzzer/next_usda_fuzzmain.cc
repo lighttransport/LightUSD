@@ -3,7 +3,7 @@
 //
 // libFuzzer harness: src/next USDA (ASCII) parser.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON
 // Seed from tests/usda/*.usda.
 
 #include <cstdint>

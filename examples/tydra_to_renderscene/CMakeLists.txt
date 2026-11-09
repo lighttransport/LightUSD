@@ -14,11 +14,11 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} 
 
 # `tydra/next` converter symbols are only required/available when the next large-
 # scene path is built.
-if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-  if(NOT TARGET lightusd_next)
+if(LIGHTUSD_LEGACY_USE_CORE_PCP)
+  if(NOT TARGET lightusd_core)
     add_subdirectory(${PROJECT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/tydra_to_renderscene_next_build)
   endif()
-  if(NOT TARGET tydra_next)
+  if(NOT TARGET tydra)
     add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra ${CMAKE_BINARY_DIR}/tydra_to_renderscene_tydra_next_build)
   endif()
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c)
@@ -28,7 +28,7 @@ if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
         -DAPP=$<TARGET_FILE:${EXAMPLE_TARGET}>
         -DROOT=${PROJECT_SOURCE_DIR}
         -P ${PROJECT_SOURCE_DIR}/tests/tydra_to_renderscene/c-api-smoke.cmake)
-    set_tests_properties(tydra-next-c-api-smoke PROPERTIES LABELS "next;c-api")
+    set_tests_properties(tydra-next-c-api-smoke PROPERTIES LABELS "core;c-api")
   endif()
 endif()
 

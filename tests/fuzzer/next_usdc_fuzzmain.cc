@@ -3,7 +3,7 @@
 //
 // libFuzzer harness: src/next USDC (crate) reader.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON
 // Run: ./fuzz_next_usdc [-max_len=65536] corpus_dir
 // Seed from tests/usdc/*.usdc (strip the 8-byte magic; it is re-prepended here
 // so every input exercises the parser body, same trick as the legacy harness).

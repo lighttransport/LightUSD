@@ -28,7 +28,7 @@ const MISSING_ASSET_ERROR = 'asset is not present in the imported memory store';
 
 // Valid-syntax fixtures that next rejects on purpose (stricter than the old
 // legacy parser). Tracked so a change in either direction is noticed.
-const NEXT_KNOWN_REJECTS = new Map([
+const CORE_KNOWN_REJECTS = new Map([
   ['rel-001.usda', "'varying' variability keyword is not valid USDA"],
   ['rel-002.usda', "'varying' variability keyword is not valid USDA"],
   ['feat-localchild-ref.usda', 'Mesh face vertex counts exceed index array length'],
@@ -121,8 +121,8 @@ describe('USDA loading (WASM, next)', { timeout: 300_000 }, () => {
       it(`load: ${rel}`, async (t) => {
         try {
           const scene = await load(rel, absPath);
-          assert.ok(!NEXT_KNOWN_REJECTS.has(name),
-            `${rel} is listed in NEXT_KNOWN_REJECTS but now loads; remove it from the list`);
+          assert.ok(!CORE_KNOWN_REJECTS.has(name),
+            `${rel} is listed in CORE_KNOWN_REJECTS but now loads; remove it from the list`);
           assert.ok(scene, `loader returned a scene for ${rel}`);
         } catch (err) {
           const msg = errorText(err);
@@ -130,8 +130,8 @@ describe('USDA loading (WASM, next)', { timeout: 300_000 }, () => {
             t.skip('needs an external asset (no resolver for in-memory loads)');
             return;
           }
-          if (NEXT_KNOWN_REJECTS.has(name)) {
-            assert.ok(msg.includes(NEXT_KNOWN_REJECTS.get(name)),
+          if (CORE_KNOWN_REJECTS.has(name)) {
+            assert.ok(msg.includes(CORE_KNOWN_REJECTS.get(name)),
               `${rel} was rejected for an unexpected reason: ${msg}`);
             return;
           }

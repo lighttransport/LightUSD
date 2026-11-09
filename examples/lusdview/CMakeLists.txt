@@ -315,7 +315,7 @@ if(NOT MSVC)
 endif()
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
     ${LIGHTUSD_TARGET_STATIC}
-    tydra_next
+    tydra
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(lightusd_gpu_rt_common PUBLIC Threads::Threads)
@@ -462,7 +462,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
-  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra_next)
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)
@@ -487,7 +487,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${COMMON_DIR})
   target_link_libraries(lusdview_openpbr_material_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC}
-      tydra_next)
+      tydra)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_openpbr_material_test PRIVATE Threads::Threads)
   endif()
@@ -514,7 +514,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${COMMON_DIR})
   target_link_libraries(lusdview_lighting_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC}
-      tydra_next)
+      tydra)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_lighting_test PRIVATE Threads::Threads)
   endif()
@@ -537,7 +537,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${COMMON_DIR})
   target_link_libraries(lusdview_geometry_primvar_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC}
-      tydra_next)
+      tydra)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_geometry_primvar_test PRIVATE Threads::Threads)
   endif()
@@ -560,7 +560,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${COMMON_DIR})
   target_link_libraries(lusdview_texture_pipeline_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC}
-      tydra_next)
+      tydra)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()
@@ -664,7 +664,7 @@ if(LIGHTUSD_BUILD_TESTS)
   target_include_directories(lusdview_next_mesh_adapter_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(lusdview_next_mesh_adapter_test PRIVATE
-      lightusd_render_c tydra_next)
+      lightusd_render_c tydra)
 
   add_executable(lusdview_document_test tests/viewer_document_test.cc viewer_document.cc)
   target_compile_features(lusdview_document_test PRIVATE cxx_std_17)
@@ -872,16 +872,16 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
 # Mirrors tools/lusdrender/CMakeLists.txt: build the next libs on demand (with
 # the std::thread parallel-compose path forced on) and link them. Used by
 # next_scene_loader.cc (the --next OpenGL mesh preview).
-set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET lightusd_next)
+set(LIGHTUSD_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdview_next_build)
 endif()
-if(NOT TARGET tydra_next)
+if(NOT TARGET tydra)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra
                    ${CMAKE_BINARY_DIR}/lusdview_tydra_next_build)
 endif()
-target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c lightusd_next tydra_next)
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c lightusd_core tydra)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_link_options(${EXAMPLE_TARGET} PRIVATE "LINKER:--gc-sections")

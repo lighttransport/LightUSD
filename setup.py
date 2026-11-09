@@ -52,8 +52,8 @@ def _env_flag(name: str, default: bool) -> bool:
 # for constrained native targets without changing the C/Python API; internal
 # synchronization required by free-threaded CPython remains available.
 PY_ENABLE_THREAD = _env_flag("LIGHTUSD_PY_ENABLE_THREAD", True)
-_default_build_dir = ("build_py_ext_next" if PY_ENABLE_THREAD else
-                      "build_py_ext_next_nothread")
+_default_build_dir = ("build_py_ext" if PY_ENABLE_THREAD else
+                      "build_py_ext_nothread")
 CMAKE_BUILD_DIR = pathlib.Path(
     os.environ.get("LIGHTUSD_PY_BUILD_DIR", str(ROOT / _default_build_dir))
 ).resolve()
@@ -75,10 +75,10 @@ def _cmake_configure_and_build() -> None:
         "-B", str(CMAKE_BUILD_DIR),
         "-DCMAKE_BUILD_TYPE=MinSizeRel",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        ("-DLIGHTUSD_NEXT_ENABLE_THREAD=" +
+        ("-DLIGHTUSD_ENABLE_THREAD=" +
          ("ON" if PY_ENABLE_THREAD else "OFF")),
-        "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
-        "-DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF",
+        "-DLIGHTUSD_BUILD_TESTS=OFF",
+        "-DLIGHTUSD_BUILD_EXAMPLES=OFF",
         "-DLIGHTUSD_WITH_TYDRA=ON",
     ]
     is_windows = platform.system() == "Windows"
@@ -102,8 +102,8 @@ def _cmake_configure_and_build() -> None:
     build_args = [
         "cmake", "--build", str(CMAKE_BUILD_DIR),
         "--config", "MinSizeRel",
-        "--target", "lightusd_next",
-        "--target", "tydra_next",
+        "--target", "lightusd_core",
+        "--target", "tydra",
         "--target", "lightusd_render_c",
         "--target", "lightusd_validation_c",
         "--parallel", os.environ.get("LIGHTUSD_PY_JOBS", str(min(16, os.cpu_count() or 2))),

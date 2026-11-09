@@ -706,7 +706,7 @@ await testAsync('next-only lodVariantCount reports the largest LOD option set', 
   }
 });
 
-if (process.env.LIGHTUSD_NEXT_ONLY !== '1') await testAsync(
+if (process.env.LIGHTUSD_ONLY !== '1') await testAsync(
   'combined module next session accepts USDA dependency layers', async () => {
   const glue = wasm64 ? '../src/lightusd/lightusd_combined_64.js'
                       : '../src/lightusd/lightusd_combined.js';

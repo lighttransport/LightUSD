@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // UsdVol render query contract: sparse/dense voxel queries and copied Gaussian
 // particle arrays exposed by RenderStream. The VDB payload path is covered by
-// next_test_volume_c and the Python suite; this pins JS argument validation,
+// core_test_volume_c and the Python suite; this pins JS argument validation,
 // unresolved-field behavior, and ownership of returned particle arrays.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';

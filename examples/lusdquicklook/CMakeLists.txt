@@ -89,11 +89,11 @@ if(LIGHTUSD_BUILD_QUICKLOOK AND NOT LIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS)
   set(LIGHTUSD_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
 endif()
 
-# The `next` lazy loader + tydra_next streaming converter are the whole reason
+# The `next` lazy loader + tydra streaming converter are the whole reason
 # this app can hold a small memory budget. Build them on demand, the same way
 # tools/lusdrender does.
-set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET lightusd_next)
+set(LIGHTUSD_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdquicklook_next_build)
 endif()
@@ -101,10 +101,10 @@ endif()
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     lightui
     ${LIGHTUSD_TOOLS_ALLOCATOR_LIB}
-    lightusd_next
-    tydra_next
+    lightusd_core
+    tydra
 )
-# tydra_next's lazy image decoding uses symbols from the main static library;
+# tydra's lazy image decoding uses symbols from the main static library;
 # keep that archive last so single-pass static linkers resolve it.
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_static)
 

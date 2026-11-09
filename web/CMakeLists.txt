@@ -142,12 +142,12 @@ if (BUILD_TESTING AND LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS AND
                NAMES google-chrome-stable google-chrome chromium chromium-browser)
   set(LIGHTUSD_OPENPBR_VISUAL_DIFF
       "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
-  set(LIGHTUSD_NEXT_WASM_JS
+  set(LIGHTUSD_WASM_JS
       "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.js")
-  set(LIGHTUSD_NEXT_WASM_BINARY
+  set(LIGHTUSD_WASM_BINARY
       "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.wasm")
   if (LIGHTUSD_NODE_EXECUTABLE AND EXISTS "${LIGHTUSD_OPENPBR_VISUAL_DIFF}" AND
-      EXISTS "${LIGHTUSD_NEXT_WASM_JS}" AND EXISTS "${LIGHTUSD_NEXT_WASM_BINARY}")
+      EXISTS "${LIGHTUSD_WASM_JS}" AND EXISTS "${LIGHTUSD_WASM_BINARY}")
     add_test(
       NAME wasm-regression-openpbr-visual-diff
       COMMAND "${LIGHTUSD_NODE_EXECUTABLE}" "${LIGHTUSD_OPENPBR_VISUAL_DIFF}"
@@ -191,8 +191,8 @@ if (BUILD_TESTING AND LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS AND
       EXISTS "${LIGHTUSD_COLORSPACE_BACKEND_TEST}" AND
       EXISTS "${LIGHTUSD_LEGACY_WASM_JS}" AND
       EXISTS "${LIGHTUSD_LEGACY_WASM_BINARY}" AND
-      EXISTS "${LIGHTUSD_NEXT_WASM_JS}" AND
-      EXISTS "${LIGHTUSD_NEXT_WASM_BINARY}")
+      EXISTS "${LIGHTUSD_WASM_JS}" AND
+      EXISTS "${LIGHTUSD_WASM_BINARY}")
     add_test(
       NAME wasm-regression-colorspace-backend-parity
       COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
@@ -333,13 +333,14 @@ endif()
 # not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
 # browser-threading build option opts into it.
 set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+set(LIGHTUSD_LEGACY_ENABLE_THREAD OFF CACHE BOOL "Disable legacy std::thread paths for default WASM builds" FORCE)
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   # The MCP server product: a separate module so the next-only scene module
   # stays lean. Built on the next C API; no render conversion.
   message(STATUS "LightUSD WASM: building the MCP server module")
-  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
-  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
+  set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
   set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
   set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
@@ -390,8 +391,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
   set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
   set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
-  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
-  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL
+  set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL
       "Do not build a shared C API in WASM" FORCE)
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
@@ -489,7 +490,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ../src/external/lightrt/lightrt_c.c ../src/external/lightrt/lightrt_c_tri.c)
   foreach(feature geometry raytrace)
     target_include_directories(lightusd_${feature}_wasm PRIVATE ../src)
-    target_compile_definitions(lightusd_${feature}_wasm PRIVATE LIGHTUSD_NEXT_TYPED_BINDINGS=1)
+    target_compile_definitions(lightusd_${feature}_wasm PRIVATE LIGHTUSD_TYPED_BINDINGS=1)
     target_compile_options(lightusd_${feature}_wasm PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions> $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     add_dependencies(lightusd_next_distribution lightusd_${feature}_wasm)
@@ -515,7 +516,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   target_compile_definitions(lightusd_next_wasm
                              PRIVATE JSON_NOEXCEPTION=1
                                      LIGHTUSD_CXX_EXCEPTIONS=0
-                                     LIGHTUSD_NEXT_TYPED_BINDINGS=1)
+                                     LIGHTUSD_TYPED_BINDINGS=1)
   if (LIGHTUSD_WASM64)
     target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
   endif()
@@ -530,7 +531,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   endif()
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_CORE_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
      -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -541,11 +542,11 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
      -sINVOKE_RUN=0 ")
   else()
     if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-      set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
+      set(LIGHTUSD_CORE_EMCC_LINK_OPT_FLAGS "-Oz ")
     else()
-      set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "")
+      set(LIGHTUSD_CORE_EMCC_LINK_OPT_FLAGS "")
     endif()
-    set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_CORE_EMCC_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
      -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -557,23 +558,23 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
      -sINVOKE_RUN=0 ")
   endif()
   if (LIGHTUSD_SIMD_FLAGS)
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
+    string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
   endif()
   if (LIGHTUSD_WASM64)
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
+    string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
   else()
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
+    string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sASSERTIONS=1")
   endif()
   if (LIGHTUSD_WASM_MALLOC)
     # Last -sMALLOC wins.
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sMALLOC=${LIGHTUSD_WASM_MALLOC}")
+    string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sMALLOC=${LIGHTUSD_WASM_MALLOC}")
   endif()
-  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+  string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
   # LightUSDLoader/tests hand the module a zstd-decompressed wasmBinary;
   # newer emscripten dropped wasmBinary from the default
   # INCOMING_MODULE_JS_API, so pin the default list plus wasmBinary.
-  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
-  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS
+  string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
+  string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS
     " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
 
   set_target_properties(
@@ -581,14 +582,14 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
       PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
-                 LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+                 LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
   foreach(feature geometry raytrace)
     set(feature_output lightusd_${feature})
     if(LIGHTUSD_WASM64)
       string(APPEND feature_output "_64")
     endif()
     string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
-      feature_flags "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+      feature_flags "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
     set_target_properties(lightusd_${feature}_wasm PROPERTIES OUTPUT_NAME ${feature_output}
       SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${feature_flags}")
     set_property(TARGET lightusd_${feature}_wasm APPEND PROPERTY LINK_DEPENDS
@@ -607,7 +608,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   # Independent memory and exports: no dynamic-linking retention in scene core.
   string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
                  "${PROJECT_SOURCE_DIR}/validator-api.js"
-                 VALIDATOR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+                 VALIDATOR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
   set_target_properties(lightusd_validator_wasm PROPERTIES
     OUTPUT_NAME ${VALIDATOR_OUTPUT} SUFFIX ".js"
     RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
@@ -618,7 +619,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     string(REPLACE "validator" "exr" EXR_OUTPUT "${VALIDATOR_OUTPUT}")
     string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
                    "${PROJECT_SOURCE_DIR}/exr-api.js"
-                   EXR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+                   EXR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
     set_target_properties(lightusd_exr_wasm PROPERTIES
       OUTPUT_NAME ${EXR_OUTPUT} SUFFIX ".js"
       RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${EXR_LINK_FLAGS}")
@@ -633,10 +634,10 @@ add_subdirectory(../  lightusd)
 
 # The combined compatibility module shares the pipeline source definition.
 # Its legacy library supplies LZ4 and the other shared support implementations.
-set(LIGHTUSD_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src")
-include("${LIGHTUSD_NEXT_DIR}/pipeline-sources.cmake")
-set(NEXT_SOURCES ${LIGHTUSD_NEXT_PIPELINE_SOURCES})
-list(TRANSFORM NEXT_SOURCES PREPEND "${LIGHTUSD_NEXT_DIR}/")
+set(LIGHTUSD_DIR "${PROJECT_SOURCE_DIR}/../src")
+include("${LIGHTUSD_DIR}/pipeline-sources.cmake")
+set(CORE_SOURCES ${LIGHTUSD_PIPELINE_SOURCES})
+list(TRANSFORM CORE_SOURCES PREPEND "${LIGHTUSD_DIR}/")
 
 list(
   APPEND
@@ -676,7 +677,7 @@ endif()
 # The legacy product deliberately excludes the next core. The combined product
 # remains available for compatibility testing, but is not the shipped default.
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
-  list(APPEND SOURCES ${NEXT_SOURCES})
+  list(APPEND SOURCES ${CORE_SOURCES})
   list(APPEND SOURCES binding-combined-api.cc)
 endif()
 
@@ -699,7 +700,7 @@ target_compile_definitions(${BUILD_TARGET}
                                    LIGHTUSD_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
-  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WASM_WITH_NEXT=1)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WASM_WITH_CORE=1)
 endif()
 if (LIGHTUSD_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WASM_MEMORY64=1)

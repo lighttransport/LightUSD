@@ -141,7 +141,7 @@ class Cache {
   /// Populated regardless of whether an `err` pointer was passed, so callers
   /// can inspect typed codes even with `err == nullptr`. Returned by value: a
   /// borrowed reference could dangle if a concurrent compose appended to the
-  /// log under LIGHTUSD_NEXT_FINE_LOCKS.
+  /// log under LIGHTUSD_FINE_LOCKS.
   std::vector<CompositionIssue> GetCompositionIssues() const;
   size_t GetCompositionIssueCount() const;
   bool GetCompositionIssue(size_t index, CompositionIssue* out) const;

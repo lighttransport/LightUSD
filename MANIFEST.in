@@ -49,7 +49,7 @@ prune tests/usdc
 prune tests/feat
 prune tests/unit
 prune tests/fuzzer
-prune tests/next
+prune tests/core
 prune tests/tydra
 prune tests/c-api
 prune tests/composition
@@ -72,7 +72,7 @@ include src/external/miniz.c src/external/mikktspace/mikktspace.c
 # even though the wheel only builds the four library targets, so every source
 # they list must exist in the sdist (a missing file fails `cmake -S`).
 include src/core/host-services.cc src/image-loader.cc src/image-writer.cc src/io-util.cc src/usdVol.cc
-include tests/next/lusdcat.cc
+include tests/core/lusdcat.cc
 recursive-include src/external/tinyvdb *.c *.h
 recursive-include src/external/mimalloc *.c *.h
 recursive-include tools/lusdpreview *.cc *.hh *.h
@@ -84,7 +84,8 @@ prune src/legacy
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__
 prune build
-prune build_py_ext_next
+prune build_py_ext
+prune build_py_ext_nothread
 prune build-next
 prune dist
 prune .git

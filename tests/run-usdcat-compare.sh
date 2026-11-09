@@ -279,7 +279,7 @@ main() {
     exit 1
   fi
 
-  # The next-core lusdcat (tests/next/lusdcat.cc) prints only a
+  # The next-core lusdcat (tests/core/lusdcat.cc) prints only a
   # "loaded: N prims" summary unless asked for output; --rewrite-layer prints
   # the root layer as USDA, matching `usdcat <file>`. The legacy lusdcat
   # prints USDA by default. Detect which one we have unless LUSDCAT_ARGS is set.

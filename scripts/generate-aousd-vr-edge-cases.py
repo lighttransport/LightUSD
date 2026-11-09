@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generate the value-resolution EDGE-CASE matrix with pxr-baked expectations.
 
-Authors small USDA cases under tests/next/fixtures/vr-edge/<case>/ and bakes
+Authors small USDA cases under tests/core/fixtures/vr-edge/<case>/ and bakes
 the PINNED OpenUSD oracle's resolved values into
-tests/next/generated/vr-edge-expected.inc (an X-macro table consumed by
-tests/next/test_vr_edge_matrix.cc). The fixtures and the .inc are COMMITTED;
+tests/core/generated/vr-edge-expected.inc (an X-macro table consumed by
+tests/core/test_vr_edge_matrix.cc). The fixtures and the .inc are COMMITTED;
 re-run this script only when extending the matrix:
 
   PYTHONPATH=/mnt/nvme02/work/lightusd-repo/OpenUSD/dist/lib/python \
@@ -22,8 +22,8 @@ import pathlib
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-FIXTURES = REPO / "tests/next/fixtures/vr-edge"
-OUT_INC = REPO / "tests/next/generated/vr-edge-expected.inc"
+FIXTURES = REPO / "tests/core/fixtures/vr-edge"
+OUT_INC = REPO / "tests/core/generated/vr-edge-expected.inc"
 
 try:
     from pxr import Usd, Sdf  # noqa: F401

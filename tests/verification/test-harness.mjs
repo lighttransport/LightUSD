@@ -17,7 +17,7 @@ const forbiddenFiles = [
   'web/js/vite.config.ts',
   'web/js/phys-sim.js',
   'web/js/cli/phys-sim.js',
-  'tests/next/run-next-pxr-flatten-diff.mjs',
+  'tests/core/run-next-pxr-flatten-diff.mjs',
   'tests/parse-asset-corpus.mjs',
 ];
 for (const relative of forbiddenFiles) {

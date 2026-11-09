@@ -48,7 +48,7 @@ TOOLS_OUT="${TOOLS_OUT:-$MUJOCO_BUILD/lightusd-tools}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 mkdir -p "$TOOLS_OUT"
 
-worker_src="$repo/tests/next/mujoco-bounded-dynamics.cc"
+worker_src="$repo/tests/core/mujoco-bounded-dynamics.cc"
 [[ -f "$worker_src" ]] || { echo "missing $worker_src" >&2; exit 1; }
 [[ -f "$MUJOCO_SRC/CMakeLists.txt" ]] || { echo "MUJOCO_SRC is not a MuJoCo checkout" >&2; exit 1; }
 

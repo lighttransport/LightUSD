@@ -238,7 +238,7 @@ struct CompositionOptions {
   // warm; the one-shot ComposeStageFromLayer/File always enable it.
   bool release_build_sources = false;
 
-  // Experimental (LIGHTUSD_NEXT_DEFERRED_FILL builds only): build the stage
+  // Experimental (LIGHTUSD_DEFERRED_FILL builds only): build the stage
   // as a skeleton layer and compose each prim's opinions on demand through
   // the layer's PrimFiller (the USDC writer fills, encodes and releases prim
   // by prim). For a stage that is written once (flatten to USDC). Ignored
@@ -266,7 +266,7 @@ struct CompositionOptions {
   ParseOptions usda_parse_options = {};
 
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
-  // [next_warm]). Off by default. Replaces the former LIGHTUSD_NEXT_TIMING env
+  // [next_warm]). Off by default. Replaces the former LIGHTUSD_TIMING env
   // read so the composition core takes no implicit process-environment input;
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;

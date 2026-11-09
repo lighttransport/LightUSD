@@ -89,7 +89,7 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
 }
 
 std::vector<std::string> Cache::GetLayerDependencies() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<std::string> dependencies;
   for (const LayerStack& stack : impl_->layer_stacks) {
     for (const std::string& identifier : stack.layer_identifiers) {
@@ -109,7 +109,7 @@ std::vector<std::string> Cache::GetLayerDependencies() const {
 }
 
 Cache::MemoryStats Cache::GetMemoryStats() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   MemoryStats stats;
   auto add_source = [&stats](size_t bytes) {
     stats.source_layer_bytes =
@@ -205,7 +205,7 @@ Cache::MemoryStats Cache::GetMemoryStats() const {
 }
 
 void Cache::TrimTransientCaches() {
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->index_cache.clear();
   impl_->sources_cache.clear();
   impl_->composed_cache_.clear();
@@ -228,21 +228,21 @@ void Cache::TrimTransientCaches() {
 
 const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
                                    std::string *err) {
-#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_NEXT_FINE_LOCKS)
+#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_FINE_LOCKS)
   {
-    NEXT_PCP_READ_LOCK(impl_->api_mu_);
+    LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
     auto it = impl_->composed_cache_.find(prim_path.str());
     if (it != impl_->composed_cache_.end()) return it->second.get();
   }
 #endif
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   return impl_->ComposePrim_locked(prim_path, warn, err);
 }
 
 std::vector<std::string> Cache::ComposedChildNames(const Path &prim_path,
                                                    std::string *warn,
                                                    std::string *err) {
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->ComposePrim_locked(prim_path, warn, err);  // ensure cached
   auto it = impl_->composed_children_.find(prim_path.str());
   return it != impl_->composed_children_.end() ? it->second
@@ -250,24 +250,24 @@ std::vector<std::string> Cache::ComposedChildNames(const Path &prim_path,
 }
 
 bool Cache::IsInstance(const Path &p) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() && it->second.proto != p.str();
 }
 Path Cache::GetPrototype(const Path &p) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() ? Path(it->second.proto.str()) : Path();
 }
 std::vector<Path> Cache::GetPrototypePaths() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->instances_by_prototype.size());
   for (const auto &kv : impl_->instances_by_prototype) out.push_back(Path(kv.first));
   return out;
 }
 std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   auto it = impl_->instances_by_prototype.find(proto.str());
   if (it != impl_->instances_by_prototype.end()) {
@@ -276,11 +276,11 @@ std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
   return out;
 }
 size_t Cache::PrototypeCount() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->instances_by_prototype.size();
 }
 Path Cache::TranslatePathToPrototype(const Path &path) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   if (path.empty()) return Path();
   // An instance root A maps A -> prototype_of[A] (which differs from A; the
   // prototype maps to itself). Rewrite the nearest enclosing instance prefix,
@@ -311,7 +311,7 @@ Path Cache::TranslatePathToPrototype(const Path &path) const {
 }
 Path Cache::TranslatePathFromPrototype(const Path &proto_path,
                                        const Path &instance_root) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(instance_root.str());
   if (it == impl_->prototype_of.end() || it->second.proto == instance_root.str()) {
     return Path();  // instance_root is not an instance
@@ -345,7 +345,7 @@ bool Cache::LoadPayloads(const std::vector<Path> &paths, LoadPolicy policy) {
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
 void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
 LoadRules Cache::GetLoadRules() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->load_rules_;
 }
 void Cache::SetVariantSelections(
@@ -353,15 +353,15 @@ void Cache::SetVariantSelections(
   impl_->SetVariantSelections(selections);
 }
 CompositionOptions::VariantSelectionMap Cache::GetVariantSelections() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->options.variant_overrides_by_path;
 }
 bool Cache::HasDeferredPayload(const Path &p) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->deferred_payload_prims.count(p.str()) != 0;
 }
 std::vector<Path> Cache::GetDeferredPayloadPaths() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->deferred_payload_prims.size());
   for (const std::string &s : impl_->deferred_payload_prims) out.push_back(Path(s));
@@ -369,22 +369,22 @@ std::vector<Path> Cache::GetDeferredPayloadPaths() const {
 }
 
 std::vector<Cache::CompositionIssue> Cache::GetCompositionIssues() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->issues_;  // copy out under the lock (see header)
 }
 size_t Cache::GetCompositionIssueCount() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->issues_.size();
 }
 bool Cache::GetCompositionIssue(size_t index, CompositionIssue* out) const {
   if (!out) return false;
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   if (index >= impl_->issues_.size()) return false;
   *out = impl_->issues_[index];
   return true;
 }
 void Cache::ClearCompositionIssues() {
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->issues_.clear();
 }
 
@@ -396,11 +396,11 @@ bool Cache::ReloadLayer(const std::string &id, std::string *warn,
 }
 
 bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->index_cache.count(prim_path.str()) != 0;
 }
 size_t Cache::ComputedPrimIndexCount() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->index_cache.size();
 }
 const LayerRegistry &Cache::layer_registry() const { return impl_->registry; }
@@ -500,7 +500,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
     report->issues = cache.GetCompositionIssues();
   }
   const auto t2 = Clock::now();
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
   // A deferred-fill stage composes through this cache later: hand it over.
   if (Layer *root_out = out_stage->GetRootLayer()) {
     if (PrimFiller *filler = root_out->prim_filler())
@@ -1426,7 +1426,7 @@ struct InstanceIndexLookup {
 };
 }  // namespace
 
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
 // Composes a prim's opinions when the writer asks for it, with the same steps
 // the eager path runs for every prim: ComposeOpinions (FillOpinions), the
 // Holder instance flatten (FlattenInstances, recorded as per-prim fix-ups) and
@@ -1507,7 +1507,7 @@ auto Cache::Impl::ComposeRootNames() const -> std::vector<std::string> {
 
 auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                   const Cache::PreviewCallback &preview_callback) -> bool {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
     // release_layers_during_fill: the source compaction and the fill free
     // gigabytes in the middle of the composition peak; return those pages on
@@ -1872,14 +1872,14 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // Opinion-fill pass: compose every slot's opinions, in parallel when
     // num_threads > 1 (each slot is independent; resolved vectors stay stable).
     auto fill_t0 = std::chrono::steady_clock::now();
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     std::shared_ptr<DeferredFiller> deferred;
 #endif
     if (options.enable_timing) LIGHTUSD_LOG_I("[next_fill] begin=1");
     {
       prepare_fill();
       if (options.enable_timing) LIGHTUSD_LOG_I("[next_fill] lookup_released=1");
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
       // Small stages fill eagerly: keeping the composition Cache alive through
       // the write costs more than deferring saves (merged ALab: +23% RSS).
       if (options.defer_opinion_fill && out->prim_count() >= 65536 &&
@@ -1926,7 +1926,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     }
     switch (options.instance_flatten_mode) {
       case InstanceFlattenMode::Holder:
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
         if (deferred) {
           // FlattenInstances' edits, recorded for after each prim's fill.
           if (!instances_by_prototype.empty()) {
@@ -2040,7 +2040,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
         prim->meta().loaded = false;
       }
     }
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
     if (deferred) out->set_prim_filler(std::move(deferred));
 #endif
     stage->SetRootLayer(std::move(*out));
@@ -3026,13 +3026,13 @@ auto Cache::Impl::PrewarmPrimIndices(const std::vector<Path> &paths, std::string
     }
 #else
     {
-      NEXT_PCP_LOCK(api_mu_);
+      LIGHTUSD_PCP_LOCK(api_mu_);
       for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
     }
 #endif
 #if defined(LIGHTUSD_ENABLE_THREAD)
     // The thread-enabled serial fallback reaches here with `wlk` already
-    // holding api_mu_. Do not take NEXT_PCP_LOCK again: the default mutex is
+    // holding api_mu_. Do not take LIGHTUSD_PCP_LOCK again: the default mutex is
     // intentionally non-recursive.
     for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
 #endif
@@ -3041,7 +3041,7 @@ auto Cache::Impl::PrewarmPrimIndices(const std::vector<Path> &paths, std::string
 
 auto Cache::Impl::ComputeInstanceKey(const Path &path, std::string *warn,
                                  std::string *err) -> std::string {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
     return ComputeInstanceKeyImpl(srcs);
   }
@@ -3063,7 +3063,7 @@ auto Cache::Impl::DropIndex(const std::string &key) -> void {
   }
 
 auto Cache::Impl::Invalidate(const Path &prim_path) -> void {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     Invalidate_locked(prim_path);
   }
 
@@ -3114,7 +3114,7 @@ auto Cache::Impl::Invalidate_locked(const Path &prim_path) -> void {
   }
 
 auto Cache::Impl::InvalidateLayer(const std::string &layer_id) -> void {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     std::set<std::string> to_drop;
     for (const auto &kv : site_to_indices) {
       if (kv.first.layer_id == layer_id) {
@@ -3142,7 +3142,7 @@ auto Cache::Impl::InvalidateLayer(const std::string &layer_id) -> void {
 
 auto Cache::Impl::ReloadLayer(const std::string &layer_id, std::string *warn,
                    std::string *err) -> bool {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
 
     bool known_dependency = layer_id == root_identifier;
     for (const LayerStack &stack : layer_stacks) {
@@ -3223,7 +3223,7 @@ auto Cache::Impl::ReloadLayer(const std::string &layer_id, std::string *warn,
 
 auto Cache::Impl::LoadPayload(const Path &prim_path, bool with_descendants,
                    std::string *warn, std::string *err) -> bool {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     if (with_descendants) {
       load_rules_.LoadWithDescendants(prim_path.str());
     } else {
@@ -3236,7 +3236,7 @@ auto Cache::Impl::LoadPayload(const Path &prim_path, bool with_descendants,
 
 auto Cache::Impl::LoadPayloads(const std::vector<Path> &prim_paths,
                     bool with_descendants) -> bool {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     Path common;
     for (const Path &path : prim_paths) {
       if (path.empty()) continue;
@@ -3256,7 +3256,7 @@ auto Cache::Impl::LoadPayloads(const std::vector<Path> &prim_paths,
   }
 
 auto Cache::Impl::UnloadPayload(const Path &prim_path) -> bool {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     load_rules_.Unload(prim_path.str());
     Invalidate_locked(prim_path);
     // Recompose so the deferred-payload set (and HasDeferredPayload) reflects
@@ -3268,7 +3268,7 @@ auto Cache::Impl::UnloadPayload(const Path &prim_path) -> bool {
   }
 
 auto Cache::Impl::SetLoadRules(const LoadRules &rules) -> void {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     // Idempotent call: viewer code and round-trip tests re-apply the same rule
     // set routinely, and nuking every prim index / composed spec / instancing
     // group for it forced a full stage recomposition for nothing.
@@ -3297,7 +3297,7 @@ auto Cache::Impl::SetLoadRules(const LoadRules &rules) -> void {
 
 auto Cache::Impl::SetVariantSelections(
       const CompositionOptions::VariantSelectionMap &selections) -> void {
-    NEXT_PCP_LOCK(api_mu_);
+    LIGHTUSD_PCP_LOCK(api_mu_);
     std::set<std::string> changed;
     for (const auto &entry : options.variant_overrides_by_path) {
       const auto it = selections.find(entry.first);

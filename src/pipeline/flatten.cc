@@ -17,7 +17,7 @@
 
 #include "layer/layer.hh"
 #include "../pcp/layer-registry.hh"
-#if defined(LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
+#if defined(LIGHTUSD_PIPELINE_PCP_COMPOSE)
 #include "../pcp/cache.hh"  // pcp::ComposeStageFromLayer (parallel compose)
 #include "resolver/asset-resolver.hh"
 #endif
@@ -97,7 +97,7 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   std::unique_ptr<Layer> composed;
   const Layer* layer = root;
   const auto compose_begin = Clock::now();
-#if defined(LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
+#if defined(LIGHTUSD_PIPELINE_PCP_COMPOSE)
   if (opts.flatten && opts.use_pcp_compose && LayerNeedsComposition(*root)) {
     // Parallel pcp composition. A non-owning shared_ptr hands the root to pcp
     // for the call; `root_owner` retains ownership and outlives the write, and

@@ -10,7 +10,7 @@ BUILD_DIR="${ROOT_DIR}/build_ninja"
 OUTPUT=""
 JOBS=16
 REPEAT=3
-TARGET=lightusd_next
+TARGET=lightusd_core
 SIZE_TOOL=""
 ARTIFACTS=()
 while [[ $# -gt 0 ]]; do

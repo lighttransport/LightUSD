@@ -234,19 +234,19 @@ if(LIGHTUSD_WITH_TEXTOOLS)
 endif()
 
 # lusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
-# parse) as the default for the RT preview path, plus tydra_next for bit-exact
+# parse) as the default for the RT preview path, plus tydra for bit-exact
 # world transforms. Build those targets on demand and link them.
 # Parallel composition (per-prim opinion fill across cores) needs the next lib's
 # std::thread paths; output is byte-identical to the serial fill. Force it on for
 # lusdrender's on-demand next build.
-set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET lightusd_next)
+set(LIGHTUSD_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdrender_next_build)
 endif()
-target_link_libraries(lusdrender lightusd_next tydra_next)
-# tydra_next's lazy Ptex decoder uses symbols supplied by the main static
-# library.  Keep that archive after tydra_next so single-pass static linkers
+target_link_libraries(lusdrender lightusd_core tydra)
+# tydra's lazy Ptex decoder uses symbols supplied by the main static
+# library.  Keep that archive after tydra so single-pass static linkers
 # resolve the dependency (the initial common-library link above precedes it).
 target_link_libraries(lusdrender ${LIGHTUSD_TARGET_STATIC})
 

@@ -10,7 +10,7 @@
     bool is_mmapped() const override { return view.is_mapped(); }
     bool MaterializeArray(const LazyArrayRef&, Value*) const override { return false; }
     void DiscardRange(uint64_t offset, uint64_t count) const override {
-#if defined(LIGHTUSD_NEXT_PLAN_HAVE_MMAP)
+#if defined(LIGHTUSD_PLAN_HAVE_MMAP)
       if (!view.is_mapped() || offset >= size()) return;
       const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
       if (!page || page > size()) return;
@@ -273,7 +273,7 @@ public:
   bool StreamPrepareBatch(Layer& batch, const std::vector<uint8_t>& spine,
       const std::vector<uint8_t>& repeated,
       const std::unordered_map<std::string, std::vector<std::string>>& children) {
-#if !defined(LIGHTUSD_NEXT_PLAN_HAVE_MMAP)
+#if !defined(LIGHTUSD_PLAN_HAVE_MMAP)
     result_.error = "prepared writing requires the native mapped spill backend";
     return false;
 #endif

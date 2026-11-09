@@ -1105,7 +1105,7 @@ private:
   // The parallel build releases them on reaper threads instead.
   bool reap_prims_ = false;
 
-#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+#if defined(LIGHTUSD_DEFERRED_FILL)
   // Deferred-fill layer (see PrimFiller): prims are composed right before
   // they are encoded and released after; null when the layer is complete
   // (or was filled up front).

@@ -603,7 +603,7 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
     return ParseWithSource(data, size, std::move(src));
   }
 
-#if LIGHTUSD_NEXT_USDA_LAZY_MMAP
+#if LIGHTUSD_USDA_LAZY_MMAP
   // Map the file instead of copying it into the heap: the parse only reads
   // the bytes, and a large flattened layer would otherwise cost a full
   // single-threaded read() copy up front. The mapping outlives the parse

@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Define tydra/next source files
-set(TYDRA_NEXT_SOURCES
+set(TYDRA_SOURCES
     scene-preview.cc
     scene-preview-lod.cc
     scene-preview-cli.cc
@@ -75,7 +75,7 @@ set(TYDRA_NEXT_SOURCES
     ../external/mikktspace/mikktspace.c
 )
 
-set(TYDRA_NEXT_HEADERS
+set(TYDRA_HEADERS
     scene-preview.hh
     chunked-array.hh
     render-data.hh
@@ -91,31 +91,33 @@ set(TYDRA_NEXT_HEADERS
 )
 
 # Prepend source directory to all files
-list(TRANSFORM TYDRA_NEXT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
-list(TRANSFORM TYDRA_NEXT_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM TYDRA_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM TYDRA_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
 # Create static library
-add_library(tydra_next STATIC
-    ${TYDRA_NEXT_SOURCES}
-    ${TYDRA_NEXT_HEADERS}
+add_library(tydra STATIC
+    ${TYDRA_SOURCES}
+    ${TYDRA_HEADERS}
 )
-option(TYDRA_NEXT_USE_PCH "Use a precompiled header for tydra/next C++ sources" ON)
-if(TYDRA_NEXT_USE_PCH)
-  target_precompile_headers(tydra_next PRIVATE
+# Pre-1.1 target name; remove after one release.
+add_library(tydra_next ALIAS tydra)
+option(LIGHTUSD_TYDRA_USE_PCH "Use a precompiled header for tydra/next C++ sources" ON)
+if(LIGHTUSD_TYDRA_USE_PCH)
+  target_precompile_headers(tydra PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
   # Without this, clang embeds the header mtimes in the PCH and ccache cannot
   # cache any TU that uses it (CI sets the matching CCACHE_SLOPPINESS).
-  target_compile_options(tydra_next PRIVATE
+  target_compile_options(tydra PRIVATE
     "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:SHELL:-Xclang -fno-pch-timestamp>")
 endif()
 
-# Link to lightusd_next
+# Link to lightusd_core
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-asset-import.cmake")
-target_link_libraries(tydra_next PUBLIC lightusd_asset_import lightusd_next)
+target_link_libraries(tydra PUBLIC lightusd_asset_import lightusd_core)
 
 if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
   add_executable(lusdpreview "${CMAKE_CURRENT_LIST_DIR}/../../tools/lusdpreview/main.cc")
-  target_link_libraries(lusdpreview PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+  target_link_libraries(lusdpreview PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
   if(TARGET lightusd)
     target_link_libraries(lusdpreview PRIVATE lightusd)
   else()
@@ -133,149 +135,149 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
     target_link_libraries(lusdpreview PRIVATE lightusd_preview_images)
   endif()
   set_target_properties(lusdpreview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-  if(LIGHTUSD_NEXT_BUILD_TESTS)
-    add_executable(test_scene_preview "${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_scene_preview.cc")
-    target_link_libraries(test_scene_preview PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+  if(LIGHTUSD_BUILD_TESTS)
+    add_executable(test_scene_preview "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_scene_preview.cc")
+    target_link_libraries(test_scene_preview PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_scene_preview PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_scene_preview PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_scene_preview COMMAND test_scene_preview)
-    add_executable(test_scene_preview_compute "${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_scene_preview_compute.cc")
-    target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    add_test(NAME core_test_scene_preview COMMAND test_scene_preview)
+    add_executable(test_scene_preview_compute "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_scene_preview_compute.cc")
+    target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_scene_preview_compute PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_scene_preview_compute COMMAND test_scene_preview_compute cpu)
-    add_executable(test_host_services "${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_host_services.cc")
-    target_link_libraries(test_host_services PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    add_test(NAME core_test_scene_preview_compute COMMAND test_scene_preview_compute cpu)
+    add_executable(test_host_services "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_host_services.cc")
+    target_link_libraries(test_host_services PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_host_services PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_host_services PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_host_services COMMAND test_host_services)
-    add_executable(test_scene_preview_photometry "${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_scene_preview_photometry.cc")
-    target_link_libraries(test_scene_preview_photometry PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    add_test(NAME core_test_host_services COMMAND test_host_services)
+    add_executable(test_scene_preview_photometry "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_scene_preview_photometry.cc")
+    target_link_libraries(test_scene_preview_photometry PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_scene_preview_photometry PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_scene_preview_photometry PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_scene_preview_photometry COMMAND test_scene_preview_photometry)
-    add_executable(test_light_filter ${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_light_filter.cc)
-    target_link_libraries(test_light_filter PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    add_test(NAME core_test_scene_preview_photometry COMMAND test_scene_preview_photometry)
+    add_executable(test_light_filter ${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_light_filter.cc)
+    target_link_libraries(test_light_filter PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_light_filter PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_light_filter PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_light_filter COMMAND test_light_filter)
-    add_executable(test_preview_light_assets ${CMAKE_CURRENT_LIST_DIR}/../../tests/next/test_preview_light_assets.cc)
-    target_link_libraries(test_preview_light_assets PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    add_test(NAME core_test_light_filter COMMAND test_light_filter)
+    add_executable(test_preview_light_assets ${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_preview_light_assets.cc)
+    target_link_libraries(test_preview_light_assets PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
       target_link_libraries(test_preview_light_assets PRIVATE lightusd_preview_images)
     else()
       target_link_libraries(test_preview_light_assets PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
-    add_test(NAME next_test_preview_light_assets COMMAND test_preview_light_assets)
+    add_test(NAME core_test_preview_light_assets COMMAND test_preview_light_assets)
   endif()
 endif()
 
 # Windows: GetProcessMemoryInfo (process RSS for the memory budget, see
-# mem-budget.hh) lives in psapi. PUBLIC so every consumer (test_tydra_next,
+# mem-budget.hh) lives in psapi. PUBLIC so every consumer (test_tydra,
 # lusdview, lusdrender, tydra_to_renderscene) inherits the link automatically.
 if(WIN32)
-  target_link_libraries(tydra_next PUBLIC psapi)
+  target_link_libraries(tydra PUBLIC psapi)
 endif()
 
 # Keep Tydra-next on the repository C++17 baseline.
-target_compile_features(tydra_next PUBLIC cxx_std_17)
+target_compile_features(tydra PUBLIC cxx_std_17)
 
 if(LIGHTUSD_ENABLE_THREAD)
-    target_compile_definitions(tydra_next PUBLIC LIGHTUSD_ENABLE_THREAD)
-    target_link_libraries(tydra_next PUBLIC Threads::Threads)
+    target_compile_definitions(tydra PUBLIC LIGHTUSD_ENABLE_THREAD)
+    target_link_libraries(tydra PUBLIC Threads::Threads)
 endif()
 
 # Set include directories
-target_include_directories(tydra_next PUBLIC
+target_include_directories(tydra PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
     $<INSTALL_INTERFACE:include>
 )
 
 # Compiler warnings
 if(MSVC)
-    target_compile_options(tydra_next PRIVATE /W4)
+    target_compile_options(tydra PRIVATE /W4)
     # Keep MSVC toolchain + STL compatibility checks from aborting the build on
     # older but still usable compiler versions.
-    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
+    target_compile_definitions(tydra PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
-    target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(tydra PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# tydra_next uses no C++ RTTI and no C++ exceptions; disable both. The
+# tydra uses no C++ RTTI and no C++ exceptions; disable both. The
 # LIGHTUSD_CXX_RTTI / _EXCEPTIONS variables are inherited from the parent project
 # when built as a subdirectory (undefined -> disabled when built standalone).
 if(NOT LIGHTUSD_CXX_RTTI)
     if(MSVC)
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+        target_compile_options(tydra PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
     else()
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+        target_compile_options(tydra PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     endif()
 endif()
 if(NOT LIGHTUSD_CXX_EXCEPTIONS)
     if(MSVC)
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+        target_compile_options(tydra PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
     else()
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+        target_compile_options(tydra PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
 endif()
 
 # No legacy Stage/schema dependency: both products embed these shared objects.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/lightusd-render-support.cmake")
 lightusd_add_render_support()
-target_sources(tydra_next PRIVATE
+target_sources(tydra PRIVATE
     $<TARGET_OBJECTS:lightusd_ptex_objects>
     $<TARGET_OBJECTS:lightusd_subdiv_objects>)
 
 # Optional: Build test
-option(TYDRA_NEXT_BUILD_TESTS "Build tests for Tydra Next" OFF)
+option(LIGHTUSD_TYDRA_BUILD_TESTS "Build tests for Tydra Next" OFF)
 
-if(TYDRA_NEXT_BUILD_TESTS)
-    # src/next (LIGHTUSD_NEXT_BUILD_TESTS) also defines test_tydra_next and
+if(LIGHTUSD_TYDRA_BUILD_TESTS)
+    # src/next (LIGHTUSD_BUILD_TESTS) also defines test_tydra and
     # registers it with ctest; define it here only when that has not happened,
     # so enabling both options does not fail configure with a duplicate target.
-    if(NOT TARGET test_tydra_next)
-        add_executable(test_tydra_next
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
+    if(NOT TARGET test_tydra)
+        add_executable(test_tydra
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_tydra.cc
         )
-        target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+        target_link_libraries(test_tydra PRIVATE tydra lightusd_core)
     endif()
     add_executable(skinning_points_dump
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/skinning-points-dump.cc)
-    target_link_libraries(skinning_points_dump PRIVATE tydra_next lightusd_next)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/skinning-points-dump.cc)
+    target_link_libraries(skinning_points_dump PRIVATE tydra lightusd_core)
 endif()
 
-if(LIGHTUSD_NEXT_BUILD_FUZZERS)
-    target_compile_options(tydra_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    add_executable(fuzz_next_render
+if(LIGHTUSD_BUILD_FUZZERS)
+    target_compile_options(tydra PRIVATE ${CORE_FUZZ_LIB_FLAGS})
+    add_executable(fuzz_core_render
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_render_fuzzmain.cc)
-    target_link_libraries(fuzz_next_render PRIVATE tydra_next lightusd_next)
-    target_compile_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
-    target_link_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_libraries(fuzz_core_render PRIVATE tydra lightusd_core)
+    target_compile_options(fuzz_core_render PRIVATE ${CORE_FUZZ_BIN_FLAGS})
+    target_link_options(fuzz_core_render PRIVATE ${CORE_FUZZ_BIN_FLAGS})
 endif()
 
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
-  add_executable(test_gltf_export ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_gltf_export.cc)
-  target_link_libraries(test_gltf_export PRIVATE tydra_next)
-  add_test(NAME next_gltf_export COMMAND test_gltf_export)
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
+  add_executable(test_gltf_export ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_gltf_export.cc)
+  target_link_libraries(test_gltf_export PRIVATE tydra)
+  add_test(NAME core_gltf_export COMMAND test_gltf_export)
 endif()
 
 # Optional hardware preview compute; CPU builds retain no GPU dependency.
-target_sources(tydra_next PRIVATE scene-preview-compute.cc)
+target_sources(tydra PRIVATE scene-preview-compute.cc)
 option(LIGHTUSD_PREVIEW_GPU_COMPUTE "Enable optional GPU preview compute kernels" ON)
 if(NOT EMSCRIPTEN AND LIGHTUSD_PREVIEW_GPU_COMPUTE)
   find_package(Vulkan QUIET)
@@ -287,19 +289,19 @@ if(NOT EMSCRIPTEN AND LIGHTUSD_PREVIEW_GPU_COMPUTE)
         --vn kPreviewComputeSpv -o "${preview_spv}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scene-preview-compute.comp"
       DEPENDS scene-preview-compute.comp scene-preview-kernel.inc VERBATIM)
-    target_sources(tydra_next PRIVATE scene-preview-compute-vk.cc "${preview_spv}")
-    target_compile_definitions(tydra_next PRIVATE LIGHTUSD_PREVIEW_VULKAN=1)
-    target_include_directories(tydra_next SYSTEM PRIVATE ${Vulkan_INCLUDE_DIRS})
+    target_sources(tydra PRIVATE scene-preview-compute-vk.cc "${preview_spv}")
+    target_compile_definitions(tydra PRIVATE LIGHTUSD_PREVIEW_VULKAN=1)
+    target_include_directories(tydra SYSTEM PRIVATE ${Vulkan_INCLUDE_DIRS})
   endif()
   find_path(LIGHTUSD_PREVIEW_CUDA_INCLUDE cuda.h HINTS /usr/local/cuda/include)
   if(LIGHTUSD_PREVIEW_CUDA_INCLUDE AND UNIX)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scene-preview-kernel.inc" preview_kernel_source)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/scene-preview-kernel-source.hh"
       "static const char kPreviewKernelSource[] = R\"kernel(${preview_kernel_source})kernel\";\n")
-    target_sources(tydra_next PRIVATE scene-preview-compute-cuda.cc)
-    target_include_directories(tydra_next PRIVATE "${LIGHTUSD_PREVIEW_CUDA_INCLUDE}")
-    target_compile_definitions(tydra_next PRIVATE LIGHTUSD_PREVIEW_CUDA=1)
+    target_sources(tydra PRIVATE scene-preview-compute-cuda.cc)
+    target_include_directories(tydra PRIVATE "${LIGHTUSD_PREVIEW_CUDA_INCLUDE}")
+    target_compile_definitions(tydra PRIVATE LIGHTUSD_PREVIEW_CUDA=1)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scene-preview-kernel.inc)
   endif()
-  target_include_directories(tydra_next PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_include_directories(tydra PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

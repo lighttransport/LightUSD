@@ -244,7 +244,7 @@ jobs:
   # Fuzz the installed C ABI (src/c-api/lightusd-c.h) -- the boundary the
   # JavaScript/WASM, Python and engine bindings call. The C++-internal fuzzers
   # do not cover it. Bounded smoke run; a crash fails the job and uploads the
-  # reproducer. ASan/UBSan come from LIGHTUSD_NEXT_BUILD_FUZZERS; hardening is
+  # reproducer. ASan/UBSan come from LIGHTUSD_BUILD_FUZZERS; hardening is
   # disabled so nothing masks or conflicts with the sanitizer output.
   next-fuzz-cabi:
 
@@ -261,13 +261,13 @@ jobs:
       run: |
         CXX=clang++ CC=clang cmake -B build_fuzz -S . -G Ninja \
           -DLIGHTUSD_NATIVE_PRODUCT=next \
-          -DLIGHTUSD_NEXT_BUILD_FUZZERS=On \
+          -DLIGHTUSD_BUILD_FUZZERS=On \
           -DLIGHTUSD_HARDENING=Off \
           -DLIGHTUSD_WITH_TYDRA=Off \
           -DLIGHTUSD_BUILD_TESTS=Off \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
     - name: build the C ABI fuzzer
-      run: cmake --build build_fuzz -j $(nproc) --target fuzz_next_cabi
+      run: cmake --build build_fuzz -j $(nproc) --target fuzz_core_cabi
     - name: seed corpus
       run: |
         mkdir -p /tmp/cabi-corpus /tmp/cabi-artifacts
@@ -275,7 +275,7 @@ jobs:
         cp tests/usdc/*.usdc /tmp/cabi-corpus/ 2>/dev/null || true
     - name: fuzz (bounded)
       run: |
-        ./build_fuzz/src/fuzz_next_cabi \
+        ./build_fuzz/src/fuzz_core_cabi \
           -max_total_time=60 -rss_limit_mb=4096 \
           -artifact_prefix=/tmp/cabi-artifacts/ /tmp/cabi-corpus
     - name: upload reproducers on failure
@@ -407,7 +407,7 @@ jobs:
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/ — it is gated
-  # behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE — so this variant exists to keep the
+  # behind LIGHTUSD_LEGACY_USE_CORE_PCP — so this variant exists to keep the
   # next/ library + examples from silently bit-rotting against core API changes.
   build-next:
 
@@ -425,7 +425,7 @@ jobs:
         CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
           -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
-          -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
+          -DLIGHTUSD_LEGACY_USE_CORE_PCP=On \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_TOOLS=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -465,9 +465,9 @@ jobs:
         echo "AOUSD_CORE_SUPPLEMENTAL_ROOT=$AOUSD_CORE_SUPPLEMENTAL_ROOT"
         CXX=clang++ CC=clang cmake -S src -B build_next_aousd -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
-          -DLIGHTUSD_NEXT_BUILD_TESTS=On \
+          -DLIGHTUSD_BUILD_TESTS=On \
           -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \
-          -DLIGHTUSD_NEXT_ENABLE_THREAD=On \
+          -DLIGHTUSD_ENABLE_THREAD=On \
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     - name: make next
       run: cmake --build build_next_aousd -j $(nproc)

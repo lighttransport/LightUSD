@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-const moduleUrl = process.env.LIGHTUSD_NEXT_MODULE
-  ? pathToFileURL(path.resolve(process.env.LIGHTUSD_NEXT_MODULE))
+const moduleUrl = process.env.LIGHTUSD_MODULE
+  ? pathToFileURL(path.resolve(process.env.LIGHTUSD_MODULE))
   : new URL(process.env.LIGHTUSD_WASM64 === '1'
       ? '../src/lightusd/lightusd_next_64.js'
       : '../src/lightusd/lightusd_next.js', import.meta.url);

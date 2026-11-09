@@ -26,8 +26,8 @@
 // The spill file goes to the directory the caller configures through
 // CrateWriteOptions::spill_directory. Nothing here reads the environment.
 
-#ifndef LIGHTUSD_NEXT_CRATE_SPILL_ARRAY_HH_
-#define LIGHTUSD_NEXT_CRATE_SPILL_ARRAY_HH_
+#ifndef LIGHTUSD_CRATE_SPILL_ARRAY_HH_
+#define LIGHTUSD_CRATE_SPILL_ARRAY_HH_
 
 #include <atomic>
 #include <cerrno>
@@ -46,10 +46,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NO_MMAP) && \
     !defined(__EMSCRIPTEN__) && !defined(__wasi__) && \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
-#define LIGHTUSD_NEXT_SPILL_HAVE_MMAP 1
+#define LIGHTUSD_SPILL_HAVE_MMAP 1
 #include <sys/mman.h>
 #include <sys/stat.h>
 #endif
@@ -126,7 +126,7 @@ class SpillVec final : public SpillColumnBase {
     size_t size() const { return count_; }
     bool is_mapped() const { return mapped_bytes_ != 0; }
     void Reset() noexcept {
-#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+#if defined(LIGHTUSD_SPILL_HAVE_MMAP)
       if (mapped_bytes_) ::munmap(mapping_, mapped_bytes_);
 #endif
       mapping_ = nullptr;
@@ -152,7 +152,7 @@ class SpillVec final : public SpillColumnBase {
       io_failed_.store(true, std::memory_order_relaxed);
       return false;
     }
-#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+#if defined(LIGHTUSD_SPILL_HAVE_MMAP)
     const size_t bytes = size_ * sizeof(T);
     if (spilled_elems_ &&
         static_cast<uint64_t>(bytes) <=
@@ -375,7 +375,7 @@ class SpillVec final : public SpillColumnBase {
   }
 
  private:
-#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+#if defined(LIGHTUSD_SPILL_HAVE_MMAP)
   bool WriteSnapshotTail(std::string* error) const {
     uint64_t offset = spilled_bytes();
     for (const auto& chunk : chunks_) {
@@ -511,8 +511,8 @@ class SpillVec final : public SpillColumnBase {
 
 }  // namespace lightusd
 
-#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
-#undef LIGHTUSD_NEXT_SPILL_HAVE_MMAP
+#if defined(LIGHTUSD_SPILL_HAVE_MMAP)
+#undef LIGHTUSD_SPILL_HAVE_MMAP
 #endif
 
-#endif  // LIGHTUSD_NEXT_CRATE_SPILL_ARRAY_HH_
+#endif  // LIGHTUSD_CRATE_SPILL_ARRAY_HH_

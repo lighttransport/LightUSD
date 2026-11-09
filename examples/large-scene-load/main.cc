@@ -53,7 +53,7 @@ void print_mem(const char *tag) {
   std::printf("  [%s] process RSS = %.1f MiB\n", tag, double(kb) / 1024.0);
 }
 
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 size_t count_prims(const lightusd::Stage &stage) {
   size_t n = 0;
   stage.Traverse([&](const lightusd::UsdPrim &) {

@@ -1,0 +1,38 @@
+# next-vs-pxr flatten differential: divergence ledger.
+# Format: <input-relpath> <reason>. Entries fail the semantic compare in
+# tests/core/run-next-pxr-flatten-diff.mjs; an unlisted divergence FAILS the
+# gate (ratchet 0), and a listed entry that starts passing reports XPASS and
+# must be pruned.
+#
+# Reason tags:
+#   INTENTIONAL: deliberate lightusd behavior kept on purpose (lossless
+#     unknown-metadata preservation, uint2/3/4 support, portable relative
+#     asset paths, clip preservation) — permanent, counted in the
+#     runner's `intentional` bucket.
+#   ORACLE-*: a pinned-pxr bug/nondeterminism/limitation — permanent.
+#   (untagged): a REAL remaining divergence to burn down (deep composition
+#     tail: relocate chains, class-hierarchy value selection, connection
+#     mapping through variant+reference, permission enforcement).
+supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
+tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
+tests/usda/lusdview-gaussian-half.usda ORACLE-FORMATTING: pxr widens binary16 values and prints the expanded float decimal (for example 0.350098); lightusd prints the shortest decimal that reparses to the same half bits (0.35)
+tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
+tests/usda/materialx-001.usda INTENTIONAL: the fixture references a .mtlx file; pxr's usdMtlx plugin translates the MaterialX doc its way (ND_* shader ids, Material-level inputs, shader relocated under the Material, mtlx:version bumped to 1.39, config:mtlx:colorspace dropped) while lightusd's own MaterialX importer produces a UsdPreviewSurface-style network — two different .mtlx->USD translations, ~35 structural diffs, not comparable field-by-field (retagged 2026-07-16; the old reason named only the colorspace attribute and mis-described the divergence)
+tests/usda/purpose-hierarchy-001.usda INTENTIONAL: `purpose` authored as PRIM metadata is unregistered (purpose is an attribute); lightusd preserves it losslessly, pxr drops it
+tests/usda/sceneLibrary-001.usda INTENTIONAL: Apple sceneLibrary extension metadata (sceneName) preserved losslessly; pxr 26.05 drops it
+tests/usda/uint2-array-001.usda INTENTIONAL: lightusd supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usda/uint2-type-001.usda INTENTIONAL: lightusd supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usda/unregistered-prim-meta-001.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usda/usdz-schema-autoplay-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (autoPlay) preserved losslessly; pxr 26.05 drops it
+tests/usda/usdz-schema-playbackmode-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (playbackMode) preserved losslessly; pxr 26.05 drops it
+tests/usdc/aousd-unknown-property-metadata.usdc INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usdc/clips-primmeta-001.usdc INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
+tests/usdc/memory-budget-customdata-001-runtime.usdc ORACLE-LIMITATION: pxr usdcat --flatten silently produces an EMPTY stage for this crate (exit 0, zero prims); next composes it fully
+tests/usdc/sceneLibrary-001.usdc INTENTIONAL: Apple sceneLibrary extension metadata (sceneName) preserved losslessly; pxr 26.05 drops it
+tests/usdc/uint2-array-001.usdc INTENTIONAL: lightusd supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usdc/uint2-type-001.usdc INTENTIONAL: lightusd supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usdc/unregistered-prim-meta-001.usdc INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usdc/usdz-schema-autoplay-001.usdc INTENTIONAL: Apple usdz preliminary schema metadata (autoPlay) preserved losslessly; pxr 26.05 drops it (usdc twin joined the ledger when the Stage writer stopped dropping crate layer-level unknownFields)
+tests/usdc/usdz-schema-playbackmode-001.usdc INTENTIONAL: Apple usdz preliminary schema metadata (playbackMode) preserved losslessly; pxr 26.05 drops it (usdc twin joined the ledger when the Stage writer stopped dropping crate layer-level unknownFields)
+supplemental/ErrorInvalidInstanceTargetPath_root ORACLE-UNSPECIFIED: error-path behavior for a class connection that targets the inheriting instance's own RELOCATED subtree (FaceRig/BrowRig {L,R}Brow amount.connect). The AOUSD spec does not define it and every oracle differs: corpus pcp.txt keeps only the self target at its pre-relocate path; pxr 26.05 usdcat kept self(pre-relocate)+other(relocated) (what lightusd emits); pxr 26.11 usdcat keeps only the other target; pxr 26.11 Pcp ComputeAttributeConnectionPaths drops both with 2 errors

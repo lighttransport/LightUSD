@@ -1,5 +1,5 @@
 # Python harness tests are independent of the native product and renderer build.
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import PIL"

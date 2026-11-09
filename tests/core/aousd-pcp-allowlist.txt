@@ -1,0 +1,17 @@
+# AOUSD supplemental composition corpus: pcp.json structural compare ledger.
+# Format: <case-dir-name> <reason>. Listed cases are known to differ from the
+# corpus pcp.json in tests/core/run-aousd-supplemental.py --compare-pcp
+# (prim stack / child names / property names / property stacks). An unlisted
+# divergence FAILS the gate (--max-pcp-diff 0); a listed case that starts
+# matching reports XPASS and must be pruned.
+#
+# Reason tags:
+#   ENGINE-*: a real src/next/pcp composition difference (site attribution,
+#     arc ordering, selection, error policy).
+BasicLocalAndGlobalClassCombination_root ENGINE-IMPLIED-CLASS: model.usd site of the nested class is /_class_Model/_class_Nested in pxr, /Model/_class_Nested in next
+SpecializesAndAncestralArcs2_root ENGINE-IMPLIED-CLASS: pxr maps the ancestral specializes site to /_shared_HumanHair/Hair_Chiang/Class, next keeps /Inner
+SpecializesAndAncestralArcs4_root ENGINE-IMPLIED-CLASS: pxr composes the implied-inherit-of-specializes sites (/PISI, /PSI); next stops at /PIS, /PS
+TrickySpookyInherits_root ENGINE-IMPLIED-CLASS: spooky inherit site /_class_Model/Anim/LAnim and model-before-rig layer order
+TrickySpookyInheritsInSymmetricBrowRig_root ENGINE-IMPLIED-CLASS: spooky inherit site /FaceRig/BrowRig/SymBrow/Anim/Brow; next attributes the root.usd opinion to the composed path
+TrickyInheritsAndRelocates4_root ENGINE-ARC-ORDER: CurveTrackRig.usd (inherit through relocate) must precede ConstraintRig.usd
+TrickySpookyVariantSelectionInClass_root ENGINE-VARIANT-SELECTION: /Char/Anim/RightLeg composes {LegRigStyle=1Leg} with the spooky class selection, pxr {LegRigStyle=2Leg}

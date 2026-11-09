@@ -35,9 +35,9 @@ cmake -S "${ROOT_DIR}/src" -B "${BUILD_DIR}" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/cmake/llvm-mingw-cross.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-  -DLIGHTUSD_NEXT_ENABLE_THREAD=OFF \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
-  -DLIGHTUSD_NEXT_BUILD_SHARED_C_API=ON
+  -DLIGHTUSD_ENABLE_THREAD=OFF \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_SHARED_C_API=ON
 cmake --build "${BUILD_DIR}" --target lightusd_c_shared test_lightusd_c --parallel
 
 DLL="${BUILD_DIR}/liblightusd_c.dll"

@@ -63,10 +63,10 @@
 // SpillVec: the append-only structural columns (fields, fieldsets, specs) in
 // the batched write may push committed prefixes to an unlinked spill file.
 #include "spill-array.hh"
-#if !defined(_WIN32) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
+#if !defined(_WIN32) && !defined(LIGHTUSD_NO_MMAP) && \
     !defined(__EMSCRIPTEN__) && !defined(__wasi__) && \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
-#define LIGHTUSD_NEXT_PLAN_HAVE_MMAP 1
+#define LIGHTUSD_PLAN_HAVE_MMAP 1
 #endif
 
 // LZ4 for compression

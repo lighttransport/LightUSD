@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <emscripten/emscripten.h>
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 #endif
@@ -10,7 +10,7 @@
 #include "external/meshoptimizer/meshoptimizer.h"
 #include "lightrt-wasm-api.h"
 namespace {
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 template <typename T>
 std::vector<T> CopyArray(const emscripten::val &src, const char *ctor) {
   const size_t n = src["length"].as<size_t>();
@@ -22,7 +22,7 @@ std::vector<T> CopyArray(const emscripten::val &src, const char *ctor) {
   return out;
 }
 #endif
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 template <typename T>
 emscripten::val TypedArrayCopy(const char *ctor, const T *data, size_t n) {
   // JS typed-array lengths are Numbers; size_t is a BigInt in memory64.
@@ -85,7 +85,7 @@ int32_t SimplifyMesh(const float* pos, uint32_t pos_count,
   return static_cast<int32_t>(count);
 }
 
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 class MeshoptSimplifier {
  public:
   emscripten::val simplify(const emscripten::val &positions,
@@ -121,7 +121,7 @@ class MeshoptSimplifier {
 };
 #endif
 }
-#if defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if defined(LIGHTUSD_TYPED_BINDINGS)
 extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_meshopt_simplify(
     const float* pos, uint32_t pos_count, const uint32_t* idx,
     uint32_t idx_count, const float* nrm, uint32_t nrm_count,
@@ -133,7 +133,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_meshopt_simplify(
                       target_error, options, out, out_cap, result_error);
 }
 #endif
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 EMSCRIPTEN_BINDINGS(lightusd_meshoptimizer) {
   emscripten::class_<MeshoptSimplifier>("MeshoptSimplifier")
       .constructor<>()

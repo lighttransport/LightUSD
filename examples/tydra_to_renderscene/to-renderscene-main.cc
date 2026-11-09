@@ -17,7 +17,7 @@
 #include "str-util.hh"
 #include "lightusd.hh"
 #include "mmap-array-ref.hh"
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 #include "lightusd-render-cpp.hh"
 #endif
 #include "tydra/obj-export.hh"
@@ -228,7 +228,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
   std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
   std::cout << "  --fast-index-build    Force BuildVertexIndicesFastImpl (reproduces WASM code path)\n";
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   std::cout << "  --next                Use next-core pipeline (compose/payload-aware)\n";
   std::cout << "  --compose-threads N   next composition worker hint\n";
   std::cout << "  --compose-threads-auto Use hw-concurrency for next composition\n";
@@ -268,7 +268,7 @@ int main(int argc, char **argv) {
   bool snorm8 = false;
   bool force_fast_index = false;
   bool profile = false;
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   bool use_next = false;
   int compose_threads = 1;
   bool next_load_payloads = true;
@@ -345,7 +345,7 @@ int main(int argc, char **argv) {
       snorm8 = true;
     } else if (strcmp(argv[i], "--fast-index-build") == 0) {
       force_fast_index = true;
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
     } else if (strcmp(argv[i], "--next") == 0) {
       use_next = true;
     } else if (strcmp(argv[i], "--compose-threads") == 0) {
@@ -382,7 +382,7 @@ int main(int argc, char **argv) {
   std::string err;
 
   bool use_next_pipeline = false;
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   use_next_pipeline = use_next;
   lightusd::api::Stage next_stage;
 #endif
@@ -406,7 +406,7 @@ int main(int argc, char **argv) {
   bool ret = false;
 
   auto _t_load_begin = std::chrono::steady_clock::now();
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   if (use_next_pipeline) {
     config_info.push_back({"load_pipeline", "next"});
     lightusd_load_options load_options;
@@ -462,7 +462,7 @@ int main(int argc, char **argv) {
     }
     ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
   }
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   }
 #endif
   auto _t_load_end = std::chrono::steady_clock::now();
@@ -489,7 +489,7 @@ int main(int argc, char **argv) {
 
   if (memstat) {
     size_t stage_mem = 0;
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
     if (use_next_pipeline) {
       lightusd_stage_stats stats{};
       if (next_stage.stats(&stats) == LIGHTUSD_OK) stage_mem = stats.memory_bytes;
@@ -519,7 +519,7 @@ int main(int argc, char **argv) {
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   lightusd::legacy::tydra::RenderScene render_scene;
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   lightusd::api::RenderScene next_render_scene;
   bool next_render_scene_ready = false;
 #endif
@@ -531,7 +531,7 @@ int main(int argc, char **argv) {
   config_info.push_back({"triangulation_method", use_triangle_fan ? "TriangleFan" : "Earcut"});
   auto _t_conv_begin = std::chrono::steady_clock::now();
   if (use_next_pipeline) {
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
     if (snorm8) {
       std::cerr << "WARN: --snorm8 is not yet supported in next converter; ignored.\n";
       config_info.push_back({"normal_storage", "unsupported_in_next"});
@@ -726,7 +726,7 @@ int main(int argc, char **argv) {
   if (profile) {
     double _conv_ms = std::chrono::duration<double, std::milli>(_t_conv_end - _t_conv_begin).count();
     std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
     if (use_next_pipeline) {
       lightusd_render_stats next_stats{};
       lightusd::api::RenderSceneStats(next_render_scene, &next_stats);
@@ -742,7 +742,7 @@ int main(int argc, char **argv) {
   }
 
   if (memstat) {
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
     if (use_next_pipeline && next_render_scene_ready) {
       lightusd_render_stats stats{};
       lightusd::api::RenderSceneStats(next_render_scene, &stats);
@@ -803,7 +803,7 @@ int main(int argc, char **argv) {
         std::cout << "    Total buffer memory: " << format_memory_size(total_buf) << "\n";
       }
     }
-#endif  // LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
+#endif  // LIGHTUSD_LEGACY_USE_CORE_PCP
     std::cout << "\n";
   }
 

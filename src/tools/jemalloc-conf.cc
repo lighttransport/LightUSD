@@ -5,7 +5,7 @@
 //
 // jemalloc reads this symbol before /etc/malloc.conf and the MALLOC_CONF
 // environment variable, so both still override it. The value comes from the
-// LIGHTUSD_NEXT_JEMALLOC_CONF CMake cache variable (default empty, in which
+// LIGHTUSD_JEMALLOC_CONF CMake cache variable (default empty, in which
 // case this TU is not compiled at all). Example: `thp:always` (transparent
 // huge pages) helps mid-size flattens whose working set is far below free
 // memory, and hurts very large ones on a THP=madvise host (synchronous
@@ -13,10 +13,10 @@
 // bytes.
 //
 // Only linked when the tool links jemalloc; other allocators ignore it.
-#ifndef LIGHTUSD_NEXT_JEMALLOC_CONF
-#define LIGHTUSD_NEXT_JEMALLOC_CONF ""
+#ifndef LIGHTUSD_JEMALLOC_CONF
+#define LIGHTUSD_JEMALLOC_CONF ""
 #endif
 
 extern "C" {
-const char* malloc_conf = LIGHTUSD_NEXT_JEMALLOC_CONF;
+const char* malloc_conf = LIGHTUSD_JEMALLOC_CONF;
 }

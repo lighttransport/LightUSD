@@ -119,7 +119,7 @@ class Layer;
 
 /// On-demand opinion composition for a layer whose prims are a skeleton
 /// (name, path, children) -- the experimental deferred fill
-/// (LIGHTUSD_NEXT_DEFERRED_FILL). Fill(i) composes prim i's opinions into the
+/// (LIGHTUSD_DEFERRED_FILL). Fill(i) composes prim i's opinions into the
 /// layer; Release(i) drops them again (back to the skeleton). Each prim is
 /// filled at most once (its composition sources are freed after the fill).
 class PrimFiller {

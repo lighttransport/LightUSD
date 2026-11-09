@@ -57,10 +57,10 @@ def main():
         missing.append(f"field table has only {len(fields)} entries (expected >=70)")
 
     # Spec-matrix floors in the conformance binary: the table-driven tests in
-    # tests/next/test_aousd_conformance.cc must not silently shrink. Rows are
+    # tests/core/test_aousd_conformance.cc must not silently shrink. Rows are
     # counted between each `k<Name>Matrix[] = {` and its closing `};`.
     conformance = (args.root /
-                   "tests/next/test_aousd_conformance.cc").read_text()
+                   "tests/core/test_aousd_conformance.cc").read_text()
     matrix_floors = {
         "kPathGrammarMatrix": 25,   # §8.3 production-derived path cases
         "kEscapeMatrix": 14,        # string escape decode/round-trip cases
@@ -78,7 +78,7 @@ def main():
                 f"matrix {name} has only {rows} rows (expected >={floor})")
 
     # VR edge matrix (pxr-baked expectations) floor.
-    vr_inc = args.root / "tests/next/generated/vr-edge-expected.inc"
+    vr_inc = args.root / "tests/core/generated/vr-edge-expected.inc"
     vr_rows = len(re.findall(r"^VR_EDGE_CASE\(", vr_inc.read_text(), re.M))
     if vr_rows < 70:
         missing.append(

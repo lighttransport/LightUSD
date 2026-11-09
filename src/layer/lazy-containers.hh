@@ -10,8 +10,8 @@
 // plus implicit conversion to the const container for every reader that
 // takes a `const std::vector<std::string>&` / `const std::string&`.
 
-#ifndef LIGHTUSD_NEXT_LAYER_LAZY_CONTAINERS_HH_
-#define LIGHTUSD_NEXT_LAYER_LAZY_CONTAINERS_HH_
+#ifndef LIGHTUSD_LAYER_LAZY_CONTAINERS_HH_
+#define LIGHTUSD_LAYER_LAZY_CONTAINERS_HH_
 
 #include <cstddef>
 #include <initializer_list>
@@ -264,4 +264,4 @@ class LazyString {
 
 }  // namespace lightusd
 
-#endif  // LIGHTUSD_NEXT_LAYER_LAZY_CONTAINERS_HH_
+#endif  // LIGHTUSD_LAYER_LAZY_CONTAINERS_HH_

@@ -125,7 +125,7 @@ using SplinePolyline = std::vector<SplineSample>;
 /// cbrt(t - t0) there), no finite vertex set can meet the vertical bound
 /// within a few ulps of that time. The sampler places a vertex at the
 /// inflection time and the bound holds everywhere else;
-/// TestSplinePiecewiseLinear (tests/next/test_aousd_conformance.cc) skips a
+/// TestSplinePiecewiseLinear (tests/core/test_aousd_conformance.cc) skips a
 /// +/-1e-12 time window around such a tangent when checking deviation.
 ///
 /// Returns false (with `err`) on an invalid interval or tolerance, or when the

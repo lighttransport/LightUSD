@@ -35,7 +35,7 @@ struct ParseOptions {
 
   /// Worker-thread hint for the parallel large-array parse path (when built with
   /// LIGHTUSD_ENABLE_THREAD). 0 = auto (min(hardware_concurrency, 8)); 1 =
-  /// serial; >1 = that many workers. Replaces the former LIGHTUSD_NEXT_NUM_THREADS
+  /// serial; >1 = that many workers. Replaces the former LIGHTUSD_NUM_THREADS
   /// env read so the library takes no implicit process-environment input.
   int num_threads = 0;
 

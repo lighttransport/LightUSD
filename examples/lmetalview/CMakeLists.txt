@@ -1,8 +1,8 @@
 # lmetalview - native macOS (Swift + Metal) minimal USD viewer example.
 #
-# Added from src/CMakeLists.txt, where lightusd_next / lightusd_c /
-# lightusd_render_c / tydra_next are already defined. The example links ONLY the
-# next product (next + tydra_next); no legacy lightusd/lightusd_static target is
+# Added from src/CMakeLists.txt, where lightusd_core / lightusd_c /
+# lightusd_render_c / tydra are already defined. The example links ONLY the
+# next product (next + tydra); no legacy lightusd/lightusd_static target is
 # involved.
 #
 # Shaders are compiled by the Metal driver at startup (see swift/Shaders.swift),
@@ -18,7 +18,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
-# Core: next + tydra_next -> flat preview scene behind a C ABI (core/lmv.h)
+# Core: next + tydra -> flat preview scene behind a C ABI (core/lmv.h)
 # ---------------------------------------------------------------------------
 
 set(LMV_CORE_SOURCES
@@ -94,7 +94,7 @@ target_include_directories(lmetalview_core
       ${LMV_REPO_ROOT}/src/external
       ${LMV_REPO_ROOT}/examples/common)
 target_link_libraries(lmetalview_core PUBLIC
-    lightusd_render_c lightusd_c tydra_next)
+    lightusd_render_c lightusd_c tydra)
 target_link_libraries(lmetalview_core PRIVATE lmetalview_textools)
 
 # Same warning policy as the core library / lusdview.
@@ -202,7 +202,7 @@ endif()
 # Tests
 # ---------------------------------------------------------------------------
 
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
   add_executable(lmetalview_core_test tests/core_test.cc)
   target_compile_features(lmetalview_core_test PRIVATE cxx_std_17)
   target_link_libraries(lmetalview_core_test PRIVATE lmetalview_core)

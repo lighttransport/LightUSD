@@ -3,10 +3,10 @@
 //
 // large-scene-loader.hh - Memory-bounded loading of very large USD scenes.
 //
-// Two backends, selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE:
+// Two backends, selected at compile time by LIGHTUSD_LEGACY_USE_CORE_PCP:
 //
 //   Default (no define):      CompositionGraph (old, stable).
-//   LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE:
+//   LIGHTUSD_LEGACY_USE_CORE_PCP:
 //                             ::lightusd::pcp::Cache (new, incremental payload
 //                             load/unload without full stage rebuild).
 //
@@ -19,7 +19,7 @@
 
 #include "stage.hh"
 
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 #include "../pcp/cache.hh"
 #include "resolver/asset-resolver.hh"
 #else
@@ -99,7 +99,7 @@ class LargeSceneLoader {
   bool Load(const std::string &filename, const LargeSceneLoadOptions &options,
             std::string *warn, std::string *err);
 
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   Stage &stage() { return *_stage; }
   const Stage &stage() const { return *_stage; }
 
@@ -143,7 +143,7 @@ class LargeSceneLoader {
   size_t layer_parse_count() const;
 
  private:
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   std::shared_ptr<Stage> _stage{std::make_shared<Stage>()};
 #else
   std::shared_ptr<::lightusd::Stage> _stage{std::make_shared<::lightusd::Stage>()};
@@ -154,7 +154,7 @@ class LargeSceneLoader {
   // Caller must hold _mutex.
   bool RebuildStageLocked(std::string *warn, std::string *err);
 
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   std::unique_ptr<::lightusd::AssetResolver> _resolver;
   std::unique_ptr<::lightusd::pcp::Cache> _cache;
 #else
@@ -174,7 +174,7 @@ class LargeSceneLoader {
 // on-demand payload streaming (use LargeSceneLoader for that).
 // Available only in the old backend path (CompositionGraph).
 // In the new backend path use LargeSceneLoader or ::lightusd::pcp::ComposeStageFromFile.
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,
                        const LargeSceneLoadOptions &options = {});

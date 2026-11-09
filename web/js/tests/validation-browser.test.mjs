@@ -18,9 +18,9 @@ const browser = await puppeteer.launch({headless: true,
   args: ['--no-sandbox', '--disable-dev-shm-usage']});
 try {
   for (const app of ['js', 'demo']) {
-    const alias = process.env.LIGHTUSD_NEXT_MODULE ? [{
+    const alias = process.env.LIGHTUSD_MODULE ? [{
       find: /^\.\/src\/lightusd\/lightusd_next\.(js|wasm)(\?url)?$/,
-      replacement: path.resolve(process.env.LIGHTUSD_NEXT_MODULE).replace(/\.js$/, '') + '.$1$2'
+      replacement: path.resolve(process.env.LIGHTUSD_MODULE).replace(/\.js$/, '') + '.$1$2'
     }] : [];
     const config = {configFile: false, root: path.join(web, app), base: './',
       resolve: {alias: [...alias, {find: 'lightusd', replacement: path.join(web, 'js/src/lightusd')}]},

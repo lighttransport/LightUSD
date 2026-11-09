@@ -78,7 +78,7 @@ def run(args):
     from physics_compare import compare
     root=args.root.resolve(strict=True);out=args.out.resolve();out.mkdir(parents=True,exist_ok=True)
     if any(out.iterdir()):raise ValueError('output directory must be empty')
-    helper=Path(__file__).resolve().parents[2]/'tests/next/run-menagerie-import.py'
+    helper=Path(__file__).resolve().parents[2]/'tests/core/run-menagerie-import.py'
     spec=importlib.util.spec_from_file_location('menagerie_reference',helper);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     sdk_env=dict(os.environ);prefix=args.usd_prefix.resolve();packages=list((prefix/'lib').glob('python*/site-packages'))
     if len(packages)!=1:raise ValueError('expected one SDK Python package directory')

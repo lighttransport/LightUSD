@@ -20,7 +20,7 @@ env:
 jobs:
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
-  # src/ is gated behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built
+  # src/ is gated behind LIGHTUSD_LEGACY_USE_CORE_PCP and is not built
   # by the default macOS job, so this variant keeps it from bit-rotting.
   build-next-macos:
 
@@ -40,7 +40,7 @@ jobs:
             cmake -B build_next -S . \
               -DLIGHTUSD_NATIVE_PRODUCT=legacy \
               -DCMAKE_BUILD_TYPE=Release \
-              -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
+              -DLIGHTUSD_LEGACY_USE_CORE_PCP=On \
               -DLIGHTUSD_WITH_TYDRA=On \
               -DLIGHTUSD_BUILD_TOOLS=On \
               -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -70,8 +70,8 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DLIGHTUSD_NATIVE_PRODUCT=next \
               -DLIGHTUSD_BUILD_EXAMPLES=ON \
-              -DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON \
-              -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+              -DLIGHTUSD_BUILD_LMETALVIEW=ON \
+              -DLIGHTUSD_BUILD_TESTS=ON
       - name: Build
         run: |
             cmake --build build_lmv -j $(sysctl -n hw.ncpu) \

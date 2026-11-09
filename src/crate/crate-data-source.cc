@@ -26,10 +26,10 @@
 // Posix mmap is used to back a CrateDataSource directly off the file (Phase
 // 8.3). WASM (emscripten/wasi) and non-posix platforms keep the owned-buffer
 // path; MmapFile() then returns nullptr and the reader falls back.
-#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                         \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
-#define LIGHTUSD_NEXT_HAVE_MMAP 1
+#define LIGHTUSD_HAVE_MMAP 1
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -43,7 +43,7 @@ namespace lightusd {
 // Paged secure snapshot
 // ============================================================
 
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
 namespace {
 
 // The parse copy is either new[] or a private anonymous mapping (>= 4 MiB),
@@ -104,12 +104,12 @@ bool ReadWholeFile(int fd, size_t n, uint8_t* dst, std::string* err) {
 }
 
 }  // namespace
-#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+#endif  // LIGHTUSD_HAVE_MMAP
 
 /// Process-wide append-only snapshot arena. One descriptor serves every paged
 /// layer: a scene can reference thousands of layers, and one fd per layer would
 /// hit the descriptor limit (the mmap path avoids that for the same reason).
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
 class CrateSnapshotArena {
  public:
   ~CrateSnapshotArena() {
@@ -238,11 +238,11 @@ class CrateSnapshotArena {
   std::mutex mu_;
   uint64_t size_ = 0;
 };
-#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+#endif  // LIGHTUSD_HAVE_MMAP
 
 /// One layer's slice of the snapshot arena. `pread` is positional and
 /// thread-safe, so materializations from parallel readers need no lock.
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
 class CrateSnapshotPager {
  public:
   CrateSnapshotPager(std::shared_ptr<CrateSnapshotArena> arena, uint64_t offset,
@@ -273,7 +273,7 @@ class CrateSnapshotPager {
   uint64_t size() const { return 0; }
   bool Read(uint64_t, size_t, uint8_t*) const { return false; }
 };
-#endif  // LIGHTUSD_NEXT_HAVE_MMAP
+#endif  // LIGHTUSD_HAVE_MMAP
 
 
 
@@ -303,7 +303,7 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(std::string&& bytes,
 
 std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
     const std::string& filename) {
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   int fd = ::open(filename.c_str(), O_RDONLY);
   if (fd < 0) return nullptr;
   struct stat st;
@@ -331,7 +331,7 @@ std::shared_ptr<CrateDataSource> CrateDataSource::ReadFileSnapshot(
     const std::string& filename, uint64_t max_bytes, bool* unavailable,
     std::string* err) {
   if (unavailable) *unavailable = false;
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   auto fail = [&](const std::string& message) {
     if (err) *err = message;
     return std::shared_ptr<CrateDataSource>();
@@ -385,7 +385,7 @@ std::shared_ptr<CrateDataSource> CrateDataSource::PagedFileSnapshot(
     const std::string& filename, uint64_t max_bytes,
     const std::string& temp_directory, bool* unavailable, std::string* err) {
   if (unavailable) *unavailable = false;
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   auto fail = [&](const std::string& message) {
     if (err) *err = message;
     return std::shared_ptr<CrateDataSource>();
@@ -477,7 +477,7 @@ bool CrateDataSource::ReadRange(uint64_t offset, size_t length,
 
 void CrateSnapshotDeleter::operator()(uint8_t* p) const noexcept {
   if (!p) return;
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   if (mapped_bytes) {
     ::munmap(mapped_base, mapped_bytes);
     return;
@@ -487,7 +487,7 @@ void CrateSnapshotDeleter::operator()(uint8_t* p) const noexcept {
 }
 
 bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   if (!mmap_base_ || mmap_path_.empty()) return false;
   struct stat st;
   if (::stat(mmap_path_.c_str(), &st) != 0 || st.st_size < 0) return false;
@@ -501,7 +501,7 @@ bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
 }
 
 CrateDataSource::~CrateDataSource() {
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   if (mmap_addr_) {
     ::munmap(mmap_addr_, mmap_size_);
     mmap_addr_ = nullptr;
@@ -510,7 +510,7 @@ CrateDataSource::~CrateDataSource() {
 }
 
 void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
-#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_HAVE_MMAP)
   if (!mmap_addr_ || length == 0 || offset >= mmap_size_) return;
   uint64_t end = offset + length;
   if (end < offset || end > mmap_size_) end = mmap_size_;

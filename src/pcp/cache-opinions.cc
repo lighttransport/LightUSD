@@ -47,7 +47,7 @@ std::string Cache::Impl::SpellSitePath(uint32_t stack,
 }
 
 std::vector<std::string> Cache::GetRootLayerStackIdentifiers() const {
-  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_READ_LOCK(impl_->api_mu_);
   if (impl_->layer_stacks.empty()) return {};
   return impl_->layer_stacks[0].layer_identifiers;
 }
@@ -55,7 +55,7 @@ std::vector<std::string> Cache::GetRootLayerStackIdentifiers() const {
 std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
                                                 std::string* warn,
                                                 std::string* err) {
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   std::vector<PrimStackEntry> out;
   const auto& sources = impl_->SourcesForPath(path, warn, err);
   auto variant_property_names = [](const PrimVariantData& vd) {
@@ -305,7 +305,7 @@ std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
 std::vector<PropertyOpinion> Cache::GetPropertyStack(
     const Path& path, const std::string& property, size_t limit,
     bool* truncated, std::string* warn, std::string* err) {
-  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  LIGHTUSD_PCP_WRITE_LOCK(impl_->api_mu_);
   if (truncated) *truncated = false;
   std::vector<PropertyOpinion> out;
   const auto& sources = impl_->SourcesForPath(path, warn, err);
@@ -1078,18 +1078,18 @@ auto Cache::Impl::ComposePrim_locked(const Path &prim_path, std::string *warn,
 
 auto Cache::Impl::ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err) -> const PrimIndex * {
-#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_NEXT_FINE_LOCKS)
+#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_FINE_LOCKS)
     // F4 fast path: a shared lock lets cache hits resolve concurrently. On a
     // miss we fall through to the exclusive build; ComputePrimIndex_locked
     // re-checks index_cache under the write lock, so a prim contended by many
     // threads is still built exactly once.
     {
-      NEXT_PCP_READ_LOCK(api_mu_);
+      LIGHTUSD_PCP_READ_LOCK(api_mu_);
       auto it = index_cache.find(prim_path.str());
       if (it != index_cache.end()) return it->second.get();
     }
 #endif
-    NEXT_PCP_WRITE_LOCK(api_mu_);
+    LIGHTUSD_PCP_WRITE_LOCK(api_mu_);
     return ComputePrimIndex_locked(prim_path, warn, err);
   }
 

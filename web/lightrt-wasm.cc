@@ -1,5 +1,5 @@
 #include <emscripten/emscripten.h>
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 #endif
@@ -25,7 +25,7 @@ static_assert(offsetof(lightusd_lrt_scene_info, lengths) == 20,
 
 namespace {
 
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 template <typename T>
 std::vector<T> CopyArray(const emscripten::val &src, const char *ctor) {
   const size_t n = src["length"].as<size_t>();
@@ -58,7 +58,7 @@ Vec3 CosineHemisphere(Vec3 n, uint32_t *seed) {
   return Norm(Add(Add(Mul(t,r*std::cos(a)),Mul(b,r*std::sin(a))),Mul(n,z)));
 }
 
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 template <typename T>
 emscripten::val TypedArrayCopy(const char *ctor, const T *data, size_t n) {
   // JS typed-array lengths are Numbers; size_t is a BigInt in memory64.
@@ -124,7 +124,7 @@ class LightRTPathTracer {
                         std::move(v), std::move(ids), std::move(m));
   }
 
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
   bool build(const emscripten::val &positions, const emscripten::val &normals,
              const emscripten::val &colors, const emscripten::val &vertex_params,
              const emscripten::val &material_ids, const emscripten::val &materials) {
@@ -179,7 +179,7 @@ class LightRTPathTracer {
     }
     return true;
   }
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
   emscripten::val trace(const emscripten::val &inv_view_projection,
                         const emscripten::val &camera_position, int width, int height,
                         int sample_start, int sample_count, int max_bounces,
@@ -221,7 +221,7 @@ class LightRTPathTracer {
                        LRT_TRI_BATCH_INCOHERENT);
     return true;
   }
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
   emscripten::val occluded(const emscripten::val &origins,
                            const emscripten::val &directions,
                            float max_distance = 1.0e30f) const {
@@ -274,7 +274,7 @@ class LightRTPathTracer {
     }
     return true;
   }
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
   emscripten::val raycast(const emscripten::val &origins,
                           const emscripten::val &directions,
                           float max_distance = 1.0e30f) const {
@@ -349,7 +349,7 @@ class LightRTPathTracer {
     if (out && cap>=bytes && bytes) std::memcpy(out,data,bytes);
     return static_cast<int32_t>(bytes);
   }
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
   emscripten::val webGPUScene() const {
     if(!scene_) return emscripten::val::undefined();
     const void *nodes=nullptr,*blocks=nullptr; uint32_t nc=0,ns=0,bc=0,bs=0,root=0,layout=0,kind=0,point=0;
@@ -374,7 +374,7 @@ class LightRTPathTracer {
 
 }
 
-#if defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if defined(LIGHTUSD_TYPED_BINDINGS)
 namespace {
 struct TracerSlot {
   LightRTPathTracer* object;
@@ -509,7 +509,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_lrt_scene_buffer(
 
 #endif
 
-#if !defined(LIGHTUSD_NEXT_TYPED_BINDINGS)
+#if !defined(LIGHTUSD_TYPED_BINDINGS)
 EMSCRIPTEN_BINDINGS(lightusd_lightrt_path_tracer) {
   emscripten::class_<LightRTPathTracer>("LightRTPathTracer")
     .constructor<>().function("build",&LightRTPathTracer::build)

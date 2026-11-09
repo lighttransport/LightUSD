@@ -16,7 +16,7 @@ jobs:
 
   # Windows(x64) + Visual Studio 2026 build with the experimental `next`
   # (pcp large-scene) backend enabled. src/ is gated behind
-  # LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built by the default Windows
+  # LIGHTUSD_LEGACY_USE_CORE_PCP and is not built by the default Windows
   # job, so this variant keeps it from bit-rotting on MSVC.
   build-windows-next:
 
@@ -29,7 +29,7 @@ jobs:
       - name: Configure
         # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
-        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On -DLIGHTUSD_NATIVE_PRODUCT=legacy
+        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_LEGACY_USE_CORE_PCP=On -DLIGHTUSD_NATIVE_PRODUCT=legacy
       - name: Build
         run: cmake --build build_next --config Release --parallel
       - name: Test
@@ -51,7 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Configure
-        run: cmake -S . -B build_d3d12 -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_NEXT_BUILD_EXAMPLES=ON -DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+        run: cmake -S . -B build_d3d12 -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON -DLIGHTUSD_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build_d3d12 --config Release --parallel --target ld3d12view lmetalview_core_test
       - name: Test

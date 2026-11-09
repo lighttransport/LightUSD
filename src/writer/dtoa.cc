@@ -13,7 +13,7 @@
 // portable scalar code otherwise, e.g. WASM); everything else (special values,
 // subnormals, scientific / out-of-window exponents) falls back to the dragonbox
 // renderer below. The two are byte-identical for every input (see
-// tests/next/test_dtoa.cc). Define LIGHTUSD_NEXT_NO_ZMIJ_DTOA to build the
+// tests/core/test_dtoa.cc). Define LIGHTUSD_NO_ZMIJ_DTOA to build the
 // dragonbox-only formatter.
 
 #include "dtoa.hh"
@@ -28,7 +28,7 @@
 #endif
 
 #include "external/dragonbox/dragonbox.h"
-#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+#if !defined(LIGHTUSD_NO_ZMIJ_DTOA)
 #include "external/zmij/zmij.h"
 #endif
 
@@ -346,7 +346,7 @@ char* dtoa_impl(const double f, char* buf) {
     *buf++ = '1';
     return buf;
   }
-#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+#if !defined(LIGHTUSD_NO_ZMIJ_DTOA)
   if (char* e = zmij::write_usd_fast(buf, f)) return e;
 #endif
   return dtoa_ref_impl(f, buf);
@@ -369,7 +369,7 @@ char* dtoa_impl(const float f, char* buf) {
     *buf++ = '1';
     return buf;
   }
-#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+#if !defined(LIGHTUSD_NO_ZMIJ_DTOA)
   if (char* e = zmij::write_usd_fast(buf, f)) return e;
 #endif
   return dtoa_ref_impl(f, buf);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Shared native OBJ/URDF/MJCF frontends; no Python or Node dependency.
 #include "tydra/asset-import/import.hh"
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
 #include "load-usd.hh"
 #include "stage/stage.hh"
 #include "writer/usda-writer.hh"
@@ -48,7 +48,7 @@ void Help() {
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
 using MeshBuffers = std::map<std::string, lightusd::tydra::URDFMeshBuffer>;
 #else
 using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
@@ -58,7 +58,7 @@ using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes J
 // moved into the stage.
 bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputStage* stage,
              std::string* warn, std::string* err) {
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   if (consume)
     return lightusd::tydra::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
                                                                         warn, err);
@@ -75,7 +75,7 @@ bool Save(const OutputStage& stage, const std::string& path,
           const std::string& format,
           const ia::AssetMap& assets,
           std::string* err) {
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   if (format == "usda") return lightusd::WriteUSDA(stage, path, err);
   if (format == "usdc") return lightusd::WriteUSDC(stage, path, err);
   std::vector<uint8_t> crate, zip;
@@ -227,7 +227,7 @@ int main(int argc, char** argv) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return 1;
   }
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   // Large mesh arrays travel as typed buffers (as through the C API) unless
   // the JSON dump needs them inline: one value per scalar costs far more.
   opts.typed_meshes = dump.empty();
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
   }
   if (!result.warnings.empty()) std::cerr << result.warnings;
   MeshBuffers meshes;
-#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   for (auto& entry : result.meshes) {
     auto& buffer = meshes[entry.first];
     buffer.positions = std::move(entry.second.positions);

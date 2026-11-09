@@ -12,7 +12,7 @@
 #endif
 
 #include "binding-next-api.h"
-#if defined(LIGHTUSD_NEXT_WASM_WITH_EXR)
+#if defined(LIGHTUSD_CORE_WASM_WITH_EXR)
 #include "../src/image-writer.hh"
 #include "../src/image-types.hh"
 #include <string>
@@ -27,7 +27,7 @@
 namespace {
 constexpr uint32_t kMaxInputBytes = 256u * 1024u * 1024u;
 constexpr uint32_t kMaxOutputBytes = 512u * 1024u * 1024u;
-#if defined(LIGHTUSD_NEXT_WASM_WITH_EXR)
+#if defined(LIGHTUSD_CORE_WASM_WITH_EXR)
 // WASM execution is single-threaded. The JS wrapper consumes and releases this
 // one-shot result synchronously before another image call can run.
 std::vector<uint8_t> pending_exr;
@@ -154,7 +154,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_encode_image(
   if (!png && !bmp && !tiff && !dng && !exr) return -2;
 
   if (exr) {
-#if defined(LIGHTUSD_NEXT_WASM_WITH_EXR)
+#if defined(LIGHTUSD_CORE_WASM_WITH_EXR)
     if (channels != 1 && channels != 3 && channels != 4) return -1;
     const uint64_t estimate = static_cast<uint64_t>(width) *
         static_cast<uint64_t>(height) * static_cast<uint64_t>(channels) * 2u +
@@ -239,7 +239,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_encode_image(
   return static_cast<int32_t>(sink.size);
 }
 
-#if defined(LIGHTUSD_NEXT_WASM_WITH_EXR)
+#if defined(LIGHTUSD_CORE_WASM_WITH_EXR)
 extern "C" EMSCRIPTEN_KEEPALIVE uintptr_t
 lightusd_next_encoded_image_data(void) {
   return pending_exr.empty()

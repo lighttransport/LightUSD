@@ -43,7 +43,7 @@
 #include "binding-combined-api.h"
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/). Compiled out
 // in the legacy product (LIGHTUSD_WASM_PRODUCT=legacy).
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
 #include "pipeline/flatten.hh"
 #include "../src/pcp/layer-registry.hh"
 #include "resolver/asset-resolver.hh"
@@ -54,7 +54,7 @@
 #include "schema/geom-mesh.hh"
 #include "schema/geom-xform.hh"
 #include "schema/usd-shade.hh"
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
@@ -609,7 +609,7 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 // Enable with CMake option: -DLIGHTUSD_WASM_COROUTINE=ON (default)
 // Disable with: -DLIGHTUSD_WASM_COROUTINE=OFF
 
-#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_CORE)
 
 // NOTE: EM_VAL is a pointer type (struct _EM_VAL*). In MEMORY64 mode,
 // pointers are i64 and must be returned as BigInt from JS→WASM imports.
@@ -986,7 +986,7 @@ struct ZeroCopyStreamingBuffer {
     return entry;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val toJS() const {
     emscripten::val result = emscripten::val::object();
     result.set("uuid", uuid);
@@ -1002,7 +1002,7 @@ struct ZeroCopyStreamingBuffer {
 #endif
 };
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
 bool GetUint8ArrayByteLength(const emscripten::val &buffer, size_t *capacity) {
   if (!capacity || buffer.isNull() || buffer.isUndefined()) {
     return false;
@@ -1303,7 +1303,7 @@ struct EMAssetResolutionResolver {
   }
 
   // Get all asset UUIDs
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAssetUUIDs() const {
     emscripten::val uuids = emscripten::val::object();
     for (const auto &pair : cache) {
@@ -1377,7 +1377,7 @@ struct EMAssetResolutionResolver {
   // owned by this cache and becomes a dangling reference once the asset is
   // evicted or deleted. Callers must consume it before any such mutation.
   // Prefer the copying getAsset()/getAssetByUUID() unless you manage lifetime.
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
       return emscripten::val::undefined();
@@ -1460,7 +1460,7 @@ struct EMAssetResolutionResolver {
     return streaming_cache.at(asset_name).isComplete();
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getStreamingProgress(const std::string &asset_name) const {
     emscripten::val progress = emscripten::val::object();
 
@@ -1520,7 +1520,7 @@ struct EMAssetResolutionResolver {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size,
                                          size_t max_bytes) {
     emscripten::val result = emscripten::val::object();
@@ -1569,7 +1569,7 @@ struct EMAssetResolutionResolver {
 
   /// Get current zero-copy buffer progress
   /// @param uuid The buffer UUID
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getZeroCopyProgress(const std::string &uuid) const {
     if (!zerocopy_buffers.count(uuid)) {
       emscripten::val result = emscripten::val::object();
@@ -1625,7 +1625,7 @@ struct EMAssetResolutionResolver {
   }
 
   /// Get all active zero-copy buffers
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getActiveZeroCopyBuffers() const {
     emscripten::val result = emscripten::val::array();
     for (const auto& pair : zerocopy_buffers) {
@@ -1753,7 +1753,7 @@ struct ParsingProgress {
     return cancel_requested.load();
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val toJS() const {
     emscripten::val result = emscripten::val::object();
     result.set("progress", progress);
@@ -2479,7 +2479,7 @@ void AppendPhysicsPrimJson(const lightusd::legacy::Prim &prim, const std::string
   }
 }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
 // Parse a dependency layer's bytes for the next flatten compositor. Crate
 // bytes keep the lazy CrateReader path (arrays pass through verbatim);
 // anything else (USDA text, USDZ package) dispatches through the
@@ -2559,7 +2559,7 @@ static std::unique_ptr<lightusd::Layer> ParseNextLayerBytes(
   layer->build_path_index();
   return layer;
 }
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
 }  // namespace
 
@@ -3240,7 +3240,7 @@ class LightUSDLoaderNative {
   //
   // Returns a Promise that resolves to a JS object: { success: bool, error?: string }
   //
-#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_CORE)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcoroutine-missing-unhandled-exception"
@@ -3438,7 +3438,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   bool loadTest(const std::string &filename, const emscripten::val &u8) {
     lightusd::legacy::TypedArray<uint8_t> binary;
     detail::uint8arrayToBuffer(u8, binary);
@@ -3633,7 +3633,7 @@ class LightUSDLoaderNative {
     return tests;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val testValueMemoryUsage(emscripten::val arrayLengthVal) {
     const int arrayLength = arrayLengthVal.isUndefined() || arrayLengthVal.isNull()
                                 ? 10000 : arrayLengthVal.as<int>();
@@ -3862,7 +3862,7 @@ class LightUSDLoaderNative {
 #endif
 
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t cameraInfoC(int32_t id, lightusd_combined_camera_info *out) const {
     if (!out || out->struct_size < sizeof(*out)) return -1;
     *out = {}; out->struct_size = sizeof(*out);
@@ -3933,7 +3933,7 @@ class LightUSDLoaderNative {
     return static_cast<int>(render_scene_.instances.size());
   }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t instanceInfoC(int32_t id, lightusd_combined_instance_info *out) const {
     if (!out || out->struct_size < sizeof(*out)) return -1;
     *out = {}; out->struct_size = sizeof(*out);
@@ -4151,7 +4151,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val generateBoneTexture(int mesh_id, int max_influences = 0) const {
     BoneTextureData data;
     emscripten::val result = emscripten::val::object();
@@ -4235,7 +4235,7 @@ class LightUSDLoaderNative {
     return 2;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getMaterial(int id) const { return getMaterial(id, "json"); }
   emscripten::val getMaterial(int id, const std::string &format) const {
     lightusd_combined_material_info info{};
@@ -4270,7 +4270,7 @@ class LightUSDLoaderNative {
 
   int numLights() const { return static_cast<int>(render_scene_.lights.size()); }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t lightInfoC(int32_t id, lightusd_combined_light_info *out) const {
     if (!out || out->struct_size < sizeof(*out)) return -1;
     *out = {}; out->struct_size = sizeof(*out);
@@ -4569,7 +4569,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getLightWithFormat(int id, const std::string &format) const {
     auto result = emscripten::val::object();
     std::string text;
@@ -4582,7 +4582,7 @@ class LightUSDLoaderNative {
 
   int numCameras() const { return static_cast<int>(render_scene_.cameras.size()); }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getCamera(int camera_id) const {
     emscripten::val cam = emscripten::val::object();
 
@@ -4624,7 +4624,7 @@ class LightUSDLoaderNative {
   }
 
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -4675,7 +4675,7 @@ class LightUSDLoaderNative {
   // Return a sparse (keep-as-is) UDIM texture: its `<UDIM>` asset identifier
   // and the list of resolved tiles { udim, u, v, imageId }. Each tile image can
   // be fetched with getImage(imageId).
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t udimInfoC(int32_t id, uint32_t *tile_count) const {
     if (!tile_count) return -1;
     *tile_count = 0;
@@ -4733,7 +4733,7 @@ class LightUSDLoaderNative {
 
 #endif
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t imageInfoC(int32_t id, bool load_buffer, lightusd_combined_image_info *out) {
     if (!out || out->struct_size < sizeof(*out)) return -1;
     *out = {}; out->struct_size = sizeof(*out);
@@ -4838,7 +4838,7 @@ class LightUSDLoaderNative {
   // getMesh()/getImage() remain (deprecated) for backward compatibility.
   // ---------------------------------------------------------------------------
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   static size_t dtypeByteSize_(const char *dtype) {
     std::string d(dtype);
     if (d == "f32" || d == "u32") return 4;
@@ -5238,7 +5238,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getMeshPtr(int mesh_id) const {
     MeshPointerData data;
     auto out = emscripten::val::object();
@@ -5349,7 +5349,7 @@ class LightUSDLoaderNative {
   }
 
   // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getMeshCopy(int mesh_id) const {
     return buildMeshVal_(mesh_id, /* copy_arrays */ true);
   }
@@ -5358,7 +5358,7 @@ class LightUSDLoaderNative {
 
   // Zero-copy image descriptor: {width,height,channels,decoded,colorSpace,
   // usdColorSpace,uri,bufferId, ptr,byteLength}.
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getImagePtr(int img_id) const {
     emscripten::val out = imageMeta_(img_id);
     if (out.isUndefined()) return emscripten::val::object();
@@ -5431,7 +5431,7 @@ class LightUSDLoaderNative {
   }
 
   // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getImageCopy(int img_id) {
     ensureImageBufferLoaded_(img_id);
     return buildImageVal_(img_id, /* copy_arrays */ true);
@@ -5470,7 +5470,7 @@ class LightUSDLoaderNative {
 
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getMesh(int mesh_id) const {
     warnDeprecated_("getMesh", "getMeshPtr()/getMeshCopy()");
     return buildMeshVal_(mesh_id);
@@ -5896,7 +5896,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val buildMeshVal_(int mesh_id, bool copy_arrays = false) const {
     MeshPointerData data;
     auto mesh = emscripten::val::object();
@@ -5962,7 +5962,7 @@ class LightUSDLoaderNative {
 
   int getDefaultRootNodeId() { return render_scene_.default_root_node; }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   struct NodeCursor {
     struct Frame {
       const lightusd::legacy::tydra::Node *node;
@@ -6045,7 +6045,7 @@ class LightUSDLoaderNative {
   }
 
   // Get the complete scene metadata as a JavaScript object
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getSceneMetadata() const {
     emscripten::val metadata = emscripten::val::object();
 
@@ -6091,7 +6091,7 @@ class LightUSDLoaderNative {
 #endif
   int numAnimations() const { return render_scene_.animations.size(); }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t animationInfoC(int32_t id, lightusd_combined_animation_info *out) const {
     if (!out || out->struct_size < sizeof(*out)) return -1;
     *out = {}; out->struct_size = sizeof(*out);
@@ -6516,7 +6516,7 @@ class LightUSDLoaderNative {
     return static_cast<int>(render_scene_.skeletons.size());
   }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   struct SkeletonCursor {
     struct Frame {
       const lightusd::legacy::tydra::SkelNode *node;
@@ -6938,7 +6938,7 @@ class LightUSDLoaderNative {
     return ok;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAssetSearchPaths() const {
     emscripten::val arr = emscripten::val::array();
     for (size_t i = 0; i < search_paths_.size(); i++) {
@@ -6980,7 +6980,7 @@ class LightUSDLoaderNative {
     return lightusd::legacy::ExtractPayloadAssetPaths(curr);
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   static emscripten::val toStringArray(const std::vector<std::string> &items) {
     emscripten::val arr = emscripten::val::array();
     for (const auto &item : items) arr.call<void>("push", item);
@@ -7168,7 +7168,7 @@ class LightUSDLoaderNative {
     return prims;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val extractVariants() {
     emscripten::val arr = emscripten::val::array();
     for (const VariantPrimInfo &prim : collectVariantInfo()) {
@@ -7189,7 +7189,7 @@ class LightUSDLoaderNative {
   }
 #endif
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t layerOpC(uint32_t op) {
     switch (op) {
       case LIGHTUSD_COMBINED_HAS_SUBLAYERS: return hasSublayers();
@@ -7237,7 +7237,7 @@ class LightUSDLoaderNative {
                                               std::move(shape));
     return count;
   }
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
   bool applyVariantSelection(const std::string &prim_path,
                              const std::string &variant_set_name,
@@ -7490,7 +7490,7 @@ class LightUSDLoaderNative {
     image_export_buf_.clear();
   }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   static bool configInt32(double value, int32_t *out) {
     if (!(value >= -2147483648.0 && value <= 2147483647.0) ||
         value != std::trunc(value)) {
@@ -7624,7 +7624,7 @@ class LightUSDLoaderNative {
 
     return stats;
   }
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
   void setAsset(const std::string &name, const std::string &binary) {
     em_resolver_.add(name, binary);
@@ -7647,7 +7647,7 @@ class LightUSDLoaderNative {
     return em_resolver_.isStreamingAssetComplete(name);
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getStreamingProgress(const std::string &name) const {
     return em_resolver_.getStreamingProgress(name);
   }
@@ -7659,7 +7659,7 @@ class LightUSDLoaderNative {
 
   /// Allocate a zero-copy buffer for streaming transfer from JS
   /// Returns object with {success, uuid, bufferPtr, totalSize} or {success: false, error}
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size,
                                          size_t max_bytes) {
     return em_resolver_.allocateZeroCopyBuffer(name, size, max_bytes);
@@ -7682,7 +7682,7 @@ class LightUSDLoaderNative {
   }
 
   /// Get zero-copy buffer progress
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getZeroCopyProgress(const std::string &name) const {
     return em_resolver_.getZeroCopyProgress(name);
   }
@@ -7699,13 +7699,13 @@ class LightUSDLoaderNative {
   }
 
   /// Get all active zero-copy buffers
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getActiveZeroCopyBuffers() const {
     return em_resolver_.getActiveZeroCopyBuffers();
   }
 #endif
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   static double streamSizeMaxC() {
     return sizeof(size_t) == 4 ? 4294967295.0 : 9007199254740991.0;
   }
@@ -7836,7 +7836,7 @@ class LightUSDLoaderNative {
   // (use-after-free in JS) if the asset is later evicted or deleted. Callers
   // that want a zero-copy view and that manage lifetime themselves can use
   // getAssetCacheDataAsMemoryView().
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAsset(const std::string &name) const {
     emscripten::val val = emscripten::val::object();
     if (em_resolver_.has(name)) {
@@ -7861,7 +7861,7 @@ class LightUSDLoaderNative {
     return em_resolver_.getStreamingUUID(name);
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAllAssetUUIDs() const {
     return em_resolver_.getAssetUUIDs();
   }
@@ -7873,7 +7873,7 @@ class LightUSDLoaderNative {
 
   // Get asset by UUID instead of name. Like getAsset(), `data` is a JS-owned
   // *copy* to avoid a dangling view after eviction/deletion.
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAssetByUUID(const std::string &uuid) const {
     emscripten::val val = emscripten::val::object();
 
@@ -7944,7 +7944,7 @@ class LightUSDLoaderNative {
   // Explicit zero-copy view into the cached bytes. See the warning on
   // EMAssetResolutionResolver::getCacheDataAsMemoryView(): the returned
   // Uint8Array dangles after the asset is evicted/deleted. Prefer getAsset().
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
     return em_resolver_.getCacheDataAsMemoryView(name);
   }
@@ -7954,7 +7954,7 @@ class LightUSDLoaderNative {
     return em_resolver_.addFromRawPointer(name, dataPtr, size);
   }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   double assetOpC(uint32_t op, const std::string &key,
                   const std::string &data, double value) {
     switch (op) {
@@ -8043,7 +8043,7 @@ class LightUSDLoaderNative {
   }
 #endif
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t unresolvedTexturesC() const {
     std::vector<std::string> paths;
     for (const auto &image : render_scene_.images) {
@@ -8304,7 +8304,7 @@ class LightUSDLoaderNative {
   // ============================================================
   // next: low-memory lazy-ValueRep flatten pipeline
   // ============================================================
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
 
   int32_t nextFlattenBufferC(const uint8_t *uuid, uint32_t uuid_size,
                              uint8_t lazy_arrays,
@@ -8850,7 +8850,7 @@ class LightUSDLoaderNative {
     return 0;
   }
 
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
   /// Helper: convert current loaded layer to a Stage
   bool getStageFromLayer(lightusd::legacy::Stage &stage) {
@@ -9098,7 +9098,7 @@ class LightUSDLoaderNative {
         memory_mb > 0 ? static_cast<int64_t>(memory_mb) * 1024 * 1024 : 0;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val debugLogMemory(const std::string &label) {
     ReportLightUSDDebugEvent("manual", label);
     emscripten::val result = emscripten::val::object();
@@ -9132,7 +9132,7 @@ class LightUSDLoaderNative {
     return saved;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val exportAsUSDC() {
     std::vector<uint8_t> output;
     if (!exportUSDCData(false, &output)) return emscripten::val::null();
@@ -9183,7 +9183,7 @@ class LightUSDLoaderNative {
 
   void finishUSDCBufferCopy(const std::string &warning) { warn_ = warning; }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val exportUSDCToBuffer(bool as_layer, emscripten::val buffer) {
     emscripten::val result = emscripten::val::object();
     result.set("success", false);
@@ -9329,7 +9329,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
   /// Assets are collected from the em_resolver_ cache.
   ///
@@ -9975,7 +9975,7 @@ class LightUSDLoaderNative {
     lightusd::legacy::usdz::LegacyUDIMLayer access(composited_ ? composed_layer_ : layer_);
     return apply ? lightusd::udim::ApplyJSON(access, input) : lightusd::udim::DescribeJSON(access);
   }
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val describeUDIM() {
     return emscripten::val::global("JSON").call<emscripten::val>("parse", udimLayerJSONC(false, ""));
   }
@@ -10127,7 +10127,7 @@ class LightUSDLoaderNative {
     urdf_mesh_buffers_.clear();
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   bool setVisualMesh(const std::string &name, const emscripten::val &positions,
                      const emscripten::val &normals,
                      const emscripten::val &uvs,
@@ -10167,7 +10167,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   bool setURDFMeshBuffer(const std::string &name,
                          const emscripten::val &positions,
                          const emscripten::val &normals,
@@ -10267,7 +10267,7 @@ class LightUSDLoaderNative {
     return 1;
   }
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
     lightusd_combined_export_info info{};
     const int32_t status = encodeImageData_(reinterpret_cast<const uint8_t *>(pixelData.data()),
@@ -10287,7 +10287,7 @@ class LightUSDLoaderNative {
   //
 
   /// Get current parsing progress as a JS object
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val getProgress() const {
     return parsing_progress_.toJS();
   }
@@ -10429,7 +10429,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   int32_t loadingOpC(uint32_t op, const std::string &a,
                      const std::string &b, const std::string &c) {
     switch (op) {
@@ -10500,7 +10500,7 @@ class LightUSDLoaderNative {
   }
 #endif
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   struct AsyncLoadState {
     std::string binary;
     std::string filename;
@@ -10658,7 +10658,7 @@ class LightUSDLoaderNative {
   const std::string &warn() const { return warn_; }
 
  private:
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   std::map<uint32_t, std::unique_ptr<AsyncLoadState>> async_loads_;
   uint32_t next_async_load_id_{1};
 #endif
@@ -10719,7 +10719,7 @@ class LightUSDLoaderNative {
 
 
   // Simple glTF-like Node
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::val buildNodeRec(const lightusd::legacy::tydra::Node &rnode) {
     emscripten::val node = emscripten::val::object();
 
@@ -10778,7 +10778,7 @@ class LightUSDLoaderNative {
   // composePayload fixed-point loop (cleared by clearAssets()/reset()).
   std::map<std::string, lightusd::legacy::Layer> compose_layer_cache_;
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   struct NextAsyncFlattenSession {
     std::string root;
     std::string root_name;
@@ -10789,7 +10789,7 @@ class LightUSDLoaderNative {
     std::map<std::string, std::shared_ptr<lightusd::Layer>> parsed_layers;
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
   // UDIM: when false, keep UDIM tiles separate (sparse lightusd::legacy::tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
@@ -10895,7 +10895,7 @@ class LightUSDLoaderNative {
   ParsingProgress parsing_progress_;
 };
 
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
 extern "C" EMSCRIPTEN_KEEPALIVE int32_t
 lightusd_combined_next_flatten_buffer(
     void *loader, const uint8_t *uuid, uint32_t uuid_size,
@@ -12319,7 +12319,7 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 // values + texture ASSET PATHS; the JS caller maps a path to its in-archive
 // texture entry (which it already holds) and uploads it to the GPU.
 // ============================================================================
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
 class RenderStream {
  public:
   RenderStream() = default;
@@ -13555,10 +13555,10 @@ class RenderStream {
   std::vector<float> s_points_, s_normals_, s_uv_;
   std::vector<uint32_t> s_indices_;
 };
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 
 EMSCRIPTEN_BINDINGS(render_stream_module) {
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_WASM_WITH_CORE)
   emscripten::class_<RenderStream>("RenderStream")
       .constructor<>()
       .function("setMaterialDedup", &RenderStream::setMaterialDedup)
@@ -13573,7 +13573,7 @@ EMSCRIPTEN_BINDINGS(render_stream_module) {
       .function("getMesh", &RenderStream::getMesh)
       .function("error", &RenderStream::error)
       .function("end", &RenderStream::end);
-#endif  // LIGHTUSD_WASM_WITH_NEXT
+#endif  // LIGHTUSD_WASM_WITH_CORE
 }
 
 // Register STL
@@ -13721,14 +13721,14 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #if defined(LIGHTUSD_WASM_ASYNCIFY)
       .function("loadAsync", &LightUSDLoaderNative::loadAsync)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("loadAsLayerFromBinary", &LightUSDLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &LightUSDLoaderNative::loadFromBinary)
 #endif
-#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("loadFromBinaryAsync", &LightUSDLoaderNative::loadFromBinaryAsync)
 #endif  // Legacy C++20 coroutine async version
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("loadTest", &LightUSDLoaderNative::loadTest)
       .function("loadFromCachedAsset", &LightUSDLoaderNative::loadFromCachedAsset)
       .function("loadAsLayerFromCachedAsset", &LightUSDLoaderNative::loadAsLayerFromCachedAsset)
@@ -13737,163 +13737,163 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
       //.function("loadAndCompositeFromBinary", &LightUSDLoaderNative::loadFromBinary)
 
       // For Stage
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("extractUnresolvedTexturePaths", &LightUSDLoaderNative::extractUnresolvedTexturePaths)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getURI", &LightUSDLoaderNative::getURI)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMesh", &LightUSDLoaderNative::getMesh)  // deprecated: use getMeshPtr/getMeshCopy
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMeshPtr", &LightUSDLoaderNative::getMeshPtr)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMeshPrimvarsJSON",
                 &LightUSDLoaderNative::getMeshPrimvarsJSON)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMeshCopy", &LightUSDLoaderNative::getMeshCopy)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numMeshes", &LightUSDLoaderNative::numMeshes)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numInstances", &LightUSDLoaderNative::numInstances)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getInstance", &LightUSDLoaderNative::getInstance)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getInstancesForMesh", &LightUSDLoaderNative::getInstancesForMesh)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("generateBoneTexture", &LightUSDLoaderNative::generateBoneTexture)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&LightUSDLoaderNative::getMaterial))
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&LightUSDLoaderNative::getMaterial))
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numMaterials", &LightUSDLoaderNative::numMaterials)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getLight", &LightUSDLoaderNative::getLight)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getLightWithFormat", &LightUSDLoaderNative::getLightWithFormat)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAllLights", &LightUSDLoaderNative::getAllLights)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numLights", &LightUSDLoaderNative::numLights)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getCamera", &LightUSDLoaderNative::getCamera)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numCameras", &LightUSDLoaderNative::numCameras)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getTexture", &LightUSDLoaderNative::getTexture)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numTextures", &LightUSDLoaderNative::numTextures)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getImage", &LightUSDLoaderNative::getImage)
 #endif  // deprecated: use getImagePtr/getImageCopy
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getImagePtr", &LightUSDLoaderNative::getImagePtr)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getImageCopy", &LightUSDLoaderNative::getImageCopy)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numImages", &LightUSDLoaderNative::numImages)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numUDIMTextures", &LightUSDLoaderNative::numUDIMTextures)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getUDIMTexture", &LightUSDLoaderNative::getUDIMTexture)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getNativeMaterialDedup",
                 &LightUSDLoaderNative::getNativeMaterialDedup)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getNativeMeshMerge",
                 &LightUSDLoaderNative::getNativeMeshMerge)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getNativeMeshMergeBakeTransform",
                 &LightUSDLoaderNative::getNativeMeshMergeBakeTransform)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getNativeFlattenRenderTree",
                 &LightUSDLoaderNative::getNativeFlattenRenderTree)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setAllowParentRelativeAssetPaths",
                 &LightUSDLoaderNative::setAllowParentRelativeAssetPaths)
       .function("getAllowParentRelativeAssetPaths",
                 &LightUSDLoaderNative::getAllowParentRelativeAssetPaths)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getDefaultRootNodeId",
                 &LightUSDLoaderNative::getDefaultRootNodeId)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getRootNode", &LightUSDLoaderNative::getRootNode)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getDefaultRootNode", &LightUSDLoaderNative::getDefaultRootNode)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numRootNodes", &LightUSDLoaderNative::numRootNodes)
 #endif
 
       // Metadata access
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getUpAxis", &LightUSDLoaderNative::getUpAxis)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getSceneMetadata", &LightUSDLoaderNative::getSceneMetadata)
 #endif
 
       // Animation methods
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numAnimations", &LightUSDLoaderNative::numAnimations)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAnimation", &LightUSDLoaderNative::getAnimation)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAllAnimations", &LightUSDLoaderNative::getAllAnimations)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAnimationInfo", &LightUSDLoaderNative::getAnimationInfo)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAllAnimationInfos", &LightUSDLoaderNative::getAllAnimationInfos)
 #endif
 
       // Skeleton hierarchy methods
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("numSkeletons", &LightUSDLoaderNative::numSkeletons)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getSkeleton", &LightUSDLoaderNative::getSkeleton)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getAllSkeletons", &LightUSDLoaderNative::getAllSkeletons)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getSkeletonJointsFlat", &LightUSDLoaderNative::getSkeletonJointsFlat)
 #endif
 
@@ -13904,20 +13904,20 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 
 
       // Deferred tangent computation
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("computeMeshTangents",
                 &LightUSDLoaderNative::computeMeshTangents)
 #endif
 
       // MMap zero-copy (experimental, default off)
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setMMapZeroCopy",
                 &LightUSDLoaderNative::setMMapZeroCopy)
       .function("getMMapZeroCopy",
                 &LightUSDLoaderNative::getMMapZeroCopy)
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   // The combined product installs typed-C adapters for these from
   // combined-api.js.
       .function("extractSublayerAssetPaths",
@@ -13972,8 +13972,8 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 
       .function("lodVariantCount",
                 &LightUSDLoaderNative::lodVariantCount)
-#endif  // !LIGHTUSD_WASM_WITH_NEXT
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#endif  // !LIGHTUSD_WASM_WITH_CORE
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
   // Loader configuration; combined-api.js installs typed-C adapters instead.
       .function("debugLogMemory", &LightUSDLoaderNative::debugLogMemory)
       .function("getCombineUDIMTiles", &LightUSDLoaderNative::getCombineUDIMTiles)
@@ -14007,15 +14007,15 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
       .function("setValueClipSampleRate", &LightUSDLoaderNative::setValueClipSampleRate)
       .function("setValueClipTimeRange", &LightUSDLoaderNative::setValueClipTimeRange)
       .function("setValueClipUseTimeRange", &LightUSDLoaderNative::setValueClipUseTimeRange)
-#endif  // !LIGHTUSD_WASM_WITH_NEXT
+#endif  // !LIGHTUSD_WASM_WITH_CORE
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("layerToRenderScene",
                 &LightUSDLoaderNative::layerToRenderScene)
 #endif
 
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setAsset",
                 &LightUSDLoaderNative::setAsset)
       .function("startStreamingAsset",
@@ -14048,7 +14048,7 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
                 &LightUSDLoaderNative::getActiveZeroCopyBuffers)
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("hasAsset",
                 &LightUSDLoaderNative::hasAsset)
       .function("getAsset",
@@ -14095,13 +14095,13 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
                 &LightUSDLoaderNative::reset)
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("layerToString",
                 &LightUSDLoaderNative::layerToString)
       .function("describeUDIM", &LightUSDLoaderNative::describeUDIM)
       .function("applyUDIM", &LightUSDLoaderNative::applyUDIM)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("validateFromBinary",
                 &LightUSDLoaderNative::validateFromBinary)
       .function("validateLoadedLayer",
@@ -14109,20 +14109,20 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #endif
 
       // JSON conversion methods
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("layerToJSON",
                 &LightUSDLoaderNative::layerToJSON)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("layerToJSONWithOptions",
                 &LightUSDLoaderNative::layerToJSONWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("loadLayerFromJSON",
                 &LightUSDLoaderNative::loadLayerFromJSON)
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setBaseWorkingPath", &LightUSDLoaderNative::setBaseWorkingPath)
       .function("getBaseWorkingPath", &LightUSDLoaderNative::getBaseWorkingPath)
       .function("clearAssetSearchPaths", &LightUSDLoaderNative::clearAssetSearchPaths)
@@ -14132,7 +14132,7 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 
 
       // MCP
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("mcpCreateContext", &LightUSDLoaderNative::mcpCreateContext)
       .function("mcpSelectContext", &LightUSDLoaderNative::mcpSelectContext)
       .function("mcpResourcesList", &LightUSDLoaderNative::mcpResourcesList)
@@ -14142,7 +14142,7 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #endif
 
       // Progress reporting for async parsing
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getProgress", &LightUSDLoaderNative::getProgress)
       .function("cancelParsing", &LightUSDLoaderNative::cancelParsing)
       .function("wasCancelled", &LightUSDLoaderNative::wasCancelled)
@@ -14153,68 +14153,68 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #endif
 
       // USD Export
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportAsUSDA", &LightUSDLoaderNative::exportAsUSDA)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getShadingGraphJSON", &LightUSDLoaderNative::getShadingGraphJSON)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportAsUSDC", &LightUSDLoaderNative::exportAsUSDC)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportLayerAsUSDCWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportLayerAsUSDCToBufferWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCToBufferWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportStageAsUSDCToBufferWithOptions", &LightUSDLoaderNative::exportStageAsUSDCToBufferWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("flattenLayer", &LightUSDLoaderNative::flattenLayer)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportAsUSDZ", &LightUSDLoaderNative::exportAsUSDZ)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportAsUSDZWithRemap", &LightUSDLoaderNative::exportAsUSDZWithRemap)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("remapLayerAssetPaths", &LightUSDLoaderNative::remapLayerAssetPaths)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportAsUSDZWithOptions", &LightUSDLoaderNative::exportAsUSDZWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("exportLayerAsUSDZWithOptions", &LightUSDLoaderNative::exportLayerAsUSDZWithOptions)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("extractPhysicsSceneJSON", &LightUSDLoaderNative::extractPhysicsSceneJSON)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("getMhProfileJSON", &LightUSDLoaderNative::getMhProfileJSON)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("createSampleScene", &LightUSDLoaderNative::createSampleScene)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("clearURDFMeshBuffers", &LightUSDLoaderNative::clearURDFMeshBuffers)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setVisualMesh", &LightUSDLoaderNative::setVisualMesh)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("setCollisionMesh", &LightUSDLoaderNative::setCollisionMesh)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("createURDFPhysicsScene", &LightUSDLoaderNative::createURDFPhysicsScene)
 #endif
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("encodeImageNative", &LightUSDLoaderNative::encodeImageNative)
 #endif
 
-#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+#if !defined(LIGHTUSD_WASM_WITH_CORE)
       .function("ok", &LightUSDLoaderNative::ok)
       .function("error", &LightUSDLoaderNative::error)
       .function("warn", &LightUSDLoaderNative::warn)

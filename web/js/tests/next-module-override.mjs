@@ -6,7 +6,7 @@ import path from 'node:path';
 
 export async function resolve(specifier, context, nextResolve) {
   const override = /(?:^|\/)lightusd_next(?:_64)?\.js$/.test(specifier)
-    ? process.env.LIGHTUSD_NEXT_MODULE
+    ? process.env.LIGHTUSD_MODULE
     : /(?:^|\/)lightusd_combined(?:_64)?\.js$/.test(specifier)
       ? process.env.LIGHTUSD_COMBINED_MODULE : undefined;
   if (override) {
