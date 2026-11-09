@@ -2106,7 +2106,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
   endif ()
 
   add_subdirectory(examples/api_tutorial)
-  add_subdirectory(examples/next_workflows)
+  # examples/workflows is a core example, added by the root CMakeLists.txt.
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
@@ -2144,7 +2144,7 @@ if(LIGHTUSD_BUILD_TOOLS)
   # tools/lusddeps is a core tool, added by the root CMakeLists.txt.
   # lusddiff uses the Tydra diff-and-compare API.
   if(LIGHTUSD_WITH_TYDRA)
-    add_subdirectory(tools/lusddiff)
+    # tools/lusddiff is a core tool, added by the root CMakeLists.txt.
     # examples/lusdview (added earlier when LIGHTUSD_BUILD_GUI_VIEWER is also
     # ON) may have already pulled this in for its lightrt_c CPU RT backend.
     if(NOT TARGET lusdrender)
@@ -5042,15 +5042,4 @@ if(WIN32)
   endif()
 endif()
 
-if(LIGHTUSD_BUILD_TESTS AND TARGET lusddeps AND TARGET next_quickstart AND TARGET lusddiff)
-  find_package(Python3 COMPONENTS Interpreter QUIET)
-  if(Python3_Interpreter_FOUND)
-    set(workflow_capture_args)
-    if(TARGET lusdrender)
-      list(APPEND workflow_capture_args --capture-renderer $<TARGET_FILE:lusdrender>)
-    endif()
-    add_test(NAME workflow_tools COMMAND ${Python3_EXECUTABLE}
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-workflow-tools.py --bin-dir ${CMAKE_BINARY_DIR} ${workflow_capture_args})
-    set_tests_properties(workflow_tools PROPERTIES TIMEOUT 120 LABELS "tools;next")
-  endif()
-endif()
+# workflow_tools is registered by the root CMakeLists.txt (core tools).

@@ -146,7 +146,26 @@ if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusdchecker)
   add_subdirectory(tools/lusddeps)
   add_subdirectory(tools/lusddumpcrate)
+  add_subdirectory(tools/lusddiff)
 endif()
+if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
+  add_subdirectory(examples/workflows)
+endif()
+
+# End-to-end workflow over the core CLI tools.
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusddeps AND TARGET quickstart AND TARGET lusddiff)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(workflow_capture_args)
+    if(TARGET lusdrender)
+      list(APPEND workflow_capture_args --capture-renderer $<TARGET_FILE:lusdrender>)
+    endif()
+    add_test(NAME workflow_tools COMMAND ${Python3_EXECUTABLE}
+      ${PROJECT_SOURCE_DIR}/tests/run-workflow-tools.py --bin-dir ${CMAKE_BINARY_DIR} ${workflow_capture_args})
+    set_tests_properties(workflow_tools PROPERTIES TIMEOUT 120 LABELS "tools;core")
+  endif()
+endif()
+
 option(LIGHTUSD_BUILD_QUICKLOOK
        "Build the minimal portable USD Quick Look viewer 'lusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
        OFF)

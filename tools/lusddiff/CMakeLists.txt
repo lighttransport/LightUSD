@@ -8,17 +8,12 @@ set(LUSDDIFF_TARGET "lusddiff")
 add_executable(${LUSDDIFF_TARGET}
     lusddiff.cc
     collection-diff.cc
+    instance-canon.cc
     )
 add_sanitizers(${LUSDDIFF_TARGET})
 
-target_include_directories(${LUSDDIFF_TARGET} PRIVATE
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR})
-if(NOT TARGET lightusd_core)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src
-                   ${CMAKE_BINARY_DIR}/lusddiff_next_build)
-endif()
-target_link_libraries(${LUSDDIFF_TARGET} ${LIGHTUSD_TARGET_STATIC} lightusd_core)
+target_include_directories(${LUSDDIFF_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(${LUSDDIFF_TARGET} PRIVATE lightusd_core)
 
 # Warning flags (same policy as the core library)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

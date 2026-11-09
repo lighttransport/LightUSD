@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "collection-diff.hh"
-#include "../../src/pcp/layer-registry.hh"
+#include "pcp/layer-registry.hh"
 #include "reader/usdz-reader.hh"
 #include "core/minijson.hh"
 #include <algorithm>

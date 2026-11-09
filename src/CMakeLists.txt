@@ -1075,7 +1075,7 @@ endif()
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   option(LIGHTUSD_BUILD_EXAMPLES "Build next workflow examples" ON)
   if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
-    add_subdirectory(../examples/next_workflows core_workflow_examples)
+    add_subdirectory(../examples/workflows core_workflow_examples)
   endif()
 endif()
 

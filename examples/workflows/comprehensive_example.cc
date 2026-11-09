@@ -4,7 +4,7 @@
 // typed schema access, attribute evaluation at a timecode, and writing the
 // result back out as USDA and USDC.
 //
-// Build: see examples/next_workflows/CMakeLists.txt (target: comprehensive_example)
+// Build: see examples/workflows/CMakeLists.txt (target: comprehensive_example)
 // Run:   comprehensive_example <file.usd[ac]>
 
 #include <cstdlib>

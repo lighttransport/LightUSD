@@ -15,7 +15,7 @@ static void PrintPrim(const lightusd::api::Prim& prim) {
 
 int main(int argc, char** argv) {
   if (argc != 3) {
-    std::fprintf(stderr, "Usage: next_quickstart INPUT OUTPUT.usda|OUTPUT.usdc\n");
+    std::fprintf(stderr, "Usage: quickstart INPUT OUTPUT.usda|OUTPUT.usdc\n");
     return 2;
   }
   lightusd::api::Stage stage;

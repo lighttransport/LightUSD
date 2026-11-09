@@ -390,7 +390,10 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
   if ((lflags & PropSlot::kFlagCustom) != (rflags & PropSlot::kFlagCustom)) {
     note("custom");
   }
-  if ((lflags & PropSlot::kFlagUniform) != (rflags & PropSlot::kFlagUniform)) {
+  // Relationships are always uniform in USD; the USDC reader keeps the
+  // authored `variability = uniform` field, the USDA reader does not.
+  if (!lv.is_rel &&
+      (lflags & PropSlot::kFlagUniform) != (rflags & PropSlot::kFlagUniform)) {
     note("variability");
   }
 
@@ -654,10 +657,23 @@ bool ComparePrimMeta(const PrimMetadata &l, const PrimMetadata &r,
   static const ArcListOps kNoEdits;
   const ArcListOps &le = l.arc_edits() ? *l.arc_edits() : kNoEdits;
   const ArcListOps &re = r.arc_edits() ? *r.arc_edits() : kNoEdits;
+  // A non-empty inline list with no authored edit IS an explicit list (the
+  // USDC reader stores `references = [...]` that way; the USDA reader also
+  // records an explicit edit with no list-op items). Only an explicit EMPTY
+  // list (`references = []`) needs the marker to differ from "unauthored".
+  auto arc_edit_key = [](const std::vector<std::string> &v,
+                         const ArcListOp &e) {
+    if (!v.empty() && e.authored && e.is_explicit && !e.is_value_block &&
+        e.added.empty() && e.prepended.empty() && e.appended.empty() &&
+        e.deleted.empty() && e.ordered.empty()) {
+      return std::string("<none>");
+    }
+    return ArcEditToStr(e);
+  };
   auto cmp_arc = [&](const std::vector<std::string> &a,
                      const std::vector<std::string> &b, const ArcListOp &ea,
                      const ArcListOp &eb, const char *field) {
-    if (a != b || ArcEditToStr(ea) != ArcEditToStr(eb)) {
+    if (a != b || arc_edit_key(a, ea) != arc_edit_key(b, eb)) {
       note(field);
     }
   };

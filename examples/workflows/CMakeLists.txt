@@ -1,4 +1,4 @@
-foreach(pair "next_quickstart|quickstart.cc" "interactive_session|interactive-session.cc"
+foreach(pair "quickstart|quickstart.cc" "interactive_session|interactive-session.cc"
              "animation_sampling|animation-sampling.cc" "portable_asset_package|portable-package.cc")
   string(REPLACE "|" ";" parts "${pair}")
   list(GET parts 0 target)
@@ -15,19 +15,19 @@ foreach(pair "next_quickstart|quickstart.cc" "interactive_session|interactive-se
   set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endforeach()
 
-# The examples above go through the C API. This one is the C++ `next` API
+# The examples above go through the C API. This one is the C++ core API
 # walkthrough (load -> compose -> traverse -> schema -> evaluate -> write).
 if(TARGET lightusd_core)
   add_executable(comprehensive_example comprehensive_example.cc)
   # lightusd_core exports the repo `src/` directory as a PUBLIC include dir,
-  # which is what makes the "next/..." includes resolve. Do not add
+  # which is what makes the core includes resolve. Do not add
   # ${PROJECT_SOURCE_DIR}/src here: in the standalone src build
   # PROJECT_SOURCE_DIR is src, not the repo root.
   target_link_libraries(comprehensive_example PRIVATE lightusd_core)
   set_target_properties(comprehensive_example PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endif()
 
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME core_workflow_examples

@@ -4039,3 +4039,23 @@ cmake --build build_ninja/no-native-io --target test_host_services test_host_ser
 scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
   -R 'next_test_host_services' --output-on-failure
 ```
+
+## Legacy tests (compiled, not run)
+
+Since 1.1 the legacy implementation (`src/legacy/`, `-DLIGHTUSD_BUILD_LEGACY=ON`)
+is built but registers no CTest cases; its test programs live under
+`tests/legacy/` and still compile. Core replacements for the legacy-only
+shell drivers are `core_scope_imageable_roundtrip`, `core_variant_chain` and
+(with a pinned OpenUSD usdcat) `core_pxr_crate_fidelity`.
+
+Known coverage gaps surfaced while porting the tools to the core (each a
+pre-existing core behavior, not a port regression):
+
+| Area | Gap | Found by |
+|---|---|---|
+| USDC reader | variant contents are held as `{set=sel}` child prims instead of prim variant metadata, so a USDA layer and its USDC twin diff as different | `lusddiff tests/usda/variantSet-*.usda tests/usdc/variantSet-*.usdc` |
+| USDC reader | `uint2` / `uint2[]` values come back as strings | `lusddiff` on `uint2-type-001`, `uint2-array-001` |
+| USDC reader | `sceneLibrary-001` prim metadata differs from the USDA reader | `lusddiff` on `sceneLibrary-001` |
+| USDA parser | `varying rel` is rejected (legacy accepted it) | `tests/usda/rel-001.usda` |
+| lusdcat | no `--explain` opinion tracer (legacy `examples/lusdcat` only); `run-workflow-tools.py` skips those checks | `workflow_tools` |
+| usd_to_gltf | legacy-only example; `run-workflow-tools.py` skips the glTF checks without it | `workflow_tools` |

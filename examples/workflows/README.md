@@ -16,7 +16,7 @@ The four C++ examples also build in the standalone `src/next` project with
 
 | Executable | What it demonstrates |
 |---|---|
-| `next_quickstart INPUT OUTPUT.usda` (or `.usdc`) | Bounded composition, traversal, typed evaluation, writing and reopening |
+| `quickstart INPUT OUTPUT.usda` (or `.usdc`) | Bounded composition, traversal, typed evaluation, writing and reopening |
 | `interactive_session ROOT` | Retained snapshots, `/World`'s `display=high` selection, deferred payload load/unload, reload, cancellation, transactional `SceneUpdateSink` |
 | `animation_sampling INPUT /Prim.attribute` | DefaultTime versus numeric time; held/linear evaluation, spline evaluation, lazy clip loader/cache, sampled SkelAnimation extraction |
 | `portable_asset_package NEW_DIRECTORY` | Memory assets/custom resolution, dependency inventory, validation, USDC writing, USDZ packaging, relocation and reopening |
@@ -39,7 +39,7 @@ RenderProducts and raw RenderVars, invokes `lusdrender` once, checks the data
 images numerically, and writes a camera/output manifest:
 
 ```sh
-python3 examples/next_workflows/synthetic-capture.py \
+python3 examples/workflows/synthetic-capture.py \
   --lusdrender /path/to/built/lusdrender --output-dir /tmp/new-capture
 ```
 
