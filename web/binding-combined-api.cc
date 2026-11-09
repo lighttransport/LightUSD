@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "next/pipeline/flatten.hh"
+#include "pipeline/flatten.hh"
 
 static_assert(sizeof(lightusd_combined_material_info) == 240, "material layout changed");
 static_assert(sizeof(lightusd_combined_mesh_value_info) == 80, "mesh value layout changed");

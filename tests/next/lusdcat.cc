@@ -28,14 +28,14 @@
 #include <vector>
 
 #include "core/logger.hh"  // lightusd::logging (next routes diagnostics through it)
-#include "next/pcp/cache.hh"
-#include "next/pcp/batched-compose.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
-#include "next/load-usd.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "../../src/pcp/cache.hh"
+#include "pcp/batched-compose.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
+#include "load-usd.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 

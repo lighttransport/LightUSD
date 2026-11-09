@@ -5,7 +5,7 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   cat <<'EOF'
 Usage: scripts/run-next-checks.sh
 
-Configure, build, and run the standalone src/next smoke tests.
+Configure, build, and run the standalone src smoke tests.
 
 Environment overrides:
   ROOT_DIR             Repository root (default: git top-level)
@@ -49,7 +49,7 @@ trap cleanup_bench_file EXIT
 
 cd "$ROOT_DIR"
 
-cmake -S "$ROOT_DIR/src/next" -B "$BUILD_DIR" \
+cmake -S "$ROOT_DIR/src" -B "$BUILD_DIR" \
   -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
   -DLIGHTUSD_NEXT_ENABLE_THREAD="$THREADS" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
@@ -94,7 +94,7 @@ fi
 if [ "$ALSO_THREADS" != "0" ] && [ "$THREADS" != "ON" ]; then
   echo
   echo "=== second pass: LIGHTUSD_NEXT_ENABLE_THREAD=ON ==="
-  cmake -S "$ROOT_DIR/src/next" -B "$THREADS_BUILD_DIR" \
+  cmake -S "$ROOT_DIR/src" -B "$THREADS_BUILD_DIR" \
     -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
     -DLIGHTUSD_NEXT_ENABLE_THREAD=ON \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
@@ -112,7 +112,7 @@ if [ "${RUN_FUZZ:-0}" != "0" ]; then
   echo
   echo "=== fuzzer harnesses: build + seed-corpus replay ==="
   FUZZ_BUILD_DIR="${FUZZ_BUILD_DIR:-$BUILD_DIR-fuzz}"
-  cmake -S "$ROOT_DIR/src/next" -B "$FUZZ_BUILD_DIR" \
+  cmake -S "$ROOT_DIR/src" -B "$FUZZ_BUILD_DIR" \
     -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo

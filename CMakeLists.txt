@@ -140,7 +140,7 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   if(LIGHTUSD_NEXT_BUILD_TESTS)
     enable_testing()
   endif()
-  add_subdirectory(src/next)
+  add_subdirectory(src)
   if(COMMAND add_sanitizers)
     add_sanitizers(lightusd_next)
   endif()
@@ -250,9 +250,9 @@ option(LIGHTUSD_BUILD_TOOLS "Build tools (lusddumpcrate, etc.)" OFF)
 # (~20% of a large-scene `lusdcat -f` is glibc malloc/free/consolidate);
 # jemalloc cut representative large-scene runs by 14-17% at ~+4% RSS with
 # byte-identical output. Tools only -- the library
-# never forces an allocator (apps choose). Same ranking as src/next
+# never forces an allocator (apps choose). Same ranking as src
 # (LIGHTUSD_NEXT_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
-# NOTE: unlike src/next tools, no `malloc_conf` no-purge baking here -- the
+# NOTE: unlike src tools, no `malloc_conf` no-purge baking here -- the
 # decay-purge stall does not show on this path (measured a wash, +5% RSS).
 option(LIGHTUSD_WITH_TCMALLOC
        "Link a drop-in allocator (jemalloc/tcmalloc/mimalloc) into CLI example tools (faster flatten/compose on large scenes)" OFF)
@@ -683,7 +683,7 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/legacy/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/unicode-xid-c.c
-    ${PROJECT_SOURCE_DIR}/src/next/c/spline.c
+    ${PROJECT_SOURCE_DIR}/src/c/spline.c
     ${PROJECT_SOURCE_DIR}/src/core/logger.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/value-pprint.cc
@@ -1802,7 +1802,7 @@ if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
     set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
   endif()
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next lightusd_next_build)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_next_build)
 endif()
 
 #
@@ -4444,7 +4444,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     # Layer-relative asset-path anchoring: a look layer nested below the root
     # reaches its texture with `../tex/...`, which only resolves when anchored to
-    # the layer that authored it (see src/next/layer/asset-anchor.hh).
+    # the layer that authored it (see src/layer/asset-anchor.hh).
     add_test(
       NAME lusdview-asset-path-anchoring
       COMMAND ${CMAKE_COMMAND} -E env
@@ -4580,7 +4580,7 @@ if(LIGHTUSD_BUILD_TESTS)
             --check
             --ledger ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
             --output ${PROJECT_SOURCE_DIR}/tests/usda/generated/openusd-supported-schema-26.08.usda
-            --registry-output ${PROJECT_SOURCE_DIR}/src/next/schema/generated/openusd-supported-schema-names.inc
+            --registry-output ${PROJECT_SOURCE_DIR}/src/schema/generated/openusd-supported-schema-names.inc
     )
 
   #
@@ -4984,7 +4984,7 @@ if(LIGHTUSD_BUILD_TESTS)
       target_link_libraries(bench-render-convert-next PRIVATE
         ${LIGHTUSD_TARGET_STATIC} lightusd_next tydra_next)
       target_include_directories(bench-render-convert-next PRIVATE
-        ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/next)
+        ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src)
       target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
       add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
       set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"

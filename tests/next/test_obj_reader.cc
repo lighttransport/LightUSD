@@ -4,8 +4,8 @@
 #include <iostream>
 
 #include "external/tinyobjloader-c/tiny_obj_c.h"
-#include "next/pcp/layer-registry.hh"
-#include "next/reader/obj-reader.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "reader/obj-reader.hh"
 using namespace lightusd::next;
 int main() {
   const char* obj =

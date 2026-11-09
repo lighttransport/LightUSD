@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
-#include "tydra/next/render-extract.hh"
-#include "next/schema/usd-shade.hh"
+#include "tydra/render-extract.hh"
+#include "schema/usd-shade.hh"
 #include <algorithm>
 #include <cmath>
 namespace lightusd {

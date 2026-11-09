@@ -3,7 +3,7 @@
 
 #include <string_view>
 
-#include "next/stage/change-set.hh"
+#include "stage/change-set.hh"
 
 struct lightusd_document_session;
 struct lightusd_document_snapshot;

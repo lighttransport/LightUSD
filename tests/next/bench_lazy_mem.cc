@@ -24,12 +24,12 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
-#include "next/crate/crate-reader.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/layer/layer.hh"
-#include "next/pipeline/flatten.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
+#include "crate/crate-reader.hh"
+#include "crate/crate-writer.hh"
+#include "layer/layer.hh"
+#include "pipeline/flatten.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
 
 using namespace lightusd::next;
 

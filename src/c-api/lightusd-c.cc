@@ -4,9 +4,9 @@
 // LightUSD C API implementation (core: stage/prim/attr/authoring).
 
 #include "core/native-io.hh"
-#include "next/schema/schema-registry.hh"
+#include "schema/schema-registry.hh"
 #include "c-internal.hh"
-#include "next/format-detect.hh"
+#include "format-detect.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -16,24 +16,24 @@
 #include <map>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
-#include "next/prim/identifier.hh"
-#include "next/schema/usd-geom-camera.hh"
-#include "next/schema/usd-shade.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/load-usd.hh"
-#include "next/types/type-info.hh"
-#include "next/types/value-view.hh"
-#include "next/crate/crate-data-source.hh"
-#include "next/pipeline/flatten.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
-#include "next/eval/xform-eval.hh"
-#include "next/eval/value-clip.hh"
-#include "next/eval/property-trace.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
+#include "prim/identifier.hh"
+#include "schema/usd-geom-camera.hh"
+#include "schema/usd-shade.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "load-usd.hh"
+#include "types/type-info.hh"
+#include "types/value-view.hh"
+#include "crate/crate-data-source.hh"
+#include "pipeline/flatten.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
+#include "eval/xform-eval.hh"
+#include "eval/value-clip.hh"
+#include "eval/property-trace.hh"
+#include "../pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
 
 namespace n = lightusd::next;
 namespace fs = ghc::filesystem;

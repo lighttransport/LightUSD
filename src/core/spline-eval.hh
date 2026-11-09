@@ -16,7 +16,7 @@
 #include <cmath>
 #include <vector>
 
-#include "next/c/lightusd-core-c.h"  // lu_cubic_bezier / lu_hermite_*
+#include "c/lightusd-core-c.h"  // lu_cubic_bezier / lu_hermite_*
 
 // Knot boundaries require exact equality, including discontinuities and loop
 // seams. Copy elision of the local spline/knot values is optional and does not

@@ -874,11 +874,11 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
 # next_scene_loader.cc (the --next OpenGL mesh preview).
 set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
 if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdview_next_build)
 endif()
 if(NOT TARGET tydra_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra
                    ${CMAKE_BINARY_DIR}/lusdview_tydra_next_build)
 endif()
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c lightusd_next tydra_next)

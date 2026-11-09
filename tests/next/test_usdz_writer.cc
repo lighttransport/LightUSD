@@ -2,10 +2,10 @@
 /// Writes a Stage to USDZ, reads it back with the USDZ reader,
 /// then reads the embedded USDC with the USDC reader.
 
-#include "next/writer/usdz-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/load-usd.hh"
+#include "writer/usdz-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "reader/usdz-reader.hh"
+#include "load-usd.hh"
 #include <cstdio>
 #include <string>
 #include <vector>

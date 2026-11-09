@@ -3,7 +3,7 @@
 
 Two artifacts are produced from the same JSON:
 
-* a C11 data module under ``src/next/c`` (``generated-schema-tables.{c,h}``)
+* a C11 data module under ``src/c`` (``generated-schema-tables.{c,h}``)
   consumed by the next product, and
 * the rule metadata cross-check used by ``tools/lusdchecker``.
 
@@ -297,11 +297,11 @@ def main():
     p.add_argument('--references', type=Path,
                    default=root / 'tools/lusdchecker/reference-errors.json')
     p.add_argument('--output', type=Path,
-                   default=root / 'src/next/c/generated-schema-tables.c')
+                   default=root / 'src/c/generated-schema-tables.c')
     p.add_argument('--header', type=Path,
-                   default=root / 'src/next/c/generated-schema-tables.h')
+                   default=root / 'src/c/generated-schema-tables.h')
     p.add_argument('--rule-table', type=Path,
-                   default=root / 'src/next/validation/usd-validation-report.cc')
+                   default=root / 'src/validation/usd-validation-report.cc')
     p.add_argument('--check', action='store_true')
     a = p.parse_args()
 

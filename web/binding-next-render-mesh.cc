@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
-#include "tydra/next/render-extract.hh"
-#include "tydra/next/render-converter-clip.hh"
+#include "tydra/render-extract.hh"
+#include "tydra/render-converter-clip.hh"
 namespace lightusd {
 namespace web_next {
 int RenderStream::meshCopyScope(int mesh_id, bool begin) {

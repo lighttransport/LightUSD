@@ -12,11 +12,11 @@
 #include <string>
 #include <vector>
 
-#include "next/pcp/cache.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/schema/usd-skel.hh"
-#include "next/stage/stage.hh"
+#include "../../src/pcp/cache.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "resolver/asset-resolver.hh"
+#include "schema/usd-skel.hh"
+#include "stage/stage.hh"
 
 // Regression tests for the `next` UsdSkel readers. Each of these guarded a bug
 // that failed SILENTLY: the data came back empty (or as an identity transform),

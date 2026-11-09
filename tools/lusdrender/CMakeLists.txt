@@ -241,7 +241,7 @@ endif()
 # lusdrender's on-demand next build.
 set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
 if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdrender_next_build)
 endif()
 target_link_libraries(lusdrender lightusd_next tydra_next)

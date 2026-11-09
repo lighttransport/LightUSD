@@ -11,12 +11,12 @@
 
 #include "c-internal.hh"
 #include "external/filesystem/include/ghc/filesystem.hpp"
-#include "next/resolver/asset-resolver.hh"
+#include "resolver/asset-resolver.hh"
 #ifdef LIGHTUSD_WITH_USDOBJ
-#include "next/reader/obj-reader.hh"
+#include "reader/obj-reader.hh"
 #endif
 #include "tydra/asset-import/import.hh"
-#include "tydra/next/urdf-to-usd.hh"
+#include "../tydra/urdf-to-usd.hh"
 namespace ia = lightusd::tydra::import_asset;
 using lightusd_internal::Fail;
 namespace {

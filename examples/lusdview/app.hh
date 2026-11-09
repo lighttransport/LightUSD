@@ -45,8 +45,8 @@
 #include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
-#include "tydra/next/scene-preview-compute.hh"
-#include "tydra/next/scene-preview.hh"
+#include "tydra/scene-preview-compute.hh"
+#include "tydra/scene-preview.hh"
 #include "tydra/rb-dynamics.hh"
 #include "viewer_document.hh"
 #if defined(LUSDVIEW_HAVE_MCP)

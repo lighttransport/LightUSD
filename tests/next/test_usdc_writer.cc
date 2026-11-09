@@ -12,14 +12,14 @@
 #include <string>
 #include <vector>
 
-#include "next/stage/stage.hh"
-#include "next/layer/layer.hh"
-#include "next/types/value.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/crate/crate-format.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/reader/usdc-reader.hh"
+#include "stage/stage.hh"
+#include "layer/layer.hh"
+#include "types/value.hh"
+#include "crate/crate-writer.hh"
+#include "crate/crate-format.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usda-writer.hh"
+#include "reader/usdc-reader.hh"
 
 using namespace lightusd::next;
 

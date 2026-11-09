@@ -15,8 +15,8 @@
 
 #include "mcp-json.hh"
 #include "lightusd-c.h"
-#include "next/diff/layer-diff.hh"
-#include "next/layer/layer.hh"
+#include "diff/layer-diff.hh"
+#include "layer/layer.hh"
 
 namespace lightusd {
 namespace mcp {

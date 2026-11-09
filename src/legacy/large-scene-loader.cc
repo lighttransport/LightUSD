@@ -24,8 +24,8 @@
 #include "pcp/layer-registry.hh"
 #include "lightusd.hh"
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-#include "next/layer/asset-anchor.hh"
-#include "next/types/value-view.hh"
+#include "layer/asset-anchor.hh"
+#include "types/value-view.hh"
 #endif
 
 namespace lightusd { namespace legacy {

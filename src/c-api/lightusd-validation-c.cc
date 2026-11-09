@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "lightusd-validation-c.h"
 #include "c-internal.hh"
-#include "next/validation/usd-validation.hh"
-#include "next/validation/validation-context.hh"
+#include "validation/usd-validation.hh"
+#include "validation/validation-context.hh"
 #include <new>
 namespace n = lightusd::next;
 using lightusd_internal::Fail;

@@ -6,10 +6,10 @@
 #include <vector>
 
 #include "c-api/c-internal.hh"
-#include "next/crate/crate-data-source.hh"
-#include "next/crate/lazy-array.hh"
-#include "next/layer/layer.hh"
-#include "next/types/value-view.hh"
+#include "crate/crate-data-source.hh"
+#include "crate/lazy-array.hh"
+#include "layer/layer.hh"
+#include "types/value-view.hh"
 
 namespace n = lightusd::next;
 static int failures = 0;

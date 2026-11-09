@@ -3,10 +3,10 @@
 #include "binding-next-layer.hh"
 #include "binding-next-scene.hh"
 #include "c-stage-bridge.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/types/type-info.hh"
-#include "next/stage/stage.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "types/type-info.hh"
+#include "stage/stage.hh"
 #include <algorithm>
 #include <cstring>
 #include <limits>

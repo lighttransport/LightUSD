@@ -2,12 +2,12 @@
 /// Writes a Stage to USDC, then reads it back with pxrUSD's usdcat.
 /// Documents current pxrUSD compatibility level.
 
-#include "next/stage/stage.hh"
-#include "next/layer/layer.hh"
-#include "next/types/value.hh"
-#include "next/load-usd.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/writer/usdc-writer.hh"
+#include "stage/stage.hh"
+#include "layer/layer.hh"
+#include "types/value.hh"
+#include "load-usd.hh"
+#include "reader/usdc-reader.hh"
+#include "writer/usdc-writer.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <string>

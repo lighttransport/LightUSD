@@ -2,9 +2,9 @@
 // AOUSD Core 1.1 schema-definition rules (doc/validation/
 // aousd11-schema-defs-uihints-2026-11-04.md): prim-definition fallback order,
 // abstract / API typeName => typeless, and the `uiHints` UI-hint dictionary.
-#include "next/validation/validation-context.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/schema/schema-registry.hh"
+#include "validation/validation-context.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "schema/schema-registry.hh"
 #include <cassert>
 #include <cstring>
 #include <iostream>

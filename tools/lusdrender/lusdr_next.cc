@@ -19,20 +19,20 @@
 #include "ptex_atlas.hh"   // lusdview::BuildPtexAtlas (Ptex face atlas)
 #include "ptx-loader.hh"
 #include "image-writer.hh"
-#include "next/layer/asset-anchor.hh"   // AssetAnchorPath
-#include "next/eval/value-clip.hh"
-#include "next/eval/xform-eval.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
-#include "next/schema/usd-render.hh"
-#include "next/schema/usd-geom-camera.hh"
-#include "next/schema/usd-skel.hh"
-#include "next/types/value-view.hh"
+#include "layer/asset-anchor.hh"   // AssetAnchorPath
+#include "eval/value-clip.hh"
+#include "eval/xform-eval.hh"
+#include "resolver/asset-resolver.hh"
+#include "schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
+#include "schema/usd-render.hh"
+#include "schema/usd-geom-camera.hh"
+#include "schema/usd-skel.hh"
+#include "types/value-view.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
-#include "tydra/next/openpbr-params-converter.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
+#include "tydra/openpbr-params-converter.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
 #include "tydra/openpbr-params.hh"
 #include "tydra/texture-util.hh"
 #include "tydra/vol/volume-field.hh"

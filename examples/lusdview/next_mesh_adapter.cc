@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "c-api/lightusd-render-cpp.hh"
-#include "tydra/next/render-converter.hh"
+#include "tydra/render-converter.hh"
 
 namespace lusdview {
 namespace tydn = ::lightusd::tydra::next;

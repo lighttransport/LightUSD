@@ -94,7 +94,7 @@ endif()
 # tools/lusdrender does.
 set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
 if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdquicklook_next_build)
 endif()
 

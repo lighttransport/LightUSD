@@ -3,7 +3,7 @@
 //
 // AssetResolver context, scoped-cache, package-resolver and new-asset tests.
 
-#include "next/resolver/asset-resolver.hh"
+#include "resolver/asset-resolver.hh"
 
 #include <chrono>
 #include <filesystem>

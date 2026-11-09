@@ -1,6 +1,6 @@
 # lmetalview - native macOS (Swift + Metal) minimal USD viewer example.
 #
-# Added from src/next/CMakeLists.txt, where lightusd_next / lightusd_c /
+# Added from src/CMakeLists.txt, where lightusd_next / lightusd_c /
 # lightusd_render_c / tydra_next are already defined. The example links ONLY the
 # next product (next + tydra_next); no legacy lightusd/lightusd_static target is
 # involved.

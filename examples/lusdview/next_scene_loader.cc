@@ -45,23 +45,23 @@
 #include "log.hh"
 
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/load-usd.hh"
-#include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
-#include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
-#include "next/schema/usd-vol.hh"      // Volume shaders
-#include "next/schema/geom-xform.hh"   // HasAnimatedTransform
-#include "next/types/type-info.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "load-usd.hh"
+#include "reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
+#include "schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
+#include "schema/usd-vol.hh"      // Volume shaders
+#include "schema/geom-xform.hh"   // HasAnimatedTransform
+#include "types/type-info.hh"
 #include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
-#include "tydra/next/resource-budget.hh"
-#include "tydra/next/openpbr-params-converter.hh"
-#include "tydra/next/texture-cache.hh"  // shared decode + size cap + byte budget
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
+#include "tydra/resource-budget.hh"
+#include "tydra/openpbr-params-converter.hh"
+#include "tydra/texture-cache.hh"  // shared decode + size cap + byte budget
 #include "ptx-loader.hh"                  // lazy Ptex metadata validation
 #include "ptex_atlas.hh"                  // bounded rectangular face atlas
-#include "tydra/next/scene-access.hh"  // ComputeWorldTransform
+#include "../../src/tydra/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
 #include "io-util.hh"                  // io::GetBaseDir / SplitUDIMPath

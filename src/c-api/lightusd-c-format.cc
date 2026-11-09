@@ -6,8 +6,8 @@
 #include <new>
 #include <vector>
 
-#include "next/schema/usd-skel.hh"
-#include "next/writer/value-printer.hh"
+#include "schema/usd-skel.hh"
+#include "writer/value-printer.hh"
 
 namespace n = lightusd::next;
 using lightusd_internal::Fail;

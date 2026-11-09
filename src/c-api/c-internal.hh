@@ -14,8 +14,8 @@
 #include <vector>
 
 #include "lightusd-c.h"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
 
 namespace lightusd {
 namespace next {

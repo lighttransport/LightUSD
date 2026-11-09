@@ -2,7 +2,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
-#include "next/c/lightusd-core-c.h"
+#include "c/lightusd-core-c.h"
 #include <assert.h>
 #include <string.h>
 

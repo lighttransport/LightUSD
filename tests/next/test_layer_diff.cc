@@ -6,11 +6,11 @@
 // metadata gating (compareMetadata), array + timeSample diffs, fuzzy asset
 // paths, and the text/JSON renderer output shape.
 
-#include "next/diff/layer-diff.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/types/value.hh"
+#include "diff/layer-diff.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "reader/usda-reader.hh"
+#include "types/value.hh"
 
 #include <algorithm>
 #include <cmath>

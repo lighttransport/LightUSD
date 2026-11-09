@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "checker-options.hh"
 #include "report.hh"
-#include "next/reader/usdz-reader.hh"
+#include "reader/usdz-reader.hh"
 #include <cstring>
 #include <limits>
 #include <map>

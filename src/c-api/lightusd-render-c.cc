@@ -18,17 +18,17 @@
 
 #include "c-internal.hh"
 #include "c-session-ref.hh"
-#include "next/load-usd.hh"
-#include "next/schema/usd-vol.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/eval/attribute-eval.hh"
-#include "tydra/next/light-filter.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
-#include "tydra/next/render-session.hh"
+#include "load-usd.hh"
+#include "schema/usd-vol.hh"
+#include "resolver/asset-resolver.hh"
+#include "eval/attribute-eval.hh"
+#include "tydra/light-filter.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
+#include "tydra/render-session.hh"
 #include "core/safe-arithmetic.hh"
-#include "tydra/next/render-data.hh"
-#include "tydra/next/resource-budget.hh"
+#include "../tydra/render-data.hh"
+#include "tydra/resource-budget.hh"
 
 namespace td = lightusd::tydra::next;
 namespace n = lightusd::next;

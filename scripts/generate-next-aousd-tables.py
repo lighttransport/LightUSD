@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="fail when generated coverage is incomplete")
     args = parser.parse_args()
-    generated = args.root / "src/next/schema/generated"
+    generated = args.root / "src/schema/generated"
     schema_text = (generated / "aousd-core-schema-definitions.inc").read_text()
     actual = {}
     for schema, name in re.findall(

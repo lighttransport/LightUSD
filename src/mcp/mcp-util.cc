@@ -9,11 +9,11 @@
 #include <random>
 
 #include "c-stage-bridge.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
-#include "next/writer/value-printer.hh"
+#include "layer/prim-spec.hh"
+#include "reader/usda-reader.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
+#include "writer/value-printer.hh"
 
 namespace lightusd {
 namespace mcp {

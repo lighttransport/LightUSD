@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "lightusd-physics-c.h"
 #include "c-internal.hh"
-#include "next/c/lightusd-core-c.h"
-#include "next/schema/physics-query.hh"
+#include "c/lightusd-core-c.h"
+#include "schema/physics-query.hh"
 #include <cmath>
 #include <cstring>
 #include <new>

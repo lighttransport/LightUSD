@@ -5,9 +5,9 @@
 // specific rule violations are flagged with the expected rule ids; option
 // group toggling controls which rules run.
 
-#include "next/validation/usd-validation.hh"
-#include "next/validation/validation-context.hh"
-#include "next/pcp/layer-registry.hh"
+#include "validation/usd-validation.hh"
+#include "validation/validation-context.hh"
+#include "../../src/pcp/layer-registry.hh"
 
 #include <cstring>
 #include <iostream>

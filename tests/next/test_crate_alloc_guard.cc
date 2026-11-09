@@ -21,11 +21,11 @@
 #include <sys/mman.h>
 #endif
 
-#include "next/c/lightusd-core-c.h"
-#include "next/crate/crate-data-source.hh"
-#include "next/crate/crate-format.hh"
-#include "next/crate/lazy-array.hh"
-#include "next/types/value.hh"
+#include "c/lightusd-core-c.h"
+#include "crate/crate-data-source.hh"
+#include "crate/crate-format.hh"
+#include "crate/lazy-array.hh"
+#include "types/value.hh"
 
 using namespace lightusd::next;
 

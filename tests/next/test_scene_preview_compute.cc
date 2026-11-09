@@ -9,10 +9,10 @@
 
 #include "external/tinyvdb/tinyvdb_io.h"
 #include "external/tinyvdb/tinyvdb_sparse_tree.h"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
-#include "tydra/next/scene-preview-compute.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
+#include "tydra/scene-preview-compute.hh"
 namespace td = lightusd::tydra::next;
 namespace fs = std::filesystem;
 int main(int argc, char** argv) {

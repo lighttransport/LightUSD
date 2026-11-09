@@ -14,13 +14,13 @@
 #include <string>
 #include <vector>
 
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/lightusd-next.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "reader/usdz-reader.hh"
+#include "lightusd-next.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
 
 namespace {
 

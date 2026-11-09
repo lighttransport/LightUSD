@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "next/c/value.h"
-#include "next/c/chunks.h"
-#include "next/c/descriptor.h"
+#include "c/value.h"
+#include "c/chunks.h"
+#include "c/descriptor.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

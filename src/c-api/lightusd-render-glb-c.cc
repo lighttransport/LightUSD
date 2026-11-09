@@ -9,8 +9,8 @@
 #include <utility>
 
 #include "c-internal.hh"
-#include "next/reader/usdz-reader.hh"
-#include "tydra/next/gltf-export.hh"
+#include "reader/usdz-reader.hh"
+#include "tydra/gltf-export.hh"
 
 static lightusd_status ExportGLBWithResolver(
     const lightusd_render_scene* scene, const char* source_path,

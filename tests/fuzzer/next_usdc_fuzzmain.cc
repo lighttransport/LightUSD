@@ -12,7 +12,7 @@
 #include <cstring>
 #include <string>
 
-#include "next/reader/usdc-reader.hh"
+#include "reader/usdc-reader.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   std::string buf("PXR-USDC");

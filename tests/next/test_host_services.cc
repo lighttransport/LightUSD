@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "core/host-services.hh"
 #include "core/native-io.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/layer/asset-anchor.hh"
-#include "next/memory-trim.hh"
-#include "next/phase-faults.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "tydra/next/scene-preview-compute.hh"
-#include "tydra/next/mem-budget.hh"
+#include "writer/usda-writer.hh"
+#include "crate/crate-writer.hh"
+#include "crate/crate-reader.hh"
+#include "layer/asset-anchor.hh"
+#include "memory-trim.hh"
+#include "phase-faults.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "tydra/scene-preview-compute.hh"
+#include "tydra/mem-budget.hh"
 #include <atomic>
 #include <cstring>
 #include <iostream>

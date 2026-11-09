@@ -20,17 +20,17 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "next/eval/attribute-eval.hh"
-#include "next/layer/asset-anchor.hh"
-#include "next/layer/layer.hh"
-#include "next/load-usd.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdz-writer.hh"
-#include "next/pcp/cache.hh"
-#include "next/pcp/batched-compose.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
+#include "eval/attribute-eval.hh"
+#include "layer/asset-anchor.hh"
+#include "layer/layer.hh"
+#include "load-usd.hh"
+#include "reader/usda-reader.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdz-writer.hh"
+#include "../../src/pcp/cache.hh"
+#include "pcp/batched-compose.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

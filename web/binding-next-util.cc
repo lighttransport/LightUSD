@@ -3,12 +3,12 @@
 #include "binding-next-common.hh"
 #include <cstring>
 #include <limits>
-#include "next/resolver/asset-resolver.hh"
+#include "resolver/asset-resolver.hh"
 #include <iomanip>
 #include <set>
-#include "next/crate/crate-reader.hh"
-#include "next/layer/layer.hh"
-#include "next/pcp/layer-registry.hh"
+#include "crate/crate-reader.hh"
+#include "layer/layer.hh"
+#include "../src/pcp/layer-registry.hh"
 namespace lightusd {
 namespace web_next {
 

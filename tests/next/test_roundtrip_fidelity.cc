@@ -11,10 +11,10 @@
 #include <string>
 #include <vector>
 
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 

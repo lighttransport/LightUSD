@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/validation/validation-context.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/schema/schema-registry.hh"
+#include "validation/validation-context.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "schema/schema-registry.hh"
 #include <cassert>
 #include <cstring>
 #include <iostream>

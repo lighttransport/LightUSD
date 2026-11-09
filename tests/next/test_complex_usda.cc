@@ -3,14 +3,14 @@
 //
 // LightUSD Next - Complex USDA parsing test
 
-#include "next/layer/layer.hh"
+#include "layer/layer.hh"
 #include <iostream>
 #include <cassert>
 #include <cmath>
 #include <string>
 
-#include "next/reader/usda-reader.hh"
-#include "next/writer/usda-writer.hh"
+#include "reader/usda-reader.hh"
+#include "writer/usda-writer.hh"
 
 using namespace lightusd::next;
 

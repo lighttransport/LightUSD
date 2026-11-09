@@ -17,14 +17,14 @@
 #include <unistd.h>
 #endif
 
-#include "next/layer/layer.hh"
-#include "next/pcp/prim-index.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/pipeline/flatten.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "layer/layer.hh"
+#include "pcp/prim-index.hh"
+#include "crate/crate-reader.hh"
+#include "pipeline/flatten.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 

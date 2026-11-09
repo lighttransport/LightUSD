@@ -12,13 +12,13 @@
 #include <string>
 #include <vector>
 
-#include "next/eval/attribute-eval.hh"
-#include "next/load-usd.hh"
-#include "next/lightusd-next.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/schema/geom-xform.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "eval/attribute-eval.hh"
+#include "load-usd.hh"
+#include "lightusd-next.hh"
+#include "schema/geom-mesh.hh"
+#include "schema/geom-xform.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 

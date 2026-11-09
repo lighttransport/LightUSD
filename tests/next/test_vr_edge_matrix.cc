@@ -20,10 +20,10 @@
 #include <sys/stat.h>
 #include <vector>
 
-#include "next/eval/attribute-eval.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
+#include "eval/attribute-eval.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

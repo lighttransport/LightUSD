@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "lightusd-render-c.h"
 #include "lightusd-physics-c.h"
-#include "next/c/lightusd-core-c.h"
-#include "next/c/generated-schema-tables.h"
+#include "c/lightusd-core-c.h"
+#include "c/generated-schema-tables.h"
 #include "py-internal.h"
 
 static int put(PyObject* dict, const char* key, PyObject* value) {

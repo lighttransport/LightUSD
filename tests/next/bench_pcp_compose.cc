@@ -26,15 +26,15 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
-#include "next/crate/lazy-array.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/pcp/cache.hh"
-#include "next/pcp/prim-index.hh"
-#include "next/prim/path.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
+#include "crate/lazy-array.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "../../src/pcp/cache.hh"
+#include "pcp/prim-index.hh"
+#include "prim/path.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
 
 using namespace lightusd::next;
 

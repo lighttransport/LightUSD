@@ -16,10 +16,10 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} 
 # scene path is built.
 if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   if(NOT TARGET lightusd_next)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/src/next ${CMAKE_BINARY_DIR}/tydra_to_renderscene_next_build)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/tydra_to_renderscene_next_build)
   endif()
   if(NOT TARGET tydra_next)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next ${CMAKE_BINARY_DIR}/tydra_to_renderscene_tydra_next_build)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra ${CMAKE_BINARY_DIR}/tydra_to_renderscene_tydra_next_build)
   endif()
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c)
   if(LIGHTUSD_BUILD_TESTS)

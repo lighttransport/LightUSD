@@ -3,14 +3,14 @@
 //
 // Test for Stage functionality
 
-#include "next/layer/layer.hh"
+#include "layer/layer.hh"
 #include <iostream>
 #include <cassert>
 #include <cmath>
 #include <algorithm>
 
-#include "next/stage/stage.hh"
-#include "next/eval/attribute-eval.hh"
+#include "stage/stage.hh"
+#include "eval/attribute-eval.hh"
 
 using namespace lightusd::next;
 

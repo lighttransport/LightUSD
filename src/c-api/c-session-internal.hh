@@ -4,7 +4,7 @@
 #include <string>
 
 #include "lightusd-session-c.h"
-#include "next/stage/stage-session.hh"
+#include "stage/stage-session.hh"
 
 struct lightusd_document_snapshot {
   lightusd::next::StageSnapshot snapshot;

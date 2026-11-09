@@ -9,7 +9,7 @@
 #include <vector>
 #include "binding-next-api.h"
 #include <emscripten/emscripten.h>
-#include "tydra/next/render-data.hh"
+#include "../src/tydra/render-data.hh"
 
 namespace lightusd {
 namespace next { class Layer; struct CrateReadOptions; }

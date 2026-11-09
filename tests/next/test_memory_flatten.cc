@@ -7,13 +7,13 @@
 // filesystem), and pipeline::FlattenUSDMemoryToUSDCOwned for USDA roots with
 // USDA dependency layers.
 
-#include "next/pcp/layer-registry.hh"
-#include "next/pipeline/flatten.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "pipeline/flatten.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "resolver/asset-resolver.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
 
 #include <chrono>
 #include <cstring>

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/prim/name-order.hh"
-#include "next/layer/property-index.hh"
-#include "next/layer/layer.hh"
-#include "next/reader/usda-reader.hh"
+#include "prim/name-order.hh"
+#include "layer/property-index.hh"
+#include "layer/layer.hh"
+#include "reader/usda-reader.hh"
 #include <algorithm>
 #include <cassert>
 #include <iostream>

@@ -3,7 +3,7 @@
 #include <cstring>
 #include <iostream>
 #include "c-api/lightusd-validation-cpp.hh"
-#include "next/validation/usd-validation.hh"
+#include "validation/usd-validation.hh"
 
 namespace n = lightusd::next;
 namespace api = lightusd::api;

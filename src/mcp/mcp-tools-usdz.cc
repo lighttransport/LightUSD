@@ -15,9 +15,9 @@
 #include "c-stage-bridge.hh"
 #include "mcp-tools.hh"
 #include "mcp-util.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
-#include "next/writer/usdz-writer.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
+#include "writer/usdz-writer.hh"
 
 namespace lightusd {
 namespace mcp {

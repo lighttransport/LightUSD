@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
-#include "next/schema/usd-shade.hh"
+#include "schema/usd-shade.hh"
 #include "binding-next-assets.hh"
 #include "binding-next-layer.hh"
 #include "c-api/lightusd-render-c.h"
-#include "next/load-usd.hh"
-#include "next/composition/composition.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/writer/usdc-writer.hh"
+#include "load-usd.hh"
+#include "composition/composition.hh"
+#include "resolver/asset-resolver.hh"
+#include "writer/usdc-writer.hh"
 #include "image-loader.hh"
 #include "core/safe-arithmetic.hh"
-#include "next/c/storage.h"
+#include "c/storage.h"
 #include <cmath>
 namespace lightusd {
 namespace web_next {

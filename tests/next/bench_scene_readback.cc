@@ -3,9 +3,9 @@
 // CPU-only, opt-in profiling probe; not registered as a regression test.
 // Usage: bench_scene_readback scene.usdc [threads=1] [metadata|retained]
 //        [budget_mib=512]
-#include "next/crate/crate-reader.hh"
-#include "next/layer/layer.hh"
-#include "tydra/next/render-converter.hh"
+#include "crate/crate-reader.hh"
+#include "layer/layer.hh"
+#include "tydra/render-converter.hh"
 #include "core/logger.hh"
 
 #include <charconv>

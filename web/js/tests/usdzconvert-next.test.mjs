@@ -1,7 +1,7 @@
 // Smoke test for the WASM `next` (low-memory lazy-ValueRep) flatten pipeline.
 //   node tests/usdzconvert-next.test.mjs
 //
-// The `next` pipeline (src/next/) is compiled into the WASM module and exposed
+// The `next` pipeline (src/) is compiled into the WASM module and exposed
 // through convertFolderToUSDZ({ pipeline: 'next' }) for a single .usdz with a
 // top-level USDC root. This test exercises that path end-to-end and asserts it
 // actually engaged (not the legacy fallback) and produced a reloadable .usdz.

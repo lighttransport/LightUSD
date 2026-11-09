@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 # lusdchecker uses only the dependency-free next core. Build that target on
 # demand when the top-level project has not enabled another next consumer.
 if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src
                    ${CMAKE_BINARY_DIR}/lusdchecker_next_build)
 endif()
 

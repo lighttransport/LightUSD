@@ -31,7 +31,7 @@ if [[ -z "${WINE_BIN}" ]]; then
 fi
 
 export LLVM_MINGW_DIR
-cmake -S "${ROOT_DIR}/src/next" -B "${BUILD_DIR}" -G Ninja \
+cmake -S "${ROOT_DIR}/src" -B "${BUILD_DIR}" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/cmake/llvm-mingw-cross.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \

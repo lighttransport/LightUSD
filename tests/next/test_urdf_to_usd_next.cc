@@ -18,11 +18,11 @@
 #include <string>
 #include <vector>
 
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
-#include "tydra/next/urdf-to-usd.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
+#include "../../src/tydra/urdf-to-usd.hh"
 
 using namespace lightusd::next;
 

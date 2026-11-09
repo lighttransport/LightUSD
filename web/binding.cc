@@ -44,16 +44,16 @@
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/). Compiled out
 // in the legacy product (LIGHTUSD_WASM_PRODUCT=legacy).
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
-#include "next/pipeline/flatten.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/schema/geom-xform.hh"
-#include "next/schema/usd-shade.hh"
+#include "pipeline/flatten.hh"
+#include "../src/pcp/layer-registry.hh"
+#include "resolver/asset-resolver.hh"
+#include "reader/usdc-reader.hh"
+#include "reader/usda-reader.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
+#include "schema/geom-mesh.hh"
+#include "schema/geom-xform.hh"
+#include "schema/usd-shade.hh"
 #endif  // LIGHTUSD_WASM_WITH_NEXT
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"

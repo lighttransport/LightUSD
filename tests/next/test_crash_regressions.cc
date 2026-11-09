@@ -20,10 +20,10 @@
 #include <string>
 #include <vector>
 
-#include "next/reader/usdc-reader.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/layer/layer.hh"
+#include "reader/usdc-reader.hh"
+#include "reader/usda-reader.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "layer/layer.hh"
 #include <memory>
 
 #ifndef CRASH_REGRESSION_DIR

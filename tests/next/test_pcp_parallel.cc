@@ -34,14 +34,14 @@
 #include <utility>
 #include <vector>
 
-#include "next/layer/layer.hh"
-#include "next/pcp/cache.hh"
-#include "next/pcp/cache-internal.hh"
-#include "next/parser/ascii-parser.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
+#include "layer/layer.hh"
+#include "../../src/pcp/cache.hh"
+#include "pcp/cache-internal.hh"
+#include "parser/ascii-parser.hh"
+#include "resolver/asset-resolver.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
 
 using namespace lightusd::next;
 

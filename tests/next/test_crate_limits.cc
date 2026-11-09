@@ -20,13 +20,13 @@
 #include <iostream>
 #include <string>
 
-#include "next/load-usd.hh"
-#include "next/pcp/cache.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
+#include "load-usd.hh"
+#include "../../src/pcp/cache.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

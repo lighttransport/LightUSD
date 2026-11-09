@@ -17,9 +17,9 @@
 // Usage:
 //   bench_extref_compose [L] [K] [verts]     (defaults: 8000 100 512)
 
-#include "next/composition/composition.hh"
-#include "next/layer/layer.hh"
-#include "next/types/value.hh"
+#include "composition/composition.hh"
+#include "layer/layer.hh"
+#include "types/value.hh"
 
 #include <sys/resource.h>
 

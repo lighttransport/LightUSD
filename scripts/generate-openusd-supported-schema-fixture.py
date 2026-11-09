@@ -58,7 +58,7 @@ def main() -> int:
         "tests/usda/generated/openusd-supported-schema-26.08.usda"))
     p.add_argument("--registry-output", type=pathlib.Path,
                    default=pathlib.Path(
-                       "src/next/schema/generated/"
+                       "src/schema/generated/"
                        "openusd-supported-schema-names.inc"))
     p.add_argument("--check", action="store_true")
     p.add_argument("--stdout", action="store_true")

@@ -2,7 +2,7 @@
 Build driver for the lightusd PyPI wheel.
 
 Flow:
-  1. Invoke CMake on the standalone `src/next` project (next-core), building
+  1. Invoke CMake on the standalone `src` project (next-core), building
      the next core, Tydra, asset importer, C API and native validation libraries.
      The legacy lightusd core is NOT built or linked into the Python wheel
      (v1.0.0 next + tydra-next only, npm preview tag). Native
@@ -71,7 +71,7 @@ def _cmake_configure_and_build() -> None:
 
     cmake_args = [
         "cmake",
-        "-S", str(ROOT / "src" / "next"),
+        "-S", str(ROOT / "src"),
         "-B", str(CMAKE_BUILD_DIR),
         "-DCMAKE_BUILD_TYPE=MinSizeRel",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
@@ -128,7 +128,7 @@ class CMakeBuildExt(build_ext):
         config = repr((archives, USE_LIMITED, PY_LIMITED_API, PY_ENABLE_THREAD))
         if not stamp.exists() or stamp.read_text() != config:
             stamp.write_text(config)
-        headers = [str(p) for directory in (ROOT / "src/python", ROOT / "src/c-api", ROOT / "src/next/c")
+        headers = [str(p) for directory in (ROOT / "src/python", ROOT / "src/c-api", ROOT / "src/c")
                    for p in directory.glob("*.h")]
         for ext in self.extensions:
             ext.extra_objects = archives + list(ext.extra_objects)

@@ -32,9 +32,9 @@
 #include "lightusd-c.h"
 #include "lightusd-render-c.h"
 
-#include "next/reader/usdz-reader.hh"
-#include "tydra/next/render-data-enums.hh"
-#include "tydra/next/usdz-entry-match.hh"
+#include "reader/usdz-reader.hh"
+#include "tydra/render-data-enums.hh"
+#include "tydra/usdz-entry-match.hh"
 #include "tydra/openpbr-params.hh"
 #include "imageio/exr-codec.h"
 

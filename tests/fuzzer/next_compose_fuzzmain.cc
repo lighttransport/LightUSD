@@ -18,11 +18,11 @@
 #include <string>
 #include <vector>
 
-#include "next/layer/layer.hh"
-#include "next/pcp/cache.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
+#include "layer/layer.hh"
+#include "../../src/pcp/cache.hh"
+#include "reader/usda-reader.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

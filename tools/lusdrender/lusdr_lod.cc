@@ -28,8 +28,8 @@
 #include <unistd.h>  // realpath, getpid
 #endif
 
-#include "next/pcp/prim-index.hh"  // pcp::CompositionOptions
-#include "tydra/next/resource-budget.hh"
+#include "pcp/prim-index.hh"  // pcp::CompositionOptions
+#include "tydra/resource-budget.hh"
 #include "lusdr_context.hh"
 #include "io-util.hh"
 

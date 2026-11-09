@@ -11,7 +11,7 @@ on:
 
 # ccache (installed and persisted per job by hendrikmuhs/ccache-action; the
 # root CMakeLists picks it up as the compiler launcher). Sloppiness lets
-# precompiled-header TUs (src/next) be cached too.
+# precompiled-header TUs (src) be cached too.
 env:
   CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
   CCACHE_COMPRESS: "true"
@@ -275,7 +275,7 @@ jobs:
         cp tests/usdc/*.usdc /tmp/cabi-corpus/ 2>/dev/null || true
     - name: fuzz (bounded)
       run: |
-        ./build_fuzz/src/next/fuzz_next_cabi \
+        ./build_fuzz/src/fuzz_next_cabi \
           -max_total_time=60 -rss_limit_mb=4096 \
           -artifact_prefix=/tmp/cabi-artifacts/ /tmp/cabi-corpus
     - name: upload reproducers on failure
@@ -355,7 +355,7 @@ jobs:
         nm "$BIN" | grep -q __stack_chk_fail
     - name: assert mitigations on the shared C library
       run: |
-        LIB=build_hardening/src/next/liblightusd_c.so
+        LIB=build_hardening/src/liblightusd_c.so
         test -f "$LIB"
         readelf -lW "$LIB" | grep -q GNU_RELRO
         readelf -dW "$LIB" | grep -q BIND_NOW
@@ -406,7 +406,7 @@ jobs:
         cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav|lusdview-vk-oit-validation"
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
-  # The default build and the rest of CI do NOT compile src/next/ — it is gated
+  # The default build and the rest of CI do NOT compile src/ — it is gated
   # behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE — so this variant exists to keep the
   # next/ library + examples from silently bit-rotting against core API changes.
   build-next:
@@ -463,7 +463,7 @@ jobs:
     - name: configure next with supplemental
       run: |
         echo "AOUSD_CORE_SUPPLEMENTAL_ROOT=$AOUSD_CORE_SUPPLEMENTAL_ROOT"
-        CXX=clang++ CC=clang cmake -S src/next -B build_next_aousd -G Ninja \
+        CXX=clang++ CC=clang cmake -S src -B build_next_aousd -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_NEXT_BUILD_TESTS=On \
           -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \

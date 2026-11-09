@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-#include "next/validation/validation-context.hh"
-#include "next/resolver/asset-resolver.hh"
+#include "validation/validation-context.hh"
+#include "resolver/asset-resolver.hh"
 #include "core/minijson.hh"
 #include <functional>
 namespace lusdchecker {

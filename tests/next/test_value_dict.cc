@@ -17,8 +17,8 @@
 #include <type_traits>
 #include <utility>
 
-#include "next/types/value.hh"
-#include "next/core/string-index.hh"
+#include "types/value.hh"
+#include "core/string-index.hh"
 
 using namespace lightusd::next;
 

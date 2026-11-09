@@ -17,7 +17,7 @@
 #endif
 
 #include "external/tinyobjloader-c/tiny_obj_c.h"
-#include "next/reader/obj-reader.hh"
+#include "reader/obj-reader.hh"
 namespace ia = lightusd::tydra::import_asset;
 namespace n = lightusd::next;
 namespace {

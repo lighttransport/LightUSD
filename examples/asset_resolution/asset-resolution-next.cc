@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Next-core counterpart to the legacy asset-resolution example. Virtual
 // identifiers are resolved and read through the next AssetResolver API.
-#include "next/pcp/layer-registry.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/writer/usda-writer.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "resolver/asset-resolver.hh"
+#include "writer/usda-writer.hh"
 
 #include <cstdint>
 #include <iostream>

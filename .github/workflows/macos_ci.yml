@@ -20,7 +20,7 @@ env:
 jobs:
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
-  # src/next/ is gated behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built
+  # src/ is gated behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built
   # by the default macOS job, so this variant keeps it from bit-rotting.
   build-next-macos:
 

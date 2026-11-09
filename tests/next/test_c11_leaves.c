@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "next/c/string-index.h"
-#include "next/c/usda-string.h"
+#include "c/string-index.h"
+#include "c/usda-string.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

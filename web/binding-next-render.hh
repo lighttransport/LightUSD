@@ -14,11 +14,11 @@
 #include "asset-uuid.hh"
 #include "binding-next-common.hh"
 #include "core/security-policy.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/pcp/cache.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/stage/stage.hh"
-#include "tydra/next/render-converter.hh"
+#include "resolver/asset-resolver.hh"
+#include "../src/pcp/cache.hh"
+#include "schema/geom-mesh.hh"
+#include "stage/stage.hh"
+#include "tydra/render-converter.hh"
 namespace lightusd {
 namespace tydra { namespace next { template <typename T> struct ValueArrayRead; } }
 namespace web_next {

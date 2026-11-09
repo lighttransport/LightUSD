@@ -26,7 +26,7 @@
 #include <cstring>
 #include <string>
 
-#include "next/writer/dtoa.hh"
+#include "writer/dtoa.hh"
 
 namespace {
 

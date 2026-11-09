@@ -1,4 +1,4 @@
-#include "next/reader/usdz-reader.hh"
+#include "reader/usdz-reader.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
@@ -23,16 +23,16 @@
 #include <unordered_set>
 #include <vector>
 
-#include "next/composition/composition.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/validation/usd-validation.hh"
+#include "composition/composition.hh"
+#include "crate/crate-reader.hh"
+#include "../../src/pcp/layer-registry.hh"
+#include "reader/usdz-reader.hh"
+#include "resolver/asset-resolver.hh"
+#include "validation/usd-validation.hh"
 #include "report.hh"
 #include "checker-options.hh"
 using lusdchecker::KeywordToGroups;
-#include "next/layer/asset-anchor.hh"
+#include "layer/asset-anchor.hh"
 #include <deque>
 #include <set>
 

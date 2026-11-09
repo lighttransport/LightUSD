@@ -1,0 +1,355 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// LightUSD Next - Crate Writer Implementation
+// Writes spec-compliant USDC with: tokens, strings, paths, fields,
+// fieldsets, specs, VALUE data section, time samples, metadata.
+
+#include "core/native-io.hh"
+#include "crate-writer.hh"
+#include "layer/int64-listop.hh"
+#include "layer/array-edit.hh"
+#include "layer/arc-reference.hh"
+#include "prim/relocate-path.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
+#include "crate-data-source.hh"
+#include "crate-timing.hh"
+#include "memory-trim.hh"
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+#define XXH_INLINE_ALL
+#include "external/xxhash.h"  // XXH3_128bits (streaming-write dedup)
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#include "variant-holders.hh"
+#include "crate-writer-types.hh"
+#include "lazy-array.hh"
+#include "core/safe-arithmetic.hh"
+#include "stream-writer.hh"
+#include "layer/property-index.hh"
+#include "parser/ascii-parser.hh"
+#include "types/spline.hh"
+#include "types/type-id.hh"
+#include "writer/value-printer.hh"
+#include <unordered_map>
+#include <unordered_set>
+#include <map>
+#include <deque>
+#include <fstream>
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <string_view>
+#include <type_traits>
+#include <cstdio>
+#include <atomic>  // also used by single-thread fallbacks of parallel loops
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#include <condition_variable>
+#include <mutex>
+#endif
+
+// SpillVec: the append-only structural columns (fields, fieldsets, specs) in
+// the batched write may push committed prefixes to an unlinked spill file.
+#include "spill-array.hh"
+#if !defined(_WIN32) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
+    !defined(__EMSCRIPTEN__) && !defined(__wasi__) && \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+#define LIGHTUSD_NEXT_PLAN_HAVE_MMAP 1
+#endif
+
+// LZ4 for compression
+#include "lz4/lz4.h"
+
+namespace lightusd {
+namespace next {
+
+namespace {
+
+bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
+  for (const PrimSpec& prim : layer.prims()) {
+    for (const PropSlot& slot : prim.properties().slots()) {
+      const std::string name(GetPropNameTable().get(slot.name_id));
+      if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
+        // Typed splines encode as Crate type 59; only a spline whose raw
+        // text does not parse is unencodable.
+        SplineData sd;
+        std::string serr;
+        if (!ParseSplineText(*spline_text, &sd, &serr)) {
+          if (error) *error =
+              "Strict AOUSD USDC write cannot encode malformed spline " +
+              prim.path().str() + "." + name + ": " + serr;
+          return false;
+        }
+      }
+      if (prim.raw_default_source(slot.name_id) &&
+          !prim.array_edit(slot.name_id)) {
+        // A sparse array edit also carries its canonical text as a raw
+        // default source, but it has a real crate encoding (VtArrayEdit rep,
+        // crate 0.14) -- only raw text WITHOUT a structured twin is lossy.
+        if (error) *error =
+            "Strict AOUSD USDC write cannot encode raw unsupported value " +
+            prim.path().str() + "." + name;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// File output for the streaming write: appends go through a fixed staging
+// buffer (large pass-through blocks bypass it), so a file write never holds
+// the whole crate in memory.
+class BufferedFileSink {
+ public:
+  explicit BufferedFileSink(std::ofstream* ofs) : ofs_(ofs) {
+    buf_.reserve(kCapacity);
+  }
+  bool Write(const uint8_t* data, size_t size) {
+    if (size == 0) return true;
+    if (buf_.size() + size > kCapacity && !Flush()) return false;
+    if (size >= kCapacity) {
+      ofs_->write(reinterpret_cast<const char*>(data),
+                  static_cast<std::streamsize>(size));
+      return ofs_->good();
+    }
+    buf_.insert(buf_.end(), data, data + size);
+    return true;
+  }
+  bool Flush() {
+    if (!buf_.empty()) {
+      ofs_->write(reinterpret_cast<const char*>(buf_.data()),
+                  static_cast<std::streamsize>(buf_.size()));
+      buf_.clear();
+    }
+    return ofs_->good();
+  }
+  // Overwrite bytes already written at absolute position `pos`, then resume
+  // appending at the end.
+  bool Patch(uint64_t pos, const uint8_t* data, size_t size) {
+    if (!Flush()) return false;
+    ofs_->seekp(static_cast<std::streamoff>(pos), std::ios::beg);
+    ofs_->write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(size));
+    ofs_->seekp(0, std::ios::end);
+    return ofs_->good();
+  }
+
+ private:
+  static constexpr size_t kCapacity = size_t(4) << 20;
+  std::ofstream* ofs_;
+  std::vector<uint8_t> buf_;
+};
+
+}  // namespace
+
+
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
+#include "crate-writer-impl.inc"
+
+// Output file of a batched write (CrateWriter::BeginBatchedFile).
+struct CrateWriter::BatchedFile {
+  std::string filename;
+  std::ofstream ofs;
+  std::unique_ptr<BufferedFileSink> file_sink;
+  CrateWriteSink sink;
+  CrateWritePatch patch;
+};
+
+CrateWriter::CrateWriter(const CrateWriteOptions& options)
+    : impl_(new Impl(options)) {}
+
+CrateWriter::~CrateWriter() = default;
+
+void CrateWriter::AddBatchTables(const Layer& batch,
+                                 const std::vector<uint8_t>& repeated) {
+  impl_->StreamTablesBatch(batch, repeated);
+}
+
+bool CrateWriter::PrepareBatch(
+    Layer& batch, const std::vector<uint8_t>& spine,
+    const std::vector<uint8_t>& repeated,
+    const std::unordered_map<std::string, std::vector<std::string>>& children) {
+  return impl_->StreamPrepareBatch(batch, spine, repeated, children);
+}
+
+CrateWriteResult CrateWriter::WritePreparedFile(
+    const char* filename, const std::vector<std::string>& cleared_prototypes) {
+  if (!filename) return impl_->PreparedFailure("prepared planning failed");
+  if (!impl_->HasPreparedBatches())
+    return impl_->PreparedFailure("no complete prepared batches");
+  if (!BeginBatchedFile(filename))
+    return impl_->PreparedFailure(std::string("cannot open output file: ") + filename);
+  const bool replayed = impl_->ReplayPrepared(cleared_prototypes);
+  CrateWriteResult result = FinishBatched();
+  impl_->ReleasePreparedLog();
+  if (!replayed && result.success) {
+    result.success = false;
+    result.error = "prepared writer replay failed";
+  }
+  return result;
+}
+
+bool CrateWriter::BeginBatchedFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
+  if (!filename) return false;
+  batched_file_.reset(new BatchedFile());
+  BatchedFile& f = *batched_file_;
+  f.filename = filename;
+  f.ofs.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!f.ofs) return false;
+  f.file_sink.reset(new BufferedFileSink(&f.ofs));
+  BufferedFileSink* fs = f.file_sink.get();
+  f.sink = [fs](const uint8_t* data, size_t size) { return fs->Write(data, size); };
+  f.patch = [fs](uint64_t pos, const uint8_t* data, size_t size) {
+    return fs->Patch(pos, data, size);
+  };
+  return impl_->StreamWriteBegin(&f.sink);
+}
+
+bool CrateWriter::WriteBatch(
+    Layer& batch, const std::vector<uint8_t>& spine,
+    const std::vector<uint8_t>& repeated,
+    const std::unordered_map<std::string, std::vector<std::string>>& full_children) {
+  if (!batched_file_) return false;
+  return impl_->StreamWriteBatch(batch, spine, repeated, full_children);
+}
+
+CrateWriteResult CrateWriter::FinishBatched() {
+  CrateWriteResult result;
+  if (!batched_file_) {
+    result.error = "batched write was not started";
+    return result;
+  }
+  BatchedFile& f = *batched_file_;
+  result = impl_->StreamFinish(&f.sink, &f.patch);
+  const bool flushed = f.file_sink->Flush();
+  f.ofs.close();
+  if (result.success && (!flushed || f.ofs.fail())) {
+    result.success = false;
+    result.error = "Failed to write";
+  }
+  if (!result.success) std::remove(f.filename.c_str());
+  batched_file_.reset();
+  return result;
+}
+
+CrateWriteResult CrateWriter::WriteToFile(const char* filename, const Stage& stage) {
+  if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
+  const Layer* root_layer = stage.GetRootLayer();
+  if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
+  return WriteLayerToFile(filename, *root_layer);
+}
+
+CrateWriteResult CrateWriter::WriteToFile(const std::string& filename, const Stage& stage) {
+  return WriteToFile(filename.c_str(), stage);
+}
+
+CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const Stage& stage) {
+  const Layer* root_layer = stage.GetRootLayer();
+  if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
+  return WriteLayerToMemory(buffer, *root_layer);
+}
+
+CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer& layer) {
+  if (!::lightusd::NativeIOEnabled()) { CrateWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
+  if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
+  // Stream straight to the file (byte-identical to WriteLayerToMemory): the
+  // VALUE section is copied block by block from its sources instead of first
+  // being staged, with the whole crate, in one output buffer.
+  std::ofstream ofs(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!ofs) { CrateWriteResult r; r.error = "Failed to open file"; return r; }
+  BufferedFileSink file_sink(&ofs);
+  CrateWriteSink sink = [&file_sink](const uint8_t* data, size_t size) {
+    return file_sink.Write(data, size);
+  };
+  // Seekable: VALUE blocks stream to the file as they are built (never all
+  // staged in memory) and the bootstrap is backfilled at the end.
+  CrateWritePatch patch = [&file_sink](uint64_t pos, const uint8_t* data,
+                                       size_t size) {
+    return file_sink.Patch(pos, data, size);
+  };
+  CrateWriteResult result = WriteLayerToSeekableSink(sink, patch, layer);
+  const bool flushed = file_sink.Flush();
+  ofs.close();
+  if (result.success && (!flushed || ofs.fail())) {
+    result.success = false;
+    result.error = "Failed to write";
+  }
+  if (!result.success) {
+    // Do not leave a truncated crate behind.
+    std::remove(filename);
+  }
+  return result;
+}
+
+CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
+  // Inline-authored variants (PrimVariantSetData without bracketed holder prims)
+  // must be materialized into holder prims or the crate drops them.
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    CrateWriteResult result = impl_->Write(materialized);
+    if (result.success) buffer = impl_->take_buffer();
+    return result;
+  }
+  CrateWriteResult result = impl_->Write(layer);
+  if (result.success) buffer = impl_->take_buffer();
+  return result;
+}
+
+CrateWriteResult CrateWriter::WriteLayerToSeekableSink(
+    const CrateWriteSink& sink, const CrateWritePatch& patch,
+    const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    return impl_->Write(materialized, &sink, &patch);
+  }
+  return impl_->Write(layer, &sink, &patch);
+}
+
+CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
+  // Impl::Write streams bootstrap/VALUE/structural/TOC to `sink` in file order
+  // when a sink is supplied; buffer_ only ever holds the small structural tail.
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    return impl_->Write(materialized, &sink);
+  }
+  return impl_->Write(layer, &sink);
+}
+
+}  // namespace next
+}  // namespace lightusd

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-#include "next/layer/prim-spec.hh"
+#include "layer/prim-spec.hh"
 #include "binding-next-scene.hh"
-#include "next/schema/color-space.hh"
+#include "schema/color-space.hh"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <set>
-#include "next/stage/stage.hh"
-#include "next/schema/usd-shade.hh"
-#include "next/schema/color-space.hh"
-#include "next/writer/value-printer.hh"
+#include "stage/stage.hh"
+#include "schema/usd-shade.hh"
+#include "schema/color-space.hh"
+#include "writer/value-printer.hh"
 
 namespace tn = lightusd::next;
 namespace lightusd {

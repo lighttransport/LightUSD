@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include "asset-uuid.hh"
-#include "next/resolver/asset-resolver.hh"
+#include "resolver/asset-resolver.hh"
 
 namespace lightusd::web_next {
 

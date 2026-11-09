@@ -38,7 +38,7 @@
 #include <thread>
 #endif
 
-#include "next/writer/dtoa.hh"
+#include "writer/dtoa.hh"
 
 using lightusd::next::dtos;
 using lightusd::next::dtos_append;

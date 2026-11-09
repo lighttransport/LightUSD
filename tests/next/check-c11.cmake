@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Compile all first-party core modules as strict C11, including generated data.
-file(GLOB core_sources "${SOURCE_ROOT}/src/next/c/*.c")
+file(GLOB core_sources "${SOURCE_ROOT}/src/c/*.c")
 list(APPEND core_sources "${SOURCE_ROOT}/src/unicode-xid-c.c"
                          "${SOURCE_ROOT}/tests/next/test_array_parser_c.c"
                          "${SOURCE_ROOT}/src/imageio/exr-codec.c"

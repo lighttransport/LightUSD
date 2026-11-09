@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
 #include "binding-next-scene.hh"
-#include "next/schema/usd-shade.hh"
+#include "schema/usd-shade.hh"
 #include "tydra/material-serializer.hh"
 namespace lightusd {
 namespace web_next {

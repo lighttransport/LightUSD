@@ -6,7 +6,7 @@
 // find()/get() while a genuinely-new name may still be interned (unfreeze +
 // insert). Readers and that writer must not race. Built and registered only
 // with -DLIGHTUSD_NEXT_BUILD_TSAN_TESTS=ON; a detected race aborts nonzero.
-#include "next/layer/property-index.hh"
+#include "layer/property-index.hh"
 
 #include <cstdio>
 #include <string>

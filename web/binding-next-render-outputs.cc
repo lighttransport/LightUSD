@@ -4,7 +4,7 @@
 #include <map>
 #include <cstring>
 #include <array>
-#include "next/schema/usd-shade.hh"
+#include "schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 void RenderStream::buildAnalyticOutputs_() {

@@ -22,7 +22,7 @@ if(NOT TARGET lightusd_next)
   # by the `LIGHTUSD_NATIVE_PRODUCT=next` root path.
   set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
   set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next ${CMAKE_BINARY_DIR}/lusdcat_next_build)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/lusdcat_next_build)
 endif()
 target_link_libraries(${EXAMPLE_TARGET} lightusd_next)
 if(TARGET lightusd_c)

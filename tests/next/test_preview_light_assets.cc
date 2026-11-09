@@ -5,11 +5,11 @@
 #include <iostream>
 #include <string>
 
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
-#include "tydra/next/scene-preview-photometry.hh"
-#include "tydra/next/scene-preview.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
+#include "tydra/scene-preview-photometry.hh"
+#include "tydra/scene-preview.hh"
 
 namespace td = lightusd::tydra::next;
 namespace fs = std::filesystem;

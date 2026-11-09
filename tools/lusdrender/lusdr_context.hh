@@ -7,8 +7,8 @@
 #include <atomic>
 #include <functional>
 
-#include "next/eval/value-clip.hh"
-#include "tydra/next/render-extract.hh"
+#include "eval/value-clip.hh"
+#include "tydra/render-extract.hh"
 #include "lusdr_types.hh"
 #ifdef HAVE_CUDA_RT
 #include "gpu_scene.hh"

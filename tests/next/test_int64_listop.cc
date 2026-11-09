@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/layer/int64-listop.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/crate/listop-wire.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/pcp/batched-compose.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/schema/geom-point-instancer.hh"
-#include "next/writer/usda-writer.hh"
+#include "layer/int64-listop.hh"
+#include "crate/crate-reader.hh"
+#include "crate/listop-wire.hh"
+#include "crate/crate-writer.hh"
+#include "pcp/batched-compose.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "schema/geom-point-instancer.hh"
+#include "writer/usda-writer.hh"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>

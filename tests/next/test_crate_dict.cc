@@ -9,16 +9,16 @@
 // nested stage customLayerData dict, prim customData/assetInfo (incl. token[]),
 // and a property-level customData dict.
 
-#include "next/layer/layer.hh"
+#include "layer/layer.hh"
 #include <cassert>
 #include <iostream>
 #include <algorithm>
 #include <vector>
-#include "next/crate/crate-reader.hh"
-#include "next/validation/usd-validation.hh"
+#include "crate/crate-reader.hh"
+#include "validation/usd-validation.hh"
 
-#include "next/reader/usdc-reader.hh"
-#include "next/stage/stage.hh"
+#include "reader/usdc-reader.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

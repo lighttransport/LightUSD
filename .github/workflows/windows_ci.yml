@@ -15,7 +15,7 @@ on:
 jobs:
 
   # Windows(x64) + Visual Studio 2026 build with the experimental `next`
-  # (pcp large-scene) backend enabled. src/next/ is gated behind
+  # (pcp large-scene) backend enabled. src/ is gated behind
   # LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built by the default Windows
   # job, so this variant keeps it from bit-rotting on MSVC.
   build-windows-next:

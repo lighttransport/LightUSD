@@ -20,8 +20,8 @@
 #include "stage.hh"
 
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
+#include "../pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
 #else
 #include "composition-graph.hh"
 #include "pcp/layer-registry.hh"

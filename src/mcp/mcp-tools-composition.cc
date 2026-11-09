@@ -11,9 +11,9 @@
 #include "c-stage-bridge.hh"
 #include "mcp-tools.hh"
 #include "mcp-util.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/stage/stage.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "stage/stage.hh"
 
 namespace lightusd {
 namespace mcp {

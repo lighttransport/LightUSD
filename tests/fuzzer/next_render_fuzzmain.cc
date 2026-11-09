@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <string>
 
-#include "next/lightusd-next.hh"
-#include "tydra/next/render-converter.hh"
+#include "lightusd-next.hh"
+#include "tydra/render-converter.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   constexpr size_t kMaxInputBytes = 1024u * 1024u;

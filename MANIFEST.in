@@ -1,17 +1,17 @@
 # sdist contents for the lightusd PyPI package.
 # Everything needed to run `python -m build --wheel` from the sdist itself.
-# The wheel builds only the "next" core, Tydra-next, the C API, and the Python
-# extension, but those targets reuse selected sources and headers elsewhere in
-# src/. Keep those transitive build inputs in the sdist.
+# The wheel builds the core library (src/), Tydra (src/tydra), the C API and
+# the Python extension. src/legacy is never included; src/external only the
+# vendored pieces the core build compiles (all headers are kept).
 
 include LICENSE
 include README.md
 include pyproject.toml
 include setup.py
 
-# next core + tydra-next + C API + extension sources.
-recursive-include src/next *.cc *.c *.h *.hh *.inc *.txt
-recursive-include src/tydra/next *.cc *.hh *.txt
+# Core + Tydra + C API + extension sources.
+recursive-include src *.cc *.c *.h *.hh *.inc *.txt *.json *.cmake
+recursive-include src/tydra *.cc *.hh *.txt *.comp
 recursive-include src/c-api *.cc *.h *.hh
 recursive-include src/python *.c *.h
 include src/lz4/lz4.c src/lz4/lz4.h
@@ -54,15 +54,11 @@ prune tests/tydra
 prune tests/c-api
 prune tests/composition
 prune src/external
-prune src/core
-prune src/tsd
 prune src/osd
-prune src/tydra/mcp
 prune tools
 prune subprojects
 exclude resume-*.md
 prune scripts
-exclude src/*.cc src/*.cpp
 # Transitive standalone-next inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
 recursive-include src *.h *.hh *.hpp *.inc *.inl *.txt
@@ -72,7 +68,7 @@ include src/ptx-loader.cc
 recursive-include src/external/textools/ptex/src *.c
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
-# Configure-time inputs: src/next and tydra-next CMake define these targets
+# Configure-time inputs: src and tydra-next CMake define these targets
 # even though the wheel only builds the four library targets, so every source
 # they list must exist in the sdist (a missing file fails `cmake -S`).
 include src/core/host-services.cc src/image-loader.cc src/image-writer.cc src/io-util.cc src/usdVol.cc
@@ -125,4 +121,4 @@ include src/external/pugixml.cpp
 include src/unicode-xid-c.c
 include src/external/zmij/zmij.cc
 recursive-include cmake *.cmake *.in
-recursive-include src/next *.cmake
+recursive-include src *.cmake

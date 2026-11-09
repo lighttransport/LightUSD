@@ -11,7 +11,7 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
-#include "tydra/next/scene-preview.hh"
+#include "tydra/scene-preview.hh"
 #include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>

@@ -33,8 +33,8 @@
 
 #include "value-types.hh"
 #include "tydra/openpbr-params.hh"
-#include "tydra/next/mem-budget.hh"
-#include "tydra/next/resource-budget.hh"
+#include "tydra/mem-budget.hh"
+#include "tydra/resource-budget.hh"
 #include "xform.hh"
 
 namespace lusdr {

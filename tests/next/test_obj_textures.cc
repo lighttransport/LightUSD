@@ -3,7 +3,7 @@
 #include <iostream>
 #include <string>
 
-#include "next/reader/obj-reader.hh"
+#include "reader/obj-reader.hh"
 
 namespace ia = lightusd::tydra::import_asset;
 namespace n = lightusd::next;

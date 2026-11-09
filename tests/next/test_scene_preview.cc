@@ -7,12 +7,12 @@
 #include <fstream>
 #include <string>
 
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/schema/usd-vol.hh"
-#include "next/stage/stage.hh"
-#include "tydra/next/scene-preview.hh"
-#include "tydra/next/texture-cache.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "schema/usd-vol.hh"
+#include "stage/stage.hh"
+#include "tydra/scene-preview.hh"
+#include "tydra/texture-cache.hh"
 #include "tydra/vol/volume-field.hh"
 
 namespace fs = std::filesystem;

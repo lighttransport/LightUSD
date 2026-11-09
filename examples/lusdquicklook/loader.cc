@@ -13,10 +13,10 @@
 
 #include "image_decode.hh"
 #include "byte-budget.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/stage/stage-session.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-data.hh"
+#include "reader/usdz-reader.hh"
+#include "stage/stage-session.hh"
+#include "tydra/render-converter.hh"
+#include "../../src/tydra/render-data.hh"
 
 namespace lusdql {
 

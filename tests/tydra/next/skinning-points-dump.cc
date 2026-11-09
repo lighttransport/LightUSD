@@ -4,8 +4,8 @@
 #include <iomanip>
 #include <cstdlib>
 #include <cmath>
-#include "next/load-usd.hh"
-#include "tydra/next/render-extract.hh"
+#include "load-usd.hh"
+#include "tydra/render-extract.hh"
 int main(int argc,char** argv){
  if(argc!=3)return 2;
  namespace n=lightusd::next;namespace t=lightusd::tydra::next;

@@ -3,10 +3,10 @@
 #undef NDEBUG
 #endif
 // This header must not introduce namespace-local copies of C ABI types.
-#include "next/parser/value-parser-numeric.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/c/lightusd-core-c.h"
-#include "next/types/type-info.hh"
+#include "parser/value-parser-numeric.hh"
+#include "reader/usda-reader.hh"
+#include "c/lightusd-core-c.h"
+#include "types/type-info.hh"
 #include <cassert>
 #include <cmath>
 #include <cstring>

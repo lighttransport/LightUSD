@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "tydra/next/gltf-export.hh"
+#include "tydra/gltf-export.hh"
 #include <cmath>
 #include <iostream>
 #include <limits>

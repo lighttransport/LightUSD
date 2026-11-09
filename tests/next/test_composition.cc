@@ -5,13 +5,13 @@
 // external, with subtree grafting), payloads, inherits, specializes, local
 // override strength, arc clearing, and cycle safety.
 
-#include "next/composition/composition.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/types/value.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/reader/usda-reader.hh"
+#include "composition/composition.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "types/value.hh"
+#include "crate/crate-writer.hh"
+#include "crate/crate-reader.hh"
+#include "reader/usda-reader.hh"
 
 #include <chrono>
 #include <iostream>

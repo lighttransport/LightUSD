@@ -6,7 +6,7 @@
 #include <cassert>
 #include <iostream>
 
-#include "next/pcp/load-rules.hh"
+#include "pcp/load-rules.hh"
 
 using namespace lightusd::next::pcp;
 using R = LoadRules::Rule;

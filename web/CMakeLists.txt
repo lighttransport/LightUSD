@@ -342,7 +342,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
   set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
   set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
 
   add_executable(lightusd_mcp_wasm binding-mcp.cc)
   target_link_libraries(lightusd_mcp_wasm PRIVATE lightusd_mcp)
@@ -394,7 +394,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL
       "Do not build a shared C API in WASM" FORCE)
 
-  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
 
   add_executable(lightusd_next_wasm binding-udim.cc binding-next-udim.cc
     ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
@@ -633,7 +633,7 @@ add_subdirectory(../  lightusd)
 
 # The combined compatibility module shares the pipeline source definition.
 # Its legacy library supplies LZ4 and the other shared support implementations.
-set(LIGHTUSD_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src/next")
+set(LIGHTUSD_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src")
 include("${LIGHTUSD_NEXT_DIR}/pipeline-sources.cmake")
 set(NEXT_SOURCES ${LIGHTUSD_NEXT_PIPELINE_SOURCES})
 list(TRANSFORM NEXT_SOURCES PREPEND "${LIGHTUSD_NEXT_DIR}/")

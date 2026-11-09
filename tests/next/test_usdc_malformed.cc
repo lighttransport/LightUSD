@@ -18,11 +18,11 @@
 #include <utility>
 #include <vector>
 
-#include "next/crate/crate-format.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/crate/crate-data-source.hh"
-#include "next/layer/layer.hh"
-#include "next/reader/usdc-reader.hh"
+#include "crate/crate-format.hh"
+#include "crate/crate-writer.hh"
+#include "crate/crate-data-source.hh"
+#include "layer/layer.hh"
+#include "reader/usdc-reader.hh"
 
 using namespace lightusd::next;
 

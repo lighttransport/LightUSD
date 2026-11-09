@@ -9,17 +9,17 @@
 #include <fstream>
 #include <vector>
 
-#include "next/crate/crate-data-source.hh"
-#include "next/crate/crate-format.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/crate/crate-reader-internal.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/layer/layer.hh"
-#include "next/crate/stream-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/types/value-view.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usda-writer.hh"
+#include "crate/crate-data-source.hh"
+#include "crate/crate-format.hh"
+#include "crate/crate-reader.hh"
+#include "crate/crate-reader-internal.hh"
+#include "crate/crate-writer.hh"
+#include "layer/layer.hh"
+#include "crate/stream-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "types/value-view.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usda-writer.hh"
 
 using namespace lightusd::next;
 

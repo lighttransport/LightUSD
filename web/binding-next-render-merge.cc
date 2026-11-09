@@ -3,9 +3,9 @@
 #include "binding-next-render.hh"
 #include <algorithm>
 #include <cmath>
-#include "tydra/next/render-extract.hh"
-#include "next/schema/geom-xform.hh"
-#include "next/schema/usd-shade.hh"
+#include "tydra/render-extract.hh"
+#include "schema/geom-xform.hh"
+#include "schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 bool RenderStream::hasGeomSubset_(const lightusd::next::UsdPrim &prim) {

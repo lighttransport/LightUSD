@@ -11,7 +11,7 @@ add_sanitizers(${EXAMPLE_TARGET})
 target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
-  target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/next)
+  target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(${EXAMPLE_TARGET} lightusd_next)
 else()
   target_link_libraries(${EXAMPLE_TARGET} lightusd_static)

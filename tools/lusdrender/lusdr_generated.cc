@@ -4,8 +4,8 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
 
 namespace lusdr {
 

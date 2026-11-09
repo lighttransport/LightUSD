@@ -3,10 +3,10 @@
 #include "binding-next-layer.hh"
 #include "binding-next-layer-json-internal.hh"
 #include "c-stage-bridge.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/layer/arc-reference.hh"
-#include "next/types/type-info.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "layer/arc-reference.hh"
+#include "types/type-info.hh"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -14,10 +14,10 @@
 #include <utility>
 namespace tn = lightusd::next;
 #include "core/security-policy.hh"
-#include "next/parser/lexer.hh"
-#include "next/parser/value-parser.hh"
-#include "next/parser/ascii-parser.hh"
-#include "next/writer/value-printer.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
+#include "parser/ascii-parser.hh"
+#include "writer/value-printer.hh"
 #include <string_view>
 
 namespace lightusd {

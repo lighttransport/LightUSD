@@ -6,7 +6,7 @@
 // the same order with the same values, whether the array stayed in memory,
 // was chunked, or had its prefix moved to the spill file.
 
-#include "next/crate/spill-array.hh"
+#include "crate/spill-array.hh"
 
 #include <cstdint>
 #include <cstdio>

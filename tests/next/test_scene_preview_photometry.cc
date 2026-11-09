@@ -5,7 +5,7 @@
 #include <fstream>
 #include <iostream>
 
-#include "tydra/next/scene-preview-photometry.hh"
+#include "tydra/scene-preview-photometry.hh"
 namespace td = lightusd::tydra::next;
 namespace fs = std::filesystem;
 int main() {

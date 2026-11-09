@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
-#include "tydra/next/scene-access.hh"
+#include "../src/tydra/scene-access.hh"
 namespace lightusd {
 namespace web_next {
 namespace {

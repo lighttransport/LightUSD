@@ -10,10 +10,10 @@
 #include "c-stage-bridge.hh"
 #include "mcp-tools.hh"
 #include "mcp-util.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/schema/schema-registry.hh"
-#include "next/stage/stage.hh"
-#include "next/validation/usd-validation.hh"
+#include "layer/prim-spec.hh"
+#include "schema/schema-registry.hh"
+#include "stage/stage.hh"
+#include "validation/usd-validation.hh"
 
 namespace lightusd {
 namespace mcp {

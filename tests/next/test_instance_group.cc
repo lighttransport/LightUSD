@@ -28,12 +28,12 @@
 #include <string>
 #include <vector>
 
-#include "next/layer/layer.hh"
-#include "next/layer/asset-anchor.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
-#include "next/types/value.hh"
+#include "layer/layer.hh"
+#include "layer/asset-anchor.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
+#include "types/value.hh"
 
 using namespace lightusd::next;
 

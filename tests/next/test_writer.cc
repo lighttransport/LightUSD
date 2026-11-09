@@ -14,19 +14,19 @@
 #include <algorithm>
 #include <vector>
 
-#include "next/stage/stage.hh"
-#include "next/layer/layer.hh"
-#include "next/types/value.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/strfmt.hh"
-#include "next/prim/relocate-path.hh"
-#include "next/writer/value-printer.hh"
-#include "next/writer/prim-printer.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/dtoa.hh"
-#include "next/crate/lazy-array.hh"
+#include "stage/stage.hh"
+#include "layer/layer.hh"
+#include "types/value.hh"
+#include "reader/usdc-reader.hh"
+#include "strfmt.hh"
+#include "prim/relocate-path.hh"
+#include "writer/value-printer.hh"
+#include "writer/prim-printer.hh"
+#include "writer/usda-writer.hh"
+#include "reader/usda-reader.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/dtoa.hh"
+#include "crate/lazy-array.hh"
 
 using namespace lightusd::next;
 

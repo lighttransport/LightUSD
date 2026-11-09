@@ -16,9 +16,9 @@
 #include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
 
 #include "preview_gpu_budget.hh"
-#include "tydra/next/scene-preview-compute.hh"
-#include "tydra/next/scene-preview.hh"
-#include "tydra/next/render-converter.hh"
+#include "tydra/scene-preview-compute.hh"
+#include "tydra/scene-preview.hh"
+#include "tydra/render-converter.hh"
 // unconditionally (was only included under LIGHTUSD_WITH_QJS)
 #include <iostream>
 #include <mutex>
@@ -58,15 +58,15 @@
 // Experimental `next` lazy loader: fast, low-memory USDC parse used as the
 // default backend for the RT preview path. tydra_next provides bit-exact
 // world transforms (see src/tydra/next/scene-access.cc).
-#include "next/layer/prim-spec.hh"
-#include "next/pcp/prim-index.hh"
-#include "next/prim/path.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
-#include "next/types/value.hh"
-#include "tydra/next/scene-access.hh"
+#include "layer/prim-spec.hh"
+#include "pcp/prim-index.hh"
+#include "prim/path.hh"
+#include "reader/usdz-reader.hh"
+#include "schema/geom-mesh.hh"
+#include "stage/stage.hh"
+#include "lightusd-next.hh"
+#include "types/value.hh"
+#include "../../src/tydra/scene-access.hh"
 
 extern "C" {
 #include "lightrt_c_tri.h"

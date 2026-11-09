@@ -9,7 +9,7 @@
 #include "c-stage-bridge.hh"
 #include "mcp-tools.hh"
 #include "mcp-util.hh"
-#include "next/stage/stage.hh"
+#include "stage/stage.hh"
 
 namespace lightusd {
 namespace mcp {

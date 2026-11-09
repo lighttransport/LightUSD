@@ -13,7 +13,7 @@
 #include "c-api/lightusd-render-c.h"
 #include "next_mesh_adapter.hh"
 #include "prototype_expansion.hh"
-#include "tydra/next/render-converter.hh"
+#include "tydra/render-converter.hh"
 
 namespace tydn = lightusd::tydra::next;
 

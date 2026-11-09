@@ -3,10 +3,10 @@
 #include "binding-next-layer.hh"
 #include "binding-next-assets.hh"
 #include "c-stage-bridge.hh"
-#include "next/stage/stage.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
+#include "stage/stage.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
 
 #include <algorithm>
 #include <cstring>

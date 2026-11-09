@@ -22,11 +22,11 @@
 #include <string>
 #include <sys/stat.h>
 
-#include "next/eval/attribute-eval.hh"
-#include "next/load-usd.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/stage/stage.hh"
+#include "eval/attribute-eval.hh"
+#include "load-usd.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "stage/stage.hh"
 
 using namespace lightusd::next;
 

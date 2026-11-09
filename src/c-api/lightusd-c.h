@@ -30,7 +30,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "next/c/descriptor.h"
+#include "c/descriptor.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/resolver/dependency-report.hh"
+#include "resolver/dependency-report.hh"
 #include <cerrno>
 #include <cstdlib>
 #include <iostream>

@@ -15,11 +15,11 @@
 #include <string>
 #include <vector>
 
-#include "next/layer/layer.hh"
-#include "next/layer/property-index.hh"
-#include "next/stage/stage.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "layer/layer.hh"
+#include "layer/property-index.hh"
+#include "stage/stage.hh"
+#include "crate/crate-writer.hh"
+#include "writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 

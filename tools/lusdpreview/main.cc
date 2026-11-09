@@ -7,8 +7,8 @@
 #include <cstdlib>
 #include <string>
 
-#include "next/resolver/asset-resolver.hh"
-#include "tydra/next/scene-preview.hh"
+#include "resolver/asset-resolver.hh"
+#include "tydra/scene-preview.hh"
 
 int main(int argc, char** argv) {
   using namespace lightusd::tydra::next;

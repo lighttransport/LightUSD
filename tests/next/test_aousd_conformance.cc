@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#include "next/composition/composition.hh"
-#include "next/eval/value-clip.hh"
-#include "next/layer/listop-field-table.hh"
-#include "next/prim/identifier.hh"
-#include "next/eval/attribute-eval.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/reader/usda-reader.hh"
-#include "next/reader/usdc-reader.hh"
-#include "next/types/spline.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
+#include "composition/composition.hh"
+#include "eval/value-clip.hh"
+#include "layer/listop-field-table.hh"
+#include "prim/identifier.hh"
+#include "eval/attribute-eval.hh"
+#include "../../src/pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
+#include "reader/usda-reader.hh"
+#include "reader/usdc-reader.hh"
+#include "types/spline.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
 
 #include <algorithm>
 #include <array>
@@ -28,7 +28,7 @@
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
-#include "next/schema/schema-registry.hh"
+#include "schema/schema-registry.hh"
 
 using namespace lightusd::next;
 
@@ -2351,7 +2351,7 @@ void TestRemainingElectiveFieldCoverage() {
   struct FieldCoverage { const char* scope; const char* name; const char* mode; };
   const FieldCoverage generated_fields[] = {
 #define AOUSD_FIELD(scope, name, coverage) {#scope, #name, #coverage},
-#include "next/schema/generated/aousd-elective-field-coverage.inc"
+#include "schema/generated/aousd-elective-field-coverage.inc"
 #undef AOUSD_FIELD
   };
   assert(sizeof(generated_fields) / sizeof(generated_fields[0]) >= 70);
@@ -2410,7 +2410,7 @@ void TestGeneratedElectiveAuthoredRoundtrips() {
   struct Field { const char* scope; const char* name; const char* mode; };
   const Field fields[] = {
 #define AOUSD_FIELD(scope, name, mode) {#scope, #name, #mode},
-#include "next/schema/generated/aousd-elective-field-coverage.inc"
+#include "schema/generated/aousd-elective-field-coverage.inc"
 #undef AOUSD_FIELD
   };
   size_t tested = 0;

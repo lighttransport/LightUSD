@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-#include "tydra/next/scene-preview-photometry.hh"
+#include "tydra/scene-preview-photometry.hh"
 
 namespace lusdview {
 namespace {

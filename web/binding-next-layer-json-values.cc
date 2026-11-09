@@ -3,14 +3,14 @@
 #include "binding-next-layer.hh"
 #include "binding-next-layer-json-internal.hh"
 #include "binding-next-scene.hh"
-#include "next/types/type-info.hh"
-#include "next/types/value.hh"
+#include "types/type-info.hh"
+#include "types/value.hh"
 #include <cmath>
 #include <utility>
 namespace tn = lightusd::next;
-#include "next/parser/lexer.hh"
-#include "next/parser/value-parser.hh"
-#include "next/writer/value-printer.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
+#include "writer/value-printer.hh"
 
 namespace lightusd {
 namespace web_next {

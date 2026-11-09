@@ -34,8 +34,8 @@
 #include "tiny-format.hh"
 #include "str-util.hh"
 #include "tydra/diff-and-compare.hh"
-#include "next/lightusd-next.hh"
-#include "next/diff/layer-diff.hh"
+#include "lightusd-next.hh"
+#include "diff/layer-diff.hh"
 #include "collection-diff.hh"
 
 namespace {

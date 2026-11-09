@@ -3,9 +3,9 @@
 #include <cstring>
 #include <iostream>
 #include "c-api/lightusd-physics-c.h"
-#include "next/c/lightusd-core-c.h"
-#include "next/schema/physics-query.hh"
-#include "next/layer/layer.hh"
+#include "c/lightusd-core-c.h"
+#include "schema/physics-query.hh"
+#include "layer/layer.hh"
 
 namespace n = lightusd::next;
 void Check(bool ok, const char* message) {

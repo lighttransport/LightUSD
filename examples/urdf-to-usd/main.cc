@@ -2,12 +2,12 @@
 // Shared native OBJ/URDF/MJCF frontends; no Python or Node dependency.
 #include "tydra/asset-import/import.hh"
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
-#include "next/load-usd.hh"
-#include "next/stage/stage.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
-#include "tydra/next/urdf-to-usd.hh"
+#include "load-usd.hh"
+#include "stage/stage.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
+#include "../../src/tydra/urdf-to-usd.hh"
 using OutputStage = lightusd::next::Stage;
 #else
 #include "lightusd.hh"

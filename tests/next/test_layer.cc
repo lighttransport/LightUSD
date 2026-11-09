@@ -11,10 +11,10 @@
 #include <vector>
 #endif
 
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/layer/property-index.hh"
-#include "next/schema/schema-registry.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "layer/property-index.hh"
+#include "schema/schema-registry.hh"
 
 using namespace lightusd::next;
 

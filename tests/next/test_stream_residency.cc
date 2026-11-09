@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/crate/crate-data-source.hh"
-#include "next/crate/crate-writer.hh"
-#include "next/stage/stage.hh"
+#include "crate/crate-data-source.hh"
+#include "crate/crate-writer.hh"
+#include "stage/stage.hh"
 #include <atomic>
 #include <cstdio>
 #include <cstring>

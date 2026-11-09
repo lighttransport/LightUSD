@@ -27,8 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "next/c/lightusd-core-c.h"
-#include "next/core/path-expression-eval.hh"
+#include "c/lightusd-core-c.h"
+#include "../../src/core/path-expression-eval.hh"
 
 using lightusd::ExpressionReference;
 using lightusd::ParsedPathExpression;
