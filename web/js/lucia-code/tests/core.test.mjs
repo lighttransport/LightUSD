@@ -3430,7 +3430,7 @@ test('attribute edit replaces exact property and inserts missing property', () =
 
 test('display color authoring writes constant interpolation and removes stale indices', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { color3f[] primvars:displayColor = [(0, 1, 0)] ( interpolation = "faceVarying" ) int[] primvars:displayColor:indices = [0] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { color3f[] primvars:displayColor = [(0, 1, 0)] ( interpolation = "faceVarying" )\n int[] primvars:displayColor:indices = [0] }\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setDisplayColor('/M', [2, 0.25, -1]);
   assert.match(session.usda, /primvars:displayColor[\s\S]*interpolation = "constant"/);
@@ -3456,7 +3456,7 @@ test('mesh authoring supports face-varying UV indices', async () => {
 
 test('USD session reads authored face-varying UV buffers for topology operations', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" ) int[] primvars:st:indices = [0, 1, 2] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" )\n int[] primvars:st:indices = [0, 1, 2]\n}\n';
   const result = session.getMeshUVData('/M');
   assert.deepEqual([...result.uvs], [0, 0, 1, 0, 0, 1]);
   assert.deepEqual([...result.uvIndices], [0, 1, 2]);
@@ -3464,7 +3464,7 @@ test('USD session reads authored face-varying UV buffers for topology operations
 
 test('USD session reads typed face-varying primvars for topology operations', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { color3f[] primvars:cornerColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] ( interpolation = "faceVarying" ) int[] primvars:cornerColor:indices = [2, 1, 0] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { color3f[] primvars:cornerColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] ( interpolation = "faceVarying" )\n int[] primvars:cornerColor:indices = [2, 1, 0] }\n';
   const result = session.getMeshFaceVaryingPrimvars('/M', 3);
   assert.equal(result.length, 1);
   assert.equal(result[0].itemSize, 3);
@@ -3474,7 +3474,7 @@ test('USD session reads typed face-varying primvars for topology operations', ()
 
 test('USD session rejects malformed authored face-varying primvars before cleanup', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { float3[] primvars:corner = [(1, 2, 3)] ( interpolation = "faceVarying" ) int[] primvars:corner:indices = [1] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { float3[] primvars:corner = [(1, 2, 3)] ( interpolation = "faceVarying" )\n int[] primvars:corner:indices = [1] }\n';
   assert.throws(() => session.getMeshFaceVaryingPrimvars('/M', 3), /malformed values or corner indices/);
 });
 
@@ -3487,7 +3487,7 @@ test('USD session scopes UV interpolation to the exact authored declaration', ()
 
 test('USD session fails closed on malformed authored lightmap UV indices', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st1 = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" ) }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st1 = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" )\n}\n';
   assert.throws(() => session.getMeshUVData('/M', 'lightmap'), /Face-varying mesh UV indices are malformed/);
 });
 
@@ -3589,7 +3589,7 @@ test('mesh authoring rejects malformed custom and face-varying attributes', asyn
 
 test('mesh authoring removes stale UV indices when switching to vertex interpolation', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" ) int[] primvars:st:indices = [0, 1, 2] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" )\n int[] primvars:st:indices = [0, 1, 2]\n}\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), uvs: new Float32Array([0, 0, 1, 0, 0, 1]) });
   assert.match(session.usda, /interpolation = "vertex"/);
@@ -3598,7 +3598,7 @@ test('mesh authoring removes stale UV indices when switching to vertex interpola
 
 test('mesh authoring removes same-line stale UV indices', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" ) int[] primvars:st:indices = [0, 1, 2] }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" { texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] ( interpolation = "faceVarying" )\n int[] primvars:st:indices = [0, 1, 2]\n}\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), uvs: new Float32Array([0, 0, 1, 0, 0, 1]) });
   assert.match(session.usda, /interpolation = "vertex"/);
@@ -3613,14 +3613,14 @@ test('USD session extracts authored crease chains as sharp edges', () => {
   assert.throws(() => session.getMeshSharpEdges('/M'), /invalid chain length/);
   session.usda = '#usda 1.0\ndef Mesh "M" { uniform int[] creaseIndices = [0, 2] uniform int[] creaseLengths = [2] }';
   assert.deepEqual(session.getMeshSharpEdges('/M'), [[0, 2]]);
-  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1, 2, 3] int[] creaseLengths = [2, 2] float[] creaseSharpness = [0, 1] }';
+  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1, 2, 3]\n int[] creaseLengths = [2, 2]\n float[] creaseSharpness = [0, 1]\n}';
   assert.deepEqual(session.getMeshSharpEdges('/M'), [[2, 3]]);
   assert.deepEqual(session.getMeshSharpEdgeData('/M'), { edges: [[2, 3]], sharpness: [1] });
-  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1, 1, 0] int[] creaseLengths = [2, 2] float[] creaseSharpness = [0.25, 0.75] }';
+  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1, 1, 0]\n int[] creaseLengths = [2, 2]\n float[] creaseSharpness = [0.25, 0.75]\n}';
   assert.deepEqual(session.getMeshSharpEdgeData('/M'), { edges: [[0, 1]], sharpness: [0.75] });
-  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1] int[] creaseLengths = [2] float[] creaseSharpness = [1, 0] }';
+  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 1]\n int[] creaseLengths = [2]\n float[] creaseSharpness = [1, 0]\n}';
   assert.throws(() => session.getMeshSharpEdges('/M'), /one value per crease chain/);
-  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 2, 3, 4, 5] int[] creaseLengths = [3, 2] float[] creaseSharpness = [0.25, 0.75] }';
+  session.usda = '#usda 1.0\ndef Mesh "M" { int[] creaseIndices = [0, 2, 3, 4, 5]\n int[] creaseLengths = [3, 2]\n float[] creaseSharpness = [0.25, 0.75]\n}';
   assert.deepEqual(session.getMeshSharpChainData('/M'), { chains: [[0, 2, 3], [4, 5]], sharpness: [.25, .75] });
 });
 
@@ -3633,7 +3633,7 @@ test('USD session returns a stable empty sharp-edge data shape', () => {
 
 test('USD session authors guide mesh siblings without render subsets', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Xform "World" {\n  def Mesh "Source" {\n    rel material:binding = </World/Looks/Mat>\n    def GeomSubset "Subset" { int[] indices = [0] }\n  }\n}\n';
+  session.usda = '#usda 1.0\ndef Xform "World" {\n  def Mesh "Source" {\n    rel material:binding = </World/Looks/Mat>\n    def GeomSubset "Subset" {\n    int[] indices = [0]\n  }\n  }\n}\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.createGuideMeshSibling('/World/Source', 'Source_Collider', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) });
   assert.match(session.usda, /def Mesh "Source_Collider"/);
@@ -3682,7 +3682,7 @@ test('mesh authoring updates existing GeomSubset face indices', async () => {
 
 test('mesh authoring clears stale GeomSubset indices when groups are removed', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" { int[] indices = [0, 1] }\n}\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" {\n int[] indices = [0, 1]\n}\n}\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', {
     positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
@@ -3693,7 +3693,7 @@ test('mesh authoring clears stale GeomSubset indices when groups are removed', a
 
 test('mesh authoring clears GeomSubsets when groups are empty', async () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" { int[] indices = [0] }\n}\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" {\n int[] indices = [0]\n}\n}\n';
   session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), groups: [] });
   assert.match(session.usda, /def GeomSubset "Red"[\s\S]*?int\[\] indices = \[\]/);
@@ -3701,7 +3701,7 @@ test('mesh authoring clears GeomSubsets when groups are empty', async () => {
 
 test('USD session derives cleanup groups from authored GeomSubsets', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" { int[] indices = [1] }\n  def GeomSubset "Blue" { int[] indices = [0] }\n}\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" {\n  def GeomSubset "Red" {\n int[] indices = [1]\n}\n  def GeomSubset "Blue" {\n int[] indices = [0]\n}\n}\n';
   assert.deepEqual(session.getMeshMaterialGroups('/M', 6), [
     { start: 0, count: 3, materialIndex: 1 },
     { start: 3, count: 3, materialIndex: 0 },
@@ -3710,7 +3710,7 @@ test('USD session derives cleanup groups from authored GeomSubsets', () => {
 
 test('USD session rejects overflowing GeomSubset indices', () => {
   const session = new LuciaUsdSession();
-  session.usda = '#usda 1.0\ndef Mesh "M" { def GeomSubset "Bad" { int[] indices = [999999999999999999999] } }\n';
+  session.usda = '#usda 1.0\ndef Mesh "M" {\n def GeomSubset "Bad" {\n  int[] indices = [999999999999999999999]\n }\n}\n';
   assert.throws(() => session.getMeshMaterialGroups('/M', 3), /indices are not readable/);
 });
 
@@ -3737,7 +3737,7 @@ test('mesh authoring invalidates stale tangents when no replacement is supplied'
 });
 
 test('mesh authoring removes stale indices for vertex primvars', async () => {
-  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" { normal3f[] normals = [(0, 0, 1)] ( interpolation = "faceVarying" ) int[] normals:indices = [0] color3f[] primvars:displayColor = [(1, 0, 0)] ( interpolation = "faceVarying" ) int[] primvars:displayColor:indices = [0] }\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
+  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {\n normal3f[] normals = [(0, 0, 1)] ( interpolation = "faceVarying" )\n int[] normals:indices = [0]\n color3f[] primvars:displayColor = [(1, 0, 0)] ( interpolation = "faceVarying" )\n int[] primvars:displayColor:indices = [0]\n}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), colors: new Float32Array([1, 0, 0, 1, 0, 0, 1, 0, 0]) });
   assert.equal((session.usda.match(/normals:indices/g) || []).length, 0);
   assert.equal((session.usda.match(/primvars:displayColor:indices/g) || []).length, 0);
@@ -3753,19 +3753,19 @@ test('mesh authoring writes face-varying normals and corner indices', async () =
 });
 
 test('cleanup authoring can clear aligned primvars omitted from the result', async () => {
-  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" { normal3f[] normals = [(0, 0, 1)] int[] normals:indices = [0] texCoord2f[] primvars:st = [(0, 0)] color3f[] primvars:displayColor = [(1, 0, 0)] int[] primvars:skel:jointIndices = [0, 0, 0, 0] float[] primvars:skel:jointWeights = [1, 0, 0, 0] float3[] primvars:tangents = [(1, 0, 0)] }\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
+  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {\n normal3f[] normals = [(0, 0, 1)]\n int[] normals:indices = [0]\n texCoord2f[] primvars:st = [(0, 0)]\n color3f[] primvars:displayColor = [(1, 0, 0)]\n int[] primvars:skel:jointIndices = [0, 0, 0, 0]\n float[] primvars:skel:jointWeights = [1, 0, 0, 0]\n float3[] primvars:tangents = [(1, 0, 0)]\n}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), clearMissingAttributes: true });
   for (const token of ['normals', 'primvars:st', 'primvars:displayColor', 'primvars:skel:jointIndices', 'primvars:skel:jointWeights', 'primvars:tangents']) assert.equal(session.usda.includes(token), false, token);
 });
 
 test('cleanup authoring clears omitted face-varying primvars and indices', async () => {
-  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" { color3f[] primvars:cornerColor = [(1, 0, 0)] ( interpolation = "faceVarying" ) int[] primvars:cornerColor:indices = [0] }\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
+  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {\n color3f[] primvars:cornerColor = [(1, 0, 0)] ( interpolation = "faceVarying" )\n int[] primvars:cornerColor:indices = [0]\n}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), clearMissingAttributes: true });
   assert.equal(session.usda.includes('primvars:cornerColor'), false);
 });
 
 test('cleanup authoring clears only omitted known custom primvars', async () => {
-  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" { float[] primvars:stale = [1] float3[] primvars:kept = [(1, 2, 3)] }\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
+  const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {\n float[] primvars:stale = [1]\n float3[] primvars:kept = [(1, 2, 3)]\n}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), clearMissingAttributes: true, customAttributeNames: ['stale', 'kept'], customAttributes: [{ name: 'kept', itemSize: 3, array: new Float32Array([1, 2, 3, 1, 2, 3, 1, 2, 3]) }] });
   assert.equal(session.usda.includes('primvars:stale'), false);
   assert.equal(session.usda.includes('primvars:kept'), true);

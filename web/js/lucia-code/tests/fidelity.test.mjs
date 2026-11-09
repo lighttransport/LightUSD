@@ -114,7 +114,7 @@ test('typed native transforms preserve double precision and roll back a failed b
 test('typed mesh edits keep indexed corner buffers and four-component tangents', async () => {
   const session = new LuciaUsdSession();
   session.replaceUSDA = async function(source) { const previous = this.usda; this.usda = source; return previous; };
-  session.usda = '#usda 1.0\ndef Mesh "M" { custom string note = "keep" }';
+  session.usda = '#usda 1.0\ndef Mesh "M" {\n custom string note = "keep"\n}';
   await session.setMeshGeometry('/M', {
     positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]),
     uvs: new Float32Array([0, 0, 1, 0]), uvIndices: new Uint32Array([0, 1, 0]),
