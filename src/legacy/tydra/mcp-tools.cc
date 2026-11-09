@@ -4,7 +4,7 @@
 #include <string>
 
 #include "mcp-context.hh"
-#include "../mcp/mcp-tool-schemas.hh"
+#include "mcp/mcp-tool-schemas.hh"
 #include "mcp-server.hh"
 #include "mcp-tools-scene.hh"
 #include "mcp-tools-query.hh"

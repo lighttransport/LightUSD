@@ -8,7 +8,7 @@
 #include <random>
 #include <charconv>
 
-#include "../../src/tiny-string.hh"
+#include "../../src/legacy/tiny-string.hh"
 
 std::string gen_intarray(size_t n, bool delim_at_end) {
   std::stringstream ss;

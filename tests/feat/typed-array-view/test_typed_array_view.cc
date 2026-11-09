@@ -1,7 +1,7 @@
 ﻿// Simple test program for TypedArrayView methods in TimeSamples
-#include "src/timesamples.hh"
-#include "src/typed-array.hh"
-#include "src/value-types.hh"
+#include "src/legacy/timesamples.hh"
+#include "src/legacy/typed-array.hh"
+#include "src/legacy/value-types.hh"
 #include <iostream>
 #include <cassert>
 #include <vector>

@@ -8,7 +8,7 @@
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 
-#include "../str-util.hh"  // base64_decode
+#include "str-util.hh"  // base64_decode
 #include "../lightusd.hh"
 #include "../usd-validation.hh"
 #include "mcp-context.hh"

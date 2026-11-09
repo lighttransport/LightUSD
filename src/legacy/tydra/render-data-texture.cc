@@ -20,7 +20,7 @@
 #include "image-types.hh"
 #include "io-util.hh"
 #include "core/security-policy.hh"
-#include "texture-util.hh"
+#include "tydra/texture-util.hh"
 #include "tiny-format.hh"
 #include "tydra/render-data.hh"
 #include "value-types.hh"

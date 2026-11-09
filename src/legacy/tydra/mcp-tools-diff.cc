@@ -25,7 +25,7 @@
 #include "../lightusd.hh"
 #include "../composition.hh"
 #include "../asset-resolution.hh"
-#include "../str-util.hh"
+#include "str-util.hh"
 #include "diff-and-compare.hh"
 
 namespace lightusd {

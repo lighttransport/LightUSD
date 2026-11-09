@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "../compiler-features.hh"
+#include "compiler-features.hh"
 
 // Disable weak-vtables warning for interface classes
 // These are header-only interfaces, vtable duplication is acceptable

@@ -3,8 +3,8 @@ set(TEST_TARGET_NAME test-decompress-int)
 set(TEST_SOURCES
   test-decompress-int-main.cc
   ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c 
-  ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
-  ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
+  ${PROJECT_SOURCE_DIR}/src/legacy/lz4-compression.cc
+  ${PROJECT_SOURCE_DIR}/src/legacy/integerCoding.cpp
    )
 
 add_executable(${TEST_TARGET_NAME}

@@ -13,11 +13,11 @@
 
 #include "../lightusd.hh"
 #include "../usdz-convert.hh"
-#include "../image-loader.hh"
-#include "../image-writer.hh"
-#include "../str-util.hh"
-#include "../io-util.hh"
-#include "texture-util.hh"
+#include "image-loader.hh"
+#include "image-writer.hh"
+#include "str-util.hh"
+#include "io-util.hh"
+#include "tydra/texture-util.hh"
 #include "mcp-context.hh"
 
 namespace lightusd {

@@ -24,7 +24,7 @@
 #include "../usdPhysics.hh"
 #include "../usdSkel.hh"
 #include "../pprinter.hh"
-#include "../str-util.hh"
+#include "str-util.hh"
 #include "value-to-json.hh"
 #include "mcp-context.hh"
 

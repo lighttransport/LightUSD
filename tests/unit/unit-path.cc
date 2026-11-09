@@ -6,8 +6,8 @@
 #include "acutest.h"
 
 #include "unit-path.h"
-#include "../../src/core/path.hh"
-#include "../../src/crate-format.hh"  // PathHasher / PathKeyEqual
+#include "../../src/legacy/core/path.hh"
+#include "../../src/legacy/crate-format.hh"  // PathHasher / PathKeyEqual
 
 #include <string>
 

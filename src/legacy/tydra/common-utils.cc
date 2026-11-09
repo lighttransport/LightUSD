@@ -5,7 +5,7 @@
 #include <cstring>
 #include <algorithm>
 #include <limits>
-#include "../str-util.hh"
+#include "str-util.hh"
 #include "tiny-format.hh"
 #include "core/safe-arithmetic.hh"
 

@@ -302,7 +302,6 @@ src/tydra/mcp.hh	src/legacy/tydra/mcp.hh
 src/tydra/nurbs-tess.hh	src/legacy/tydra/nurbs-tess.hh
 src/tydra/obj-export.cc	src/legacy/tydra/obj-export.cc
 src/tydra/obj-export.hh	src/legacy/tydra/obj-export.hh
-src/tydra/openpbr-params.hh	src/legacy/tydra/openpbr-params.hh
 src/tydra/physics-to-json.cc	src/legacy/tydra/physics-to-json.cc
 src/tydra/physics-to-json.hh	src/legacy/tydra/physics-to-json.hh
 src/tydra/prim-apply.cc	src/legacy/tydra/prim-apply.cc
@@ -378,7 +377,6 @@ src/tydra/threejs-exporter.cc	src/legacy/tydra/threejs-exporter.cc
 src/tydra/threejs-exporter.hh	src/legacy/tydra/threejs-exporter.hh
 src/tydra/tydra.png	src/legacy/tydra/tydra.png
 src/tydra/typed-array-render-data.hh	src/legacy/tydra/typed-array-render-data.hh
-src/tydra/urdf-payload.hh	src/legacy/tydra/urdf-payload.hh
 src/tydra/urdf-to-usd.cc	src/legacy/tydra/urdf-to-usd.cc
 src/tydra/urdf-to-usd.hh	src/legacy/tydra/urdf-to-usd.hh
 src/tydra/usd-export.cc	src/legacy/tydra/usd-export.cc
@@ -403,7 +401,6 @@ src/typed-array.hh	src/legacy/typed-array.hh
 src/unicode-xid.hh	src/legacy/unicode-xid.hh
 src/usd-dump.cc	src/legacy/usd-dump.cc
 src/usd-dump.hh	src/legacy/usd-dump.hh
-src/usd-preview-surface-schema.json	src/legacy/usd-preview-surface-schema.json
 src/usd-to-json.cc	src/legacy/usd-to-json.cc
 src/usd-to-json.hh	src/legacy/usd-to-json.hh
 src/usd-validation.cc	src/legacy/usd-validation.cc
@@ -491,3 +488,4 @@ src/xform.cc	src/legacy/xform.cc
 src/xform.hh	src/legacy/xform.hh
 src/zstd-compression.cc	src/legacy/zstd-compression.cc
 src/zstd-compression.hh	src/legacy/zstd-compression.hh
+src/tydra/material-serializer.cc	src/legacy/tydra/material-serializer.cc

@@ -70,7 +70,6 @@ include src/core/color-transform.cc src/core/logger.cc src/core/minijson.cc
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/core/mtlx-dom.cc
 include src/ptx-loader.cc
 recursive-include src/external/textools/ptex/src *.c
-include src/core/path-expression.cc src/core/path-expression-eval.cc
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
 # Configure-time inputs: src/next and tydra-next CMake define these targets
@@ -82,6 +81,9 @@ recursive-include src/external/tinyvdb *.c *.h
 recursive-include src/external/mimalloc *.c *.h
 recursive-include tools/lusdpreview *.cc *.hh *.h
 recursive-include cmake *.cmake
+
+# Legacy sources are never part of the Python package.
+prune src/legacy
 
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__

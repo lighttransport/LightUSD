@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "tinysubdiv.hh"
+#include "tsd/tinysubdiv.hh"
 
 namespace lightusd {
 

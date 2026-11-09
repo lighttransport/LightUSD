@@ -427,7 +427,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     binding-next-render-mesh.cc
     binding-next-render-material-key.cc
     binding-next-render-material.cc
-    ${PROJECT_SOURCE_DIR}/../src/tydra/material-serializer.cc
+    ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
     binding-next-render-merge.cc
     binding-next-render-material-output.cc)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
@@ -497,6 +497,11 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   target_link_libraries(lightusd_next_wasm PRIVATE
     tydra_next lightusd_c lightusd_next)
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
+  # TEMPORARY (next->core refactor): binding-next-render-material-output.cc
+  # still serializes materials through the legacy tydra/material-serializer
+  # (src/legacy/tydra). Appended after src/ so core/shared headers always win.
+  # Removed once the serializer is ported to core RenderMaterial.
+  target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/feature-runtime.js"
@@ -712,7 +717,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND LIGHTUSD_WASM_COROUTINE)
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_USE_COROUTINE=1)
 endif()
 
-# lightusd dir
+# lightusd dir. Legacy-only headers live in src/legacy/ and must win over
+# same-named shared paths, as in the root legacy build.
+target_include_directories(${BUILD_TARGET} BEFORE
+                           PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
 

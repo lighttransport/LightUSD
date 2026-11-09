@@ -75,8 +75,8 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path,
 /// Currently ToUnixishPath converts backslash character to forward slash
 /// character.
 ///
-/// /home/lightusd => C:/Users/lightusd
-/// C:\\Users\\lightusd => C:/Users/lightusd
+/// /opt/assets => C:/assets
+/// C:\\\\assets => C:/assets
 ///
 Path ToUnixishPath(const Path &path);
 

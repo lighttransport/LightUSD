@@ -153,6 +153,13 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   return()
 endif()
 
+# ---- Legacy product -------------------------------------------------------
+# Legacy-only sources live in src/legacy/ (same relative layout they had under
+# src/). Put it ahead of src/ so legacy `#include "stage.hh"` /
+# "core/prim.hh" / "tydra/render-data.hh" resolve to the legacy copies while
+# shared headers (core/logger.hh, image-loader.hh, ...) still come from src/.
+include_directories(BEFORE ${PROJECT_SOURCE_DIR}/src/legacy)
+
 if (EMSCRIPTEN)
   set(LIGHTUSD_DEFAULT_NO_WERROR ON)
   set(LIGHTUSD_DEFAULT_PRODUCTION_BUILD On)
@@ -579,332 +586,332 @@ endif()
 
 set(LIGHTUSD_SOURCES
     # Crate path utilities (path sorting/tree encoding for USDC writer)
-    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/path_sort.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/tree_encode.cc
-    ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
-    ${PROJECT_SOURCE_DIR}/src/lightusd.cc
-    ${PROJECT_SOURCE_DIR}/src/xform.cc
-    ${PROJECT_SOURCE_DIR}/src/performance.cc
-    ${PROJECT_SOURCE_DIR}/src/spline-binary.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-inst.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
-    ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/base122.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-1.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-2.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-3.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-4.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-property.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-parse.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-1.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-2.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-3.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-4.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-reader-reconstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/composition.cc
-    ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
-    ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
-    ${PROJECT_SOURCE_DIR}/src/core/path-expression.cc
-    ${PROJECT_SOURCE_DIR}/src/core/path-expression-eval.cc
-    ${PROJECT_SOURCE_DIR}/src/hash-util.cc
-    ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-reader-arrays.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-reader-values.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-reader-paths.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-format.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-writer-values.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-writer-inline.cc
-    ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-ar.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-media.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-shader.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-light.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-skel.cc
-    ${PROJECT_SOURCE_DIR}/src/sconv-layer.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
-    ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
-    ${PROJECT_SOURCE_DIR}/src/path-util.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct2.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct3.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom3.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-vol.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-lightprim.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader2.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader3.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader4.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics2.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics3.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics4.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-ar.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-media.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-types.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-types-schema.cc
-    ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
-    ${PROJECT_SOURCE_DIR}/src/enum-handlers.cc
-    ${PROJECT_SOURCE_DIR}/src/layer.cc
-    ${PROJECT_SOURCE_DIR}/src/primvar.cc
-    ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-path-utils/path_sort.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-path-utils/tree_encode.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/arg-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/asset-resolution.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/lightusd.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/xform.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/performance.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/spline-binary.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-props.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-entry.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-basetype.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-basetype-inst.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/ascii-parser-timesamples-array.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/audio-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/base122.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-reader-reconstruct-1.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-reader-reconstruct-2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-reader-reconstruct-3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-reader-reconstruct-4.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-property.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim-parse.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim-reconstruct-1.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim-reconstruct-2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim-reconstruct-3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-prim-reconstruct-4.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-reader-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usda-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdc-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/composition.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/composition-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/large-scene-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/core/instance-key.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/core/path-expression.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/core/path-expression-eval.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/hash-util.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/chunk-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-reader-arrays.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-reader-values.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-reader-paths.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-reader-timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-format.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-writer-values.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-writer-inline.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/stage-converter.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-media.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-light.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-skel.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/sconv-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/crate-dump.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/path-util.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-geom2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-geom3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-vol.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-lightprim.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-shader2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-shader3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-shader4.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-physics2.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-physics3.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-physics4.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-reconstruct-media.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-composition.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-types-schema.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/core/prim-enums.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/enum-handlers.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/layer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/primvar.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/unicode-xid-c.c
     ${PROJECT_SOURCE_DIR}/src/next/c/spline.c
     ${PROJECT_SOURCE_DIR}/src/core/logger.cc
-    ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
-    ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
-    ${PROJECT_SOURCE_DIR}/src/value-pprint-dispatch.cc
-    ${PROJECT_SOURCE_DIR}/src/value-pprint-prim.cc
-    ${PROJECT_SOURCE_DIR}/src/value-types.cc
-    ${PROJECT_SOURCE_DIR}/src/value-types-typename.cc
-    ${PROJECT_SOURCE_DIR}/src/value-types-cast.cc
-    ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
-    ${PROJECT_SOURCE_DIR}/src/value-types-lerp.cc
-    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usd-dump.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-pprint-dispatch.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-pprint-prim.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-types-typename.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-types-cast.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-types-matrix.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-types-lerp.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/color-space.cc
     ${PROJECT_SOURCE_DIR}/src/core/color-transform.cc
-    ${PROJECT_SOURCE_DIR}/src/color-space.hh
-    ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
-    ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
-    ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/color-space.hh
+    ${PROJECT_SOURCE_DIR}/src/legacy/usd-validation.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/tiny-format.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
-    ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/udim-bake.cc
     ${PROJECT_SOURCE_DIR}/src/udim-mesh.cc
     ${PROJECT_SOURCE_DIR}/src/udim-layer.cc
     ${PROJECT_SOURCE_DIR}/src/udim-layer-geometry.cc
-    ${PROJECT_SOURCE_DIR}/src/usdz-udim-layer.cc
-    ${PROJECT_SOURCE_DIR}/src/usdz-udim-bake.cc
-    ${PROJECT_SOURCE_DIR}/src/usdz-geometry-optimize.cc
-    ${PROJECT_SOURCE_DIR}/src/usdz-material-optimize.cc
-    ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
-    ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-accessors.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-scalar-a.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-scalar-b.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-vec-a.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-vec-b.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-role-a.cc
-    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-role-b.cc
-    ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
-    ${PROJECT_SOURCE_DIR}/src/usdShade.cc
-    ${PROJECT_SOURCE_DIR}/src/usdLux.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdz-udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdz-udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdz-geometry-optimize.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdz-material-optimize.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/linear-algebra.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/value-eval-util.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-accessors.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-scalar-a.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-scalar-b.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-vec-a.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-vec-b.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-role-a.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdGeom-primvar-inst-role-b.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdSkel.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdShade.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
     ${PROJECT_SOURCE_DIR}/src/core/mtlx-dom.cc
-    ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
-    ${PROJECT_SOURCE_DIR}/src/usdMtlx-write.cc
-    ${PROJECT_SOURCE_DIR}/src/usdPhysics.cc
-    ${PROJECT_SOURCE_DIR}/src/mjcPhysics.cc
-    ${PROJECT_SOURCE_DIR}/src/usdObj.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/mtlx-simple-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdMtlx.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdMtlx-write.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdPhysics.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/mjcPhysics.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-enum.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-meta.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-geom.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-shader.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-light.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-skel.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-physics.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-ar.cc
-    ${PROJECT_SOURCE_DIR}/src/pprint-media.cc
-    ${PROJECT_SOURCE_DIR}/src/pprinter.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-eval.cc
-    ${PROJECT_SOURCE_DIR}/src/stage.cc
-    ${PROJECT_SOURCE_DIR}/src/stage.hh
-    ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
-    ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
-    ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-enum.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-meta.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-light.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-skel.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprint-media.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/timesamples-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/timesamples-eval.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/stage.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/stage.hh
+    ${PROJECT_SOURCE_DIR}/src/legacy/uuid-gen.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/uuid-gen.hh
+    ${PROJECT_SOURCE_DIR}/src/legacy/parser-timing.cc
     ${PROJECT_SOURCE_DIR}/src/sha256.cc
-    ${PROJECT_SOURCE_DIR}/src/typed-array.cc
-    ${PROJECT_SOURCE_DIR}/src/task-queue.cc
-    ${PROJECT_SOURCE_DIR}/src/task-queue.hh
-    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
+    ${PROJECT_SOURCE_DIR}/src/legacy/typed-array.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/task-queue.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/task-queue.hh
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-pprint-parallel.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/prim-pprint-parallel.hh
 
     )
 
 if (LIGHTUSD_WITH_PCP)
     list(APPEND LIGHTUSD_SOURCES
-        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.cc
-        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.hh
-        ${PROJECT_SOURCE_DIR}/src/pcp/cache.cc
-        ${PROJECT_SOURCE_DIR}/src/pcp/cache.hh
-        ${PROJECT_SOURCE_DIR}/src/pcp/cache-impl.hh
-        ${PROJECT_SOURCE_DIR}/src/pcp/cache-parallel.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/layer-registry.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/layer-registry.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/cache.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/cache.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/cache-impl.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/pcp/cache-parallel.cc
     )
 endif()
 
 if (LIGHTUSD_WITH_TYDRA)
     list(APPEND LIGHTUSD_SOURCES
-        ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-xform-node.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-skeleton.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-physics.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-collection.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-primvar.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-terminal.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-blendshape.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-property.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-property-names.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listprims-inst.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listshaders-inst.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/color-management.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/color-management.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-scalar.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-array.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-state.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-xform-anim.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-stage-instances.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-memory.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-texture.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-optimize.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-dedup.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-deferred.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-hierarchy.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-analytic-basic.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-analytic-solid.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-tangent.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-assembly.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-ktx2.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-visitor.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-signature.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-light.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-skeleton.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-property.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-value-clip.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-instancer.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
-        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-math.h
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.h
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.h
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/facial.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/facial.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/prim-apply.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/prim-apply.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-xform-node.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-skeleton.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-physics.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-collection.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-primvar.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-terminal.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-blendshape.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-property.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-property-names.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-listprims-inst.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access-listshaders-inst.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-access.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-analysis.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/scene-analysis.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/color-management.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/color-management.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/attribute-eval.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/attribute-eval.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/attribute-eval-typed-all.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/attribute-eval-typed-inst-scalar.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/attribute-eval-typed-inst-array.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/command-and-history.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/obj-export.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/usd-export.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/shader-network.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/shader-network.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-state.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-xform-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-stage-instances.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-memory.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-texture.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-optimize.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-dedup.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-deferred.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-hierarchy.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-analytic-basic.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-analytic-solid.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-mesh.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-mesh-tangent.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-material-assembly.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-material-ktx2.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-mesh-visitor.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-material-signature.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-material-mtlx.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-anim-light.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-anim-skeleton.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-anim-property.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-anim-value-clip.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-instancer.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-internal.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-pprint.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/raytracing-data.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/raytracing-data.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/raytracing-scene-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/raytracing-scene-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/material-serializer.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/material-serializer.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/materialx-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/materialx-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/physics-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/physics-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/urdf-to-usd.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/urdf-to-usd.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ar-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ar-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ik-solver.h
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ik-solver.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ik-solver.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-math.h
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-collision.h
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-collision.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.h
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-scene-dump.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/render-scene-dump.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/bone-util.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/bone-util.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/layer-to-renderscene.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/common-utils.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/common-utils.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/common-utils.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/common-utils.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-support.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-support.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-applier.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-applier.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools.cc
         ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-context.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json-native.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json-native-decode.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-scene.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-scene.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-query.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-query.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-composition.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-composition.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-validate.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-validate.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-usdz.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-usdz.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-diff.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-diff.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-resources.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-resources.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-server.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-server.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-context.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-js-bridge.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-js-bridge.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/value-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/value-to-json-native.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/value-to-json-native-decode.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/value-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/diff-and-compare.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/diff-and-compare.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/js-script.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/js-script-persistent.cc
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/threejs-exporter.hh
+        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/threejs-exporter.cc
         )
 
     if(LIGHTUSD_WITH_WAMR)
         list(APPEND LIGHTUSD_SOURCES
-            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.cc
-            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.hh
+            ${PROJECT_SOURCE_DIR}/src/legacy/tydra/wasm-runtime.cc
+            ${PROJECT_SOURCE_DIR}/src/legacy/tydra/wasm-runtime.hh
         )
     endif(LIGHTUSD_WITH_WAMR)
 endif (LIGHTUSD_WITH_TYDRA)
@@ -912,17 +919,17 @@ endif (LIGHTUSD_WITH_TYDRA)
 # Variant extraction utilities handled via variant-support.hh/cc in Tydra section
 
 if(LIGHTUSD_WITH_PXR_COMPAT_API)
-  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
+  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/legacy/pxr-compat.cc)
 endif()
 
 set(LIGHTUSD_C_API_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/c-lightusd.cc
-    ${PROJECT_SOURCE_DIR}/src/c-lightusd-helpers.cc
-    ${PROJECT_SOURCE_DIR}/src/c-lightusd-tydra.cc)
+    ${PROJECT_SOURCE_DIR}/src/legacy/c-lightusd.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/c-lightusd-helpers.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/c-lightusd-tydra.cc)
 
 set(LIGHTUSD_DEP_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
-    ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/integerCoding.cpp
+    ${PROJECT_SOURCE_DIR}/src/legacy/lz4-compression.cc
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     #${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
@@ -949,7 +956,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc       # stb_image decode
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc       # stb_image_write / fpng entry
-    ${PROJECT_SOURCE_DIR}/src/image-util.cc         # stb_image_resize
+    ${PROJECT_SOURCE_DIR}/src/legacy/image-util.cc         # stb_image_resize
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc # streaming PNG transcode/resize
     ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc # ResizeImage
     ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp     # fpng PNG encoder
@@ -968,7 +975,7 @@ if (SANITIZE_UNDEFINED AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     SOURCE ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
     APPEND PROPERTY COMPILE_DEFINITIONS "FPNG_USE_UNALIGNED_LOADS=0")
   set_property(
-    SOURCE ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    SOURCE ${PROJECT_SOURCE_DIR}/src/legacy/image-util.cc
     APPEND PROPERTY COMPILE_OPTIONS "-fno-sanitize=alignment")
   set_property(
     SOURCE ${PROJECT_SOURCE_DIR}/src/image-writer.cc
@@ -1033,17 +1040,17 @@ endif()
 if(LIGHTUSD_WITH_JSON)
   list(APPEND LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/core/minijson.cc
-    ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
-    ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
-    ${PROJECT_SOURCE_DIR}/src/json-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/json-util.cc)
+    ${PROJECT_SOURCE_DIR}/src/legacy/json-to-usd.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usd-to-json.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/json-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/json-util.cc)
 
   list(APPEND LIGHTUSD_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
 endif()
 
 if(LIGHTUSD_WITH_USDFBX)
   list(APPEND LIGHTUSD_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/usdFbx.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/usdFbx.cc
   )
   list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/OpenFBX/src/ofbx.cpp)
@@ -1054,7 +1061,7 @@ if(LIGHTUSD_WITH_USDOBJ)
 endif()
 
 if(LIGHTUSD_WITH_USDVOX)
-  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
+  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/legacy/usdVox.cc)
 endif()
 
 if(LIGHTUSD_WITH_USDVOL)
@@ -1136,7 +1143,7 @@ if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   else()
     find_package(zstd REQUIRED)
   endif()
-  list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+  list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/legacy/zstd-compression.cc)
 endif()
 
 # Vendored pure-C11 texture processing stack used by lusdview/lusdrender.
@@ -1239,7 +1246,7 @@ lightusd_add_render_support()
 list(APPEND LIGHTUSD_SOURCES
   $<TARGET_OBJECTS:lightusd_ptex_objects>
   $<TARGET_OBJECTS:lightusd_subdiv_objects>
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc)
+  ${PROJECT_SOURCE_DIR}/src/legacy/tsd/tsd-lightusd.cc)
 
 if(LIGHTUSD_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -1419,7 +1426,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     "$<$<COMPILE_LANGUAGE:C>:-Wno-declaration-after-statement>")
 
   # Suppress informational `#pragma message` output. miniz.c no longer needs
-  # this, but src/prim-types.hh and some vendored deps (wamr, wuffs) still
+  # this, but src/legacy/prim-types.hh and some vendored deps (wamr, wuffs) still
   # emit it, and it is not worth a diagnostic per translation unit.
   #
   # The _LARGEFILE*_SOURCE feature-test macros that miniz.c must define before
@@ -1492,21 +1499,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(LIGHTUSD_NLOHMANN_JSON_WARNING_FLAGS
       " -Wno-covered-switch-default -Wno-weak-vtables")
   set(LIGHTUSD_NLOHMANN_JSON_SOURCES
-      ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/usd-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-js-bridge.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-resources.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-server.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools.cc
       ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
-      ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-composition.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-query.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-scene.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-validate.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-diff.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/mcp-tools-usdz.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/urdf-to-usd.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/value-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/legacy/tydra/js-script-persistent.cc)
   foreach(LIGHTUSD_NLOHMANN_JSON_SOURCE ${LIGHTUSD_NLOHMANN_JSON_SOURCES})
     set_property(SOURCE ${LIGHTUSD_NLOHMANN_JSON_SOURCE}
                  APPEND_STRING PROPERTY COMPILE_FLAGS
@@ -1805,7 +1812,7 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
   # contains C sources (zstd.c, lz4.c, yyjson.c, ...) which cannot use a C++ PCH.
   if(LIGHTUSD_USE_PCH)
     target_precompile_headers(${LIGHTUSD_LIB_TARGET} PRIVATE
-      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/lightusd-pch.hh>")
+      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/legacy/lightusd-pch.hh>")
   endif()
 
   # Although LightUSD should compile well without /bigobj flag,
@@ -4836,7 +4843,7 @@ if(LIGHTUSD_BUILD_TESTS)
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Driver-level counterpart: run the binary flatten drivers (lusdcat, and
-    # lusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
+    # lusdzconvert -> src/legacy/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just
     # the library) is caught. The C++ test above drives the library with its own
     # deferred loop and would not notice a driver revert.

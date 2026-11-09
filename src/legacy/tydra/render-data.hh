@@ -78,7 +78,7 @@
 #include "variant-support.hh"
 #include "spatial-hashes.hh"
 #include "render-data-pprint.hh"
-#include "shape-to-mesh.hh"
+#include "tydra/shape-to-mesh.hh"
 
 // Extracted headers
 #include "render-data-shader.hh"

@@ -44,7 +44,7 @@
 #include "value-pprint.hh"
 #include "core/logger.hh"
 #include "bone-util.hh"
-#include "shape-to-mesh.hh"
+#include "tydra/shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 #include "core/safe-arithmetic.hh"
@@ -64,9 +64,9 @@
 #endif
 
 // MikkTSpace tangent computation
-#include "mikktspace-tangent.hh"
+#include "tydra/mikktspace-tangent.hh"
 // Optimized MikkTSpace reimplementation
-#include "fast-mikktspace.hh"
+#include "tydra/fast-mikktspace.hh"
 
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation

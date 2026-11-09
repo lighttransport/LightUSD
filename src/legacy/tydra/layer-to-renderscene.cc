@@ -14,7 +14,7 @@
 #include "../value-types.hh"
 #include "../lightusd.hh"
 #include "../prim-reconstruct.hh"
-#include "../str-util.hh"
+#include "str-util.hh"
 #include "../pprinter.hh"
 
 namespace lightusd {

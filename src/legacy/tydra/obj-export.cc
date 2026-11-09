@@ -312,4 +312,3 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
 } // namespace tydra
 } // namespace lightusd
-

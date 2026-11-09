@@ -7,6 +7,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(lightusd_next C CXX)
 
+# Core resolves headers only through its own target include directories.
+# When the legacy product adds this directory, drop the inherited
+# directory-level include paths (src/legacy) so legacy headers can never
+# shadow core/shared ones (e.g. core/path-expression.hh).
+set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
+
 # ---------------------------------------------------------------------------
 # Release hardening for the shipped native artifacts.
 #

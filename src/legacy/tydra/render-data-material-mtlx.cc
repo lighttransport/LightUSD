@@ -46,7 +46,7 @@
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "bone-util.hh"
-#include "shape-to-mesh.hh"
+#include "tydra/shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 #include "materialx-to-json.hh"

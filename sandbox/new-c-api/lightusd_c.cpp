@@ -9,12 +9,12 @@
 #include "lightusd_c.h"
 
 // Include LightUSD headers - adjust paths as needed
-#include "../../src/lightusd.hh"
-#include "../../src/stage.hh"
-#include "../../src/core/prim.hh"
-#include "../../src/value-types.hh"
-#include "../../src/usdGeom.hh"
-#include "../../src/usdShade.hh"
+#include "../../src/legacy/lightusd.hh"
+#include "../../src/legacy/stage.hh"
+#include "../../src/legacy/core/prim.hh"
+#include "../../src/legacy/value-types.hh"
+#include "../../src/legacy/usdGeom.hh"
+#include "../../src/legacy/usdShade.hh"
 
 #include <cstring>
 #include <memory>
