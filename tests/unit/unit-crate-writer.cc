@@ -22,7 +22,9 @@
 #include <cstdio>
 
 using namespace lightusd;
-using namespace lightusd::experimental;
+
+using namespace lightusd::legacy;  // NOLINT
+using namespace lightusd::legacy::experimental;
 
 // Helper function to create a temporary filename
 static std::string get_temp_filename(const std::string& prefix) {
@@ -154,7 +156,7 @@ void crate_writer_typename_encoding_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -195,25 +197,25 @@ void crate_writer_timesamples_test(void) {
   translate_op.op_type = XformOp::OpType::Translate;
 
   // Create TimeSamples with 5 frames
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   for (int i = 0; i < 5; i++) {
     double time = static_cast<double>(i);
-    value::float3 position;
+    lightusd::legacy::value::float3 position;
     position[0] = 10.0f * i;
     position[1] = 0.0f;
     position[2] = 0.0f;
-    value::Value pos_value(position);
+    lightusd::legacy::value::Value pos_value(position);
     ts.add_sample(time, pos_value);
   }
 
   translate_op._var.set_timesamples(ts);
 
   // Set default value
-  value::float3 default_pos;
+  lightusd::legacy::value::float3 default_pos;
   default_pos[0] = 0.0f;
   default_pos[1] = 0.0f;
   default_pos[2] = 0.0f;
-  translate_op._var._value = value::Value(default_pos);
+  translate_op._var._value = lightusd::legacy::value::Value(default_pos);
 
   xform.xformOps.push_back(translate_op);
 
@@ -238,7 +240,7 @@ void crate_writer_timesamples_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -296,7 +298,7 @@ void crate_writer_pseudoroot_ordering_test(void) {
   // Read back - should not get PseudoRoot error
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -358,7 +360,7 @@ void crate_writer_roundtrip_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -400,15 +402,15 @@ void crate_writer_stage_composition_arcs_test(void) {
   // references (prepend)
   {
     Reference ref;
-    ref.asset_path = value::AssetPath("ref.usda");
+    ref.asset_path = lightusd::legacy::value::AssetPath("ref.usda");
     ref.prim_path = Path("/RefPrim", "");
     ref.customData["note"].set_value(std::string("reference metadata"));
-    ref.customData["asset"].set_value(value::AssetPath("refs/texture.png"));
-    value::matrix4d ref_matrix = value::matrix4d::identity();
+    ref.customData["asset"].set_value(lightusd::legacy::value::AssetPath("refs/texture.png"));
+    lightusd::legacy::value::matrix4d ref_matrix = lightusd::legacy::value::matrix4d::identity();
     ref_matrix.m[3][0] = 5.0;
     ref.customData["matrix"].set_value(ref_matrix);
-    ref.customData["tokens"].set_value(std::vector<value::token>{
-        value::token("ref"), value::token("metadata")});
+    ref.customData["tokens"].set_value(std::vector<lightusd::legacy::value::token>{
+        lightusd::legacy::value::token("ref"), lightusd::legacy::value::token("metadata")});
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::Prepend, {ref}});
     prim.metas().references = refs;
@@ -416,7 +418,7 @@ void crate_writer_stage_composition_arcs_test(void) {
   // payload (explicit)
   {
     Payload pl;
-    pl.asset_path = value::AssetPath("pay.usda");
+    pl.asset_path = lightusd::legacy::value::AssetPath("pay.usda");
     pl.prim_path = Path("/PayPrim", "");
     std::vector<std::pair<ListEditQual, std::vector<Payload>>> payloads;
     payloads.push_back({ListEditQual::ResetToExplicit, {pl}});
@@ -460,7 +462,7 @@ void crate_writer_stage_composition_arcs_test(void) {
   // Read back.
   Stage loaded;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -490,7 +492,7 @@ void crate_writer_stage_composition_arcs_test(void) {
         }
         TEST_CHECK(ref.customData.count("asset") == 1);
         if (ref.customData.count("asset")) {
-          auto asset = ref.customData.at("asset").get_value<value::AssetPath>();
+          auto asset = ref.customData.at("asset").get_value<lightusd::legacy::value::AssetPath>();
           TEST_CHECK(asset.has_value());
           if (asset) {
             TEST_CHECK(asset->GetAssetPath() == "refs/texture.png");
@@ -498,7 +500,7 @@ void crate_writer_stage_composition_arcs_test(void) {
         }
         TEST_CHECK(ref.customData.count("matrix") == 1);
         if (ref.customData.count("matrix")) {
-          auto matrix = ref.customData.at("matrix").get_value<value::matrix4d>();
+          auto matrix = ref.customData.at("matrix").get_value<lightusd::legacy::value::matrix4d>();
           TEST_CHECK(matrix.has_value());
           if (matrix) {
             TEST_CHECK(matrix->m[3][0] == 5.0);
@@ -506,7 +508,7 @@ void crate_writer_stage_composition_arcs_test(void) {
         }
         TEST_CHECK(ref.customData.count("tokens") == 1);
         if (ref.customData.count("tokens")) {
-          auto tokens = ref.customData.at("tokens").get_value<std::vector<value::token>>();
+          auto tokens = ref.customData.at("tokens").get_value<std::vector<lightusd::legacy::value::token>>();
           TEST_CHECK(tokens.has_value());
           if (tokens) {
             TEST_CHECK(tokens->size() == 2);
@@ -604,7 +606,7 @@ void crate_writer_multiple_prims_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   TEST_CHECK(loaded_stage.root_prims().size() == 10);
@@ -656,7 +658,7 @@ void crate_writer_nested_prims_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (ret) {
@@ -758,7 +760,7 @@ void crate_writer_material_shader_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -817,6 +819,7 @@ void crate_writer_material_shader_test(void) {
 
 void crate_writer_layer_metadata_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   std::string filename = "test_layer_metadata.usdc";
 
@@ -834,7 +837,7 @@ void crate_writer_layer_metadata_test(void) {
   metas.framesPerSecond = 30.0;
   metas.startTimeCode = 1.0;
   metas.endTimeCode = 120.0;
-  metas.defaultPrim = value::token("MyPrim");
+  metas.defaultPrim = lightusd::legacy::value::token("MyPrim");
   metas.doc.value = "Test documentation string";
   metas.comment.value = "Test comment";
   metas.kilogramsPerUnit = 0.001;  // grams
@@ -876,7 +879,7 @@ void crate_writer_layer_metadata_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -936,7 +939,7 @@ void crate_writer_usd_preview_surface_test(void) {
     // Create UsdPreviewSurface value
     UsdPreviewSurface preview_surface;
 
-    Animatable<value::color3f> diffuse_anim(value::color3f{0.8f, 0.1f, 0.1f});
+    Animatable<lightusd::legacy::value::color3f> diffuse_anim(lightusd::legacy::value::color3f{0.8f, 0.1f, 0.1f});
     preview_surface.diffuseColor.set_value(diffuse_anim);
 
     Animatable<float> metallic_anim(0.9f);
@@ -955,7 +958,7 @@ void crate_writer_usd_preview_surface_test(void) {
     Animatable<float> ior_anim(1.45f);
     preview_surface.ior.set_value(ior_anim);
 
-    Animatable<value::color3f> emissive_anim(value::color3f{0.1f, 0.1f, 0.0f});
+    Animatable<lightusd::legacy::value::color3f> emissive_anim(lightusd::legacy::value::color3f{0.1f, 0.1f, 0.0f});
     preview_surface.emissiveColor.set_value(emissive_anim);
 
     Animatable<float> clearcoat_anim(0.5f);
@@ -1013,7 +1016,7 @@ void crate_writer_usd_preview_surface_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1084,11 +1087,11 @@ void crate_writer_usd_uv_texture_test(void) {
     UsdUVTexture uv_texture;
 
     // Set file path
-    Animatable<value::AssetPath> file_anim(value::AssetPath("textures/diffuse.png"));
+    Animatable<lightusd::legacy::value::AssetPath> file_anim(lightusd::legacy::value::AssetPath("textures/diffuse.png"));
     uv_texture.file.set_value(file_anim);
 
     // Set texture coordinates
-    Animatable<value::texcoord2f> st_anim(value::texcoord2f{0.5f, 0.5f});
+    Animatable<lightusd::legacy::value::texcoord2f> st_anim(lightusd::legacy::value::texcoord2f{0.5f, 0.5f});
     uv_texture.st.set_value(st_anim);
 
     // Set wrap modes
@@ -1099,8 +1102,8 @@ void crate_writer_usd_uv_texture_test(void) {
     uv_texture.wrapT.set_value(wrapt_anim);
 
     // Set fallback color
-    Animatable<value::float4> fallback(
-        value::float4{1.0f, 0.0f, 1.0f, 1.0f});
+    Animatable<lightusd::legacy::value::float4> fallback(
+        lightusd::legacy::value::float4{1.0f, 0.0f, 1.0f, 1.0f});
     uv_texture.fallback.set_value(fallback);
 
     // Set color space
@@ -1108,10 +1111,10 @@ void crate_writer_usd_uv_texture_test(void) {
     uv_texture.sourceColorSpace.set_value(colorspace_anim);
 
     // Set scale and bias
-    value::float4 scale{2.0f, 2.0f, 1.0f, 1.0f};
+    lightusd::legacy::value::float4 scale{2.0f, 2.0f, 1.0f, 1.0f};
     uv_texture.scale.set_value(scale);
 
-    value::float4 bias{0.1f, 0.1f, 0.0f, 0.0f};
+    lightusd::legacy::value::float4 bias{0.1f, 0.1f, 0.0f, 0.0f};
     uv_texture.bias.set_value(bias);
 
     // Create Shader and set info:id and value
@@ -1163,7 +1166,7 @@ void crate_writer_usd_uv_texture_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1270,7 +1273,7 @@ void crate_writer_usd_primvar_reader_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1325,7 +1328,7 @@ void crate_writer_usd_transform2d_test(void) {
 
     // Set transformation inputs
     // inputs:in (float2) - input texture coordinates
-    Animatable<value::float2> in_anim(value::float2{0.0f, 0.0f});
+    Animatable<lightusd::legacy::value::float2> in_anim(lightusd::legacy::value::float2{0.0f, 0.0f});
     transform2d.in.set_value(in_anim);
 
     // inputs:rotation (float) - rotation in degrees, CCW
@@ -1333,11 +1336,11 @@ void crate_writer_usd_transform2d_test(void) {
     transform2d.rotation.set_value(rotation_anim);
 
     // inputs:scale (float2) - scale factors
-    Animatable<value::float2> scale_anim(value::float2{2.0f, 2.0f});
+    Animatable<lightusd::legacy::value::float2> scale_anim(lightusd::legacy::value::float2{2.0f, 2.0f});
     transform2d.scale.set_value(scale_anim);
 
     // inputs:translation (float2) - translation offset
-    Animatable<value::float2> translation_anim(value::float2{0.5f, 0.5f});
+    Animatable<lightusd::legacy::value::float2> translation_anim(lightusd::legacy::value::float2{0.5f, 0.5f});
     transform2d.translation.set_value(translation_anim);
 
     // Create Shader and set info:id and value
@@ -1389,7 +1392,7 @@ void crate_writer_usd_transform2d_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1487,7 +1490,7 @@ void crate_writer_cone_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1571,7 +1574,7 @@ void crate_writer_cylinder_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1680,7 +1683,7 @@ void crate_writer_capsule_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1717,7 +1720,7 @@ void crate_writer_points_test(void) {
     Stage stage;
 
     // Create point cloud data
-    std::vector<value::point3f> points_data = {
+    std::vector<lightusd::legacy::value::point3f> points_data = {
       {0.0f, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f},
       {1.0f, 1.0f, 0.0f},
@@ -1732,7 +1735,7 @@ void crate_writer_points_test(void) {
     GeomPoints points;
     // Note: We currently support point3f[] and float[] arrays
     // int64[], normal3f[], vector3f[] support can be added later
-    Animatable<std::vector<value::point3f>> points_anim(points_data);
+    Animatable<std::vector<lightusd::legacy::value::point3f>> points_anim(points_data);
     Animatable<std::vector<float>> widths_anim(widths_data);
 
     // Use authored() check pattern from existing code
@@ -1782,7 +1785,7 @@ void crate_writer_points_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1822,7 +1825,7 @@ void crate_writer_camera_test(void) {
     GeomCamera camera;
     camera.name = "Camera";
     camera.focalLength = 35.0f;  // 35mm lens
-    camera.clippingRange = value::float2({0.1f, 10000.0f});
+    camera.clippingRange = lightusd::legacy::value::float2({0.1f, 10000.0f});
     camera.exposure = 0.0f;
     camera.fStop = 2.8f;
     camera.horizontalAperture = 21.0f;
@@ -1867,7 +1870,7 @@ void crate_writer_camera_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1908,8 +1911,8 @@ void crate_writer_camera_test(void) {
 
     // Check clippingRange
     if (loaded_camera->clippingRange.authored()) {
-      const Animatable<value::float2>& cr_anim = loaded_camera->clippingRange.get_value();
-      value::float2 cr_val;
+      const Animatable<lightusd::legacy::value::float2>& cr_anim = loaded_camera->clippingRange.get_value();
+      lightusd::legacy::value::float2 cr_val;
       if (cr_anim.get_scalar(&cr_val)) {
         TEST_MSG("Camera clippingRange: [%.1f, %.1f]", cr_val[0], cr_val[1]);
         TEST_CHECK(std::abs(cr_val[0] - 0.1f) < 0.01f);
@@ -1940,7 +1943,7 @@ void crate_writer_basis_curves_test(void) {
     Stage stage;
 
     // Create curve point data
-    std::vector<value::point3f> points_data = {
+    std::vector<lightusd::legacy::value::point3f> points_data = {
       {0.0f, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f},
       {2.0f, 1.0f, 0.0f},
@@ -1957,7 +1960,7 @@ void crate_writer_basis_curves_test(void) {
     basis_curves.wrap = GeomBasisCurves::Wrap::Nonperiodic;
 
     // Set animatable properties
-    Animatable<std::vector<value::point3f>> points_anim(points_data);
+    Animatable<std::vector<lightusd::legacy::value::point3f>> points_anim(points_data);
     Animatable<std::vector<int>> counts_anim(counts_data);
     Animatable<std::vector<float>> widths_anim(widths_data);
 
@@ -2007,7 +2010,7 @@ void crate_writer_basis_curves_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2046,8 +2049,8 @@ void crate_writer_basis_curves_test(void) {
       if (loaded_curves->points.authored()) {
         auto points_opt = loaded_curves->points.get_value();
         if (points_opt.has_value()) {
-          const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
-          std::vector<value::point3f> pts;
+          const Animatable<std::vector<lightusd::legacy::value::point3f>>& points_anim = points_opt.value();
+          std::vector<lightusd::legacy::value::point3f> pts;
           if (points_anim.get_default(&pts)) {
             TEST_CHECK(pts.size() == 4);
             TEST_MSG("BasisCurves has %zu points", pts.size());
@@ -2096,7 +2099,7 @@ void crate_writer_nurbs_curves_test(void) {
     Stage stage;
 
     // Create NURBS curve data - simple quadratic curve
-    std::vector<value::point3f> points = {
+    std::vector<lightusd::legacy::value::point3f> points = {
       {0.0f, 0.0f, 0.0f},
       {1.0f, 1.0f, 0.0f},
       {2.0f, 0.0f, 0.0f},
@@ -2110,7 +2113,7 @@ void crate_writer_nurbs_curves_test(void) {
     std::vector<double> knots = {0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
 
     // Parameter range
-    std::vector<value::double2> ranges = {{0.0, 1.0}};
+    std::vector<lightusd::legacy::value::double2> ranges = {{0.0, 1.0}};
 
     // Weights for control points (uniform weights for non-rational curve)
     std::vector<double> weights = {1.0, 1.0, 1.0, 1.0};
@@ -2120,10 +2123,10 @@ void crate_writer_nurbs_curves_test(void) {
 
     // Create GeomNurbsCurves
     GeomNurbsCurves nurbs_curves;
-    Animatable<std::vector<value::point3f>> points_anim(points);
+    Animatable<std::vector<lightusd::legacy::value::point3f>> points_anim(points);
     Animatable<std::vector<int>> orders_anim(orders);
     Animatable<std::vector<double>> knots_anim(knots);
-    Animatable<std::vector<value::double2>> ranges_anim(ranges);
+    Animatable<std::vector<lightusd::legacy::value::double2>> ranges_anim(ranges);
     Animatable<std::vector<double>> weights_anim(weights);
     Animatable<std::vector<int>> counts_anim(vertex_counts);
 
@@ -2176,7 +2179,7 @@ void crate_writer_nurbs_curves_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2210,8 +2213,8 @@ void crate_writer_nurbs_curves_test(void) {
       if (loaded_nurbs->points.authored()) {
         auto points_opt = loaded_nurbs->points.get_value();
         if (points_opt.has_value()) {
-          const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
-          std::vector<value::point3f> pts;
+          const Animatable<std::vector<lightusd::legacy::value::point3f>>& points_anim = points_opt.value();
+          std::vector<lightusd::legacy::value::point3f> pts;
           if (points_anim.get_default(&pts)) {
             TEST_CHECK(pts.size() == 4);
             TEST_MSG("NurbsCurves has %zu points", pts.size());
@@ -2250,8 +2253,8 @@ void crate_writer_nurbs_curves_test(void) {
       if (loaded_nurbs->ranges.authored()) {
         auto ranges_opt = loaded_nurbs->ranges.get_value();
         if (ranges_opt.has_value()) {
-          const Animatable<std::vector<value::double2>>& ranges_anim = ranges_opt.value();
-          std::vector<value::double2> ranges;
+          const Animatable<std::vector<lightusd::legacy::value::double2>>& ranges_anim = ranges_opt.value();
+          std::vector<lightusd::legacy::value::double2> ranges;
           if (ranges_anim.get_default(&ranges)) {
             TEST_CHECK(ranges.size() == 1);
             TEST_MSG("NurbsCurves has %zu ranges", ranges.size());
@@ -2286,7 +2289,7 @@ void crate_writer_geom_subset_test(void) {
     Stage stage;
 
     // Create simple mesh data (cube-like structure)
-    std::vector<value::point3f> points = {
+    std::vector<lightusd::legacy::value::point3f> points = {
       {-1.0f, -1.0f, -1.0f},
       {1.0f, -1.0f, -1.0f},
       {1.0f, 1.0f, -1.0f},
@@ -2309,7 +2312,7 @@ void crate_writer_geom_subset_test(void) {
 
     // Create GeomMesh
     GeomMesh mesh;
-    Animatable<std::vector<value::point3f>> points_anim(points);
+    Animatable<std::vector<lightusd::legacy::value::point3f>> points_anim(points);
     Animatable<std::vector<int>> fv_counts_anim(face_vertex_counts);
     Animatable<std::vector<int>> fv_indices_anim(face_vertex_indices);
 
@@ -2327,7 +2330,7 @@ void crate_writer_geom_subset_test(void) {
     subset.name = "material_faces";
 
     // Set family name
-    value::token family_name("material_family");
+    lightusd::legacy::value::token family_name("material_family");
     subset.familyName.set_value(family_name);
 
     // Set indices for first 3 faces (0-11)
@@ -2378,7 +2381,7 @@ void crate_writer_geom_subset_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2416,7 +2419,7 @@ void crate_writer_geom_subset_test(void) {
       if (loaded_subset->familyName.authored()) {
         auto familyname_opt = loaded_subset->familyName.get_value();
         if (familyname_opt.has_value()) {
-          const value::token& familyname_val = familyname_opt.value();
+          const lightusd::legacy::value::token& familyname_val = familyname_opt.value();
           TEST_MSG("GeomSubset familyName: %s", familyname_val.str().c_str());
         }
       }
@@ -2466,45 +2469,45 @@ void crate_writer_point_instancer_test(void) {
     instancer.protoIndices = Animatable<std::vector<int32_t>>(proto_indices);
 
     // Set positions (point3f)
-    std::vector<value::point3f> positions = {
+    std::vector<lightusd::legacy::value::point3f> positions = {
       {0.0f, 0.0f, 0.0f},
       {2.0f, 0.0f, 0.0f},
       {0.0f, 2.0f, 0.0f},
       {2.0f, 2.0f, 0.0f}
     };
-    instancer.positions = Animatable<std::vector<value::point3f>>(positions);
+    instancer.positions = Animatable<std::vector<lightusd::legacy::value::point3f>>(positions);
 
     // Set scales (float3)
-    std::vector<value::float3> scales = {
+    std::vector<lightusd::legacy::value::float3> scales = {
       {1.0f, 1.0f, 1.0f},
       {1.5f, 1.5f, 1.5f},
       {0.8f, 0.8f, 0.8f},
       {1.2f, 1.2f, 1.2f}
     };
-    instancer.scales = Animatable<std::vector<value::float3>>(scales);
+    instancer.scales = Animatable<std::vector<lightusd::legacy::value::float3>>(scales);
 
     // Set velocities (vector3f)
-    std::vector<value::vector3f> velocities = {
+    std::vector<lightusd::legacy::value::vector3f> velocities = {
       {0.0f, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f},
       {0.0f, 1.0f, 0.0f},
       {0.5f, 0.5f, 0.0f}
     };
-    instancer.velocities = Animatable<std::vector<value::vector3f>>(velocities);
+    instancer.velocities = Animatable<std::vector<lightusd::legacy::value::vector3f>>(velocities);
 
     // Set orientations (quath)
-    const value::half half_zero{0x0000};
-    const value::half half_one{0x3c00};
-    value::quath identity_orientation{};
-    identity_orientation.imag = value::half3{half_zero, half_zero, half_zero};
+    const lightusd::legacy::value::half half_zero{0x0000};
+    const lightusd::legacy::value::half half_one{0x3c00};
+    lightusd::legacy::value::quath identity_orientation{};
+    identity_orientation.imag = lightusd::legacy::value::half3{half_zero, half_zero, half_zero};
     identity_orientation.real = half_one;
-    std::vector<value::quath> orientations = {
+    std::vector<lightusd::legacy::value::quath> orientations = {
       identity_orientation,
       identity_orientation,
       identity_orientation,
       identity_orientation
     };
-    instancer.orientations = Animatable<std::vector<value::quath>>(orientations);
+    instancer.orientations = Animatable<std::vector<lightusd::legacy::value::quath>>(orientations);
 
     // Set enhanced properties (ids, invisibleIds, inactiveIds)
     std::vector<int64_t> ids = {100, 101, 102, 103};
@@ -2524,7 +2527,7 @@ void crate_writer_point_instancer_test(void) {
     stage.root_prims().push_back(instancer_prim);
 
     // Write to crate
-    lightusd::experimental::CrateWriter writer(filename);
+    lightusd::legacy::experimental::CrateWriter writer(filename);
     TEST_CHECK(writer.Open());
     TEST_CHECK(writer.ConvertStageToSpecs(stage));
     TEST_CHECK(writer.Finalize());
@@ -2535,9 +2538,9 @@ void crate_writer_point_instancer_test(void) {
 
   // Now read it back and verify
   {
-    lightusd::Stage loaded_stage;
+    lightusd::legacy::Stage loaded_stage;
     std::string err, warn;
-    bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
     TEST_CHECK(ret);
     if (!ret) {
       TEST_MSG("Failed to load: %s", err.c_str());
@@ -2580,8 +2583,8 @@ void crate_writer_point_instancer_test(void) {
         if (loaded_instancer->positions.authored()) {
           auto pos_opt = loaded_instancer->positions.get_value();
           if (pos_opt.has_value()) {
-            const Animatable<std::vector<value::point3f>>& pos_anim = pos_opt.value();
-            std::vector<value::point3f> positions;
+            const Animatable<std::vector<lightusd::legacy::value::point3f>>& pos_anim = pos_opt.value();
+            std::vector<lightusd::legacy::value::point3f> positions;
             if (pos_anim.get_default(&positions)) {
               TEST_CHECK(positions.size() == 4);
               TEST_MSG("PointInstancer has %zu positions", positions.size());
@@ -2595,8 +2598,8 @@ void crate_writer_point_instancer_test(void) {
         if (loaded_instancer->scales.authored()) {
           auto scales_opt = loaded_instancer->scales.get_value();
           if (scales_opt.has_value()) {
-            const Animatable<std::vector<value::float3>>& scales_anim = scales_opt.value();
-            std::vector<value::float3> scales;
+            const Animatable<std::vector<lightusd::legacy::value::float3>>& scales_anim = scales_opt.value();
+            std::vector<lightusd::legacy::value::float3> scales;
             if (scales_anim.get_default(&scales)) {
               TEST_CHECK(scales.size() == 4);
               TEST_MSG("PointInstancer has %zu scales", scales.size());
@@ -2608,8 +2611,8 @@ void crate_writer_point_instancer_test(void) {
         if (loaded_instancer->velocities.authored()) {
           auto vel_opt = loaded_instancer->velocities.get_value();
           if (vel_opt.has_value()) {
-            const Animatable<std::vector<value::vector3f>>& vel_anim = vel_opt.value();
-            std::vector<value::vector3f> velocities;
+            const Animatable<std::vector<lightusd::legacy::value::vector3f>>& vel_anim = vel_opt.value();
+            std::vector<lightusd::legacy::value::vector3f> velocities;
             if (vel_anim.get_default(&velocities)) {
               TEST_CHECK(velocities.size() == 4);
               TEST_MSG("PointInstancer has %zu velocities", velocities.size());
@@ -2622,8 +2625,8 @@ void crate_writer_point_instancer_test(void) {
         if (loaded_instancer->orientations.authored()) {
           auto orient_opt = loaded_instancer->orientations.get_value();
           if (orient_opt.has_value()) {
-            const Animatable<std::vector<value::quath>>& orient_anim = orient_opt.value();
-            std::vector<value::quath> orientations;
+            const Animatable<std::vector<lightusd::legacy::value::quath>>& orient_anim = orient_opt.value();
+            std::vector<lightusd::legacy::value::quath> orientations;
             if (orient_anim.get_default(&orientations)) {
               TEST_CHECK(orientations.size() == 4);
               TEST_MSG("PointInstancer has %zu orientations", orientations.size());
@@ -2743,7 +2746,7 @@ void crate_writer_material_binding_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2852,7 +2855,7 @@ void crate_writer_xform_hierarchy_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2951,7 +2954,7 @@ void crate_writer_model_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3037,7 +3040,7 @@ void crate_writer_scope_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3083,13 +3086,13 @@ void crate_writer_mesh_advanced_features_test(void) {
     mesh.spec = Specifier::Def;
 
     // Set basic geometry
-    std::vector<value::point3f> points = {
+    std::vector<lightusd::legacy::value::point3f> points = {
       {0.0f, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f},
       {1.0f, 1.0f, 0.0f},
       {0.0f, 1.0f, 0.0f}
     };
-    mesh.points = Animatable<std::vector<value::point3f>>(points);
+    mesh.points = Animatable<std::vector<lightusd::legacy::value::point3f>>(points);
 
     // Set face vertex counts and indices
     std::vector<int32_t> face_counts = {4};  // One quad face
@@ -3125,9 +3128,9 @@ void crate_writer_mesh_advanced_features_test(void) {
       Animatable<GeomMesh::FaceVaryingLinearInterpolation>(
         GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1);
 
-    std::vector<value::token> blend_shapes = {
-      value::token("smile"),
-      value::token("blink")
+    std::vector<lightusd::legacy::value::token> blend_shapes = {
+      lightusd::legacy::value::token("smile"),
+      lightusd::legacy::value::token("blink")
     };
     mesh.blendShapes = blend_shapes;
 
@@ -3172,7 +3175,7 @@ void crate_writer_mesh_advanced_features_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3205,7 +3208,7 @@ void crate_writer_mesh_advanced_features_test(void) {
   if (loaded_mesh->points.has_value()) {
     auto points_anim = loaded_mesh->points.get_value();
     if (points_anim && points_anim->has_default()) {
-      std::vector<value::point3f> loaded_points;
+      std::vector<lightusd::legacy::value::point3f> loaded_points;
       if (points_anim->get_default(&loaded_points)) {
         TEST_CHECK(loaded_points.size() == 4);
         TEST_MSG("Mesh has %zu points", loaded_points.size());
@@ -3295,14 +3298,14 @@ void crate_writer_blend_shape_test(void) {
     Stage stage;
 
     // Create position offsets for 4 vertices (vertex deformation targets)
-    std::vector<value::vector3f> offsets_data;
+    std::vector<lightusd::legacy::value::vector3f> offsets_data;
     offsets_data.push_back({0.1f, 0.0f, 0.0f});  // Vertex 0: move +X
     offsets_data.push_back({0.0f, 0.2f, 0.0f});  // Vertex 1: move +Y
     offsets_data.push_back({0.0f, 0.0f, 0.3f});  // Vertex 2: move +Z
     offsets_data.push_back({0.05f, 0.05f, 0.05f});  // Vertex 3: move diagonally
 
     // Create normal offsets
-    std::vector<value::vector3f> normal_offsets_data;
+    std::vector<lightusd::legacy::value::vector3f> normal_offsets_data;
     normal_offsets_data.push_back({0.01f, 0.0f, 0.0f});
     normal_offsets_data.push_back({0.0f, 0.02f, 0.0f});
     normal_offsets_data.push_back({0.0f, 0.0f, 0.03f});
@@ -3323,11 +3326,11 @@ void crate_writer_blend_shape_test(void) {
     blend_shape.normalOffsets = normal_offsets_data;
     blend_shape.pointIndices = point_indices_data;
 
-    std::vector<value::vector3f> inbetween_offsets;
+    std::vector<lightusd::legacy::value::vector3f> inbetween_offsets;
     inbetween_offsets.push_back({0.2f, 0.0f, 0.0f});
     inbetween_offsets.push_back({0.0f, 0.3f, 0.0f});
     primvar::PrimVar inbetween_pvar;
-    inbetween_pvar.set_value(value::Value(inbetween_offsets));
+    inbetween_pvar.set_value(lightusd::legacy::value::Value(inbetween_offsets));
     Attribute inbetween_attr;
     inbetween_attr.set_name("half");
     inbetween_attr.set_type_name("vector3f[]");
@@ -3375,7 +3378,7 @@ void crate_writer_blend_shape_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3408,7 +3411,7 @@ void crate_writer_blend_shape_test(void) {
   if (loaded_bs->offsets.has_value()) {
     auto offsets_opt = loaded_bs->offsets.get_value();
     if (offsets_opt.has_value()) {
-      const std::vector<value::vector3f>& loaded_offsets = offsets_opt.value();
+      const std::vector<lightusd::legacy::value::vector3f>& loaded_offsets = offsets_opt.value();
       TEST_CHECK(loaded_offsets.size() == 4);
       TEST_MSG("BlendShape has %zu position offsets", loaded_offsets.size());
 
@@ -3423,7 +3426,7 @@ void crate_writer_blend_shape_test(void) {
   if (loaded_bs->normalOffsets.has_value()) {
     auto normal_offsets_opt = loaded_bs->normalOffsets.get_value();
     if (normal_offsets_opt.has_value()) {
-      const std::vector<value::vector3f>& loaded_normal_offsets = normal_offsets_opt.value();
+      const std::vector<lightusd::legacy::value::vector3f>& loaded_normal_offsets = normal_offsets_opt.value();
       TEST_CHECK(loaded_normal_offsets.size() == 4);
       TEST_MSG("BlendShape has %zu normal offsets", loaded_normal_offsets.size());
 
@@ -3453,7 +3456,7 @@ void crate_writer_blend_shape_test(void) {
     if (inbetween_prop.is_attribute()) {
       const Attribute& inbetween_attr = inbetween_prop.get_attribute();
       auto loaded_inbetweens =
-          inbetween_attr.get_value<std::vector<value::vector3f>>();
+          inbetween_attr.get_value<std::vector<lightusd::legacy::value::vector3f>>();
       TEST_CHECK(loaded_inbetweens.has_value());
       if (loaded_inbetweens.has_value()) {
         TEST_CHECK(loaded_inbetweens->size() == 2);
@@ -3565,7 +3568,7 @@ void crate_writer_relationship_features_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -3629,7 +3632,7 @@ void crate_writer_material_shader_enhancements_test(void) {
       UsdPreviewSurface surface_shader;
 
       // Set base material parameters
-      Animatable<value::color3f> diffuse_anim(value::color3f{0.7f, 0.7f, 0.7f});
+      Animatable<lightusd::legacy::value::color3f> diffuse_anim(lightusd::legacy::value::color3f{0.7f, 0.7f, 0.7f});
       surface_shader.diffuseColor.set_value(diffuse_anim);
 
       Animatable<float> metallic_anim(0.5f);
@@ -3736,7 +3739,7 @@ void crate_writer_material_shader_enhancements_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -3820,14 +3823,14 @@ void crate_writer_layer_composition_test(void) {
 
       // Sublayer 1: No offset
       SubLayer sublayer1;
-      sublayer1.assetPath = value::AssetPath("sublayer1.usd");
+      sublayer1.assetPath = lightusd::legacy::value::AssetPath("sublayer1.usd");
       sublayer1.layerOffset._offset = 0.0;
       sublayer1.layerOffset._scale = 1.0;
       sublayers.push_back(sublayer1);
 
       // Sublayer 2: With time offset and scale
       SubLayer sublayer2;
-      sublayer2.assetPath = value::AssetPath("sublayer2.usd");
+      sublayer2.assetPath = lightusd::legacy::value::AssetPath("sublayer2.usd");
       sublayer2.layerOffset._offset = 24.0;  // Offset by 24 frames
       sublayer2.layerOffset._scale = 2.0;     // 2x time scale
       sublayers.push_back(sublayer2);
@@ -3870,7 +3873,7 @@ void crate_writer_layer_composition_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -3914,44 +3917,44 @@ void crate_writer_skeletal_animation_test(void) {
       skeleton.spec = Specifier::Def;
 
       // Define joint names
-      std::vector<value::token> joint_names;
-      joint_names.push_back(value::token("hips"));
-      joint_names.push_back(value::token("spine"));
-      joint_names.push_back(value::token("leftArm"));
-      joint_names.push_back(value::token("rightArm"));
+      std::vector<lightusd::legacy::value::token> joint_names;
+      joint_names.push_back(lightusd::legacy::value::token("hips"));
+      joint_names.push_back(lightusd::legacy::value::token("spine"));
+      joint_names.push_back(lightusd::legacy::value::token("leftArm"));
+      joint_names.push_back(lightusd::legacy::value::token("rightArm"));
       skeleton.jointNames = joint_names;
 
       // Define joint paths (as tokens)
-      std::vector<value::token> joints;
-      joints.push_back(value::token("hips"));
-      joints.push_back(value::token("spine"));
-      joints.push_back(value::token("leftArm"));
-      joints.push_back(value::token("rightArm"));
+      std::vector<lightusd::legacy::value::token> joints;
+      joints.push_back(lightusd::legacy::value::token("hips"));
+      joints.push_back(lightusd::legacy::value::token("spine"));
+      joints.push_back(lightusd::legacy::value::token("leftArm"));
+      joints.push_back(lightusd::legacy::value::token("rightArm"));
       skeleton.joints = joints;
 
       // Define bind transforms (world-space matrices for each joint at bind pose)
-      std::vector<value::matrix4d> bind_transforms;
+      std::vector<lightusd::legacy::value::matrix4d> bind_transforms;
       // Hips at origin
       {
-        value::matrix4d mat = value::matrix4d::identity();
+        lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
         bind_transforms.push_back(mat);
       }
       // Spine offset from hips
       {
-        value::matrix4d mat = value::matrix4d::identity();
+        lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
         mat.m[3][1] = 1.0;  // Y translation
         bind_transforms.push_back(mat);
       }
       // Left arm
       {
-        value::matrix4d mat = value::matrix4d::identity();
+        lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
         mat.m[3][0] = -1.0;  // X translation
         mat.m[3][1] = 2.0;   // Y translation
         bind_transforms.push_back(mat);
       }
       // Right arm
       {
-        value::matrix4d mat = value::matrix4d::identity();
+        lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
         mat.m[3][0] = 1.0;   // X translation
         mat.m[3][1] = 2.0;   // Y translation
         bind_transforms.push_back(mat);
@@ -3959,9 +3962,9 @@ void crate_writer_skeletal_animation_test(void) {
       skeleton.bindTransforms = bind_transforms;
 
       // Define rest transforms (local-space matrices for each joint)
-      std::vector<value::matrix4d> rest_transforms;
+      std::vector<lightusd::legacy::value::matrix4d> rest_transforms;
       for (size_t i = 0; i < 4; i++) {
-        rest_transforms.push_back(value::matrix4d::identity());
+        rest_transforms.push_back(lightusd::legacy::value::matrix4d::identity());
       }
       skeleton.restTransforms = rest_transforms;
 
@@ -3978,29 +3981,29 @@ void crate_writer_skeletal_animation_test(void) {
       skel_anim.spec = Specifier::Def;
 
       // Define animated joints
-      std::vector<value::token> anim_joints;
-      anim_joints.push_back(value::token("hips"));
-      anim_joints.push_back(value::token("spine"));
-      anim_joints.push_back(value::token("leftArm"));
-      anim_joints.push_back(value::token("rightArm"));
+      std::vector<lightusd::legacy::value::token> anim_joints;
+      anim_joints.push_back(lightusd::legacy::value::token("hips"));
+      anim_joints.push_back(lightusd::legacy::value::token("spine"));
+      anim_joints.push_back(lightusd::legacy::value::token("leftArm"));
+      anim_joints.push_back(lightusd::legacy::value::token("rightArm"));
       skel_anim.joints = anim_joints;
 
       // Define joint rotations (quaternions for each joint)
-      std::vector<value::quatf> rotations;
-      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});  // Identity
-      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
-      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
-      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
-      Animatable<std::vector<value::quatf>> rotations_anim(rotations);
+      std::vector<lightusd::legacy::value::quatf> rotations;
+      rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});  // Identity
+      rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      Animatable<std::vector<lightusd::legacy::value::quatf>> rotations_anim(rotations);
       skel_anim.rotations = rotations_anim;
 
       // Define joint translations
-      std::vector<value::float3> translations;
+      std::vector<lightusd::legacy::value::float3> translations;
       translations.push_back({0.0f, 0.0f, 0.0f});  // Hips at origin
       translations.push_back({0.0f, 1.0f, 0.0f});  // Spine up
       translations.push_back({-1.0f, 1.0f, 0.0f}); // Left arm
       translations.push_back({1.0f, 1.0f, 0.0f});  // Right arm
-      Animatable<std::vector<value::float3>> translations_anim(translations);
+      Animatable<std::vector<lightusd::legacy::value::float3>> translations_anim(translations);
       skel_anim.translations = translations_anim;
 
       // Define blend shape weights (for facial animation, etc)
@@ -4050,7 +4053,7 @@ void crate_writer_skeletal_animation_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4093,7 +4096,7 @@ void crate_writer_skeletal_animation_test(void) {
     if (anim_data && anim_data->rotations.has_value()) {
       auto rotations_opt = anim_data->rotations.get_value();
       if (rotations_opt && rotations_opt->has_default()) {
-        std::vector<value::quatf> rotations;
+        std::vector<lightusd::legacy::value::quatf> rotations;
         if (rotations_opt->get_default(&rotations)) {
           TEST_CHECK(rotations.size() == 4);
           TEST_MSG("SkelAnimation has %zu joint rotations", rotations.size());
@@ -4121,11 +4124,11 @@ void crate_writer_advanced_attributes_test(void) {
       mesh.spec = Specifier::Def;
 
       // Define mesh geometry
-      std::vector<value::point3f> points;
-      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
-      points.push_back(value::point3f{1.0f, 1.0f, 0.0f});
+      std::vector<lightusd::legacy::value::point3f> points;
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 1.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{1.0f, 1.0f, 0.0f});
       mesh.points = points;
 
       // Define face indices
@@ -4141,9 +4144,9 @@ void crate_writer_advanced_attributes_test(void) {
       mesh.faceVertexIndices = face_vertex_indices;
 
       // Set normals (normal3f array - advanced normal type)
-      std::vector<value::normal3f> normals;
+      std::vector<lightusd::legacy::value::normal3f> normals;
       for (size_t i = 0; i < 4; i++) {
-        normals.push_back(value::normal3f{0.0f, 0.0f, 1.0f});  // Z-up
+        normals.push_back(lightusd::legacy::value::normal3f{0.0f, 0.0f, 1.0f});  // Z-up
       }
       mesh.normals = normals;
 
@@ -4187,7 +4190,7 @@ void crate_writer_advanced_attributes_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4228,10 +4231,10 @@ void crate_writer_assetinfo_test(void) {
       mesh.spec = Specifier::Def;
 
       // Define minimal mesh
-      std::vector<value::point3f> points;
-      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      std::vector<lightusd::legacy::value::point3f> points;
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 1.0f, 0.0f});
       mesh.points = points;
 
       std::vector<int32_t> face_vertex_counts;
@@ -4286,7 +4289,7 @@ void crate_writer_assetinfo_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4401,7 +4404,7 @@ void crate_writer_shader_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4436,27 +4439,27 @@ void crate_writer_skelBinding_test(void) {
       skeleton.name = "Skeleton";
       skeleton.spec = Specifier::Def;
 
-      std::vector<value::token> joint_names;
-      joint_names.push_back(value::token("root"));
-      joint_names.push_back(value::token("arm_l"));
-      joint_names.push_back(value::token("arm_r"));
+      std::vector<lightusd::legacy::value::token> joint_names;
+      joint_names.push_back(lightusd::legacy::value::token("root"));
+      joint_names.push_back(lightusd::legacy::value::token("arm_l"));
+      joint_names.push_back(lightusd::legacy::value::token("arm_r"));
       skeleton.jointNames = joint_names;
 
-      std::vector<value::token> joints;
-      joints.push_back(value::token("root"));
-      joints.push_back(value::token("arm_l"));
-      joints.push_back(value::token("arm_r"));
+      std::vector<lightusd::legacy::value::token> joints;
+      joints.push_back(lightusd::legacy::value::token("root"));
+      joints.push_back(lightusd::legacy::value::token("arm_l"));
+      joints.push_back(lightusd::legacy::value::token("arm_r"));
       skeleton.joints = joints;
 
-      std::vector<value::matrix4d> bind_transforms;
+      std::vector<lightusd::legacy::value::matrix4d> bind_transforms;
       for (int i = 0; i < 3; i++) {
-        bind_transforms.push_back(value::matrix4d::identity());
+        bind_transforms.push_back(lightusd::legacy::value::matrix4d::identity());
       }
       skeleton.bindTransforms = bind_transforms;
 
-      std::vector<value::matrix4d> rest_transforms;
+      std::vector<lightusd::legacy::value::matrix4d> rest_transforms;
       for (int i = 0; i < 3; i++) {
-        rest_transforms.push_back(value::matrix4d::identity());
+        rest_transforms.push_back(lightusd::legacy::value::matrix4d::identity());
       }
       skeleton.restTransforms = rest_transforms;
 
@@ -4471,10 +4474,10 @@ void crate_writer_skelBinding_test(void) {
       mesh.name = "SkinnedMesh";
       mesh.spec = Specifier::Def;
 
-      std::vector<value::point3f> points;
-      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      std::vector<lightusd::legacy::value::point3f> points;
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 1.0f, 0.0f});
       mesh.points = points;
 
       std::vector<int32_t> face_vertex_counts;
@@ -4530,7 +4533,7 @@ void crate_writer_skelBinding_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4570,10 +4573,10 @@ void crate_writer_references_payloads_test(void) {
       mesh.spec = Specifier::Def;
 
       // Define minimal mesh
-      std::vector<value::point3f> points;
-      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
-      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      std::vector<lightusd::legacy::value::point3f> points;
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(lightusd::legacy::value::point3f{0.0f, 1.0f, 0.0f});
       mesh.points = points;
 
       std::vector<int32_t> face_vertex_counts;
@@ -4625,7 +4628,7 @@ void crate_writer_references_payloads_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4728,7 +4731,7 @@ void crate_writer_custom_metadata_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4799,11 +4802,11 @@ void crate_writer_complex_hierarchy_test(void) {
             std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0};
             mesh.faceVertexIndices.set_value(face_vertex_indices);
 
-            std::vector<value::point3f> points = {
-              value::point3f{-1.0f, -1.0f, 0.0f},
-              value::point3f{1.0f, -1.0f, 0.0f},
-              value::point3f{1.0f, 1.0f, 0.0f},
-              value::point3f{-1.0f, 1.0f, 0.0f}
+            std::vector<lightusd::legacy::value::point3f> points = {
+              lightusd::legacy::value::point3f{-1.0f, -1.0f, 0.0f},
+              lightusd::legacy::value::point3f{1.0f, -1.0f, 0.0f},
+              lightusd::legacy::value::point3f{1.0f, 1.0f, 0.0f},
+              lightusd::legacy::value::point3f{-1.0f, 1.0f, 0.0f}
             };
             mesh.points.set_value(points);
 
@@ -4856,7 +4859,7 @@ void crate_writer_complex_hierarchy_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4900,15 +4903,15 @@ void crate_writer_advanced_geometry_test(void) {
       mesh.faceVertexCounts.set_value(face_vertex_counts);
 
       // Set vertex positions
-      std::vector<value::point3f> points = {
-        value::point3f{-1.0f, -1.0f, 0.0f},
-        value::point3f{1.0f, -1.0f, 0.0f},
-        value::point3f{1.0f, 1.0f, 0.0f},
-        value::point3f{-1.0f, 1.0f, 0.0f},
-        value::point3f{-1.0f, -1.0f, 1.0f},
-        value::point3f{1.0f, -1.0f, 1.0f},
-        value::point3f{1.0f, 1.0f, 1.0f},
-        value::point3f{-1.0f, 1.0f, 1.0f}
+      std::vector<lightusd::legacy::value::point3f> points = {
+        lightusd::legacy::value::point3f{-1.0f, -1.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, -1.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{-1.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{-1.0f, -1.0f, 1.0f},
+        lightusd::legacy::value::point3f{1.0f, -1.0f, 1.0f},
+        lightusd::legacy::value::point3f{1.0f, 1.0f, 1.0f},
+        lightusd::legacy::value::point3f{-1.0f, 1.0f, 1.0f}
       };
       mesh.points.set_value(points);
 
@@ -4955,7 +4958,7 @@ void crate_writer_advanced_geometry_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4993,11 +4996,11 @@ void crate_writer_normal_interpolation_test(void) {
       std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0};
       mesh.faceVertexIndices.set_value(face_vertex_indices);
 
-      std::vector<value::point3f> points = {
-        value::point3f{-1.0f, -1.0f, 0.0f},
-        value::point3f{1.0f, -1.0f, 0.0f},
-        value::point3f{1.0f, 1.0f, 0.0f},
-        value::point3f{-1.0f, 1.0f, 0.0f}
+      std::vector<lightusd::legacy::value::point3f> points = {
+        lightusd::legacy::value::point3f{-1.0f, -1.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, -1.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{-1.0f, 1.0f, 0.0f}
       };
       mesh.points.set_value(points);
 
@@ -5018,14 +5021,14 @@ void crate_writer_normal_interpolation_test(void) {
       std::vector<int> face_vertex_counts = {4, 3};
       mesh.faceVertexCounts.set_value(face_vertex_counts);
 
-      std::vector<value::point3f> points = {
-        value::point3f{0.0f, 0.0f, 0.0f},
-        value::point3f{1.0f, 0.0f, 0.0f},
-        value::point3f{1.0f, 1.0f, 0.0f},
-        value::point3f{0.0f, 1.0f, 0.0f},
-        value::point3f{2.0f, 0.0f, 0.0f},
-        value::point3f{2.0f, 1.0f, 0.0f},
-        value::point3f{1.5f, 1.5f, 0.0f}
+      std::vector<lightusd::legacy::value::point3f> points = {
+        lightusd::legacy::value::point3f{0.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{0.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{2.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{2.0f, 1.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.5f, 1.5f, 0.0f}
       };
       mesh.points.set_value(points);
 
@@ -5068,7 +5071,7 @@ void crate_writer_normal_interpolation_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5187,7 +5190,7 @@ void crate_writer_visibility_purpose_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5246,20 +5249,20 @@ void crate_writer_instance_offsets_test(void) {
       instancer.protoIndices.set_value(proto_indices);
 
       // Instance positions
-      std::vector<value::point3f> positions = {
-        value::point3f{-2.0f, 0.0f, 0.0f},
-        value::point3f{-1.0f, 0.0f, 0.0f},
-        value::point3f{1.0f, 0.0f, 0.0f},
-        value::point3f{2.0f, 0.0f, 0.0f}
+      std::vector<lightusd::legacy::value::point3f> positions = {
+        lightusd::legacy::value::point3f{-2.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{-1.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{1.0f, 0.0f, 0.0f},
+        lightusd::legacy::value::point3f{2.0f, 0.0f, 0.0f}
       };
       instancer.positions.set_value(positions);
 
       // Instance scales (non-uniform scaling)
-      std::vector<value::float3> scales = {
-        value::float3{1.0f, 1.0f, 1.0f},
-        value::float3{1.5f, 1.0f, 1.0f},
-        value::float3{1.0f, 1.5f, 1.0f},
-        value::float3{1.0f, 1.0f, 1.5f}
+      std::vector<lightusd::legacy::value::float3> scales = {
+        lightusd::legacy::value::float3{1.0f, 1.0f, 1.0f},
+        lightusd::legacy::value::float3{1.5f, 1.0f, 1.0f},
+        lightusd::legacy::value::float3{1.0f, 1.5f, 1.0f},
+        lightusd::legacy::value::float3{1.0f, 1.0f, 1.5f}
       };
       instancer.scales.set_value(scales);
 
@@ -5302,7 +5305,7 @@ void crate_writer_instance_offsets_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5341,11 +5344,11 @@ void crate_writer_large_array_types_test(void) {
       points.spec = Specifier::Def;
 
       // Create 100 point positions (large int and float array)
-      std::vector<value::point3f> positions;
+      std::vector<lightusd::legacy::value::point3f> positions;
       for (int i = 0; i < 100; i++) {
         float x = static_cast<float>(i % 10);
         float y = static_cast<float>(i / 10);
-        positions.push_back(value::point3f{x, y, 0.0f});
+        positions.push_back(lightusd::legacy::value::point3f{x, y, 0.0f});
       }
       points.points.set_value(positions);
 
@@ -5375,14 +5378,14 @@ void crate_writer_large_array_types_test(void) {
       mesh.spec = Specifier::Def;
 
       // Create a grid mesh with many faces
-      std::vector<value::point3f> mesh_points;
+      std::vector<lightusd::legacy::value::point3f> mesh_points;
       std::vector<int> face_indices;
       std::vector<int> face_counts;
 
       int grid_size = 10;
       for (int i = 0; i <= grid_size; i++) {
         for (int j = 0; j <= grid_size; j++) {
-          mesh_points.push_back(value::point3f{
+          mesh_points.push_back(lightusd::legacy::value::point3f{
             static_cast<float>(i),
             static_cast<float>(j),
             0.0f
@@ -5449,7 +5452,7 @@ void crate_writer_large_array_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5523,7 +5526,7 @@ void crate_writer_sphere_light_test(void) {
   light.name = "MyLight";
   light.radius.set_value(Animatable<float>(2.5f));
   light.intensity.set_value(Animatable<float>(1.5f));
-  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 0.8f, 0.6f})));
+  light.color.set_value(Animatable<lightusd::legacy::value::color3f>(lightusd::legacy::value::color3f({1.0f, 0.8f, 0.6f})));
 
   Prim light_prim("MyLight", light);
   stage.root_prims().push_back(light_prim);
@@ -5567,7 +5570,7 @@ void crate_writer_sphere_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5619,7 +5622,7 @@ static void check_light_base_roundtrip(const char* tname) {
   writer.Close();
 
   Stage loaded; std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK_(ret, "%s load failed: %s", tname, err.c_str());
   if (!ret) { cleanup_file(filename); return; }
 
@@ -5683,13 +5686,13 @@ void crate_writer_mesh_velocities_roundtrip_test(void) {
   Stage stage;
   GeomMesh mesh;
   mesh.name = "M";
-  std::vector<value::point3f> points = {
+  std::vector<lightusd::legacy::value::point3f> points = {
     {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
   mesh.points.set_value(points);
-  std::vector<value::vector3f> vels = {
+  std::vector<lightusd::legacy::value::vector3f> vels = {
     {0.1f, 0.2f, 0.3f}, {0.4f, 0.5f, 0.6f},
     {0.7f, 0.8f, 0.9f}, {1.0f, 1.1f, 1.2f}};
-  mesh.velocities.set_value(Animatable<std::vector<value::vector3f>>(vels));
+  mesh.velocities.set_value(Animatable<std::vector<lightusd::legacy::value::vector3f>>(vels));
 
   Prim prim("M", mesh);
   prim.prim_type_name() = "Mesh";
@@ -5707,7 +5710,7 @@ void crate_writer_mesh_velocities_roundtrip_test(void) {
   writer.Close();
 
   Stage loaded; std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) { TEST_MSG("load failed: %s", err.c_str()); cleanup_file(filename); return; }
 
@@ -5721,7 +5724,7 @@ void crate_writer_mesh_velocities_roundtrip_test(void) {
       auto vopt = m->velocities.get_value();
       TEST_CHECK(vopt.has_value());
       if (vopt.has_value()) {
-        std::vector<value::vector3f> out;
+        std::vector<lightusd::legacy::value::vector3f> out;
         TEST_CHECK(vopt.value().get_default(&out));
         TEST_CHECK(out.size() == vels.size());
       }
@@ -5744,7 +5747,7 @@ void crate_writer_rect_light_test(void) {
   light.width.set_value(Animatable<float>(4.0f));
   light.height.set_value(Animatable<float>(2.0f));
   light.intensity.set_value(Animatable<float>(2.0f));
-  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+  light.color.set_value(Animatable<lightusd::legacy::value::color3f>(lightusd::legacy::value::color3f({1.0f, 1.0f, 1.0f})));
 
   Prim light_prim("RectLightPrim", light);
   stage.root_prims().push_back(light_prim);
@@ -5773,7 +5776,7 @@ void crate_writer_rect_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/RectLightPrim", ""));
@@ -5796,7 +5799,7 @@ void crate_writer_distant_light_test(void) {
   light.name = "DistantLightPrim";
   light.angle.set_value(Animatable<float>(0.5f));
   light.intensity.set_value(Animatable<float>(1.0f));
-  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+  light.color.set_value(Animatable<lightusd::legacy::value::color3f>(lightusd::legacy::value::color3f({1.0f, 1.0f, 1.0f})));
 
   Prim light_prim("DistantLightPrim", light);
   stage.root_prims().push_back(light_prim);
@@ -5825,7 +5828,7 @@ void crate_writer_distant_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DistantLightPrim", ""));
@@ -5846,9 +5849,9 @@ void crate_writer_dome_light_test(void) {
   Stage stage;
   DomeLight light;
   light.name = "DomeLightPrim";
-  light.file.set_value(Animatable<value::AssetPath>(value::AssetPath("textures/environment.exr")));
+  light.file.set_value(Animatable<lightusd::legacy::value::AssetPath>(lightusd::legacy::value::AssetPath("textures/environment.exr")));
   light.intensity.set_value(Animatable<float>(1.5f));
-  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+  light.color.set_value(Animatable<lightusd::legacy::value::color3f>(lightusd::legacy::value::color3f({1.0f, 1.0f, 1.0f})));
 
   Prim light_prim("DomeLightPrim", light);
   stage.root_prims().push_back(light_prim);
@@ -5877,7 +5880,7 @@ void crate_writer_dome_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DomeLightPrim", ""));
@@ -5960,7 +5963,7 @@ void crate_writer_multiple_lights_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6055,7 +6058,7 @@ void crate_writer_light_filters_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6098,7 +6101,7 @@ void crate_writer_nodegraph_test(void) {
 
   // Create a UsdPreviewSurface shader inside the NodeGraph
   UsdPreviewSurface preview_surface;
-  preview_surface.diffuseColor.set_value(Animatable<value::color3f>(value::color3f({0.5f, 0.5f, 0.5f})));
+  preview_surface.diffuseColor.set_value(Animatable<lightusd::legacy::value::color3f>(lightusd::legacy::value::color3f({0.5f, 0.5f, 0.5f})));
   preview_surface.metallic.set_value(Animatable<float>(0.5f));
   preview_surface.roughness.set_value(Animatable<float>(0.3f));
 
@@ -6109,7 +6112,7 @@ void crate_writer_nodegraph_test(void) {
 
   // Create a UV Texture shader in the NodeGraph
   UsdUVTexture uv_texture;
-  uv_texture.file.set_value(Animatable<value::AssetPath>(value::AssetPath("textures/diffuse.png")));
+  uv_texture.file.set_value(Animatable<lightusd::legacy::value::AssetPath>(lightusd::legacy::value::AssetPath("textures/diffuse.png")));
 
   Shader texture;
   texture.name = "DiffuseTexture";
@@ -6165,7 +6168,7 @@ void crate_writer_nodegraph_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6505,11 +6508,11 @@ void crate_writer_compression_test(void) {
   points_prim.name = "CompressedPoints";
 
   // Create 100 points to trigger compression (>= 16 elements)
-  std::vector<value::point3f> positions;
+  std::vector<lightusd::legacy::value::point3f> positions;
   for (int i = 0; i < 100; ++i) {
-    positions.push_back(value::point3f({float(i) * 0.1f, float(i) * 0.2f, float(i) * 0.3f}));
+    positions.push_back(lightusd::legacy::value::point3f({float(i) * 0.1f, float(i) * 0.2f, float(i) * 0.3f}));
   }
-  Animatable<std::vector<value::point3f>> points_anim(positions);
+  Animatable<std::vector<lightusd::legacy::value::point3f>> points_anim(positions);
   points_prim.points.set_value(points_anim);
 
   // Create widths array (also > 16 elements)
@@ -6566,15 +6569,15 @@ void crate_writer_compressed_int_array_roundtrip_test(void) {
   mesh.name = "CompressedMesh";
   mesh.spec = Specifier::Def;
 
-  std::vector<value::point3f> points = {
-    value::point3f{-1.0f, -1.0f, -1.0f},
-    value::point3f{-1.0f, -1.0f, 1.0f},
-    value::point3f{-1.0f, 1.0f, -1.0f},
-    value::point3f{-1.0f, 1.0f, 1.0f},
-    value::point3f{1.0f, -1.0f, -1.0f},
-    value::point3f{1.0f, -1.0f, 1.0f},
-    value::point3f{1.0f, 1.0f, -1.0f},
-    value::point3f{1.0f, 1.0f, 1.0f}
+  std::vector<lightusd::legacy::value::point3f> points = {
+    lightusd::legacy::value::point3f{-1.0f, -1.0f, -1.0f},
+    lightusd::legacy::value::point3f{-1.0f, -1.0f, 1.0f},
+    lightusd::legacy::value::point3f{-1.0f, 1.0f, -1.0f},
+    lightusd::legacy::value::point3f{-1.0f, 1.0f, 1.0f},
+    lightusd::legacy::value::point3f{1.0f, -1.0f, -1.0f},
+    lightusd::legacy::value::point3f{1.0f, -1.0f, 1.0f},
+    lightusd::legacy::value::point3f{1.0f, 1.0f, -1.0f},
+    lightusd::legacy::value::point3f{1.0f, 1.0f, 1.0f}
   };
   mesh.points.set_value(points);
 
@@ -6623,7 +6626,7 @@ void crate_writer_compressed_int_array_roundtrip_test(void) {
 
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6690,7 +6693,7 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
     0u, 4u, 6u, 2u, 3u, 2u, 6u, 7u, 7u, 6u, 4u, 5u,
     5u, 1u, 3u, 7u, 1u, 0u, 2u, 3u, 5u, 4u, 0u, 1u
   };
-  pvar.set_value(value::Value(values));
+  pvar.set_value(lightusd::legacy::value::Value(values));
   attr.set_var(std::move(pvar));
   mesh.props["myUintArray"] = Property(attr, /* custom */ true);
 
@@ -6738,9 +6741,9 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  lightusd::crate::CrateReaderConfig config;
+  lightusd::legacy::crate::CrateReaderConfig config;
   config.numThreads = 1;
-  lightusd::crate::CrateReader reader(&sr, config);
+  lightusd::legacy::crate::CrateReader reader(&sr, config);
 
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
@@ -6769,7 +6772,7 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
 
     found_spec = true;
 
-    lightusd::crate::FieldValuePairVector pairs;
+    lightusd::legacy::crate::FieldValuePairVector pairs;
     TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
     if (!pairs.empty()) {
       for (const auto& pair : pairs) {
@@ -6789,9 +6792,9 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
     const auto& fieldset_indices = reader.GetFieldsetIndices();
     for (size_t idx = spec.fieldset_index.value;
          idx < fieldset_indices.size() &&
-         fieldset_indices[idx] != lightusd::crate::Index();
+         fieldset_indices[idx] != lightusd::legacy::crate::Index();
          ++idx) {
-      const lightusd::crate::Index field_index = fieldset_indices[idx];
+      const lightusd::legacy::crate::Index field_index = fieldset_indices[idx];
       if (field_index.value >= reader.GetFields().size()) {
         continue;
       }
@@ -6841,43 +6844,43 @@ void crate_writer_string_token_asset_index_array_test(void) {
       "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega", "gamma",
       "delta", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"};
 
-  const std::vector<value::token> token_values = {
-      value::token("tok_a"), value::token("tok_b"), value::token("tok_c"),
-      value::token("tok_d"), value::token("tok_e"), value::token("tok_f"),
-      value::token("tok_g"), value::token("tok_h"), value::token("tok_i"),
-      value::token("tok_j"), value::token("tok_k"), value::token("tok_l"),
-      value::token("tok_m"), value::token("tok_n"), value::token("tok_o"),
-      value::token("tok_p"), value::token("tok_q"), value::token("tok_r"),
-      value::token("tok_s"), value::token("tok_t"), value::token("tok_u"),
-      value::token("tok_v"), value::token("tok_w"), value::token("tok_x"),
-      value::token("tok_y"), value::token("tok_z"), value::token("tok_a"),
-      value::token("tok_b"), value::token("tok_c"), value::token("tok_d"),
-      value::token("tok_e"), value::token("tok_f"), value::token("tok_g")};
+  const std::vector<lightusd::legacy::value::token> token_values = {
+      lightusd::legacy::value::token("tok_a"), lightusd::legacy::value::token("tok_b"), lightusd::legacy::value::token("tok_c"),
+      lightusd::legacy::value::token("tok_d"), lightusd::legacy::value::token("tok_e"), lightusd::legacy::value::token("tok_f"),
+      lightusd::legacy::value::token("tok_g"), lightusd::legacy::value::token("tok_h"), lightusd::legacy::value::token("tok_i"),
+      lightusd::legacy::value::token("tok_j"), lightusd::legacy::value::token("tok_k"), lightusd::legacy::value::token("tok_l"),
+      lightusd::legacy::value::token("tok_m"), lightusd::legacy::value::token("tok_n"), lightusd::legacy::value::token("tok_o"),
+      lightusd::legacy::value::token("tok_p"), lightusd::legacy::value::token("tok_q"), lightusd::legacy::value::token("tok_r"),
+      lightusd::legacy::value::token("tok_s"), lightusd::legacy::value::token("tok_t"), lightusd::legacy::value::token("tok_u"),
+      lightusd::legacy::value::token("tok_v"), lightusd::legacy::value::token("tok_w"), lightusd::legacy::value::token("tok_x"),
+      lightusd::legacy::value::token("tok_y"), lightusd::legacy::value::token("tok_z"), lightusd::legacy::value::token("tok_a"),
+      lightusd::legacy::value::token("tok_b"), lightusd::legacy::value::token("tok_c"), lightusd::legacy::value::token("tok_d"),
+      lightusd::legacy::value::token("tok_e"), lightusd::legacy::value::token("tok_f"), lightusd::legacy::value::token("tok_g")};
 
-  const std::vector<value::AssetPath> asset_values = {
-      value::AssetPath("textures/a.png"), value::AssetPath("textures/b.png"),
-      value::AssetPath("textures/c.png"), value::AssetPath("textures/d.png"),
-      value::AssetPath("textures/e.png"), value::AssetPath("textures/f.png"),
-      value::AssetPath("textures/g.png"), value::AssetPath("textures/h.png"),
-      value::AssetPath("textures/i.png"), value::AssetPath("textures/j.png"),
-      value::AssetPath("textures/k.png"), value::AssetPath("textures/l.png"),
-      value::AssetPath("textures/m.png"), value::AssetPath("textures/n.png"),
-      value::AssetPath("textures/o.png"), value::AssetPath("textures/p.png"),
-      value::AssetPath("textures/q.png"), value::AssetPath("textures/r.png"),
-      value::AssetPath("textures/s.png"), value::AssetPath("textures/t.png"),
-      value::AssetPath("textures/u.png"), value::AssetPath("textures/v.png"),
-      value::AssetPath("textures/w.png"), value::AssetPath("textures/x.png"),
-      value::AssetPath("textures/y.png"), value::AssetPath("textures/z.png"),
-      value::AssetPath("textures/a.png"), value::AssetPath("textures/b.png"),
-      value::AssetPath("textures/c.png"), value::AssetPath("textures/d.png"),
-      value::AssetPath("textures/e.png"), value::AssetPath("textures/f.png"),
-      value::AssetPath("textures/g.png")};
+  const std::vector<lightusd::legacy::value::AssetPath> asset_values = {
+      lightusd::legacy::value::AssetPath("textures/a.png"), lightusd::legacy::value::AssetPath("textures/b.png"),
+      lightusd::legacy::value::AssetPath("textures/c.png"), lightusd::legacy::value::AssetPath("textures/d.png"),
+      lightusd::legacy::value::AssetPath("textures/e.png"), lightusd::legacy::value::AssetPath("textures/f.png"),
+      lightusd::legacy::value::AssetPath("textures/g.png"), lightusd::legacy::value::AssetPath("textures/h.png"),
+      lightusd::legacy::value::AssetPath("textures/i.png"), lightusd::legacy::value::AssetPath("textures/j.png"),
+      lightusd::legacy::value::AssetPath("textures/k.png"), lightusd::legacy::value::AssetPath("textures/l.png"),
+      lightusd::legacy::value::AssetPath("textures/m.png"), lightusd::legacy::value::AssetPath("textures/n.png"),
+      lightusd::legacy::value::AssetPath("textures/o.png"), lightusd::legacy::value::AssetPath("textures/p.png"),
+      lightusd::legacy::value::AssetPath("textures/q.png"), lightusd::legacy::value::AssetPath("textures/r.png"),
+      lightusd::legacy::value::AssetPath("textures/s.png"), lightusd::legacy::value::AssetPath("textures/t.png"),
+      lightusd::legacy::value::AssetPath("textures/u.png"), lightusd::legacy::value::AssetPath("textures/v.png"),
+      lightusd::legacy::value::AssetPath("textures/w.png"), lightusd::legacy::value::AssetPath("textures/x.png"),
+      lightusd::legacy::value::AssetPath("textures/y.png"), lightusd::legacy::value::AssetPath("textures/z.png"),
+      lightusd::legacy::value::AssetPath("textures/a.png"), lightusd::legacy::value::AssetPath("textures/b.png"),
+      lightusd::legacy::value::AssetPath("textures/c.png"), lightusd::legacy::value::AssetPath("textures/d.png"),
+      lightusd::legacy::value::AssetPath("textures/e.png"), lightusd::legacy::value::AssetPath("textures/f.png"),
+      lightusd::legacy::value::AssetPath("textures/g.png")};
 
   {
     Attribute attr;
     attr.set_type_name("string[]");
     primvar::PrimVar pvar;
-    pvar.set_value(value::Value(string_values));
+    pvar.set_value(lightusd::legacy::value::Value(string_values));
     attr.set_var(std::move(pvar));
     prim_obj.props["stringArray"] = Property(attr, /* custom */ true);
   }
@@ -6885,7 +6888,7 @@ void crate_writer_string_token_asset_index_array_test(void) {
     Attribute attr;
     attr.set_type_name("token[]");
     primvar::PrimVar pvar;
-    pvar.set_value(value::Value(token_values));
+    pvar.set_value(lightusd::legacy::value::Value(token_values));
     attr.set_var(std::move(pvar));
     prim_obj.props["tokenArray"] = Property(attr, /* custom */ true);
   }
@@ -6893,7 +6896,7 @@ void crate_writer_string_token_asset_index_array_test(void) {
     Attribute attr;
     attr.set_type_name("asset[]");
     primvar::PrimVar pvar;
-    pvar.set_value(value::Value(asset_values));
+    pvar.set_value(lightusd::legacy::value::Value(asset_values));
     attr.set_var(std::move(pvar));
     prim_obj.props["assetArray"] = Property(attr, /* custom */ true);
   }
@@ -6940,8 +6943,8 @@ void crate_writer_string_token_asset_index_array_test(void) {
   bool uncompressed_token = false;
   bool uncompressed_asset = false;
 
-  auto compare_asset_paths = [](const std::vector<value::AssetPath>& lhs,
-                               const std::vector<value::AssetPath>& rhs) {
+  auto compare_asset_paths = [](const std::vector<lightusd::legacy::value::AssetPath>& lhs,
+                               const std::vector<lightusd::legacy::value::AssetPath>& rhs) {
     if (lhs.size() != rhs.size()) {
       return false;
     }
@@ -6962,7 +6965,7 @@ void crate_writer_string_token_asset_index_array_test(void) {
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  lightusd::crate::CrateReader reader(&sr, {});
+  lightusd::legacy::crate::CrateReader reader(&sr, {});
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
   TEST_CHECK(reader.ReadTokens());
@@ -6996,7 +6999,7 @@ void crate_writer_string_token_asset_index_array_test(void) {
       continue;
     }
 
-    lightusd::crate::FieldValuePairVector pairs;
+    lightusd::legacy::crate::FieldValuePairVector pairs;
     TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
     if (pairs.empty()) {
       continue;
@@ -7015,14 +7018,14 @@ void crate_writer_string_token_asset_index_array_test(void) {
           found_string_spec = true;
         }
       } else if (kind == ArrayKind::kToken) {
-        auto loaded = pair.second.get_value<std::vector<value::token>>();
+        auto loaded = pair.second.get_value<std::vector<lightusd::legacy::value::token>>();
         TEST_CHECK(loaded.has_value());
         if (loaded) {
           TEST_CHECK(*loaded == token_values);
           found_token_spec = true;
         }
       } else if (kind == ArrayKind::kAsset) {
-        auto loaded = pair.second.get_value<std::vector<value::AssetPath>>();
+        auto loaded = pair.second.get_value<std::vector<lightusd::legacy::value::AssetPath>>();
         TEST_CHECK(loaded.has_value());
         if (loaded) {
           TEST_CHECK(compare_asset_paths(*loaded, asset_values));
@@ -7033,9 +7036,9 @@ void crate_writer_string_token_asset_index_array_test(void) {
 
     for (size_t idx = spec.fieldset_index.value;
          idx < reader.GetFieldsetIndices().size() &&
-         reader.GetFieldsetIndices()[idx] != lightusd::crate::Index();
+         reader.GetFieldsetIndices()[idx] != lightusd::legacy::crate::Index();
          ++idx) {
-      const lightusd::crate::Index field_index = reader.GetFieldsetIndices()[idx];
+      const lightusd::legacy::crate::Index field_index = reader.GetFieldsetIndices()[idx];
       if (field_index.value >= reader.GetFields().size()) {
         continue;
       }
@@ -7075,7 +7078,7 @@ void crate_writer_string_token_asset_index_array_test(void) {
 
   Stage loaded_stage;
   std::string warn;
-  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("LoadUSDFromFile failed: %s", err.c_str());
@@ -7094,8 +7097,8 @@ void crate_writer_string_token_asset_index_array_test(void) {
       auto token_prop = loaded_xform->props.at("tokenArray").get_attribute();
       auto asset_prop = loaded_xform->props.at("assetArray").get_attribute();
       auto loaded_strings = string_prop.get_value<std::vector<std::string>>();
-      auto loaded_tokens = token_prop.get_value<std::vector<value::token>>();
-      auto loaded_assets = asset_prop.get_value<std::vector<value::AssetPath>>();
+      auto loaded_tokens = token_prop.get_value<std::vector<lightusd::legacy::value::token>>();
+      auto loaded_assets = asset_prop.get_value<std::vector<lightusd::legacy::value::AssetPath>>();
       TEST_CHECK(loaded_strings.has_value());
       TEST_CHECK(loaded_tokens.has_value());
       TEST_CHECK(loaded_assets.has_value());
@@ -7124,7 +7127,7 @@ void crate_reader_parallel_inlined_fieldsets_test(void) {
     Attribute attr;
     attr.set_type_name("int");
     primvar::PrimVar pvar;
-    pvar.set_value(value::Value(static_cast<int32_t>(i)));
+    pvar.set_value(lightusd::legacy::value::Value(static_cast<int32_t>(i)));
     attr.set_var(std::move(pvar));
     xform.props["testIndex"] = Property(attr, /* custom */ true);
 
@@ -7152,9 +7155,9 @@ void crate_reader_parallel_inlined_fieldsets_test(void) {
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  lightusd::crate::CrateReaderConfig config;
+  lightusd::legacy::crate::CrateReaderConfig config;
   config.numThreads = 4;
-  lightusd::crate::CrateReader reader(&sr, config);
+  lightusd::legacy::crate::CrateReader reader(&sr, config);
 
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
@@ -7241,7 +7244,7 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
     writer.Close();
 
     Stage loaded; std::string warn;
-    if (lightusd::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+    if (lightusd::legacy::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
       auto r = loaded.GetPrimAtPath(Path("/Curve", ""));
       if (r.has_value() && r.value()) {
         if (const GeomBasisCurves* c = r.value()->data().as<GeomBasisCurves>()) {
@@ -7282,7 +7285,7 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
     writer.Close();
 
     Stage loaded; std::string warn;
-    if (lightusd::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+    if (lightusd::legacy::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
       auto r = loaded.GetPrimAtPath(Path("/Nurbs", ""));
       if (r.has_value() && r.value()) {
         if (const GeomNurbsCurves* c = r.value()->data().as<GeomNurbsCurves>()) {
@@ -7472,7 +7475,7 @@ void crate_writer_specializes_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -7547,13 +7550,13 @@ void crate_writer_nan_dedup_test(void) {
     Attribute attr;
     attr.set_type_name("float[]");
 
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     // 20 samples: even frames use +0.0f, odd frames use -0.0f.
     // The arrays are numerically identical but have different bit patterns.
     for (int i = 0; i < 20; i++) {
       float zero = (i % 2 == 0) ? 0.0f : -0.0f;
       std::vector<float> arr = {zero, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
-      ts.add_sample(static_cast<double>(i), value::Value(arr));
+      ts.add_sample(static_cast<double>(i), lightusd::legacy::value::Value(arr));
     }
     primvar::PrimVar pv;
     pv.set_timesamples(ts);
@@ -7609,12 +7612,12 @@ void crate_writer_nan_dedup_test(void) {
   {
     Stage loaded_stage;
     std::string warn;
-    bool ret = lightusd::LoadUSDFromFile(dedup_file, &loaded_stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDFromFile(dedup_file, &loaded_stage, &warn, &err);
     if (!ret) {
       std::cerr << "[NaN dedup test] dedup file roundtrip: " << err << "\n";
     }
     Stage loaded_stage2;
-    bool ret2 = lightusd::LoadUSDFromFile(no_dedup_file, &loaded_stage2, &warn, &err);
+    bool ret2 = lightusd::legacy::LoadUSDFromFile(no_dedup_file, &loaded_stage2, &warn, &err);
     if (!ret2) {
       std::cerr << "[NaN dedup test] no-dedup file roundtrip: " << err << "\n";
     }
@@ -7653,23 +7656,23 @@ void crate_writer_prim_meta_roundtrip_test(void) {
 
     // Set hidden
     scope.meta.set_hidden(true);
-    scope.meta.set("studioTag", value::token("hero"));
+    scope.meta.set("studioTag", lightusd::legacy::value::token("hero"));
     scope.meta.set("uiPriority", int32_t(7));
 
     // Set displayName
     scope.meta.set_displayName("Test Scope Display");
 
     // Set documentation
-    scope.meta.set_doc(value::StringData("This is a test scope"));
+    scope.meta.set_doc(lightusd::legacy::value::StringData("This is a test scope"));
 
     Dictionary custom_data;
     custom_data["big"].set_value(int64_t(1234567890123ll));
-    custom_data["asset"].set_value(value::AssetPath("assets/model.usd"));
-    custom_data["tokens"].set_value(std::vector<value::token>{
-        value::token("metal"), value::token("rough")});
-    custom_data["pairs"].set_value(std::vector<value::double2>{
-        value::double2{1.0, 2.0}, value::double2{3.0, 4.0}});
-    value::matrix4d custom_matrix = value::matrix4d::identity();
+    custom_data["asset"].set_value(lightusd::legacy::value::AssetPath("assets/model.usd"));
+    custom_data["tokens"].set_value(std::vector<lightusd::legacy::value::token>{
+        lightusd::legacy::value::token("metal"), lightusd::legacy::value::token("rough")});
+    custom_data["pairs"].set_value(std::vector<lightusd::legacy::value::double2>{
+        lightusd::legacy::value::double2{1.0, 2.0}, lightusd::legacy::value::double2{3.0, 4.0}});
+    lightusd::legacy::value::matrix4d custom_matrix = lightusd::legacy::value::matrix4d::identity();
     custom_matrix.m[3][2] = 8.0;
     custom_data["matrix"].set_value(custom_matrix);
     Dictionary nested;
@@ -7678,7 +7681,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
     scope.meta.set_customData(custom_data);
 
     Dictionary asset_info;
-    asset_info["identifier"].set_value(value::AssetPath("assets/model.usd"));
+    asset_info["identifier"].set_value(lightusd::legacy::value::AssetPath("assets/model.usd"));
     asset_info["name"].set_value(std::string("TestAsset"));
     scope.meta.set_assetInfo(asset_info);
 
@@ -7706,7 +7709,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -7746,7 +7749,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
 
     TEST_CHECK(metas.has("studioTag"));
     if (metas.has("studioTag")) {
-      auto tag = metas.get<value::token>("studioTag");
+      auto tag = metas.get<lightusd::legacy::value::token>("studioTag");
       TEST_CHECK(tag.has_value());
       if (tag) {
         TEST_CHECK(tag->str() == "hero");
@@ -7774,7 +7777,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       }
       TEST_CHECK(custom_data.count("asset") == 1);
       if (custom_data.count("asset")) {
-        auto asset = custom_data["asset"].get_value<value::AssetPath>();
+        auto asset = custom_data["asset"].get_value<lightusd::legacy::value::AssetPath>();
         TEST_CHECK(asset.has_value());
         if (asset) {
           TEST_CHECK(asset->GetAssetPath() == "assets/model.usd");
@@ -7782,7 +7785,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       }
       TEST_CHECK(custom_data.count("tokens") == 1);
       if (custom_data.count("tokens")) {
-        auto tokens = custom_data["tokens"].get_value<std::vector<value::token>>();
+        auto tokens = custom_data["tokens"].get_value<std::vector<lightusd::legacy::value::token>>();
         TEST_CHECK(tokens.has_value());
         if (tokens) {
           TEST_CHECK(tokens->size() == 2);
@@ -7790,7 +7793,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       }
       TEST_CHECK(custom_data.count("pairs") == 1);
       if (custom_data.count("pairs")) {
-        auto pairs = custom_data["pairs"].get_value<std::vector<value::double2>>();
+        auto pairs = custom_data["pairs"].get_value<std::vector<lightusd::legacy::value::double2>>();
         TEST_CHECK(pairs.has_value());
         if (pairs) {
           TEST_CHECK(pairs->size() == 2);
@@ -7816,7 +7819,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       }
       TEST_CHECK(custom_data.count("matrix") == 1);
       if (custom_data.count("matrix")) {
-        auto matrix = custom_data["matrix"].get_value<value::matrix4d>();
+        auto matrix = custom_data["matrix"].get_value<lightusd::legacy::value::matrix4d>();
         TEST_CHECK(matrix.has_value());
         if (matrix) {
           TEST_CHECK(matrix->m[3][2] == 8.0);
@@ -7829,7 +7832,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       Dictionary asset_info = metas.get_assetInfo();
       TEST_CHECK(asset_info.count("identifier") == 1);
       if (asset_info.count("identifier")) {
-        auto identifier = asset_info["identifier"].get_value<value::AssetPath>();
+        auto identifier = asset_info["identifier"].get_value<lightusd::legacy::value::AssetPath>();
         TEST_CHECK(identifier.has_value());
         if (identifier) {
           TEST_CHECK(identifier->GetAssetPath() == "assets/model.usd");
@@ -7885,9 +7888,9 @@ void crate_writer_props_map_roundtrip_test(void) {
       Attribute attr;
       attr.set_type_name("float");
       primvar::PrimVar pvar;
-      pvar.set_value(value::Value(1.5f));
+      pvar.set_value(lightusd::legacy::value::Value(1.5f));
       attr.set_var(std::move(pvar));
-      attr.metas().set("studioTag", value::token("hero"));
+      attr.metas().set("studioTag", lightusd::legacy::value::token("hero"));
       attr.metas().set("uiMin", 0.0f);
       Property prop(attr, /* custom */ true);
       mesh.props["myCustomFloat"] = prop;
@@ -7898,7 +7901,7 @@ void crate_writer_props_map_roundtrip_test(void) {
       Attribute attr;
       attr.set_type_name("string");
       primvar::PrimVar pvar;
-      pvar.set_value(value::Value(std::string("test_value")));
+      pvar.set_value(lightusd::legacy::value::Value(std::string("test_value")));
       attr.set_var(std::move(pvar));
       Property prop(attr, /* custom */ true);
       mesh.props["myCustomString"] = prop;
@@ -7927,7 +7930,7 @@ void crate_writer_props_map_roundtrip_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -7952,7 +7955,7 @@ void crate_writer_props_map_roundtrip_test(void) {
           loaded_mesh->props.at("myCustomFloat").get_attribute().metas();
       TEST_CHECK(metas.has("studioTag"));
       if (metas.has("studioTag")) {
-        auto tag = metas.get<value::token>("studioTag");
+        auto tag = metas.get<lightusd::legacy::value::token>("studioTag");
         TEST_CHECK(tag.has_value());
         if (tag) {
           TEST_CHECK(tag->str() == "hero");
@@ -7980,7 +7983,7 @@ void crate_writer_props_map_roundtrip_test(void) {
 }
 
 // ==========================================================================
-// Raw value::dict packing: direct Crate dictionary coverage
+// Raw lightusd::legacy::value::dict packing: direct Crate dictionary coverage
 // ==========================================================================
 void crate_writer_raw_dict_value_pack_test(void) {
   std::string filename = get_temp_filename("test_raw_dict_pack.usdc");
@@ -7994,22 +7997,22 @@ void crate_writer_raw_dict_value_pack_test(void) {
     return;
   }
 
-  value::dict nested;
+  lightusd::legacy::value::dict nested;
   nested["enabled"] = true;
 
-  value::dict dict;
+  lightusd::legacy::value::dict dict;
   dict["big"] = int64_t(1234567890123ll);
-  dict["asset"] = value::AssetPath("assets/model.usd");
-  dict["tokens"] = std::vector<value::token>{
-      value::token("metal"), value::token("rough")};
-  dict["pairs"] = std::vector<value::double2>{
-      value::double2{1.0, 2.0}, value::double2{3.0, 4.0}};
-  value::matrix4d raw_matrix = value::matrix4d::identity();
+  dict["asset"] = lightusd::legacy::value::AssetPath("assets/model.usd");
+  dict["tokens"] = std::vector<lightusd::legacy::value::token>{
+      lightusd::legacy::value::token("metal"), lightusd::legacy::value::token("rough")};
+  dict["pairs"] = std::vector<lightusd::legacy::value::double2>{
+      lightusd::legacy::value::double2{1.0, 2.0}, lightusd::legacy::value::double2{3.0, 4.0}};
+  lightusd::legacy::value::matrix4d raw_matrix = lightusd::legacy::value::matrix4d::identity();
   raw_matrix.m[3][2] = 8.0;
   dict["matrix"] = raw_matrix;
   dict["nested"] = nested;
 
-  lightusd::crate::FieldValuePairVector pseudo_fields;
+  lightusd::legacy::crate::FieldValuePairVector pseudo_fields;
   bool added_pseudo =
       writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields, &err);
   TEST_CHECK(added_pseudo);
@@ -8017,14 +8020,14 @@ void crate_writer_raw_dict_value_pack_test(void) {
     TEST_MSG("AddSpec pseudo-root failed: %s", err.c_str());
   }
 
-  lightusd::crate::CrateValue specifier_value;
+  lightusd::legacy::crate::CrateValue specifier_value;
   specifier_value.Set(Specifier::Def);
-  lightusd::crate::CrateValue type_name_value;
-  type_name_value.Set(value::token("Xform"));
-  lightusd::crate::CrateValue dict_value;
+  lightusd::legacy::crate::CrateValue type_name_value;
+  type_name_value.Set(lightusd::legacy::value::token("Xform"));
+  lightusd::legacy::crate::CrateValue dict_value;
   dict_value.Set(dict);
 
-  lightusd::crate::FieldValuePairVector fields;
+  lightusd::legacy::crate::FieldValuePairVector fields;
   fields.push_back({"specifier", specifier_value});
   fields.push_back({"typeName", type_name_value});
   fields.push_back({"customData", dict_value});
@@ -8061,30 +8064,30 @@ void crate_writer_skeleton_properties_test(void) {
     skeleton.spec = Specifier::Def;
 
     // Set joints
-    std::vector<value::token> joints;
-    joints.push_back(value::token("root"));
-    joints.push_back(value::token("root/spine"));
-    joints.push_back(value::token("root/spine/head"));
+    std::vector<lightusd::legacy::value::token> joints;
+    joints.push_back(lightusd::legacy::value::token("root"));
+    joints.push_back(lightusd::legacy::value::token("root/spine"));
+    joints.push_back(lightusd::legacy::value::token("root/spine/head"));
     skeleton.joints = joints;
 
     // Set jointNames
-    std::vector<value::token> joint_names;
-    joint_names.push_back(value::token("root"));
-    joint_names.push_back(value::token("spine"));
-    joint_names.push_back(value::token("head"));
+    std::vector<lightusd::legacy::value::token> joint_names;
+    joint_names.push_back(lightusd::legacy::value::token("root"));
+    joint_names.push_back(lightusd::legacy::value::token("spine"));
+    joint_names.push_back(lightusd::legacy::value::token("head"));
     skeleton.jointNames = joint_names;
 
-    std::vector<value::matrix4d> bind_transforms;
+    std::vector<lightusd::legacy::value::matrix4d> bind_transforms;
     for (size_t i = 0; i < 3; i++) {
-      value::matrix4d mat = value::matrix4d::identity();
+      lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
       mat.m[3][1] = static_cast<double>(i);
       bind_transforms.push_back(mat);
     }
     skeleton.bindTransforms = bind_transforms;
 
-    std::vector<value::matrix4d> rest_transforms;
+    std::vector<lightusd::legacy::value::matrix4d> rest_transforms;
     for (size_t i = 0; i < 3; i++) {
-      value::matrix4d mat = value::matrix4d::identity();
+      lightusd::legacy::value::matrix4d mat = lightusd::legacy::value::matrix4d::identity();
       mat.m[3][0] = static_cast<double>(i) * 0.25;
       rest_transforms.push_back(mat);
     }
@@ -8104,7 +8107,7 @@ void crate_writer_skeleton_properties_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -8170,34 +8173,34 @@ void crate_writer_skelanim_properties_test(void) {
     anim.spec = Specifier::Def;
 
     // Set joints
-    std::vector<value::token> joints;
-    joints.push_back(value::token("root"));
-    joints.push_back(value::token("root/spine"));
+    std::vector<lightusd::legacy::value::token> joints;
+    joints.push_back(lightusd::legacy::value::token("root"));
+    joints.push_back(lightusd::legacy::value::token("root/spine"));
     anim.joints = joints;
 
     // Set rotations (Animatable)
-    std::vector<value::quatf> rotations;
-    rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
-    rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
-    Animatable<std::vector<value::quatf>> rot_anim(rotations);
+    std::vector<lightusd::legacy::value::quatf> rotations;
+    rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+    rotations.push_back(lightusd::legacy::value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+    Animatable<std::vector<lightusd::legacy::value::quatf>> rot_anim(rotations);
     anim.rotations = rot_anim;
 
     // Set translations (Animatable)
-    std::vector<value::float3> translations;
+    std::vector<lightusd::legacy::value::float3> translations;
     translations.push_back({0.0f, 0.0f, 0.0f});
     translations.push_back({0.0f, 1.0f, 0.0f});
-    Animatable<std::vector<value::float3>> trans_anim(translations);
+    Animatable<std::vector<lightusd::legacy::value::float3>> trans_anim(translations);
     anim.translations = trans_anim;
 
-    std::vector<value::half3> scales;
-    scales.push_back(value::half3{value::half{0x3c00}, value::half{0x3c00}, value::half{0x3c00}});
-    scales.push_back(value::half3{value::half{0x4000}, value::half{0x3c00}, value::half{0x3c00}});
-    anim.scales = Animatable<std::vector<value::half3>>(scales);
+    std::vector<lightusd::legacy::value::half3> scales;
+    scales.push_back(lightusd::legacy::value::half3{lightusd::legacy::value::half{0x3c00}, lightusd::legacy::value::half{0x3c00}, lightusd::legacy::value::half{0x3c00}});
+    scales.push_back(lightusd::legacy::value::half3{lightusd::legacy::value::half{0x4000}, lightusd::legacy::value::half{0x3c00}, lightusd::legacy::value::half{0x3c00}});
+    anim.scales = Animatable<std::vector<lightusd::legacy::value::half3>>(scales);
 
     // Set blendShapes
-    std::vector<value::token> blend_shapes;
-    blend_shapes.push_back(value::token("smile"));
-    blend_shapes.push_back(value::token("frown"));
+    std::vector<lightusd::legacy::value::token> blend_shapes;
+    blend_shapes.push_back(lightusd::legacy::value::token("smile"));
+    blend_shapes.push_back(lightusd::legacy::value::token("frown"));
     anim.blendShapes = blend_shapes;
 
     // Set blendShapeWeights (Animatable)
@@ -8221,7 +8224,7 @@ void crate_writer_skelanim_properties_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -8251,7 +8254,7 @@ void crate_writer_skelanim_properties_test(void) {
     if (loaded_anim->rotations.has_value()) {
       auto rot_opt = loaded_anim->rotations.get_value();
       if (rot_opt && rot_opt->has_default()) {
-        std::vector<value::quatf> rots;
+        std::vector<lightusd::legacy::value::quatf> rots;
         if (rot_opt->get_default(&rots)) {
           TEST_CHECK(rots.size() == 2);
           TEST_MSG("SkelAnimation rotations count: %zu", rots.size());
@@ -8263,7 +8266,7 @@ void crate_writer_skelanim_properties_test(void) {
     if (loaded_anim->translations.has_value()) {
       auto trans_opt = loaded_anim->translations.get_value();
       if (trans_opt && trans_opt->has_default()) {
-        std::vector<value::float3> trans;
+        std::vector<lightusd::legacy::value::float3> trans;
         if (trans_opt->get_default(&trans)) {
           TEST_CHECK(trans.size() == 2);
           // Check second joint translation
@@ -8278,7 +8281,7 @@ void crate_writer_skelanim_properties_test(void) {
     if (loaded_anim->scales.has_value()) {
       auto scales_opt = loaded_anim->scales.get_value();
       if (scales_opt && scales_opt->has_default()) {
-        std::vector<value::half3> scales;
+        std::vector<lightusd::legacy::value::half3> scales;
         if (scales_opt->get_default(&scales)) {
           TEST_CHECK(scales.size() == 2);
           if (scales.size() == 2) {
@@ -8355,7 +8358,7 @@ void crate_writer_prim_children_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());

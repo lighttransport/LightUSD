@@ -19,10 +19,12 @@
 #include <cmath>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd_test;
 
 // Helper: check upper-left 3x3 of two 4x4 matrices are close
-static bool mat3x3_close(const value::matrix4d &a, const value::matrix4d &b,
+static bool mat3x3_close(const lightusd::legacy::value::matrix4d &a, const lightusd::legacy::value::matrix4d &b,
                          double eps = 1e-6) {
   for (int i = 0; i < 3; i++) {
     for (int j = 0; j < 3; j++) {
@@ -35,7 +37,7 @@ static bool mat3x3_close(const value::matrix4d &a, const value::matrix4d &b,
 void xformOp_test(void) {
 
   {
-    value::double3 scale = {1.0, 2.0, 3.0};
+    lightusd::legacy::value::double3 scale = {1.0, 2.0, 3.0};
 
     XformOp op;
     op.op_type = XformOp::OpType::Scale;
@@ -46,11 +48,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret == true);
@@ -62,7 +64,7 @@ void xformOp_test(void) {
   }
 
   {
-    value::matrix4d a;
+    lightusd::legacy::value::matrix4d a;
     a.m[0][0] = 0;
     a.m[0][1] = 0;
     a.m[0][2] = 1;
@@ -81,10 +83,10 @@ void xformOp_test(void) {
     a.m[3][2] = 18.611000061035156;
     a.m[3][3] = 1;
 
-    value::matrix4d b = value::matrix4d::identity();
+    lightusd::legacy::value::matrix4d b = lightusd::legacy::value::matrix4d::identity();
     b.m[3][2] = -30.0;
 
-    value::matrix4d c = a * b;
+    lightusd::legacy::value::matrix4d c = a * b;
     std::cout << c << "\n";
 
     // expected: (0, 0, 1, 0), (0, 1, 0, 0), (-1, 0, 0, 0), (0.442, -7.532, -11.389, 1)
@@ -113,7 +115,7 @@ void xformOp_test(void) {
 
   // RotateXYZ 000
   {
-    value::double3 rotXYZ = {90.0, 0.0, 0.0};
+    lightusd::legacy::value::double3 rotXYZ = {90.0, 0.0, 0.0};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
@@ -123,11 +125,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
@@ -164,7 +166,7 @@ void xformOp_test(void) {
 
   // RotateXYZ 001
   {
-    value::double3 rotXYZ = {0.0, 0.0, -65.66769};
+    lightusd::legacy::value::double3 rotXYZ = {0.0, 0.0, -65.66769};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
@@ -174,11 +176,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
@@ -213,7 +215,7 @@ void xformOp_test(void) {
 
   // RotateXYZ 002
   {
-    value::double3 rotXYZ = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rotXYZ = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
@@ -223,11 +225,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
@@ -262,7 +264,7 @@ void xformOp_test(void) {
 
   // Rotate 003
   {
-    value::double3 rotXYZ = {-10.0, 13.0, 43.2};
+    lightusd::legacy::value::double3 rotXYZ = {-10.0, 13.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
@@ -272,11 +274,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
@@ -310,7 +312,7 @@ void xformOp_test(void) {
 
   // RotateXZY
   {
-    value::double3 rot = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rot = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXZY;
@@ -320,11 +322,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret);
@@ -338,7 +340,7 @@ void xformOp_test(void) {
 
   // RotateYXZ
   {
-    value::double3 rot = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rot = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateYXZ;
@@ -348,11 +350,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret);
@@ -362,7 +364,7 @@ void xformOp_test(void) {
 
   // RotateYZX
   {
-    value::double3 rot = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rot = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateYZX;
@@ -372,11 +374,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret);
@@ -384,7 +386,7 @@ void xformOp_test(void) {
 
   // RotateZXY
   {
-    value::double3 rot = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rot = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateZXY;
@@ -394,11 +396,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret);
@@ -406,7 +408,7 @@ void xformOp_test(void) {
 
   // RotateZYX
   {
-    value::double3 rot = {10.0, 23.0, 43.2};
+    lightusd::legacy::value::double3 rot = {10.0, 23.0, 43.2};
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateZYX;
@@ -416,11 +418,11 @@ void xformOp_test(void) {
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret);
@@ -429,8 +431,8 @@ void xformOp_test(void) {
   // trans x scale
   // scale firstly applied, then translation.
   {
-    value::double3 trans = {1.0, 1.0, 1.0};
-    value::double3 scale = {1.5, 0.5, 2.5};
+    lightusd::legacy::value::double3 trans = {1.0, 1.0, 1.0};
+    lightusd::legacy::value::double3 scale = {1.5, 0.5, 2.5};
 
     Xformable x;
     {
@@ -451,11 +453,11 @@ void xformOp_test(void) {
       x.xformOps.push_back(op);
     }
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    double t = value::TimeCode::Default();
-    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
@@ -509,7 +511,7 @@ void rotation_order_quat_vs_matrix_test(void) {
   };
 
   // Test with multiple angle sets
-  value::double3 angle_sets[] = {
+  lightusd::legacy::value::double3 angle_sets[] = {
     {0.0, 0.0, 0.0},        // identity
     {90.0, 0.0, 0.0},       // single axis X
     {0.0, 90.0, 0.0},       // single axis Y
@@ -536,11 +538,11 @@ void rotation_order_quat_vs_matrix_test(void) {
       Xformable x;
       x.xformOps.push_back(op);
 
-      value::matrix4d m_ref;
+      lightusd::legacy::value::matrix4d m_ref;
       bool resetXformStack;
       std::string err;
-      bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                    value::TimeSampleInterpolationType::Held,
+      bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                    lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                     &m_ref, &resetXformStack, &err);
       TEST_CHECK(ret);
       if (!ret) {
@@ -551,16 +553,16 @@ void rotation_order_quat_vs_matrix_test(void) {
 
       // Method 2: Build quaternion from individual axis quaternions,
       // multiply in correct order, convert to matrix
-      value::quatf qx = to_quaternion(value::float3{1,0,0}, float(angles[0]));
-      value::quatf qy = to_quaternion(value::float3{0,1,0}, float(angles[1]));
-      value::quatf qz = to_quaternion(value::float3{0,0,1}, float(angles[2]));
+      lightusd::legacy::value::quatf qx = to_quaternion(lightusd::legacy::value::float3{1,0,0}, float(angles[0]));
+      lightusd::legacy::value::quatf qy = to_quaternion(lightusd::legacy::value::float3{0,1,0}, float(angles[1]));
+      lightusd::legacy::value::quatf qz = to_quaternion(lightusd::legacy::value::float3{0,0,1}, float(angles[2]));
 
-      value::quatf combined;
+      lightusd::legacy::value::quatf combined;
       // Quaternion composition: rightmost applied first
       switch (order.op_type) {
         case XformOp::OpType::RotateXYZ: {
           // X first, Y second, Z third => Q = Qz * Qy * Qx
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           // Manual Hamilton product: Qy * Qx
           tmp.imag[0] = qy.real*qx.imag[0] + qy.imag[0]*qx.real + qy.imag[1]*qx.imag[2] - qy.imag[2]*qx.imag[1];
           tmp.imag[1] = qy.real*qx.imag[1] - qy.imag[0]*qx.imag[2] + qy.imag[1]*qx.real + qy.imag[2]*qx.imag[0];
@@ -575,7 +577,7 @@ void rotation_order_quat_vs_matrix_test(void) {
         }
         case XformOp::OpType::RotateXZY: {
           // X first, Z second, Y third => Q = Qy * Qz * Qx
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           tmp.imag[0] = qz.real*qx.imag[0] + qz.imag[0]*qx.real + qz.imag[1]*qx.imag[2] - qz.imag[2]*qx.imag[1];
           tmp.imag[1] = qz.real*qx.imag[1] - qz.imag[0]*qx.imag[2] + qz.imag[1]*qx.real + qz.imag[2]*qx.imag[0];
           tmp.imag[2] = qz.real*qx.imag[2] + qz.imag[0]*qx.imag[1] - qz.imag[1]*qx.imag[0] + qz.imag[2]*qx.real;
@@ -588,7 +590,7 @@ void rotation_order_quat_vs_matrix_test(void) {
         }
         case XformOp::OpType::RotateYXZ: {
           // Y first, X second, Z third => Q = Qz * Qx * Qy
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           tmp.imag[0] = qx.real*qy.imag[0] + qx.imag[0]*qy.real + qx.imag[1]*qy.imag[2] - qx.imag[2]*qy.imag[1];
           tmp.imag[1] = qx.real*qy.imag[1] - qx.imag[0]*qy.imag[2] + qx.imag[1]*qy.real + qx.imag[2]*qy.imag[0];
           tmp.imag[2] = qx.real*qy.imag[2] + qx.imag[0]*qy.imag[1] - qx.imag[1]*qy.imag[0] + qx.imag[2]*qy.real;
@@ -601,7 +603,7 @@ void rotation_order_quat_vs_matrix_test(void) {
         }
         case XformOp::OpType::RotateYZX: {
           // Y first, Z second, X third => Q = Qx * Qz * Qy
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           tmp.imag[0] = qz.real*qy.imag[0] + qz.imag[0]*qy.real + qz.imag[1]*qy.imag[2] - qz.imag[2]*qy.imag[1];
           tmp.imag[1] = qz.real*qy.imag[1] - qz.imag[0]*qy.imag[2] + qz.imag[1]*qy.real + qz.imag[2]*qy.imag[0];
           tmp.imag[2] = qz.real*qy.imag[2] + qz.imag[0]*qy.imag[1] - qz.imag[1]*qy.imag[0] + qz.imag[2]*qy.real;
@@ -614,7 +616,7 @@ void rotation_order_quat_vs_matrix_test(void) {
         }
         case XformOp::OpType::RotateZXY: {
           // Z first, X second, Y third => Q = Qy * Qx * Qz
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           tmp.imag[0] = qx.real*qz.imag[0] + qx.imag[0]*qz.real + qx.imag[1]*qz.imag[2] - qx.imag[2]*qz.imag[1];
           tmp.imag[1] = qx.real*qz.imag[1] - qx.imag[0]*qz.imag[2] + qx.imag[1]*qz.real + qx.imag[2]*qz.imag[0];
           tmp.imag[2] = qx.real*qz.imag[2] + qx.imag[0]*qz.imag[1] - qx.imag[1]*qz.imag[0] + qx.imag[2]*qz.real;
@@ -627,7 +629,7 @@ void rotation_order_quat_vs_matrix_test(void) {
         }
         case XformOp::OpType::RotateZYX: {
           // Z first, Y second, X third => Q = Qx * Qy * Qz
-          value::quatf tmp;
+          lightusd::legacy::value::quatf tmp;
           tmp.imag[0] = qy.real*qz.imag[0] + qy.imag[0]*qz.real + qy.imag[1]*qz.imag[2] - qy.imag[2]*qz.imag[1];
           tmp.imag[1] = qy.real*qz.imag[1] - qy.imag[0]*qz.imag[2] + qy.imag[1]*qz.real + qy.imag[2]*qz.imag[0];
           tmp.imag[2] = qy.real*qz.imag[2] + qy.imag[0]*qz.imag[1] - qy.imag[1]*qz.imag[0] + qy.imag[2]*qz.real;
@@ -644,7 +646,7 @@ void rotation_order_quat_vs_matrix_test(void) {
       }
 
       // Convert combined quaternion to matrix
-      value::matrix4d m_quat = to_matrix(combined);
+      lightusd::legacy::value::matrix4d m_quat = to_matrix(combined);
 
       // Compare: the 3x3 rotation part should match
       bool close = mat3x3_close(m_ref, m_quat, 1e-5);
@@ -662,7 +664,7 @@ void rotation_order_quat_vs_matrix_test(void) {
 // Test that different rotation orders produce different results
 // (except for trivial cases like all zeros or single-axis)
 void rotation_order_distinct_test(void) {
-  value::double3 angles = {30.0, 45.0, 60.0};
+  lightusd::legacy::value::double3 angles = {30.0, 45.0, 60.0};
 
   XformOp::OpType orders[] = {
     XformOp::OpType::RotateXYZ,
@@ -673,7 +675,7 @@ void rotation_order_distinct_test(void) {
     XformOp::OpType::RotateZYX,
   };
 
-  value::matrix4d matrices[6];
+  lightusd::legacy::value::matrix4d matrices[6];
 
   for (int i = 0; i < 6; i++) {
     XformOp op;
@@ -686,8 +688,8 @@ void rotation_order_distinct_test(void) {
 
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &matrices[i], &resetXformStack, &err);
     TEST_CHECK(ret);
   }
@@ -708,7 +710,7 @@ void rotation_order_distinct_test(void) {
 
 // Test inverted rotation orders
 void rotation_order_inverted_test(void) {
-  value::double3 angles = {25.0, -35.0, 55.0};
+  lightusd::legacy::value::double3 angles = {25.0, -35.0, 55.0};
 
   XformOp::OpType orders[] = {
     XformOp::OpType::RotateXYZ,
@@ -722,7 +724,7 @@ void rotation_order_inverted_test(void) {
 
   for (int i = 0; i < 6; i++) {
     // Forward
-    value::matrix4d m_fwd;
+    lightusd::legacy::value::matrix4d m_fwd;
     {
       XformOp op;
       op.op_type = orders[i];
@@ -732,14 +734,14 @@ void rotation_order_inverted_test(void) {
       x.xformOps.push_back(op);
       bool resetXformStack;
       std::string err;
-      bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                    value::TimeSampleInterpolationType::Held,
+      bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                    lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                     &m_fwd, &resetXformStack, &err);
       TEST_CHECK(ret);
     }
 
     // Inverted
-    value::matrix4d m_inv;
+    lightusd::legacy::value::matrix4d m_inv;
     {
       XformOp op;
       op.op_type = orders[i];
@@ -749,15 +751,15 @@ void rotation_order_inverted_test(void) {
       x.xformOps.push_back(op);
       bool resetXformStack;
       std::string err;
-      bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                    value::TimeSampleInterpolationType::Held,
+      bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                    lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                     &m_inv, &resetXformStack, &err);
       TEST_CHECK(ret);
     }
 
     // m_fwd * m_inv should be close to identity
-    value::matrix4d product = m_fwd * m_inv;
-    value::matrix4d identity = value::matrix4d::identity();
+    lightusd::legacy::value::matrix4d product = m_fwd * m_inv;
+    lightusd::legacy::value::matrix4d identity = lightusd::legacy::value::matrix4d::identity();
     bool close = mat3x3_close(product, identity, 1e-10);
     TEST_CHECK(close);
     if (!close) {
@@ -771,11 +773,11 @@ void rotation_order_inverted_test(void) {
 void single_axis_rotation_test(void) {
   // RotateX(90) should match RotateXYZ(90,0,0)
   {
-    value::matrix4d m1, m2;
+    lightusd::legacy::value::matrix4d m1, m2;
     bool resetXformStack;
     std::string err;
-    auto tc = value::TimeCode::Default();
-    auto interp = value::TimeSampleInterpolationType::Held;
+    auto tc = lightusd::legacy::value::TimeCode::Default();
+    auto interp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     {
       XformOp op;
@@ -788,7 +790,7 @@ void single_axis_rotation_test(void) {
     {
       XformOp op;
       op.op_type = XformOp::OpType::RotateXYZ;
-      op.set_value(value::double3{90.0, 0.0, 0.0});
+      op.set_value(lightusd::legacy::value::double3{90.0, 0.0, 0.0});
       Xformable x;
       x.xformOps.push_back(op);
       TEST_CHECK(x.EvaluateXformOps(tc, interp, &m2, &resetXformStack, &err));
@@ -799,11 +801,11 @@ void single_axis_rotation_test(void) {
 
   // RotateY(45)
   {
-    value::matrix4d m1, m2;
+    lightusd::legacy::value::matrix4d m1, m2;
     bool resetXformStack;
     std::string err;
-    auto tc = value::TimeCode::Default();
-    auto interp = value::TimeSampleInterpolationType::Held;
+    auto tc = lightusd::legacy::value::TimeCode::Default();
+    auto interp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     {
       XformOp op;
@@ -816,7 +818,7 @@ void single_axis_rotation_test(void) {
     {
       XformOp op;
       op.op_type = XformOp::OpType::RotateXYZ;
-      op.set_value(value::double3{0.0, 45.0, 0.0});
+      op.set_value(lightusd::legacy::value::double3{0.0, 45.0, 0.0});
       Xformable x;
       x.xformOps.push_back(op);
       TEST_CHECK(x.EvaluateXformOps(tc, interp, &m2, &resetXformStack, &err));
@@ -827,11 +829,11 @@ void single_axis_rotation_test(void) {
 
   // RotateZ(-60)
   {
-    value::matrix4d m1, m2;
+    lightusd::legacy::value::matrix4d m1, m2;
     bool resetXformStack;
     std::string err;
-    auto tc = value::TimeCode::Default();
-    auto interp = value::TimeSampleInterpolationType::Held;
+    auto tc = lightusd::legacy::value::TimeCode::Default();
+    auto interp = lightusd::legacy::value::TimeSampleInterpolationType::Held;
 
     {
       XformOp op;
@@ -844,7 +846,7 @@ void single_axis_rotation_test(void) {
     {
       XformOp op;
       op.op_type = XformOp::OpType::RotateXYZ;
-      op.set_value(value::double3{0.0, 0.0, -60.0});
+      op.set_value(lightusd::legacy::value::double3{0.0, 0.0, -60.0});
       Xformable x;
       x.xformOps.push_back(op);
       TEST_CHECK(x.EvaluateXformOps(tc, interp, &m2, &resetXformStack, &err));

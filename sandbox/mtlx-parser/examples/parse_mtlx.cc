@@ -7,6 +7,8 @@
 
 using namespace lightusd::mtlx;
 
+using namespace lightusd::legacy::mtlx;  // NOLINT
+
 void print_indent(int level) {
   for (int i = 0; i < level; ++i) {
     std::cout << "  ";

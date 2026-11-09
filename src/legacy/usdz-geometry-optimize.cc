@@ -24,7 +24,7 @@
 #include "value-types.hh"
 #include "xform.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdz {
 namespace {
 
@@ -1048,4 +1048,5 @@ bool OptimizeGeometryInLayer(const UsdzConvertOptions &options, Layer *layer,
 }
 
 }  // namespace usdz
+}  // namespace legacy
 }  // namespace lightusd

@@ -62,7 +62,7 @@
 #include "tydra/value-to-json.hh"
 #include "tydra/diff-and-compare.hh"
 
-// js-script.hh must precede mcp-context.hh: tydra::mcp::Context holds a
+// js-script.hh must precede mcp-context.hh: lightusd::legacy::tydra::mcp::Context holds a
 // std::unique_ptr<JSEngineState> and relies on its implicit destructor, which
 // requires the complete JSEngineState type (forward-declared in mcp-context.hh,
 // defined in js-script.hh).
@@ -284,9 +284,9 @@ using namespace emscripten;
 
 namespace {
 
-lightusd::ValidationOptions ParseValidationOptionsJSONForWeb(
+lightusd::legacy::ValidationOptions ParseValidationOptionsJSONForWeb(
     const std::string &options_json) {
-  lightusd::ValidationOptions opts;
+  lightusd::legacy::ValidationOptions opts;
   if (options_json.empty()) {
     return opts;
   }
@@ -321,7 +321,7 @@ lightusd::ValidationOptions ParseValidationOptionsJSONForWeb(
     } else if (name == "crate") {
       opts.crate = true;
     } else if (name == "all") {
-      opts = lightusd::MakeValidateAllOptions();
+      opts = lightusd::legacy::MakeValidateAllOptions();
     }
   }
 
@@ -332,34 +332,34 @@ lightusd::ValidationOptions ParseValidationOptionsJSONForWeb(
   return opts;
 }
 
-const char *ValidationSeverityString(lightusd::USDValidationSeverity severity) {
-  return severity == lightusd::USDValidationSeverity::Error ? "error"
+const char *ValidationSeverityString(lightusd::legacy::USDValidationSeverity severity) {
+  return severity == lightusd::legacy::USDValidationSeverity::Error ? "error"
                                                             : "warning";
 }
 
 nlohmann::json ValidationGroupsToJSON(
-    const lightusd::ValidationOptions &options) {
+    const lightusd::legacy::ValidationOptions &options) {
   nlohmann::json groups = nlohmann::json::array();
-  for (const std::string &name : lightusd::GetValidationGroupNames(options)) {
+  for (const std::string &name : lightusd::legacy::GetValidationGroupNames(options)) {
     groups.push_back(name);
   }
   return groups;
 }
 
 nlohmann::json ValidationResultToJSON(
-    const lightusd::USDValidationResult &validation) {
+    const lightusd::legacy::USDValidationResult &validation) {
   nlohmann::json result;
   result["parse_ok"] = true;
   result["ok"] = validation.ok();
   result["error_count"] = validation.error_count();
   result["warning_count"] = validation.warning_count();
-  result["spec_version"] = lightusd::GetAOUSDCoreSpecVersionString();
+  result["spec_version"] = lightusd::legacy::GetAOUSDCoreSpecVersionString();
   result["checked_groups"] =
       ValidationGroupsToJSON(validation.checked_groups);
 
   nlohmann::json issues = nlohmann::json::array();
-  for (const lightusd::USDValidationIssue *issue :
-       lightusd::GetOrderedValidationIssues(validation)) {
+  for (const lightusd::legacy::USDValidationIssue *issue :
+       lightusd::legacy::GetOrderedValidationIssues(validation)) {
     nlohmann::json item;
     item["severity"] = ValidationSeverityString(issue->severity);
     item["rule_id"] = issue->rule_id;
@@ -677,7 +677,7 @@ EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
 
 namespace detail {
 
-std::array<double, 9> toArray(const lightusd::value::matrix3d &m) {
+std::array<double, 9> toArray(const lightusd::legacy::value::matrix3d &m) {
   std::array<double, 9> ret;
 
   ret[0] = m.m[0][0];
@@ -695,7 +695,7 @@ std::array<double, 9> toArray(const lightusd::value::matrix3d &m) {
   return ret;
 }
 
-std::array<double, 16> toArray(const lightusd::value::matrix4d &m) {
+std::array<double, 16> toArray(const lightusd::legacy::value::matrix4d &m) {
   std::array<double, 16> ret;
 
   ret[0] = m.m[0][0];
@@ -759,7 +759,7 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
   return true;
 }
 
-bool uint8arrayToBuffer(const emscripten::val& u8, lightusd::TypedArray<uint8_t> &buf) {
+bool uint8arrayToBuffer(const emscripten::val& u8, lightusd::legacy::TypedArray<uint8_t> &buf) {
   size_t n = u8["byteLength"].as<size_t>();
   // Cap allocation to avoid OOM from untrusted JS typed arrays.
   constexpr size_t kMaxUint8ArrayBytes = size_t(1) << 30;  // 1 GiB
@@ -1779,14 +1779,14 @@ struct ParsingProgress {
 };
 
 bool SetupEMAssetResolution(
-    lightusd::AssetResolutionResolver &resolver,
+    lightusd::legacy::AssetResolutionResolver &resolver,
     /* must be the persistent pointer address until usd load finishes */
     const EMAssetResolutionResolver *p) {
   if (!p) {
     return false;
   }
 
-  lightusd::AssetResolutionHandler handler;
+  lightusd::legacy::AssetResolutionHandler handler;
   handler.resolve_fun = EMAssetResolutionResolver::Resolve;
   handler.size_fun = EMAssetResolutionResolver::Size;
   handler.read_fun = EMAssetResolutionResolver::Read;
@@ -1803,27 +1803,27 @@ namespace {
 
 using json = nlohmann::json;
 
-std::string AxisName(const lightusd::Axis axis) {
+std::string AxisName(const lightusd::legacy::Axis axis) {
   switch (axis) {
-    case lightusd::Axis::X:
+    case lightusd::legacy::Axis::X:
       return "X";
-    case lightusd::Axis::Y:
+    case lightusd::legacy::Axis::Y:
       return "Y";
-    case lightusd::Axis::Z:
+    case lightusd::legacy::Axis::Z:
     default:
       return "Z";
   }
 }
 
-json Vec3Json(const lightusd::value::point3f &v) {
+json Vec3Json(const lightusd::legacy::value::point3f &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
-json Vec3Json(const lightusd::value::float3 &v) {
+json Vec3Json(const lightusd::legacy::value::float3 &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
-json Vec3Json(const lightusd::value::vector3f &v) {
+json Vec3Json(const lightusd::legacy::value::vector3f &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
@@ -1838,11 +1838,11 @@ json Vec3JsonG(const T &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
-json QuatJson(const lightusd::value::quatf &v) {
+json QuatJson(const lightusd::legacy::value::quatf &v) {
   return json::array({v.real, v.imag[0], v.imag[1], v.imag[2]});
 }
 
-json Matrix4Json(const lightusd::value::matrix4d &m) {
+json Matrix4Json(const lightusd::legacy::value::matrix4d &m) {
   json a = json::array();
   for (size_t r = 0; r < 4; r++) {
     for (size_t c = 0; c < 4; c++) {
@@ -1852,11 +1852,11 @@ json Matrix4Json(const lightusd::value::matrix4d &m) {
   return a;
 }
 
-std::string PathName(const lightusd::Path &path) {
+std::string PathName(const lightusd::legacy::Path &path) {
   return path.full_path_name();
 }
 
-json RelationshipTargetsJson(const lightusd::RelationshipProperty &rel) {
+json RelationshipTargetsJson(const lightusd::legacy::RelationshipProperty &rel) {
   json targets = json::array();
   for (const auto &path : rel.get_targetPaths()) {
     targets.push_back(PathName(path));
@@ -1866,7 +1866,7 @@ json RelationshipTargetsJson(const lightusd::RelationshipProperty &rel) {
 
 template <typename T>
 bool AddTypedAttr(json &props, const std::string &name,
-                  const lightusd::TypedAttribute<T> &attr) {
+                  const lightusd::legacy::TypedAttribute<T> &attr) {
   auto v = attr.get_value();
   if (!v) {
     return false;
@@ -1876,7 +1876,7 @@ bool AddTypedAttr(json &props, const std::string &name,
 }
 
 bool AddTypedAttr(json &props, const std::string &name,
-                  const lightusd::TypedAttribute<lightusd::value::token> &attr) {
+                  const lightusd::legacy::TypedAttribute<lightusd::legacy::value::token> &attr) {
   auto v = attr.get_value();
   if (!v) {
     return false;
@@ -1886,7 +1886,7 @@ bool AddTypedAttr(json &props, const std::string &name,
 }
 
 bool AddTypedAttr(json &props, const std::string &name,
-                  const lightusd::TypedAttribute<lightusd::value::point3f> &attr) {
+                  const lightusd::legacy::TypedAttribute<lightusd::legacy::value::point3f> &attr) {
   auto v = attr.get_value();
   if (!v) {
     return false;
@@ -1897,7 +1897,7 @@ bool AddTypedAttr(json &props, const std::string &name,
 
 
 bool AddTypedAttr(json &props, const std::string &name,
-                  const lightusd::TypedAttribute<lightusd::value::vector3f> &attr) {
+                  const lightusd::legacy::TypedAttribute<lightusd::legacy::value::vector3f> &attr) {
   auto v = attr.get_value();
   if (!v) {
     return false;
@@ -1907,7 +1907,7 @@ bool AddTypedAttr(json &props, const std::string &name,
 }
 
 bool AddTypedAttr(json &props, const std::string &name,
-                  const lightusd::TypedAttribute<lightusd::value::quatf> &attr) {
+                  const lightusd::legacy::TypedAttribute<lightusd::legacy::value::quatf> &attr) {
   auto v = attr.get_value();
   if (!v) {
     return false;
@@ -1918,7 +1918,7 @@ bool AddTypedAttr(json &props, const std::string &name,
 
 template <typename T>
 bool AddFallbackAttr(json &props, const std::string &name,
-                     const lightusd::TypedAttributeWithFallback<T> &attr) {
+                     const lightusd::legacy::TypedAttributeWithFallback<T> &attr) {
   if (!attr.authored()) {
     return false;
   }
@@ -1927,7 +1927,7 @@ bool AddFallbackAttr(json &props, const std::string &name,
 }
 
 bool AddFallbackAttr(json &props, const std::string &name,
-                     const lightusd::TypedAttributeWithFallback<lightusd::value::token> &attr) {
+                     const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::value::token> &attr) {
   if (!attr.authored()) {
     return false;
   }
@@ -1936,7 +1936,7 @@ bool AddFallbackAttr(json &props, const std::string &name,
 }
 
 bool AddFallbackAttr(json &props, const std::string &name,
-                     const lightusd::TypedAttributeWithFallback<lightusd::value::point3f> &attr) {
+                     const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::value::point3f> &attr) {
   if (!attr.authored()) {
     return false;
   }
@@ -1945,7 +1945,7 @@ bool AddFallbackAttr(json &props, const std::string &name,
 }
 
 bool AddFallbackAttr(json &props, const std::string &name,
-                     const lightusd::TypedAttributeWithFallback<lightusd::value::vector3f> &attr) {
+                     const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::value::vector3f> &attr) {
   if (!attr.authored()) {
     return false;
   }
@@ -1954,7 +1954,7 @@ bool AddFallbackAttr(json &props, const std::string &name,
 }
 
 bool AddFallbackAttr(json &props, const std::string &name,
-                     const lightusd::TypedAttributeWithFallback<lightusd::value::quatf> &attr) {
+                     const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::value::quatf> &attr) {
   if (!attr.authored()) {
     return false;
   }
@@ -1965,19 +1965,19 @@ bool AddFallbackAttr(json &props, const std::string &name,
 template <typename T>
 bool AddAnimatableFallbackAttr(
     json &props, const std::string &name,
-    const lightusd::TypedAttributeWithFallback<lightusd::Animatable<T>> &attr) {
+    const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::Animatable<T>> &attr) {
   if (!attr.authored()) {
     return false;
   }
   T value{};
-  if (!attr.get_value().get(lightusd::value::TimeCode::Default(), &value)) {
+  if (!attr.get_value().get(lightusd::legacy::value::TimeCode::Default(), &value)) {
     return false;
   }
   props[name] = value;
   return true;
 }
 
-json AttributeValueJson(const lightusd::Attribute &attr) {
+json AttributeValueJson(const lightusd::legacy::Attribute &attr) {
   if (attr.has_connections()) {
     json paths = json::array();
     for (const auto &path : attr.connections()) {
@@ -1996,35 +1996,35 @@ json AttributeValueJson(const lightusd::Attribute &attr) {
   if (auto v = attr.get_value<float>()) return v.value();
   if (auto v = attr.get_value<double>()) return v.value();
   if (auto v = attr.get_value<std::string>()) return v.value();
-  if (auto v = attr.get_value<lightusd::value::StringData>()) return v.value().value;
-  if (auto v = attr.get_value<lightusd::value::token>()) return v.value().str();
-  if (auto v = attr.get_value<lightusd::value::AssetPath>()) return v.value().GetAssetPath();
+  if (auto v = attr.get_value<lightusd::legacy::value::StringData>()) return v.value().value;
+  if (auto v = attr.get_value<lightusd::legacy::value::token>()) return v.value().str();
+  if (auto v = attr.get_value<lightusd::legacy::value::AssetPath>()) return v.value().GetAssetPath();
   // SdfPathExpression (e.g. CollectionAPI membershipExpression) — serialize its
   // text so the web collision-group evaluator can read the pattern.
-  if (auto v = attr.get_value<lightusd::value::PathExpression>()) return v.value().GetText();
-  if (auto v = attr.get_value<lightusd::value::point3f>()) return Vec3Json(v.value());
-  if (auto v = attr.get_value<lightusd::value::float3>()) return Vec3Json(v.value());
-  if (auto v = attr.get_value<lightusd::value::vector3f>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::PathExpression>()) return v.value().GetText();
+  if (auto v = attr.get_value<lightusd::legacy::value::point3f>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::float3>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::vector3f>()) return Vec3Json(v.value());
   // Double-precision / role-typed vec3 variants (Blender authors physics
   // attrs like diagonalInertia / centerOfMass as double3).
-  if (auto v = attr.get_value<lightusd::value::double3>()) return Vec3JsonG(v.value());
-  if (auto v = attr.get_value<lightusd::value::vector3d>()) return Vec3JsonG(v.value());
-  if (auto v = attr.get_value<lightusd::value::point3d>()) return Vec3JsonG(v.value());
-  if (auto v = attr.get_value<lightusd::value::normal3f>()) return Vec3JsonG(v.value());
-  if (auto v = attr.get_value<lightusd::value::normal3d>()) return Vec3JsonG(v.value());
-  if (auto v = attr.get_value<lightusd::value::quatf>()) return QuatJson(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::double3>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::vector3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::point3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::normal3f>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::normal3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<lightusd::legacy::value::quatf>()) return QuatJson(v.value());
   if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
   if (auto v = attr.get_value<std::vector<float>>()) return v.value();
   if (auto v = attr.get_value<std::vector<double>>()) return v.value();
   if (auto v = attr.get_value<std::vector<std::string>>()) return v.value();
-  if (auto v = attr.get_value<std::vector<lightusd::value::token>>()) {
+  if (auto v = attr.get_value<std::vector<lightusd::legacy::value::token>>()) {
     json arr = json::array();
     for (const auto &tok : v.value()) {
       arr.push_back(tok.str());
     }
     return arr;
   }
-  if (auto v = attr.get_value<std::vector<lightusd::value::point3f>>()) {
+  if (auto v = attr.get_value<std::vector<lightusd::legacy::value::point3f>>()) {
     json arr = json::array();
     for (const auto &p : v.value()) {
       arr.push_back(Vec3Json(p));
@@ -2038,7 +2038,7 @@ json AttributeValueJson(const lightusd::Attribute &attr) {
 // mh:* attribute → JSON. Time-sampled float[] curves (mh:rig:guiControlValues,
 // mh:animatedMapWeights) become { timeSamples: [{t, v:[...]}, ...] }; other
 // attrs fall through to AttributeValueJson (scalars + static arrays).
-json MhAttrJson(const lightusd::Attribute &attr) {
+json MhAttrJson(const lightusd::legacy::Attribute &attr) {
   if (attr.get_var().has_timesamples()) {
     const auto &ts = attr.get_var().ts_raw();
     json samples = json::array();
@@ -2056,9 +2056,9 @@ json MhAttrJson(const lightusd::Attribute &attr) {
 }
 
 void AddPropertyMap(json &props, json &rels,
-                    const std::map<std::string, lightusd::Property> &map) {
+                    const std::map<std::string, lightusd::legacy::Property> &map) {
   for (const auto &kv : map) {
-    if (const lightusd::Attribute *attr = kv.second.get_attribute_or_null()) {
+    if (const lightusd::legacy::Attribute *attr = kv.second.get_attribute_or_null()) {
       props[kv.first] = AttributeValueJson(*attr);
     } else if (kv.second.is_relationship()) {
       json targets = json::array();
@@ -2083,28 +2083,28 @@ void AddPropertyMap(json &props, json &rels,
 template <typename GPrimT>
 void AddPurposeVisibilityJson(json &prim_json, const GPrimT &gprim) {
   if (gprim.purpose.authored()) {
-    lightusd::Purpose p_val = gprim.purpose.get_value();
-    if (p_val != lightusd::Purpose::Default) {
-      prim_json["purpose"] = lightusd::to_string(p_val);
+    lightusd::legacy::Purpose p_val = gprim.purpose.get_value();
+    if (p_val != lightusd::legacy::Purpose::Default) {
+      prim_json["purpose"] = lightusd::legacy::to_string(p_val);
     }
   }
   if (gprim.visibility.authored()) {
     const auto &v_anim = gprim.visibility.get_value();
     if (v_anim.has_default()) {
-      lightusd::Visibility v_val;
+      lightusd::legacy::Visibility v_val;
       if (v_anim.get_default(&v_val)
-          && v_val != lightusd::Visibility::Inherited) {
-        prim_json["visibility"] = lightusd::to_string(v_val);
+          && v_val != lightusd::legacy::Visibility::Inherited) {
+        prim_json["visibility"] = lightusd::legacy::to_string(v_val);
       }
     }
   }
 }
 
-void AddAPISchemasJson(json &prim_json, const lightusd::Prim &prim) {
+void AddAPISchemasJson(json &prim_json, const lightusd::legacy::Prim &prim) {
   json schemas = json::array();
-  const lightusd::APISchemas api = prim.metas().get_apiSchemas();
+  const lightusd::legacy::APISchemas api = prim.metas().get_apiSchemas();
   for (const auto &schema : api.names) {
-    std::string name = lightusd::to_string(schema.first);
+    std::string name = lightusd::legacy::to_string(schema.first);
     if (!schema.second.empty()) {
       name += ":" + schema.second;
     }
@@ -2120,11 +2120,11 @@ void AddAPISchemasJson(json &prim_json, const lightusd::Prim &prim) {
   prim_json["apiSchemas"] = std::move(schemas);
 }
 
-void AddXformableJson(json &prim_json, const lightusd::Xformable &xformable) {
+void AddXformableJson(json &prim_json, const lightusd::legacy::Xformable &xformable) {
   bool reset = false;
   auto m = xformable.GetLocalMatrix(
-      lightusd::value::TimeCode::Default(),
-      lightusd::value::TimeSampleInterpolationType::Linear, &reset);
+      lightusd::legacy::value::TimeCode::Default(),
+      lightusd::legacy::value::TimeSampleInterpolationType::Linear, &reset);
   if (m) {
     prim_json["matrix"] = Matrix4Json(m.value());
     prim_json["resetXformStack"] = reset;
@@ -2132,7 +2132,7 @@ void AddXformableJson(json &prim_json, const lightusd::Xformable &xformable) {
 }
 
 void AddJointBaseJson(json &props, json &rels,
-                      const lightusd::PhysicsJointBase &joint) {
+                      const lightusd::legacy::PhysicsJointBase &joint) {
   rels["physics:body0"] = RelationshipTargetsJson(joint.body0);
   rels["physics:body1"] = RelationshipTargetsJson(joint.body1);
   AddFallbackAttr(props, "physics:localPos0", joint.localPos0);
@@ -2193,7 +2193,7 @@ void AddJointBaseJson(json &props, json &rels,
   }
 }
 
-void AddSceneJson(json &props, const lightusd::PhysicsScene &scene) {
+void AddSceneJson(json &props, const lightusd::legacy::PhysicsScene &scene) {
   AddTypedAttr(props, "physics:gravityDirection", scene.gravityDirection);
   AddTypedAttr(props, "physics:gravityMagnitude", scene.gravityMagnitude);
   if (scene.mjcScene) {
@@ -2279,7 +2279,7 @@ void AddSceneJson(json &props, const lightusd::PhysicsScene &scene) {
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomMesh &mesh) {
+                     const lightusd::legacy::GeomMesh &mesh) {
   AddXformableJson(prim_json, mesh);
   json geom;
   geom["type"] = "mesh";
@@ -2290,7 +2290,7 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomCube &cube) {
+                     const lightusd::legacy::GeomCube &cube) {
   AddXformableJson(prim_json, cube);
   json geom;
   // Use the schema-canonical "cube" name (matches the USD type "Cube"
@@ -2301,7 +2301,7 @@ void AddGeometryJson(json &prim_json, json &props,
   geom["type"] = "cube";
   double size = 2.0;
   if (cube.size.authored()) {
-    cube.size.get_value().get(lightusd::value::TimeCode::Default(), &size);
+    cube.size.get_value().get(lightusd::legacy::value::TimeCode::Default(), &size);
   }
   geom["size"] = size;
   prim_json["geometry"] = std::move(geom);
@@ -2309,7 +2309,7 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomSphere &sphere) {
+                     const lightusd::legacy::GeomSphere &sphere) {
   AddXformableJson(prim_json, sphere);
   json geom;
   geom["type"] = "sphere";
@@ -2319,7 +2319,7 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomCylinder &cylinder) {
+                     const lightusd::legacy::GeomCylinder &cylinder) {
   AddXformableJson(prim_json, cylinder);
   json geom;
   geom["type"] = "cylinder";
@@ -2333,7 +2333,7 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomCapsule &capsule) {
+                     const lightusd::legacy::GeomCapsule &capsule) {
   AddXformableJson(prim_json, capsule);
   json geom;
   geom["type"] = "capsule";
@@ -2347,7 +2347,7 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AddGeometryJson(json &prim_json, json &props,
-                     const lightusd::GeomPlane &plane) {
+                     const lightusd::legacy::GeomPlane &plane) {
   AddXformableJson(prim_json, plane);
   json geom;
   geom["type"] = "plane";
@@ -2360,7 +2360,7 @@ void AddGeometryJson(json &prim_json, json &props,
   AddPropertyMap(props, prim_json["relationships"], plane.props);
 }
 
-void AppendPhysicsPrimJson(const lightusd::Prim &prim, const std::string &path,
+void AppendPhysicsPrimJson(const lightusd::legacy::Prim &prim, const std::string &path,
                            json &prims, int depth = 0) {
   // Guard against stack overflow from deeply nested USD stages.
   if (depth > 1024) return;
@@ -2378,7 +2378,7 @@ void AppendPhysicsPrimJson(const lightusd::Prim &prim, const std::string &path,
   // distinguish authored metadata from regular USD properties.
   const std::string prim_kind = prim.metas().get_kind();
   if (!prim_kind.empty()) item["kind"] = prim_kind;
-  item["specifier"] = lightusd::to_string(prim.specifier());
+  item["specifier"] = lightusd::legacy::to_string(prim.specifier());
   item["active"] = prim.IsActive();
   item["abstract"] = prim.IsAbstract();
   item["model"] = prim.IsModel();
@@ -2387,67 +2387,67 @@ void AppendPhysicsPrimJson(const lightusd::Prim &prim, const std::string &path,
   json &props = item["properties"];
   json &rels = item["relationships"];
 
-  if (const auto *xform = prim.as<lightusd::Xform>()) {
+  if (const auto *xform = prim.as<lightusd::legacy::Xform>()) {
     AddXformableJson(item, *xform);
     AddPropertyMap(props, rels, xform->props);
-  } else if (const auto *mesh = prim.as<lightusd::GeomMesh>()) {
+  } else if (const auto *mesh = prim.as<lightusd::legacy::GeomMesh>()) {
     AddGeometryJson(item, props, *mesh);
     AddPurposeVisibilityJson(item, *mesh);
-  } else if (const auto *cube = prim.as<lightusd::GeomCube>()) {
+  } else if (const auto *cube = prim.as<lightusd::legacy::GeomCube>()) {
     AddGeometryJson(item, props, *cube);
     AddPurposeVisibilityJson(item, *cube);
-  } else if (const auto *sphere = prim.as<lightusd::GeomSphere>()) {
+  } else if (const auto *sphere = prim.as<lightusd::legacy::GeomSphere>()) {
     AddGeometryJson(item, props, *sphere);
     AddPurposeVisibilityJson(item, *sphere);
-  } else if (const auto *cylinder = prim.as<lightusd::GeomCylinder>()) {
+  } else if (const auto *cylinder = prim.as<lightusd::legacy::GeomCylinder>()) {
     AddGeometryJson(item, props, *cylinder);
     AddPurposeVisibilityJson(item, *cylinder);
-  } else if (const auto *capsule = prim.as<lightusd::GeomCapsule>()) {
+  } else if (const auto *capsule = prim.as<lightusd::legacy::GeomCapsule>()) {
     AddGeometryJson(item, props, *capsule);
     AddPurposeVisibilityJson(item, *capsule);
-  } else if (const auto *plane = prim.as<lightusd::GeomPlane>()) {
+  } else if (const auto *plane = prim.as<lightusd::legacy::GeomPlane>()) {
     AddGeometryJson(item, props, *plane);
     AddPurposeVisibilityJson(item, *plane);
-  } else if (const auto *scene = prim.as<lightusd::PhysicsScene>()) {
+  } else if (const auto *scene = prim.as<lightusd::legacy::PhysicsScene>()) {
     AddSceneJson(props, *scene);
     AddPropertyMap(props, rels, scene->props);
-  } else if (const auto *group = prim.as<lightusd::PhysicsCollisionGroup>()) {
+  } else if (const auto *group = prim.as<lightusd::legacy::PhysicsCollisionGroup>()) {
     AddTypedAttr(props, "physics:mergeGroup", group->mergeGroup);
     AddFallbackAttr(props, "physics:invertFilteredGroups",
                     group->invertFilteredGroups);
     rels["physics:filteredGroups"] =
         RelationshipTargetsJson(group->filteredGroups);
     AddPropertyMap(props, rels, group->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsRevoluteJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsRevoluteJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:axis", joint->axis);
     AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
     AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsPrismaticJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsPrismaticJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:axis", joint->axis);
     AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
     AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsSphericalJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsSphericalJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:axis", joint->axis);
     AddTypedAttr(props, "physics:coneAngle0Limit", joint->coneAngle0Limit);
     AddTypedAttr(props, "physics:coneAngle1Limit", joint->coneAngle1Limit);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsFixedJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsFixedJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsDistanceJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsDistanceJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:minDistance", joint->minDistance);
     AddTypedAttr(props, "physics:maxDistance", joint->maxDistance);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *joint = prim.as<lightusd::PhysicsJoint>()) {
+  } else if (const auto *joint = prim.as<lightusd::legacy::PhysicsJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddPropertyMap(props, rels, joint->props);
-  } else if (const auto *act = prim.as<lightusd::NewtonActuator>()) {
+  } else if (const auto *act = prim.as<lightusd::legacy::NewtonActuator>()) {
     rels["newton:targets"] = RelationshipTargetsJson(act->targets);
     AddFallbackAttr(props, "newton:delaySteps", act->delaySteps);
     AddFallbackAttr(props, "newton:constEffort", act->constEffort);
@@ -2462,13 +2462,13 @@ void AppendPhysicsPrimJson(const lightusd::Prim &prim, const std::string &path,
     AddTypedAttr(props, "newton:lookupPositions", act->lookupPositions);
     AddTypedAttr(props, "newton:lookupEfforts", act->lookupEfforts);
     AddPropertyMap(props, rels, act->props);
-  } else if (const auto *model = prim.as<lightusd::Model>()) {
+  } else if (const auto *model = prim.as<lightusd::legacy::Model>()) {
     // Unknown/custom schema prims are reconstructed through the generic Model
     // carrier. Preserve their authored properties so an explicit
     // `mjc:jointType` representation hint can map a foreign joint schema on
     // the JS side without guessing its semantics.
     AddPropertyMap(props, rels, model->props);
-  } else if (const auto *scope = prim.as<lightusd::Scope>()) {
+  } else if (const auto *scope = prim.as<lightusd::legacy::Scope>()) {
     AddPropertyMap(props, rels, scope->props);
   }
 
@@ -2764,13 +2764,13 @@ class LightUSDLoaderNative {
   }
 #endif
 
-  bool stageToRenderScene(const lightusd::Stage &stage, bool is_usdz, const std::string &binary) {
+  bool stageToRenderScene(const lightusd::legacy::Stage &stage, bool is_usdz, const std::string &binary) {
     ReportLightUSDDebugEvent(
         "renderScene.begin",
         "filename=" + filename_ + " inputBytes=" + std::to_string(binary.size()),
         binary.size(), is_usdz);
 
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
 
     // load texture in C++ image loader? default = false(Use JS to decode texture image)
     env.scene_config.load_texture_assets = loadTextureInNative_;
@@ -2814,7 +2814,7 @@ class LightUSDLoaderNative {
             "usdzAssetInfo.begin",
             "asset_on_memory=false filename=" + filename_, binary.size(),
             is_usdz);
-        if (!lightusd::ReadUSDZAssetInfoFromMemory(
+        if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
                 reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
                 asset_on_memory, &usdz_asset_, &warn_, &error_)) {
           std::cerr << "Failed to read USDZ assetInfo. \n";
@@ -2837,11 +2837,11 @@ class LightUSDLoaderNative {
               " backingBytes=" + std::to_string(usdz_asset_.size),
           binary.size(), is_usdz);
 
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
 
       // NOTE: Pointer address of usdz_asset must be valid until the call of
       // RenderSceneConverter::ConvertToRenderScene.
-      if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+      if (!lightusd::legacy::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         ReportLightUSDDebugEvent(
             "usdzAssetResolution.failed", "SetupUSDZAssetResolution failed",
@@ -2856,7 +2856,7 @@ class LightUSDLoaderNative {
 
       env.asset_resolver = arr;
     } else {
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
       if (!SetupEMAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
         ReportLightUSDDebugEvent(
@@ -2874,7 +2874,7 @@ class LightUSDLoaderNative {
     }
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverter converter;
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
     struct TydraProgressCallbackState {
@@ -2885,7 +2885,7 @@ class LightUSDLoaderNative {
     };
     TydraProgressCallbackState progress_state{&parsing_progress_, 0, 0, ""};
     converter.SetDetailedProgressCallback(
-        [input_size = binary.size(), is_usdz, debug_enabled = IsLightUSDDebugEnabled()](const lightusd::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+        [input_size = binary.size(), is_usdz, debug_enabled = IsLightUSDDebugEnabled()](const lightusd::legacy::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           TydraProgressCallbackState *state =
               static_cast<TydraProgressCallbackState *>(userptr);
           if (state && state->progress) {
@@ -3015,15 +3015,15 @@ class LightUSDLoaderNative {
 
   bool loadAsLayerFromBinary(const std::string &binary, const std::string &filename) {
 
-    const bool is_usdz = lightusd::IsUSDZ(
+    const bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
     loaded_layer_is_usdz_ = is_usdz;
-    usdz_asset_ = lightusd::USDZAsset();
+    usdz_asset_ = lightusd::legacy::USDZAsset();
 
     if (is_usdz) {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to USDZAsset struct.
-      if (!lightusd::ReadUSDZAssetInfoFromMemory(
+      if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
@@ -3033,10 +3033,10 @@ class LightUSDLoaderNative {
       }
     }
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
 
-    loaded_ = lightusd::LoadLayerFromMemory(
+    loaded_ = lightusd::legacy::LoadLayerFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, &layer_, &warn_, &error_, options);
 
@@ -3062,19 +3062,19 @@ class LightUSDLoaderNative {
     //  return loadAndCompositeFromBinary(binary, filename);
     //}
 
-    bool is_usdz = lightusd::IsUSDZ(
+    bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
     ReportLightUSDDebugEvent(
         "loadFromBinary.begin",
         "filename=" + filename + " bytes=" + std::to_string(binary.size()),
         binary.size(), is_usdz);
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
-    lightusd::Stage stage;
-    loaded_ = lightusd::LoadUSDFromMemory(
+    lightusd::legacy::Stage stage;
+    loaded_ = lightusd::legacy::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, &stage, &warn_, &error_, options);
 
@@ -3106,7 +3106,7 @@ class LightUSDLoaderNative {
 
     //std::cout << "[lightusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
 
     //
     // false = Load Texture in JS Layer
@@ -3125,7 +3125,7 @@ class LightUSDLoaderNative {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
-      if (!lightusd::ReadUSDZAssetInfoFromMemory(
+      if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
@@ -3133,11 +3133,11 @@ class LightUSDLoaderNative {
         return false;
       }
 
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
 
       // NOTE: Pointer address of usdz_asset must be valid until the call of
       // RenderSceneConverter::ConvertToRenderScene.
-      if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+      if (!lightusd::legacy::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         loaded_ = false;
         return false;
@@ -3145,7 +3145,7 @@ class LightUSDLoaderNative {
 
       env.asset_resolver = arr;
     } else {
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
       if (!SetupFetchAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
         loaded_ = false;
@@ -3156,11 +3156,11 @@ class LightUSDLoaderNative {
     }
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverter converter;
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
     converter.SetDetailedProgressCallback(
-        [](const lightusd::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+        [](const lightusd::legacy::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
           if (pp) {
             pp->meshes_processed = info.meshes_processed;
@@ -3253,7 +3253,7 @@ class LightUSDLoaderNative {
     // Phase 1: Initial setup and format detection
     reportAsyncPhaseStart("detecting", 0.0f);
 
-    bool is_usdz = lightusd::IsUSDZ(
+    bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
     // Yield to allow UI to show "detecting" phase
@@ -3262,12 +3262,12 @@ class LightUSDLoaderNative {
     // Phase 2: Parsing USD
     reportAsyncPhaseStart("parsing", 0.1f);
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
-    lightusd::Stage stage;
-    loaded_ = lightusd::LoadUSDFromMemory(
+    lightusd::legacy::Stage stage;
+    loaded_ = lightusd::legacy::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, &stage, &warn_, &error_, options);
 
@@ -3292,7 +3292,7 @@ class LightUSDLoaderNative {
     // Phase 3: Setup conversion environment
     reportAsyncPhaseStart("setup", 0.3f);
 
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.load_texture_assets = loadTextureInNative_;
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -3314,7 +3314,7 @@ class LightUSDLoaderNative {
 
     if (is_usdz) {
       bool asset_on_memory = false;
-      if (!lightusd::ReadUSDZAssetInfoFromMemory(
+      if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         emscripten::val result = emscripten::val::object();
@@ -3323,8 +3323,8 @@ class LightUSDLoaderNative {
         co_return result;
       }
 
-      lightusd::AssetResolutionResolver arr;
-      if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+      lightusd::legacy::AssetResolutionResolver arr;
+      if (!lightusd::legacy::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         emscripten::val result = emscripten::val::object();
         result.set("success", false);
         result.set("error", "Failed to setup AssetResolution for USDZ");
@@ -3332,7 +3332,7 @@ class LightUSDLoaderNative {
       }
       env.asset_resolver = arr;
     } else {
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
       if (!SetupEMAssetResolution(arr, &em_resolver_)) {
         emscripten::val result = emscripten::val::object();
         result.set("success", false);
@@ -3348,11 +3348,11 @@ class LightUSDLoaderNative {
     // Phase 5: Converting meshes (Tydra)
     reportAsyncPhaseStart("meshes", 0.5f);
 
-    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverter converter;
 
     // Set up progress callback that reports to JS
     converter.SetDetailedProgressCallback(
-        [](const lightusd::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+        [](const lightusd::legacy::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           // Report progress to JS synchronously
           reportTydraProgress(
             static_cast<int>(info.meshes_processed),
@@ -3427,10 +3427,10 @@ class LightUSDLoaderNative {
     if (size > (size_t(1) << 30)) size = 0;
     std::cout << "binary.size = " << size << "\n";
     std::cout << "layer\n";
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
-    lightusd::Layer layer;
-    loaded_ = lightusd::LoadLayerFromMemory(data, size, filename, &layer,
+    lightusd::legacy::Layer layer;
+    loaded_ = lightusd::legacy::LoadLayerFromMemory(data, size, filename, &layer,
                                            &warn_, &error_, options);
     if (!loaded_) return false;
     loaded_as_layer_ = false;
@@ -3440,7 +3440,7 @@ class LightUSDLoaderNative {
 
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
   bool loadTest(const std::string &filename, const emscripten::val &u8) {
-    lightusd::TypedArray<uint8_t> binary;
+    lightusd::legacy::TypedArray<uint8_t> binary;
     detail::uint8arrayToBuffer(u8, binary);
     return loadTestData(filename, binary.data(), binary.size());
   }
@@ -3494,98 +3494,98 @@ class LightUSDLoaderNative {
     tests.reserve(19);
     // Test 1: Empty value
     {
-      lightusd::value::Value v;
+      lightusd::legacy::value::Value v;
       size_t mem = v.estimate_memory_usage();
       tests.emplace_back("Empty value", mem);
     }
 
     // Test 2: Simple types
     {
-      lightusd::value::Value v1(42);  // int32
+      lightusd::legacy::value::Value v1(42);  // int32
       tests.emplace_back("int32(42)", v1.estimate_memory_usage());
     }
     {
-      lightusd::value::Value v2(3.14f);  // float
+      lightusd::legacy::value::Value v2(3.14f);  // float
       tests.emplace_back("float(3.14)", v2.estimate_memory_usage());
     }
     {
-      lightusd::value::Value v3(2.718);  // double
+      lightusd::legacy::value::Value v3(2.718);  // double
       tests.emplace_back("double(2.718)", v3.estimate_memory_usage());
     }
 
     // Test 3: Vector types
     {
-      lightusd::value::float3 f3{1.0f, 2.0f, 3.0f};
-      lightusd::value::Value v(f3);
+      lightusd::legacy::value::float3 f3{1.0f, 2.0f, 3.0f};
+      lightusd::legacy::value::Value v(f3);
       tests.emplace_back("float3", v.estimate_memory_usage());
     }
 
     // Test 4: Matrix types
     {
-      lightusd::value::matrix4d m4d;
-      lightusd::value::Value v(m4d);
+      lightusd::legacy::value::matrix4d m4d;
+      lightusd::legacy::value::Value v(m4d);
       tests.emplace_back("matrix4d", v.estimate_memory_usage());
     }
 
     // Test 5: String type
     {
       std::string str = "Hello, World! This is a test string.";
-      lightusd::value::Value v(str);
+      lightusd::legacy::value::Value v(str);
       tests.emplace_back("string('" + str + "')", v.estimate_memory_usage());
     }
 
     // Test 6: Token type
     {
-      lightusd::value::token tok("myToken");
-      lightusd::value::Value v(tok);
+      lightusd::legacy::value::token tok("myToken");
+      lightusd::legacy::value::Value v(tok);
       tests.emplace_back("token('myToken')", v.estimate_memory_usage());
     }
 
     // Test 7: Array of floats
     {
       std::vector<float> floats = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
-      lightusd::value::Value v(floats);
+      lightusd::legacy::value::Value v(floats);
       tests.emplace_back("float array (5 elements)", v.estimate_memory_usage());
     }
 
     // Test 8: Array of float3
     {
-      std::vector<lightusd::value::float3> vec3s = {
+      std::vector<lightusd::legacy::value::float3> vec3s = {
         {1.0f, 0.0f, 0.0f},
         {0.0f, 1.0f, 0.0f},
         {0.0f, 0.0f, 1.0f}
       };
-      lightusd::value::Value v(vec3s);
+      lightusd::legacy::value::Value v(vec3s);
       tests.emplace_back("float3 array (3 elements)", v.estimate_memory_usage());
     }
 
     // Test 9: Array of strings
     {
       std::vector<std::string> strings = {"one", "two", "three", "four"};
-      lightusd::value::Value v(strings);
+      lightusd::legacy::value::Value v(strings);
       tests.emplace_back("string array (4 elements)", v.estimate_memory_usage());
     }
 
     // Test 10: Color types (role types)
     {
-      lightusd::value::color3f c3f{1.0f, 0.5f, 0.0f};
-      lightusd::value::Value v(c3f);
+      lightusd::legacy::value::color3f c3f{1.0f, 0.5f, 0.0f};
+      lightusd::legacy::value::Value v(c3f);
       tests.emplace_back("color3f", v.estimate_memory_usage());
     }
 
     // Test 11: Normal types (role types)
     {
-      lightusd::value::normal3f n3f{0.0f, 1.0f, 0.0f};
-      lightusd::value::Value v(n3f);
+      lightusd::legacy::value::normal3f n3f{0.0f, 1.0f, 0.0f};
+      lightusd::legacy::value::Value v(n3f);
       tests.emplace_back("normal3f", v.estimate_memory_usage());
     }
 
     // Test 12: TimeSamples
     {
-      lightusd::value::TimeSamples ts;
-      ts.add_sample(0.0, lightusd::value::Value(1.0f));
-      ts.add_sample(1.0, lightusd::value::Value(2.0f));
-      ts.add_sample(2.0, lightusd::value::Value(3.0f));
+      lightusd::legacy::value::TimeSamples ts;
+      ts.add_sample(0.0, lightusd::legacy::value::Value(1.0f));
+      ts.add_sample(1.0, lightusd::legacy::value::Value(2.0f));
+      ts.add_sample(2.0, lightusd::legacy::value::Value(3.0f));
       size_t mem = ts.estimate_memory_usage();
       tests.emplace_back("TimeSamples (3 samples)", mem);
     }
@@ -3593,40 +3593,40 @@ class LightUSDLoaderNative {
     // Test 13: Large array test (using specified array length)
     {
       std::vector<float> large_array(arrayLength, 1.0f);
-      lightusd::value::Value v(large_array);
+      lightusd::legacy::value::Value v(large_array);
       tests.emplace_back("float array (" + std::to_string(arrayLength) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 13b: Large float3 array test (using specified array length / 3)
     {
       int vec3Count = std::max(1, arrayLength / 3);
-      std::vector<lightusd::value::float3> large_vec3_array;
+      std::vector<lightusd::legacy::value::float3> large_vec3_array;
       large_vec3_array.reserve(vec3Count);
       for (int i = 0; i < vec3Count; ++i) {
         large_vec3_array.push_back({static_cast<float>(i), static_cast<float>(i+1), static_cast<float>(i+2)});
       }
-      lightusd::value::Value v(large_vec3_array);
+      lightusd::legacy::value::Value v(large_vec3_array);
       tests.emplace_back("float3 array (" + std::to_string(vec3Count) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 13c: Large int array test (using specified array length)
     {
       std::vector<int32_t> large_int_array(arrayLength, 42);
-      lightusd::value::Value v(large_int_array);
+      lightusd::legacy::value::Value v(large_int_array);
       tests.emplace_back("int32 array (" + std::to_string(arrayLength) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 14: Half precision types
     {
-      lightusd::value::half h(lightusd::value::float_to_half_full(1.5f));
-      lightusd::value::Value v(h);
+      lightusd::legacy::value::half h(lightusd::legacy::value::float_to_half_full(1.5f));
+      lightusd::legacy::value::Value v(h);
       tests.emplace_back("half(1.5)", v.estimate_memory_usage());
     }
 
     // Test 15: Quaternion types
     {
-      lightusd::value::quatf q{{0.0f, 0.0f, 0.0f}, 1.0f};
-      lightusd::value::Value v(q);
+      lightusd::legacy::value::quatf q{{0.0f, 0.0f, 0.0f}, 1.0f};
+      lightusd::legacy::value::Value v(q);
       tests.emplace_back("quatf", v.estimate_memory_usage());
     }
 
@@ -3671,22 +3671,22 @@ class LightUSDLoaderNative {
 
     std::cout << "loadAndComposite " << std::endl;
 
-    bool is_usdz = lightusd::IsUSDZ(
+    bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
-    lightusd::Layer root_layer;
-    bool ret = lightusd::LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(binary.data()), binary.size(), filename, &root_layer, &warn_, &error_);
+    lightusd::legacy::Layer root_layer;
+    bool ret = lightusd::legacy::LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(binary.data()), binary.size(), filename, &root_layer, &warn_, &error_);
 
       if (!ret) {
         return false;
       }
 
-      lightusd::Stage stage;
+      lightusd::legacy::Stage stage;
       stage.metas() = root_layer.metas();
 
       std::string warn;
 
-      lightusd::AssetResolutionResolver resolver;
+      lightusd::legacy::AssetResolutionResolver resolver;
       if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
         return false;
@@ -3713,17 +3713,17 @@ class LightUSDLoaderNative {
 
       // Allow parent-relative/drive-prefixed asset paths (UE exports); the
       // sandboxed in-memory resolver bounds what is reachable.
-      lightusd::SublayersCompositionOptions sublayer_options;
+      lightusd::legacy::SublayersCompositionOptions sublayer_options;
       sublayer_options.allow_parent_relative_paths = true;
-      lightusd::ReferencesCompositionOptions references_options;
+      lightusd::legacy::ReferencesCompositionOptions references_options;
       references_options.allow_parent_relative_paths = true;
-      lightusd::PayloadCompositionOptions payload_options;
+      lightusd::legacy::PayloadCompositionOptions payload_options;
       payload_options.allow_parent_relative_paths = true;
 
-      lightusd::Layer src_layer = root_layer;
+      lightusd::legacy::Layer src_layer = root_layer;
       if (comp_features.subLayers) {
-        lightusd::Layer composited_layer;
-        if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_, sublayer_options)) {
+        lightusd::legacy::Layer composited_layer;
+        if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_, sublayer_options)) {
           //std::cerr << "Failed to composite subLayers: " << err << "\n";
           return false;
         }
@@ -3754,8 +3754,8 @@ class LightUSDLoaderNative {
               src_layer.check_unresolved_specializes();
           if (!has_unresolved) break;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositeAllArcs(resolver, src_layer,
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositeAllArcs(resolver, src_layer,
                                           &composited_layer, &warn_,
                                           &error_)) {
             return false;
@@ -3774,8 +3774,8 @@ class LightUSDLoaderNative {
           } else {
             has_unresolved = true;
 
-            lightusd::Layer composited_layer;
-            if (!lightusd::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_, references_options)) {
+            lightusd::legacy::Layer composited_layer;
+            if (!lightusd::legacy::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_, references_options)) {
               return false;
             }
 
@@ -3791,8 +3791,8 @@ class LightUSDLoaderNative {
           } else {
             has_unresolved = true;
 
-            lightusd::Layer composited_layer;
-            if (!lightusd::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_, payload_options)) {
+            lightusd::legacy::Layer composited_layer;
+            if (!lightusd::legacy::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_, payload_options)) {
               return false;
             }
 
@@ -3806,8 +3806,8 @@ class LightUSDLoaderNative {
           } else {
             has_unresolved = true;
 
-            lightusd::Layer composited_layer;
-            if (!lightusd::CompositeInherits(src_layer, &composited_layer, &warn_, &error_)) {
+            lightusd::legacy::Layer composited_layer;
+            if (!lightusd::legacy::CompositeInherits(src_layer, &composited_layer, &warn_, &error_)) {
               return false;
             }
 
@@ -3820,7 +3820,7 @@ class LightUSDLoaderNative {
           // and payloads are resolved (see ShouldDeferVariantComposition).
           if (!src_layer.check_unresolved_variant()) {
             std::cout << "# iter " << i << ": no unresolved variant.\n";
-          } else if (lightusd::ShouldDeferVariantComposition(
+          } else if (lightusd::legacy::ShouldDeferVariantComposition(
                          src_layer, comp_features.references,
                          comp_features.payload)) {
             std::cout << "# iter " << i
@@ -3829,8 +3829,8 @@ class LightUSDLoaderNative {
           } else {
             has_unresolved = true;
 
-            lightusd::Layer composited_layer;
-            if (!lightusd::CompositeVariant(src_layer, &composited_layer, &warn_, &error_)) {
+            lightusd::legacy::Layer composited_layer;
+            if (!lightusd::legacy::CompositeVariant(src_layer, &composited_layer, &warn_, &error_)) {
               return false;
             }
 
@@ -3850,7 +3850,7 @@ class LightUSDLoaderNative {
       }
       }  // !full_livrps
 
-      lightusd::Stage comp_stage;
+      lightusd::legacy::Stage comp_stage;
       ret = LayerToStage(src_layer, &comp_stage, &warn_, &error_);
 
       if (!ret) {
@@ -3881,8 +3881,8 @@ class LightUSDLoaderNative {
     out->aspect_ratio = c.horizontalAperture / c.verticalAperture;
     std::string projection;
     switch (c.projection) {
-      case lightusd::GeomCamera::Projection::Perspective: projection = "perspective"; break;
-      case lightusd::GeomCamera::Projection::Orthographic: projection = "orthographic"; break;
+      case lightusd::legacy::GeomCamera::Projection::Perspective: projection = "perspective"; break;
+      case lightusd::legacy::GeomCamera::Projection::Orthographic: projection = "orthographic"; break;
     }
     lightusd::web::combined::StoreStringTable({c.name, c.abs_path, c.display_name, projection}, {});
     return 1;
@@ -4188,9 +4188,9 @@ class LightUSDLoaderNative {
     }
     const auto &material = render_scene_.materials[size_t(id)];
     if (format == "json" || format == "xml") {
-      const auto serialization = format == "xml" ? lightusd::tydra::SerializationFormat::XML
-                                                   : lightusd::tydra::SerializationFormat::JSON;
-      auto serialized = lightusd::tydra::serializeMaterial(material, serialization, &render_scene_);
+      const auto serialization = format == "xml" ? lightusd::legacy::tydra::SerializationFormat::XML
+                                                   : lightusd::legacy::tydra::SerializationFormat::JSON;
+      auto serialized = lightusd::legacy::tydra::serializeMaterial(material, serialization, &render_scene_);
       if (!serialized.has_value()) { strings = {serialized.error()}; return 0; }
       strings = {serialized.value(), format}; return 1;
     }
@@ -4310,51 +4310,51 @@ class LightUSDLoaderNative {
     out->guideRadius = l.guideRadius;
     std::string typeStr;
     switch (l.type) {
-      case lightusd::tydra::RenderLight::Type::Point: typeStr = "point"; break;
-      case lightusd::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
-      case lightusd::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
-      case lightusd::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
-      case lightusd::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
-      case lightusd::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
-      case lightusd::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
-      case lightusd::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
-      case lightusd::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Point: typeStr = "point"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
     }
     std::string domeTexFmtStr;
     switch (l.domeTextureFormat) {
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
     }
     std::vector<std::string> strings = {l.name, l.abs_path, l.display_name,
         typeStr, l.textureFile, l.shapingIesFile, domeTexFmtStr, l.material_sync_mode};
     if (l.hasSpectralEmission()) {
       const auto &emission = *l.spd_emission;
-      static_assert(sizeof(lightusd::tydra::vec2) == 2 * sizeof(float), "spectral sample layout changed");
+      static_assert(sizeof(lightusd::legacy::tydra::vec2) == 2 * sizeof(float), "spectral sample layout changed");
       out->flags |= 16u;
       out->spectral_samples = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(emission.samples.data()));
       out->spectral_count = emission.samples.size();
       std::string interpStr;
       switch (emission.interpolation) {
-        case lightusd::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
-        case lightusd::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
-        case lightusd::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
-        case lightusd::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
       }
-      std::string unitStr = (emission.unit == lightusd::tydra::WavelengthUnit::Nanometers)
+      std::string unitStr = (emission.unit == lightusd::legacy::tydra::WavelengthUnit::Nanometers)
                             ? "nanometers" : "micrometers";
       std::string presetStr;
       switch (emission.preset) {
-        case lightusd::tydra::IlluminantPreset::None: presetStr = "none"; break;
-        case lightusd::tydra::IlluminantPreset::A: presetStr = "a"; break;
-        case lightusd::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
-        case lightusd::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
-        case lightusd::tydra::IlluminantPreset::E: presetStr = "e"; break;
-        case lightusd::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
-        case lightusd::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
-        case lightusd::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
-        case lightusd::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::None: presetStr = "none"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::A: presetStr = "a"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::E: presetStr = "e"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
       }
       strings.push_back(std::move(interpStr));
       strings.push_back(std::move(unitStr));
@@ -4389,15 +4389,15 @@ class LightUSDLoaderNative {
     // Light type as string
     std::string typeStr;
     switch (l.type) {
-      case lightusd::tydra::RenderLight::Type::Point: typeStr = "point"; break;
-      case lightusd::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
-      case lightusd::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
-      case lightusd::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
-      case lightusd::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
-      case lightusd::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
-      case lightusd::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
-      case lightusd::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
-      case lightusd::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Point: typeStr = "point"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
+      case lightusd::legacy::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
     }
     light.set("type", typeStr);
 
@@ -4474,10 +4474,10 @@ class LightUSDLoaderNative {
     // DomeLight specific
     std::string domeTexFmtStr;
     switch (l.domeTextureFormat) {
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
-      case lightusd::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
+      case lightusd::legacy::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
     }
     light.set("domeTextureFormat", domeTexFmtStr);
     light.set("guideRadius", l.guideRadius);
@@ -4505,30 +4505,30 @@ class LightUSDLoaderNative {
       // Interpolation method
       std::string interpStr;
       switch (emission.interpolation) {
-        case lightusd::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
-        case lightusd::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
-        case lightusd::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
-        case lightusd::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
+        case lightusd::legacy::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
       }
       spd.set("interpolation", interpStr);
 
       // Wavelength unit
-      std::string unitStr = (emission.unit == lightusd::tydra::WavelengthUnit::Nanometers)
+      std::string unitStr = (emission.unit == lightusd::legacy::tydra::WavelengthUnit::Nanometers)
                             ? "nanometers" : "micrometers";
       spd.set("unit", unitStr);
 
       // Illuminant preset
       std::string presetStr;
       switch (emission.preset) {
-        case lightusd::tydra::IlluminantPreset::None: presetStr = "none"; break;
-        case lightusd::tydra::IlluminantPreset::A: presetStr = "a"; break;
-        case lightusd::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
-        case lightusd::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
-        case lightusd::tydra::IlluminantPreset::E: presetStr = "e"; break;
-        case lightusd::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
-        case lightusd::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
-        case lightusd::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
-        case lightusd::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::None: presetStr = "none"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::A: presetStr = "a"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::E: presetStr = "e"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
+        case lightusd::legacy::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
       }
       spd.set("preset", presetStr);
 
@@ -4559,11 +4559,11 @@ class LightUSDLoaderNative {
     if (id < 0 || size_t(id) >= render_scene_.lights.size()) {
       *text = "Invalid light ID"; return false;
     }
-    lightusd::tydra::SerializationFormat serialization;
-    if (format == "xml") serialization = lightusd::tydra::SerializationFormat::XML;
-    else if (format == "json") serialization = lightusd::tydra::SerializationFormat::JSON;
+    lightusd::legacy::tydra::SerializationFormat serialization;
+    if (format == "xml") serialization = lightusd::legacy::tydra::SerializationFormat::XML;
+    else if (format == "json") serialization = lightusd::legacy::tydra::SerializationFormat::JSON;
     else { *text = "Unsupported format. Use 'json' or 'xml'"; return false; }
-    auto result = lightusd::tydra::serializeLight(render_scene_.lights[size_t(id)], serialization, &render_scene_);
+    auto result = lightusd::legacy::tydra::serializeLight(render_scene_.lights[size_t(id)], serialization, &render_scene_);
     if (!result.has_value()) { *text = result.error(); return false; }
     *text = std::move(result.value());
     return true;
@@ -4615,8 +4615,8 @@ class LightUSDLoaderNative {
     // Projection type
     std::string projStr;
     switch (c.projection) {
-      case lightusd::GeomCamera::Projection::Perspective: projStr = "perspective"; break;
-      case lightusd::GeomCamera::Projection::Orthographic: projStr = "orthographic"; break;
+      case lightusd::legacy::GeomCamera::Projection::Perspective: projStr = "perspective"; break;
+      case lightusd::legacy::GeomCamera::Projection::Orthographic: projStr = "orthographic"; break;
     }
     cam.set("projection", projStr);
 
@@ -4889,8 +4889,9 @@ class LightUSDLoaderNative {
   // The loader owns the returned cache until scene mutation or another query
   // replaces it; JS copy accessors copy before releasing their loader reference.
   const std::vector<float> &meshTangents_(
-      int mesh_id, const lightusd::tydra::RenderMesh &rmesh) const {
+      int mesh_id, const lightusd::legacy::tydra::RenderMesh &rmesh) const {
       using namespace lightusd::tydra;
+      using namespace lightusd::legacy::tydra;  // NOLINT
       size_t nv = rmesh.tangents.vertex_count();
       auto &cache = tangents4_cache_[mesh_id];
       cache.resize(nv * 4);
@@ -4929,7 +4930,7 @@ class LightUSDLoaderNative {
         const float *B = has_binormals
             ? reinterpret_cast<const float *>(rmesh.binormals.data.data()) : nullptr;
         for (size_t i = 0; i < nv; ++i) {
-          lightusd::tydra::vec3 normal{0.0f, 0.0f, 1.0f};
+          lightusd::legacy::tydra::vec3 normal{0.0f, 0.0f, 1.0f};
           const bool has_normal = ReadNormalForTangent(rmesh, i, &normal);
           float tx = T[i*3], ty = T[i*3+1], tz = T[i*3+2];
           if (has_normal) FixupZeroTangent(tx, ty, tz, normal[0], normal[1], normal[2]);
@@ -4952,7 +4953,7 @@ class LightUSDLoaderNative {
     int32_t start, count, material_id;
   };
 
-  static void meshMaterialOrder_(const lightusd::tydra::RenderMesh &rmesh,
+  static void meshMaterialOrder_(const lightusd::legacy::tydra::RenderMesh &rmesh,
                                  std::vector<int> &reorderMap,
                                  std::vector<MeshSubmesh> &groups) {
       // Step 1: Group face indices by material
@@ -4963,7 +4964,7 @@ class LightUSDLoaderNative {
       std::unordered_set<int> coveredFaces;
 
       for (const auto& subset_pair : rmesh.material_subsetMap) {
-        const lightusd::tydra::MaterialSubset& subset = subset_pair.second;
+        const lightusd::legacy::tydra::MaterialSubset& subset = subset_pair.second;
         const std::vector<int>& faceIndices = subset.indices();
 
         int matId = subset.material_id;
@@ -5028,12 +5029,12 @@ class LightUSDLoaderNative {
   }
 
   const std::vector<float> *reorderMeshTangents_(
-      int mesh_id, const lightusd::tydra::RenderMesh &rmesh,
+      int mesh_id, const lightusd::legacy::tydra::RenderMesh &rmesh,
       const std::vector<int> &reorderMap) const {
     const size_t numNewTriangles = reorderMap.size();
     const auto &fvIndices = rmesh.faceVertexIndices();
     const bool singleIndexable = rmesh.is_single_indexable &&
-        rmesh.tangents.variability != lightusd::tydra::VertexVariability::FaceVarying;
+        rmesh.tangents.variability != lightusd::legacy::tydra::VertexVariability::FaceVarying;
       if (!rmesh.tangents.empty() && tangents4_cache_.count(mesh_id) &&
           !tangents4_cache_[mesh_id].empty()) {
         const float* t4 = tangents4_cache_[mesh_id].data();
@@ -5096,8 +5097,8 @@ class LightUSDLoaderNative {
         static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
       return false;
     }
-    using lightusd::tydra::VertexAttributeFormat;
-    const lightusd::tydra::RenderMesh &rmesh =
+    using lightusd::legacy::tydra::VertexAttributeFormat;
+    const lightusd::legacy::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
 
     const size_t vtx = rmesh.points.size();
@@ -5130,7 +5131,7 @@ class LightUSDLoaderNative {
         rmesh.is_single_indexable && !cnt.empty()) {
       std::vector<int> face_materials(cnt.size(), rmesh.material_id);
       for (const auto &subset_pair : rmesh.material_subsetMap) {
-        const lightusd::tydra::MaterialSubset &subset = subset_pair.second;
+        const lightusd::legacy::tydra::MaterialSubset &subset = subset_pair.second;
         const int material_id = subset.material_id;
         for (int face_index : subset.indices()) {
           if (face_index >= 0 &&
@@ -5185,7 +5186,7 @@ class LightUSDLoaderNative {
     if (!rmesh.vertex_colors.empty()) {
       const auto &colors = rmesh.vertex_colors;
       const size_t nv = colors.vertex_count();
-      using lightusd::tydra::VertexAttributeFormat;
+      using lightusd::legacy::tydra::VertexAttributeFormat;
       if (colors.format == VertexAttributeFormat::Vec3) {
         out.add(5, 0, 0, reinterpret_cast<const float *>(colors.data.data()), nv * 3, 3);
       } else if (colors.format == VertexAttributeFormat::Byte3) {
@@ -5298,21 +5299,21 @@ class LightUSDLoaderNative {
       root["error"] = "invalid mesh id";
       return root.dump();
     }
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       root["error"] = error_.empty() ? "stage unavailable" : error_;
       return root.dump();
     }
     const auto &rmesh = render_scene_.meshes[size_t(mesh_id)];
     root["primPath"] = rmesh.abs_path;
-    const lightusd::Prim *prim = nullptr;
+    const lightusd::legacy::Prim *prim = nullptr;
     std::string find_error;
-    if (!stage.find_prim_at_path(lightusd::Path(rmesh.abs_path, ""), prim,
+    if (!stage.find_prim_at_path(lightusd::legacy::Path(rmesh.abs_path, ""), prim,
                                  &find_error) || !prim) {
       root["error"] = find_error.empty() ? "mesh prim not found" : find_error;
       return root.dump();
     }
-    const auto *mesh = prim->as<lightusd::GeomMesh>();
+    const auto *mesh = prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh) {
       root["error"] = "render node is not a GeomMesh";
       return root.dump();
@@ -5329,13 +5330,13 @@ class LightUSDLoaderNative {
       item["elementSize"] = primvar.has_elementSize()
                                  ? primvar.get_elementSize()
                                  : 1;
-      lightusd::value::Value value;
+      lightusd::legacy::value::Value value;
       std::string value_error;
       if (!primvar.flatten_with_indices(&value, &value_error)) {
         item["error"] = value_error.empty() ? "unable to flatten primvar"
                                              : value_error;
       } else {
-        nlohmann::json encoded = lightusd::tydra::ValueToJSON(value);
+        nlohmann::json encoded = lightusd::legacy::tydra::ValueToJSON(value);
         if (encoded.dump().size() > 16u * 1024u * 1024u) {
           item["error"] = "primvar exceeds JSON bridge budget";
         } else {
@@ -5417,8 +5418,8 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::tydra::BufferData buffer;
-    buffer.componentType = lightusd::tydra::ComponentType::UInt8;
+    lightusd::legacy::tydra::BufferData buffer;
+    buffer.componentType = lightusd::legacy::tydra::ComponentType::UInt8;
     buffer.data.resize(byte_end - byte_begin);
     memcpy(buffer.data.data(), src + byte_begin, byte_end - byte_begin);
 
@@ -5490,7 +5491,7 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    const lightusd::tydra::RenderMesh &rmesh =
+    const lightusd::legacy::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
     const size_t point_scalar_count = rmesh.points.size() * 3;
     mesh.strings = {rmesh.prim_name, rmesh.display_name, rmesh.abs_path, rmesh.light_material_sync_mode};
@@ -5515,7 +5516,7 @@ class LightUSDLoaderNative {
     mesh.set(0, 0, 0, points_ptr, point_scalar_count, 3);
 
     if (!rmesh.normals.empty()) {
-      using lightusd::tydra::VertexAttributeFormat;
+      using lightusd::legacy::tydra::VertexAttributeFormat;
       if (rmesh.normals.format == VertexAttributeFormat::Char3) {
         // SNorm8x3 — pass as Int8Array; Three.js uses normalized=true
         const int8_t *normals_ptr =
@@ -5558,13 +5559,13 @@ class LightUSDLoaderNative {
       const size_t nv = colors.vertex_count();
       auto &cache = vertex_colors_cache_[mesh_id];
       cache.resize(nv * 3);
-      if (colors.format == lightusd::tydra::VertexAttributeFormat::Vec3) {
+      if (colors.format == lightusd::legacy::tydra::VertexAttributeFormat::Vec3) {
         const float *src = reinterpret_cast<const float *>(colors.data.data());
         std::copy(src, src + cache.size(), cache.begin());
-      } else if (colors.format == lightusd::tydra::VertexAttributeFormat::Byte3) {
+      } else if (colors.format == lightusd::legacy::tydra::VertexAttributeFormat::Byte3) {
         const uint8_t *src = reinterpret_cast<const uint8_t *>(colors.data.data());
         for (size_t i = 0; i < cache.size(); i++) cache[i] = static_cast<float>(src[i]) / 255.0f;
-      } else if (colors.format == lightusd::tydra::VertexAttributeFormat::Char3) {
+      } else if (colors.format == lightusd::legacy::tydra::VertexAttributeFormat::Char3) {
         const int8_t *src = reinterpret_cast<const int8_t *>(colors.data.data());
         for (size_t i = 0; i < cache.size(); i++) cache[i] = std::max(0.0f, static_cast<float>(src[i]) / 127.0f);
       } else {
@@ -5575,7 +5576,7 @@ class LightUSDLoaderNative {
     // Keep copied mesh access consistent with getMeshPtr(): RenderMesh stores
     // authored displayColor as float3 and displayOpacity as a float stream.
     {
-      using lightusd::tydra::VertexAttributeFormat;
+      using lightusd::legacy::tydra::VertexAttributeFormat;
       if (!rmesh.vertex_colors.empty() &&
           rmesh.vertex_colors.format == VertexAttributeFormat::Vec3) {
         const float *colors_ptr = reinterpret_cast<const float *>(
@@ -5610,6 +5611,7 @@ class LightUSDLoaderNative {
     // Supports both packed formats (10_10_10_2, SNorm8, Fp16) and legacy Vec3.
     if (!rmesh.tangents.empty()) {
       using namespace lightusd::tydra;
+      using namespace lightusd::legacy::tydra;  // NOLINT
       const size_t nv = rmesh.tangents.vertex_count();
       const auto &cache = meshTangents_(mesh_id, rmesh);
       mesh.set(8, 0, 0, cache.data(), cache.size(), 4);
@@ -5701,7 +5703,7 @@ class LightUSDLoaderNative {
       // Reorder normals - per-vertex if single_indexable, facevarying otherwise
       // Handles SNorm8x3 (Char3), SNorm16x3 (Short3), and float3 (Vec3) formats.
       if (!rmesh.normals.empty()) {
-        using lightusd::tydra::VertexAttributeFormat;
+        using lightusd::legacy::tydra::VertexAttributeFormat;
         const bool isSnorm8 = (rmesh.normals.format == VertexAttributeFormat::Char3);
         const bool isSnorm16 = (rmesh.normals.format == VertexAttributeFormat::Short3);
         const size_t totalVerts = numNewTriangles * 3;
@@ -5963,7 +5965,7 @@ class LightUSDLoaderNative {
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
   struct NodeCursor {
     struct Frame {
-      const lightusd::tydra::Node *node;
+      const lightusd::legacy::tydra::Node *node;
       size_t next_child{0};
     };
     std::vector<Frame> ancestors;
@@ -6055,7 +6057,7 @@ class LightUSDLoaderNative {
     metadata.set("comment", render_scene_.meta.comment);
     metadata.set("upAxis", render_scene_.meta.upAxis);
     metadata.set("metersPerUnit", render_scene_.meta.metersPerUnit);
-    const lightusd::Layer &meta_layer = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &meta_layer = composited_ ? composed_layer_ : layer_;
     metadata.set("kilogramsPerUnit",
                  meta_layer.metas().kilogramsPerUnit.get_value());
     metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
@@ -6112,9 +6114,9 @@ class LightUSDLoaderNative {
     out->clip_sample_rate = clip.value_clip_sample_rate;
     std::string source = "Unknown";
     switch (clip.source_type) {
-      case lightusd::tydra::AnimationSourceType::XformOp: source = "XformOp"; break;
-      case lightusd::tydra::AnimationSourceType::SkelAnimation: source = "SkelAnimation"; break;
-      case lightusd::tydra::AnimationSourceType::BlendShape: source = "BlendShape"; break;
+      case lightusd::legacy::tydra::AnimationSourceType::XformOp: source = "XformOp"; break;
+      case lightusd::legacy::tydra::AnimationSourceType::SkelAnimation: source = "SkelAnimation"; break;
+      case lightusd::legacy::tydra::AnimationSourceType::BlendShape: source = "BlendShape"; break;
       default: break;
     }
     std::vector<std::string> strings = {clip.name.empty() ? "Animation" + std::to_string(id) : clip.name,
@@ -6132,8 +6134,8 @@ class LightUSDLoaderNative {
     if (size_t(index) >= clip.samplers.size()) return 0;
     const auto &sampler = clip.samplers[size_t(index)];
     switch (sampler.interpolation) {
-      case lightusd::tydra::AnimationInterpolation::Step: out->interpolation = 1; break;
-      case lightusd::tydra::AnimationInterpolation::CubicSpline: out->interpolation = 2; break;
+      case lightusd::legacy::tydra::AnimationInterpolation::Step: out->interpolation = 1; break;
+      case lightusd::legacy::tydra::AnimationInterpolation::CubicSpline: out->interpolation = 2; break;
       default: break;
     }
     out->times = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sampler.times.data()));
@@ -6151,15 +6153,15 @@ class LightUSDLoaderNative {
     if (size_t(index) >= clip.channels.size()) return 0;
     const auto &ch = clip.channels[size_t(index)];
     out->flags = (ch.is_valid() ? 1u : 0u) | (ch.is_custom_property ? 4u : 0u) |
-        (ch.target_type == lightusd::tydra::ChannelTargetType::SkeletonJoint ? 8u : 0u);
+        (ch.target_type == lightusd::legacy::tydra::ChannelTargetType::SkeletonJoint ? 8u : 0u);
     out->sampler = ch.sampler; out->target_node = ch.target_node;
     out->skeleton_id = ch.skeleton_id; out->joint_id = ch.joint_id;
     switch (ch.path) {
-      case lightusd::tydra::AnimationPath::Translation: out->path = 0; break;
-      case lightusd::tydra::AnimationPath::Rotation: out->path = 1; break;
-      case lightusd::tydra::AnimationPath::Scale: out->path = 2; break;
-      case lightusd::tydra::AnimationPath::Weights: out->path = 3; break;
-      case lightusd::tydra::AnimationPath::CustomProperty: out->path = 4; break;
+      case lightusd::legacy::tydra::AnimationPath::Translation: out->path = 0; break;
+      case lightusd::legacy::tydra::AnimationPath::Rotation: out->path = 1; break;
+      case lightusd::legacy::tydra::AnimationPath::Scale: out->path = 2; break;
+      case lightusd::legacy::tydra::AnimationPath::Weights: out->path = 3; break;
+      case lightusd::legacy::tydra::AnimationPath::CustomProperty: out->path = 4; break;
       default: out->path = 5; break;
     }
     std::string node_name, track_base;
@@ -6200,9 +6202,9 @@ class LightUSDLoaderNative {
     {
       std::string sourceTypeStr = "Unknown";
       switch (clip.source_type) {
-        case lightusd::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
-        case lightusd::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
-        case lightusd::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
         default: break;
       }
     anim.set("sourceType", sourceTypeStr);
@@ -6242,23 +6244,23 @@ class LightUSDLoaderNative {
 
         // Add property suffix for Three.js compatibility
         switch (channel.path) {
-          case lightusd::tydra::AnimationPath::Translation:
+          case lightusd::legacy::tydra::AnimationPath::Translation:
             trackName += ".position";
             track.set("type", "vector3");
             break;
-          case lightusd::tydra::AnimationPath::Rotation:
+          case lightusd::legacy::tydra::AnimationPath::Rotation:
             trackName += ".quaternion";
             track.set("type", "quaternion");
             break;
-          case lightusd::tydra::AnimationPath::Scale:
+          case lightusd::legacy::tydra::AnimationPath::Scale:
             trackName += ".scale";
             track.set("type", "vector3");
             break;
-          case lightusd::tydra::AnimationPath::Weights:
+          case lightusd::legacy::tydra::AnimationPath::Weights:
             trackName += ".morphTargetInfluences";
             track.set("type", "number");
             break;
-          case lightusd::tydra::AnimationPath::CustomProperty: {
+          case lightusd::legacy::tydra::AnimationPath::CustomProperty: {
             std::string type = "number";
             if (!sampler.times.empty() && !sampler.values.empty() &&
                 (sampler.values.size() % sampler.times.size() == 0u)) {
@@ -6289,13 +6291,13 @@ class LightUSDLoaderNative {
       // Set interpolation mode
       std::string interpolation;
       switch (sampler.interpolation) {
-        case lightusd::tydra::AnimationInterpolation::Step:
+        case lightusd::legacy::tydra::AnimationInterpolation::Step:
           interpolation = "STEP";
           break;
-        case lightusd::tydra::AnimationInterpolation::CubicSpline:
+        case lightusd::legacy::tydra::AnimationInterpolation::CubicSpline:
           interpolation = "CUBICSPLINE";
           break;
-        case lightusd::tydra::AnimationInterpolation::Linear:
+        case lightusd::legacy::tydra::AnimationInterpolation::Linear:
         default:
           interpolation = "LINEAR";
           break;
@@ -6315,19 +6317,19 @@ class LightUSDLoaderNative {
       // Add property path for reference
       std::string pathStr;
       switch (channel.path) {
-        case lightusd::tydra::AnimationPath::Translation:
+        case lightusd::legacy::tydra::AnimationPath::Translation:
           pathStr = "translation";
           break;
-        case lightusd::tydra::AnimationPath::Rotation:
+        case lightusd::legacy::tydra::AnimationPath::Rotation:
           pathStr = "rotation";
           break;
-        case lightusd::tydra::AnimationPath::Scale:
+        case lightusd::legacy::tydra::AnimationPath::Scale:
           pathStr = "scale";
           break;
-        case lightusd::tydra::AnimationPath::Weights:
+        case lightusd::legacy::tydra::AnimationPath::Weights:
           pathStr = "weights";
           break;
-        case lightusd::tydra::AnimationPath::CustomProperty:
+        case lightusd::legacy::tydra::AnimationPath::CustomProperty:
           pathStr = "custom";
           break;
         default:
@@ -6351,26 +6353,26 @@ class LightUSDLoaderNative {
       ch.set("joint_id", channel.joint_id);
 
       // Set target_type string
-      std::string targetTypeStr = (channel.target_type == lightusd::tydra::ChannelTargetType::SkeletonJoint)
+      std::string targetTypeStr = (channel.target_type == lightusd::legacy::tydra::ChannelTargetType::SkeletonJoint)
         ? "SkeletonJoint" : "SceneNode";
       ch.set("target_type", targetTypeStr);
 
       // Set path string
       std::string pathStr;
       switch (channel.path) {
-        case lightusd::tydra::AnimationPath::Translation:
+        case lightusd::legacy::tydra::AnimationPath::Translation:
           pathStr = "Translation";
           break;
-        case lightusd::tydra::AnimationPath::Rotation:
+        case lightusd::legacy::tydra::AnimationPath::Rotation:
           pathStr = "Rotation";
           break;
-        case lightusd::tydra::AnimationPath::Scale:
+        case lightusd::legacy::tydra::AnimationPath::Scale:
           pathStr = "Scale";
           break;
-        case lightusd::tydra::AnimationPath::Weights:
+        case lightusd::legacy::tydra::AnimationPath::Weights:
           pathStr = "Weights";
           break;
-        case lightusd::tydra::AnimationPath::CustomProperty:
+        case lightusd::legacy::tydra::AnimationPath::CustomProperty:
           pathStr = "CustomProperty";
           break;
         default:
@@ -6400,13 +6402,13 @@ class LightUSDLoaderNative {
 
       std::string interpolation;
       switch (sampler.interpolation) {
-        case lightusd::tydra::AnimationInterpolation::Step:
+        case lightusd::legacy::tydra::AnimationInterpolation::Step:
           interpolation = "STEP";
           break;
-        case lightusd::tydra::AnimationInterpolation::CubicSpline:
+        case lightusd::legacy::tydra::AnimationInterpolation::CubicSpline:
           interpolation = "CUBICSPLINE";
           break;
-        case lightusd::tydra::AnimationInterpolation::Linear:
+        case lightusd::legacy::tydra::AnimationInterpolation::Linear:
         default:
           interpolation = "LINEAR";
           break;
@@ -6464,9 +6466,9 @@ class LightUSDLoaderNative {
     {
       std::string sourceTypeStr = "Unknown";
       switch (clip.source_type) {
-        case lightusd::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
-        case lightusd::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
-        case lightusd::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case lightusd::legacy::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
         default: break;
       }
       info.set("sourceType", sourceTypeStr);
@@ -6517,7 +6519,7 @@ class LightUSDLoaderNative {
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
   struct SkeletonCursor {
     struct Frame {
-      const lightusd::tydra::SkelNode *node;
+      const lightusd::legacy::tydra::SkelNode *node;
       size_t next_child{0};
     };
     std::vector<Frame> ancestors;
@@ -6572,7 +6574,7 @@ class LightUSDLoaderNative {
   }
 #else
   // Convert SkelNode to JS object recursively
-  emscripten::val skelNodeToJS(const lightusd::tydra::SkelNode& node) const {
+  emscripten::val skelNodeToJS(const lightusd::legacy::tydra::SkelNode& node) const {
     emscripten::val obj = emscripten::val::object();
 
     obj.set("joint_path", node.joint_path);
@@ -6669,8 +6671,8 @@ class LightUSDLoaderNative {
     std::vector<double> rest_matrices;
 
     // Recursive function to traverse skeleton hierarchy
-    std::function<void(const lightusd::tydra::SkelNode&, int)> traverseNode;
-    traverseNode = [&](const lightusd::tydra::SkelNode& node, int parent_idx) {
+    std::function<void(const lightusd::legacy::tydra::SkelNode&, int)> traverseNode;
+    traverseNode = [&](const lightusd::legacy::tydra::SkelNode& node, int parent_idx) {
       int current_idx = static_cast<int>(joint_names.size());
 
       joint_names.push_back(node.joint_name);
@@ -6918,10 +6920,10 @@ class LightUSDLoaderNative {
     std::string err;
     // Use Lengyel (default) for deferred computation — fast and lightweight for WASM.
     // Use Packed1010102 for WASM (WebGL2 native, 4 bytes/vertex).
-    bool ok = lightusd::tydra::RenderSceneConverter::ComputeDeferredTangents(
+    bool ok = lightusd::legacy::tydra::RenderSceneConverter::ComputeDeferredTangents(
         &mesh,
-        lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel,
-        lightusd::tydra::MeshConverterConfig::TangentStorageFormat::Packed1010102,
+        lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel,
+        lightusd::legacy::tydra::MeshConverterConfig::TangentStorageFormat::Packed1010102,
         &err);
     if (!ok) {
       std::cerr << "computeMeshTangents failed for mesh " << mesh_index << ": " << err << "\n";
@@ -6968,14 +6970,14 @@ class LightUSDLoaderNative {
   }
 
   std::vector<std::string> layerAssetPaths(uint32_t kind) const {
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
     if (kind == LIGHTUSD_COMBINED_SUBLAYER_ASSET_PATHS) {
-      return lightusd::ExtractSublayerAssetPaths(curr);
+      return lightusd::legacy::ExtractSublayerAssetPaths(curr);
     }
     if (kind == LIGHTUSD_COMBINED_REFERENCE_ASSET_PATHS) {
-      return lightusd::ExtractReferencesAssetPaths(curr);
+      return lightusd::legacy::ExtractReferencesAssetPaths(curr);
     }
-    return lightusd::ExtractPayloadAssetPaths(curr);
+    return lightusd::legacy::ExtractPayloadAssetPaths(curr);
   }
 
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
@@ -6999,14 +7001,14 @@ class LightUSDLoaderNative {
 #endif
 
   bool hasSublayers() {
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
     return curr.metas().subLayers.size();
   }
 
 
   bool composeSublayers() {
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
       std::cerr << "Failed to setup EMAssetResolution\n";
       return false;
@@ -7019,9 +7021,9 @@ class LightUSDLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    lightusd::SublayersCompositionOptions sublayer_options;
+    lightusd::legacy::SublayersCompositionOptions sublayer_options;
     sublayer_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
-    if (!lightusd::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_, sublayer_options)) {
+    if (!lightusd::legacy::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_, sublayer_options)) {
       std::cerr << "Failed to composite subLayers: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -7037,12 +7039,12 @@ class LightUSDLoaderNative {
   }
 
   bool hasReferences() {
-    return lightusd::HasReferences(composited_ ? composed_layer_ : layer_, /* force_check */true);
+    return lightusd::legacy::HasReferences(composited_ ? composed_layer_ : layer_, /* force_check */true);
   }
 
   bool composeReferences() {
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
       std::cerr << "Failed to setup EMAssetResolution\n";
       return false;
@@ -7056,13 +7058,13 @@ class LightUSDLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    lightusd::ReferencesCompositionOptions references_options;
+    lightusd::legacy::ReferencesCompositionOptions references_options;
     references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
     references_options.layer_cache = &compose_layer_cache_;
     // InPlace: consumes layer_ (no internal arcs) instead of holding the
     // input + output copies concurrently — halves the peak of the pass.
-    if (!lightusd::CompositeReferencesInPlace(resolver,
-            std::make_unique<lightusd::Layer>(std::move(layer_)),
+    if (!lightusd::legacy::CompositeReferencesInPlace(resolver,
+            std::make_unique<lightusd::legacy::Layer>(std::move(layer_)),
             &composed_layer_, &warn_, &error_, references_options)) {
       std::cerr << "Failed to composite references: \n";
       if (composited_) {
@@ -7079,12 +7081,12 @@ class LightUSDLoaderNative {
   }
 
   bool hasPayload() {
-    return lightusd::HasPayload(composited_ ? composed_layer_ : layer_, /* force_check */true);
+    return lightusd::legacy::HasPayload(composited_ ? composed_layer_ : layer_, /* force_check */true);
   }
 
   bool composePayload() {
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
       std::cerr << "Failed to setup EMAssetResolution\n";
       return false;
@@ -7097,11 +7099,11 @@ class LightUSDLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    lightusd::PayloadCompositionOptions payload_options;
+    lightusd::legacy::PayloadCompositionOptions payload_options;
     payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
     payload_options.layer_cache = &compose_layer_cache_;
-    if (!lightusd::CompositePayloadInPlace(resolver,
-            std::make_unique<lightusd::Layer>(std::move(layer_)),
+    if (!lightusd::legacy::CompositePayloadInPlace(resolver,
+            std::make_unique<lightusd::legacy::Layer>(std::move(layer_)),
             &composed_layer_, &warn_, &error_, payload_options)) {
       std::cerr << "Failed to composite payload: \n";
       if (composited_) {
@@ -7119,7 +7121,7 @@ class LightUSDLoaderNative {
 
 
   bool hasInherits() {
-    return lightusd::HasInherits(composited_ ? composed_layer_ : layer_ );
+    return lightusd::legacy::HasInherits(composited_ ? composed_layer_ : layer_ );
   }
 
   bool composeInherits() {
@@ -7128,7 +7130,7 @@ class LightUSDLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!lightusd::CompositeInherits( layer_, &composed_layer_, &warn_, &error_)) {
+    if (!lightusd::legacy::CompositeInherits( layer_, &composed_layer_, &warn_, &error_)) {
       std::cerr << "Failed to composite inherits: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -7144,7 +7146,7 @@ class LightUSDLoaderNative {
   }
 
   bool hasVariants() {
-    return lightusd::HasVariants(composited_ ? composed_layer_ : layer_ );
+    return lightusd::legacy::HasVariants(composited_ ? composed_layer_ : layer_ );
   }
 
   struct VariantSetInfo {
@@ -7159,7 +7161,7 @@ class LightUSDLoaderNative {
 
   std::vector<VariantPrimInfo> collectVariantInfo() const {
     std::vector<VariantPrimInfo> prims;
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
     for (const auto &root : curr.primspecs()) {
       collectVariantInfoRec("", root.second, &prims);
     }
@@ -7254,14 +7256,14 @@ class LightUSDLoaderNative {
       composited_ = false;
     }
 
-    lightusd::VariantSelectorMap vsmap;
-    lightusd::VariantSelector selector;
+    lightusd::legacy::VariantSelectorMap vsmap;
+    lightusd::legacy::VariantSelector selector;
     selector.selection = variant_name;
     selector.vsmap[variant_set_name] = variant_name;
-    vsmap[lightusd::Path(prim_path, "")] = selector;
+    vsmap[lightusd::legacy::Path(prim_path, "")] = selector;
 
-    lightusd::Layer selected_layer;
-    if (!lightusd::ApplyVariantSelector(layer_, vsmap, &selected_layer, &warn_, &error_)) {
+    lightusd::legacy::Layer selected_layer;
+    if (!lightusd::legacy::ApplyVariantSelector(layer_, vsmap, &selected_layer, &warn_, &error_)) {
       std::cerr << "Failed to apply variant selection: \n";
       return false;
     }
@@ -7277,7 +7279,7 @@ class LightUSDLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!lightusd::CompositeVariant( layer_, &composed_layer_, &warn_, &error_)) {
+    if (!lightusd::legacy::CompositeVariant( layer_, &composed_layer_, &warn_, &error_)) {
       std::cerr << "Failed to composite variant: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -7306,7 +7308,7 @@ class LightUSDLoaderNative {
     // prior result back into `layer_` (as composeVariants does) would make
     // repeated selections (LOD switching) operate on a variant-free layer.
     // `layer_` is const input here, so it stays pristine across calls.
-    if (!lightusd::ApplyVariantSelector(layer_, variant_name, &composed_layer_,
+    if (!lightusd::legacy::ApplyVariantSelector(layer_, variant_name, &composed_layer_,
                                         &warn_, &error_)) {
       composited_ = false;
       return false;
@@ -7322,15 +7324,15 @@ class LightUSDLoaderNative {
   int lodVariantCount() {
     if (!loaded_as_layer_) return 0;
     int maxc = 0;
-    std::function<void(const lightusd::PrimSpec &)> visit =
-        [&](const lightusd::PrimSpec &ps) {
+    std::function<void(const lightusd::legacy::PrimSpec &)> visit =
+        [&](const lightusd::legacy::PrimSpec &ps) {
           const auto it = ps.variantSets().find("LOD");
           if (it != ps.variantSets().end()) {
             maxc = std::max(maxc, static_cast<int>(it->second.variantSet.size()));
           }
           for (const auto &c : ps.children()) visit(c);
         };
-    const lightusd::Layer &L = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &L = composited_ ? composed_layer_ : layer_;
     for (const auto &kv : L.primspecs()) visit(kv.second);
     return maxc;
   }
@@ -7342,14 +7344,14 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
 
     // LayerToStage expects an rvalue reference, so make a copy
-    lightusd::Layer layer_copy = curr;
+    lightusd::legacy::Layer layer_copy = curr;
 
-    if (!lightusd::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
+    if (!lightusd::legacy::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
       std::cerr << "Failed to LayerToStage \n";
       return false;
     }
@@ -7367,9 +7369,9 @@ class LightUSDLoaderNative {
       return std::string();
     }
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    return lightusd::to_string(curr);
+    return lightusd::legacy::to_string(curr);
   }
 
   std::string validateLoadedLayer(const std::string &options_json) const {
@@ -7381,11 +7383,11 @@ class LightUSDLoaderNative {
       return result.dump();
     }
 
-    const lightusd::ValidationOptions options =
+    const lightusd::legacy::ValidationOptions options =
         ParseValidationOptionsJSONForWeb(options_json);
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
     result = ValidationResultToJSON(
-        lightusd::ValidateLayerAgainstAOUSDCore(curr, options));
+        lightusd::legacy::ValidateLayerAgainstAOUSDCore(curr, options));
     if (!warn_.empty()) {
       result["warn"] = warn_;
     }
@@ -7398,14 +7400,14 @@ class LightUSDLoaderNative {
     warn_.clear();
     error_.clear();
 
-    lightusd::USDLoadOptions load_options;
+    lightusd::legacy::USDLoadOptions load_options;
     load_options.max_memory_limit_in_mb = max_memory_limit_mb_;
 
     nlohmann::json result;
-    const lightusd::ValidationOptions options =
+    const lightusd::legacy::ValidationOptions options =
         ParseValidationOptionsJSONForWeb(options_json);
-    lightusd::USDValidationResult validation;
-    const bool loaded = lightusd::ValidateUSDFromMemoryAgainstAOUSDCore(
+    lightusd::legacy::USDValidationResult validation;
+    const bool loaded = lightusd::legacy::ValidateUSDFromMemoryAgainstAOUSDCore(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, options, load_options, &validation, &warn_, &error_);
     if (!loaded) {
@@ -7437,7 +7439,7 @@ class LightUSDLoaderNative {
   /// the composed layer will be used (export/remap). No-op unless composited.
   void releaseSourceLayer() {
     if (composited_) {
-      layer_ = lightusd::Layer();
+      layer_ = lightusd::legacy::Layer();
     }
   }
 
@@ -7456,15 +7458,15 @@ class LightUSDLoaderNative {
     error_.clear();
 
     // Clear render scene (meshes, materials, textures, buffers, etc.)
-    render_scene_ = lightusd::tydra::RenderScene();
+    render_scene_ = lightusd::legacy::tydra::RenderScene();
 
     // Clear layers
-    layer_ = lightusd::Layer();
-    composed_layer_ = lightusd::Layer();
+    layer_ = lightusd::legacy::Layer();
+    composed_layer_ = lightusd::legacy::Layer();
     compose_layer_cache_.clear();
 
     // Clear USDZ asset
-    usdz_asset_ = lightusd::USDZAsset();
+    usdz_asset_ = lightusd::legacy::USDZAsset();
 
     // Clear asset resolver cache
     em_resolver_.clear();
@@ -7479,7 +7481,7 @@ class LightUSDLoaderNative {
     parsing_progress_.reset();
 
     // Clear export state
-    export_stage_ = lightusd::Stage();
+    export_stage_ = lightusd::legacy::Stage();
     has_stage_ = false;
     physics_scene_json_cache_.clear();
     // (USDC export no longer retains a wasm-side buffer; it copies straight to a
@@ -8060,7 +8062,7 @@ class LightUSDLoaderNative {
     // `.push()` throws. Call this AFTER layerToRenderScene()/loadFromBinary().
     emscripten::val val = emscripten::val::array();
 
-    for (const lightusd::tydra::TextureImage &texImg : render_scene_.images) {
+    for (const lightusd::legacy::tydra::TextureImage &texImg : render_scene_.images) {
       if (texImg.buffer_id == -1) {
         std::string path = texImg.asset_identifier;
         val.call<void>("push", path);
@@ -8079,7 +8081,7 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    mcp_ctx_[session_id] = lightusd::tydra::mcp::Context();
+    mcp_ctx_[session_id] = lightusd::legacy::tydra::mcp::Context();
     mcp_session_id_ = session_id;
 
     return true;
@@ -8107,10 +8109,10 @@ class LightUSDLoaderNative {
     }
 
     // Per-session context (see note in mcpToolsCall). Guarded above.
-    lightusd::tydra::mcp::Context &ctx = mcp_ctx_.at(mcp_session_id_);
+    lightusd::legacy::tydra::mcp::Context &ctx = mcp_ctx_.at(mcp_session_id_);
 
     nlohmann::json result;
-    if (!lightusd::tydra::mcp::GetToolsList(ctx, result)) {
+    if (!lightusd::legacy::tydra::mcp::GetToolsList(ctx, result)) {
       std::cerr << "[tydra:mcp:GetToolsList] failed." << "\n";
       // TODO: Report error more nice way.
       result = nlohmann::json::object();
@@ -8145,7 +8147,7 @@ class LightUSDLoaderNative {
     nlohmann::json result;
 
     std::string err;
-    if (!lightusd::tydra::mcp::CallTool(ctx, tool_name, j_args, result, err)) {
+    if (!lightusd::legacy::tydra::mcp::CallTool(ctx, tool_name, j_args, result, err)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:CallTool]" << err << "\n";
       result = nlohmann::json::object();
@@ -8181,7 +8183,7 @@ class LightUSDLoaderNative {
 
     nlohmann::json result;
 
-    if (!lightusd::tydra::mcp::GetResourcesList(ctx, result)) {
+    if (!lightusd::legacy::tydra::mcp::GetResourcesList(ctx, result)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:ListResources] failed\n";
       result = nlohmann::json::object();
@@ -8208,7 +8210,7 @@ class LightUSDLoaderNative {
 
     nlohmann::json content;
 
-    if (!lightusd::tydra::mcp::ReadResource(ctx, uri, content)) {
+    if (!lightusd::legacy::tydra::mcp::ReadResource(ctx, uri, content)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:ReadResources] failed\n";
       content = nlohmann::json::object();
@@ -8227,10 +8229,10 @@ class LightUSDLoaderNative {
       return "{\"error\": \"No layer loaded\"}";
     }
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    lightusd::USDToJSONContext context;
-    lightusd::minijson::Value json_obj = lightusd::ToJSONValue(curr, context);
+    lightusd::legacy::USDToJSONContext context;
+    lightusd::minijson::Value json_obj = lightusd::legacy::ToJSONValue(curr, context);
     return json_obj.dump(2); // Pretty print with 2 spaces
   }
 
@@ -8239,19 +8241,19 @@ class LightUSDLoaderNative {
       return "{\"error\": \"No layer loaded\"}";
     }
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    lightusd::USDToJSONOptions options;
+    lightusd::legacy::USDToJSONOptions options;
     options.embedBuffers = embedBuffers;
 
     if (arrayMode == "buffer") {
-      options.arrayMode = lightusd::ArraySerializationMode::Buffer;
+      options.arrayMode = lightusd::legacy::ArraySerializationMode::Buffer;
     } else {
-      options.arrayMode = lightusd::ArraySerializationMode::Base64;
+      options.arrayMode = lightusd::legacy::ArraySerializationMode::Base64;
     }
 
     std::string json_str, warn, err;
-    bool success = lightusd::to_json_string(curr, options, &json_str, &warn, &err);
+    bool success = lightusd::legacy::to_json_string(curr, options, &json_str, &warn, &err);
 
     if (!success) {
       return "{\"error\": \"Failed to convert layer to JSON: " + err + "\"}";
@@ -8263,7 +8265,7 @@ class LightUSDLoaderNative {
   bool loadLayerFromJSON(const std::string& json_string) {
     std::string warn, err;
 
-    bool success = lightusd::JSONToLayer(json_string, &layer_, &warn, &err);
+    bool success = lightusd::legacy::JSONToLayer(json_string, &layer_, &warn, &err);
 
     if (success) {
       loaded_ = true;
@@ -8851,7 +8853,7 @@ class LightUSDLoaderNative {
 #endif  // LIGHTUSD_WASM_WITH_NEXT
 
   /// Helper: convert current loaded layer to a Stage
-  bool getStageFromLayer(lightusd::Stage &stage) {
+  bool getStageFromLayer(lightusd::legacy::Stage &stage) {
     if (!loaded_) {
       error_ = "No scene loaded";
       return false;
@@ -8867,10 +8869,10 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    lightusd::Layer layer_copy = curr;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::Layer layer_copy = curr;
 
-    if (!lightusd::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
+    if (!lightusd::legacy::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
       error_ = "Failed to convert Layer to Stage: " + error_;
       return false;
     }
@@ -8883,7 +8885,7 @@ class LightUSDLoaderNative {
   // Build the physics-scene JSON from a specific Stage. Kept separate from
   // extractPhysicsSceneJSON() so the load paths can snapshot it from the
   // pristine parsed stage before the Tydra converter mutates the meshes.
-  std::string BuildPhysicsSceneJSON(const lightusd::Stage &stage) {
+  std::string BuildPhysicsSceneJSON(const lightusd::legacy::Stage &stage) {
     json root;
     root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
     root["metersPerUnit"] = stage.metas().metersPerUnit.get_value();
@@ -8906,7 +8908,7 @@ class LightUSDLoaderNative {
       return physics_scene_json_cache_;
     }
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return std::string();
     }
@@ -8919,25 +8921,25 @@ class LightUSDLoaderNative {
   /// brittle exportAsUSDA text parsing, and carries time-sampled control
   /// curves as { timeSamples: [{t, v}] }. Returns "[]" when none.
   std::string getMhProfileJSON() {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return std::string("[]");
     }
     json root = json::array();
-    std::function<void(const lightusd::Prim &, const std::string &, int)> visit =
-        [&](const lightusd::Prim &prim, const std::string &path, int depth) {
+    std::function<void(const lightusd::legacy::Prim &, const std::string &, int)> visit =
+        [&](const lightusd::legacy::Prim &prim, const std::string &path, int depth) {
           if (depth > 1024) return;  // guard deeply nested stages (as AppendPhysicsPrimJson)
-          const std::map<std::string, lightusd::Property> *props = nullptr;
-          if (const auto *s = prim.as<lightusd::Skeleton>()) props = &s->props;
-          else if (const auto *a = prim.as<lightusd::SkelAnimation>()) props = &a->props;
-          else if (const auto *m = prim.as<lightusd::Material>()) props = &m->props;
-          else if (const auto *r = prim.as<lightusd::SkelRoot>()) props = &r->props;
+          const std::map<std::string, lightusd::legacy::Property> *props = nullptr;
+          if (const auto *s = prim.as<lightusd::legacy::Skeleton>()) props = &s->props;
+          else if (const auto *a = prim.as<lightusd::legacy::SkelAnimation>()) props = &a->props;
+          else if (const auto *m = prim.as<lightusd::legacy::Material>()) props = &m->props;
+          else if (const auto *r = prim.as<lightusd::legacy::SkelRoot>()) props = &r->props;
           if (props) {
             json attrs = json::object();
             json rels = json::object();
             for (const auto &kv : *props) {
               if (kv.first.rfind("mh:", 0) != 0) continue;
-              if (const lightusd::Attribute *at = kv.second.get_attribute_or_null()) {
+              if (const lightusd::legacy::Attribute *at = kv.second.get_attribute_or_null()) {
                 attrs[kv.first] = MhAttrJson(*at);
               } else if (kv.second.is_relationship()) {
                 json targets = json::array();
@@ -8973,14 +8975,14 @@ class LightUSDLoaderNative {
       error_ = "Shading graph inspection requires a loaded Layer";
       return std::string();
     }
-    const lightusd::Layer &source = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &source = composited_ ? composed_layer_ : layer_;
     json root = {{"version", 1}, {"colorMetadataVersion", 1},
                  {"colorSpaces", json::object()}, {"assetPaths", json::array()},
                  {"prims", json::array()}};
     size_t count = 0;
     bool ok = true;
-    std::function<void(const lightusd::PrimSpec &, const std::string &, int)> visit =
-        [&](const lightusd::PrimSpec &prim, const std::string &path, int depth) {
+    std::function<void(const lightusd::legacy::PrimSpec &, const std::string &, int)> visit =
+        [&](const lightusd::legacy::PrimSpec &prim, const std::string &path, int depth) {
           if (!ok) return;
           if (depth > 256 || ++count > 1000000) {
             error_ = "Shading graph traversal budget exceeded";
@@ -8992,7 +8994,7 @@ class LightUSDLoaderNative {
           // these source opinions even when this prim is not a shading node.
           for (const auto &entry : prim.props()) {
             if (const auto *attr = entry.second.get_attribute_or_null()) {
-              if (auto asset = attr->get_value<lightusd::value::AssetPath>()) {
+              if (auto asset = attr->get_value<lightusd::legacy::value::AssetPath>()) {
                 root["assetPaths"].push_back({{"primPath", path},
                     {"propertyPath", path + "." + entry.first},
                     {"authored", asset->GetAssetPath()}});
@@ -9001,7 +9003,7 @@ class LightUSDLoaderNative {
           }
           if (const auto *schemas = prim.metas().get_apiSchemas_ptr()) {
             for (const auto &schema : schemas->names) {
-              if (schema.first != lightusd::APISchemas::APIName::ColorSpaceAPI) continue;
+              if (schema.first != lightusd::legacy::APISchemas::APIName::ColorSpaceAPI) continue;
               const auto found = prim.props().find("colorSpace:name");
               if (found != prim.props().end()) {
                 if (const auto *attr = found->second.get_attribute_or_null()) {
@@ -9029,16 +9031,16 @@ class LightUSDLoaderNative {
                 }
                 // Connections and a default may coexist. The general JSON
                 // helper prioritizes connections, so inspect a detached copy.
-                lightusd::Attribute value = *attr;
+                lightusd::legacy::Attribute value = *attr;
                 value.connections().clear();
                 if (value.has_value()) {
-                  if (auto v = value.get_value<lightusd::value::color3f>()) {
+                  if (auto v = value.get_value<lightusd::legacy::value::color3f>()) {
                     item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2]});
-                  } else if (auto v = value.get_value<lightusd::value::color4f>()) {
+                  } else if (auto v = value.get_value<lightusd::legacy::value::color4f>()) {
                     item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2], (*v)[3]});
-                  } else if (auto v = value.get_value<lightusd::value::float2>()) {
+                  } else if (auto v = value.get_value<lightusd::legacy::value::float2>()) {
                     item["value"] = json::array({(*v)[0], (*v)[1]});
-                  } else if (auto v = value.get_value<lightusd::value::float4>()) {
+                  } else if (auto v = value.get_value<lightusd::legacy::value::float4>()) {
                     item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2], (*v)[3]});
                   } else {
                     item["value"] = AttributeValueJson(value);
@@ -9068,14 +9070,14 @@ class LightUSDLoaderNative {
 
   /// Export loaded scene as USDA (ASCII) string
   std::string exportAsUSDA() {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return std::string();
     }
 
     std::string output;
     std::string warn, err;
-    if (!lightusd::usda::ExportToUSDAString(stage, &output, &warn, &err)) {
+    if (!lightusd::legacy::usda::ExportToUSDAString(stage, &output, &warn, &err)) {
       error_ = "USDA export failed: " + err;
       warn_ = warn;
       return std::string();
@@ -9115,13 +9117,13 @@ class LightUSDLoaderNative {
         error_ = "No layer loaded";
         return false;
       }
-      const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-      saved = lightusd::usdc::SaveAsUSDCToMemory(curr, output, &warn, &err,
+      const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+      saved = lightusd::legacy::usdc::SaveAsUSDCToMemory(curr, output, &warn, &err,
           usdc_max_file_size_bytes_, usdc_max_memory_bytes_);
     } else {
-      lightusd::Stage stage;
+      lightusd::legacy::Stage stage;
       if (!getStageFromLayer(stage)) return false;
-      saved = lightusd::usdc::SaveAsUSDCToMemory(stage, output, &warn, &err,
+      saved = lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, output, &warn, &err,
           usdc_max_file_size_bytes_, usdc_max_memory_bytes_);
     }
     if (saved && pending_warning) *pending_warning = warn;
@@ -9239,7 +9241,7 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
       error_ = "Failed to setup asset resolution for flatten.";
       return false;
@@ -9248,34 +9250,34 @@ class LightUSDLoaderNative {
     resolver.set_search_paths({"./"});
 
     // Move the current layer out — flatten in place, never duplicating it.
-    lightusd::Layer src_layer =
+    lightusd::legacy::Layer src_layer =
         composited_ ? std::move(composed_layer_) : std::move(layer_);
 
     // Parent-relative ('../') and drive-prefixed asset paths are legitimate in
     // UE-exported scenes; the sandboxed in-memory resolver bounds what is
     // reachable, and the resolver suffix-fallback rebases escaping paths onto
     // the uploaded folder root.
-    lightusd::SublayersCompositionOptions sublayer_options;
+    lightusd::legacy::SublayersCompositionOptions sublayer_options;
     sublayer_options.allow_parent_relative_paths =
         allow_parent_relative_asset_paths_;
-    lightusd::ReferencesCompositionOptions references_options;
+    lightusd::legacy::ReferencesCompositionOptions references_options;
     references_options.allow_parent_relative_paths =
         allow_parent_relative_asset_paths_;
-    lightusd::PayloadCompositionOptions payload_options;
+    lightusd::legacy::PayloadCompositionOptions payload_options;
     payload_options.allow_parent_relative_paths =
         allow_parent_relative_asset_paths_;
 
     // Parse each referenced file once across the whole fixed-point loop; all
     // arcs to the same file share one copy of the heavy attribute data (COW).
-    std::map<std::string, lightusd::Layer> layer_cache;
+    std::map<std::string, lightusd::legacy::Layer> layer_cache;
     references_options.layer_cache = &layer_cache;
     payload_options.layer_cache = &layer_cache;
 
     // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
     // fixed point. Each Composite* moves the prior layer into the next.
     {
-      lightusd::Layer tmp;
-      if (!lightusd::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_, sublayer_options)) {
+      lightusd::legacy::Layer tmp;
+      if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_, sublayer_options)) {
         error_ = "Failed to composite subLayers: " + error_;
         return false;
       }
@@ -9285,34 +9287,34 @@ class LightUSDLoaderNative {
     for (int i = 0; i < kMaxFlattenIter; i++) {
       bool unresolved = false;
       if (src_layer.check_unresolved_references()) {
-        lightusd::Layer tmp;
+        lightusd::legacy::Layer tmp;
         // InPlace: consumes src_layer (no internal arcs) instead of holding
         // input + output copies — halves the peak of the pass.
-        if (!lightusd::CompositeReferencesInPlace(resolver,
-                std::make_unique<lightusd::Layer>(std::move(src_layer)), &tmp,
+        if (!lightusd::legacy::CompositeReferencesInPlace(resolver,
+                std::make_unique<lightusd::legacy::Layer>(std::move(src_layer)), &tmp,
                 &warn_, &error_, references_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_payload()) {
-        lightusd::Layer tmp;
-        if (!lightusd::CompositePayloadInPlace(resolver,
-                std::make_unique<lightusd::Layer>(std::move(src_layer)), &tmp,
+        lightusd::legacy::Layer tmp;
+        if (!lightusd::legacy::CompositePayloadInPlace(resolver,
+                std::make_unique<lightusd::legacy::Layer>(std::move(src_layer)), &tmp,
                 &warn_, &error_, payload_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_inherits()) {
-        lightusd::Layer tmp;
-        if (!lightusd::CompositeInherits(src_layer, &tmp, &warn_, &error_)) return false;
+        lightusd::legacy::Layer tmp;
+        if (!lightusd::legacy::CompositeInherits(src_layer, &tmp, &warn_, &error_)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_variant()) {
         // AOUSD Core Spec 10.3.2.5: defer variant composition until references
         // and payloads are resolved (this loop always resolves both).
-        if (lightusd::ShouldDeferVariantComposition(src_layer)) {
+        if (lightusd::legacy::ShouldDeferVariantComposition(src_layer)) {
           unresolved = true;  // loop again to settle refs/payloads first
         } else {
-          lightusd::Layer tmp;
-          if (!lightusd::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
+          lightusd::legacy::Layer tmp;
+          if (!lightusd::legacy::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
           src_layer = std::move(tmp); unresolved = true;
         }
       }
@@ -9339,7 +9341,7 @@ class LightUSDLoaderNative {
   /// copy immediately. If you may retain the result across WASM calls, prefer a
   /// USDC exporter (those return JS-owned copies via toOwnedUint8Array).
   emscripten::val exportAsUSDZ() {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return emscripten::val::null();
     }
@@ -9369,13 +9371,13 @@ class LightUSDLoaderNative {
       }
     }
 
-    lightusd::USDZWriteOptions write_options;
+    lightusd::legacy::USDZWriteOptions write_options;
     write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
     write_options.max_memory_bytes = usdc_max_memory_bytes_;
 
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!lightusd::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+    if (!lightusd::legacy::SaveAsUSDZToMemory(stage, assets, &output, write_options,
                                       &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
@@ -9408,9 +9410,9 @@ class LightUSDLoaderNative {
       std::string k = keys[i].as<std::string>();
       remap_map[k] = remap[k].as<std::string>();
     }
-    lightusd::Layer &layer = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::Layer &layer = composited_ ? composed_layer_ : layer_;
     return int(
-        lightusd::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
+        lightusd::legacy::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
   }
 
   bool applyMaterialOptimizationToLayerOptions(emscripten::val options) {
@@ -9418,23 +9420,23 @@ class LightUSDLoaderNative {
       return true;
     }
 
-    lightusd::usdz::UsdzConvertOptions opt;
+    lightusd::legacy::usdz::UsdzConvertOptions opt;
     auto parse_mode = [&](const std::string &mode) {
       std::string m = mode;
       for (auto &c : m) c = static_cast<char>(std::tolower(c));
       if (m == "off" || m == "none" || m.empty()) {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Off;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Off;
       } else if (m == "dedupe" || m == "dedup") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Dedupe;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Dedupe;
       } else if (m == "preview" || m == "previewsurface" ||
                  m == "usdpreviewsurface") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Preview;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Preview;
       } else if (m == "atlas") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Atlas;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Atlas;
       } else {
         error_ = "Invalid material optimization mode: " + mode;
         return false;
@@ -9452,7 +9454,7 @@ class LightUSDLoaderNative {
       }
     }
     if (opt.material_optimization ==
-        lightusd::usdz::MaterialOptimizationMode::Off) {
+        lightusd::legacy::usdz::MaterialOptimizationMode::Off) {
       return true;
     }
 
@@ -9472,10 +9474,10 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    lightusd::usdz::MaterialOptimizationStats opt_stats;
+    lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::usdz::MaterialOptimizationStats opt_stats;
     std::string owarn, oerr;
-    if (!lightusd::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
+    if (!lightusd::legacy::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
                                                   &owarn, &oerr)) {
       error_ = "Material optimization failed: " + oerr;
       warn_ += owarn;
@@ -9494,17 +9496,17 @@ class LightUSDLoaderNative {
       return true;
     }
 
-    lightusd::usdz::UsdzConvertOptions opt;
+    lightusd::legacy::usdz::UsdzConvertOptions opt;
     auto parse_mode = [&](const std::string &mode) {
       std::string m = mode;
       for (auto &c : m) c = static_cast<char>(std::tolower(c));
       if (m == "off" || m == "none" || m.empty()) {
         opt.geometry_optimization =
-            lightusd::usdz::GeometryOptimizationMode::Off;
+            lightusd::legacy::usdz::GeometryOptimizationMode::Off;
       } else if (m == "mergemeshes" || m == "merge" ||
                  m == "meshmerge") {
         opt.geometry_optimization =
-            lightusd::usdz::GeometryOptimizationMode::MergeMeshes;
+            lightusd::legacy::usdz::GeometryOptimizationMode::MergeMeshes;
       } else {
         error_ = "Invalid geometry optimization mode: " + mode;
         return false;
@@ -9525,7 +9527,7 @@ class LightUSDLoaderNative {
       }
     }
     if (opt.geometry_optimization ==
-        lightusd::usdz::GeometryOptimizationMode::Off) {
+        lightusd::legacy::usdz::GeometryOptimizationMode::Off) {
       return true;
     }
 
@@ -9546,10 +9548,10 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    lightusd::usdz::GeometryOptimizationStats opt_stats;
+    lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::usdz::GeometryOptimizationStats opt_stats;
     std::string owarn, oerr;
-    if (!lightusd::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
+    if (!lightusd::legacy::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
                                                  &owarn, &oerr)) {
       error_ = "Geometry optimization failed: " + oerr;
       warn_ += owarn;
@@ -9569,7 +9571,7 @@ class LightUSDLoaderNative {
   /// paths according to `remap` ({oldName: newName}). Use when textures are
   /// renamed (e.g. transcoded PNG -> JPG) so references follow.
   emscripten::val exportAsUSDZWithRemap(emscripten::val remap) {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return emscripten::val::null();
     }
@@ -9583,7 +9585,7 @@ class LightUSDLoaderNative {
       std::string k = keys[i].as<std::string>();
       remap_map[k] = remap[k].as<std::string>();
     }
-    lightusd::usdz::RemapTextureAssetPaths(stage, remap_map);
+    lightusd::legacy::usdz::RemapTextureAssetPaths(stage, remap_map);
 
     // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
     // inlined into the root; pack only the image/audio assets it references
@@ -9604,13 +9606,13 @@ class LightUSDLoaderNative {
       }
     }
 
-    lightusd::USDZWriteOptions write_options;
+    lightusd::legacy::USDZWriteOptions write_options;
     write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
     write_options.max_memory_bytes = usdc_max_memory_bytes_;
 
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!lightusd::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+    if (!lightusd::legacy::SaveAsUSDZToMemory(stage, assets, &output, write_options,
                                       &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
@@ -9633,7 +9635,7 @@ class LightUSDLoaderNative {
       return emscripten::val::null();
     }
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     if (!getStageFromLayer(stage)) {
       return emscripten::val::null();
     }
@@ -9649,10 +9651,10 @@ class LightUSDLoaderNative {
       }
     }
     if (!remap_map.empty()) {
-      lightusd::usdz::RemapTextureAssetPaths(stage, remap_map);
+      lightusd::legacy::usdz::RemapTextureAssetPaths(stage, remap_map);
     }
 
-    lightusd::USDZWriteOptions write_options;
+    lightusd::legacy::USDZWriteOptions write_options;
     write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
     write_options.max_memory_bytes = usdc_max_memory_bytes_;
     bool arkit_compatible = false;
@@ -9666,13 +9668,13 @@ class LightUSDLoaderNative {
         std::string root_format = root_format_val.as<std::string>();
         for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
         if (root_format == "usda") {
-          write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
+          write_options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDA;
         }
       }
     }
     if (arkit_compatible) {
-      stage.metas().upAxis.set_value(lightusd::Axis::Y);
-      write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDC;
+      stage.metas().upAxis.set_value(lightusd::legacy::Axis::Y);
+      write_options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDC;
     }
 
     // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
@@ -9696,7 +9698,7 @@ class LightUSDLoaderNative {
 
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!lightusd::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+    if (!lightusd::legacy::SaveAsUSDZToMemory(stage, assets, &output, write_options,
                                       &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
@@ -9722,8 +9724,8 @@ class LightUSDLoaderNative {
       return emscripten::val::null();
     }
 
-    lightusd::USDZWriteOptions write_options;
-    write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
+    lightusd::legacy::USDZWriteOptions write_options;
+    write_options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDA;
     write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
     write_options.max_memory_bytes = usdc_max_memory_bytes_;
     if (!options.isUndefined() && !options.isNull()) {
@@ -9732,7 +9734,7 @@ class LightUSDLoaderNative {
         std::string root_format = root_format_val.as<std::string>();
         for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
         if (root_format == "usdc") {
-          write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDC;
+          write_options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDC;
         }
       }
     }
@@ -9763,10 +9765,10 @@ class LightUSDLoaderNative {
       }
     }
 
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    const lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!lightusd::SaveAsUSDZToMemory(curr, assets, &output, write_options,
+    if (!lightusd::legacy::SaveAsUSDZToMemory(curr, assets, &output, write_options,
                                       &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
@@ -9781,23 +9783,23 @@ class LightUSDLoaderNative {
 #else
   bool applyMaterialOptimizationC(const std::string &mode,
       const lightusd_combined_export_optimization &options) {
-    lightusd::usdz::UsdzConvertOptions opt;
+    lightusd::legacy::usdz::UsdzConvertOptions opt;
     auto parse_mode = [&](const std::string &mode) {
       std::string m = mode;
       for (auto &c : m) c = static_cast<char>(std::tolower(c));
       if (m == "off" || m == "none" || m.empty()) {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Off;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Off;
       } else if (m == "dedupe" || m == "dedup") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Dedupe;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Dedupe;
       } else if (m == "preview" || m == "previewsurface" ||
                  m == "usdpreviewsurface") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Preview;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Preview;
       } else if (m == "atlas") {
         opt.material_optimization =
-            lightusd::usdz::MaterialOptimizationMode::Atlas;
+            lightusd::legacy::usdz::MaterialOptimizationMode::Atlas;
       } else {
         error_ = "Invalid material optimization mode: " + mode;
         return false;
@@ -9807,7 +9809,7 @@ class LightUSDLoaderNative {
 
     if (!parse_mode(mode)) return false;
     if (opt.material_optimization ==
-        lightusd::usdz::MaterialOptimizationMode::Off) {
+        lightusd::legacy::usdz::MaterialOptimizationMode::Off) {
       return true;
     }
 
@@ -9821,10 +9823,10 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    lightusd::usdz::MaterialOptimizationStats opt_stats;
+    lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::usdz::MaterialOptimizationStats opt_stats;
     std::string owarn, oerr;
-    if (!lightusd::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
+    if (!lightusd::legacy::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
                                                   &owarn, &oerr)) {
       error_ = "Material optimization failed: " + oerr;
       warn_ += owarn;
@@ -9839,17 +9841,17 @@ class LightUSDLoaderNative {
   }
   bool applyGeometryOptimizationC(const std::string &mode,
       const lightusd_combined_export_optimization &options) {
-    lightusd::usdz::UsdzConvertOptions opt;
+    lightusd::legacy::usdz::UsdzConvertOptions opt;
     auto parse_mode = [&](const std::string &mode) {
       std::string m = mode;
       for (auto &c : m) c = static_cast<char>(std::tolower(c));
       if (m == "off" || m == "none" || m.empty()) {
         opt.geometry_optimization =
-            lightusd::usdz::GeometryOptimizationMode::Off;
+            lightusd::legacy::usdz::GeometryOptimizationMode::Off;
       } else if (m == "mergemeshes" || m == "merge" ||
                  m == "meshmerge") {
         opt.geometry_optimization =
-            lightusd::usdz::GeometryOptimizationMode::MergeMeshes;
+            lightusd::legacy::usdz::GeometryOptimizationMode::MergeMeshes;
       } else {
         error_ = "Invalid geometry optimization mode: " + mode;
         return false;
@@ -9859,7 +9861,7 @@ class LightUSDLoaderNative {
 
     if (!parse_mode(mode)) return false;
     if (opt.geometry_optimization ==
-        lightusd::usdz::GeometryOptimizationMode::Off) {
+        lightusd::legacy::usdz::GeometryOptimizationMode::Off) {
       return true;
     }
 
@@ -9873,10 +9875,10 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    lightusd::usdz::GeometryOptimizationStats opt_stats;
+    lightusd::legacy::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::legacy::usdz::GeometryOptimizationStats opt_stats;
     std::string owarn, oerr;
-    if (!lightusd::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
+    if (!lightusd::legacy::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
                                                  &owarn, &oerr)) {
       error_ = "Geometry optimization failed: " + oerr;
       warn_ += owarn;
@@ -9894,7 +9896,7 @@ class LightUSDLoaderNative {
   struct PackageExportState {
     LightUSDLoaderNative *owner{nullptr};
     bool as_layer{false};
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
   };
 
   PackageExportState *beginPackageExport(bool as_layer) {
@@ -9910,19 +9912,19 @@ class LightUSDLoaderNative {
       const std::map<std::string, std::string> &remap, std::string root_format,
       bool arkit, lightusd_combined_export_info *out) {
     if (!state.as_layer && !remap.empty())
-      lightusd::usdz::RemapTextureAssetPaths(state.stage, remap);
+      lightusd::legacy::usdz::RemapTextureAssetPaths(state.stage, remap);
     for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
-    lightusd::USDZWriteOptions options;
+    lightusd::legacy::USDZWriteOptions options;
     options.max_file_size_bytes = usdc_max_file_size_bytes_;
     options.max_memory_bytes = usdc_max_memory_bytes_;
     if (state.as_layer) {
       options.root_layer_format = root_format == "usdc"
-          ? lightusd::USDZRootLayerFormat::USDC : lightusd::USDZRootLayerFormat::USDA;
+          ? lightusd::legacy::USDZRootLayerFormat::USDC : lightusd::legacy::USDZRootLayerFormat::USDA;
     } else {
-      if (root_format == "usda") options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
+      if (root_format == "usda") options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDA;
       if (arkit) {
-        state.stage.metas().upAxis.set_value(lightusd::Axis::Y);
-        options.root_layer_format = lightusd::USDZRootLayerFormat::USDC;
+        state.stage.metas().upAxis.set_value(lightusd::legacy::Axis::Y);
+        options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDC;
       }
     }
     std::map<std::string, std::vector<uint8_t>> assets;
@@ -9943,9 +9945,9 @@ class LightUSDLoaderNative {
     std::vector<uint8_t> output;
     std::string warn, err;
     const bool success = state.as_layer
-        ? lightusd::SaveAsUSDZToMemory(composited_ ? composed_layer_ : layer_, assets,
+        ? lightusd::legacy::SaveAsUSDZToMemory(composited_ ? composed_layer_ : layer_, assets,
                                       &output, options, &warn, &err)
-        : lightusd::SaveAsUSDZToMemory(state.stage, assets, &output, options, &warn, &err);
+        : lightusd::legacy::SaveAsUSDZToMemory(state.stage, assets, &output, options, &warn, &err);
     warn_ = warn;
     if (!success) {
       error_ = "USDZ export failed: " + err;
@@ -9962,7 +9964,7 @@ class LightUSDLoaderNative {
       error_ = "No layer loaded";
       return -1;
     }
-    return int32_t(lightusd::usdz::RemapLayerTextureAssetPaths(
+    return int32_t(lightusd::legacy::usdz::RemapLayerTextureAssetPaths(
         composited_ ? composed_layer_ : layer_, remap));
   }
 
@@ -9970,7 +9972,7 @@ class LightUSDLoaderNative {
 
   std::string udimLayerJSONC(bool apply, const std::string& input) {
     if (!loaded_) return "{\"success\":false,\"error\":\"No layer loaded\"}";
-    lightusd::usdz::LegacyUDIMLayer access(composited_ ? composed_layer_ : layer_);
+    lightusd::legacy::usdz::LegacyUDIMLayer access(composited_ ? composed_layer_ : layer_);
     return apply ? lightusd::udim::ApplyJSON(access, input) : lightusd::udim::DescribeJSON(access);
   }
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
@@ -9988,32 +9990,32 @@ class LightUSDLoaderNative {
   /// BEFORE calling exportAsUSDZ.
   bool createSampleScene() {
     // Build stage
-    lightusd::Stage stage;
-    stage.metas().defaultPrim = lightusd::value::token("root");
-    stage.metas().upAxis = lightusd::Axis::Y;
+    lightusd::legacy::Stage stage;
+    stage.metas().defaultPrim = lightusd::legacy::value::token("root");
+    stage.metas().upAxis = lightusd::legacy::Axis::Y;
 
     // -- Xform root --
-    lightusd::Xform xform;
+    lightusd::legacy::Xform xform;
     xform.name = "root";
 
     // -- GeomMesh quad --
-    lightusd::GeomMesh mesh;
+    lightusd::legacy::GeomMesh mesh;
     mesh.name = "quad";
     {
-      std::vector<lightusd::value::point3f> pts;
+      std::vector<lightusd::legacy::value::point3f> pts;
       pts.push_back({-0.5f, 0.0f, -0.5f});
       pts.push_back({ 0.5f, 0.0f, -0.5f});
       pts.push_back({ 0.5f, 0.0f,  0.5f});
       pts.push_back({-0.5f, 0.0f,  0.5f});
       mesh.points.set_value(std::move(pts));
 
-      std::vector<lightusd::value::normal3f> normals;
+      std::vector<lightusd::legacy::value::normal3f> normals;
       normals.push_back({0.0f, 1.0f, 0.0f});
       normals.push_back({0.0f, 1.0f, 0.0f});
       normals.push_back({0.0f, 1.0f, 0.0f});
       normals.push_back({0.0f, 1.0f, 0.0f});
       mesh.normals.set_value(std::move(normals));
-      mesh.normals.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
+      mesh.normals.metas().set_interpolation_enum(lightusd::legacy::Interpolation::Vertex);
 
       std::vector<int> counts = {3, 3};
       mesh.faceVertexCounts.set_value(std::move(counts));
@@ -10022,53 +10024,53 @@ class LightUSDLoaderNative {
       mesh.faceVertexIndices.set_value(std::move(indices));
 
       // UV primvar
-      lightusd::Attribute uvAttr;
-      std::vector<lightusd::value::texcoord2f> uvs;
+      lightusd::legacy::Attribute uvAttr;
+      std::vector<lightusd::legacy::value::texcoord2f> uvs;
       uvs.push_back({0.0f, 0.0f});
       uvs.push_back({1.0f, 0.0f});
       uvs.push_back({1.0f, 1.0f});
       uvs.push_back({0.0f, 1.0f});
       uvAttr.set_value(std::move(uvs));
-      uvAttr.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
-      mesh.props.emplace("primvars:st", lightusd::Property(uvAttr, false));
+      uvAttr.metas().set_interpolation_enum(lightusd::legacy::Interpolation::Vertex);
+      mesh.props.emplace("primvars:st", lightusd::legacy::Property(uvAttr, false));
 
       // Material binding
-      lightusd::Relationship materialBinding;
-      materialBinding.set(lightusd::Path("/root/mat", ""));
+      lightusd::legacy::Relationship materialBinding;
+      materialBinding.set(lightusd::legacy::Path("/root/mat", ""));
       mesh.materialBinding = materialBinding;
     }
 
     // -- Material --
-    lightusd::Material mat;
+    lightusd::legacy::Material mat;
     mat.name = "mat";
-    mat.surface.set(lightusd::Path("/root/mat/PBRShader", "outputs:surface"));
+    mat.surface.set(lightusd::legacy::Path("/root/mat/PBRShader", "outputs:surface"));
 
     // -- UsdPreviewSurface shader --
-    lightusd::Shader pbrShader;
+    lightusd::legacy::Shader pbrShader;
     pbrShader.name = "PBRShader";
-    pbrShader.info_id = lightusd::kUsdPreviewSurface;
+    pbrShader.info_id = lightusd::legacy::kUsdPreviewSurface;
     {
-      lightusd::UsdPreviewSurface surf;
+      lightusd::legacy::UsdPreviewSurface surf;
       surf.outputsSurface.set_authored(true);
       surf.metallic.set_value(0.0f);
       surf.roughness.set_value(0.5f);
 
       // Connect diffuseColor to texture
       surf.diffuseColor.set_connection(
-          lightusd::Path("/root/mat/diffuseTexture", "outputs:rgb"));
+          lightusd::legacy::Path("/root/mat/diffuseTexture", "outputs:rgb"));
       surf.diffuseColor.set_value_empty();
 
       pbrShader.value = std::move(surf);
     }
 
     // -- UsdPrimvarReader_float2 shader --
-    lightusd::Shader stReaderShader;
+    lightusd::legacy::Shader stReaderShader;
     stReaderShader.name = "stReader";
-    stReaderShader.info_id = lightusd::kUsdPrimvarReader_float2;
+    stReaderShader.info_id = lightusd::legacy::kUsdPrimvarReader_float2;
     {
-      lightusd::UsdPrimvarReader_float2 reader;
+      lightusd::legacy::UsdPrimvarReader_float2 reader;
 
-      lightusd::Animatable<std::string> varname;
+      lightusd::legacy::Animatable<std::string> varname;
       varname.set_default(std::string("st"));
       reader.varname.set_value(varname);
 
@@ -10078,16 +10080,16 @@ class LightUSDLoaderNative {
     }
 
     // -- UsdUVTexture shader --
-    lightusd::Shader texShader;
+    lightusd::legacy::Shader texShader;
     texShader.name = "diffuseTexture";
-    texShader.info_id = lightusd::kUsdUVTexture;
+    texShader.info_id = lightusd::legacy::kUsdUVTexture;
     {
-      lightusd::UsdUVTexture tex;
-      tex.file = lightusd::value::AssetPath("textures/checkerboard.png");
+      lightusd::legacy::UsdUVTexture tex;
+      tex.file = lightusd::legacy::value::AssetPath("textures/checkerboard.png");
 
       // Connect st input to primvar reader
       tex.st.set_connection(
-          lightusd::Path("/root/mat/stReader", "outputs:result"));
+          lightusd::legacy::Path("/root/mat/stReader", "outputs:result"));
       tex.st.set_value_empty();
 
       tex.outputsRGB.set_authored(true);
@@ -10096,18 +10098,18 @@ class LightUSDLoaderNative {
     }
 
     // Assemble scene hierarchy
-    lightusd::Prim matPrim(mat);
+    lightusd::legacy::Prim matPrim(mat);
     {
       std::string err;
-      matPrim.add_child(lightusd::Prim(pbrShader), true, &err);
-      matPrim.add_child(lightusd::Prim(stReaderShader), true, &err);
-      matPrim.add_child(lightusd::Prim(texShader), true, &err);
+      matPrim.add_child(lightusd::legacy::Prim(pbrShader), true, &err);
+      matPrim.add_child(lightusd::legacy::Prim(stReaderShader), true, &err);
+      matPrim.add_child(lightusd::legacy::Prim(texShader), true, &err);
     }
 
-    lightusd::Prim xformPrim(xform);
+    lightusd::legacy::Prim xformPrim(xform);
     {
       std::string err;
-      xformPrim.add_child(lightusd::Prim(mesh), true, &err);
+      xformPrim.add_child(lightusd::legacy::Prim(mesh), true, &err);
       xformPrim.add_child(std::move(matPrim), true, &err);
     }
 
@@ -10146,10 +10148,10 @@ class LightUSDLoaderNative {
   /// description generated by web/js/urdf.js. Geometry is expected to be
   /// already baked to triangle meshes in link-local space.
   bool createURDFPhysicsScene(const std::string &robot_json) {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     std::string warn;
     std::string err;
-    if (!lightusd::tydra::ConvertURDFJsonToUSDStage(
+    if (!lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(
             robot_json, &urdf_mesh_buffers_, &stage, &warn, &err)) {
       warn_ = std::move(warn);
       error_ = std::move(err);
@@ -10176,7 +10178,7 @@ class LightUSDLoaderNative {
       return false;
     }
 
-    lightusd::tydra::URDFMeshBuffer buffer;
+    lightusd::legacy::tydra::URDFMeshBuffer buffer;
     detail::copyTypedArray<float>(positions, buffer.positions, "Float32Array");
     detail::copyTypedArray<float>(normals, buffer.normals, "Float32Array");
     detail::copyTypedArray<float>(uvs, buffer.uvs, "Float32Array");
@@ -10186,7 +10188,7 @@ class LightUSDLoaderNative {
   }
 #endif
 
-  bool storeURDFMeshBuffer_(const std::string &name, lightusd::tydra::URDFMeshBuffer buffer) {
+  bool storeURDFMeshBuffer_(const std::string &name, lightusd::legacy::tydra::URDFMeshBuffer buffer) {
     if (name.empty()) {
       error_ = "setVisualMesh/setCollisionMesh requires a non-empty mesh name";
       return false;
@@ -10321,10 +10323,10 @@ class LightUSDLoaderNative {
     parsing_progress_.total_bytes = binary.size();
     parsing_progress_.current_operation = "Loading USD file";
 
-    bool is_usdz = lightusd::IsUSDZ(
+    bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
@@ -10338,8 +10340,8 @@ class LightUSDLoaderNative {
     };
     options.progress_userptr = &parsing_progress_;
 
-    lightusd::Stage stage;
-    loaded_ = lightusd::LoadUSDFromMemory(
+    lightusd::legacy::Stage stage;
+    loaded_ = lightusd::legacy::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, &stage, &warn_, &error_, options);
 
@@ -10390,7 +10392,7 @@ class LightUSDLoaderNative {
     parsing_progress_.total_bytes = binary.size();
     parsing_progress_.current_operation = "Loading USD layer";
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
 
     // Set up progress callback
@@ -10402,7 +10404,7 @@ class LightUSDLoaderNative {
     };
     options.progress_userptr = &parsing_progress_;
 
-    loaded_ = lightusd::LoadLayerFromMemory(
+    loaded_ = lightusd::legacy::LoadLayerFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         filename, &layer_, &warn_, &error_, options);
 
@@ -10503,9 +10505,9 @@ class LightUSDLoaderNative {
     std::string binary;
     std::string filename;
     std::string error;
-    lightusd::Stage stage;
-    std::unique_ptr<lightusd::tydra::RenderSceneConverterEnv> env;
-    std::unique_ptr<lightusd::tydra::RenderSceneConverter> converter;
+    lightusd::legacy::Stage stage;
+    std::unique_ptr<lightusd::legacy::tydra::RenderSceneConverterEnv> env;
+    std::unique_ptr<lightusd::legacy::tydra::RenderSceneConverter> converter;
     lightusd_combined_async_load_info result{};
     uint32_t phase{0};
     bool is_usdz{false};
@@ -10537,15 +10539,15 @@ class LightUSDLoaderNative {
     switch (s.phase) {
       case 0:
         reportAsyncPhaseStart("detecting", 0.0f);
-        s.is_usdz = lightusd::IsUSDZ(
+        s.is_usdz = lightusd::legacy::IsUSDZ(
             reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size());
         break;
       case 1: {
         reportAsyncPhaseStart("parsing", 0.1f);
-        lightusd::USDLoadOptions options;
+        lightusd::legacy::USDLoadOptions options;
         options.max_memory_limit_in_mb = max_memory_limit_mb_;
         options.mmap_zero_copy = mmap_zero_copy_;
-        loaded_ = lightusd::LoadUSDFromMemory(
+        loaded_ = lightusd::legacy::LoadUSDFromMemory(
             reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size(),
             s.filename, &s.stage, &warn_, &error_, options);
         if (!loaded_) return fail(error_);
@@ -10558,7 +10560,7 @@ class LightUSDLoaderNative {
       }
       case 2: {
         reportAsyncPhaseStart("setup", 0.3f);
-        s.env = std::make_unique<lightusd::tydra::RenderSceneConverterEnv>(s.stage);
+        s.env = std::make_unique<lightusd::legacy::tydra::RenderSceneConverterEnv>(s.stage);
         auto &env = *s.env;
         env.scene_config.load_texture_assets = loadTextureInNative_;
         env.material_config.preserve_texel_bitdepth = true;
@@ -10574,14 +10576,14 @@ class LightUSDLoaderNative {
       }
       case 3: {
         reportAsyncPhaseStart("assets", 0.4f);
-        lightusd::AssetResolutionResolver resolver;
+        lightusd::legacy::AssetResolutionResolver resolver;
         if (s.is_usdz) {
           bool asset_on_memory = false;
-          if (!lightusd::ReadUSDZAssetInfoFromMemory(
+          if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
                   reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size(),
                   asset_on_memory, &usdz_asset_, &warn_, &error_))
             return fail("Failed to read USDZ assetInfo");
-          if (!lightusd::SetupUSDZAssetResolution(resolver, &usdz_asset_))
+          if (!lightusd::legacy::SetupUSDZAssetResolution(resolver, &usdz_asset_))
             return fail("Failed to setup AssetResolution for USDZ");
         } else if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
           return fail("Failed to setup asset resolution");
@@ -10591,9 +10593,9 @@ class LightUSDLoaderNative {
       }
       case 4: {
         reportAsyncPhaseStart("meshes", 0.5f);
-        s.converter = std::make_unique<lightusd::tydra::RenderSceneConverter>();
+        s.converter = std::make_unique<lightusd::legacy::tydra::RenderSceneConverter>();
         s.converter->SetDetailedProgressCallback(
-            [](const lightusd::tydra::DetailedProgressInfo &info, void *) -> bool {
+            [](const lightusd::legacy::tydra::DetailedProgressInfo &info, void *) -> bool {
               reportTydraProgress(
                   static_cast<int>(info.meshes_processed), static_cast<int>(info.meshes_total),
                   info.GetStageName(), info.current_mesh_name.c_str(),
@@ -10663,7 +10665,7 @@ class LightUSDLoaderNative {
 
 
   void collectVariantInfoRec(const std::string &root_path,
-                             const lightusd::PrimSpec &ps,
+                             const lightusd::legacy::PrimSpec &ps,
                              std::vector<VariantPrimInfo> *out) const {
     const std::string prim_path = root_path + "/" + ps.name();
     std::vector<std::string> set_names;
@@ -10718,7 +10720,7 @@ class LightUSDLoaderNative {
 
   // Simple glTF-like Node
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
-  emscripten::val buildNodeRec(const lightusd::tydra::Node &rnode) {
+  emscripten::val buildNodeRec(const lightusd::legacy::tydra::Node &rnode) {
     emscripten::val node = emscripten::val::object();
 
     node.set("primName", rnode.prim_name);
@@ -10748,7 +10750,7 @@ class LightUSDLoaderNative {
 
     emscripten::val children = emscripten::val::array();
 
-    for (const lightusd::tydra::Node &child : rnode.children) {
+    for (const lightusd::legacy::tydra::Node &child : rnode.children) {
       emscripten::val child_val = buildNodeRec(child);
 
       children.call<void>("push", child_val);
@@ -10774,7 +10776,7 @@ class LightUSDLoaderNative {
   bool allow_parent_relative_asset_paths_{true};
   // Parsed-layer cache shared across the JS-driven composeReferences/
   // composePayload fixed-point loop (cleared by clearAssets()/reset()).
-  std::map<std::string, lightusd::Layer> compose_layer_cache_;
+  std::map<std::string, lightusd::legacy::Layer> compose_layer_cache_;
 
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
   struct NextAsyncFlattenSession {
@@ -10789,7 +10791,7 @@ class LightUSDLoaderNative {
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
 #endif  // LIGHTUSD_WASM_WITH_NEXT
 
-  // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
+  // UDIM: when false, keep UDIM tiles separate (sparse lightusd::legacy::tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
   // tiles into a single atlas texture.
   bool combineUDIMTiles_{true};
@@ -10834,18 +10836,18 @@ class LightUSDLoaderNative {
   std::string warn_;
   std::string error_;
 
-  lightusd::Layer layer_;
-  lightusd::Layer composed_layer_;
+  lightusd::legacy::Layer layer_;
+  lightusd::legacy::Layer composed_layer_;
   bool composited_{false};
   std::vector<std::string> search_paths_;
   std::string base_dir_{"./"};
 
-  lightusd::tydra::RenderScene render_scene_;
-  lightusd::USDZAsset usdz_asset_;
+  lightusd::legacy::tydra::RenderScene render_scene_;
+  lightusd::legacy::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
 
   // Export state
-  lightusd::Stage export_stage_;
+  lightusd::legacy::Stage export_stage_;
   bool has_stage_{false};
   // Physics-scene JSON snapshotted from the pristine parsed stage at load time,
   // before the Tydra render conversion strips custom GeomMesh props. Empty when
@@ -10858,7 +10860,7 @@ class LightUSDLoaderNative {
   // (e.g. mesh-dense robots) past the conservative WASM defaults.
   int64_t usdc_max_file_size_bytes_{0};
   int64_t usdc_max_memory_bytes_{0};
-  std::map<std::string, lightusd::tydra::URDFMeshBuffer> urdf_mesh_buffers_;
+  std::map<std::string, lightusd::legacy::tydra::URDFMeshBuffer> urdf_mesh_buffers_;
 
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
   struct ReorderedMeshCache {
@@ -10886,7 +10888,7 @@ class LightUSDLoaderNative {
 
   // Per-session MCP contexts. key = session_id. Each session gets its own
   // isolated Context so tools cannot read/overwrite another session's state.
-  std::unordered_map<std::string, lightusd::tydra::mcp::Context> mcp_ctx_;
+  std::unordered_map<std::string, lightusd::legacy::tydra::mcp::Context> mcp_ctx_;
   std::string mcp_session_id_;
 
   // Progress tracking for polling-based progress reporting
@@ -11441,7 +11443,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_schema_mesh(
       (index_count && reinterpret_cast<uintptr_t>(indices) % alignof(int32_t))) return -1;
   const std::string key = name_size
       ? std::string(reinterpret_cast<const char *>(name), name_size) : std::string();
-  lightusd::tydra::URDFMeshBuffer buffer;
+  lightusd::legacy::tydra::URDFMeshBuffer buffer;
   if (!key.empty()) {
     if (position_count) buffer.positions.assign(positions, positions + position_count);
     if (normal_count) buffer.normals.assign(normals, normals + normal_count);
@@ -11710,7 +11712,7 @@ class LightUSDComposerNative {
   std::string warn_;
   std::string error_;
 
-  lightusd::Layer root_layer_;
+  lightusd::legacy::Layer root_layer_;
 };
 
 #if 0
@@ -12003,7 +12005,7 @@ std::string detectUSDFormat(const emscripten::val& data) {
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
   std::string fmt;
-  if (lightusd::IsUSD(buffer.data(), buffer.size(), &fmt)) {
+  if (lightusd::legacy::IsUSD(buffer.data(), buffer.size(), &fmt)) {
     return fmt;
   }
   return "";
@@ -12014,7 +12016,7 @@ std::string detectUSDFormat(const emscripten::val& data) {
 bool isUSD(const emscripten::val& data) {
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
-  return lightusd::IsUSD(buffer.data(), buffer.size(), /* detected_format */ nullptr);
+  return lightusd::legacy::IsUSD(buffer.data(), buffer.size(), /* detected_format */ nullptr);
 }
 
 // Minimal prefix needed for streaming magic-number detection.
@@ -12041,10 +12043,10 @@ std::string detectUSDFormatHeader(const emscripten::val& data) {
   const uint8_t* p = buf.data();
   const size_t n = buf.size();
 
-  if (lightusd::IsUSDA(p, n)) {
+  if (lightusd::legacy::IsUSDA(p, n)) {
     return "usda";
   }
-  if (lightusd::IsUSDC(p, n)) {
+  if (lightusd::legacy::IsUSDC(p, n)) {
     return "usdc";
   }
   // ZIP local file header signature: 0x50 0x4b 0x03 0x04 ("PK\x03\x04").
@@ -14571,20 +14573,20 @@ static lightusd::Image halfImageToFloat(const lightusd::Image& img) {
 }
 
 // Read a scalar token/string attribute from a PrimSpec (default time).
-static std::string psAttrStr(const lightusd::PrimSpec& ps, const char* name) {
+static std::string psAttrStr(const lightusd::legacy::PrimSpec& ps, const char* name) {
   auto it = ps.props().find(name);
   if (it == ps.props().end() || !it->second.is_attribute()) return "";
   const auto& a = it->second.get_attribute();
-  if (auto v = a.get_value<lightusd::value::token>()) return v.value().str();
+  if (auto v = a.get_value<lightusd::legacy::value::token>()) return v.value().str();
   if (auto v = a.get_value<std::string>()) return v.value();
-  if (auto v = a.get_value<lightusd::value::AssetPath>())
+  if (auto v = a.get_value<lightusd::legacy::value::AssetPath>())
     return v.value().GetAssetPath();
   return "";
 }
 
 // Walk PrimSpecs collecting {texture-file-basename -> sourceColorSpace} from
 // UsdUVTexture shaders (authored value only; absent => "auto").
-static void collectTexColorspaces(const lightusd::PrimSpec& ps,
+static void collectTexColorspaces(const lightusd::legacy::PrimSpec& ps,
                                   emscripten::val& out) {
   if (ps.typeName() == "Shader" &&
       psAttrStr(ps, "info:id") == "UsdUVTexture") {
@@ -14609,9 +14611,9 @@ emscripten::val getTextureColorspaceMap(const emscripten::val& data) {
   emscripten::val result = emscripten::val::object();
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
-  lightusd::Layer layer;
+  lightusd::legacy::Layer layer;
   std::string warn, err;
-  if (!lightusd::LoadLayerFromMemory(buffer.data(), buffer.size(), "root",
+  if (!lightusd::legacy::LoadLayerFromMemory(buffer.data(), buffer.size(), "root",
                                      &layer, &warn, &err)) {
     return result;
   }
@@ -14627,6 +14629,7 @@ emscripten::val getTextureColorspaceMap(const emscripten::val& data) {
 emscripten::val convertImage(const emscripten::val& data,
                              const emscripten::val& opts) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   emscripten::val result = emscripten::val::object();
 
   std::vector<uint8_t> buffer;
@@ -14780,9 +14783,9 @@ emscripten::val convertImage(const emscripten::val& data,
     }
     if (tw > 0 && th > 0 && (tw != img.width || th != img.height)) {
       Image out; std::string rerr;
-      const tydra::ResizeFilter rfilter =
-          resizeSrgb ? tydra::ResizeFilter::SRGB : tydra::ResizeFilter::Auto;
-      if (tydra::ResizeImage(img, tw, th, &out, rfilter, &rerr)) {
+      const lightusd::legacy::tydra::ResizeFilter rfilter =
+          resizeSrgb ? lightusd::legacy::tydra::ResizeFilter::SRGB : lightusd::legacy::tydra::ResizeFilter::Auto;
+      if (lightusd::legacy::tydra::ResizeImage(img, tw, th, &out, rfilter, &rerr)) {
         img = std::move(out);
         resized = true;
       } else {
@@ -14829,6 +14832,7 @@ emscripten::val convertImage(const emscripten::val& data,
 //         r/g/b/a: { data?:Uint8Array, channel?:int, const?:int } }
 emscripten::val repackChannels(const emscripten::val& opts) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   emscripten::val result = emscripten::val::object();
 
   const char* slot_names[4] = {"r", "g", "b", "a"};
@@ -14924,11 +14928,11 @@ emscripten::val repackChannels(const emscripten::val& opts) {
 
   std::vector<Image> images;
 
-  tydra::ChannelPackSpec spec;
+  lightusd::legacy::tydra::ChannelPackSpec spec;
   spec.out_channels = optInt(opts, "channels", 0);
   spec.out_width = optInt(opts, "width", 0);
   spec.out_height = optInt(opts, "height", 0);
-  tydra::ChannelSource* dst[4] = {&spec.r, &spec.g, &spec.b, &spec.a};
+  lightusd::legacy::tydra::ChannelSource* dst[4] = {&spec.r, &spec.g, &spec.b, &spec.a};
 
   int inferred = 0;
   for (int c = 0; c < 4; c++) {
@@ -14963,7 +14967,7 @@ emscripten::val repackChannels(const emscripten::val& opts) {
   }
 
   Image packed; std::string perr;
-  if (!tydra::PackChannels(images, spec, &packed, &perr)) {
+  if (!lightusd::legacy::tydra::PackChannels(images, spec, &packed, &perr)) {
     result.set("success", false);
     result.set("error", perr);
     return result;
@@ -15000,6 +15004,7 @@ emscripten::val repackChannels(const emscripten::val& opts) {
 //         startMaxSize?, minTextureSize?, minQuality?, jpegQuality?, pngEncoder? }
 emscripten::val fitTextures(const emscripten::val& opts) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   emscripten::val result = emscripten::val::object();
 
   emscripten::val jsImages = opts["images"];
@@ -15010,7 +15015,7 @@ emscripten::val fitTextures(const emscripten::val& opts) {
   }
   const size_t n = jsImages["length"].as<size_t>();
 
-  std::vector<tydra::FitTextureInput> inputs;
+  std::vector<lightusd::legacy::tydra::FitTextureInput> inputs;
   std::vector<std::string> names;
   inputs.reserve(n);
   names.reserve(n);
@@ -15020,7 +15025,7 @@ emscripten::val fitTextures(const emscripten::val& opts) {
     copyFromJSBuffer(im["data"], buf);
     const std::string name = im["name"].as<std::string>();
 
-    tydra::FitTextureInput fi;
+    lightusd::legacy::tydra::FitTextureInput fi;
     fi.original_bytes = buf;
     // lowercase extension from name
     {
@@ -15051,24 +15056,24 @@ emscripten::val fitTextures(const emscripten::val& opts) {
     names.push_back(name);
   }
 
-  tydra::FitTextureOptions fopts;
+  lightusd::legacy::tydra::FitTextureOptions fopts;
   {
     emscripten::val tb = opts["targetBytes"];
     fopts.target_total_bytes =
         (tb.isUndefined() || tb.isNull()) ? 0 : size_t(tb.as<double>());
   }
   fopts.strategy = (optStr(opts, "strategy", "size") == "quality")
-                       ? tydra::FitStrategy::Quality
-                       : tydra::FitStrategy::Size;
+                       ? lightusd::legacy::tydra::FitStrategy::Quality
+                       : lightusd::legacy::tydra::FitStrategy::Size;
   fopts.start_max_size = optInt(opts, "startMaxSize", 0);
   fopts.min_texture_size = optInt(opts, "minTextureSize", 64);
   fopts.min_jpeg_quality = optInt(opts, "minQuality", 30);
   fopts.jpeg_quality = optInt(opts, "jpegQuality", 90);
   fopts.png_encoder = parsePngEncoder(optStr(opts, "pngEncoder", "auto"));
 
-  std::vector<tydra::FitTextureOutput> outs;
+  std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
   std::string warn, err;
-  if (!tydra::FitTexturesToBudget(inputs, fopts, &outs, &warn, &err)) {
+  if (!lightusd::legacy::tydra::FitTexturesToBudget(inputs, fopts, &outs, &warn, &err)) {
     result.set("success", false);
     result.set("error", err);
     return result;
@@ -15110,6 +15115,7 @@ emscripten::val fitTextures(const emscripten::val& opts) {
 // `lusddiff` tool (tools/lusddiff/lusddiff.cc).
 emscripten::val usddiff(const emscripten::val& opts) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   emscripten::val result = emscripten::val::object();
 
   if (opts.isUndefined() || opts.isNull()) {
@@ -15138,7 +15144,7 @@ emscripten::val usddiff(const emscripten::val& opts) {
   // Diff tolerance / options, flat on `opts` (matching the lusddiff CLI):
   //   ulps (sets float+double; default 1), eps (absEps), compareMetadata,
   //   fuzzyAssetPaths.
-  tydra::DiffOptions diffOpts;
+  lightusd::legacy::tydra::DiffOptions diffOpts;
   {
     const int ulps = optInt(opts, "ulps", -1);
     if (ulps >= 0) {
@@ -15178,10 +15184,10 @@ emscripten::val usddiff(const emscripten::val& opts) {
     accumWarn += warn;
   }
 
-  lightusd::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
-  lightusd::HashMap<std::string, tydra::PropDiff> propDiffs;
-  tydra::LayerMetaDiff layerMetaDiff;
-  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs, diffOpts, &layerMetaDiff);
+  lightusd::legacy::HashMap<std::string, lightusd::legacy::tydra::PrimSpecDiff> psDiffs;
+  lightusd::legacy::HashMap<std::string, lightusd::legacy::tydra::PropDiff> propDiffs;
+  lightusd::legacy::tydra::LayerMetaDiff layerMetaDiff;
+  lightusd::legacy::tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs, diffOpts, &layerMetaDiff);
 
   const bool hasDiffs =
       !psDiffs.empty() || !propDiffs.empty() || layerMetaDiff.changed();
@@ -15191,12 +15197,12 @@ emscripten::val usddiff(const emscripten::val& opts) {
   if (!accumWarn.empty()) result.set("warn", accumWarn);
 
   if (format == "json" || format == "both") {
-    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName,
+    result.set("json", lightusd::legacy::tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName,
                                          diffOpts));
   }
   if (format == "text" || format == "both") {
     if (hasDiffs) {
-      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName,
+      result.set("text", lightusd::legacy::tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName,
                                            diffOpts));
     } else {
       result.set("text", std::string("No differences found.\n"));

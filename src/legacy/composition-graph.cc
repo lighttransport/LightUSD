@@ -29,7 +29,7 @@
 // VariantSelectPrimSpec (variant content resolution).
 #include "composition.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace composition_graph {
 
 using security_policy::ValidateAndNormalizeAssetPath;
@@ -2495,4 +2495,5 @@ std::string CompositionGraph::DumpToString() const {
 }
 
 }  // namespace composition_graph
+}  // namespace legacy
 }  // namespace lightusd

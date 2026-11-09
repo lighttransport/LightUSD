@@ -78,9 +78,9 @@ static int NullARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_
 }
 
 static bool SetupNullAssetResolution(
-  lightusd::AssetResolutionResolver &resolver)
+  lightusd::legacy::AssetResolutionResolver &resolver)
 {
-  lightusd::AssetResolutionHandler handler;
+  lightusd::legacy::AssetResolutionHandler handler;
   handler.resolve_fun = NullARResolve;
   handler.size_fun = NullARSize;
   handler.read_fun = NullARRead;
@@ -92,35 +92,35 @@ static bool SetupNullAssetResolution(
   return true;
 }
 
-static std::string AnimationPathToString(lightusd::tydra::AnimationPath path) {
+static std::string AnimationPathToString(lightusd::legacy::tydra::AnimationPath path) {
   switch (path) {
-    case lightusd::tydra::AnimationPath::Translation:
+    case lightusd::legacy::tydra::AnimationPath::Translation:
       return "Translation";
-    case lightusd::tydra::AnimationPath::Rotation:
+    case lightusd::legacy::tydra::AnimationPath::Rotation:
       return "Rotation";
-    case lightusd::tydra::AnimationPath::Scale:
+    case lightusd::legacy::tydra::AnimationPath::Scale:
       return "Scale";
-    case lightusd::tydra::AnimationPath::Weights:
+    case lightusd::legacy::tydra::AnimationPath::Weights:
       return "Weights";
-    case lightusd::tydra::AnimationPath::CustomProperty:
+    case lightusd::legacy::tydra::AnimationPath::CustomProperty:
       return "CustomProperty";
   }
   return "Unknown";
 }
 
-static std::string InterpolationToString(lightusd::tydra::AnimationInterpolation interp) {
+static std::string InterpolationToString(lightusd::legacy::tydra::AnimationInterpolation interp) {
   switch (interp) {
-    case lightusd::tydra::AnimationInterpolation::Linear:
+    case lightusd::legacy::tydra::AnimationInterpolation::Linear:
       return "Linear";
-    case lightusd::tydra::AnimationInterpolation::Step:
+    case lightusd::legacy::tydra::AnimationInterpolation::Step:
       return "Step";
-    case lightusd::tydra::AnimationInterpolation::CubicSpline:
+    case lightusd::legacy::tydra::AnimationInterpolation::CubicSpline:
       return "CubicSpline";
   }
   return "Unknown";
 }
 
-static void DumpAnimationTimesamples(const lightusd::tydra::RenderScene& scene) {
+static void DumpAnimationTimesamples(const lightusd::legacy::tydra::RenderScene& scene) {
   std::cout << "\n========================================\n";
   std::cout << "Animation Timesamples Dump\n";
   std::cout << "========================================\n";
@@ -143,7 +143,7 @@ static void DumpAnimationTimesamples(const lightusd::tydra::RenderScene& scene) 
       std::cout << "\n  Channel [" << ch_idx << "]:\n";
       std::cout << "    Path: " << AnimationPathToString(channel.path) << "\n";
 
-      if (channel.target_type == lightusd::tydra::ChannelTargetType::SceneNode) {
+      if (channel.target_type == lightusd::legacy::tydra::ChannelTargetType::SceneNode) {
         std::cout << "    Target type: SceneNode\n";
         std::cout << "    Target node: " << channel.target_node << "\n";
       } else {
@@ -164,15 +164,15 @@ static void DumpAnimationTimesamples(const lightusd::tydra::RenderScene& scene) 
         // Determine components per value based on path
         size_t components = 1;
         switch (channel.path) {
-          case lightusd::tydra::AnimationPath::Translation:
-          case lightusd::tydra::AnimationPath::Scale:
+          case lightusd::legacy::tydra::AnimationPath::Translation:
+          case lightusd::legacy::tydra::AnimationPath::Scale:
             components = 3;  // vec3
             break;
-          case lightusd::tydra::AnimationPath::Rotation:
+          case lightusd::legacy::tydra::AnimationPath::Rotation:
             components = 4;  // quat (x, y, z, w)
             break;
-          case lightusd::tydra::AnimationPath::Weights:
-          case lightusd::tydra::AnimationPath::CustomProperty:
+          case lightusd::legacy::tydra::AnimationPath::Weights:
+          case lightusd::legacy::tydra::AnimationPath::CustomProperty:
             // Variable, depends on number of morph targets
             if (!sampler.times.empty() && !sampler.values.empty()) {
               components = sampler.values.size() / sampler.times.size();
@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
   // When Xform, Mesh, Material, etc. have time-varying values,
   // values are evaluated at `timecode` time(except for animation values in
   // SkelAnimation)
-  double timecode = lightusd::value::TimeCode::Default();
+  double timecode = lightusd::legacy::value::TimeCode::Default();
 
   bool build_indices = true;
   bool triangulate = true;
@@ -274,7 +274,7 @@ int main(int argc, char **argv) {
   bool next_load_payloads = true;
   bool no_animation = false;
 #endif
-  auto tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
+  auto tangent_method = lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
@@ -315,11 +315,11 @@ int main(int argc, char **argv) {
       }
       std::string tm = argv[i + 1];
       if (tm == "lengyel") {
-        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
+        tangent_method = lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
       } else if (tm == "mikktspace") {
-        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace;
+        tangent_method = lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace;
       } else if (tm == "fast-mikktspace") {
-        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
+        tangent_method = lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
       } else {
         std::cerr << "Unknown tangent method: " << tm << ". Use lengyel, mikktspace, or fast-mikktspace.\n";
         return -1;
@@ -386,13 +386,13 @@ int main(int argc, char **argv) {
   use_next_pipeline = use_next;
   lightusd::api::Stage next_stage;
 #endif
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
 
-  if (!lightusd::IsUSD(filepath)) {
+  if (!lightusd::legacy::IsUSD(filepath)) {
     std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
 
-  bool is_usdz = lightusd::IsUSDZ(filepath);
+  bool is_usdz = lightusd::legacy::IsUSDZ(filepath);
 
   // Add base directory early since next load path also needs it.
   std::string usd_basedir = lightusd::io::GetBaseDir(filepath);
@@ -436,7 +436,7 @@ int main(int argc, char **argv) {
     config_info.push_back({"load_payloads", next_load_payloads ? "true" : "false"});
   } else {
 #endif
-  lightusd::USDLoadOptions load_options;
+  lightusd::legacy::USDLoadOptions load_options;
   if (mmap_lowmem) {
     load_options.mmap_zero_copy = true;
     config_info.push_back({"mmap_zero_copy", "true"});
@@ -451,7 +451,7 @@ int main(int argc, char **argv) {
     using_mmap = true;
 
     // Load USD from mmap'd memory
-    ret = lightusd::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
+    ret = lightusd::legacy::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
                                        filepath, &stage, &warn, &err,
                                        load_options);
   } else {
@@ -460,7 +460,7 @@ int main(int argc, char **argv) {
     if (mmap_lowmem) {
       std::cerr << "WARN: --mmap-lowmem requested but mmap is not supported on this platform.\n";
     }
-    ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
   }
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   }
@@ -518,7 +518,7 @@ int main(int argc, char **argv) {
   }
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-  lightusd::tydra::RenderScene render_scene;
+  lightusd::legacy::tydra::RenderScene render_scene;
 #if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   lightusd::api::RenderScene next_render_scene;
   bool next_render_scene_ready = false;
@@ -553,7 +553,7 @@ int main(int argc, char **argv) {
     conv_cfg.target_color_space = 0;  // Preserve the converter's sRGB default.
     conv_cfg.use_default_asset_resolver = !no_assetresolver;
 
-    if (!lightusd::value::TimeCode(timecode).is_default()) {
+    if (!lightusd::legacy::value::TimeCode(timecode).is_default()) {
       config_info.push_back({"timecode", std::to_string(timecode)});
     } else {
       config_info.push_back({"timecode", "default"});
@@ -565,14 +565,14 @@ int main(int argc, char **argv) {
     config_info.push_back({"no_animation", no_animation ? "true" : "false"});
 
     switch (tangent_method) {
-      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel:
+      case lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel:
         conv_cfg.tangent_method = 1;
         break;
-      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace:
+      case lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace:
         conv_cfg.tangent_method = 2;
         break;
-      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace:
-      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Hybrid:
+      case lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace:
+      case lightusd::legacy::tydra::MeshConverterConfig::TangentComputationMethod::Hybrid:
         conv_cfg.tangent_method = 3;
         break;
     }
@@ -599,14 +599,14 @@ int main(int argc, char **argv) {
     ret = false;
 #endif
   } else {
-    lightusd::tydra::RenderSceneConverter converter;
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
 
     env.mesh_config.triangulate = triangulate;
     env.mesh_config.triangulation_method =
         use_triangle_fan
-            ? lightusd::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan
-            : lightusd::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
+            ? lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan
+            : lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
     env.mesh_config.build_vertex_indices = build_indices;
     if (no_tangent) {
       env.mesh_config.compute_tangents_and_binormals = false;
@@ -635,9 +635,9 @@ int main(int argc, char **argv) {
 
     if (snorm8) {
       env.mesh_config.normal_storage =
-          lightusd::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
+          lightusd::legacy::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
       env.mesh_config.tangent_storage =
-          lightusd::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
+          lightusd::legacy::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
       config_info.push_back({"normal_storage", "snorm8"});
       config_info.push_back({"tangent_storage", "snorm8"});
     }
@@ -653,7 +653,7 @@ int main(int argc, char **argv) {
 
     config_info.push_back({"search_path", usd_basedir});
 
-    lightusd::USDZAsset usdz_asset;
+    lightusd::legacy::USDZAsset usdz_asset;
 
     if (is_usdz) {
       // Setup AssetResolutionResolver to read assets from USDZ container.
@@ -661,7 +661,7 @@ int main(int argc, char **argv) {
       if (using_mmap) {
         // Use ReadUSDZAssetInfoFromMemory with asset_on_memory=true
         // This avoids copying the USDZ data, just references the mmap'd address
-        if (!lightusd::ReadUSDZAssetInfoFromMemory(
+        if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
               mmap_handle.addr, mmap_handle.size,
               /* asset_on_memory */ true,
               &usdz_asset, &warn, &err)) {
@@ -671,7 +671,7 @@ int main(int argc, char **argv) {
         }
       } else {
         // Fallback to file-based loading (copies entire file into memory)
-        if (!lightusd::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
+        if (!lightusd::legacy::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
                                                  &err)) {
           std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
           return EXIT_FAILURE;
@@ -681,14 +681,14 @@ int main(int argc, char **argv) {
         std::cout << warn << "\n";
       }
 
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
       if (no_assetresolver) {
         SetupNullAssetResolution(arr);
         config_info.push_back({"asset_resolver", "null"});
       } else {
         // NOTE: Pointer address of usdz_asset must be valid until the call of
         // RenderSceneConverter::ConvertToRenderScene.
-        if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset)) {
+        if (!lightusd::legacy::SetupUSDZAssetResolution(arr, &usdz_asset)) {
           std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
           exit(-1);
         };
@@ -705,7 +705,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (!lightusd::value::TimeCode(timecode).is_default()) {
+    if (!lightusd::legacy::value::TimeCode(timecode).is_default()) {
       config_info.push_back({"timecode", std::to_string(timecode)});
     } else {
       config_info.push_back({"timecode", "default"});
@@ -886,7 +886,7 @@ int main(int argc, char **argv) {
       for (size_t i = 0; i < render_scene.meshes.size(); i++) {
         std::string obj_str;
         std::string mtl_str;
-        if (!lightusd::tydra::export_to_obj(render_scene, i, obj_str, mtl_str,
+        if (!lightusd::legacy::tydra::export_to_obj(render_scene, i, obj_str, mtl_str,
                                             &warn, &err)) {
           std::cerr << "obj export error: " << err << "\n";
           exit(-1);
@@ -913,10 +913,10 @@ int main(int argc, char **argv) {
       std::string ext = lightusd::io::GetFileExtension(filepath);
       std::string usd_basename = lightusd::io::GetBaseFilename(filepath);
       std::string usd_filename =
-          lightusd::removeSuffix(usd_basename, ext) + "export.usda";
+          lightusd::legacy::removeSuffix(usd_basename, ext) + "export.usda";
 
       std::string usda_str;
-      if (!lightusd::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
+      if (!lightusd::legacy::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
         std::cerr << "Failed to export RenderScene to USDA: " << err << "\n";
       }
       if (warn.size()) {

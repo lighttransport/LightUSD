@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // forward decl.
@@ -34,4 +34,5 @@ std::string to_string(UVReaderFloatComponentType ty);
 // std::string to_string(const UVTexture::Channel channel);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

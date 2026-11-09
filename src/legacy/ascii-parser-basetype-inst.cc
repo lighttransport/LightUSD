@@ -93,7 +93,7 @@
 #include "tiny-string.hh"
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace ascii {
 
 [[maybe_unused]] constexpr auto kAscii = "[ASCII]";
@@ -289,6 +289,7 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *res
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::PathExpression> *result);
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDA_READER

@@ -14,7 +14,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Collection API
 ///
@@ -226,4 +226,5 @@ DEFINE_TYPE_TRAIT(ColorSpaceAPI, "ColorSpaceAPI", TYPE_ID_COLOR_SPACE_API, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

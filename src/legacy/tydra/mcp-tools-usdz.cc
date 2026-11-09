@@ -20,7 +20,7 @@
 #include "tydra/texture-util.hh"
 #include "mcp-context.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -34,7 +34,7 @@ image::PngEncoder ParsePngEncoder(const nlohmann::json &args) {
 }
 
 // Encode an Image to base64 in the requested format ("png" default, or "jpeg").
-// NOTE: this namespace (lightusd::tydra::mcp) has its own `Image` type, so the
+// NOTE: this namespace (lightusd::legacy::tydra::mcp) has its own `Image` type, so the
 // pixel-image type must be spelled `lightusd::Image`.
 bool EncodeImageBase64(const lightusd::Image &img, const std::string &format,
                        image::PngEncoder enc, int jpeg_quality,
@@ -218,7 +218,7 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
       err = "Path contains unsafe characters or traversal sequences.";
       return false;
     }
-    if (!lightusd::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
+    if (!lightusd::legacy::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
       return false;
     }
     result["success"] = true;
@@ -227,7 +227,7 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   }
 
   std::vector<uint8_t> out;
-  if (!lightusd::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
+  if (!lightusd::legacy::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
     return false;
   }
   // Cap in-memory archive size before base64 encoding.
@@ -394,4 +394,5 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
 
 }  // namespace mcp
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

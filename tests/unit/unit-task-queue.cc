@@ -13,6 +13,8 @@
 #include <vector>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd_test;
 
 // Test data structure

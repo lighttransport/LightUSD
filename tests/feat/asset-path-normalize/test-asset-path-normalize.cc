@@ -18,6 +18,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 int g_failures = 0;
 void expect(const std::string &got, const std::string &want,

@@ -21,6 +21,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 static bool roundtrip(const char *usda, Stage *out,
@@ -557,7 +559,7 @@ void usdc_writer_inmemory_shader_inputs_test(void) {
   {
     UsdUVTexture tex;
     tex.file.set_value(
-        Animatable<value::AssetPath>(value::AssetPath("assets/diffuse.png")));
+        Animatable<lightusd::legacy::value::AssetPath>(lightusd::legacy::value::AssetPath("assets/diffuse.png")));
     tex.wrapS.set_value(
         Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
     tex.sourceColorSpace.set_value(Animatable<UsdUVTexture::SourceColorSpace>(
@@ -608,7 +610,7 @@ void usdc_writer_inmemory_shader_inputs_test(void) {
       TEST_CHECK(uv->sourceColorSpace.authored());
       TEST_CHECK(uv->outputsRGB.authored());
       auto file_opt = uv->file.get_value();
-      value::AssetPath ap;
+      lightusd::legacy::value::AssetPath ap;
       bool got = file_opt.has_value() && file_opt.value().get_scalar(&ap);
       TEST_CHECK(got);
       if (got) TEST_CHECK(ap.GetAssetPath() == "assets/diffuse.png");
@@ -1690,7 +1692,7 @@ def Material "mat" {
   const auto &a = it->second.get_attribute();
   TEST_CHECK(a.type_name() == "asset");
   // Read back the AssetPath value
-  auto pv = a.get_var().value_raw().get_value<value::AssetPath>();
+  auto pv = a.get_var().value_raw().get_value<lightusd::legacy::value::AssetPath>();
   TEST_CHECK(pv.has_value());
   if (!pv) return;
   std::string got = pv.value().GetAssetPath();
@@ -1727,7 +1729,7 @@ def Xform "x" {
   if (!op.is_timesamples()) return;
   // Extract the underlying TimeSamples and verify each sample value.
   // Implementation detail: XformOp stores typed_timesamples<double3> for
-  // double3 ops; we sniff via the generic value::Value lookup.
+  // double3 ops; we sniff via the generic lightusd::legacy::value::Value lookup.
   TEST_CHECK(op.get_var().has_timesamples());
   const auto &ts = op.get_var().ts_raw();
   TEST_CHECK(ts.size() == 2);
@@ -1737,8 +1739,8 @@ def Xform "x" {
   TEST_CHECK(samples[1].t == 24.0);
   // Now verify the actual payload — these are the bits that turn into
   // garbage on the broken roundtrip.
-  auto v0 = samples[0].value.get_value<value::double3>();
-  auto v1 = samples[1].value.get_value<value::double3>();
+  auto v0 = samples[0].value.get_value<lightusd::legacy::value::double3>();
+  auto v1 = samples[1].value.get_value<lightusd::legacy::value::double3>();
   TEST_CHECK(v0.has_value());
   TEST_CHECK(v1.has_value());
   if (!v0 || !v1) return;
@@ -1812,7 +1814,7 @@ def Material "mat" {
   if (it == mat->props.end()) return;
   const auto &a = it->second.get_attribute();
   TEST_CHECK(a.type_name() == "asset[]");
-  auto pv = a.get_var().value_raw().get_value<std::vector<value::AssetPath>>();
+  auto pv = a.get_var().value_raw().get_value<std::vector<lightusd::legacy::value::AssetPath>>();
   TEST_CHECK(pv.has_value());
   if (!pv) return;
   TEST_CHECK(pv->size() == 3);
@@ -1850,9 +1852,9 @@ def Xform "x" {
   TEST_CHECK(ts.size() == 3);
   if (ts.size() != 3) return;
   const auto &samples = ts.get_samples();
-  auto v0 = samples[0].value.get_value<value::token>();
-  auto v1 = samples[1].value.get_value<value::token>();
-  auto v2 = samples[2].value.get_value<value::token>();
+  auto v0 = samples[0].value.get_value<lightusd::legacy::value::token>();
+  auto v1 = samples[1].value.get_value<lightusd::legacy::value::token>();
+  auto v2 = samples[2].value.get_value<lightusd::legacy::value::token>();
   TEST_CHECK(v0.has_value() && v1.has_value() && v2.has_value());
   if (!v0 || !v1 || !v2) return;
   TEST_CHECK(v0->str() == "off");
@@ -1952,8 +1954,8 @@ def Xform "x" {
   const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
   TEST_CHECK(samples.size() == 2);
   if (samples.size() != 2) return;
-  auto v0 = samples[0].value.get_value<value::float3>();
-  auto v1 = samples[1].value.get_value<value::float3>();
+  auto v0 = samples[0].value.get_value<lightusd::legacy::value::float3>();
+  auto v1 = samples[1].value.get_value<lightusd::legacy::value::float3>();
   TEST_CHECK(v0.has_value() && v1.has_value());
   if (!v0 || !v1) return;
   TEST_CHECK((*v0)[0] == 0.1f);
@@ -2046,7 +2048,7 @@ def Shader "tex" {
   auto av = uv->file.get_value();
   TEST_CHECK(av.has_value());
   if (!av) return;
-  value::AssetPath path_val;
+  lightusd::legacy::value::AssetPath path_val;
   TEST_CHECK(av.value().get_default(&path_val));
   TEST_MSG("uvtexture asset path = '%s'", path_val.GetAssetPath().c_str());
   TEST_CHECK(path_val.GetAssetPath() == "./diffuse.png");
@@ -2073,10 +2075,10 @@ def Xform "x" {
   auto it = xf->props.find("h");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto v = it->second.get_attribute().get_var().value_raw().get_value<value::half>();
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<lightusd::legacy::value::half>();
   TEST_CHECK(v.has_value());
   if (!v) return;
-  // value::half stores raw uint16; 1.5 -> 0x3E00
+  // lightusd::legacy::value::half stores raw uint16; 1.5 -> 0x3E00
   TEST_CHECK(v->value == 0x3E00);
 }
 
@@ -2096,7 +2098,7 @@ def Xform "x" {
   auto it = xf->props.find("hs");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::half>>();
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::half>>();
   TEST_CHECK(v.has_value());
   if (!v) return;
   TEST_CHECK(v->size() == 3);
@@ -2151,7 +2153,7 @@ def Xform "x" {
   const auto &samples = pv.ts_raw().get_samples();
   TEST_CHECK(samples.size() == 2);
   if (samples.size() != 2) return;
-  auto m1 = samples[1].value.get_value<value::matrix4d>();
+  auto m1 = samples[1].value.get_value<lightusd::legacy::value::matrix4d>();
   TEST_CHECK(m1.has_value());
   if (!m1) return;
   // Row 3 col 0..2 = translation 5,6,7
@@ -2182,7 +2184,7 @@ def Xform "x" {
   const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
   TEST_CHECK(samples.size() == 2);
   if (samples.size() != 2) return;
-  auto q0 = samples[0].value.get_value<value::quatf>();
+  auto q0 = samples[0].value.get_value<lightusd::legacy::value::quatf>();
   TEST_CHECK(q0.has_value());
   if (!q0) return;
   TEST_CHECK(q0->real == 1.0f);
@@ -2206,7 +2208,7 @@ def Xform "x" {
   if (it == xf->props.end()) return;
   // Must round-trip as uniform variability
   TEST_CHECK(it->second.get_attribute().variability() == Variability::Uniform);
-  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::token>>();
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::token>>();
   TEST_CHECK(v.has_value());
   if (!v) return;
   TEST_CHECK(v->size() == 3);
@@ -2298,7 +2300,7 @@ def Mesh "m" {
   if (it == mesh->props.end()) return;
   const auto &a = it->second.get_attribute();
   TEST_CHECK(a.metas().has_interpolation());
-  auto v = a.get_var().value_raw().get_value<std::vector<value::color3f>>();
+  auto v = a.get_var().value_raw().get_value<std::vector<lightusd::legacy::value::color3f>>();
   TEST_CHECK(v.has_value());
   if (!v) return;
   TEST_CHECK(v->size() == 3);
@@ -3117,7 +3119,7 @@ def Mesh "m" {
   auto val = mesh->normals.get_value();
   TEST_CHECK(val.has_value());
   if (!val) return;
-  std::vector<value::normal3f> ns;
+  std::vector<lightusd::legacy::value::normal3f> ns;
   TEST_CHECK(val.value().get_scalar(&ns));
   TEST_CHECK(ns.size() == 3);
 }
@@ -3497,8 +3499,8 @@ def Xform "x" {
   if (it == xf->props.end()) return;
   // Value type may be exposed as point3d[] or double3[] depending on parser.
   const auto &val = it->second.get_attribute().get_var().value_raw();
-  bool found = val.get_value<std::vector<value::point3d>>().has_value() ||
-               val.get_value<std::vector<value::double3>>().has_value();
+  bool found = val.get_value<std::vector<lightusd::legacy::value::point3d>>().has_value() ||
+               val.get_value<std::vector<lightusd::legacy::value::double3>>().has_value();
   TEST_CHECK(found);
 }
 
@@ -3828,7 +3830,7 @@ void usdc_writer_attr_documentation_test(void) {
   // Round-tripping `documentation = "..."` must preserve the string,
   // not collapse to empty (regression: parser used the generic
   // dictionary path which stored a raw string but get_doc() expected
-  // value::StringData and returned empty).
+  // lightusd::legacy::value::StringData and returned empty).
   const char *usda = R"(#usda 1.0
 def Xform "x" {
     custom int n = 5 (
@@ -3957,7 +3959,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quatf>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<lightusd::legacy::value::quatf>();
   TEST_CHECK(pv.has_value());
   if (pv.has_value()) {
     const auto &q = pv.value();
@@ -3983,7 +3985,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quatd>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<lightusd::legacy::value::quatd>();
   TEST_CHECK(pv.has_value());
   if (pv.has_value()) {
     const auto &q = pv.value();
@@ -4011,7 +4013,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quath>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<lightusd::legacy::value::quath>();
   TEST_CHECK(pv.has_value());
 }
 
@@ -4032,7 +4034,7 @@ def Xform "x" {
   auto it = xf->props.find("v");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int2>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::int2>>();
   TEST_CHECK(pv.has_value());
   if (pv.has_value()) TEST_CHECK(pv.value().size() == 3);
 }
@@ -4052,7 +4054,7 @@ def Xform "x" {
   auto it = xf->props.find("v");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int3>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::int3>>();
   TEST_CHECK(pv.has_value());
   if (pv.has_value()) TEST_CHECK(pv.value().size() == 2);
 }
@@ -4072,7 +4074,7 @@ def Xform "x" {
   auto it = xf->props.find("v");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int4>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::int4>>();
   TEST_CHECK(pv.has_value());
   if (pv.has_value()) TEST_CHECK(pv.value().size() == 2);
 }
@@ -4411,7 +4413,7 @@ def Xform "x" {
   };
 
   if (const Attribute *attr = check_attr("u2")) {
-    auto v = attr->get_var().value_raw().get_value<value::uint2>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::uint2>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK((*v)[0] == 7u);
@@ -4419,7 +4421,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("u2arr")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint2>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::uint2>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 2);
@@ -4432,7 +4434,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("u3arr")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint3>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::uint3>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4444,7 +4446,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("u4arr")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint4>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::uint4>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4481,11 +4483,11 @@ def Xform "x" {
     if (!it->second.is_attribute()) return nullptr;
     return &it->second.get_attribute();
   };
-  auto hf = [](value::half h) { return value::half_to_float(h); };
+  auto hf = [](lightusd::legacy::value::half h) { return lightusd::legacy::value::half_to_float(h); };
   auto close = [](float a, float b) { return std::fabs(a - b) < 0.0001f; };
 
   if (const Attribute *attr = check_attr("st")) {
-    auto v = attr->get_var().value_raw().get_value<value::texcoord2h>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::texcoord2h>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(close(hf((*v)[0]), 0.5f));
@@ -4493,7 +4495,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("p")) {
-    auto v = attr->get_var().value_raw().get_value<value::point3h>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::point3h>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(close(hf((*v)[0]), 1.0f));
@@ -4502,7 +4504,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("n")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::normal3h>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::normal3h>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4514,7 +4516,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("tint")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::color4h>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::color4h>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4527,7 +4529,7 @@ def Xform "x" {
     }
   }
   if (const Attribute *attr = check_attr("st3")) {
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::texcoord3h>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::texcoord3h>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4563,7 +4565,7 @@ def Xform "x" {
 
   if (const Attribute *attr = find_attr("frame")) {
     TEST_CHECK(attr->type_name() == "timecode");
-    auto v = attr->get_var().value_raw().get_value<value::timecode>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::timecode>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(std::fabs(v->value - 24.0) < 1.0e-9);
@@ -4571,7 +4573,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("frames")) {
     TEST_CHECK(attr->type_name() == "timecode[]");
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::timecode>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::timecode>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 3);
@@ -4608,7 +4610,7 @@ def Xform "x" {
 
   if (const Attribute *attr = find_attr("m2")) {
     TEST_CHECK(attr->type_name() == "matrix2f");
-    auto v = attr->get_var().value_raw().get_value<value::matrix2f>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::matrix2f>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(std::fabs(v->m[0][0] - 1.0f) < 1.0e-6f);
@@ -4619,7 +4621,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("m3")) {
     TEST_CHECK(attr->type_name() == "matrix3f[]");
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::matrix3f>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::matrix3f>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 1);
@@ -4632,7 +4634,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("m4")) {
     TEST_CHECK(attr->type_name() == "matrix4f");
-    auto v = attr->get_var().value_raw().get_value<value::matrix4f>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::matrix4f>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(std::fabs(v->m[3][0] - 4.0f) < 1.0e-6f);
@@ -4693,7 +4695,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("c3")) {
     TEST_CHECK(attr->type_name() == "char3");
-    auto v = attr->get_var().value_raw().get_value<value::char3>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::char3>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(static_cast<uint8_t>(static_cast<unsigned char>((*v)[0])) ==
@@ -4704,7 +4706,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("uc4")) {
     TEST_CHECK(attr->type_name() == "uchar4");
-    auto v = attr->get_var().value_raw().get_value<value::uchar4>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::uchar4>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK((*v)[0] == uint8_t(1));
@@ -4713,7 +4715,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("sh2")) {
     TEST_CHECK(attr->type_name() == "short2");
-    auto v = attr->get_var().value_raw().get_value<value::short2>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::short2>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK((*v)[0] == int16_t(-300));
@@ -4722,7 +4724,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("ush3")) {
     TEST_CHECK(attr->type_name() == "ushort3");
-    auto v = attr->get_var().value_raw().get_value<value::ushort3>();
+    auto v = attr->get_var().value_raw().get_value<lightusd::legacy::value::ushort3>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK((*v)[0] == uint16_t(5));
@@ -4731,7 +4733,7 @@ def Xform "x" {
   }
   if (const Attribute *attr = find_attr("c2a")) {
     TEST_CHECK(attr->type_name() == "char2[]");
-    auto v = attr->get_var().value_raw().get_value<std::vector<value::char2>>();
+    auto v = attr->get_var().value_raw().get_value<std::vector<lightusd::legacy::value::char2>>();
     TEST_CHECK(v.has_value());
     if (v) {
       TEST_CHECK(v->size() == 2);
@@ -4769,7 +4771,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quatf>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::quatf>>();
   TEST_CHECK(pv.has_value());
   if (!pv.has_value()) return;
   const auto &arr = pv.value();
@@ -4804,7 +4806,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quatd>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::quatd>>();
   TEST_CHECK(pv.has_value());
   if (!pv.has_value()) return;
   const auto &arr = pv.value();
@@ -4833,7 +4835,7 @@ def Xform "x" {
   auto it = xf->props.find("q");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quath>>();
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<lightusd::legacy::value::quath>>();
   TEST_CHECK(pv.has_value());
   if (!pv.has_value()) return;
   TEST_CHECK(pv.value().size() == 2);

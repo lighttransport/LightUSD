@@ -21,7 +21,7 @@
 
 #include "primvar.hh"  // primvar::PrimVar::SplineData
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Encode SplineData into the OpenUSD ts-binary blob. The value type
 // (double/float/half) is inferred from the knots' stored value type; an empty
@@ -42,4 +42,5 @@ bool DecodeSplineFromBinary(const uint8_t *data, size_t size,
 // Mirrors pxr Ts_BinaryDataAccess::GetBinaryFormatVersion.
 uint8_t SplineBinaryFormatVersion(const primvar::PrimVar::SplineData &sd);
 
+}  // namespace legacy
 }  // namespace lightusd

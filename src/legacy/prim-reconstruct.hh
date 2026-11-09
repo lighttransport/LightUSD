@@ -15,7 +15,7 @@
 #include "prim-reconstruct-common.hh"  // ParsePropertyTable
 #include "core/xform-op.hh"   // XformOp
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 struct PrimReconstructOptions
@@ -93,4 +93,5 @@ bool ReconstructPrim(
 
 
 } // namespace prim
+}  // namespace legacy
 } // namespace lightusd

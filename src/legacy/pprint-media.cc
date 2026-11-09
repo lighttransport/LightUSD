@@ -8,7 +8,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 #define PRINT_PRIM_HEADER(prim, type_name)                                       \
   do {                                                                            \
@@ -32,8 +32,8 @@ namespace lightusd {
 
 std::string to_string(const SpatialAudio &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "SpatialAudio");
   ss << print_typed_attr(prim.filePath, "filePath", indent + 1);
   ss << print_typed_attr(prim.auralMode, "auralMode", indent + 1);
@@ -46,4 +46,5 @@ std::string to_string(const SpatialAudio &prim,
   return pp_ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

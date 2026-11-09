@@ -11,7 +11,7 @@
 //
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declaration — defined in pprint-meta.cc (or pprinter.cc).
 std::string print_customData(const CustomDataType &customData,
@@ -304,8 +304,8 @@ std::string to_string(const CustomDataType &custom) {
 // Reference
 //
 std::string to_string(const Reference &v) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // For internal references (no asset path, just prim path), don't output "@@"
   if (!v.asset_path.GetAssetPath().empty()) {
@@ -329,8 +329,8 @@ std::string to_string(const Reference &v) {
 // Payload
 //
 std::string to_string(const Payload &v) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (v.is_none()) {
     // pxrUSD serialize and prints 'None' for payload by filling all members in
@@ -355,19 +355,19 @@ std::string to_string(const Payload &v) {
 //
 // CollectionInstance::ExpansionRule
 //
-std::string to_string(lightusd::CollectionInstance::ExpansionRule rule) {
+std::string to_string(lightusd::legacy::CollectionInstance::ExpansionRule rule) {
   std::string s;
 
   switch (rule) {
-    case lightusd::CollectionInstance::ExpansionRule::ExplicitOnly: {
+    case lightusd::legacy::CollectionInstance::ExpansionRule::ExplicitOnly: {
       s = kExplicitOnly;
       break;
     }
-    case lightusd::CollectionInstance::ExpansionRule::ExpandPrims: {
+    case lightusd::legacy::CollectionInstance::ExpansionRule::ExpandPrims: {
       s = kExpandPrims;
       break;
     }
-    case lightusd::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
+    case lightusd::legacy::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
       s = kExpandPrimsAndProperties;
       break;
     }
@@ -379,20 +379,20 @@ std::string to_string(lightusd::CollectionInstance::ExpansionRule rule) {
 //
 // Kind
 //
-std::string to_string(lightusd::Kind v) {
-  if (v == lightusd::Kind::Model) {
+std::string to_string(lightusd::legacy::Kind v) {
+  if (v == lightusd::legacy::Kind::Model) {
     return "model";
-  } else if (v == lightusd::Kind::Group) {
+  } else if (v == lightusd::legacy::Kind::Group) {
     return "group";
-  } else if (v == lightusd::Kind::Assembly) {
+  } else if (v == lightusd::legacy::Kind::Assembly) {
     return "assembly";
-  } else if (v == lightusd::Kind::Component) {
+  } else if (v == lightusd::legacy::Kind::Component) {
     return "component";
-  } else if (v == lightusd::Kind::Subcomponent) {
+  } else if (v == lightusd::legacy::Kind::Subcomponent) {
     return "subcomponent";
-  } else if (v == lightusd::Kind::SceneLibrary) {
+  } else if (v == lightusd::legacy::Kind::SceneLibrary) {
     return "sceneLibrary";
-  } else if (v == lightusd::Kind::UserDef) {
+  } else if (v == lightusd::legacy::Kind::UserDef) {
     // Should use PrimMeta::get_kind() to get actual Kind string value.
     return "[[InternalError. UserDefKind]]";
   } else {
@@ -403,12 +403,12 @@ std::string to_string(lightusd::Kind v) {
 //
 // Axis
 //
-std::string to_string(lightusd::Axis v) {
-  if (v == lightusd::Axis::X) {
+std::string to_string(lightusd::legacy::Axis v) {
+  if (v == lightusd::legacy::Axis::X) {
     return "X";
-  } else if (v == lightusd::Axis::Y) {
+  } else if (v == lightusd::legacy::Axis::Y) {
     return "Y";
-  } else if (v == lightusd::Axis::Z) {
+  } else if (v == lightusd::legacy::Axis::Z) {
     return "Z";
   } else {
     return "[[InvalidAxis]]";
@@ -418,8 +418,8 @@ std::string to_string(lightusd::Axis v) {
 //
 // Visibility
 //
-std::string to_string(lightusd::Visibility v) {
-  if (v == lightusd::Visibility::Inherited) {
+std::string to_string(lightusd::legacy::Visibility v) {
+  if (v == lightusd::legacy::Visibility::Inherited) {
     return "inherited";
   } else {
     return "invisible";
@@ -429,8 +429,8 @@ std::string to_string(lightusd::Visibility v) {
 //
 // Orientation
 //
-std::string to_string(lightusd::Orientation o) {
-  if (o == lightusd::Orientation::RightHanded) {
+std::string to_string(lightusd::legacy::Orientation o) {
+  if (o == lightusd::legacy::Orientation::RightHanded) {
     return "rightHanded";
   } else {
     return "leftHanded";
@@ -440,18 +440,18 @@ std::string to_string(lightusd::Orientation o) {
 //
 // ListEditQual
 //
-std::string to_string(lightusd::ListEditQual v) {
-  if (v == lightusd::ListEditQual::ResetToExplicit) {
+std::string to_string(lightusd::legacy::ListEditQual v) {
+  if (v == lightusd::legacy::ListEditQual::ResetToExplicit) {
     return "";  // unqualified
-  } else if (v == lightusd::ListEditQual::Append) {
+  } else if (v == lightusd::legacy::ListEditQual::Append) {
     return "append";
-  } else if (v == lightusd::ListEditQual::Add) {
+  } else if (v == lightusd::legacy::ListEditQual::Add) {
     return "add";
-  } else if (v == lightusd::ListEditQual::Delete) {
+  } else if (v == lightusd::legacy::ListEditQual::Delete) {
     return "delete";
-  } else if (v == lightusd::ListEditQual::Prepend) {
+  } else if (v == lightusd::legacy::ListEditQual::Prepend) {
     return "prepend";
-  } else if (v == lightusd::ListEditQual::Order) {
+  } else if (v == lightusd::legacy::ListEditQual::Order) {
     return "order";
   }
 
@@ -461,7 +461,7 @@ std::string to_string(lightusd::ListEditQual v) {
 //
 // Interpolation
 //
-std::string to_string(lightusd::Interpolation interp) {
+std::string to_string(lightusd::legacy::Interpolation interp) {
   switch (interp) {
     case Interpolation::Invalid:
       return "[[Invalid interpolation value]]";
@@ -484,7 +484,7 @@ std::string to_string(lightusd::Interpolation interp) {
 //
 // SpecType
 //
-std::string to_string(lightusd::SpecType ty) {
+std::string to_string(lightusd::legacy::SpecType ty) {
   if (SpecType::Attribute == ty) {
     return "SpecTypeAttribute";
   } else if (SpecType::Connection == ty) {
@@ -514,12 +514,12 @@ std::string to_string(lightusd::SpecType ty) {
 //
 // Specifier
 //
-std::string to_string(lightusd::Specifier s) {
-  if (s == lightusd::Specifier::Def) {
+std::string to_string(lightusd::legacy::Specifier s) {
+  if (s == lightusd::legacy::Specifier::Def) {
     return "def";
-  } else if (s == lightusd::Specifier::Over) {
+  } else if (s == lightusd::legacy::Specifier::Over) {
     return "over";
-  } else if (s == lightusd::Specifier::Class) {
+  } else if (s == lightusd::legacy::Specifier::Class) {
     return "class";
   } else {
     return "[[SpecifierInvalid]]";
@@ -529,10 +529,10 @@ std::string to_string(lightusd::Specifier s) {
 //
 // Permission
 //
-std::string to_string(lightusd::Permission s) {
-  if (s == lightusd::Permission::Public) {
+std::string to_string(lightusd::legacy::Permission s) {
+  if (s == lightusd::legacy::Permission::Public) {
     return "public";
-  } else if (s == lightusd::Permission::Private) {
+  } else if (s == lightusd::legacy::Permission::Private) {
     return "private";
   } else {
     return "[[PermissionInvalid]]";
@@ -542,7 +542,7 @@ std::string to_string(lightusd::Permission s) {
 //
 // Purpose
 //
-std::string to_string(lightusd::Purpose purpose) {
+std::string to_string(lightusd::legacy::Purpose purpose) {
   switch (purpose) {
     case Purpose::Default: {
       return "default";
@@ -565,12 +565,12 @@ std::string to_string(lightusd::Purpose purpose) {
 //
 // Variability
 //
-std::string to_string(lightusd::Variability v) {
-  if (v == lightusd::Variability::Varying) {
+std::string to_string(lightusd::legacy::Variability v) {
+  if (v == lightusd::legacy::Variability::Varying) {
     return "varying";
-  } else if (v == lightusd::Variability::Uniform) {
+  } else if (v == lightusd::legacy::Variability::Uniform) {
     return "uniform";
-  } else if (v == lightusd::Variability::Config) {
+  } else if (v == lightusd::legacy::Variability::Config) {
     return "config";
   } else {
     return "\"[[VariabilityInvalid]]\"";
@@ -580,9 +580,9 @@ std::string to_string(lightusd::Variability v) {
 //
 // Extent
 //
-std::string to_string(lightusd::Extent e) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+std::string to_string(lightusd::legacy::Extent e) {
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "[" << e.lower << ", " << e.upper << "]";
 
@@ -602,8 +602,8 @@ std::string to_string(const Path &path, bool show_full_path) {
 
 std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   // TODO(syoyo): indent
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << "[";
 
   for (size_t i = 0; i < v.size(); i++) {
@@ -688,8 +688,8 @@ std::string to_string(const XformOp::OpType &op) {
 // dump_path (debug helper)
 //
 std::string dump_path(const Path &path) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << "Path: Prim part = " << path.prim_part();
   ss << ", Prop part = " << path.prop_part();
   ss << ", Variant part = " << path.variant_part();
@@ -701,4 +701,5 @@ std::string dump_path(const Path &path) {
   return pp_ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

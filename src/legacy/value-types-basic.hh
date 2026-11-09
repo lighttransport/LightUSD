@@ -16,7 +16,7 @@
 #include <cstring>
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declaration
 class Token;
@@ -216,9 +216,10 @@ class AssetPath;
 class TimeCode;
 struct TimeSamples;
 struct StringData;
-using token = lightusd::Token;
+using token = lightusd::legacy::Token;
 struct dict;
 struct timecode;
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

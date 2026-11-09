@@ -17,7 +17,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct SubLayer
 {
@@ -131,4 +131,5 @@ struct LayerMetas {
 // Layer class has been moved to layer.hh
 class Layer;
 
+}  // namespace legacy
 }  // namespace lightusd

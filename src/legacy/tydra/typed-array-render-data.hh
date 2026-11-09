@@ -17,7 +17,7 @@
 #include <memory>
 #include <type_traits>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace typed_array_opt {
 
@@ -488,4 +488,5 @@ public:
 
 } // namespace typed_array_opt
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

@@ -6,7 +6,7 @@
 #include "usdSkel.hh"
 #include "usdLux.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 bool ApplyToGPrim(
@@ -146,4 +146,5 @@ bool ApplyToXformable(
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

@@ -26,7 +26,7 @@
 #include "value-types.hh"
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 bool DefaultTextureImageLoaderFunction(
@@ -120,7 +120,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Half;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + lightusd::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + to_string(imgret.image.format)  /* ADL: shared lightusd::legacy::to_string(Image::PixelFormat) */ + "\n";
       }
       return false;
     }
@@ -134,7 +134,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Float;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + lightusd::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + to_string(imgret.image.format)  /* ADL: shared lightusd::legacy::to_string(Image::PixelFormat) */ + "\n";
       }
       return false;
     }
@@ -541,4 +541,5 @@ bool BuildUDIMAtlas(const std::vector<UDIMTile> &tiles,
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

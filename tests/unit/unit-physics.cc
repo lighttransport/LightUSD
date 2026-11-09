@@ -42,6 +42,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -515,8 +517,8 @@ def PhysicsDistanceJoint "DistJoint"
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (!json_ok) return;
@@ -716,9 +718,9 @@ def PhysicsRevoluteJoint "MjcFullHinge" (
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (!json_ok) return;
@@ -1032,9 +1034,9 @@ def PhysicsPrismaticJoint "Slider"
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   TEST_CHECK(!json.empty());
@@ -1608,9 +1610,9 @@ def MjcKeyframe "Key0"
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   TEST_CHECK(!json.empty());
@@ -1653,10 +1655,10 @@ def "World"
 
   std::string compact_json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
   opts.include_defaults = false;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &compact_json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &compact_json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (!json_ok) return;
@@ -1676,7 +1678,7 @@ def "World"
 
   std::string defaults_json;
   opts.include_defaults = true;
-  json_ok = tydra::ConvertPhysicsToJson(stage, &defaults_json, &json_err, opts);
+  json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &defaults_json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (!json_ok) return;
@@ -1705,9 +1707,9 @@ void physics_mjc_tendon_full_to_json_test(void) {
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (!json_ok) return;
@@ -2106,11 +2108,11 @@ void physics_schema_defaults_and_owner_test(void) {
 
   PhysicsMassAPI mass;
   TEST_CHECK(GetPhysicsMassAPI(**body_r, &mass));
-  value::point3f com = mass.centerOfMass.get_value();
+  lightusd::legacy::value::point3f com = mass.centerOfMass.get_value();
   TEST_CHECK(std::isinf(com[0]) && com[0] < 0.0f);
   TEST_CHECK(std::isinf(com[1]) && com[1] < 0.0f);
   TEST_CHECK(std::isinf(com[2]) && com[2] < 0.0f);
-  value::quatf pa = mass.principalAxes.get_value();
+  lightusd::legacy::value::quatf pa = mass.principalAxes.get_value();
   TEST_CHECK(pa[0] == 0.0f && pa[1] == 0.0f && pa[2] == 0.0f &&
              pa[3] == 0.0f);
 
@@ -2325,7 +2327,7 @@ def Xform "World"
     }
   }
 
-  // Note: tydra::ConvertPhysicsToJson scopes to PhysicsScene / Joint /
+  // Note: lightusd::legacy::tydra::ConvertPhysicsToJson scopes to PhysicsScene / Joint /
   // Actuator / Tendon / Keyframe — Mesh-collider surfacing lives in
   // web/binding.cc's extractPhysicsSceneJSON (`AppendPhysicsPrimJson`),
   // which is exercised from the web/js test harness, not here.
@@ -2440,7 +2442,7 @@ void urdf_json_spherical_joint_export_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
   TEST_CHECK(ok);
@@ -2546,7 +2548,7 @@ void urdf_json_newton_api_export_test(void) {
 
   Stage tmp;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &tmp, &warn, &err);
   if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
   TEST_CHECK(ok);
@@ -2699,7 +2701,7 @@ void urdf_json_mjcf_contact_export_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &stage, &warn, &err);
   if (!ok) {
     TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str());
@@ -2813,7 +2815,7 @@ void physics_urdf_upaxis_axis_invariant_test(void) {
         "  ]\n}";
     std::string warn, err;
     bool ok =
-        lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, out, &warn, &err);
+        lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, out, &warn, &err);
     if (!ok) { TEST_MSG("convert (%s) failed: %s", up_axis, err.c_str()); }
     return ok;
   };
@@ -3207,15 +3209,15 @@ def PhysicsDistanceJoint "Dist"
       if (dj && rj) {
         TEST_CHECK(rj->localPos0.authored());
         if (rj->localPos0.authored()) {
-          value::point3f p = rj->localPos0.get_value();
+          lightusd::legacy::value::point3f p = rj->localPos0.get_value();
           TEST_CHECK(approx_eq(p[0], 1.0));
           TEST_CHECK(approx_eq(p[1], 2.0));
           TEST_CHECK(approx_eq(p[2], 3.0));
         }
         TEST_CHECK(dj->localRot0.authored() && rj->localRot0.authored());
         if (dj->localRot0.authored() && rj->localRot0.authored()) {
-          value::quatf qd = dj->localRot0.get_value();
-          value::quatf qr = rj->localRot0.get_value();
+          lightusd::legacy::value::quatf qd = dj->localRot0.get_value();
+          lightusd::legacy::value::quatf qr = rj->localRot0.get_value();
           for (size_t i = 0; i < 4; i++) {
             TEST_CHECK(approx_eq(qr[i], qd[i]));
           }
@@ -3237,8 +3239,8 @@ def PhysicsDistanceJoint "Dist"
       if (dj && rj) {
         TEST_CHECK(dj->localRot0.authored() && rj->localRot0.authored());
         if (dj->localRot0.authored() && rj->localRot0.authored()) {
-          value::quatf qd = dj->localRot0.get_value();
-          value::quatf qr = rj->localRot0.get_value();
+          lightusd::legacy::value::quatf qd = dj->localRot0.get_value();
+          lightusd::legacy::value::quatf qr = rj->localRot0.get_value();
           for (size_t i = 0; i < 4; i++) {
             TEST_CHECK(approx_eq(qr[i], qd[i]));
           }
@@ -3408,9 +3410,9 @@ def Scope "Joints"
   if (!ok) return;
 
   std::string json, json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   TEST_CHECK(!json.empty());
@@ -3517,7 +3519,7 @@ void urdf_json_mjcf_tendon_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3595,7 +3597,7 @@ void urdf_json_mjcf_tendon_full_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3665,7 +3667,7 @@ void urdf_json_mjcf_tendon_alias_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3746,7 +3748,7 @@ void urdf_json_mjc_actuator_full_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3826,7 +3828,7 @@ void urdf_json_mjcf_equality_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3884,7 +3886,7 @@ void urdf_json_fullinertia_diagonalize_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3903,8 +3905,8 @@ void urdf_json_fullinertia_diagonalize_test(void) {
   TEST_CHECK(pa_it != xf->props.end());
   if (di_it == xf->props.end() || pa_it == xf->props.end()) return;
 
-  auto di = di_it->second.get_attribute().get_value<value::float3>();
-  auto pa = pa_it->second.get_attribute().get_value<value::quatf>();
+  auto di = di_it->second.get_attribute().get_value<lightusd::legacy::value::float3>();
+  auto pa = pa_it->second.get_attribute().get_value<lightusd::legacy::value::quatf>();
   TEST_CHECK(di.has_value() && pa.has_value());
   if (!di.has_value() || !pa.has_value()) return;
 
@@ -3969,7 +3971,7 @@ void urdf_json_mjcf_muscle_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4039,7 +4041,7 @@ void urdf_json_mjc_mocap_custom_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4145,7 +4147,7 @@ void urdf_json_mjc_plugin_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4224,7 +4226,7 @@ void physics_static_world_link_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4273,7 +4275,7 @@ void physics_freejoint_floating_base_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4310,7 +4312,7 @@ void urdf_json_mjc_contact_pair_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4345,7 +4347,7 @@ void urdf_json_mjc_actuator_types_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4390,7 +4392,7 @@ void urdf_json_mjc_sensors_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4422,9 +4424,9 @@ void urdf_json_mjc_sensors_test(void) {
 
   std::string json;
   std::string json_err;
-  tydra::PhysicsJsonExportOptions opts;
+  lightusd::legacy::tydra::PhysicsJsonExportOptions opts;
   opts.include_mjc = true;
-  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  bool json_ok = lightusd::legacy::tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
   if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
   TEST_CHECK(json_ok);
   if (json_ok) {
@@ -4477,7 +4479,7 @@ void urdf_json_mjc_sensor_aliases_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4542,7 +4544,7 @@ void urdf_json_mjc_materials_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4588,7 +4590,7 @@ void urdf_json_mjc_lights_cameras_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4629,7 +4631,7 @@ void urdf_json_mjc_keyframe_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4681,7 +4683,7 @@ void urdf_json_mjc_scene_options_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::legacy::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4820,23 +4822,23 @@ def Cube "BodyB" {}
 #include "usdObj.hh"
 #include "tydra/obj-export.hh"
 void physics_obj_c11_import_test(void) {
-  lightusd::GPrim mesh;
+  lightusd::legacy::GPrim mesh;
   std::string error;
   const char* text =
       "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn "
       "0 0 -1\nf 1/1/1 2/2/1 3/3/1 4/4/1\n";
-  TEST_CHECK(lightusd::usdObj::ReadObjFromString(text, &mesh, &error));
+  TEST_CHECK(lightusd::legacy::usdObj::ReadObjFromString(text, &mesh, &error));
   auto counts = mesh.props.at("faceVertexCounts")
                     .get_attribute()
                     .get_value<std::vector<int32_t>>();
   TEST_CHECK(counts && counts->size() == 1 && (*counts)[0] == 4);
   auto normals = mesh.props.at("normals")
                      .get_attribute()
-                     .get_value<std::vector<lightusd::value::normal3f>>();
+                     .get_value<std::vector<lightusd::legacy::value::normal3f>>();
   TEST_CHECK(normals && normals->size() == 4 && (*normals)[0][2] == -1);
   TEST_CHECK(mesh.props.count("primvars:st") == 1);
-  lightusd::tydra::RenderScene scene;
-  lightusd::tydra::RenderMesh rendered;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderMesh rendered;
   rendered.points = {{0,0,0}, {1,0,0}, {0,1,0}};
   rendered.usdFaceVertexCounts = {3};
   rendered.usdFaceVertexIndices = {0,1,2};
@@ -4845,10 +4847,10 @@ void physics_obj_c11_import_test(void) {
   rendered.joint_and_weights.jointWeights = {.123456789f,.876543211f,2,0,-.5f,1.5f};
   scene.meshes.push_back(std::move(rendered));
   std::string exported, mtl, warning;
-  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, exported, mtl, &warning, &error));
+  TEST_CHECK(lightusd::legacy::tydra::export_to_obj(scene, 0, exported, mtl, &warning, &error));
   TEST_CHECK(exported.find("vw 0 0 ") != std::string::npos);
-  lightusd::GPrim reloaded;
-  TEST_CHECK(lightusd::usdObj::ReadObjFromString(exported, &reloaded, &error));
+  lightusd::legacy::GPrim reloaded;
+  TEST_CHECK(lightusd::legacy::usdObj::ReadObjFromString(exported, &reloaded, &error));
   auto weights = reloaded.props.at("primvars:skel:jointWeights")
                       .get_attribute().get_value<std::vector<float>>();
   TEST_CHECK(weights && *weights == scene.meshes[0].joint_and_weights.jointWeights);
@@ -4858,8 +4860,8 @@ void physics_obj_c11_import_test(void) {
 // groups follow face order, materials are written once, and the result
 // reloads with the same topology and attributes.
 void physics_obj_export_facevarying_test(void) {
-  lightusd::tydra::RenderScene scene;
-  lightusd::tydra::RenderMesh rendered;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderMesh rendered;
   rendered.prim_name = "quads";
   rendered.points = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {2, 0, 0}, {2, 1, 0}};
   rendered.usdFaceVertexCounts = {4, 4, 3};
@@ -4871,22 +4873,22 @@ void physics_obj_export_facevarying_test(void) {
     uv.push_back(1.0f - float(corner) * 0.05f);
     normals.insert(normals.end(), {0.0f, 0.0f, corner % 2 ? 1.0f : -1.0f});
   }
-  lightusd::tydra::VertexAttribute texcoord;
-  texcoord.format = lightusd::tydra::VertexAttributeFormat::Vec2;
-  texcoord.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  lightusd::legacy::tydra::VertexAttribute texcoord;
+  texcoord.format = lightusd::legacy::tydra::VertexAttributeFormat::Vec2;
+  texcoord.variability = lightusd::legacy::tydra::VertexVariability::FaceVarying;
   texcoord.set_buffer(reinterpret_cast<const uint8_t *>(uv.data()), uv.size() * sizeof(float));
   rendered.texcoords[0] = texcoord;
-  rendered.normals.format = lightusd::tydra::VertexAttributeFormat::Vec3;
-  rendered.normals.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  rendered.normals.format = lightusd::legacy::tydra::VertexAttributeFormat::Vec3;
+  rendered.normals.variability = lightusd::legacy::tydra::VertexVariability::FaceVarying;
   rendered.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
                               normals.size() * sizeof(float));
   for (const char *name : {"red", "blue"}) {
-    lightusd::tydra::RenderMaterial material;
+    lightusd::legacy::tydra::RenderMaterial material;
     material.name = name;
     scene.materials.push_back(material);
   }
   // Subsets listed out of face order; face 0 has no subset.
-  lightusd::tydra::MaterialSubset late, early;
+  lightusd::legacy::tydra::MaterialSubset late, early;
   late.material_id = 0;
   late.usdIndices = {2};
   early.material_id = 1;
@@ -4896,7 +4898,7 @@ void physics_obj_export_facevarying_test(void) {
   rendered.material_id = 0;
   scene.meshes.push_back(std::move(rendered));
   std::string obj, mtl, warning, error;
-  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+  TEST_CHECK(lightusd::legacy::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
   // Corner (not face) offsets, 1-based, in face order.
   TEST_CHECK(obj.find("f 1/1/1 2/2/2 3/3/3 4/4/4\n") != std::string::npos);
   TEST_CHECK(obj.find("g aa_early\nusemtl blue\nf 2/5/5 5/6/6 6/7/7 3/8/8\n") != std::string::npos);
@@ -4905,11 +4907,11 @@ void physics_obj_export_facevarying_test(void) {
   // Each material once, even when used by two groups.
   TEST_CHECK(mtl.find("newmtl red") == mtl.rfind("newmtl red"));
   TEST_CHECK(mtl.find("# 2 materials.") != std::string::npos);
-  lightusd::GPrim reloaded;
-  TEST_CHECK(lightusd::usdObj::ReadObjFromString(obj, &reloaded, &error));
+  lightusd::legacy::GPrim reloaded;
+  TEST_CHECK(lightusd::legacy::usdObj::ReadObjFromString(obj, &reloaded, &error));
   // Out-of-range subset faces are rejected, not read past the array.
   scene.meshes[0].material_subsetMap["zz_late"].usdIndices = {7};
-  TEST_CHECK(!lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+  TEST_CHECK(!lightusd::legacy::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
 }
 
 #include <chrono>

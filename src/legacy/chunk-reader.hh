@@ -17,7 +17,7 @@
 #include "nonstd/expected.hpp"
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Chunked data reader for efficient streaming and parsing of large USD files.
@@ -568,13 +568,13 @@ private:
   std::unique_ptr<RingBuffer> sliding_window_;
 
   // Random access cache
-  lightusd::HashMap<size_t, CacheEntry> random_cache_;
+  lightusd::legacy::HashMap<size_t, CacheEntry> random_cache_;
   std::unique_ptr<TwoQCache> two_q_cache_;
   std::unique_ptr<TinyLFUSketch> tiny_lfu_sketch_;
   std::list<size_t> random_cache_lru_;  ///< For SLRU algorithm
 
   // Preload cache
-  lightusd::HashMap<size_t, std::shared_ptr<Chunk>> preload_cache_;
+  lightusd::legacy::HashMap<size_t, std::shared_ptr<Chunk>> preload_cache_;
   std::list<size_t> preload_lru_;
 
   // Current cache sizes
@@ -601,4 +601,5 @@ private:
   ChunkReader& operator=(const ChunkReader&) = delete;
 };
 
+}  // namespace legacy
 } // namespace lightusd

@@ -40,7 +40,7 @@
 #include "xform.hh"                 // Xformable, Identity functions
 #include "usdShade.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // From schema definition.
 constexpr auto kGPrim = "GPrim";
@@ -1346,4 +1346,5 @@ APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 //#undef APPLY_GEOMPRIVAR_TYPE
 
 
+}  // namespace legacy
 }  // namespace lightusd

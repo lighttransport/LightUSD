@@ -8,7 +8,7 @@
 
 #include "../hash-util.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 bool ComputeInstanceKeyFromPrimSpec(const PrimSpec &ps, InstanceKey *key) {
   if (!key) return false;
@@ -181,4 +181,5 @@ bool ComputeInstanceKeyFromPrimMetas(const PrimMeta &metas,
   return true;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

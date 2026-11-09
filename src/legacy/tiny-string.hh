@@ -21,7 +21,7 @@
 #include "tiny-container.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // default: Up to 1G char
 //
@@ -225,7 +225,7 @@ struct tstring_view {
   // guaranteed to be NUL-terminated at c_str()[size()]. Use size()-aware
   // operations (==, <, starts_with, ...). Do not hand c_str() to length-
   // agnostic C functions (strlen, printf("%s"), std::string(const char*));
-  // build an owned copy with lightusd::to_string(view) instead.
+  // build an owned copy with lightusd::legacy::to_string(view) instead.
   const char *data() const LIGHTUSD_LIFETIMEBOUND {
     return _s;
   }
@@ -443,37 +443,38 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
 bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result);
 bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result);
 bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result);
-bool parse_half_array(const tstring_view &sv, std::vector<lightusd::value::half> *result);
+bool parse_half_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half> *result);
 bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
 bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
-bool parse_token_array(const tstring_view &sv, std::vector<lightusd::value::token> *result);
-bool parse_string_array(const tstring_view &sv, std::vector<lightusd::value::StringData> *result);
+bool parse_token_array(const tstring_view &sv, std::vector<lightusd::legacy::value::token> *result);
+bool parse_string_array(const tstring_view &sv, std::vector<lightusd::legacy::value::StringData> *result);
 bool parse_std_string_array(const tstring_view &sv, std::vector<std::string> *result);
 
 // Compound-type array parsers
-bool parse_half2_array(const tstring_view &sv, std::vector<lightusd::value::half2> *result);
-bool parse_half3_array(const tstring_view &sv, std::vector<lightusd::value::half3> *result);
-bool parse_half4_array(const tstring_view &sv, std::vector<lightusd::value::half4> *result);
-bool parse_float2_array(const tstring_view &sv, std::vector<lightusd::value::float2> *result);
-bool parse_float3_array(const tstring_view &sv, std::vector<lightusd::value::float3> *result);
-bool parse_float4_array(const tstring_view &sv, std::vector<lightusd::value::float4> *result);
-bool parse_point3f_array(const tstring_view &sv, std::vector<lightusd::value::point3f> *result);
-bool parse_normal3f_array(const tstring_view &sv, std::vector<lightusd::value::normal3f> *result);
-bool parse_double2_array(const tstring_view &sv, std::vector<lightusd::value::double2> *result);
-bool parse_double3_array(const tstring_view &sv, std::vector<lightusd::value::double3> *result);
-bool parse_double4_array(const tstring_view &sv, std::vector<lightusd::value::double4> *result);
-bool parse_quath_array(const tstring_view &sv, std::vector<lightusd::value::quath> *result);
-bool parse_quatf_array(const tstring_view &sv, std::vector<lightusd::value::quatf> *result);
-bool parse_quatd_array(const tstring_view &sv, std::vector<lightusd::value::quatd> *result);
-bool parse_matrix2f_array(const tstring_view &sv, std::vector<lightusd::value::matrix2f> *result);
-bool parse_matrix3f_array(const tstring_view &sv, std::vector<lightusd::value::matrix3f> *result);
-bool parse_matrix4f_array(const tstring_view &sv, std::vector<lightusd::value::matrix4f> *result);
-bool parse_matrix2d_array(const tstring_view &sv, std::vector<lightusd::value::matrix2d> *result);
-bool parse_matrix3d_array(const tstring_view &sv, std::vector<lightusd::value::matrix3d> *result);
-bool parse_matrix4d_array(const tstring_view &sv, std::vector<lightusd::value::matrix4d> *result);
+bool parse_half2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half2> *result);
+bool parse_half3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half3> *result);
+bool parse_half4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half4> *result);
+bool parse_float2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float2> *result);
+bool parse_float3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float3> *result);
+bool parse_float4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float4> *result);
+bool parse_point3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::point3f> *result);
+bool parse_normal3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::normal3f> *result);
+bool parse_double2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double2> *result);
+bool parse_double3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double3> *result);
+bool parse_double4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double4> *result);
+bool parse_quath_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quath> *result);
+bool parse_quatf_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quatf> *result);
+bool parse_quatd_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quatd> *result);
+bool parse_matrix2f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix2f> *result);
+bool parse_matrix3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix3f> *result);
+bool parse_matrix4f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix4f> *result);
+bool parse_matrix2d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix2d> *result);
+bool parse_matrix3d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix3d> *result);
+bool parse_matrix4d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix4d> *result);
 
 }
 
+}  // namespace legacy
 } // namespace lightusd
 
 namespace std {
@@ -485,8 +486,8 @@ namespace std {
 // (= 14695981039346656037) does NOT fit in a 32-bit size_t, so it must not
 // be used as-is on 32-bit platforms (suppresses -Wconstant-conversion).
 template <>
-struct hash<lightusd::tstring_view> {
-  size_t operator()(const lightusd::tstring_view &v) const noexcept {
+struct hash<lightusd::legacy::tstring_view> {
+  size_t operator()(const lightusd::legacy::tstring_view &v) const noexcept {
 #if SIZE_MAX >= UINT64_C(0xFFFFFFFFFFFFFFFF)
     // 64-bit FNV-1a
     constexpr size_t kFnvOffsetBasis = static_cast<size_t>(UINT64_C(0xCBF29CE484222325));

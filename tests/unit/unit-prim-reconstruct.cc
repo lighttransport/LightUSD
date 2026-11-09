@@ -25,6 +25,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ---------------------------------------------------------------------------
 // Helper: parse a USDA string into a Stage
 // ---------------------------------------------------------------------------
@@ -77,14 +79,14 @@ def Xform "root" {
 
     // Evaluate the transform matrix
     bool resetStack = false;
-    auto mat = xform->GetLocalMatrix(value::TimeCode::Default(),
-                                     value::TimeSampleInterpolationType::Linear,
+    auto mat = xform->GetLocalMatrix(lightusd::legacy::value::TimeCode::Default(),
+                                     lightusd::legacy::value::TimeSampleInterpolationType::Linear,
                                      &resetStack);
     TEST_CHECK(bool(mat));
     if (mat) {
       // Translation should be (1, 2, 3) -> column 3 of the matrix
       // row-major: m[3][0], m[3][1], m[3][2]
-      value::matrix4d m = mat.value();
+      lightusd::legacy::value::matrix4d m = mat.value();
       TEST_CHECK(math::is_close(m.m[3][0], 1.0));
       TEST_CHECK(math::is_close(m.m[3][1], 2.0));
       TEST_CHECK(math::is_close(m.m[3][2], 3.0));
@@ -263,9 +265,9 @@ def Material "mat" {
 
   // Check diffuseColor
   {
-    value::color3f dc;
+    lightusd::legacy::value::color3f dc;
     bool got = pbs->diffuseColor.get_value().get(
-        value::TimeCode::Default(), &dc);
+        lightusd::legacy::value::TimeCode::Default(), &dc);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(dc[0], 0.8f));
@@ -278,7 +280,7 @@ def Material "mat" {
   {
     float m;
     bool got = pbs->metallic.get_value().get(
-        value::TimeCode::Default(), &m);
+        lightusd::legacy::value::TimeCode::Default(), &m);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(m, 1.0f));
@@ -289,7 +291,7 @@ def Material "mat" {
   {
     float r;
     bool got = pbs->roughness.get_value().get(
-        value::TimeCode::Default(), &r);
+        lightusd::legacy::value::TimeCode::Default(), &r);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(r, 0.3f));
@@ -330,7 +332,7 @@ def SphereLight "light1" {
   {
     float val;
     bool got = light->intensity.get_value().get(
-        value::TimeCode::Default(), &val);
+        lightusd::legacy::value::TimeCode::Default(), &val);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(val, 500.0f));
@@ -339,9 +341,9 @@ def SphereLight "light1" {
 
   // Check color
   {
-    value::color3f col;
+    lightusd::legacy::value::color3f col;
     bool got = light->color.get_value().get(
-        value::TimeCode::Default(), &col);
+        lightusd::legacy::value::TimeCode::Default(), &col);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(col[0], 1.0f));
@@ -354,7 +356,7 @@ def SphereLight "light1" {
   {
     float val;
     bool got = light->radius.get_value().get(
-        value::TimeCode::Default(), &val);
+        lightusd::legacy::value::TimeCode::Default(), &val);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(val, 2.5f));
@@ -402,7 +404,7 @@ def Skeleton "skel" {
   // Check joints
   TEST_CHECK(skel->joints.has_value());
   if (skel->joints.has_value()) {
-    std::vector<value::token> j;
+    std::vector<lightusd::legacy::value::token> j;
     skel->joints.get_value(&j);
     TEST_CHECK(j.size() == 3);
     if (j.size() == 3) {
@@ -415,7 +417,7 @@ def Skeleton "skel" {
   // Check bindTransforms
   TEST_CHECK(skel->bindTransforms.has_value());
   if (skel->bindTransforms.has_value()) {
-    std::vector<value::matrix4d> bt;
+    std::vector<lightusd::legacy::value::matrix4d> bt;
     skel->bindTransforms.get_value(&bt);
     TEST_CHECK(bt.size() == 3);
     if (bt.size() == 3) {
@@ -429,7 +431,7 @@ def Skeleton "skel" {
   // Check restTransforms
   TEST_CHECK(skel->restTransforms.has_value());
   if (skel->restTransforms.has_value()) {
-    std::vector<value::matrix4d> rt;
+    std::vector<lightusd::legacy::value::matrix4d> rt;
     skel->restTransforms.get_value(&rt);
     TEST_CHECK(rt.size() == 3);
   }
@@ -470,7 +472,7 @@ def Camera "cam" {
   {
     float val;
     bool got = cam->focalLength.get_value().get(
-        value::TimeCode::Default(), &val);
+        lightusd::legacy::value::TimeCode::Default(), &val);
     TEST_CHECK(got);
     if (got) {
       TEST_CHECK(math::is_close(val, 50.0f));
@@ -554,7 +556,7 @@ def Xform "world" {
     if (light) {
       float val;
       bool got = light->intensity.get_value().get(
-          value::TimeCode::Default(), &val);
+          lightusd::legacy::value::TimeCode::Default(), &val);
       TEST_CHECK(got);
       if (got) {
         TEST_CHECK(math::is_close(val, 100.0f));

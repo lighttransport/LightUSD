@@ -27,7 +27,7 @@
 #define LIGHTUSD_SPIN_YIELD() ((void)0)
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct SpinMutex {
   void lock() {
@@ -52,4 +52,5 @@ struct ScopedSpinLock {
   M &_m;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

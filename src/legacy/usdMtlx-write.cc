@@ -47,7 +47,7 @@
 // MaterialX WRITE path (USD -> .mtlx XML), split from usdMtlx.cc to divide back-end
 // codegen. Read and write paths share no statics. See usdMtlx.cc for the read path.
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace detail {
 
 // MaterialX is XML, so USD names, asset paths, and user-authored string
@@ -1332,6 +1332,7 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_USE_USDMTLX

@@ -8,7 +8,7 @@
 //
 #pragma once
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Core types from prim-types.hh
 class Prim;
@@ -49,4 +49,5 @@ template<typename T> struct Animatable;
 // Extent
 struct Extent;
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -33,7 +33,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -79,7 +79,7 @@ inline bool decode_data(const std::string &data, std::string *binary,
 // ---------------------------------------------------------------------------
 static std::string FindUUID(
     const std::string &name,
-    const lightusd::HashMap<std::string, USDLayer> &layers) {
+    const lightusd::legacy::HashMap<std::string, USDLayer> &layers) {
   for (const auto &it : layers) {
     if (it.second.name == name) {
       return it.first;
@@ -135,10 +135,10 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 
 bool GetVersion(nlohmann::json &result) {
-  std::string ver_str = std::to_string(lightusd::version_major) + "." +
-                        std::to_string(lightusd::version_minor) + "." +
-                        std::to_string(lightusd::version_micro);
-  std::string rev = lightusd::version_rev;
+  std::string ver_str = std::to_string(lightusd::legacy::version_major) + "." +
+                        std::to_string(lightusd::legacy::version_minor) + "." +
+                        std::to_string(lightusd::legacy::version_micro);
+  std::string rev = lightusd::legacy::version_rev;
 
   if (rev.size()) {
     ver_str += "." + rev;
@@ -1101,4 +1101,5 @@ bool CallTool(Context &ctx, const std::string &tool_name,
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

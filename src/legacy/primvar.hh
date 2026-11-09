@@ -33,7 +33,7 @@
 #include "value-types.hh"
 #include "timesamples.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace primvar {
 
 struct PrimVar {
@@ -428,4 +428,5 @@ DEFINE_TYPE_TRAIT(primvar::PrimVar::SplineData, "Spline", TYPE_ID_SPLINE_DATA, 1
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 } // namespace value
+}  // namespace legacy
 } // namespace lightusd

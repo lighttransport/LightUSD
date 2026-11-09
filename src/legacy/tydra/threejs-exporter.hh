@@ -30,7 +30,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 using json = nlohmann::json;
@@ -179,4 +179,5 @@ struct MaterialParameterMapping {
 };
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

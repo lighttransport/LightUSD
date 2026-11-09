@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
-namespace minijson { class Value; }
+namespace lightusd { namespace legacy {
+// minijson::Value: shared, forward-declared in legacy-namespace.hh.
 
 class Stage;
 
@@ -57,4 +57,5 @@ bool ConvertURDFJsonToUSDStage(
     std::string *err = nullptr);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

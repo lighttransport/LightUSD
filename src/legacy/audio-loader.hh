@@ -10,7 +10,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace audio {
 
 struct AudioResult {
@@ -33,4 +33,5 @@ nonstd::expected<AudioResult, std::string> LoadAudioFromFile(const std::string &
 nonstd::expected<AudioResult, std::string> LoadAudioFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
 } // namespace audio
+}  // namespace legacy
 } // namespace lightusd

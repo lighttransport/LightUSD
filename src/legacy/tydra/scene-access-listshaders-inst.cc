@@ -31,30 +31,31 @@
 #include <unordered_set>
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #include "tydra/scene-access-traverse-impl.inc"
 
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPreviewSurface> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdUVTexture> &m);
 
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_string> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_int> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float2> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float3> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float4> &m);
-template bool ListShaders(const lightusd::Stage &stage,
+template bool ListShaders(const lightusd::legacy::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

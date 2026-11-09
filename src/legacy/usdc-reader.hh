@@ -9,7 +9,7 @@
 #include "stream-reader.hh"
 #include "lightusd.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 ///
@@ -97,4 +97,5 @@ class USDCReader {
 };
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

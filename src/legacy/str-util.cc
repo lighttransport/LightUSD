@@ -41,7 +41,7 @@
 #include <emmintrin.h>
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -2325,4 +2325,5 @@ char *dtoa(double d, char *buf) {
   return buf + len;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

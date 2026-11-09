@@ -13,7 +13,7 @@
 #include <memory>
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -276,4 +276,5 @@ CollectionMembershipQuery BuildCollectionMembershipQuery(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

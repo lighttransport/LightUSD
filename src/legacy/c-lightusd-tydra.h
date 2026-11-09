@@ -1,6 +1,6 @@
 ﻿/* SPDX-License-Identifier: Apache 2.0
  *
- * C API wrapper around lightusd::tydra::RenderScene for language bindings.
+ * C API wrapper around lightusd::legacy::tydra::RenderScene for language bindings.
  *
  * All accessors that return pointers return BORROWED pointers into the
  * owning RenderScene's internal storage. Those pointers are stable until

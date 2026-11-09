@@ -8,7 +8,10 @@
 #include "tydra/variant-support.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 // Test 1: Apply single variant selection
 bool test_apply_single_selection() {
@@ -17,7 +20,7 @@ bool test_apply_single_selection() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -65,7 +68,7 @@ bool test_apply_multiple_selections() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -114,7 +117,7 @@ bool test_update_existing_selection() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -173,7 +176,7 @@ bool test_change_tracking() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -219,7 +222,7 @@ bool test_reset_to_defaults() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -273,7 +276,7 @@ bool test_nested_variant_selections() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(
+  bool ret = lightusd::legacy::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/triple-nesting-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";

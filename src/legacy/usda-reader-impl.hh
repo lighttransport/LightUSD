@@ -66,7 +66,7 @@
 #include "tiny-format.hh"
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 // template specialization forward decls.
@@ -162,7 +162,7 @@ namespace usda {
 constexpr auto kTag = "[USDA]";  // moved from usda-reader.cc
 
 // Supporting types for USDAReader::Impl. NOTE: originally TU-local (anonymous namespace);
-// promoted to named lightusd::usda for use across the split reconstruct TUs.
+// promoted to named lightusd::legacy::usda for use across the split reconstruct TUs.
 struct VariantNode {
   PrimMeta metas;
   std::map<std::string, Property> props;
@@ -1530,6 +1530,7 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(SpatialAudio)
 #undef USDA_EXTERN_REGISTER_RECONSTRUCT
 
 }  // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

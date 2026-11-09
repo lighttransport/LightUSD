@@ -19,19 +19,20 @@
 #include "core/property.hh"
 #include "core/composition-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations needed before variant-types.hh
 class Prim;
 class PrimSpec;
 struct VariantSet;
 
+}  // namespace legacy
 } // namespace lightusd
 
 // variant-types.hh uses Prim/PrimSpec forward declarations
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 /// Similar to PrimSpec
 /// PrimSpec is a Prim object state just after reading it from USDA and USDC.
@@ -333,4 +334,5 @@ using PayloadList = std::vector<PayloadListOp>;
 
 }  // namespace prim
 
+}  // namespace legacy
 } // namespace lightusd

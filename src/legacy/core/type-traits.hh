@@ -11,11 +11,12 @@
 // Type traits are defined in the main prim-types.hh
 // This file is a placeholder for future reorganization
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 // Type traits will be defined in the facade header (prim-types.hh)
 // to maintain proper include order and backward compatibility.
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

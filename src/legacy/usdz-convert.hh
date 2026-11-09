@@ -23,7 +23,7 @@
 #include "lightusd.hh"         // Stage, USDLoadOptions
 #include "udim-bake.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdz {
 
 ///
@@ -256,4 +256,5 @@ bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
                         std::string *err);
 
 }  // namespace usdz
+}  // namespace legacy
 }  // namespace lightusd

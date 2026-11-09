@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -29,11 +29,11 @@ static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
                       TydraPerfClock::now() - start).count());
 }
 
-std::vector<const lightusd::GeomSubset *> GetMaterialBindGeomSubsets(
-    const lightusd::Prim &prim) {
-  std::vector<const lightusd::GeomSubset *> dst;
+std::vector<const lightusd::legacy::GeomSubset *> GetMaterialBindGeomSubsets(
+    const lightusd::legacy::Prim &prim) {
+  std::vector<const lightusd::legacy::GeomSubset *> dst;
   for (const auto &child : prim.children()) {
-    const lightusd::GeomSubset *subset = child.as<lightusd::GeomSubset>();
+    const lightusd::legacy::GeomSubset *subset = child.as<lightusd::legacy::GeomSubset>();
     if (!subset) continue;
     value::token family;
     if (subset->familyName.get_value(&family) && family.str() == "materialBind") {
@@ -45,7 +45,7 @@ std::vector<const lightusd::GeomSubset *> GetMaterialBindGeomSubsets(
 
 }  // namespace
 
-bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
+bool MeshVisitor(const lightusd::legacy::Path &abs_path, const lightusd::legacy::Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
     if (err) {
@@ -66,7 +66,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 
   // Lambda to convert and cache bound materials - shared by all geometry types
   auto ConvertBoundMaterial = [&](const Path &bound_material_path,
-                                  const lightusd::Material *bound_material,
+                                  const lightusd::legacy::Material *bound_material,
                                   int64_t &rmaterial_id) -> bool {
     std::vector<RenderMaterial> &rmaterials =
         visitorEnv->converter->materials;
@@ -266,9 +266,9 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
     return true;
   };
 
-  if (const lightusd::GeomMesh *pmesh = prim.as<lightusd::GeomMesh>()) {
+  if (const lightusd::legacy::GeomMesh *pmesh = prim.as<lightusd::legacy::GeomMesh>()) {
     // Collect GeomSubsets
-    // std::vector<const lightusd::GeomSubset *> subsets = GetGeomSubsets(;
+    // std::vector<const lightusd::legacy::GeomSubset *> subsets = GetGeomSubsets(;
 
     DCOUT("Mesh: " << abs_path);
 
@@ -303,8 +303,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 
         // front and back
         {
-          lightusd::Path bound_material_path;
-          const lightusd::Material *bound_material{nullptr};
+          lightusd::legacy::Path bound_material_path;
+          const lightusd::legacy::Material *bound_material{nullptr};
           bool ret{false};
           if (!ResolveBoundMaterial(
                   /* GeomSubset prim path */ subset_abs_path,
@@ -339,8 +339,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
           DCOUT("backface_material_purpose "
                 << visitorEnv->env->material_config
                        .default_backface_material_purpose_name);
-          lightusd::Path bound_material_path;
-          const lightusd::Material *bound_material{nullptr};
+          lightusd::legacy::Path bound_material_path;
+          const lightusd::legacy::Material *bound_material{nullptr};
           bool ret{false};
           if (!ResolveBoundMaterial(
                   /* GeomSubset prim path */ subset_abs_path,
@@ -382,8 +382,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 
       // Front and back material.
       {
-        lightusd::Path bound_material_path;
-        const lightusd::Material *bound_material{nullptr};
+        lightusd::legacy::Path bound_material_path;
+        const lightusd::legacy::Material *bound_material{nullptr};
         bool ret{false};
         if (!ResolveBoundMaterial(
                 /* GeomMesh prim path */ abs_path,
@@ -415,8 +415,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 
       if (!backface_purpose.empty() &&
           pmesh->has_materialBinding(value::token(backface_purpose))) {
-        lightusd::Path bound_material_path;
-        const lightusd::Material *bound_material{nullptr};
+        lightusd::legacy::Path bound_material_path;
+        const lightusd::legacy::Material *bound_material{nullptr};
         bool ret{false};
         if (!ResolveBoundMaterial(
                 /* GeomMesh prim path */ abs_path,
@@ -556,7 +556,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   }
 
   // Handle GeomCube primitives by converting to mesh
-  if (const lightusd::GeomCube *pcube = prim.as<lightusd::GeomCube>()) {
+  if (const lightusd::legacy::GeomCube *pcube = prim.as<lightusd::legacy::GeomCube>()) {
     DCOUT("Cube: " << abs_path);
 
     // Get material binding (same logic as GeomMesh)
@@ -605,8 +605,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const lightusd::GeomSubset *> material_subsets;  // Cubes don't have subsets
-    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
+    std::vector<const lightusd::legacy::GeomSubset *> material_subsets;  // Cubes don't have subsets
+    std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
 
     if (!visitorEnv->converter->ConvertCube(
             *visitorEnv->env, abs_path, *pcube, material_path,
@@ -655,7 +655,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   }
 
   // Handle GeomSphere primitives by converting to mesh
-  if (const lightusd::GeomSphere *psphere = prim.as<lightusd::GeomSphere>()) {
+  if (const lightusd::legacy::GeomSphere *psphere = prim.as<lightusd::legacy::GeomSphere>()) {
     DCOUT("Sphere: " << abs_path);
 
     // Get material binding (same logic as GeomMesh)
@@ -704,8 +704,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const lightusd::GeomSubset *> material_subsets;  // Spheres don't have subsets
-    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
+    std::vector<const lightusd::legacy::GeomSubset *> material_subsets;  // Spheres don't have subsets
+    std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
 
     if (!visitorEnv->converter->ConvertSphere(
             *visitorEnv->env, abs_path, *psphere, material_path,
@@ -794,8 +794,8 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const lightusd::GeomSubset *> material_subsets;
-    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;
+    std::vector<const lightusd::legacy::GeomSubset *> material_subsets;
+    std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> blendshapes;
 
     if (!(visitorEnv->converter->*convertFunc)(
             *visitorEnv->env, abs_path, *pprim, material_path,
@@ -836,7 +836,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   };
 
   // Handle GeomCylinder primitives
-  if (const lightusd::GeomCylinder *pcyl = prim.as<lightusd::GeomCylinder>()) {
+  if (const lightusd::legacy::GeomCylinder *pcyl = prim.as<lightusd::legacy::GeomCylinder>()) {
     if (!convertParamPrim(pcyl, "cylinder", MeshWorkItem::Kind::Cylinder,
                           &RenderSceneConverter::ConvertCylinder)) {
       return false;
@@ -844,7 +844,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   }
 
   // Handle GeomCone primitives
-  if (const lightusd::GeomCone *pcone = prim.as<lightusd::GeomCone>()) {
+  if (const lightusd::legacy::GeomCone *pcone = prim.as<lightusd::legacy::GeomCone>()) {
     if (!convertParamPrim(pcone, "cone", MeshWorkItem::Kind::Cone,
                           &RenderSceneConverter::ConvertCone)) {
       return false;
@@ -852,7 +852,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   }
 
   // Handle GeomCapsule primitives
-  if (const lightusd::GeomCapsule *pcap = prim.as<lightusd::GeomCapsule>()) {
+  if (const lightusd::legacy::GeomCapsule *pcap = prim.as<lightusd::legacy::GeomCapsule>()) {
     if (!convertParamPrim(pcap, "capsule", MeshWorkItem::Kind::Capsule,
                           &RenderSceneConverter::ConvertCapsule)) {
       return false;
@@ -860,7 +860,7 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
   }
 
   // Handle GeomPlane primitives
-  if (const lightusd::GeomPlane *pplane = prim.as<lightusd::GeomPlane>()) {
+  if (const lightusd::legacy::GeomPlane *pplane = prim.as<lightusd::legacy::GeomPlane>()) {
     if (!convertParamPrim(pplane, "plane", MeshWorkItem::Kind::Plane,
                           &RenderSceneConverter::ConvertPlane)) {
       return false;
@@ -871,4 +871,5 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

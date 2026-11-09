@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) \
@@ -892,6 +892,7 @@ bool ExpandConstantInfluencesToVarying(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 
 #undef PushError

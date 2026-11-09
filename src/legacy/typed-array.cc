@@ -13,7 +13,7 @@
 // most functionality is implemented in the header file.
 // This file can be used for explicit template instantiations if needed.
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Explicit template instantiations for commonly used types
 // This can help reduce compilation time by pre-instantiating frequently used types
@@ -46,4 +46,5 @@ template class TypedArrayView<const float>;
 template class TypedArrayView<double>;
 template class TypedArrayView<const double>;
 
+}  // namespace legacy
 } // namespace lightusd

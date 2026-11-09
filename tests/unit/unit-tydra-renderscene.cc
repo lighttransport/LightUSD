@@ -25,11 +25,13 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 bool SyntheticTextureLoader(
-    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
-    const AssetResolutionResolver &assetResolver, tydra::TextureImage *imageOut,
+    const lightusd::legacy::value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver, lightusd::legacy::tydra::TextureImage *imageOut,
     std::vector<uint8_t> *imageData, void *userdata, std::string *warn,
     std::string *err) {
   (void)assetInfo;
@@ -48,7 +50,7 @@ bool SyntheticTextureLoader(
   imageOut->width = 1;
   imageOut->height = 1;
   imageOut->channels = 4;
-  imageOut->assetTexelComponentType = tydra::ComponentType::UInt8;
+  imageOut->assetTexelComponentType = lightusd::legacy::tydra::ComponentType::UInt8;
   imageData->assign({255, 128, 64, 255});
   return true;
 }
@@ -62,9 +64,9 @@ void tydra_renderscene_empty_stage_test(void) {
   Stage stage;
   stage.commit();
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   bool ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -105,9 +107,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -144,9 +146,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -196,9 +198,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -276,7 +278,7 @@ def Scope "Legacy" (
 
   color::ColorSpaceDesc legacy_definition;
   std::string definition_error;
-  ok = tydra::color_management::ResolveColorSpaceDefinition(
+  ok = lightusd::legacy::tydra::color_management::ResolveColorSpaceDefinition(
       stage, Path("/Legacy", ""), "legacy_linear", &legacy_definition,
       &definition_error);
   TEST_CHECK(ok);
@@ -284,9 +286,9 @@ def Scope "Legacy" (
            definition_error.c_str());
   TEST_CHECK(color::IsLinear(legacy_definition));
 
-  tydra::color_management::RenderingColorConfig fallback;
+  lightusd::legacy::tydra::color_management::RenderingColorConfig fallback;
   std::string fallback_warning;
-  ok = tydra::color_management::ResolveRenderingColorConfig(
+  ok = lightusd::legacy::tydra::color_management::ResolveRenderingColorConfig(
       stage, "/missing", &fallback, &fallback_warning);
   TEST_CHECK(ok);
   TEST_CHECK(fallback.used_override);
@@ -294,10 +296,10 @@ def Scope "Legacy" (
   TEST_CHECK(fallback.working_space == "lin_rec709_scene");
   TEST_CHECK(!fallback_warning.empty());
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.timecode = 1.5;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
   TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
@@ -438,11 +440,11 @@ def Xform "World" (
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
   if (!ok) return;
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.material_config.texture_image_loader_function = SyntheticTextureLoader;
   env.material_config.linearize_color_space = true;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
   TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
@@ -453,9 +455,9 @@ def Xform "World" (
   // own cache entry.
   TEST_CHECK(scene.images.size() == 3);
   if (scene.images.size() != 3) return;
-  const tydra::TextureImage *image_ptr = nullptr;
-  const tydra::TextureImage *inherited_ptr = nullptr;
-  for (const tydra::TextureImage &candidate : scene.images) {
+  const lightusd::legacy::tydra::TextureImage *image_ptr = nullptr;
+  const lightusd::legacy::tydra::TextureImage *inherited_ptr = nullptr;
+  for (const lightusd::legacy::tydra::TextureImage &candidate : scene.images) {
     if (candidate.sourceToDisplayLinear[0] > 2.0f) image_ptr = &candidate;
     if (candidate.sourceColorSpaceName == "lin_ap1_scene") {
       inherited_ptr = &candidate;
@@ -468,24 +470,24 @@ def Xform "World" (
     TEST_CHECK(!inherited_ptr->colorTransformBypass);
   }
   if (!image_ptr) return;
-  const tydra::TextureImage &image = *image_ptr;
-  TEST_CHECK(image.usdColorSpace == tydra::ColorSpace::Custom);
-  TEST_CHECK(image.colorSpace == tydra::ColorSpace::Lin_sRGB);
+  const lightusd::legacy::tydra::TextureImage &image = *image_ptr;
+  TEST_CHECK(image.usdColorSpace == lightusd::legacy::tydra::ColorSpace::Custom);
+  TEST_CHECK(image.colorSpace == lightusd::legacy::tydra::ColorSpace::Lin_sRGB);
   TEST_CHECK(image.sourceColorSpaceName == "studio_ap0");
   TEST_CHECK(image.colorTransformValid);
   TEST_CHECK(image.colorTransformApplied);
   TEST_CHECK(!image.colorTransformBypass);
   TEST_CHECK(image.buffer_id >= 0);
   if (image.buffer_id < 0) return;
-  const tydra::BufferData &buffer =
+  const lightusd::legacy::tydra::BufferData &buffer =
       scene.buffers[static_cast<size_t>(image.buffer_id)];
-  TEST_CHECK(buffer.componentType == tydra::ComponentType::Float);
+  TEST_CHECK(buffer.componentType == lightusd::legacy::tydra::ComponentType::Float);
   TEST_CHECK(buffer.data.size() == 4 * sizeof(float));
   if (buffer.data.size() != 4 * sizeof(float)) return;
   float actual[4];
   std::memcpy(actual, buffer.data.data(), sizeof(actual));
   color::ColorTransform expected_transform;
-  ok = tydra::color_management::BuildColorTransform(
+  ok = lightusd::legacy::tydra::color_management::BuildColorTransform(
       stage, Path("/World/Mat/Texture", ""), "studio_ap0",
       "lin_rec709_scene", &expected_transform, &err);
   TEST_CHECK(ok);
@@ -627,9 +629,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -637,10 +639,10 @@ def Xform "Root" {
 
   TEST_CHECK(scene.materials.size() >= 1);
   if (scene.materials.empty()) return;
-  const tydra::RenderMaterial &mat = scene.materials[0];
+  const lightusd::legacy::tydra::RenderMaterial &mat = scene.materials[0];
   TEST_CHECK(mat.surfaceShader.has_value());
   if (!mat.surfaceShader) return;
-  const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+  const lightusd::legacy::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
   // swizzle "bgr" of (0.1,0.6,0.9) -> (0.9,0.6,0.1)
   TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.9f, 1e-3f));
@@ -740,9 +742,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -750,10 +752,10 @@ def Xform "Root" {
 
   TEST_CHECK(scene.materials.size() >= 1);
   if (scene.materials.empty()) return;
-  const tydra::RenderMaterial &mat = scene.materials[0];
+  const lightusd::legacy::tydra::RenderMaterial &mat = scene.materials[0];
   TEST_CHECK(mat.surfaceShader.has_value());
   if (!mat.surfaceShader) return;
-  const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+  const lightusd::legacy::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
   TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.0508761f, 1e-3f));
   TEST_CHECK(math::is_close(s.diffuseColor.value[1], 0.214041f, 1e-3f));
@@ -806,9 +808,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -820,10 +822,10 @@ def Xform "Root" {
 
   TEST_CHECK(scene.materials.size() >= 1);
   if (scene.materials.empty()) return;
-  const tydra::RenderMaterial &mat = scene.materials[0];
+  const lightusd::legacy::tydra::RenderMaterial &mat = scene.materials[0];
   TEST_CHECK(mat.surfaceShader.has_value());
   if (!mat.surfaceShader) return;
-  const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+  const lightusd::legacy::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
   TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.25f, 1e-3f));
   TEST_CHECK(math::is_close(s.diffuseColor.value[1], 0.5f, 1e-3f));
@@ -889,10 +891,10 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.material_config.texture_image_loader_function = SyntheticTextureLoader;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -978,7 +980,7 @@ def Xform "Root" {
 
   std::string inherited_source;
   bool inherited_authored = false;
-  ok = tydra::color_management::ComputeColorSpaceName(
+  ok = lightusd::legacy::tydra::color_management::ComputeColorSpaceName(
       stage, Path("/Root/Materials/MyMat/NG/ApiImage", ""), nullptr,
       &inherited_source, &inherited_authored);
   TEST_CHECK(ok);
@@ -987,10 +989,10 @@ def Xform "Root" {
            inherited_source.c_str());
   TEST_CHECK(inherited_source == "lin_rec709_scene");
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.material_config.texture_image_loader_function = SyntheticTextureLoader;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -998,10 +1000,10 @@ def Xform "Root" {
 
   TEST_CHECK(scene.materials.size() >= 1);
   if (scene.materials.empty()) return;
-  const tydra::RenderMaterial &mat = scene.materials[0];
+  const lightusd::legacy::tydra::RenderMaterial &mat = scene.materials[0];
   TEST_CHECK(mat.surfaceShader.has_value());
   if (!mat.surfaceShader) return;
-  const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+  const lightusd::legacy::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
   TEST_CHECK(s.diffuseColor.texture_id >= 0);
   TEST_CHECK(s.emissiveColor.texture_id >= 0);
   TEST_CHECK(s.roughness.texture_id >= 0);
@@ -1010,14 +1012,14 @@ def Xform "Root" {
   TEST_CHECK(scene.images.size() == 3);
 
   const auto textureImageFor = [&](int32_t texture_id)
-      -> const tydra::TextureImage & {
-    const tydra::UVTexture &tex = scene.textures[static_cast<size_t>(texture_id)];
+      -> const lightusd::legacy::tydra::TextureImage & {
+    const lightusd::legacy::tydra::UVTexture &tex = scene.textures[static_cast<size_t>(texture_id)];
     return scene.images[static_cast<size_t>(tex.texture_image_id)];
   };
 
-  const tydra::TextureImage &color_image =
+  const lightusd::legacy::tydra::TextureImage &color_image =
       textureImageFor(s.diffuseColor.texture_id);
-  TEST_CHECK(color_image.usdColorSpace == tydra::ColorSpace::Lin_ACEScg);
+  TEST_CHECK(color_image.usdColorSpace == lightusd::legacy::tydra::ColorSpace::Lin_ACEScg);
   TEST_CHECK(color_image.sourceColorSpaceName == "lin_ap1_scene");
   TEST_CHECK(color_image.colorTransformValid);
   TEST_CHECK(!color_image.colorTransformApplied);
@@ -1025,16 +1027,16 @@ def Xform "Root" {
   TEST_CHECK(std::fabs(color_image.sourceToDisplayLinear[0] - 1.70505f) <
              1.0e-4f);
 
-  const tydra::TextureImage &inherited_image =
+  const lightusd::legacy::tydra::TextureImage &inherited_image =
       textureImageFor(s.emissiveColor.texture_id);
-  TEST_CHECK(inherited_image.usdColorSpace == tydra::ColorSpace::Lin_Rec709);
+  TEST_CHECK(inherited_image.usdColorSpace == lightusd::legacy::tydra::ColorSpace::Lin_Rec709);
   TEST_CHECK(inherited_image.sourceColorSpaceName == "lin_rec709_scene");
   TEST_CHECK(inherited_image.colorTransformValid);
   TEST_CHECK(inherited_image.colorTransformBypass);
 
-  const tydra::TextureImage &data_image =
+  const lightusd::legacy::tydra::TextureImage &data_image =
       textureImageFor(s.roughness.texture_id);
-  TEST_CHECK(data_image.usdColorSpace == tydra::ColorSpace::Raw);
+  TEST_CHECK(data_image.usdColorSpace == lightusd::legacy::tydra::ColorSpace::Raw);
   TEST_CHECK(data_image.sourceColorIsData);
   TEST_CHECK(data_image.colorTransformBypass);
 }
@@ -1059,9 +1061,9 @@ def SphereLight "MyLight" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -1090,9 +1092,9 @@ def Camera "MainCam" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -1124,9 +1126,9 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -1200,10 +1202,10 @@ void tydra_renderscene_streaming_equivalence_test(void) {
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
   // Monolithic reference.
-  tydra::RenderScene sceneA;
+  lightusd::legacy::tydra::RenderScene sceneA;
   {
-    tydra::RenderSceneConverterEnv env(stage);
-    tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverter converter;
     ok = converter.ConvertToRenderScene(env, &sceneA);
     TEST_CHECK(ok);
     TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
@@ -1220,16 +1222,16 @@ void tydra_renderscene_streaming_equivalence_test(void) {
     bool mesh_after_node = false;  // a mesh arrived after a node (ordering bug)
   } log;
 
-  tydra::RenderSceneSink sink;
-  sink.on_image = [&](const tydra::TextureImage &, size_t, void *) {
+  lightusd::legacy::tydra::RenderSceneSink sink;
+  sink.on_image = [&](const lightusd::legacy::tydra::TextureImage &, size_t, void *) {
     log.images++; return true; };
-  sink.on_buffer = [&](const tydra::BufferData &, size_t, void *) {
+  sink.on_buffer = [&](const lightusd::legacy::tydra::BufferData &, size_t, void *) {
     log.buffers++; return true; };
-  sink.on_texture = [&](const tydra::UVTexture &, size_t, const std::string &, void *) {
+  sink.on_texture = [&](const lightusd::legacy::tydra::UVTexture &, size_t, const std::string &, void *) {
     log.textures++; return true; };
-  sink.on_material = [&](const tydra::RenderMaterial &, size_t, const std::string &, void *) {
+  sink.on_material = [&](const lightusd::legacy::tydra::RenderMaterial &, size_t, const std::string &, void *) {
     log.materials++; return true; };
-  sink.on_mesh = [&](const tydra::RenderMesh &m, size_t, const std::string &, void *) {
+  sink.on_mesh = [&](const lightusd::legacy::tydra::RenderMesh &m, size_t, const std::string &, void *) {
     if (m.material_id >= 0 && size_t(m.material_id) >= log.materials) {
       log.material_before_mesh_ok = false;
     }
@@ -1237,25 +1239,25 @@ void tydra_renderscene_streaming_equivalence_test(void) {
     log.meshes++;
     return true;
   };
-  sink.on_light = [&](const tydra::RenderLight &, size_t, const std::string &, void *) {
+  sink.on_light = [&](const lightusd::legacy::tydra::RenderLight &, size_t, const std::string &, void *) {
     log.lights++; return true; };
-  sink.on_camera = [&](const tydra::RenderCamera &, size_t, const std::string &, void *) {
+  sink.on_camera = [&](const lightusd::legacy::tydra::RenderCamera &, size_t, const std::string &, void *) {
     log.cameras++; return true; };
-  sink.on_root_node = [&](const tydra::Node &, size_t, void *) {
+  sink.on_root_node = [&](const lightusd::legacy::tydra::Node &, size_t, void *) {
     log.node_seen = true; log.nodes++; return true; };
-  sink.on_skeleton = [&](const tydra::SkelHierarchy &, size_t, const std::string &, void *) {
+  sink.on_skeleton = [&](const lightusd::legacy::tydra::SkelHierarchy &, size_t, const std::string &, void *) {
     log.skeletons++; return true; };
-  sink.on_animation = [&](const tydra::AnimationClip &, size_t, const std::string &, void *) {
+  sink.on_animation = [&](const lightusd::legacy::tydra::AnimationClip &, size_t, const std::string &, void *) {
     log.animations++; return true; };
-  sink.on_instance = [&](const tydra::RenderInstance &, size_t, const std::string &, void *) {
+  sink.on_instance = [&](const lightusd::legacy::tydra::RenderInstance &, size_t, const std::string &, void *) {
     log.instances++; return true; };
-  sink.on_complete = [&](const tydra::RenderScene &, void *) {
+  sink.on_complete = [&](const lightusd::legacy::tydra::RenderScene &, void *) {
     log.completes++; return true; };
 
-  tydra::RenderScene sceneB;
+  lightusd::legacy::tydra::RenderScene sceneB;
   {
-    tydra::RenderSceneConverterEnv env(stage);
-    tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverter converter;
     ok = converter.ConvertToRenderSceneStreaming(env, sink, &sceneB);
     TEST_CHECK(ok);
     TEST_MSG("ConvertToRenderSceneStreaming failed: %s",
@@ -1323,15 +1325,15 @@ void tydra_renderscene_streaming_cancel_test(void) {
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
   size_t meshes_seen = 0;
-  tydra::RenderSceneSink sink;
-  sink.on_mesh = [&](const tydra::RenderMesh &, size_t, const std::string &, void *) {
+  lightusd::legacy::tydra::RenderSceneSink sink;
+  sink.on_mesh = [&](const lightusd::legacy::tydra::RenderMesh &, size_t, const std::string &, void *) {
     meshes_seen++;
     return false;  // cancel on the very first mesh
   };
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   ok = converter.ConvertToRenderSceneStreaming(env, sink, &scene);
 
   TEST_CHECK(!ok);
@@ -1365,10 +1367,10 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.triangulate = true;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(ok);
@@ -1377,7 +1379,7 @@ def Xform "Root" {
   TEST_CHECK(scene.meshes.size() == 1);
   TEST_MSG("Expected 1 mesh, got %zu", scene.meshes.size());
 
-  const tydra::RenderMesh &rmesh = scene.meshes[0];
+  const lightusd::legacy::tydra::RenderMesh &rmesh = scene.meshes[0];
 
   // 2 quads = 4 triangles, but face 0 is a hole => only 2 triangles.
   TEST_CHECK(rmesh.triangulatedFaceVertexCounts.size() == 2);
@@ -1408,18 +1410,18 @@ static bool GetComputedNormalZ(const char *usda, float *out_z) {
     return false;
   }
 
-  tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.triangulate = true;
   env.mesh_config.compute_normals = true;
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
   ok = converter.ConvertToRenderScene(env, &scene);
   if (!ok || scene.meshes.size() != 1) {
     return false;
   }
 
-  const tydra::RenderMesh &rmesh = scene.meshes[0];
+  const lightusd::legacy::tydra::RenderMesh &rmesh = scene.meshes[0];
   const std::vector<uint8_t> &data = rmesh.normals.get_data();
   if (data.size() < 3 * sizeof(float)) {
     return false;
@@ -1469,6 +1471,7 @@ def Mesh "Tri" {
 
 void tydra_deferred_packed_normals_test(void) {
   using namespace lightusd::tydra;
+  using namespace lightusd::legacy::tydra;  // NOLINT
   using namespace lightusd::tydra::tangent_quantize;
   const VertexAttributeFormat formats[] = {VertexAttributeFormat::Vec3,
       VertexAttributeFormat::Char3, VertexAttributeFormat::Short3, VertexAttributeFormat::Uint};

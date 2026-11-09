@@ -41,7 +41,7 @@
     (*warn) += s;   \
   }
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace prim {
 
@@ -1002,4 +1002,5 @@ bool VariantSelectPrimSpec(
   return VariantSelectPrimSpec(dst, csrc, variant_selection, warn, err);
 }
 
+}  // namespace legacy
 }  // namespace lightusd

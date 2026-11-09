@@ -15,7 +15,7 @@
 
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace usdFbx {
 
@@ -25,7 +25,7 @@ namespace {
 
 }
 
-bool ReadFbxFromFile(const std::string &filepath, lightusd::GPrim *prim, std::string *err)
+bool ReadFbxFromFile(const std::string &filepath, lightusd::legacy::GPrim *prim, std::string *err)
 {
 #if !defined(LIGHTUSD_USE_USDFBX)
   (void)filepath;
@@ -52,7 +52,7 @@ bool ReadFbxFromFile(const std::string &filepath, lightusd::GPrim *prim, std::st
 }
 
 
-bool ReadFbxFromString(const std::string &str, lightusd::GPrim *prim, std::string *err)
+bool ReadFbxFromString(const std::string &str, lightusd::legacy::GPrim *prim, std::string *err)
 {
 #if !defined(LIGHTUSD_USE_USDFBX)
   (void)str;
@@ -75,4 +75,5 @@ bool ReadFbxFromString(const std::string &str, lightusd::GPrim *prim, std::strin
 
 } // namespace usdFbx
 
+}  // namespace legacy
 } // lightusd

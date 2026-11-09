@@ -14,7 +14,7 @@
 #include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // in prim-types.hh
 class Path;
@@ -28,118 +28,119 @@ namespace value {
 struct TimeSamples;
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::char2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::char3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::char4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::char2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::char3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::char4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uchar2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uchar3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uchar4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::short2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::short3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::short4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::short2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::short3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::short4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::ushort2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::ushort3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::ushort4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::int2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::int3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::int4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::int2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::int3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::int4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uint2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uint3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::uint4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uint2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uint3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::uint4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::half &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::half2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::half3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::half4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::half &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::half2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::half3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::half4 &v);
 
 // Note: operator<< for StringData is declared in pprinter.hh
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::float2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::float3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::float4 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::double2 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::double3 &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::double4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::float2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::float3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::float4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::double2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::double3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::double4 &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::point3h &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::point3f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::point3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::point3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::point3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::point3d &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3h &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::normal3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::normal3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::normal3d &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3h &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::vector3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::vector3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::vector3d &v);
 
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color3h &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color3f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color3d &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color4h &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color4f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::color4d &v);
-
-std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord2h &v);
-std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord2f &v);
-std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord2d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color4h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color4f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::color4d &v);
 
 std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord3h &v);
+                         const lightusd::legacy::value::texcoord2h &v);
 std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord3f &v);
+                         const lightusd::legacy::value::texcoord2f &v);
 std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::texcoord3d &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::quath &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::quatf &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::quatd &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::token &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::dict &v);
-std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::TimeSamples &ts);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix2f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix3f &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix4f &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix2d &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix3d &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix4d &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::frame4d &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::timecode &v);
-
-std::ostream &operator<<(std::ostream &os, const lightusd::value::AssetPath &v);
+                         const lightusd::legacy::value::texcoord2d &v);
 
 std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::PathExpression &v);
+                         const lightusd::legacy::value::texcoord3h &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::legacy::value::texcoord3f &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::legacy::value::texcoord3d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::quath &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::quatf &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::quatd &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::token &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::dict &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::legacy::value::TimeSamples &ts);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix2f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix4f &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix2d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::matrix4d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::frame4d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::timecode &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::value::AssetPath &v);
+
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::legacy::value::PathExpression &v);
 
 // NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os,
-                         const lightusd::value::StringData &v);
+                         const lightusd::legacy::value::StringData &v);
 
 // NOTE: Implemented in pprinter.cc
-std::ostream &operator<<(std::ostream &os, const lightusd::Path &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::Reference &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::Payload &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::LayerOffset &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::SubLayer &v);
-std::ostream &operator<<(std::ostream &os, const lightusd::Collection &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::Path &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::Reference &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::Payload &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::LayerOffset &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::SubLayer &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::Collection &v);
 
 // 1D array
 // All three array containers (std::vector / TypedArray / ChunkedTypedArray)
@@ -167,7 +168,7 @@ inline std::ostream &print_array_impl_wrapped(std::ostream &os, const ArrayT &v,
     ess << v[i];
     elems.push_back(ess.str());
   }
-  lightusd::pprint::print_1d_array(os, elems, wrappable);
+  lightusd::legacy::pprint::print_1d_array(os, elems, wrappable);
   return os;
 }
 
@@ -177,12 +178,12 @@ inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
   // Flush every so often so a huge array does not double its memory here.
   constexpr size_t kFlushBytes = 1u << 16;
 
-  if (wrappable && lightusd::pprint::GetColumnLimit() > 0) {
+  if (wrappable && lightusd::legacy::pprint::GetColumnLimit() > 0) {
     // Column-wrapped layout needs every element width up front.
     return print_array_impl_wrapped(os, v, wrappable);
   }
 
-  lightusd::pprint::ScratchRef buf;
+  lightusd::legacy::pprint::ScratchRef buf;
   std::ostream &ess = buf.os();
   std::string &out = buf.buffer();
 
@@ -205,17 +206,17 @@ inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
 
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
-  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
+  return print_array_impl(os, v, lightusd::legacy::pprint::is_wrappable_element_v<T>);
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const lightusd::TypedArray<T> &v) {
-  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::TypedArray<T> &v) {
+  return print_array_impl(os, v, lightusd::legacy::pprint::is_wrappable_element_v<T>);
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const lightusd::ChunkedTypedArray<T> &v) {
-  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::ChunkedTypedArray<T> &v) {
+  return print_array_impl(os, v, lightusd::legacy::pprint::is_wrappable_element_v<T>);
 }
 
 // Provide specialized version for int and float array.
@@ -242,7 +243,7 @@ std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
 
 }  // namespace std
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 std::string to_string(bool v);
 std::string to_string(int32_t v);
@@ -308,7 +309,7 @@ std::string to_string(const value::color4d &v);
 
 namespace value {
 
-std::string pprint_value(const lightusd::value::Value &v,
+std::string pprint_value(const lightusd::legacy::value::Value &v,
                          const uint32_t indent = 0, bool closing_brace = true);
 
 // Renders a value::Value holding a schema *prim* type (Model/Xform/GeomMesh/
@@ -316,7 +317,7 @@ std::string pprint_value(const lightusd::value::Value &v,
 // (which carries the schema headers); pprint_value() forwards here for type_ids
 // in [TYPE_ID_MODEL_BEGIN, TYPE_ID_MODEL_END). Split out so value-pprint-dispatch.cc
 // (the base-type/array renderer) compiles without the per-prim-type instantiation.
-std::string pprint_prim_value(const lightusd::value::Value &v,
+std::string pprint_prim_value(const lightusd::legacy::value::Value &v,
                               const uint32_t indent = 0, bool closing_brace = true);
 
 // Print first N and last N items.
@@ -536,4 +537,5 @@ std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16)
 }
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

@@ -22,7 +22,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 #define CASE_GPRIM_LIST(__FUNC) \
@@ -126,4 +126,5 @@ std::string pprint_prim_value(const value::Value &v, const uint32_t indent,
 }
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

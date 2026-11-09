@@ -9,7 +9,7 @@
 #include "str-util.hh"
 #include "tiny-format.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace enum_handler {
 
 namespace {
@@ -42,8 +42,8 @@ nonstd::expected<EnumT, std::string> LookupEnum(
 // Common/shared enum handlers
 //
 
-nonstd::expected<lightusd::Axis, std::string> Axis(const std::string &tok) {
-  using E = lightusd::Axis;
+nonstd::expected<lightusd::legacy::Axis, std::string> Axis(const std::string &tok) {
+  using E = lightusd::legacy::Axis;
   constexpr std::array<std::pair<E, const char *>, 3> enums = {{
       {E::X, "X"},
       {E::Y, "Y"},
@@ -52,8 +52,8 @@ nonstd::expected<lightusd::Axis, std::string> Axis(const std::string &tok) {
   return LookupEnum("axis", tok, enums);
 }
 
-nonstd::expected<lightusd::Visibility, std::string> Visibility(const std::string &tok) {
-  using E = lightusd::Visibility;
+nonstd::expected<lightusd::legacy::Visibility, std::string> Visibility(const std::string &tok) {
+  using E = lightusd::legacy::Visibility;
   constexpr std::array<std::pair<E, const char *>, 2> enums = {{
       {E::Inherited, "inherited"},
       {E::Invisible, "invisible"},
@@ -61,8 +61,8 @@ nonstd::expected<lightusd::Visibility, std::string> Visibility(const std::string
   return LookupEnum("visibility", tok, enums);
 }
 
-nonstd::expected<lightusd::Purpose, std::string> Purpose(const std::string &tok) {
-  using E = lightusd::Purpose;
+nonstd::expected<lightusd::legacy::Purpose, std::string> Purpose(const std::string &tok) {
+  using E = lightusd::legacy::Purpose;
   constexpr std::array<std::pair<E, const char *>, 4> enums = {{
       {E::Default, "default"},
       {E::Proxy, "proxy"},
@@ -72,8 +72,8 @@ nonstd::expected<lightusd::Purpose, std::string> Purpose(const std::string &tok)
   return LookupEnum("purpose", tok, enums);
 }
 
-nonstd::expected<lightusd::Orientation, std::string> Orientation(const std::string &tok) {
-  using E = lightusd::Orientation;
+nonstd::expected<lightusd::legacy::Orientation, std::string> Orientation(const std::string &tok) {
+  using E = lightusd::legacy::Orientation;
   constexpr std::array<std::pair<E, const char *>, 2> enums = {{
       {E::RightHanded, "rightHanded"},
       {E::LeftHanded, "leftHanded"},
@@ -390,4 +390,5 @@ APISchemaNameWithInstanceOpt(const std::string &tok) {
 }
 
 }  // namespace enum_handler
+}  // namespace legacy
 }  // namespace lightusd

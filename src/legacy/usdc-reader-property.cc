@@ -17,7 +17,7 @@
 
 #if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
@@ -834,6 +834,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

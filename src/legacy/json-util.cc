@@ -2,7 +2,8 @@
 
 #include "core/minijson.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 
+}  // namespace legacy
 } // namespace lightusd

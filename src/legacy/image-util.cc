@@ -348,7 +348,7 @@ uint8_t linearToSrgb8bit(double x) {
 
 } // SrgbTransform
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace detail {
 
@@ -1555,4 +1555,5 @@ bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   return true;
 }
 
+}  // namespace legacy
 } // namespace lightusd

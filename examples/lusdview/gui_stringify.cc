@@ -22,9 +22,9 @@ std::string Sanitize(std::string s, size_t maxLen = 240) {
 }
 }  // namespace
 
-std::string PropertyToString(const lightusd::Property& prop) {
+std::string PropertyToString(const lightusd::legacy::Property& prop) {
   if (prop.is_relationship()) {
-    std::vector<lightusd::Path> targets = prop.get_relationTargets();
+    std::vector<lightusd::legacy::Path> targets = prop.get_relationTargets();
     if (targets.empty()) return "(no targets)";
     std::string s;
     for (size_t i = 0; i < targets.size(); ++i) {
@@ -35,7 +35,7 @@ std::string PropertyToString(const lightusd::Property& prop) {
   }
 
   if (prop.is_attribute()) {
-    const lightusd::Attribute& a = prop.get_attribute();
+    const lightusd::legacy::Attribute& a = prop.get_attribute();
     if (a.has_connections()) {
       const auto& conns = a.connections();
       std::string s;
@@ -46,8 +46,8 @@ std::string PropertyToString(const lightusd::Property& prop) {
       return Sanitize("<connect: " + s + ">");
     }
     if (a.has_value()) {
-      const lightusd::value::Value& v = a.get_var().value_raw();
-      return Sanitize(lightusd::value::pprint_value(v, 0, /*closing_brace=*/false));
+      const lightusd::legacy::value::Value& v = a.get_var().value_raw();
+      return Sanitize(lightusd::legacy::value::pprint_value(v, 0, /*closing_brace=*/false));
     }
     if (a.has_timesamples()) {
       return "(timeSamples)";
@@ -59,7 +59,7 @@ std::string PropertyToString(const lightusd::Property& prop) {
   return "(empty)";
 }
 
-std::string PrimMetaSummary(const lightusd::Prim& prim) {
+std::string PrimMetaSummary(const lightusd::legacy::Prim& prim) {
   const auto& m = prim.metas();
   std::string s;
   auto add = [&](const char* k, const std::string& v) {
@@ -83,7 +83,7 @@ std::string PrimMetaSummary(const lightusd::Prim& prim) {
       std::string val;
       for (const auto& ns : schemas.names) {
         if (!val.empty()) val += ", ";
-        val += lightusd::to_string(ns.first);
+        val += lightusd::legacy::to_string(ns.first);
         if (!ns.second.empty()) val += ":" + ns.second;
       }
       for (const auto& us : schemas.unknownSchemas) {
@@ -122,7 +122,7 @@ std::string PrimMetaSummary(const lightusd::Prim& prim) {
   return s;
 }
 
-std::string AttrMetaSummary(const lightusd::Attribute& attr) {
+std::string AttrMetaSummary(const lightusd::legacy::Attribute& attr) {
   const auto& m = attr.metas();
   std::string s;
   auto add = [&](const std::string& kv) {
@@ -136,7 +136,7 @@ std::string AttrMetaSummary(const lightusd::Attribute& attr) {
   return s;
 }
 
-std::string GPrimPropertySummary(const lightusd::Prim& prim) {
+std::string GPrimPropertySummary(const lightusd::legacy::Prim& prim) {
   std::string s;
   auto add = [&](const char* k, const std::string& v) {
     if (!s.empty()) s += "\n";
@@ -149,41 +149,41 @@ std::string GPrimPropertySummary(const lightusd::Prim& prim) {
     if (gprim->doubleSided.authored()) {
       add("doubleSided", gprim->doubleSided.get_value() ? "true" : "false");
     }
-    add("orientation", lightusd::to_string(gprim->orientation.get_value()));
+    add("orientation", lightusd::legacy::to_string(gprim->orientation.get_value()));
     if (gprim->visibility.authored()) {
-      lightusd::Visibility vis;
+      lightusd::legacy::Visibility vis;
       if (gprim->visibility.get_value().get_default(&vis)) {
-        add("visibility", lightusd::to_string(vis));
+        add("visibility", lightusd::legacy::to_string(vis));
       }
     }
     if (gprim->purpose.authored()) {
-      add("purpose", lightusd::to_string(gprim->purpose.get_value()));
+      add("purpose", lightusd::legacy::to_string(gprim->purpose.get_value()));
     }
     return true;
   };
 
-  if (auto* m = prim.as<lightusd::GeomMesh>()) tryGPrim(m);
-  else if (auto* gs = prim.as<lightusd::GeomSphere>()) tryGPrim(gs);
-  else if (auto* c = prim.as<lightusd::GeomCube>()) tryGPrim(c);
-  else if (auto* y = prim.as<lightusd::GeomCylinder>()) tryGPrim(y);
-  else if (auto* o = prim.as<lightusd::GeomCone>()) tryGPrim(o);
-  else if (auto* p = prim.as<lightusd::GeomCapsule>()) tryGPrim(p);
-  else if (auto* n = prim.as<lightusd::GeomPlane>()) tryGPrim(n);
-  else if (auto* b = prim.as<lightusd::GeomBasisCurves>()) tryGPrim(b);
-  else if (auto* pt = prim.as<lightusd::GeomPoints>()) tryGPrim(pt);
+  if (auto* m = prim.as<lightusd::legacy::GeomMesh>()) tryGPrim(m);
+  else if (auto* gs = prim.as<lightusd::legacy::GeomSphere>()) tryGPrim(gs);
+  else if (auto* c = prim.as<lightusd::legacy::GeomCube>()) tryGPrim(c);
+  else if (auto* y = prim.as<lightusd::legacy::GeomCylinder>()) tryGPrim(y);
+  else if (auto* o = prim.as<lightusd::legacy::GeomCone>()) tryGPrim(o);
+  else if (auto* p = prim.as<lightusd::legacy::GeomCapsule>()) tryGPrim(p);
+  else if (auto* n = prim.as<lightusd::legacy::GeomPlane>()) tryGPrim(n);
+  else if (auto* b = prim.as<lightusd::legacy::GeomBasisCurves>()) tryGPrim(b);
+  else if (auto* pt = prim.as<lightusd::legacy::GeomPoints>()) tryGPrim(pt);
 
   return s;
 }
 
-std::string SubdivisionSchemeName(const lightusd::Prim& prim) {
-  if (const auto* m = prim.as<lightusd::GeomMesh>()) {
+std::string SubdivisionSchemeName(const lightusd::legacy::Prim& prim) {
+  if (const auto* m = prim.as<lightusd::legacy::GeomMesh>()) {
     if (m->subdivisionScheme.authored()) {
       auto v = m->subdivisionScheme.get_value();
       switch (v) {
-        case lightusd::GeomMesh::SubdivisionScheme::CatmullClark: return "catmullClark";
-        case lightusd::GeomMesh::SubdivisionScheme::Loop: return "loop";
-        case lightusd::GeomMesh::SubdivisionScheme::Bilinear: return "bilinear";
-        case lightusd::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: return "none";
+        case lightusd::legacy::GeomMesh::SubdivisionScheme::CatmullClark: return "catmullClark";
+        case lightusd::legacy::GeomMesh::SubdivisionScheme::Loop: return "loop";
+        case lightusd::legacy::GeomMesh::SubdivisionScheme::Bilinear: return "bilinear";
+        case lightusd::legacy::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: return "none";
         default: return "none";
       }
     }
@@ -191,31 +191,31 @@ std::string SubdivisionSchemeName(const lightusd::Prim& prim) {
   return {};
 }
 
-std::string VisibilityState(const lightusd::Prim& prim) {
+std::string VisibilityState(const lightusd::legacy::Prim& prim) {
   auto tryVis = [&](auto* gprim) -> std::string {
     if (gprim->visibility.authored()) {
-      lightusd::Visibility vis;
+      lightusd::legacy::Visibility vis;
       if (gprim->visibility.get_value().get_default(&vis)) {
-        return lightusd::to_string(vis);
+        return lightusd::legacy::to_string(vis);
       }
     }
     return {};
   };
 
-  if (auto* m = prim.as<lightusd::GeomMesh>()) return tryVis(m);
-  else if (auto* s = prim.as<lightusd::GeomSphere>()) return tryVis(s);
-  else if (auto* c = prim.as<lightusd::GeomCube>()) return tryVis(c);
-  else if (auto* y = prim.as<lightusd::GeomCylinder>()) return tryVis(y);
-  else if (auto* o = prim.as<lightusd::GeomCone>()) return tryVis(o);
-  else if (auto* p = prim.as<lightusd::GeomCapsule>()) return tryVis(p);
-  else if (auto* n = prim.as<lightusd::GeomPlane>()) return tryVis(n);
-  else if (auto* b = prim.as<lightusd::GeomBasisCurves>()) return tryVis(b);
-  else if (auto* pt = prim.as<lightusd::GeomPoints>()) return tryVis(pt);
+  if (auto* m = prim.as<lightusd::legacy::GeomMesh>()) return tryVis(m);
+  else if (auto* s = prim.as<lightusd::legacy::GeomSphere>()) return tryVis(s);
+  else if (auto* c = prim.as<lightusd::legacy::GeomCube>()) return tryVis(c);
+  else if (auto* y = prim.as<lightusd::legacy::GeomCylinder>()) return tryVis(y);
+  else if (auto* o = prim.as<lightusd::legacy::GeomCone>()) return tryVis(o);
+  else if (auto* p = prim.as<lightusd::legacy::GeomCapsule>()) return tryVis(p);
+  else if (auto* n = prim.as<lightusd::legacy::GeomPlane>()) return tryVis(n);
+  else if (auto* b = prim.as<lightusd::legacy::GeomBasisCurves>()) return tryVis(b);
+  else if (auto* pt = prim.as<lightusd::legacy::GeomPoints>()) return tryVis(pt);
 
   return {};
 }
 
-std::string VariantSetDetail(const lightusd::Prim& prim) {
+std::string VariantSetDetail(const lightusd::legacy::Prim& prim) {
   const auto& vs = prim.variantSets();
   if (vs.empty()) return {};
 
@@ -242,10 +242,10 @@ std::string VariantSetDetail(const lightusd::Prim& prim) {
   return s;
 }
 
-std::string GeometrySummary(const lightusd::Prim& prim) {
+std::string GeometrySummary(const lightusd::legacy::Prim& prim) {
   std::string s;
 
-  if (const auto* m = prim.as<lightusd::GeomMesh>()) {
+  if (const auto* m = prim.as<lightusd::legacy::GeomMesh>()) {
     size_t nVerts = 0, nFaces = 0, nTris = 0;
     if (m->points.authored()) {
       auto pts = m->get_points();
@@ -261,37 +261,37 @@ std::string GeometrySummary(const lightusd::Prim& prim) {
     }
     s = std::to_string(nVerts) + " verts, " + std::to_string(nFaces) + " faces";
     if (nTris > 0 && nTris != nFaces) s += " (~" + std::to_string(nTris) + " tris)";
-  } else if (const auto* sp = prim.as<lightusd::GeomSphere>()) {
+  } else if (const auto* sp = prim.as<lightusd::legacy::GeomSphere>()) {
     double r = 1.0;
     sp->radius.get_value().get_default(&r);
     s = "radius: " + std::to_string(r);
-  } else if (const auto* cu = prim.as<lightusd::GeomCube>()) {
+  } else if (const auto* cu = prim.as<lightusd::legacy::GeomCube>()) {
     double sz = 2.0;
     cu->size.get_value().get_default(&sz);
     s = "size: " + std::to_string(sz);
-  } else if (const auto* cy = prim.as<lightusd::GeomCylinder>()) {
+  } else if (const auto* cy = prim.as<lightusd::legacy::GeomCylinder>()) {
     double r = 1.0, h = 2.0;
     cy->radius.get_value().get_default(&r);
     cy->height.get_value().get_default(&h);
     s = "radius: " + std::to_string(r) + ", height: " + std::to_string(h);
-  } else if (const auto* co = prim.as<lightusd::GeomCone>()) {
+  } else if (const auto* co = prim.as<lightusd::legacy::GeomCone>()) {
     double r = 1.0, h = 2.0;
     co->radius.get_value().get_default(&r);
     co->height.get_value().get_default(&h);
     s = "radius: " + std::to_string(r) + ", height: " + std::to_string(h);
-  } else if (const auto* ca = prim.as<lightusd::GeomCapsule>()) {
+  } else if (const auto* ca = prim.as<lightusd::legacy::GeomCapsule>()) {
     double r = 0.5, h = 1.0;
     ca->radius.get_value().get_default(&r);
     ca->height.get_value().get_default(&h);
     s = "radius: " + std::to_string(r) + ", height: " + std::to_string(h);
-  } else if (const auto* bc = prim.as<lightusd::GeomBasisCurves>()) {
+  } else if (const auto* bc = prim.as<lightusd::legacy::GeomBasisCurves>()) {
     size_t nPts = 0;
     if (bc->points.authored()) {
       auto pts = bc->get_points();
       nPts = pts.size();
     }
     s = std::to_string(nPts) + " points";
-  } else if (const auto* pt = prim.as<lightusd::GeomPoints>()) {
+  } else if (const auto* pt = prim.as<lightusd::legacy::GeomPoints>()) {
     size_t nPts = 0;
     if (pt->points.authored()) {
       auto pts = pt->get_points();

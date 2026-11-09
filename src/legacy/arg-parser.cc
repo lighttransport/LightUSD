@@ -4,7 +4,7 @@
 #include "arg-parser.hh"
 #include "str-util.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace argparser {
 
 ArgParser::ArgParser() {}
@@ -68,7 +68,7 @@ bool ArgParser::get(const std::string& name, std::string& value) const {
 bool ArgParser::get(const std::string& name, double& value) const {
     auto it = options_.find(name);
     if (it != options_.end() && it->second.is_set && it->second.has_value) {
-        double d = lightusd::atof(it->second.value.c_str());
+        double d = lightusd::legacy::atof(it->second.value.c_str());
         value = d;
         return true;
     }
@@ -89,4 +89,5 @@ void ArgParser::print_help() const {
 }
 
 } // namespace argparser
+}  // namespace legacy
 } // namespace lightusd

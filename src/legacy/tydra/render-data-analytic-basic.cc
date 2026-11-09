@@ -15,7 +15,7 @@
 #include "usdGeom.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Copy authored displayColor / displayOpacity primvars from an analytic Gprim
@@ -38,8 +38,8 @@ bool RenderSceneConverter::ConvertCube(
     const GeomCube &cube, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   // Extract cube size
@@ -111,8 +111,8 @@ bool RenderSceneConverter::ConvertSphere(
     const GeomSphere &sphere, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   // Extract sphere radius
@@ -185,4 +185,5 @@ bool RenderSceneConverter::ConvertSphere(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

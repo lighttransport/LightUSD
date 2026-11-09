@@ -25,6 +25,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Helper to build a test hierarchy:
 // /Root
 //   /Root/Child1
@@ -525,7 +527,7 @@ void stage_metas_test(void) {
   Stage stage;
 
   // Set stage metadata
-  stage.metas().defaultPrim = value::token("Root");
+  stage.metas().defaultPrim = lightusd::legacy::value::token("Root");
   stage.metas().upAxis = Axis::Y;
   stage.metas().metersPerUnit = 0.01;
 
@@ -742,7 +744,7 @@ void stage_concurrent_parse_test(void) {
   auto worker = [&]() {
     Stage stage;
     std::string warn, err;
-    bool ok = lightusd::LoadUSDAFromMemory(
+    bool ok = lightusd::legacy::LoadUSDAFromMemory(
         reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
         /* base_dir */ "", &stage, &warn, &err);
     if (ok) {
@@ -771,7 +773,7 @@ void stage_concurrent_parse_test(void) {
 // concurrently. Must be ThreadSanitizer-clean.
 void stage_concurrent_timesamples_read_test(void) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   // Add out of time order so update() actually sorts.
   ts.add_sample<double>(2.0, 20.0);
   ts.add_sample<double>(0.0, 0.0);
@@ -815,7 +817,7 @@ void stage_concurrent_timesamples_read_test(void) {
       // Generic-samples path: this lazily materializes `_samples` from unified
       // storage on first call (the const-read mutation being guarded). Exercise
       // it concurrently so the materialization race would surface under TSan.
-      const std::vector<value::TimeSamples::Sample> &samples = ts.get_samples();
+      const std::vector<lightusd::legacy::value::TimeSamples::Sample> &samples = ts.get_samples();
       if (samples.size() != 4) {
         ok.store(false);
       }

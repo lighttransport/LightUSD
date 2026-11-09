@@ -4,7 +4,7 @@
 #include <sstream>
 #include <vector>
 #include "common-macros.inc"
-namespace lightusd { namespace tydra { namespace detail {
+namespace lightusd { namespace legacy { namespace tydra { namespace detail {
 template <typename T>
 bool NativeMiniScalar(const minijson::Value &source, T *out) {
   if (!out) return false;
@@ -411,4 +411,5 @@ nonstd::optional<value::Value> NativeMiniJSONToValue(
   if (type_name == "quath") return NativeMiniQuat<value::quath>(*payload);
   return nonstd::nullopt;
 }
-} } }
+} } }  // namespace legacy
+}

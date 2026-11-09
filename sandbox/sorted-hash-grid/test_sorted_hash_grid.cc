@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <cassert>
 
-using namespace lightusd::spatial;
+using namespace lightusd::legacy::spatial;
 
 void testBasicFunctionality() {
     std::cout << "Testing basic functionality...\n";

@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // unit-pcp-cache.cc - Tests for the cached / lazy composition engine
-//                     (lightusd::pcp::Cache).
+//                     (lightusd::legacy::pcp::Cache).
 //
 
 #ifdef _MSC_VER
@@ -31,6 +31,8 @@
 #include "usdGeom.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 
 namespace {
 

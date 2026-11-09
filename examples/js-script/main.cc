@@ -40,10 +40,10 @@ int main(int argc, char** argv) {
 #if defined(LIGHTUSD_WITH_QJS)
 
     // Load USD file as Stage (which contains Layer metadata)
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     std::string warn, err;
 
-    bool ret = lightusd::LoadUSDFromFile(usd_filename, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDFromFile(usd_filename, &stage, &warn, &err);
 
     if (!warn.empty()) {
         std::cerr << "WARN: " << warn << std::endl;
@@ -57,10 +57,10 @@ int main(int argc, char** argv) {
     std::cout << "Successfully loaded USD file" << std::endl;
 
     // Get LayerMetas from the Stage
-    const lightusd::LayerMetas& layer_metas = stage.metas();
+    const lightusd::legacy::LayerMetas& layer_metas = stage.metas();
 
     std::cout << "Stage LayerMetas loaded" << std::endl;
-    std::cout << "  - upAxis: " << lightusd::to_string(layer_metas.upAxis.get_value()) << std::endl;
+    std::cout << "  - upAxis: " << lightusd::legacy::to_string(layer_metas.upAxis.get_value()) << std::endl;
     std::cout << "  - defaultPrim: " << layer_metas.defaultPrim.str() << std::endl;
     std::cout << "  - metersPerUnit: " << layer_metas.metersPerUnit.get_value() << std::endl;
     std::cout << "  - timeCodesPerSecond: " << layer_metas.timeCodesPerSecond.get_value() << std::endl;
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     std::cout << "----------------------------------------" << std::endl;
 
     std::string js_err;
-    bool js_ret = lightusd::tydra::RunJSScriptWithLayerMetas(js_code, &layer_metas, js_err);
+    bool js_ret = lightusd::legacy::tydra::RunJSScriptWithLayerMetas(js_code, &layer_metas, js_err);
 
     std::cout << "----------------------------------------" << std::endl;
 

@@ -24,7 +24,7 @@
 #include "xform.hh"
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 
@@ -173,8 +173,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     }
   };
 
-  // Check if transform is identity using lightusd::is_identity function
-  bool transform_is_identity = lightusd::is_identity(src_transform);
+  // Check if transform is identity using lightusd::legacy::is_identity function
+  bool transform_is_identity = lightusd::legacy::is_identity(src_transform);
   value::matrix4d src_transform_inverse = value::matrix4d::identity();
   const bool needs_direction_bake =
       !transform_is_identity &&
@@ -189,7 +189,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       return false;
     }
     if (needs_direction_bake &&
-        !lightusd::inverse(src_transform, src_transform_inverse)) {
+        !lightusd::legacy::inverse(src_transform, src_transform_inverse)) {
       set_merge_error(
           "Cannot bake direction attributes with a non-invertible transform.");
       return false;
@@ -704,7 +704,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       for (size_t idx : mesh_indices) {
         const auto &src_mesh = meshes[idx];
         const auto &node_info = mesh_node_infos[idx];
-        if (lightusd::is_identity(node_info.global_matrix)) {
+        if (lightusd::legacy::is_identity(node_info.global_matrix)) {
           continue;
         }
         drop_normals = drop_normals ||
@@ -821,7 +821,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   value::matrix4d default_root_local = value::matrix4d::identity();
   if (env.scene_config.merge_meshes_bake_transform && !root_nodes.empty()) {
     value::matrix4d inv_root;
-    if (lightusd::inverse(root_nodes[default_root_index].global_matrix,
+    if (lightusd::legacy::inverse(root_nodes[default_root_index].global_matrix,
                           inv_root)) {
       default_root_local = inv_root;
     }
@@ -991,4 +991,5 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

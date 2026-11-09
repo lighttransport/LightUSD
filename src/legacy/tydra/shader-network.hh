@@ -35,7 +35,7 @@
 #include "nonstd/expected.hpp"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // forward decl of prim-types.hh
 class Path;
@@ -232,4 +232,5 @@ bool GetDirectCollectionMaterialBinding(
   std::string *err);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

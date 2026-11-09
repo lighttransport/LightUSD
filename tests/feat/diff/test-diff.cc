@@ -18,7 +18,10 @@
 #include "tydra/diff-and-compare.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 namespace {
 
@@ -43,8 +46,8 @@ bool LoadMem(const std::string &usda, Layer *layer) {
 }
 
 bool HasDiff(const Layer &a, const Layer &b, const DiffOptions &opts) {
-  lightusd::HashMap<std::string, PrimSpecDiff> ps;
-  lightusd::HashMap<std::string, PropDiff> pp;
+  lightusd::legacy::HashMap<std::string, PrimSpecDiff> ps;
+  lightusd::legacy::HashMap<std::string, PropDiff> pp;
   LayerMetaDiff lm;
   Diff(a, b, ps, pp, opts, &lm);
   return !ps.empty() || !pp.empty() || lm.changed();

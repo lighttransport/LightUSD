@@ -29,7 +29,7 @@
   }                               \
   return false
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -491,4 +491,5 @@ bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInte
 }
 
 
+}  // namespace legacy
 }  // namespace lightusd

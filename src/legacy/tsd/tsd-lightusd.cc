@@ -11,7 +11,7 @@
 
 #include "usdGeom.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tsd {
 
 namespace {
@@ -224,4 +224,5 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
 }
 
 }  // namespace tsd
+}  // namespace legacy
 }  // namespace lightusd

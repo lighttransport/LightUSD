@@ -22,7 +22,7 @@
 #include "usdVol.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Helper to get NodeCategory from NodeType
@@ -75,7 +75,7 @@ static bool ValueAt(const TypedAttribute<Animatable<T>> &attr,
   return value.value().get_scalar(out);
 }
 
-static bool GetFieldAssetInfo(const lightusd::Prim &prim,
+static bool GetFieldAssetInfo(const lightusd::legacy::Prim &prim,
                               const RenderSceneConverterEnv &env,
                               FieldAssetInfo *out) {
   if (!out) return false;
@@ -462,7 +462,7 @@ bool RenderSceneConverter::BuildSingleNode(
     const XformNode &node, Node &out_rnode) {
   Node rnode;
 
-  const lightusd::Prim *prim = node.prim;
+  const lightusd::legacy::Prim *prim = node.prim;
   if (prim) {
     rnode.prim_name = prim->element_name();
     rnode.abs_path = primPath;
@@ -935,4 +935,5 @@ bool RenderSceneConverter::BuildNodeHierarchy(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

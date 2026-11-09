@@ -47,7 +47,7 @@
 #include "core/security-policy.hh"
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr int version_major = 1;
 constexpr int version_minor = 0;
@@ -657,6 +657,7 @@ bool IsUSDZ(const uint8_t *addr, const size_t length);
 // This is for file-level compression, not internal USDC LZ4 compression.
 bool IsZstdCompressed(const uint8_t *addr, const size_t length);
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_HH_

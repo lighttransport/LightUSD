@@ -63,7 +63,7 @@ struct CompGraphDump {
 };
 
 // Extract composition graph from a single loaded Layer
-bool ExtractCompGraph(const lightusd::Layer &layer,
+bool ExtractCompGraph(const lightusd::legacy::Layer &layer,
                       const std::string &file_path,
                       CompGraphDump *out, std::string *err);
 

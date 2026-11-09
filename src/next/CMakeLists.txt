@@ -12,6 +12,8 @@ project(lightusd_next C CXX)
 # directory-level include paths (src/legacy) so legacy headers can never
 # shadow core/shared ones (e.g. core/path-expression.hh).
 set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
+# Also drop the legacy forced include of src/legacy/legacy-namespace.hh.
+set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "")
 
 # ---------------------------------------------------------------------------
 # Release hardening for the shipped native artifacts.

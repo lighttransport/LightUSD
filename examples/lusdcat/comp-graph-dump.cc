@@ -33,15 +33,15 @@ static std::string ResolveAssetPath(const std::string &source_file,
   return JoinPath(base, asset_path);
 }
 
-static const char *ListEditQualStr(lightusd::ListEditQual q) {
+static const char *ListEditQualStr(lightusd::legacy::ListEditQual q) {
   switch (q) {
-    case lightusd::ListEditQual::ResetToExplicit: return "explicit";
-    case lightusd::ListEditQual::Append: return "append";
-    case lightusd::ListEditQual::Add: return "add";
-    case lightusd::ListEditQual::Delete: return "delete";
-    case lightusd::ListEditQual::Prepend: return "prepend";
-    case lightusd::ListEditQual::Order: return "order";
-    case lightusd::ListEditQual::Invalid: return "invalid";
+    case lightusd::legacy::ListEditQual::ResetToExplicit: return "explicit";
+    case lightusd::legacy::ListEditQual::Append: return "append";
+    case lightusd::legacy::ListEditQual::Add: return "add";
+    case lightusd::legacy::ListEditQual::Delete: return "delete";
+    case lightusd::legacy::ListEditQual::Prepend: return "prepend";
+    case lightusd::legacy::ListEditQual::Order: return "order";
+    case lightusd::legacy::ListEditQual::Invalid: return "invalid";
   }
   return "unknown";
 }
@@ -58,9 +58,9 @@ static std::string DetectFormatByExt(const std::string &filepath) {
 }
 
 static std::string DetectUSDType(const std::string &filepath) {
-  if (lightusd::IsUSDZ(filepath)) return "usdz";
-  if (lightusd::IsUSDC(filepath)) return "crate";
-  if (lightusd::IsUSDA(filepath)) return "ascii";
+  if (lightusd::legacy::IsUSDZ(filepath)) return "usdz";
+  if (lightusd::legacy::IsUSDC(filepath)) return "crate";
+  if (lightusd::legacy::IsUSDA(filepath)) return "ascii";
   return "unknown";
 }
 
@@ -84,11 +84,11 @@ static void PopulateFileInfo(CompGraphNode &node) {
 // Stack-based DFS over PrimSpec tree to collect all composition arcs.
 static void CollectArcsFromPrimSpecs(
     const std::string &parent_path,
-    const std::vector<lightusd::PrimSpec> &children,
+    const std::vector<lightusd::legacy::PrimSpec> &children,
     std::vector<CompArc> &arcs) {
 
   struct StackEntry {
-    const lightusd::PrimSpec *ps;
+    const lightusd::legacy::PrimSpec *ps;
     std::string path;
   };
 
@@ -106,7 +106,7 @@ static void CollectArcsFromPrimSpecs(
     auto entry = stack.back();
     stack.pop_back();
 
-    const lightusd::PrimSpec *ps = entry.ps;
+    const lightusd::legacy::PrimSpec *ps = entry.ps;
     const std::string &prim_path = entry.path;
 
     if (ps->metas().references.has_value()) {
@@ -202,7 +202,7 @@ static void CollectArcsFromPrimSpecs(
   }
 }
 
-bool ExtractCompGraph(const lightusd::Layer &layer,
+bool ExtractCompGraph(const lightusd::legacy::Layer &layer,
                       const std::string &file_path,
                       CompGraphDump *out, std::string *err) {
   if (!out) {
@@ -231,7 +231,7 @@ bool ExtractCompGraph(const lightusd::Layer &layer,
   // Traverse all root PrimSpecs
   const auto &primspecs = layer.primspecs();
   for (const auto &kv : primspecs) {
-    std::vector<lightusd::PrimSpec> root_vec = {kv.second};
+    std::vector<lightusd::legacy::PrimSpec> root_vec = {kv.second};
     CollectArcsFromPrimSpecs("", root_vec, node.arcs);
   }
 
@@ -270,9 +270,9 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
     PopulateFileInfo(node);
     node.parse_attempted = true;
 
-    lightusd::Layer layer;
+    lightusd::legacy::Layer layer;
     std::string local_warn, local_err;
-    bool loaded = lightusd::LoadLayerFromFile(entry.file_path, &layer,
+    bool loaded = lightusd::legacy::LoadLayerFromFile(entry.file_path, &layer,
                                                &local_warn, &local_err);
 
     if (!loaded) {
@@ -306,7 +306,7 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
       // Extract arcs: primspecs
       const auto &primspecs = layer.primspecs();
       for (const auto &kv : primspecs) {
-        std::vector<lightusd::PrimSpec> root_vec = {kv.second};
+        std::vector<lightusd::legacy::PrimSpec> root_vec = {kv.second};
         CollectArcsFromPrimSpecs("", root_vec, node.arcs);
       }
     } else {
@@ -325,7 +325,7 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
 
       const auto &primspecs = layer.primspecs();
       for (const auto &kv : primspecs) {
-        std::vector<lightusd::PrimSpec> root_vec = {kv.second};
+        std::vector<lightusd::legacy::PrimSpec> root_vec = {kv.second};
         CollectArcsFromPrimSpecs("", root_vec, temp_arcs);
       }
 

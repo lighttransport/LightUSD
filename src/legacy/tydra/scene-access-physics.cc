@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -208,4 +208,5 @@ bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out) 
   return true;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

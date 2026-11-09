@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -567,4 +567,5 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

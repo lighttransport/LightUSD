@@ -12,7 +12,7 @@
 #include "tydra/scene-access.hh"
 #include "usdGeom.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 void RenderSceneConverter::ExtractXformAnimations(
@@ -91,4 +91,5 @@ void RenderSceneConverter::ExtractXformAnimations(
  }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

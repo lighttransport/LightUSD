@@ -75,7 +75,7 @@
 //
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -448,6 +448,7 @@ LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE(INSTANTIATE_BINARY_TIMESAMPLE_TYPE)
 #undef LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDA_READER

@@ -24,7 +24,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kNewtonActuator = "NewtonActuator";
 
@@ -177,4 +177,5 @@ DEFINE_TYPE_TRAIT(NewtonActuator, kNewtonActuator, TYPE_ID_NEWTON_ACTUATOR, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

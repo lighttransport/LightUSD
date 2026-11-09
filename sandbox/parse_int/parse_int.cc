@@ -335,8 +335,8 @@ bool do_parse(
 
         while ((j = cnt++) < results.size()) {
           int64_t val;
-          lightusd::tstring_view ts(spans[j].p_begin, size_t(spans[j].length));
-          if (!lightusd::str::parse_int64(ts, &val)) {
+          lightusd::legacy::tstring_view ts(spans[j].p_begin, size_t(spans[j].length));
+          if (!lightusd::legacy::str::parse_int64(ts, &val)) {
             parse_failed = true;
           }
 
@@ -357,8 +357,8 @@ bool do_parse(
   } else {
     for (size_t i = 0; i < spans.size(); i++) {
       int64_t val;
-      lightusd::tstring_view ts(spans[i].p_begin, size_t(spans[i].length));
-      if (!lightusd::str::parse_int64(ts, &val)) {
+      lightusd::legacy::tstring_view ts(spans[i].p_begin, size_t(spans[i].length));
+      if (!lightusd::legacy::str::parse_int64(ts, &val)) {
         std::cerr << "parsing failure\n";
         return false;
       }

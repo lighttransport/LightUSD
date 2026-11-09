@@ -49,7 +49,7 @@
 #include <functional>
 #endif  // LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 #if defined(LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE)
 
@@ -216,4 +216,5 @@ inline bool operator<(const Token &lhs, const Token &rhs) {
   return lhs.str() < rhs.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

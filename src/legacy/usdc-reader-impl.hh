@@ -63,7 +63,7 @@
 
 //
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace prim {
 
@@ -686,4 +686,5 @@ class USDCReader::Impl {
 };
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

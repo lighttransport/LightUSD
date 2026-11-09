@@ -290,8 +290,8 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
 // (usdGeom.cc): the value/timesamples extraction is emitted once, not per T.
 template <typename T>
 bool GeomPrimvar::get_value(T *dest, std::string *err) const {
-  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::legacy::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::legacy::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {
@@ -317,8 +317,8 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
 
 template <typename T>
 bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpolationType interp, std::string *err) const {
-  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::legacy::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::legacy::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {

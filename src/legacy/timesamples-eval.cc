@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 #define DEFINE_LERP_TRAIT(ty)       \
@@ -277,4 +277,5 @@ bool TimeSamples::get_value_at(value::Value *out, double t,
 }
 
 } // namespace value
+}  // namespace legacy
 } // namespace lightusd

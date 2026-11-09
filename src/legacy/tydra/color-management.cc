@@ -11,7 +11,7 @@
 #include <set>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace color_management {
 namespace {
@@ -369,4 +369,5 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 
 }  // namespace color_management
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

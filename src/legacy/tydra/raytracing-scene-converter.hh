@@ -14,7 +14,7 @@
 #include "usdShade.hh"  // Material
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Forward declarations
@@ -178,4 +178,5 @@ class RaytracingSceneConverter {
 };
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

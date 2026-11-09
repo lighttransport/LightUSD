@@ -22,7 +22,7 @@
 #include "light3d/math.h"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
-#include "tydra/mcp-tools.hh"  // lightusd::tydra::mcp::CallTool
+#include "tydra/mcp-tools.hh"  // lightusd::legacy::tydra::mcp::CallTool
 #include "vchar_control_map.hh"
 #include "../../vchar/autorigger_client.hh"
 
@@ -651,7 +651,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
           }
         }
       }
-      lightusd::tydra::FreePhysWorld(&physicsWorld_);
+      lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
       physicsWorldReady_ = false;
       physicsSceneGen_ = ~std::uint64_t(0);
       gui_.setPhysicsDebugLines({});
@@ -667,17 +667,17 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         err = "vchar_physics requires a loaded USD scene";
         return json::object();
       }
-      if (physicsWorldReady_) lightusd::tydra::FreePhysWorld(&physicsWorld_);
-      lightusd::tydra::PhysWorldBuildOptions options;
+      if (physicsWorldReady_) lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
+      lightusd::legacy::tydra::PhysWorldBuildOptions options;
       options.max_memory_limit_mb = 64;
-      if (!lightusd::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
+      if (!lightusd::legacy::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
                                            options)) {
         physicsWorldReady_ = false;
         return json::object();
       }
       physicsWorldReady_ = true;
       physicsSceneGen_ = sceneGen_;
-      physicsInitialStage_ = std::make_unique<lightusd::Stage>(loaded_.stage);
+      physicsInitialStage_ = std::make_unique<lightusd::legacy::Stage>(loaded_.stage);
     }
     if (op == "step") {
       int steps = args.value("steps", 1);
@@ -690,7 +690,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         physicsWorld_.timestep = std::max(
             1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
       }
-      if (!lightusd::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
+      if (!lightusd::legacy::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
                                                  &err)) {
         return json::object();
       }
@@ -700,7 +700,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
           return json::object();
         }
       }
-      if (!lightusd::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
+      if (!lightusd::legacy::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
                                                   &err)) {
         return json::object();
       }
@@ -2171,7 +2171,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
   // most once per loaded scene; the viewer's Stage is never disturbed).
   if (loaded_.ok) {
     if (mcpCtxGen_ != sceneGen_ || !mcpCtx_.stage) {
-      mcpCtx_.stage = std::make_unique<lightusd::Stage>(loaded_.stage);
+      mcpCtx_.stage = std::make_unique<lightusd::legacy::Stage>(loaded_.stage);
       mcpCtx_.stage_loaded = true;
       mcpCtxGen_ = sceneGen_;
     }
@@ -2180,7 +2180,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
     mcpCtx_.stage_loaded = false;
   }
   json result;
-  if (!lightusd::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
+  if (!lightusd::legacy::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
     if (err.empty()) err = "unknown tool: " + name;
     return json::object();
   }

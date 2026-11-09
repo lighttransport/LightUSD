@@ -9,7 +9,7 @@
 #include <string>
 #include <functional>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Layer;
@@ -69,4 +69,5 @@ std::string InspectLayer(const Layer &layer, const InspectOptions &opts = Inspec
 ///
 std::string InspectStage(const Stage &stage, const InspectOptions &opts = InspectOptions());
 
+}  // namespace legacy
 }  // namespace lightusd

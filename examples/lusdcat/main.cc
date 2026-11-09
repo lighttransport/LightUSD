@@ -82,11 +82,11 @@ static bool ParseOutputFormat(const std::string &value, OutputFormat *format) {
   return false;
 }
 
-static bool HasProp(const lightusd::PrimSpec &ps, const std::string &name) {
+static bool HasProp(const lightusd::legacy::PrimSpec &ps, const std::string &name) {
   return ps.props().find(name) != ps.props().end();
 }
 
-static bool HasMaterialBinding(const lightusd::PrimSpec &ps) {
+static bool HasMaterialBinding(const lightusd::legacy::PrimSpec &ps) {
   for (const auto &item : ps.props()) {
     if (item.first.rfind("material:binding", 0) == 0 &&
         item.second.is_relationship()) {
@@ -96,19 +96,19 @@ static bool HasMaterialBinding(const lightusd::PrimSpec &ps) {
   return false;
 }
 
-static std::string RelationTargetsString(const lightusd::Property &prop) {
+static std::string RelationTargetsString(const lightusd::legacy::Property &prop) {
   std::stringstream ss;
-  const std::vector<lightusd::Path> targets = prop.get_relationTargets();
+  const std::vector<lightusd::legacy::Path> targets = prop.get_relationTargets();
   for (size_t i = 0; i < targets.size(); i++) {
     if (i > 0) {
       ss << ", ";
     }
-    ss << lightusd::to_string(targets[i]);
+    ss << lightusd::legacy::to_string(targets[i]);
   }
   return ss.str();
 }
 
-static size_t IntArrayValueCount(const lightusd::Property &prop) {
+static size_t IntArrayValueCount(const lightusd::legacy::Property &prop) {
   if (!prop.is_attribute()) {
     return 0;
   }
@@ -143,8 +143,8 @@ static bool ContainsAny(const std::string &s,
   return false;
 }
 
-static void PrintMeshPrims(const lightusd::Stage &stage) {
-  std::vector<std::pair<const lightusd::Prim *, std::string>> pending;
+static void PrintMeshPrims(const lightusd::legacy::Stage &stage) {
+  std::vector<std::pair<const lightusd::legacy::Prim *, std::string>> pending;
   for (auto it = stage.root_prims().rbegin();
        it != stage.root_prims().rend(); ++it) {
     pending.emplace_back(&*it, "");
@@ -166,11 +166,11 @@ static void PrintMeshPrims(const lightusd::Stage &stage) {
 }
 
 template <typename T>
-static size_t AttrArrayCountAs(const lightusd::Attribute &attr) {
+static size_t AttrArrayCountAs(const lightusd::legacy::Attribute &attr) {
   return attr.get_value_view<T>().size();
 }
 
-static size_t AttrArrayCount(const lightusd::Attribute &attr) {
+static size_t AttrArrayCount(const lightusd::legacy::Attribute &attr) {
   if (!attr.has_value() || attr.has_timesamples() || attr.is_connection()) {
     return 0;
   }
@@ -182,24 +182,24 @@ static size_t AttrArrayCount(const lightusd::Attribute &attr) {
   if (n) return n;
   n = AttrArrayCountAs<double>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::float2>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::float2>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::float3>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::float3>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::point3f>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::point3f>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::point3d>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::point3d>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::normal3f>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::normal3f>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::vector3f>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::vector3f>(attr);
   if (n) return n;
-  n = AttrArrayCountAs<lightusd::value::quatf>(attr);
+  n = AttrArrayCountAs<lightusd::legacy::value::quatf>(attr);
   if (n) return n;
   return 0;
 }
 
-static size_t AttrArrayCountForName(const lightusd::PrimSpec &ps,
+static size_t AttrArrayCountForName(const lightusd::legacy::PrimSpec &ps,
                                     const std::string &name) {
   auto it = ps.props().find(name);
   if (it == ps.props().end() || !it->second.is_attribute()) {
@@ -208,7 +208,7 @@ static size_t AttrArrayCountForName(const lightusd::PrimSpec &ps,
   return AttrArrayCount(it->second.get_attribute());
 }
 
-static std::string AttrValueSummary(const lightusd::Attribute &attr,
+static std::string AttrValueSummary(const lightusd::legacy::Attribute &attr,
                                     size_t max_len = 160) {
   if (attr.is_connection()) {
     std::stringstream ss;
@@ -218,7 +218,7 @@ static std::string AttrValueSummary(const lightusd::Attribute &attr,
       if (i > 0) {
         ss << ", ";
       }
-      ss << lightusd::to_string(paths[i]);
+      ss << lightusd::legacy::to_string(paths[i]);
     }
     ss << "]";
     return ss.str();
@@ -232,21 +232,21 @@ static std::string AttrValueSummary(const lightusd::Attribute &attr,
   if (!attr.has_value()) {
     return "noValue";
   }
-  return SnipString(lightusd::value::pprint_value(attr.get_var().value_raw(), 0, false),
+  return SnipString(lightusd::legacy::value::pprint_value(attr.get_var().value_raw(), 0, false),
                     max_len);
 }
 
-static std::string PropertySummary(const lightusd::Property &prop,
+static std::string PropertySummary(const lightusd::legacy::Property &prop,
                                    size_t max_len = 160) {
   if (prop.is_relationship()) {
     return "targets=[" + RelationTargetsString(prop) + "]";
   }
   if (prop.is_attribute()) {
-    const lightusd::Attribute &attr = prop.get_attribute();
+    const lightusd::legacy::Attribute &attr = prop.get_attribute();
     std::stringstream ss;
     ss << "type=" << attr.type_name();
     ss << " variability="
-       << (attr.variability() == lightusd::Variability::Uniform ? "uniform" : "varying");
+       << (attr.variability() == lightusd::legacy::Variability::Uniform ? "uniform" : "varying");
     const size_t count = AttrArrayCount(attr);
     if (count > 0) {
       ss << " count=" << count;
@@ -268,11 +268,11 @@ static std::string PropertySummary(const lightusd::Property &prop,
 }
 
 static bool PathSelected(const std::string &pattern, const std::string &path) {
-  return pattern.empty() || lightusd::GlobMatchPath(pattern, path);
+  return pattern.empty() || lightusd::legacy::GlobMatchPath(pattern, path);
 }
 
 static void PrintPropertyLine(const std::string &name,
-                              const lightusd::Property &prop,
+                              const lightusd::legacy::Property &prop,
                               const std::string &indent = "    ") {
   std::cout << indent << name << ": " << PropertySummary(prop) << "\n";
 }
@@ -282,7 +282,7 @@ static bool PathMatchesOrDescendantMayMatch(const std::string &pattern,
   if (pattern.empty()) {
     return true;
   }
-  if (lightusd::GlobMatchPath(pattern, path)) {
+  if (lightusd::legacy::GlobMatchPath(pattern, path)) {
     return true;
   }
   if (pattern.size() > path.size() && pattern.compare(0, path.size(), path) == 0 &&
@@ -292,7 +292,7 @@ static bool PathMatchesOrDescendantMayMatch(const std::string &pattern,
   return false;
 }
 
-static bool AnyChildPathMatches(const lightusd::PrimSpec &ps,
+static bool AnyChildPathMatches(const lightusd::legacy::PrimSpec &ps,
                                 const std::string &path,
                                 const std::string &pattern) {
   if (pattern.empty()) {
@@ -308,7 +308,7 @@ static bool AnyChildPathMatches(const lightusd::PrimSpec &ps,
   return false;
 }
 
-static void PrintMeshSubsetReportRec(const lightusd::PrimSpec &ps,
+static void PrintMeshSubsetReportRec(const lightusd::legacy::PrimSpec &ps,
                                      const std::string &path,
                                      const std::string &pattern,
                                      size_t *mesh_count,
@@ -381,7 +381,7 @@ static void PrintMeshSubsetReportRec(const lightusd::PrimSpec &ps,
   }
 }
 
-static void PrintMeshSubsetReport(const lightusd::Layer &layer,
+static void PrintMeshSubsetReport(const lightusd::legacy::Layer &layer,
                                   const std::string &pattern) {
   size_t mesh_count = 0;
   size_t suspicious_count = 0;
@@ -398,7 +398,7 @@ static void PrintMeshSubsetReport(const lightusd::Layer &layer,
 }
 
 static std::vector<std::pair<std::string, std::string>> MaterialBindings(
-    const lightusd::PrimSpec &ps) {
+    const lightusd::legacy::PrimSpec &ps) {
   std::vector<std::pair<std::string, std::string>> bindings;
   for (const auto &item : ps.props()) {
     if (item.first.rfind("material:binding", 0) == 0 &&
@@ -409,12 +409,12 @@ static std::vector<std::pair<std::string, std::string>> MaterialBindings(
   return bindings;
 }
 
-static bool IsMaterialPrim(const lightusd::PrimSpec &ps) {
+static bool IsMaterialPrim(const lightusd::legacy::PrimSpec &ps) {
   return ps.typeName() == "Material" || ps.typeName() == "Shader" ||
          ps.typeName() == "NodeGraph";
 }
 
-static bool IsGeomPrim(const lightusd::PrimSpec &ps) {
+static bool IsGeomPrim(const lightusd::legacy::PrimSpec &ps) {
   return ps.typeName() == "Mesh" || ps.typeName() == "GeomSubset" ||
          ps.typeName() == "BasisCurves" || ps.typeName() == "NurbsCurves" ||
          ps.typeName() == "Points" || ps.typeName() == "PointInstancer" ||
@@ -423,26 +423,26 @@ static bool IsGeomPrim(const lightusd::PrimSpec &ps) {
          ps.typeName() == "Cylinder" || ps.typeName() == "Plane";
 }
 
-static bool IsSkelPrim(const lightusd::PrimSpec &ps) {
+static bool IsSkelPrim(const lightusd::legacy::PrimSpec &ps) {
   return ps.typeName() == "SkelRoot" || ps.typeName() == "Skeleton" ||
          ps.typeName() == "SkelAnimation" || ps.typeName() == "BlendShape";
 }
 
 static bool IsTextureLikeProperty(const std::string &name,
-                                  const lightusd::Property &prop) {
+                                  const lightusd::legacy::Property &prop) {
   if (!prop.is_attribute()) {
     return false;
   }
-  const lightusd::Attribute &attr = prop.get_attribute();
+  const lightusd::legacy::Attribute &attr = prop.get_attribute();
   return attr.type_name() == "asset" ||
          ContainsAny(name, {"file", "filename", "texture", "Texture"}) ||
          (attr.has_value() &&
-          lightusd::value::pprint_value(attr.get_var().value_raw(), 0, false).find('@') !=
+          lightusd::legacy::value::pprint_value(attr.get_var().value_raw(), 0, false).find('@') !=
               std::string::npos);
 }
 
 static void PrintMaterialReportRec(
-    const lightusd::PrimSpec &ps, const std::string &path,
+    const lightusd::legacy::PrimSpec &ps, const std::string &path,
     const std::string &pattern,
     const std::vector<std::pair<std::string, std::string>> &inherited_bindings,
     size_t *prim_count, size_t *binding_count, size_t *texture_count) {
@@ -499,7 +499,7 @@ static void PrintMaterialReportRec(
   }
 }
 
-static void PrintMaterialReport(const lightusd::Layer &layer,
+static void PrintMaterialReport(const lightusd::legacy::Layer &layer,
                                 const std::string &pattern) {
   size_t prim_count = 0;
   size_t binding_count = 0;
@@ -518,7 +518,7 @@ static void PrintMaterialReport(const lightusd::Layer &layer,
             << "\ntexture_like_properties: " << texture_count << "\n";
 }
 
-static void PrintGeomReportRec(const lightusd::PrimSpec &ps,
+static void PrintGeomReportRec(const lightusd::legacy::PrimSpec &ps,
                                const std::string &path,
                                const std::string &pattern,
                                size_t *prim_count, size_t *primvar_count) {
@@ -569,7 +569,7 @@ static void PrintGeomReportRec(const lightusd::PrimSpec &ps,
   }
 }
 
-static void PrintGeomReport(const lightusd::Layer &layer,
+static void PrintGeomReport(const lightusd::legacy::Layer &layer,
                             const std::string &pattern) {
   size_t prim_count = 0;
   size_t primvar_count = 0;
@@ -585,7 +585,7 @@ static void PrintGeomReport(const lightusd::Layer &layer,
             << "\nprimvar_or_skel_properties: " << primvar_count << "\n";
 }
 
-static bool HasSkelProperty(const lightusd::PrimSpec &ps) {
+static bool HasSkelProperty(const lightusd::legacy::PrimSpec &ps) {
   for (const auto &item : ps.props()) {
     if (StartsWithAny(item.first, {"skel:", "primvars:skel:"}) ||
         ContainsAny(item.first, {"jointIndices", "jointWeights", "blendShape"})) {
@@ -595,7 +595,7 @@ static bool HasSkelProperty(const lightusd::PrimSpec &ps) {
   return false;
 }
 
-static void PrintSkinningReportRec(const lightusd::PrimSpec &ps,
+static void PrintSkinningReportRec(const lightusd::legacy::PrimSpec &ps,
                                    const std::string &path,
                                    const std::string &pattern,
                                    size_t *prim_count,
@@ -623,7 +623,7 @@ static void PrintSkinningReportRec(const lightusd::PrimSpec &ps,
   }
 }
 
-static void PrintSkinningReport(const lightusd::Layer &layer,
+static void PrintSkinningReport(const lightusd::legacy::Layer &layer,
                                 const std::string &pattern) {
   size_t prim_count = 0;
   size_t skel_prop_count = 0;
@@ -650,17 +650,17 @@ static bool InferOutputFormatFromFilename(const std::string &filename,
   }
 
   const std::string lower = str_tolower(filename);
-  if (lightusd::endsWith(lower, ".usda") ||
-      lightusd::endsWith(lower, ".usda.zst")) {
+  if (lightusd::legacy::endsWith(lower, ".usda") ||
+      lightusd::legacy::endsWith(lower, ".usda.zst")) {
     *format = OutputFormat::USDA;
     return true;
   }
-  if (lightusd::endsWith(lower, ".usdc") ||
-      lightusd::endsWith(lower, ".usdc.zst")) {
+  if (lightusd::legacy::endsWith(lower, ".usdc") ||
+      lightusd::legacy::endsWith(lower, ".usdc.zst")) {
     *format = OutputFormat::USDC;
     return true;
   }
-  if (lightusd::endsWith(lower, ".usdz")) {
+  if (lightusd::legacy::endsWith(lower, ".usdz")) {
     *format = OutputFormat::USDZ;
     return true;
   }
@@ -713,7 +713,7 @@ static size_t GetMaxUsdaOutputBytes() {
   return static_cast<size_t>(mb) * 1024ull * 1024ull;
 }
 
-static bool WriteStageToFile(const lightusd::Stage &stage,
+static bool WriteStageToFile(const lightusd::legacy::Stage &stage,
                              const std::string &output_path,
                              OutputFormat format,
                              bool compress_float_arrays = false) {
@@ -722,15 +722,15 @@ static bool WriteStageToFile(const lightusd::Stage &stage,
 
   switch (format) {
     case OutputFormat::USDA:
-      if (!lightusd::usda::SaveAsUSDA(output_path, stage, &warn, &err)) {
+      if (!lightusd::legacy::usda::SaveAsUSDA(output_path, stage, &warn, &err)) {
         std::cerr << "Failed to write USDA file: " << err << "\n";
         return false;
       }
       break;
     case OutputFormat::USDC: {
-      lightusd::USDWriteOptions wopts;
+      lightusd::legacy::USDWriteOptions wopts;
       wopts.compress_float_arrays = compress_float_arrays;
-      if (!lightusd::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err,
+      if (!lightusd::legacy::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err,
                                             wopts)) {
         std::cerr << "Failed to write USDC file: " << err << "\n";
         return false;
@@ -739,7 +739,7 @@ static bool WriteStageToFile(const lightusd::Stage &stage,
     }
     case OutputFormat::USDZ: {
       const std::map<std::string, std::vector<uint8_t>> assets;
-      if (!lightusd::SaveAsUSDZToFile(output_path, stage, assets, &warn, &err)) {
+      if (!lightusd::legacy::SaveAsUSDZToFile(output_path, stage, assets, &warn, &err)) {
         std::cerr << "Failed to write USDZ file: " << err << "\n";
         return false;
       }
@@ -815,8 +815,8 @@ static bool progress_callback(float progress, void *userptr) {
 }
 
 static bool LoadUSDCWithMemoryReport(
-    const std::string &filepath, const bool show_progress, lightusd::Stage *stage,
-    lightusd::usdc::USDCMemoryUsageReport *memory_report, std::string *warn,
+    const std::string &filepath, const bool show_progress, lightusd::legacy::Stage *stage,
+    lightusd::legacy::usdc::USDCMemoryUsageReport *memory_report, std::string *warn,
     std::string *err) {
   if (!stage) {
     if (err) {
@@ -852,8 +852,8 @@ static bool LoadUSDCWithMemoryReport(
     file_size = data.size();
   }
 
-  lightusd::StreamReader sr(file_data, file_size, /* swap_endian */ false);
-  lightusd::usdc::USDCReaderConfig config;
+  lightusd::legacy::StreamReader sr(file_data, file_size, /* swap_endian */ false);
+  lightusd::legacy::usdc::USDCReaderConfig config;
   if (const char *lazy_env = std::getenv("LIGHTUSD_USDC_LAZY")) {
     std::string v = str_tolower(std::string(lazy_env));
     if ((v == "0") || (v == "false") || (v == "off") || (v == "no")) {
@@ -862,7 +862,7 @@ static bool LoadUSDCWithMemoryReport(
       config.use_lazy_property_construction = true;
     }
   }
-  lightusd::usdc::USDCReader reader(&sr, config);
+  lightusd::legacy::usdc::USDCReader reader(&sr, config);
 
   ProgressState progress_state;
   if (show_progress) {
@@ -917,7 +917,7 @@ static bool LoadUSDCWithMemoryReport(
 }
 
 static void PrintUSDCParserMemoryReport(
-    const lightusd::usdc::USDCMemoryUsageReport &report) {
+    const lightusd::legacy::usdc::USDCMemoryUsageReport &report) {
   std::cout << "  USDC parser current usage: "
             << format_memory_size(size_t(report.current_usage_bytes)) << " ("
             << report.current_usage_bytes << " bytes)\n";
@@ -1089,12 +1089,12 @@ int main(int argc, char **argv) {
   bool do_material_report{false};
   bool do_geom_report{false};
   bool do_skinning_report{false};
-  lightusd::InspectOptions inspect_opts;
+  lightusd::legacy::InspectOptions inspect_opts;
 
   // Dumpcrate option
   bool do_dumpcrate{false};
-  lightusd::crate::DumpOptions dump_opts;
-  dump_opts.format = lightusd::crate::OutputFormat::YAML;
+  lightusd::legacy::crate::DumpOptions dump_opts;
+  dump_opts.format = lightusd::legacy::crate::OutputFormat::YAML;
 
   // MaterialX validation
   bool strict_mtlx_check{false};
@@ -1144,7 +1144,7 @@ int main(int argc, char **argv) {
       // (properties stay alphabetical, matching usdcat). Must be set BEFORE
       // loading so the USDC reader records the order metadata.
       preserve_order = true;
-      lightusd::pprint::SetPreserveAuthoredOrder(true);
+      lightusd::legacy::pprint::SetPreserveAuthoredOrder(true);
     }
     OPT_MATCH(arg.compare("--openusd-compat") == 0) {
       // Aggregate opt-in: emit output as close to OpenUSD `usdcat` as lightusd
@@ -1153,10 +1153,10 @@ int main(int argc, char **argv) {
       // the `def` line, plain blank separators).
       preserve_order = true;
       openusd_compat = true;
-      lightusd::pprint::SetPreserveAuthoredOrder(true);
-      lightusd::SetUSDFloatFormat(true);
-      lightusd::pprint::SetUSDTextFormat(true);
-      lightusd::SetNormalizeAssetPathOnFlatten(true);
+      lightusd::legacy::pprint::SetPreserveAuthoredOrder(true);
+      lightusd::legacy::SetUSDFloatFormat(true);
+      lightusd::legacy::pprint::SetUSDTextFormat(true);
+      lightusd::legacy::SetNormalizeAssetPathOnFlatten(true);
     }
     OPT_MATCH((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
@@ -1172,8 +1172,8 @@ int main(int argc, char **argv) {
       i++; // Move to next argument
       output_filepath = argv[i];
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--output-format=")) {
-      std::string fmt = lightusd::removePrefix(arg, "--output-format=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--output-format=")) {
+      std::string fmt = lightusd::legacy::removePrefix(arg, "--output-format=");
       if (fmt.empty()) {
         std::cerr << "No format specified to --output-format.\n";
         return EXIT_FAILURE;
@@ -1190,8 +1190,8 @@ int main(int argc, char **argv) {
     OPT_MATCH(arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--variant-format=")) {
-      std::string fmt = lightusd::removePrefix(arg, "--variant-format=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--variant-format=")) {
+      std::string fmt = lightusd::legacy::removePrefix(arg, "--variant-format=");
       if (fmt.empty()) {
         std::cerr << "No format specified to --variant-format.\n";
         exit(-1);
@@ -1210,9 +1210,9 @@ int main(int argc, char **argv) {
     OPT_MATCH(arg.compare("--relax-asset-cap") == 0) {
       max_composition_asset_mb = 8192;
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--max-composition-asset-mb=")) {
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--max-composition-asset-mb=")) {
       std::string mb_str =
-          lightusd::removePrefix(arg, "--max-composition-asset-mb=");
+          lightusd::legacy::removePrefix(arg, "--max-composition-asset-mb=");
       if (mb_str.empty()) {
         std::cerr << "--max-composition-asset-mb requires a value.\n";
         return EXIT_FAILURE;
@@ -1238,15 +1238,15 @@ int main(int argc, char **argv) {
     OPT_MATCH(arg.compare("--dumpcrate") == 0) {
       do_dumpcrate = true;
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--dumpcrate-path=")) {
-      dump_opts.path_filter = lightusd::removePrefix(arg, "--dumpcrate-path=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--dumpcrate-path=")) {
+      dump_opts.path_filter = lightusd::legacy::removePrefix(arg, "--dumpcrate-path=");
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--dumpcrate-token=")) {
-      dump_opts.token_filter = lightusd::removePrefix(arg, "--dumpcrate-token=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--dumpcrate-token=")) {
+      dump_opts.token_filter = lightusd::legacy::removePrefix(arg, "--dumpcrate-token=");
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--dumpcrate-limit=")) {
-      std::string limit_str = lightusd::removePrefix(arg, "--dumpcrate-limit=");
-      nonstd::optional<int> limit_val = lightusd::atoi(limit_str);
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--dumpcrate-limit=")) {
+      std::string limit_str = lightusd::legacy::removePrefix(arg, "--dumpcrate-limit=");
+      nonstd::optional<int> limit_val = lightusd::legacy::atoi(limit_str);
       if (!limit_val.has_value() || limit_val.value() < 1) {
         std::cerr << "Invalid dumpcrate limit: " << limit_str << "\n";
         return EXIT_FAILURE;
@@ -1267,7 +1267,7 @@ int main(int argc, char **argv) {
       validate_against_core = true;
       validate_all_groups = true;
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--dump-comp-graph")) {
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
       if (rest.empty() || rest == "=yaml") {
@@ -1289,11 +1289,11 @@ int main(int argc, char **argv) {
     }
     OPT_MATCH(arg.compare("--inspect") == 0) {
       do_inspect = true;
-      inspect_opts.format = lightusd::InspectOutputFormat::Yaml;
+      inspect_opts.format = lightusd::legacy::InspectOutputFormat::Yaml;
     }
     OPT_MATCH(arg.compare("--inspect-json") == 0) {
       do_inspect = true;
-      inspect_opts.format = lightusd::InspectOutputFormat::Json;
+      inspect_opts.format = lightusd::legacy::InspectOutputFormat::Json;
     }
     OPT_MATCH(arg.compare("--mesh-subset-report") == 0) {
       do_mesh_subset_report = true;
@@ -1307,23 +1307,23 @@ int main(int argc, char **argv) {
     OPT_MATCH(arg.compare("--skinning-report") == 0) {
       do_skinning_report = true;
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--value=")) {
-      std::string value_str = lightusd::removePrefix(arg, "--value=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--value=")) {
+      std::string value_str = lightusd::legacy::removePrefix(arg, "--value=");
       if (value_str == "none") {
-        inspect_opts.value_mode = lightusd::InspectValueMode::NoValue;
+        inspect_opts.value_mode = lightusd::legacy::InspectValueMode::NoValue;
       } else if (value_str == "snip") {
-        inspect_opts.value_mode = lightusd::InspectValueMode::Snip;
+        inspect_opts.value_mode = lightusd::legacy::InspectValueMode::Snip;
       } else if (value_str == "full") {
-        inspect_opts.value_mode = lightusd::InspectValueMode::Full;
+        inspect_opts.value_mode = lightusd::legacy::InspectValueMode::Full;
       } else {
         std::cerr << "Invalid value mode: " << value_str
                   << ". Use: none, snip, or full\n";
         return EXIT_FAILURE;
       }
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--snip=")) {
-      std::string snip_str = lightusd::removePrefix(arg, "--snip=");
-      nonstd::optional<int> snip_val = lightusd::atoi(snip_str);
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--snip=")) {
+      std::string snip_str = lightusd::legacy::removePrefix(arg, "--snip=");
+      nonstd::optional<int> snip_val = lightusd::legacy::atoi(snip_str);
       if (!snip_val.has_value()) {
         std::cerr << "Invalid snip value: " << snip_str << "\n";
         return EXIT_FAILURE;
@@ -1335,22 +1335,22 @@ int main(int argc, char **argv) {
       }
       inspect_opts.snip_count = static_cast<size_t>(snip_val.value());
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--path=")) {
-      inspect_opts.prim_path_pattern = lightusd::removePrefix(arg, "--path=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--path=")) {
+      inspect_opts.prim_path_pattern = lightusd::legacy::removePrefix(arg, "--path=");
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--attr=")) {
-      inspect_opts.attr_pattern = lightusd::removePrefix(arg, "--attr=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--attr=")) {
+      inspect_opts.attr_pattern = lightusd::legacy::removePrefix(arg, "--attr=");
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--time=")) {
-      std::string time_str = lightusd::removePrefix(arg, "--time=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--time=")) {
+      std::string time_str = lightusd::legacy::removePrefix(arg, "--time=");
       inspect_opts.has_time_query = true;
       // Check for range format "start:end"
       size_t colon_pos = time_str.find(':');
       if (colon_pos != std::string::npos) {
         std::string start_str = time_str.substr(0, colon_pos);
         std::string end_str = time_str.substr(colon_pos + 1);
-        nonstd::optional<double> t_start = lightusd::atod(start_str);
-        nonstd::optional<double> t_end = lightusd::atod(end_str);
+        nonstd::optional<double> t_start = lightusd::legacy::atod(start_str);
+        nonstd::optional<double> t_end = lightusd::legacy::atod(end_str);
         if (!t_start.has_value() || !t_end.has_value()) {
           std::cerr << "Invalid time range: " << time_str << "\n";
           return EXIT_FAILURE;
@@ -1359,7 +1359,7 @@ int main(int argc, char **argv) {
         inspect_opts.time_end = t_end.value();
       } else {
         // Single time value
-        nonstd::optional<double> t = lightusd::atod(time_str);
+        nonstd::optional<double> t = lightusd::legacy::atod(time_str);
         if (!t.has_value()) {
           std::cerr << "Invalid time value: " << time_str << "\n";
           return EXIT_FAILURE;
@@ -1375,7 +1375,7 @@ int main(int argc, char **argv) {
       }
       i++; // Move to next argument
       {
-        nonstd::optional<int> log_level = lightusd::atoi(argv[i]);
+        nonstd::optional<int> log_level = lightusd::legacy::atoi(argv[i]);
         if (!log_level.has_value()) {
           std::cerr << "Invalid log level argument: " << argv[i] << ". Must be an integer.\n";
           return EXIT_FAILURE;
@@ -1389,14 +1389,14 @@ int main(int argc, char **argv) {
             static_cast<lightusd::logging::LogLevel>(ll));
       }
     }
-    OPT_MATCH(lightusd::startsWith(arg, "--composition=")) {
-      std::string value_str = lightusd::removePrefix(arg, "--composition=");
+    OPT_MATCH(lightusd::legacy::startsWith(arg, "--composition=")) {
+      std::string value_str = lightusd::legacy::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
         exit(-1);
       }
 
-      std::vector<std::string> items = lightusd::split(value_str, ",");
+      std::vector<std::string> items = lightusd::legacy::split(value_str, ",");
       comp_features.subLayers = false;
       comp_features.inherits = false;
       comp_features.variantSets = false;
@@ -1465,16 +1465,16 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
     options.error_detail = error_detail;
 
-    lightusd::ValidationOptions validation_options;
+    lightusd::legacy::ValidationOptions validation_options;
     if (validate_all_groups) {
-      validation_options = lightusd::MakeValidateAllOptions();
+      validation_options = lightusd::legacy::MakeValidateAllOptions();
     }
 
-    lightusd::USDValidationResult validation;
-    const bool ret = lightusd::ValidateUSDFileAgainstAOUSDCore(
+    lightusd::legacy::USDValidationResult validation;
+    const bool ret = lightusd::legacy::ValidateUSDFileAgainstAOUSDCore(
         filepath, validation_options, options, &validation, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
@@ -1488,7 +1488,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    std::cout << lightusd::FormatValidationResult(validation);
+    std::cout << lightusd::legacy::FormatValidationResult(validation);
     return validation.ok() ? EXIT_SUCCESS : EXIT_FAILURE;
   }
 
@@ -1501,7 +1501,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    if (!lightusd::crate::DumpCrate(filepath, dump_opts, &err)) {
+    if (!lightusd::legacy::crate::DumpCrate(filepath, dump_opts, &err)) {
       std::cerr << "Failed to dump crate: " << err << "\n";
       return EXIT_FAILURE;
     }
@@ -1512,8 +1512,8 @@ int main(int argc, char **argv) {
   // Handle focused Layer report modes
   if (do_mesh_subset_report || do_material_report || do_geom_report ||
       do_skinning_report) {
-    lightusd::Layer layer;
-    bool ret = lightusd::LoadLayerFromFile(filepath, &layer, &warn, &err);
+    lightusd::legacy::Layer layer;
+    bool ret = lightusd::legacy::LoadLayerFromFile(filepath, &layer, &warn, &err);
 
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
@@ -1574,8 +1574,8 @@ int main(int argc, char **argv) {
       }
     } else {
       // Single file mode
-      lightusd::Layer layer;
-      bool loaded = lightusd::LoadLayerFromFile(filepath, &layer, &warn, &err);
+      lightusd::legacy::Layer layer;
+      bool loaded = lightusd::legacy::LoadLayerFromFile(filepath, &layer, &warn, &err);
 
       if (!warn.empty()) {
         std::cerr << "WARN: " << warn << "\n";
@@ -1624,8 +1624,8 @@ int main(int argc, char **argv) {
   // Handle --inspect mode
   if (do_inspect) {
     // Load as Layer for inspection
-    lightusd::Layer layer;
-    bool ret = lightusd::LoadLayerFromFile(filepath, &layer, &warn, &err);
+    lightusd::legacy::Layer layer;
+    bool ret = lightusd::legacy::LoadLayerFromFile(filepath, &layer, &warn, &err);
 
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
@@ -1640,7 +1640,7 @@ int main(int argc, char **argv) {
     }
 
     // Output inspection result
-    std::string output = lightusd::InspectLayer(layer, inspect_opts);
+    std::string output = lightusd::legacy::InspectLayer(layer, inspect_opts);
     std::cout << output;
 
     return EXIT_SUCCESS;
@@ -1654,12 +1654,12 @@ int main(int argc, char **argv) {
     }
 
     // TODO: flatten for USDZ
-    if (lightusd::IsUSDZ(filepath)) {
+    if (lightusd::legacy::IsUSDZ(filepath)) {
 
       std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
-      lightusd::Stage stage;
-      lightusd::USDLoadOptions usdz_options;
+      lightusd::legacy::Stage stage;
+      lightusd::legacy::USDLoadOptions usdz_options;
 
       // MaterialX validation
       usdz_options.strict_mtlx_check = strict_mtlx_check;
@@ -1673,7 +1673,7 @@ int main(int argc, char **argv) {
         usdz_options.progress_userptr = &usdz_progress_state;
       }
 
-      bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err, usdz_options);
+      bool ret = lightusd::legacy::LoadUSDZFromFile(filepath, &stage, &warn, &err, usdz_options);
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
       }
@@ -1704,7 +1704,7 @@ int main(int argc, char **argv) {
 
       if (json_output) {
 #if defined(LIGHTUSD_WITH_JSON)
-        auto json_result = lightusd::ToJSON(stage);
+        auto json_result = lightusd::legacy::ToJSON(stage);
         if (json_result) {
           std::cout << json_result.value() << "\n";
         } else {
@@ -1742,8 +1742,8 @@ int main(int argc, char **argv) {
       phase_t0 = now;
     };
 
-    lightusd::Layer root_layer;
-    bool ret = lightusd::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
+    lightusd::legacy::Layer root_layer;
+    bool ret = lightusd::legacy::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
       std::cerr << "WARN: " << warn << "\n"; warn.clear();
     }
@@ -1768,12 +1768,12 @@ int main(int argc, char **argv) {
 
     phase_mark("load-root-layer");
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     stage.metas() = root_layer.metas();
 
     std::string warn;
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
     resolver.set_enable_suffix_fallback(asset_path_fallback);
@@ -1788,17 +1788,17 @@ int main(int argc, char **argv) {
     // - [ ] Specializes
     //
 
-    lightusd::Layer src_layer = root_layer;
+    lightusd::legacy::Layer src_layer = root_layer;
 
     // lusdcat resolves assets against the local filesystem (the input file's
     // directory), where USD's parent-relative references (e.g.
     // `@../common/foo.usd@`) are legitimate and ubiquitous — OpenUSD resolves
     // them too. Allow '..' in composition asset paths.
-    lightusd::SublayersCompositionOptions sublayer_opts;
+    lightusd::legacy::SublayersCompositionOptions sublayer_opts;
     sublayer_opts.allow_parent_relative_paths = true;
-    lightusd::ReferencesCompositionOptions reference_opts;
+    lightusd::legacy::ReferencesCompositionOptions reference_opts;
     reference_opts.allow_parent_relative_paths = true;
-    lightusd::PayloadCompositionOptions payload_opts;
+    lightusd::legacy::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
     if (max_composition_asset_mb > 0) {
       const size_t max_composition_asset_bytes =
@@ -1810,7 +1810,7 @@ int main(int argc, char **argv) {
 
     // Parse each referenced file once across the whole fixed-point loop; all
     // arcs to the same file share one copy of the heavy attribute data (COW).
-    std::map<std::string, lightusd::Layer> layer_cache;
+    std::map<std::string, lightusd::legacy::Layer> layer_cache;
     reference_opts.layer_cache = &layer_cache;
     payload_opts.layer_cache = &layer_cache;
 
@@ -1824,8 +1824,8 @@ int main(int argc, char **argv) {
         !suppress_usd_text_output && (GetMaxUsdaOutputBytes() == 0);
 
     if (comp_features.subLayers) {
-      lightusd::Layer composited_layer;
-      if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err, sublayer_opts)) {
+      lightusd::legacy::Layer composited_layer;
+      if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err, sublayer_opts)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -1863,14 +1863,14 @@ int main(int argc, char **argv) {
           break;
         }
 
-        lightusd::Layer composited_layer;
+        lightusd::legacy::Layer composited_layer;
         // Pass the configured per-arc options (parent-relative path policy for
         // UE-style exports, asset size caps, the shared parsed-layer cache) —
         // the option-less overload would reject `../` asset paths.
-        lightusd::AllArcsCompositionOptions all_opts;
+        lightusd::legacy::AllArcsCompositionOptions all_opts;
         all_opts.references = reference_opts;
         all_opts.payload = payload_opts;
-        if (!lightusd::CompositeAllArcs(resolver, src_layer, &composited_layer,
+        if (!lightusd::legacy::CompositeAllArcs(resolver, src_layer, &composited_layer,
                                         &warn, &err, all_opts)) {
           std::cerr << "Failed to composite arcs: " << err << "\n";
           return -1;
@@ -1895,11 +1895,11 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
+          lightusd::legacy::Layer composited_layer;
           // InPlace: consumes src_layer (no internal arcs) instead of holding
           // input + output copies — halves the peak of the pass.
-          if (!lightusd::CompositeReferencesInPlace(resolver,
-                  std::make_unique<lightusd::Layer>(std::move(src_layer)),
+          if (!lightusd::legacy::CompositeReferencesInPlace(resolver,
+                  std::make_unique<lightusd::legacy::Layer>(std::move(src_layer)),
                   &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
@@ -1925,9 +1925,9 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositePayloadInPlace(resolver,
-                  std::make_unique<lightusd::Layer>(std::move(src_layer)),
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositePayloadInPlace(resolver,
+                  std::make_unique<lightusd::legacy::Layer>(std::move(src_layer)),
                   &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
@@ -1953,8 +1953,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `inherits`: " << err << "\n";
             return -1;
           }
@@ -1979,7 +1979,7 @@ int main(int argc, char **argv) {
         // populated variantSet may live in a referenced/payloaded sublayer.
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
-        } else if (lightusd::ShouldDeferVariantComposition(
+        } else if (lightusd::legacy::ShouldDeferVariantComposition(
                        src_layer, comp_features.references,
                        comp_features.payload)) {
           std::cout << "# iter " << i
@@ -1988,11 +1988,11 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
+          lightusd::legacy::Layer composited_layer;
           // InPlace: consumes src_layer (variant selection needs no
           // pristine-layer lookups) — skips the whole-layer deep copy.
-          if (!lightusd::CompositeVariantInPlace(
-                  std::make_unique<lightusd::Layer>(std::move(src_layer)),
+          if (!lightusd::legacy::CompositeVariantInPlace(
+                  std::make_unique<lightusd::legacy::Layer>(std::move(src_layer)),
                   &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `variantSet`: " << err << "\n";
             return -1;
@@ -2031,8 +2031,8 @@ int main(int argc, char **argv) {
     if (has_extract_variants) {
       std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
 
-      lightusd::Dictionary dict;
-      if (!lightusd::ExtractVariants(src_layer, &dict, &err)) {
+      lightusd::legacy::Dictionary dict;
+      if (!lightusd::legacy::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
         if (variant_format == "json") {
@@ -2049,7 +2049,7 @@ int main(int argc, char **argv) {
     // never emits a `prepend`/`append` qualifier on a composed prim. Must run
     // after the iteration loop (a mid-flatten reset would shadow apiSchemas a
     // later arc still contributes).
-    lightusd::FlattenAppliedSchemas(src_layer);
+    lightusd::legacy::FlattenAppliedSchemas(src_layer);
 
     // --preserve-order (USDA only): emit the composed LAYER directly so prim
     // children AND properties keep their authored order (the generic PrimSpec
@@ -2078,10 +2078,10 @@ int main(int argc, char **argv) {
         docval += "Generated from Composed Stage of root layer " + filepath + "\n";
         src_layer.metas().doc.is_triple_quoted = true;
       }
-      preserved_layer_usda = lightusd::to_string(src_layer);
+      preserved_layer_usda = lightusd::legacy::to_string(src_layer);
     }
 
-    lightusd::Stage comp_stage;
+    lightusd::legacy::Stage comp_stage;
     phase_mark("flatten-finalize(apiSchemas/preserve-order)");
     try {
       ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
@@ -2110,7 +2110,7 @@ int main(int argc, char **argv) {
 
     if (json_output) {
 #if defined(LIGHTUSD_WITH_JSON)
-      auto json_result = lightusd::ToJSON(comp_stage);
+      auto json_result = lightusd::legacy::ToJSON(comp_stage);
       if (json_result) {
         std::cout << json_result.value() << "\n";
       } else {
@@ -2129,7 +2129,7 @@ int main(int argc, char **argv) {
         // a multi-GB USDA string that would exhaust memory.
         std::vector<uint8_t> usdc_bytes;
         std::string c_warn, c_err;
-        if (lightusd::usdc::SaveAsUSDCToMemory(comp_stage, &usdc_bytes, &c_warn,
+        if (lightusd::legacy::usdc::SaveAsUSDCToMemory(comp_stage, &usdc_bytes, &c_warn,
                                                &c_err)) {
           std::cerr << "# Composed stage estimate " << format_memory_size(est_bytes)
                     << " exceeds USDA output cap " << format_memory_size(cap_bytes)
@@ -2190,11 +2190,11 @@ int main(int argc, char **argv) {
 
   } else {
 
-    lightusd::Stage stage;
-    lightusd::usdc::USDCMemoryUsageReport usdc_memory_report;
+    lightusd::legacy::Stage stage;
+    lightusd::legacy::usdc::USDCMemoryUsageReport usdc_memory_report;
     bool has_usdc_memory_report{false};
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
 
     // MaterialX validation
     options.strict_mtlx_check = strict_mtlx_check;
@@ -2215,7 +2215,7 @@ int main(int argc, char **argv) {
       has_usdc_memory_report = true;
     } else {
       // auto detect format.
-      ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+      ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
     }
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
@@ -2271,7 +2271,7 @@ int main(int argc, char **argv) {
 
     if (json_output) {
 #if defined(LIGHTUSD_WITH_JSON)
-      auto json_result = lightusd::ToJSON(stage);
+      auto json_result = lightusd::legacy::ToJSON(stage);
       if (json_result) {
         std::cout << json_result.value() << "\n";
       } else {
@@ -2296,8 +2296,8 @@ int main(int argc, char **argv) {
     if (has_extract_variants) {
       std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
 
-      lightusd::Dictionary dict;
-      if (!lightusd::ExtractVariants(stage, &dict, &err)) {
+      lightusd::legacy::Dictionary dict;
+      if (!lightusd::legacy::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
         if (variant_format == "json") {

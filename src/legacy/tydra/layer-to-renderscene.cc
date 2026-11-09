@@ -17,7 +17,7 @@
 #include "str-util.hh"
 #include "../pprinter.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -128,8 +128,8 @@ void ApplyMemoryUsageDelta(
 }  // namespace detail
 
 struct LayerToRenderSceneConverter::Impl {
-  lightusd::HashMap<std::string, int> material_path_to_id;
-  lightusd::HashMap<std::string, int> mesh_path_to_id;
+  lightusd::legacy::HashMap<std::string, int> material_path_to_id;
+  lightusd::legacy::HashMap<std::string, int> mesh_path_to_id;
 
   void ClearCaches() {
     material_path_to_id.clear();
@@ -502,4 +502,5 @@ void LayerToRenderSceneConverter::TrackMemoryUsage(size_t bytes_allocated, size_
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

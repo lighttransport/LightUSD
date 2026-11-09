@@ -41,7 +41,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -97,9 +97,9 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 ///
 /// Usage:
 /// ```cpp
-/// lightusd::StreamReader reader(filename);
-/// lightusd::ascii::AsciiParser parser(&reader);
-/// lightusd::Layer layer;
+/// lightusd::legacy::StreamReader reader(filename);
+/// lightusd::legacy::ascii::AsciiParser parser(&reader);
+/// lightusd::legacy::Layer layer;
 /// if (parser.Parse(&layer)) {
 ///   // Success - use the layer
 /// } else {
@@ -172,10 +172,10 @@ class AsciiParser {
   };
 
   struct CursorStore {
-    lightusd::HashMap<std::string, StoredCursor> layer_metas;
-    lightusd::HashMap<std::string, StoredCursor> prims;
-    lightusd::HashMap<std::string, StoredCursor> prim_attrs;
-    lightusd::HashMap<std::string, StoredCursor> properties;
+    lightusd::legacy::HashMap<std::string, StoredCursor> layer_metas;
+    lightusd::legacy::HashMap<std::string, StoredCursor> prims;
+    lightusd::legacy::HashMap<std::string, StoredCursor> prim_attrs;
+    lightusd::legacy::HashMap<std::string, StoredCursor> properties;
 
     static std::string MakePropertyKey(const std::string &prim_path,
                                        const std::string &property_name) {
@@ -429,7 +429,7 @@ class AsciiParser {
       std::map<std::string, VariantSetContent>;
 
   AsciiParser();
-  AsciiParser(lightusd::StreamReader *sr);
+  AsciiParser(lightusd::legacy::StreamReader *sr);
 
   AsciiParser(const AsciiParser &rhs) = delete;
   AsciiParser(AsciiParser &&rhs) = delete;
@@ -528,7 +528,7 @@ class AsciiParser {
   ///
   /// Set ASCII data stream
   ///
-  void SetStream(lightusd::StreamReader *sr);
+  void SetStream(lightusd::legacy::StreamReader *sr);
 
   const CursorStore &GetCursorStore() const { return _cursor_store; }
   std::string FormatLayerMetaSourceDiagnostic(const std::string &meta_name,
@@ -977,8 +977,8 @@ class AsciiParser {
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
   bool ParseVariants(VariantSelectionMap *out_map);
 
-  bool MaybeListEditQual(lightusd::ListEditQual *qual);
-  bool MaybeVariability(lightusd::Variability *variability,
+  bool MaybeListEditQual(lightusd::legacy::ListEditQual *qual);
+  bool MaybeVariability(lightusd::legacy::Variability *variability,
                         bool *varying_authored);
 
   ///
@@ -1253,7 +1253,7 @@ class AsciiParser {
     }
   }
 
-  const lightusd::StreamReader *_sr = nullptr;
+  const lightusd::legacy::StreamReader *_sr = nullptr;
 
   // "class" defs
   // std::map<std::string, Klass> _klasses;
@@ -1270,13 +1270,13 @@ class AsciiParser {
   std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  lightusd::HashMap<std::string, VariableDef> _supported_stage_metas;
+  lightusd::legacy::HashMap<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  lightusd::HashMap<std::string, VariableDef> _supported_prim_metas;
+  lightusd::legacy::HashMap<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  lightusd::HashMap<std::string, VariableDef> _supported_prop_metas;
+  lightusd::legacy::HashMap<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1310,8 +1310,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  lightusd::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  lightusd::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  lightusd::legacy::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  lightusd::legacy::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 
@@ -1343,4 +1343,5 @@ bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
 
 }  // namespace ascii
 
+}  // namespace legacy
 }  // namespace lightusd

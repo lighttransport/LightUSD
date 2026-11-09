@@ -30,7 +30,7 @@
 // https://github.com/PixarAnimationStudios/USD/issues/2136
 //#define PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 using matrix44d = linalg::aliases::double4x4;
 using matrix33d = linalg::aliases::double3x3;
@@ -1860,4 +1860,5 @@ value::matrix4d trs_rot_axis(const value::double3 &translation,
   return m;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

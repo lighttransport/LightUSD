@@ -48,7 +48,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 namespace {
@@ -389,11 +389,12 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #else
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
@@ -473,6 +474,7 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif

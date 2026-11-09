@@ -4,12 +4,13 @@
 // Simple timing utility
 #pragma once
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace performance {
 
 // Return current time in [ms]
 double now();
 
 } // performance
+}  // namespace legacy
 } // namespace lightusd
 

@@ -27,6 +27,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 std::string GetUsdcFixturePath(const std::string &filename) {
@@ -159,7 +161,7 @@ bool LoadLayerFromUsdcFixtureWithOptions(const std::string &filename,
 
 bool WriteLayerToUsdc(const Layer &layer, const std::string &path,
                       std::string *err) {
-  lightusd::experimental::CrateWriter writer(path);
+  lightusd::legacy::experimental::CrateWriter writer(path);
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) {
@@ -187,9 +189,9 @@ bool WriteLayerToUsdc(const Layer &layer, const std::string &path,
 // tests/usdc/ that can race with usdc-parser-unit-test).
 bool WriteLayerToUsdcMemory(const Layer &layer, std::vector<uint8_t> *out,
                             std::string *err) {
-  auto stream = std::make_unique<lightusd::experimental::MemoryOutputStream>();
+  auto stream = std::make_unique<lightusd::legacy::experimental::MemoryOutputStream>();
   auto *mem_ptr = stream.get();
-  lightusd::experimental::CrateWriter writer(std::move(stream));
+  lightusd::legacy::experimental::CrateWriter writer(std::move(stream));
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) (*err) = local_err;
@@ -211,9 +213,9 @@ bool WriteLayerToUsdcMemory(const Layer &layer, std::vector<uint8_t> *out,
 // Write Stage to in-memory USDC buffer.
 bool WriteStageToUsdcMemory(const Stage &stage, std::vector<uint8_t> *out,
                             std::string *err) {
-  auto stream = std::make_unique<lightusd::experimental::MemoryOutputStream>();
+  auto stream = std::make_unique<lightusd::legacy::experimental::MemoryOutputStream>();
   auto *mem_ptr = stream.get();
-  lightusd::experimental::CrateWriter writer(std::move(stream));
+  lightusd::legacy::experimental::CrateWriter writer(std::move(stream));
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) (*err) = local_err;
@@ -234,7 +236,7 @@ bool WriteStageToUsdcMemory(const Stage &stage, std::vector<uint8_t> *out,
 
 bool WriteStageToUsdc(const Stage &stage, const std::string &path,
                       std::string *err) {
-  lightusd::experimental::CrateWriter writer(path);
+  lightusd::legacy::experimental::CrateWriter writer(path);
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) {
@@ -272,7 +274,7 @@ bool BuildReferencesUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   for (size_t i = 0; i < kRefCount; ++i) {
     Reference ref;
     std::string asset_path = "./ref_" + std::to_string(i) + "_" + segment + ".usd";
-    ref.asset_path = value::AssetPath(asset_path);
+    ref.asset_path = lightusd::legacy::value::AssetPath(asset_path);
     ref.prim_path = Path("/RefHeavy", "");
     refs.emplace_back(std::move(ref));
   }
@@ -307,13 +309,13 @@ bool BuildStageMetaSublayersUsdcBuffer(std::vector<uint8_t> *out,
     SubLayer sublayer;
     std::string asset_path =
         "./sublayer_" + std::to_string(i) + "_" + segment + ".usd";
-    sublayer.assetPath = value::AssetPath(asset_path);
+    sublayer.assetPath = lightusd::legacy::value::AssetPath(asset_path);
     sublayers.emplace_back(std::move(sublayer));
   }
 
   metas.subLayers = std::move(sublayers);
-  metas.defaultPrim = value::token("Root");
-  metas.primChildren.push_back(value::token("Root"));
+  metas.defaultPrim = lightusd::legacy::value::token("Root");
+  metas.primChildren.push_back(lightusd::legacy::value::token("Root"));
 
   std::string doc_segment(1024, 'D');
   metas.doc.value = doc_segment;
@@ -346,7 +348,7 @@ bool BuildStageMetaCustomDataUsdcBuffer(std::vector<uint8_t> *out,
   custom["blob"] = MetaVariable(std::string(kCustomDataSize, 'C'));
   metas.customLayerData = custom;
   metas.customLayerDataAuthored = true;
-  metas.defaultPrim = value::token("Root");
+  metas.defaultPrim = lightusd::legacy::value::token("Root");
 
   Model model;
   model.name = "Root";
@@ -401,7 +403,7 @@ bool BuildCompositionUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
     Payload payload;
     std::string asset_path =
         "./payload_" + std::to_string(i) + "_" + path_segment + ".usd";
-    payload.asset_path = value::AssetPath(asset_path);
+    payload.asset_path = lightusd::legacy::value::AssetPath(asset_path);
     payload.prim_path = Path("/ArcHeavy", "");
     payloads.emplace_back(std::move(payload));
   }
@@ -2042,7 +2044,7 @@ void usdc_golden_geom_subset_schema_test(void) {
   if (!subset) return;
 
   TEST_CHECK(subset->elementType.get_value() == GeomSubset::ElementType::Face);
-  value::token fam;
+  lightusd::legacy::value::token fam;
   TEST_CHECK(subset->familyName.get_value(&fam));
   TEST_CHECK(fam.str() == "materialBind");
   TEST_CHECK(subset->indices.authored());
@@ -2150,7 +2152,7 @@ void usdc_golden_skeleton_schema_test(void) {
 
   TEST_CHECK(skel->joints.authored());
   {
-    std::vector<value::token> joints;
+    std::vector<lightusd::legacy::value::token> joints;
     if (skel->joints.get_value(&joints)) {
       TEST_CHECK(joints.size() == 2);
     }
@@ -2237,7 +2239,7 @@ void usdc_golden_physics_joint_test(void) {
   TEST_CHECK(joint->body1.authored());
   TEST_CHECK(joint->localPos0.authored());
   TEST_CHECK(joint->axis.authored());
-  value::token ax;
+  lightusd::legacy::value::token ax;
   if (joint->axis.get_value(&ax)) TEST_CHECK(ax.str() == "X");
   TEST_CHECK(joint->lowerLimit.authored());
   if (auto v = joint->lowerLimit.get_value()) TEST_CHECK(std::abs(*v - (-45.0f)) < 1e-3f);
@@ -2259,7 +2261,7 @@ void usdc_golden_physics_collisiongroup_test(void) {
   if (!cg) return;
 
   TEST_CHECK(cg->mergeGroup.authored());
-  value::token mg;
+  lightusd::legacy::value::token mg;
   if (cg->mergeGroup.get_value(&mg)) TEST_CHECK(mg.str() == "groupA");
   TEST_CHECK(cg->invertFilteredGroups.get_value() == true);
   TEST_CHECK(cg->filteredGroups.authored());
@@ -2365,7 +2367,7 @@ void usdc_golden_lightfilter_test(void) {
       if (plf) {
         TEST_CHECK(plf->shaderId.authored());
         if (plf->shaderId.get_value()) {
-          value::token sid;
+          lightusd::legacy::value::token sid;
           if (plf->shaderId.get_value().value().get_scalar(&sid)) {
             TEST_CHECK(sid.str() == "MyFilterShader");
           }

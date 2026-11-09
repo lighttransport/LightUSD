@@ -29,7 +29,7 @@
 
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 #ifdef __GNUC__
@@ -185,4 +185,5 @@ bool ReconstructPrim<Preliminary_Text>(
 }
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

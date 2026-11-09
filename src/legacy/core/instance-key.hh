@@ -19,7 +19,7 @@
 #include "prim-metas.hh"
 #include "prim-spec.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 /// 128-bit hash capturing the structural identity of a prim's composition.
 ///
@@ -74,4 +74,5 @@ bool ComputeInstanceKeyFromPrimMetas(const PrimMeta &metas,
                                      const std::string &type_name,
                                      InstanceKey *key);
 
+}  // namespace legacy
 }  // namespace lightusd

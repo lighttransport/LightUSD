@@ -16,7 +16,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kSpatialAudio = "SpatialAudio";
 
@@ -74,4 +74,5 @@ DEFINE_TYPE_TRAIT(SpatialAudio, kSpatialAudio, TYPE_ID_SPATIAL_AUDIO, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

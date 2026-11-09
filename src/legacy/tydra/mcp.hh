@@ -13,7 +13,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -29,4 +29,5 @@ struct MCPCommand
 
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

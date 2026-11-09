@@ -6,7 +6,7 @@
 
 #include <cstring>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 //
 // Short hash ... it could be used on any message,
@@ -347,4 +347,5 @@ void HashState::Reset(size_t seed) {
   _state = seed;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

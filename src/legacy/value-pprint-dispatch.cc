@@ -21,7 +21,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 // Print literal element `idx` of a VtArrayEdit's type-erased literals array,
@@ -492,4 +492,5 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

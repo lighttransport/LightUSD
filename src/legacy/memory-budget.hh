@@ -12,7 +12,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Counters are atomic: budget reserve/release runs concurrently during
 // parallel USDC prim reconstruction (relaxed ordering — the budget is an
@@ -164,4 +164,5 @@ class MemoryBudgetGuard {
 #define MEMORY_BUDGET_CHECK_AND_RETURN(manager, bytes, error_tag, return_type) \
   MemoryBudgetGuard<return_type>(manager, bytes, error_tag)
 
+}  // namespace legacy
 }  // namespace lightusd

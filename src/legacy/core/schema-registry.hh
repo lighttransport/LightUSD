@@ -14,7 +14,7 @@
 #include "prim-enums.hh"  // Variability
 #include "../tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct SchemaPropertyInfo {
   Variability variability{Variability::Varying};
@@ -130,7 +130,8 @@ class SchemaRegistry {
                       {Variability::Uniform, "token", "default"});
   }
 
-  lightusd::HashMap<std::string, SchemaPropertyInfo> _registry;
+  lightusd::legacy::HashMap<std::string, SchemaPropertyInfo> _registry;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

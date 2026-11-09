@@ -41,7 +41,7 @@
 //
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 #if 1
 // For PUSH_ERROR_AND_RETURN
@@ -1838,4 +1838,5 @@ void Stage::ImportInstanceData(
   }
 }
 
+}  // namespace legacy
 }  // namespace lightusd

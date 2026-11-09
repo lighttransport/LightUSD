@@ -51,7 +51,7 @@
 // LightUSD : Use orignal lz4.
 #include "lz4/lz4.h"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 size_t LZ4Compression::GetMaxInputSize() {
   return 127 * static_cast<size_t>(LZ4_MAX_INPUT_SIZE);
@@ -335,4 +335,5 @@ size_t LZ4Compression::DecompressFromStreamReader(const StreamReader &stream,
   return decompressed;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

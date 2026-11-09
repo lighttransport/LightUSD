@@ -14,7 +14,7 @@
 #include <vector>
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // forward decl
 namespace value {
@@ -464,4 +464,5 @@ bool resize_image_u8_srgb(const std::vector<uint8_t> &src_img, size_t src_width,
 
                           size_t channels, std::vector<uint8_t> *dest_img, std::string *err =nullptr);
 
+}  // namespace legacy
 }  // namespace lightusd

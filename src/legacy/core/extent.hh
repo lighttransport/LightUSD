@@ -12,7 +12,7 @@
 
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
@@ -91,4 +91,5 @@ DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2);  // float3[2]
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

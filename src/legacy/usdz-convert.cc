@@ -52,7 +52,7 @@
 # undef stdout
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdz {
 
 namespace {
@@ -213,14 +213,14 @@ bool IsAllowedARKitPrimType(const std::string &type_name) {
       "Points", "SkelRoot", "Skeleton", "SkelAnimation", "BlendShape",
       "SpatialAudio", "PhysicsScene", "Preliminary_ReferenceImage",
       "Preliminary_Text", "Preliminary_Trigger"};
-  return allowed.count(type_name) || lightusd::startsWith(type_name, "RealityKit");
+  return allowed.count(type_name) || lightusd::legacy::startsWith(type_name, "RealityKit");
 }
 
 bool IsAllowedARKitShaderId(const std::string &shader_id) {
   return shader_id == "UsdPreviewSurface" || shader_id == "UsdUVTexture" ||
          shader_id == "UsdTransform2d" ||
-         lightusd::startsWith(shader_id, "UsdPrimvarReader") ||
-         lightusd::startsWith(shader_id, "ND_");
+         lightusd::legacy::startsWith(shader_id, "UsdPrimvarReader") ||
+         lightusd::legacy::startsWith(shader_id, "ND_");
 }
 
 // Turn an arbitrary asset path into a safe, relative USDZ archive name.
@@ -232,9 +232,9 @@ bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
   // Reject null bytes (could corrupt ZIP entry names).
   if (p.find('\0') != std::string::npos) return true;
   return p.empty() || (p[0] == '/') || (p.find(':') != std::string::npos) ||
-         (p == "..") || lightusd::startsWith(p, "../") ||
+         (p == "..") || lightusd::legacy::startsWith(p, "../") ||
          (p.find("/../") != std::string::npos) ||
-         lightusd::endsWith(p, "/..");
+         lightusd::legacy::endsWith(p, "/..");
 }
 
 std::string RelativeToSearchPath(const std::string &asset_path,
@@ -262,7 +262,7 @@ std::string RelativeToSearchPath(const std::string &asset_path,
     if (p == base) {
       return io::GetBaseFilename(p);
     }
-    if (lightusd::startsWith(p, base + "/")) {
+    if (lightusd::legacy::startsWith(p, base + "/")) {
       return p.substr(base.size() + 1);
     }
   }
@@ -315,7 +315,7 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
   std::replace(p.begin(), p.end(), '\\', '/');
 
   const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
-                              lightusd::startsWith(p, "./");
+                              lightusd::legacy::startsWith(p, "./");
 
   std::string name = p;
   if (needs_sanitize) {
@@ -333,10 +333,10 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
                          (name.find('\\') != std::string::npos) ||
                          (name.find(':') != std::string::npos) ||
                          (name.find("//") != std::string::npos) ||
-                         lightusd::startsWith(name, "/") ||
-                         lightusd::startsWith(name, "./") ||
-                         lightusd::startsWith(name, "../") ||
-                         lightusd::endsWith(name, "/");
+                         lightusd::legacy::startsWith(name, "/") ||
+                         lightusd::legacy::startsWith(name, "./") ||
+                         lightusd::legacy::startsWith(name, "../") ||
+                         lightusd::legacy::endsWith(name, "/");
     if (!has_traversal) {
       // Also check for ".." as a standalone path segment.
       size_t pos = 0;
@@ -365,7 +365,7 @@ std::string SanitizeLayerArchiveName(const std::string &assetPath) {
   std::replace(p.begin(), p.end(), '\\', '/');
 
   const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
-                              lightusd::startsWith(p, "./");
+                              lightusd::legacy::startsWith(p, "./");
 
   std::string name = p;
   if (needs_sanitize) {
@@ -381,10 +381,10 @@ std::string SanitizeLayerArchiveName(const std::string &assetPath) {
       name.find(':') != std::string::npos ||
       name.find("..") != std::string::npos ||
       name.find("//") != std::string::npos ||
-      lightusd::startsWith(name, "/") ||
-      lightusd::startsWith(name, "./") ||
-      lightusd::startsWith(name, "../") ||
-      lightusd::endsWith(name, "/")) {
+      lightusd::legacy::startsWith(name, "/") ||
+      lightusd::legacy::startsWith(name, "./") ||
+      lightusd::legacy::startsWith(name, "../") ||
+      lightusd::legacy::endsWith(name, "/")) {
     name = "layers/layer";
   }
   if (name.size() > kMaxArchiveNameLen) {
@@ -407,7 +407,7 @@ std::string MakeCollisionArchiveName(const std::string &archive_name,
       return "textures/texture";
     }
     base.resize(kMaxArchiveNameLen - suffix_part.size());
-    if (base.empty() || lightusd::endsWith(base, "/")) {
+    if (base.empty() || lightusd::legacy::endsWith(base, "/")) {
       base += "texture";
       if (base.size() + suffix_part.size() > kMaxArchiveNameLen) {
         base.resize(kMaxArchiveNameLen - suffix_part.size());
@@ -784,11 +784,11 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
   // parent-relative references (`@../common/foo.usd@`) are legitimate; the
   // resolver suffix-fallback additionally rebases paths authored against
   // another machine's layout (e.g. UE exports).
-  lightusd::SublayersCompositionOptions sublayer_options;
+  lightusd::legacy::SublayersCompositionOptions sublayer_options;
   sublayer_options.allow_parent_relative_paths = true;
-  lightusd::ReferencesCompositionOptions references_options;
+  lightusd::legacy::ReferencesCompositionOptions references_options;
   references_options.allow_parent_relative_paths = true;
-  lightusd::PayloadCompositionOptions payload_options;
+  lightusd::legacy::PayloadCompositionOptions payload_options;
   payload_options.allow_parent_relative_paths = true;
 
   // Parse each referenced file once across the whole fixed-point loop; all
@@ -799,7 +799,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
   if (!src_layer.metas().subLayers.empty()) {
     Layer tmp;
-    if (!lightusd::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
+    if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
                                       sublayer_options)) {
       return false;
     }
@@ -822,7 +822,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
       Layer tmp;
       // InPlace: consumes src_layer (no internal arcs) instead of holding
       // input + output copies — halves the peak of the pass.
-      if (!lightusd::CompositeReferencesInPlace(
+      if (!lightusd::legacy::CompositeReferencesInPlace(
               resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
               warn, err, references_options)) {
         return false;
@@ -833,7 +833,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_payload()) {
       has_unresolved = true;
       Layer tmp;
-      if (!lightusd::CompositePayloadInPlace(
+      if (!lightusd::legacy::CompositePayloadInPlace(
               resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
               warn, err, payload_options)) {
         return false;
@@ -844,7 +844,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_inherits()) {
       has_unresolved = true;
       Layer tmp;
-      if (!lightusd::CompositeInherits(src_layer, &tmp, warn, err)) {
+      if (!lightusd::legacy::CompositeInherits(src_layer, &tmp, warn, err)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -856,9 +856,9 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
       // payloads are resolved (this loop always resolves both), so a strong
       // local variant selection is not consumed against an empty/placeholder
       // variantSet from a weaker layer reached via reference/payload.
-      if (!lightusd::ShouldDeferVariantComposition(src_layer)) {
+      if (!lightusd::legacy::ShouldDeferVariantComposition(src_layer)) {
         Layer tmp;
-        if (!lightusd::CompositeVariant(src_layer, &tmp, warn, err)) {
+        if (!lightusd::legacy::CompositeVariant(src_layer, &tmp, warn, err)) {
           return false;
         }
         src_layer = std::move(tmp);
@@ -1367,17 +1367,17 @@ bool LoadLayerForPackaging(AssetResolutionResolver &resolver,
                            Layer *layer, std::string *warn,
                            std::string *err) {
   if (io::FileExists(source_path)) {
-    return lightusd::LoadLayerFromFile(source_path, layer, warn, err);
+    return lightusd::legacy::LoadLayerFromFile(source_path, layer, warn, err);
   }
 
   const std::string resolved = resolver.resolve(source_path);
   if (!resolved.empty()) {
-    return lightusd::LoadLayerFromAsset(resolver, resolved, layer, warn, err);
+    return lightusd::legacy::LoadLayerFromAsset(resolver, resolved, layer, warn, err);
   }
 
   const std::string authored_resolved = resolver.resolve(authored_path);
   if (!authored_resolved.empty()) {
-    return lightusd::LoadLayerFromAsset(resolver, authored_resolved, layer, warn,
+    return lightusd::legacy::LoadLayerFromAsset(resolver, authored_resolved, layer, warn,
                                         err);
   }
 
@@ -1407,7 +1407,7 @@ bool SerializeLayerForUSDZ(const Layer &layer, USDZRootLayerFormat format,
                            std::vector<uint8_t> *out, std::string *warn,
                            std::string *err) {
   if (format == USDZRootLayerFormat::USDA) {
-    const std::string text = lightusd::print_layer(layer, 0);
+    const std::string text = lightusd::legacy::print_layer(layer, 0);
     if (text.empty()) {
       if (err) *err = "USDA serialization produced empty data.";
       return false;
@@ -1416,7 +1416,7 @@ bool SerializeLayerForUSDZ(const Layer &layer, USDZRootLayerFormat format,
     return true;
   }
 
-  return lightusd::usdc::SaveAsUSDCToMemory(layer, out, warn, err);
+  return lightusd::legacy::usdc::SaveAsUSDCToMemory(layer, out, warn, err);
 }
 
 bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
@@ -1430,7 +1430,7 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   std::vector<NonFlattenLayerPackage> packages;
   packages.push_back(NonFlattenLayerPackage{});
   std::string lwarn, lerr;
-  if (!lightusd::LoadLayerFromFile(root_input, &packages[0].layer, &lwarn,
+  if (!lightusd::legacy::LoadLayerFromFile(root_input, &packages[0].layer, &lwarn,
                                    &lerr)) {
     if (err) *err = "Failed to load root layer: " + lerr;
     return false;
@@ -1789,15 +1789,15 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     assets[packages[i].archive_name] = std::move(layer_bytes);
   }
 
-  lightusd::USDZWriteOptions write_options;
-  write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
+  lightusd::legacy::USDZWriteOptions write_options;
+  write_options.root_layer_format = lightusd::legacy::USDZRootLayerFormat::USDA;
   if (options.usdz_root_layer_format == USDZRootLayerFormat::USDC && warn) {
     *warn += "Non-flatten USDZ uses a USDA root layer to preserve composition "
              "arcs for downstream loaders.\n";
   }
 
   std::string swarn, serr;
-  if (!lightusd::SaveAsUSDZToFile(options.output, packages[0].layer, assets,
+  if (!lightusd::legacy::SaveAsUSDZToFile(options.output, packages[0].layer, assets,
                                   write_options, &swarn, &serr)) {
     if (err) *err = "Failed to write USDZ: " + serr;
     return false;
@@ -1809,7 +1809,7 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
                         /*max*/ 512 * 1024 * 1024)) {
     std::string vwarn, verr;
-    if (!lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+    if (!lightusd::legacy::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
                                 &verr)) {
       if (warn) *warn += "USDZ validation reported issues: " + verr + "\n";
     } else {
@@ -1877,7 +1877,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   bool root_is_usdz = false;
   {
     std::string fmt;
-    if (lightusd::IsUSD(root_input, &fmt) && fmt == "usdz") {
+    if (lightusd::legacy::IsUSD(root_input, &fmt) && fmt == "usdz") {
       root_is_usdz = true;
     }
   }
@@ -1896,12 +1896,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   if (root_is_usdz) {
     std::string w;
-    if (!lightusd::ReadUSDZAssetInfoFromFile(root_input, &usdz_asset, &w, err)) {
+    if (!lightusd::legacy::ReadUSDZAssetInfoFromFile(root_input, &usdz_asset, &w, err)) {
       if (err) (*err) = "Failed to read USDZ asset info: " + (err ? *err : std::string());
       return false;
     }
     if (warn) (*warn) += w;
-    if (!lightusd::SetupUSDZAssetResolution(resolver, &usdz_asset)) {
+    if (!lightusd::legacy::SetupUSDZAssetResolution(resolver, &usdz_asset)) {
       if (err) (*err) = "Failed to set up USDZ asset resolution for: " + root_input;
       return false;
     }
@@ -1944,7 +1944,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     Log(options.verbose, "Loading + compositing (flatten): " + root_input);
     timer.begin("load-layer");
     Layer root_layer;
-    if (!lightusd::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
+    if (!lightusd::legacy::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
       if (err) (*err) = "Failed to load layer: " + lerr;
       return false;
     }
@@ -1965,7 +1965,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     layer_for_write = std::move(composited);
     has_layer_for_write = true;
     timer.begin("layer-to-stage");
-    if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
+    if (!lightusd::legacy::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
       if (err) (*err) = "LayerToStage failed: " + lerr;
       return false;
     }
@@ -1979,7 +1979,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     // the typed schema (e.g. skel:animationSource), and loses `uniform`
     // variability. (USDZ -noFlatten is handled earlier by ConvertNonFlattenUSDZ;
     // all downstream `stage` uses below are guarded by !has_layer_for_write.)
-    if (!lightusd::LoadLayerFromFile(root_input, &layer_for_write, &lwarn,
+    if (!lightusd::legacy::LoadLayerFromFile(root_input, &layer_for_write, &lwarn,
                                      &lerr)) {
       if (err) (*err) = "Failed to load layer: " + lerr;
       return false;
@@ -2068,7 +2068,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
               std::to_string(opt_stats.num_materials_deduped) + ".");
       if (options.arkit_compatible) {
         std::string rwarn, rerr;
-        if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+        if (!lightusd::legacy::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
                                     &rerr)) {
           if (err) {
             *err = "LayerToStage after material optimization failed: " + rerr;
@@ -2480,7 +2480,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     RemapLayerAssetPaths(layer_for_write, path_to_archive);
     if (options.arkit_compatible) {
       std::string rwarn, rerr;
-      if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+      if (!lightusd::legacy::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
                                   &rerr)) {
         if (err) *err = "LayerToStage after ARKit remap failed: " + rerr;
         return false;
@@ -2577,13 +2577,13 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   switch (options.output_format) {
     case OutputFormat::USDZ: {
       Log(options.verbose, "Writing USDZ: " + options.output);
-      lightusd::USDZWriteOptions write_options;
+      lightusd::legacy::USDZWriteOptions write_options;
       write_options.root_layer_format =
           (options.arkit_compatible)
-              ? lightusd::USDZRootLayerFormat::USDC
+              ? lightusd::legacy::USDZRootLayerFormat::USDC
           : (options.usdz_root_layer_format == USDZRootLayerFormat::USDA)
-              ? lightusd::USDZRootLayerFormat::USDA
-              : lightusd::USDZRootLayerFormat::USDC;
+              ? lightusd::legacy::USDZRootLayerFormat::USDA
+              : lightusd::legacy::USDZRootLayerFormat::USDC;
       if (options.arkit_compatible &&
           options.usdz_root_layer_format != USDZRootLayerFormat::USDC &&
           warn) {
@@ -2592,12 +2592,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       }
       write_ok = has_layer_for_write
           ? (options.arkit_compatible
-                 ? lightusd::SaveAsUSDZToFile(options.output, stage, assets,
+                 ? lightusd::legacy::SaveAsUSDZToFile(options.output, stage, assets,
                                               write_options, &swarn, &serr)
-                 : lightusd::SaveAsUSDZToFile(options.output, layer_for_write,
+                 : lightusd::legacy::SaveAsUSDZToFile(options.output, layer_for_write,
                                               assets, write_options, &swarn,
                                               &serr))
-          : lightusd::SaveAsUSDZToFile(options.output, stage, assets,
+          : lightusd::legacy::SaveAsUSDZToFile(options.output, stage, assets,
                                        write_options, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDZ: " + serr;
       break;
@@ -2605,9 +2605,9 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     case OutputFormat::USDC: {
       Log(options.verbose, "Writing USDC: " + options.output);
       write_ok = has_layer_for_write
-          ? lightusd::usdc::SaveAsUSDCToFile(write_output, layer_for_write,
+          ? lightusd::legacy::usdc::SaveAsUSDCToFile(write_output, layer_for_write,
                                              &swarn, &serr)
-          : lightusd::usdc::SaveAsUSDCToFile(write_output, stage, &swarn, &serr);
+          : lightusd::legacy::usdc::SaveAsUSDCToFile(write_output, stage, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDC: " + serr;
       break;
     }
@@ -2616,14 +2616,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       if (has_layer_for_write) {
         std::ofstream ofs(write_output);
         if (ofs) {
-          ofs << lightusd::print_layer(layer_for_write, 0);
+          ofs << lightusd::legacy::print_layer(layer_for_write, 0);
           write_ok = bool(ofs);
         } else {
           serr = "Failed to open output file.";
           write_ok = false;
         }
       } else {
-        write_ok = lightusd::usda::SaveAsUSDA(write_output, stage, &swarn, &serr);
+        write_ok = lightusd::legacy::usda::SaveAsUSDA(write_output, stage, &swarn, &serr);
       }
       if (!write_ok && err) (*err) = "Failed to write USDA: " + serr;
       break;
@@ -2666,7 +2666,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
                           /*max*/ 512 * 1024 * 1024)) {
       std::string vwarn, verr;
-      if (!lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+      if (!lightusd::legacy::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
                                   &verr)) {
         if (warn) {
           (*warn) += "USDZ validation reported issues: " + verr + "\n";
@@ -2758,4 +2758,5 @@ size_t RemapLayerTextureAssetPaths(
 }
 
 }  // namespace usdz
+}  // namespace legacy
 }  // namespace lightusd

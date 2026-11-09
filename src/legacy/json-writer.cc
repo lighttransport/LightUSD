@@ -10,19 +10,19 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace json {
 
 
 namespace detail {
 
-// NOTE: Use lightusd::dtos() from str-util.hh instead
+// NOTE: Use lightusd::legacy::dtos() from str-util.hh instead
 
 
 
 } // namespace detal
 
-bool JsonWriter::to_json(const lightusd::Layer &layer, std::string *out_json) {
+bool JsonWriter::to_json(const lightusd::legacy::Layer &layer, std::string *out_json) {
   if (!out_json) {
     return false;
   }
@@ -30,7 +30,7 @@ bool JsonWriter::to_json(const lightusd::Layer &layer, std::string *out_json) {
   // Keep this facade on the minijson path.  Besides avoiding a second USD
   // serializer, this preserves the canonical key ordering and bounded value
   // handling implemented by usd-to-json.cc.
-  minijson::Value value = lightusd::ToJSONValue(layer);
+  minijson::Value value = lightusd::legacy::ToJSONValue(layer);
   minijson::SerializeOptions options;
   options.indent = static_cast<int>(indent_);
   options.sort_keys = true;
@@ -38,13 +38,13 @@ bool JsonWriter::to_json(const lightusd::Layer &layer, std::string *out_json) {
   return minijson::Serialize(value, out_json, &error, options);
 }
 
-bool JsonWriter::to_json(const lightusd::Stage &stage, std::string *out_json) {
+bool JsonWriter::to_json(const lightusd::legacy::Stage &stage, std::string *out_json) {
   if (!out_json) {
     return false;
   }
 
   USDToJSONContext context;
-  minijson::Value value = lightusd::ToJSONValue(stage, &context);
+  minijson::Value value = lightusd::legacy::ToJSONValue(stage, &context);
   minijson::SerializeOptions options;
   options.indent = static_cast<int>(indent_);
   options.sort_keys = true;
@@ -53,4 +53,5 @@ bool JsonWriter::to_json(const lightusd::Stage &stage, std::string *out_json) {
 }
 
 } // namespace json
+}  // namespace legacy
 }  // namespace lightusd

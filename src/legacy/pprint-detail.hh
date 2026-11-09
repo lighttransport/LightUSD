@@ -17,7 +17,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations — defined in pprint-meta.cc
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
@@ -36,8 +36,8 @@ std::string print_props(const std::map<std::string, Property> &props,
 
 // Helper: print ".connect = <path>" for any attribute with connections
 inline std::string fmt_connections(const std::vector<Path> &paths) {
-  ::lightusd::pprint::ScratchRef pp_s;
-  ::lightusd::pprint::Appender &s = pp_s.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_s;
+  ::lightusd::legacy::pprint::Appender &s = pp_s.app();
   if (paths.size() == 1) {
     s << paths[0];
   } else if (paths.empty()) {
@@ -49,7 +49,7 @@ inline std::string fmt_connections(const std::vector<Path> &paths) {
 }
 
 // Helper: print attribute metadata block
-inline void print_attr_metas_block(::lightusd::pprint::Appender &ss,
+inline void print_attr_metas_block(::lightusd::legacy::pprint::Appender &ss,
                                    const AttrMeta &metas,
                                    const uint32_t indent) {
   if (metas.authored()) {
@@ -69,8 +69,8 @@ inline void print_attr_metas_block(::lightusd::pprint::Appender &ss,
 template <typename T>
 inline std::string print_enum_timesamples(const value::TimeSamples &v,
                                            const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "{\n";
 
@@ -97,8 +97,8 @@ inline std::string print_enum_timesamples(const value::TimeSamples &v,
 template <typename T>
 inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
                                                   const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "{\n";
 
@@ -124,8 +124,8 @@ inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
 template <typename T>
 inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
                                                  const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "{\n";
 
@@ -150,8 +150,8 @@ inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
 // which is a registered value type).
 inline std::string print_value_token_timesamples(const value::TimeSamples &v,
                                                   const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "{\n";
 
@@ -174,8 +174,8 @@ inline std::string print_value_token_timesamples(const value::TimeSamples &v,
 
 inline std::string print_str_timesamples(
     const value::TimeSamples &v, const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "{\n";
 
@@ -205,8 +205,8 @@ inline std::string print_animatable_default(const Animatable<T> &v,
                                             const uint32_t indent = 0) {
   (void)indent;
 
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (v.is_blocked()) {
     ss << "None";
@@ -226,8 +226,8 @@ inline std::string print_animatable_default(const Animatable<T> &v,
 template <typename T>
 inline std::string print_animatable_timesamples(const Animatable<T> &v,
                                                 const uint32_t indent = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (v.has_timesamples()) {
     if constexpr (animatable_detail::has_value_type_traits<T>::value) {
@@ -254,8 +254,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttribute<Animatable<T>> &attr, const std::string &name,
     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -349,8 +349,8 @@ inline std::string print_typed_attr(
 inline std::string print_str_attr(
     const TypedAttribute<Animatable<std::string>> &attr,
     const std::string &name, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -384,7 +384,7 @@ inline std::string print_str_attr(
 
         std::string a;
         if (pv.value().get_scalar(&a)) {
-          ss << " = " << lightusd::buildEscapedAndQuotedStringForUSDA(a);
+          ss << " = " << lightusd::legacy::buildEscapedAndQuotedStringForUSDA(a);
         } else {
           ss << " = [InternalError]";
         }
@@ -434,8 +434,8 @@ template <typename T>
 inline std::string print_typed_attr(const TypedAttribute<T> &attr,
                                     const std::string &name,
                                     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -500,8 +500,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &name, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -593,8 +593,8 @@ template <typename T>
 inline std::string print_typed_terminal_attr(
     const TypedTerminalAttribute<T> &attr, const std::string &name,
     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     ss << pprint::Indent(indent);
@@ -624,8 +624,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttributeWithFallback<T> &attr, const std::string &name,
     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -685,8 +685,8 @@ template <typename T>
 inline std::string print_typed_token_attr(
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &name, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
 
@@ -761,8 +761,8 @@ template <typename T>
 inline std::string print_typed_token_attr(
     const TypedAttributeWithFallback<T> &attr, const std::string &name,
     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (attr.authored()) {
 
@@ -803,8 +803,8 @@ inline std::string print_typed_token_attr(
 
 inline std::string print_rel_only(const Relationship &rel,
                                   const std::string &name, uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << "rel " << name;
 
@@ -842,8 +842,8 @@ inline std::string print_relationship(const Relationship &rel,
                                       const bool custom,
                                       const std::string &name,
                                       uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent);
 
@@ -871,8 +871,8 @@ inline std::string print_relationship(const Relationship &rel,
 template <typename T>
 inline std::string print_gprim_predefined(const T &gprim,
                                           const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // properties
   ss << print_typed_attr(gprim.doubleSided, "doubleSided", indent);
@@ -904,8 +904,8 @@ inline std::string print_gprim_predefined(const T &gprim,
 template <typename PrimT>
 inline std::string print_prim_header(const PrimT &prim, const char *type_name,
                                      uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << to_string(prim.spec) << " " << type_name
      << " \"" << prim.name << "\"\n";
   if (prim.meta.authored()) {
@@ -920,11 +920,12 @@ inline std::string print_prim_header(const PrimT &prim, const char *type_name,
 template <typename GeomT>
 inline std::string print_axis_attr(const GeomT &geom, uint32_t indent) {
   if (!geom.axis.authored()) return {};
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << "uniform token axis = \""
      << to_string(geom.axis.get_value()) << "\"\n";
   return pp_ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

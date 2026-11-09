@@ -39,9 +39,9 @@ int main(int argc, char** argv) {
     }
 
     // Load USD file
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     std::string warn, err;
-    bool ret = lightusd::LoadUSDFromFile(filename, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDFromFile(filename, &stage, &warn, &err);
 
     if (!warn.empty()) {
         std::cerr << "Warning: " << warn << "\n";
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     }
 
     // Set up render scene converter with triangulation method
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
 
     // Configure mesh conversion
     env.mesh_config.triangulate = true;  // Enable triangulation
@@ -61,15 +61,15 @@ int main(int argc, char** argv) {
     // Set the triangulation method
     if (use_fan) {
         env.mesh_config.triangulation_method =
-            lightusd::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
+            lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
     } else {
         env.mesh_config.triangulation_method =
-            lightusd::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
+            lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
     }
 
     // Convert to render scene
-    lightusd::tydra::RenderSceneConverter converter;
-    lightusd::tydra::RenderScene render_scene;
+    lightusd::legacy::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderScene render_scene;
 
     if (!converter.ConvertToRenderScene(env, &render_scene)) {
         std::cerr << "Failed to convert to render scene: "

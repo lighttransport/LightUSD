@@ -183,10 +183,11 @@ constexpr int kCircleSegs = 24;
 }  // namespace
 
 void CollectLightCameraTransforms(
-    const lightusd::tydra::Node& node,
+    const lightusd::legacy::tydra::Node& node,
     std::unordered_map<int, std::array<float, 16>>& lightXforms,
     std::unordered_map<int, std::array<float, 16>>& camXforms) {
   using namespace lightusd::tydra;
+  using namespace lightusd::legacy::tydra;  // NOLINT
   switch (node.nodeType) {
     case NodeType::PointLight:
     case NodeType::DirectionalLight:
@@ -220,10 +221,10 @@ void CollectLightCameraTransforms(
   }
 }
 
-void BuildLightGizmos(const lightusd::tydra::RenderScene& rs,
+void BuildLightGizmos(const lightusd::legacy::tydra::RenderScene& rs,
                       const std::unordered_map<int, std::array<float, 16>>& lightXforms,
                       std::vector<HelperVertex>& out) {
-  using lightusd::tydra::RenderLight;
+  using lightusd::legacy::tydra::RenderLight;
 
   for (size_t i = 0; i < rs.lights.size(); ++i) {
     auto it = lightXforms.find(static_cast<int>(i));
@@ -319,11 +320,11 @@ void BuildLightGizmos(const lightusd::tydra::RenderScene& rs,
   }
 }
 
-void BuildCameraGizmos(const lightusd::tydra::RenderScene& rs,
+void BuildCameraGizmos(const lightusd::legacy::tydra::RenderScene& rs,
                        const std::unordered_map<int, std::array<float, 16>>& camXforms,
                        std::vector<HelperVertex>& out) {
-  using lightusd::tydra::RenderCamera;
-  using lightusd::GeomCamera;
+  using lightusd::legacy::tydra::RenderCamera;
+  using lightusd::legacy::GeomCamera;
 
   const float* c = kCameraColor;
 

@@ -3,7 +3,7 @@
 //
 // cache.hh - Cached / lazy (partial-composition) USD composition engine.
 //
-// lightusd::pcp::Cache is the lightusd counterpart to OpenUSD's PcpCache. It
+// lightusd::legacy::pcp::Cache is the lightusd counterpart to OpenUSD's PcpCache. It
 // reuses the composition_graph engine (PrimIndex / CompNode / PrimIndexBuilder)
 // and adds the layer the eager CompositionGraph lacks:
 //
@@ -57,13 +57,13 @@
 #include "layer.hh"
 #include "pcp/layer-registry.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Stage;  // forward decl; stage.hh is only included in cache.cc
 
 namespace pcp {
 
-namespace cg = lightusd::composition_graph;
+namespace cg = lightusd::legacy::composition_graph;
 
 // ---------------------------------------------------------------------------
 // CacheOptions
@@ -171,4 +171,5 @@ class Cache {
 };
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd

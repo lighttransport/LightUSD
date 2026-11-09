@@ -13,7 +13,7 @@
 #include "core/logger.hh"
 #include "tiny-format.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 std::string AssetResolutionResolver::search_paths_str() const {
   std::string str;
@@ -341,7 +341,7 @@ bool AssetResolutionResolver::open_asset(const std::string& resolvedPath, const 
 
       DCOUT("asset_size: " << sz);
 
-      lightusd::Asset asset;
+      lightusd::legacy::Asset asset;
       asset.resize(size_t(sz));
 
       uint64_t read_size{0};
@@ -405,7 +405,7 @@ bool AssetResolutionResolver::open_asset(const std::string& resolvedPath, const 
 
       DCOUT("asset_size: " << sz);
 
-      lightusd::Asset asset;
+      lightusd::legacy::Asset asset;
       asset.resize(size_t(sz));
 
       uint64_t read_size{0};
@@ -467,4 +467,5 @@ bool AssetResolutionResolver::open_asset(const std::string& resolvedPath, const 
 #endif
 }
 
+}  // namespace legacy
 }  // namespace lightusd

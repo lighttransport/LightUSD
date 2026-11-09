@@ -20,7 +20,7 @@
 #include "stream-writer.hh"
 #include "typed-array-core.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Configuration for threaded printing
@@ -675,4 +675,5 @@ void set_threaded_print_num_threads(unsigned int num_threads) {
     g_threaded_print_config.num_threads = num_threads;
 }
 
+}  // namespace legacy
 } // namespace lightusd

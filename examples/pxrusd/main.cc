@@ -179,8 +179,8 @@ static void pxrusd_test()
     std::cout << "s = " << s << "\n"; printf("0x%016lx\n", sval.u);
     std::cout << "c = " << c << "\n"; printf("0x%016lx\n", cval.u);
 
-    double st = lightusd::math::sin_pi(45.0/180.0);
-    double ct = lightusd::math::cos_pi(45.0/180.0);
+    double st = lightusd::legacy::math::sin_pi(45.0/180.0);
+    double ct = lightusd::legacy::math::cos_pi(45.0/180.0);
 
     sval.f = st;
     cval.f = ct;
@@ -202,8 +202,8 @@ static void pxrusd_test()
     std::cout << "s = " << s << "\n";
     std::cout << "c = " << c << "\n";
 
-    st = lightusd::math::sin_pi(90.0/180.0);
-    ct = lightusd::math::cos_pi(90.0/180.0);
+    st = lightusd::legacy::math::sin_pi(90.0/180.0);
+    ct = lightusd::legacy::math::cos_pi(90.0/180.0);
 
 
     sval.f = st;
@@ -214,7 +214,7 @@ static void pxrusd_test()
     std::cout << "c = " << c << "\n";
 
     sval.f = boost::math::constants::pi<double>() * (45.0 / 180.0);
-    cval.f = lightusd::math::constants<double>::pi() * (45.0 / 180.0);
+    cval.f = lightusd::legacy::math::constants<double>::pi() * (45.0 / 180.0);
 
     std::cout << "pi\n";
     std::cout << "s == c ? " << (sval.u == cval.u) << "\n";

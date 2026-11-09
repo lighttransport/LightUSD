@@ -4,7 +4,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 std::string base122_encode(const std::vector<uint8_t>& data);
 
@@ -13,4 +13,5 @@ std::string base122_encode(const std::vector<uint8_t>& data);
 int base122_decode(const std::string& str, std::vector<uint8_t>& out);
 
 
+}  // namespace legacy
 } // namespace lightusd

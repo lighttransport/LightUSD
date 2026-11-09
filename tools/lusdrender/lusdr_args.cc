@@ -1212,9 +1212,9 @@ int NullARRead(const char *, uint64_t, uint8_t *, uint64_t *, std::string *,
   return -1;
 }
 
-void SetupNullAssetResolution(lightusd::AssetResolutionResolver *resolver) {
+void SetupNullAssetResolution(lightusd::legacy::AssetResolutionResolver *resolver) {
   if (!resolver) return;
-  lightusd::AssetResolutionHandler handler;
+  lightusd::legacy::AssetResolutionHandler handler;
   handler.resolve_fun = NullARResolve;
   handler.size_fun = NullARSize;
   handler.read_fun = NullARRead;

@@ -7,12 +7,13 @@
 #include "nonstd/expected.hpp"
 #include "../value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 // Forward declarations
 template<typename T> struct Animatable;
+}  // namespace legacy
 }  // namespace lightusd
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace utils {
 
@@ -113,5 +114,6 @@ std::string SanitizeAssetPath(const std::string& path,
 
 }  // namespace utils
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 

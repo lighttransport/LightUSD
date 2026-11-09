@@ -56,7 +56,7 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace ascii {
 
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -399,7 +399,7 @@ static constexpr size_t g_usd_keywords_count =
 
 
 static void RegisterStageMetas(
-    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::legacy::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
   metas["documentation"] =
@@ -460,7 +460,7 @@ static void RegisterStageMetas(
 }
 
 static void RegisterPrimMetas(
-    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::legacy::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
@@ -522,7 +522,7 @@ static void RegisterPrimMetas(
 }
 
 static void RegisterPropMetas(
-    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::legacy::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
@@ -747,7 +747,7 @@ void AsciiParser::RecordPropertyCursor(const std::string &prim_path,
 
 namespace {
 
-std::string GetSourceLineAtCursor(const lightusd::StreamReader *sr, int target_row) {
+std::string GetSourceLineAtCursor(const lightusd::legacy::StreamReader *sr, int target_row) {
   if (!sr || !sr->data() || (target_row < 0)) {
     return std::string();
   }
@@ -1725,9 +1725,9 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
     return false;
   }
 
-  lightusd::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  lightusd::legacy::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  lightusd::ascii::AsciiParser parser(&sr);
+  lightusd::legacy::ascii::AsciiParser parser(&sr);
 
 #define PARSE_BASE_TYPE(__ty)                                            \
   case value::TypeTraits<__ty>::type_id(): {                             \
@@ -1795,6 +1795,7 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
 }
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

@@ -35,7 +35,7 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -243,4 +243,5 @@ bool RenderSceneConverter::ExpandPointInstancer(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

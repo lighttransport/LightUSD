@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
 
   // Test 1: Parse MaterialX from string
   std::cout << "Test 1: Parsing MaterialX XML from string...\n";
-  lightusd::MtlxModel mtlx;
-  bool ret = lightusd::ReadMaterialXFromString(
+  lightusd::legacy::MtlxModel mtlx;
+  bool ret = lightusd::legacy::ReadMaterialXFromString(
       test_openpbr_mtlx, "test.mtlx", &mtlx, &warn, &err);
 
   if (!ret) {
@@ -65,8 +65,8 @@ int main(int argc, char** argv) {
 
   // Test 2: Convert to PrimSpec
   std::cout << "Test 2: Converting MaterialX to USD PrimSpec...\n";
-  lightusd::PrimSpec ps;
-  ret = lightusd::ToPrimSpec(mtlx, ps, &err);
+  lightusd::legacy::PrimSpec ps;
+  ret = lightusd::legacy::ToPrimSpec(mtlx, ps, &err);
 
   if (!ret) {
     std::cerr << "ERROR: Failed to convert MaterialX to PrimSpec\n";
@@ -84,12 +84,12 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     std::cout << "Test 3: Loading MaterialX from file: " << argv[1] << "\n";
 
-    lightusd::AssetResolutionResolver resolver;
-    lightusd::MtlxModel mtlx_file;
+    lightusd::legacy::AssetResolutionResolver resolver;
+    lightusd::legacy::MtlxModel mtlx_file;
     warn.clear();
     err.clear();
 
-    ret = lightusd::ReadMaterialXFromFile(
+    ret = lightusd::legacy::ReadMaterialXFromFile(
         resolver, argv[1], &mtlx_file, &warn, &err);
 
     if (!ret) {

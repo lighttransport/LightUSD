@@ -16,6 +16,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 // Build a deterministic test image with `ch` channels (8-bit).

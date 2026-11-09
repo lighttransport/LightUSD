@@ -96,7 +96,7 @@
 #include "common-macros.inc"
 #include "tiny-string.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -1373,7 +1373,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   {
-    nonstd::optional<uint32_t> parsed = lightusd::atou(str);
+    nonstd::optional<uint32_t> parsed = lightusd::legacy::atou(str);
     if (!parsed.has_value()) {
       PushError("Not an 32bit unsigned integer literal or value out of range.\n");
       return false;
@@ -1508,7 +1508,7 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   {
-    nonstd::optional<int64_t> parsed = lightusd::atoll(str);
+    nonstd::optional<int64_t> parsed = lightusd::legacy::atoll(str);
     if (!parsed.has_value()) {
       PushError("Not an 64bit signed integer literal.\n");
       return false;
@@ -1652,7 +1652,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   {
-    nonstd::optional<uint64_t> parsed = lightusd::atoull(str);
+    nonstd::optional<uint64_t> parsed = lightusd::legacy::atoull(str);
     if (!parsed.has_value()) {
       PushError("Not an 64bit unsigned integer literal or value out of range.\n");
       return false;
@@ -3692,6 +3692,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
 
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDA_READER

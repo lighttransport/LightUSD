@@ -18,7 +18,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace fmt {
 
 /// Lower-case hexadecimal of `v`, zero-padded to `width` digits (0 = no
@@ -129,4 +129,5 @@ std::string format(const std::string &in, Args const &...args) {
 std::string format(const std::string &in);
 
 }  // namespace fmt
+}  // namespace legacy
 }  // namespace lightusd

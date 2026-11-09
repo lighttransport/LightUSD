@@ -17,7 +17,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       "string_pool_fuzz_12", "string_pool_fuzz_13", "string_pool_fuzz_14",
       "string_pool_fuzz_15"};
 
-  lightusd::StringPool &pool = lightusd::StringPool::instance();
+  lightusd::legacy::StringPool &pool = lightusd::legacy::StringPool::instance();
   const char *ptrs[sizeof(kKeys) / sizeof(kKeys[0])] = {};
   const size_t nkeys = sizeof(kKeys) / sizeof(kKeys[0]);
 

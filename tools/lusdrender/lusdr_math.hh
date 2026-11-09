@@ -39,9 +39,9 @@
 
 namespace lusdr {
 
-using lightusd::value::color3f;
-using lightusd::value::float3;
-using lightusd::value::matrix4d;
+using lightusd::legacy::value::color3f;
+using lightusd::legacy::value::float3;
+using lightusd::legacy::value::matrix4d;
 
 // Memory budget + tracking pool allocator now live in the shared header so
 // examples/lusdquicklook can use them too. These aliases keep every lusdr call
@@ -535,10 +535,10 @@ inline float ClampFloat(float v, float lo, float hi) {
 }
 
 inline Vec3 FromFloat3(const float3 &v) { return Vec3{v[0], v[1], v[2]}; }
-inline Vec3 FromPoint3(const lightusd::value::point3f &v) {
+inline Vec3 FromPoint3(const lightusd::legacy::value::point3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
-inline Vec3 FromVector3(const lightusd::value::vector3f &v) {
+inline Vec3 FromVector3(const lightusd::legacy::value::vector3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
 

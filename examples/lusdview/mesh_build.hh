@@ -16,7 +16,7 @@ namespace lusdview {
 // Fill DrawMeshCPU::purpose from the source Stage prims. This is intentionally
 // separate from RenderScene conversion because RenderMesh does not carry USD
 // purpose today.
-void ApplyMeshPurposes(const lightusd::Stage& stage, DrawScene* draw);
+void ApplyMeshPurposes(const lightusd::legacy::Stage& stage, DrawScene* draw);
 
 // Derive the raster preview key light (draw->previewLightDir/Color/hasPreview
 // Light) from draw->lights. Called by BuildDrawScene; also usable by the `next`
@@ -84,24 +84,24 @@ void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
 // `stage` (optional) supplies the source Stage so per-mesh extras not carried by
 // RenderMesh can be read -- currently blendshape in-between shapes (read from the
 // BlendShape prims and remapped to DrawVertex order alongside the primary target).
-void BuildDrawScene(const lightusd::tydra::RenderScene& rs, DrawScene* out,
+void BuildDrawScene(const lightusd::legacy::tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl = nullptr,
-                    const lightusd::Stage* stage = nullptr,
+                    const lightusd::legacy::Stage* stage = nullptr,
                     const TextureRuntimeOptions& textureOptions = {});
 
 // Build DrawVolumeCPU entries from RenderScene::volumes (UsdVol / OpenVDB).
-void BuildDrawVolumes(const lightusd::tydra::RenderScene& rs, DrawScene* out);
+void BuildDrawVolumes(const lightusd::legacy::tydra::RenderScene& rs, DrawScene* out);
 
 // Build a DrawCameraCPU from a row-major world matrix and a tydra::RenderCamera
 // (legacy loader). Caller sets `name`, `absPath`, `displayName`.
 DrawCameraCPU MakeDrawCameraFromTydra(
-    const lightusd::value::matrix4d& worldMatrix,
-    const lightusd::tydra::RenderCamera& cam);
+    const lightusd::legacy::value::matrix4d& worldMatrix,
+    const lightusd::legacy::tydra::RenderCamera& cam);
 
 // Build camera records from a legacy Tydra RenderScene by walking its
 // node tree for Camera nodes and extracting world pose + lens from the parallel
 // RenderCamera. Used for loader-equivalence testing.
-void BuildDrawCameras(const lightusd::tydra::RenderScene& rs, DrawScene* out);
+void BuildDrawCameras(const lightusd::legacy::tydra::RenderScene& rs, DrawScene* out);
 
 // Streaming variant: run `converter.ConvertToRenderSceneStreaming` and build the
 // DrawScene incrementally as elements are produced (mesh geometry as each mesh
@@ -110,9 +110,9 @@ void BuildDrawCameras(const lightusd::tydra::RenderScene& rs, DrawScene* out);
 // ConvertToRenderScene + BuildDrawScene, while also fully populating `render`.
 // Returns the conversion result. `ctrl` bounds the build by the triangle /
 // vertex-byte budget (draw-side truncation; conversion still completes).
-bool BuildDrawSceneStreaming(lightusd::tydra::RenderSceneConverter& converter,
-                             const lightusd::tydra::RenderSceneConverterEnv& env,
-                             lightusd::tydra::RenderScene* render, DrawScene* out,
+bool BuildDrawSceneStreaming(lightusd::legacy::tydra::RenderSceneConverter& converter,
+                             const lightusd::legacy::tydra::RenderSceneConverterEnv& env,
+                             lightusd::legacy::tydra::RenderScene* render, DrawScene* out,
                              LoadControl* ctrl = nullptr,
                              const TextureRuntimeOptions& textureOptions = {});
 

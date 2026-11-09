@@ -18,7 +18,7 @@
   } \
 }
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -171,7 +171,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  lightusd::Path *materialPath,
+  lightusd::legacy::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -232,7 +232,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  lightusd::Path *materialPath,
+  lightusd::legacy::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -248,7 +248,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  lightusd::Path *materialPath,
+  lightusd::legacy::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -332,7 +332,7 @@ bool GetBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
   const std::string &materialPurpose,
-  lightusd::Path *materialPath,
+  lightusd::legacy::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -502,4 +502,5 @@ bool GetBoundMaterial(
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

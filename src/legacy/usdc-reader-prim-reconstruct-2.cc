@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule_1);
@@ -26,4 +26,5 @@ INSTANTIATE_RECONSTRUCT_PRIM(DomeLight_1);
 INSTANTIATE_RECONSTRUCT_PRIM(LightFilter);
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

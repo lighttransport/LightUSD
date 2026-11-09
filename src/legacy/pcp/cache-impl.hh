@@ -14,7 +14,7 @@
 #include "pcp/cache.hh"
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pcp {
 
 // An opinion site: (resolved layer identifier, prim path within that layer).
@@ -96,4 +96,5 @@ struct Cache::Impl {
 };
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd

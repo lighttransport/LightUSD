@@ -33,7 +33,7 @@
 
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 // Suppress unused-function warnings from enum handlers in the .inc that
@@ -198,4 +198,5 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcKeyframe)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcSensor)
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

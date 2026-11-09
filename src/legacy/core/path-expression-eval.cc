@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -272,4 +272,5 @@ bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
   return e.Eval();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

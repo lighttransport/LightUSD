@@ -66,7 +66,7 @@
 
 #include "tydra/render-data-material-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -1812,4 +1812,5 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

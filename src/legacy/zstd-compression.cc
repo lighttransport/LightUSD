@@ -13,7 +13,7 @@
 // Use amalgamated single-file zstd
 #include "external/zstd.h"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 bool ZstdCompression::IsZstdCompressed(const uint8_t *data, size_t length) {
   if (!data || length < 4) {
@@ -181,6 +181,7 @@ size_t ZstdCompression::GetCompressBound(size_t inputSize) {
   return ZSTD_compressBound(inputSize);
 }
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_WITH_ZSTD_COMPRESSION

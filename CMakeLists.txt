@@ -159,6 +159,13 @@ endif()
 # "core/prim.hh" / "tydra/render-data.hh" resolve to the legacy copies while
 # shared headers (core/logger.hh, image-loader.hh, ...) still come from src/.
 include_directories(BEFORE ${PROJECT_SOURCE_DIR}/src/legacy)
+# Legacy code lives in `lightusd::legacy`; this bridge keeps `lightusd::X`
+# working for legacy consumers and connects namespaces shared with src/.
+if(MSVC)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/FI${PROJECT_SOURCE_DIR}/src/legacy/legacy-namespace.hh>")
+else()
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${PROJECT_SOURCE_DIR}/src/legacy/legacy-namespace.hh>")
+endif()
 
 if (EMSCRIPTEN)
   set(LIGHTUSD_DEFAULT_NO_WERROR ON)

@@ -7,7 +7,7 @@
 #include <string>
 #include <functional>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace mtlx {
 
 // Adapter to replace pugixml with our parser
@@ -166,4 +166,5 @@ using xml_attribute = AdapterXMLAttribute;
 using xml_parse_result = AdapterXMLDocument::ParseResult;
 
 } // namespace mtlx
+}  // namespace legacy
 } // namespace lightusd

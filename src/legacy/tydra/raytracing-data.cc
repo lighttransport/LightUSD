@@ -9,7 +9,7 @@
 
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 //
@@ -391,4 +391,5 @@ AABB RaytracingScene::compute_scene_bounds() const {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

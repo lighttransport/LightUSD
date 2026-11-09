@@ -332,14 +332,14 @@ void CollectGpuPointsRec(
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
       const size_t orientation_index = orientations.size() == 4 ? 0 : i * 4;
       if (have_orientations && orientation_index + 3 < orientations.size()) {
-        lightusd::value::quatf q;
+        lightusd::legacy::value::quatf q;
         q.real = orientations[orientation_index + 0];
         q.imag[0] = orientations[orientation_index + 1];
         q.imag[1] = orientations[orientation_index + 2];
         q.imag[2] = orientations[orientation_index + 3];
-        const lightusd::value::matrix3d r = lightusd::to_matrix3x3(q);
-        const lightusd::value::matrix4d r4 =
-            lightusd::to_matrix(r, lightusd::value::double3{0.0, 0.0, 0.0});
+        const lightusd::legacy::value::matrix3d r = lightusd::legacy::to_matrix3x3(q);
+        const lightusd::legacy::value::matrix4d r4 =
+            lightusd::legacy::to_matrix(r, lightusd::legacy::value::double3{0.0, 0.0, 0.0});
         normal = TransformVector(world, TransformVector(
             r4, Vec3{0.0f, 0.0f, 1.0f}));
         major_axis = TransformVector(world, TransformVector(
@@ -631,7 +631,7 @@ static void ApplyLargeSceneProfile(Options *opt) {
 // starts at opt.height (<=0 = derive).
 static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
                                         const Options &opt, const Bounds &bounds,
-                                        lightusd::Axis usdUp, int *out_height) {
+                                        lightusd::legacy::Axis usdUp, int *out_height) {
   const int cam_width = opt.width > 0 ? opt.width : 960;
   CameraFrame camera;
   Options auto_opt = opt;
@@ -1212,7 +1212,7 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
   // memory per placement instead of a ~392 B MeshJobNext.
   auto place = [&](const lightusd::next::UsdPrim &prim, const matrix4d &world,
-                   lightusd::Purpose purpose) {
+                   lightusd::legacy::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
     const std::string key = prim.GetPath().str();
     auto it = proto_id.find(key);
@@ -1265,7 +1265,7 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted > budget) break;
     emitted += CollectRTInstancePlacementsNext(
-        stage, root, matrix4d::identity(), lightusd::Purpose::Default,
+        stage, root, matrix4d::identity(), lightusd::legacy::Purpose::Default,
         opt.timecode, opt.mask, place, budget + 1 - emitted);
   }
   if (invalid_prototype) return -1;
@@ -1300,9 +1300,9 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
     if (up == "Z") up_axis = 2.0;
     else if (up == "X") up_axis = 0.0;
   }
-  lightusd::Axis usdUp = (up_axis == 2.0)   ? lightusd::Axis::Z
-                         : (up_axis == 0.0) ? lightusd::Axis::X
-                                            : lightusd::Axis::Y;
+  lightusd::legacy::Axis usdUp = (up_axis == 2.0)   ? lightusd::legacy::Axis::Z
+                         : (up_axis == 0.0) ? lightusd::legacy::Axis::X
+                                            : lightusd::legacy::Axis::Y;
   int out_height = opt.height;
   CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
 
@@ -1806,7 +1806,7 @@ int main(int argc, char **argv) {
         // scene-wide transient peak on top of the final GPU chunk stream.
         std::vector<MeshJobNext> mesh_jobs;
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   lightusd::Purpose::Default, opt.timecode,
+                                   lightusd::legacy::Purpose::Default, opt.timecode,
                                    opt.mask, &mesh_jobs,
                                    /*expand_instancers=*/true);
 
@@ -1940,7 +1940,7 @@ int main(int argc, char **argv) {
         geo.uvs1.assign(have_uvs1 ? (split ? 0 : size_t(nv) * 2) : 0u,
                         0.0f);
         matrix4d inverse_world;
-        const bool invertible = lightusd::inverse(job.world, inverse_world, 1.0e-12);
+        const bool invertible = lightusd::legacy::inverse(job.world, inverse_world, 1.0e-12);
         std::map<std::array<size_t, 4>, uint32_t> corners;
         auto emit = [&](size_t corner, size_t face) {
           const int32_t point = index_values[corner];
@@ -2268,7 +2268,7 @@ int main(int argc, char **argv) {
       gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
         CollectCurvesNextRec(root, matrix4d::identity(),
-                             lightusd::Purpose::Default, opt.timecode,
+                             lightusd::legacy::Purpose::Default, opt.timecode,
                              &gpu_curve_jobs);
       }
       if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
@@ -2329,9 +2329,9 @@ int main(int argc, char **argv) {
       if (up == "Z") up_axis = 2.0;
       else if (up == "X") up_axis = 0.0;
     }
-    lightusd::Axis usdUp = (up_axis == 2.0) ? lightusd::Axis::Z
-                           : (up_axis == 0.0) ? lightusd::Axis::X
-                           : lightusd::Axis::Y;
+    lightusd::legacy::Axis usdUp = (up_axis == 2.0) ? lightusd::legacy::Axis::Z
+                           : (up_axis == 0.0) ? lightusd::legacy::Axis::X
+                           : lightusd::legacy::Axis::Y;
 
     Bounds bounds = gpu_flat_bounds;
     for (const auto &g : geos) {
@@ -2601,10 +2601,10 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
   std::string err;
-  lightusd::USDLoadOptions load_options;
+  lightusd::legacy::USDLoadOptions load_options;
   load_options.mmap_zero_copy = opt.rt_preview;
   load_options.max_memory_limit_in_mb = opt.rt_preview ? 65536 : 16384;
   load_options.load_assets = !opt.rt_preview;
@@ -2628,7 +2628,7 @@ int main(int argc, char **argv) {
   }
 
   if (opt.rt_preview) {
-    if (lightusd::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
+    if (lightusd::legacy::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
       std::cerr << "RT preview requires mmap zero-copy metadata for USDC input. "
                 << "Write flattened USDC without --compress-float-arrays.\n";
       return EXIT_FAILURE;
@@ -2773,9 +2773,9 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
 
-  lightusd::tydra::RenderScene render_scene;
-  lightusd::tydra::RenderSceneConverter converter;
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderScene render_scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.timecode = opt.timecode;
   env.mesh_config.triangulate = !opt.direct_prims;
   env.mesh_config.subdivision_level = opt.subdivision_level;
@@ -2892,7 +2892,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  lightusd::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
+  lightusd::legacy::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
   CameraFrame camera = MakeCameraFrame(render_scene, opt, bounds, height,
                                        up_axis);
   CollectLights(render_scene, &light_cache);

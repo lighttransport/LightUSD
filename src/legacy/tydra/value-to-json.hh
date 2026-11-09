@@ -19,7 +19,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 /// Canonical minijson APIs. The nlohmann overloads below are retained only
@@ -85,4 +85,5 @@ std::vector<std::string> GetRoleTypeNames();
 std::vector<std::string> GetPrimTypeNames();
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

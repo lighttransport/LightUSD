@@ -21,7 +21,7 @@
 #include "render-data.hh"
 #include "image-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 struct MeshVisitorEnv;
@@ -1132,12 +1132,12 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertCube(
-      const RenderSceneConverterEnv &env, const lightusd::Path &cube_abs_path,
-      const lightusd::GeomCube &cube, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &cube_abs_path,
+      const lightusd::legacy::GeomCube &cube, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -1157,63 +1157,63 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertSphere(
-      const RenderSceneConverterEnv &env, const lightusd::Path &sphere_abs_path,
-      const lightusd::GeomSphere &sphere, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &sphere_abs_path,
+      const lightusd::legacy::GeomSphere &sphere, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCylinder(
-      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
-      const lightusd::GeomCylinder &cylinder, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &abs_path,
+      const lightusd::legacy::GeomCylinder &cylinder, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCone(
-      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
-      const lightusd::GeomCone &cone, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &abs_path,
+      const lightusd::legacy::GeomCone &cone, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCapsule(
-      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
-      const lightusd::GeomCapsule &capsule, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &abs_path,
+      const lightusd::legacy::GeomCapsule &capsule, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertPlane(
-      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
-      const lightusd::GeomPlane &plane, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &abs_path,
+      const lightusd::legacy::GeomPlane &plane, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertMesh(
-      const RenderSceneConverterEnv &env, const lightusd::Path &mesh_abs_path,
-      const lightusd::GeomMesh &mesh, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::legacy::Path &mesh_abs_path,
+      const lightusd::legacy::GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       //const std::map<std::string, int64_t> &rmaterial_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const lightusd::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+      const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -1225,7 +1225,7 @@ class RenderSceneConverter {
   ///
   bool ConvertVolume(
       const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
-      const lightusd::Volume &volume, RenderVolume *dst);
+      const lightusd::legacy::Volume &volume, RenderVolume *dst);
 
   ///
   /// Compute tangents/binormals for a RenderMesh that had deferred tangent
@@ -1253,8 +1253,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertMaterial(const RenderSceneConverterEnv &env,
-                       const lightusd::Path &abs_mat_path,
-                       const lightusd::Material &material,
+                       const lightusd::legacy::Path &abs_mat_path,
+                       const lightusd::legacy::Material &material,
                        RenderMaterial *rmat_out);
 
   ///
@@ -1268,8 +1268,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
-                                   const lightusd::Path &shader_abs_path,
-                                   const lightusd::UsdPreviewSurface &shader,
+                                   const lightusd::legacy::Path &shader_abs_path,
+                                   const lightusd::legacy::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out,
                                    bool is_materialx = false);
 
@@ -1284,8 +1284,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
-                                    const lightusd::Path &shader_abs_path,
-                                    const lightusd::OpenPBRSurface &shader,
+                                    const lightusd::legacy::Path &shader_abs_path,
+                                    const lightusd::legacy::OpenPBRSurface &shader,
                                     OpenPBRSurfaceShader *openpbr_out,
                                     bool is_materialx = false,
                                     bool standard_surface_source = false);
@@ -1744,4 +1744,5 @@ extern template bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam<floa
     ShaderParam<float> &, bool);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

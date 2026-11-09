@@ -11,7 +11,7 @@
 #include "../tiny-hashmap.hh"
 #include "diff-and-compare.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -81,8 +81,8 @@ struct DiffSession
   Layer left;
   Layer right;
   tydra::DiffOptions opts;
-  lightusd::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
-  lightusd::HashMap<std::string, tydra::PropDiff> propDiffs;
+  lightusd::legacy::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
+  lightusd::legacy::HashMap<std::string, tydra::PropDiff> propDiffs;
   tydra::LayerMetaDiff layerMetaDiff;
 };
 
@@ -97,16 +97,16 @@ struct Context
 
   // ---- Uncomposed Layers (for editing) ----
   // key = UUID
-  lightusd::HashMap<std::string, USDLayer> layers;
+  lightusd::legacy::HashMap<std::string, USDLayer> layers;
 
   // ---- Viewer workflow assets ----
   // key = name
-  lightusd::HashMap<std::string, MCPAsset> assets;
+  lightusd::legacy::HashMap<std::string, MCPAsset> assets;
 
   std::vector<AssetSelection> selected_assets;
 
   // key = name
-  lightusd::HashMap<std::string, Screenshot> screenshots;
+  lightusd::legacy::HashMap<std::string, Screenshot> screenshots;
 
   // ---- QuickJS engine (persistent per session) ----
   std::unique_ptr<JSEngineState> js_engine;
@@ -117,5 +117,6 @@ struct Context
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 

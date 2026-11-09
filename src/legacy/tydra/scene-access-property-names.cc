@@ -18,12 +18,12 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 constexpr auto kInfoId = "info:id";
 
-bool GetPropertyNamesForPrim(const lightusd::Prim &prim,
+bool GetPropertyNamesForPrim(const lightusd::legacy::Prim &prim,
                              std::vector<std::string> *out_prop_names,
                              bool attr_prop, bool rel_prop, std::string *err);
 
@@ -1095,7 +1095,7 @@ bool GetPrimPropertyNamesImpl(const Shader &shader,
 
 }  // namespace
 
-bool GetPropertyNamesForPrim(const lightusd::Prim &prim,
+bool GetPropertyNamesForPrim(const lightusd::legacy::Prim &prim,
                              std::vector<std::string> *out_prop_names,
                              bool attr_prop, bool rel_prop, std::string *err) {
 #define GET_PRIM_PROPERTY_NAMES(__ty)                                      \
@@ -1127,4 +1127,5 @@ bool GetPropertyNamesForPrim(const lightusd::Prim &prim,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -2,7 +2,7 @@
 
 #include <array>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Base122 uses 122 safe printable ASCII characters
 // Excluding problematic chars like quotes, backslash, DEL, etc.
@@ -76,4 +76,5 @@ int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
     return 0;
 }
 
+}  // namespace legacy
 } // namespace lightusd

@@ -69,7 +69,7 @@
 #include "value-types.hh"
 #include "array-edit.hh"  // value::ArrayEdit + op helpers
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -375,7 +375,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  lightusd::ListEditQual qual{ListEditQual::ResetToExplicit};
+  lightusd::legacy::ListEditQual qual{ListEditQual::ResetToExplicit};
 
   // May be string only(varname is "comment")
   // For some reason, string-only data is just stored in `MetaVariable` and
@@ -402,7 +402,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  DCOUT("list-edit qual: " << lightusd::to_string(qual));
+  DCOUT("list-edit qual: " << lightusd::legacy::to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return nonstd::nullopt;
@@ -532,7 +532,7 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
     // ty = std::pair<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
       DCOUT("PrimMeta: list-edit qual = "
-            << lightusd::to_string(std::get<0>(m.value()))
+            << lightusd::legacy::to_string(std::get<0>(m.value()))
             << ", name = " << std::get<1>(m.value()).get_name());
 
       if (std::get<1>(m.value()).get_name().empty()) {
@@ -853,8 +853,8 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  lightusd::ascii::AsciiParser parser(&sr);
+  lightusd::legacy::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::legacy::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
 }
@@ -1571,7 +1571,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
   }
 
   bool varying_authored{false};
-  lightusd::Variability variability{lightusd::Variability::Varying};
+  lightusd::legacy::Variability variability{lightusd::legacy::Variability::Varying};
 
   if (!MaybeVariability(&variability, &varying_authored)) {
     return false;
@@ -2723,6 +2723,7 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
 }
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)

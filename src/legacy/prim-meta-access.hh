@@ -10,7 +10,7 @@
 // schema headers. Not part of the public API.
 #pragma once
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct PrimMetas;
 using PrimMeta = PrimMetas;
@@ -21,4 +21,5 @@ class Value;
 const PrimMeta *GetPrimMeta(const value::Value &v);
 PrimMeta *GetPrimMeta(value::Value &v);
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -21,7 +21,7 @@ void decompressInt(uint8_t const *data, size_t size)
   uint32_t n; // nInts
   memcpy(&n, data, 4);
 
-  using Compressor = lightusd::Usd_IntegerCompression;
+  using Compressor = lightusd::legacy::Usd_IntegerCompression;
   size_t compBufferSize = Compressor::GetCompressedBufferSize(n);
 
   // 8bytes: compressed size.

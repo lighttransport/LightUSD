@@ -216,12 +216,12 @@ void minijson_serialize_escapes_control_chars_test(void) {
 }
 
 void minijson_tydra_value_bridge_test(void) {
-  lightusd::value::Value source(1.25f);
-  lightusd::minijson::Value encoded = lightusd::tydra::ValueToMiniJSON(source);
+  lightusd::legacy::value::Value source(1.25f);
+  lightusd::minijson::Value encoded = lightusd::legacy::tydra::ValueToMiniJSON(source);
   TEST_CHECK(encoded.is_object());
   TEST_CHECK(encoded["type"].get_string() == "float");
   std::string err;
-  auto decoded = lightusd::tydra::MiniJSONToValue(encoded, &err);
+  auto decoded = lightusd::legacy::tydra::MiniJSONToValue(encoded, &err);
   TEST_CHECK(decoded.has_value());
   if (decoded) {
     auto value = decoded->get_value<float>();
@@ -229,16 +229,16 @@ void minijson_tydra_value_bridge_test(void) {
     if (value) TEST_CHECK(std::fabs(*value - 1.25f) < 1.0e-6f);
   }
 
-  lightusd::value::Value array_source(
+  lightusd::legacy::value::Value array_source(
       std::vector<float>{1.0f, 2.5f, 3.0f});
   lightusd::minijson::Value array_encoded =
-      lightusd::tydra::ValueToMiniJSON(array_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(array_source);
   TEST_CHECK(array_encoded["type"].get_string() == "float[]");
   TEST_CHECK(array_encoded["value"].is_array());
   TEST_CHECK(array_encoded["value"].size() == 3);
   TEST_CHECK(std::fabs(array_encoded["value"][1].get_double() - 2.5) <
              1.0e-6);
-  auto array_decoded = lightusd::tydra::MiniJSONToValue(array_encoded, &err);
+  auto array_decoded = lightusd::legacy::tydra::MiniJSONToValue(array_encoded, &err);
   TEST_CHECK(array_decoded.has_value());
   if (array_decoded) {
     auto values = array_decoded->get_value<std::vector<float>>();
@@ -246,48 +246,48 @@ void minijson_tydra_value_bridge_test(void) {
     if (values) TEST_CHECK(values->size() == 3 && (*values)[1] == 2.5f);
   }
 
-  lightusd::value::Value compound_source(lightusd::value::float3{1.0f, 2.0f,
+  lightusd::legacy::value::Value compound_source(lightusd::legacy::value::float3{1.0f, 2.0f,
                                                                   3.0f});
   lightusd::minijson::Value compound_encoded =
-      lightusd::tydra::ValueToMiniJSON(compound_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(compound_source);
   TEST_CHECK(compound_encoded["type"].get_string() == "float3");
   TEST_CHECK(compound_encoded["value"].is_array());
   TEST_CHECK(compound_encoded["value"].size() == 3);
   auto compound_decoded =
-      lightusd::tydra::MiniJSONToValue(compound_encoded, &err);
+      lightusd::legacy::tydra::MiniJSONToValue(compound_encoded, &err);
   TEST_CHECK(compound_decoded.has_value());
   if (compound_decoded) {
-    auto vector = compound_decoded->get_value<lightusd::value::float3>();
+    auto vector = compound_decoded->get_value<lightusd::legacy::value::float3>();
     TEST_CHECK(vector.has_value());
     if (vector) TEST_CHECK((*vector)[2] == 3.0f);
   }
 
-  lightusd::value::matrix4d matrix = lightusd::value::matrix4d::identity();
+  lightusd::legacy::value::matrix4d matrix = lightusd::legacy::value::matrix4d::identity();
   matrix.m[0][3] = 4.0;
-  lightusd::value::Value matrix_source(matrix);
+  lightusd::legacy::value::Value matrix_source(matrix);
   lightusd::minijson::Value matrix_encoded =
-      lightusd::tydra::ValueToMiniJSON(matrix_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(matrix_source);
   TEST_CHECK(matrix_encoded["type"].get_string() == "matrix4d");
   TEST_CHECK(matrix_encoded["value"].is_array());
   TEST_CHECK(matrix_encoded["value"].size() == 4);
   TEST_CHECK(matrix_encoded["value"][0][3].get_double() == 4.0);
-  auto matrix_decoded = lightusd::tydra::MiniJSONToValue(matrix_encoded, &err);
+  auto matrix_decoded = lightusd::legacy::tydra::MiniJSONToValue(matrix_encoded, &err);
   TEST_CHECK(matrix_decoded.has_value());
   if (matrix_decoded) {
     auto decoded_matrix =
-        matrix_decoded->get_value<lightusd::value::matrix4d>();
+        matrix_decoded->get_value<lightusd::legacy::value::matrix4d>();
     TEST_CHECK(decoded_matrix.has_value());
     if (decoded_matrix) TEST_CHECK(decoded_matrix->m[0][3] == 4.0);
   }
 
-  lightusd::value::dict dictionary;
+  lightusd::legacy::value::dict dictionary;
   dictionary["weight"] = 0.75f;
-  lightusd::value::dict nested;
+  lightusd::legacy::value::dict nested;
   nested["enabled"] = true;
   dictionary["nested"] = nested;
-  lightusd::value::Value dictionary_source(dictionary);
+  lightusd::legacy::value::Value dictionary_source(dictionary);
   lightusd::minijson::Value dictionary_encoded =
-      lightusd::tydra::ValueToMiniJSON(dictionary_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(dictionary_source);
   TEST_CHECK(dictionary_encoded["type"].get_string() == "dictionary");
   TEST_CHECK(dictionary_encoded["value"]["weight"]["type"].get_string() ==
              "float");
@@ -295,28 +295,28 @@ void minijson_tydra_value_bridge_test(void) {
                  ["value"]
                  .get_bool());
   auto dictionary_decoded =
-      lightusd::tydra::MiniJSONToValue(dictionary_encoded, &err);
+      lightusd::legacy::tydra::MiniJSONToValue(dictionary_encoded, &err);
   TEST_CHECK(dictionary_decoded.has_value());
   if (dictionary_decoded) {
     auto decoded_dictionary =
-        dictionary_decoded->get_value<lightusd::value::dict>();
+        dictionary_decoded->get_value<lightusd::legacy::value::dict>();
     TEST_CHECK(decoded_dictionary.has_value());
     if (decoded_dictionary) {
       auto weight = decoded_dictionary->at("weight").cast<float>();
       TEST_CHECK(weight && *weight == 0.75f);
-      auto nested_value = decoded_dictionary->at("nested").cast<lightusd::value::dict>();
+      auto nested_value = decoded_dictionary->at("nested").cast<lightusd::legacy::value::dict>();
       TEST_CHECK(nested_value != nullptr);
     }
   }
 
-  lightusd::value::Value asset_source(
-      lightusd::value::AssetPath("textures/albedo.png", "/tmp/albedo.png"));
+  lightusd::legacy::value::Value asset_source(
+      lightusd::legacy::value::AssetPath("textures/albedo.png", "/tmp/albedo.png"));
   lightusd::minijson::Value asset_encoded =
-      lightusd::tydra::ValueToMiniJSON(asset_source);
-  auto asset_decoded = lightusd::tydra::MiniJSONToValue(asset_encoded, &err);
+      lightusd::legacy::tydra::ValueToMiniJSON(asset_source);
+  auto asset_decoded = lightusd::legacy::tydra::MiniJSONToValue(asset_encoded, &err);
   TEST_CHECK(asset_decoded.has_value());
   if (asset_decoded) {
-    auto asset = asset_decoded->get_value<lightusd::value::AssetPath>();
+    auto asset = asset_decoded->get_value<lightusd::legacy::value::AssetPath>();
     TEST_CHECK(asset.has_value());
     if (asset) {
       TEST_CHECK(asset->GetAssetPath() == "textures/albedo.png");
@@ -324,79 +324,79 @@ void minijson_tydra_value_bridge_test(void) {
     }
   }
 
-  lightusd::value::color3f color{0.1f, 0.2f, 0.3f};
-  lightusd::value::Value color_source(color);
+  lightusd::legacy::value::color3f color{0.1f, 0.2f, 0.3f};
+  lightusd::legacy::value::Value color_source(color);
   lightusd::minijson::Value color_encoded =
-      lightusd::tydra::ValueToMiniJSON(color_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(color_source);
   TEST_CHECK(color_encoded["type"].get_string() == "color3f");
   TEST_CHECK(color_encoded["value"].size() == 3);
-  auto color_decoded = lightusd::tydra::MiniJSONToValue(color_encoded, &err);
+  auto color_decoded = lightusd::legacy::tydra::MiniJSONToValue(color_encoded, &err);
   TEST_CHECK(color_decoded.has_value());
   if (color_decoded) {
-    auto decoded_color = color_decoded->get_value<lightusd::value::color3f>();
+    auto decoded_color = color_decoded->get_value<lightusd::legacy::value::color3f>();
     TEST_CHECK(decoded_color.has_value());
     if (decoded_color) TEST_CHECK(std::fabs(decoded_color->b - 0.3f) < 1.0e-6f);
   }
 
-  lightusd::value::Value point_array_source(
-      std::vector<lightusd::value::float3>{{0.0f, 1.0f, 2.0f},
+  lightusd::legacy::value::Value point_array_source(
+      std::vector<lightusd::legacy::value::float3>{{0.0f, 1.0f, 2.0f},
                                            {3.0f, 4.0f, 5.0f}});
   lightusd::minijson::Value point_array_encoded =
-      lightusd::tydra::ValueToMiniJSON(point_array_source);
+      lightusd::legacy::tydra::ValueToMiniJSON(point_array_source);
   TEST_CHECK(point_array_encoded["type"].get_string() == "float3[]");
   TEST_CHECK(point_array_encoded["value"].size() == 2);
   TEST_CHECK(point_array_encoded["value"][1][2].get_double() == 5.0);
   auto point_array_decoded =
-      lightusd::tydra::MiniJSONToValue(point_array_encoded, &err);
+      lightusd::legacy::tydra::MiniJSONToValue(point_array_encoded, &err);
   TEST_CHECK(point_array_decoded.has_value());
   if (point_array_decoded) {
     auto points = point_array_decoded->get_value<
-        std::vector<lightusd::value::float3>>();
+        std::vector<lightusd::legacy::value::float3>>();
     TEST_CHECK(points.has_value());
   if (points) TEST_CHECK(points->size() == 2 && points->at(1)[2] == 5.0f);
 
-  lightusd::value::point3f point{6.0f, 7.0f, 8.0f};
-  lightusd::value::Value point_source(point);
-  auto point_encoded = lightusd::tydra::ValueToMiniJSON(point_source);
+  lightusd::legacy::value::point3f point{6.0f, 7.0f, 8.0f};
+  lightusd::legacy::value::Value point_source(point);
+  auto point_encoded = lightusd::legacy::tydra::ValueToMiniJSON(point_source);
   TEST_CHECK(point_encoded["type"].get_string() == "point3f");
-  auto point_decoded = lightusd::tydra::MiniJSONToValue(point_encoded, &err);
+  auto point_decoded = lightusd::legacy::tydra::MiniJSONToValue(point_encoded, &err);
   TEST_CHECK(point_decoded.has_value());
   if (point_decoded) {
-    auto decoded_point = point_decoded->get_value<lightusd::value::point3f>();
+    auto decoded_point = point_decoded->get_value<lightusd::legacy::value::point3f>();
     TEST_CHECK(decoded_point.has_value());
     if (decoded_point) TEST_CHECK(decoded_point->z == 8.0f);
   }
 
-  auto plain = lightusd::tydra::ValueToPlainMiniJSON(point_source);
+  auto plain = lightusd::legacy::tydra::ValueToPlainMiniJSON(point_source);
   TEST_CHECK(plain.is_array());
   TEST_CHECK(plain.size() == 3 && plain[2].get_double() == 8.0);
 
-  lightusd::value::point3h half_point{
-      lightusd::value::float_to_half_full(1.0f),
-      lightusd::value::float_to_half_full(2.0f),
-      lightusd::value::float_to_half_full(3.0f)};
-  auto half_encoded = lightusd::tydra::ValueToMiniJSON(
-      lightusd::value::Value(half_point));
+  lightusd::legacy::value::point3h half_point{
+      lightusd::legacy::value::float_to_half_full(1.0f),
+      lightusd::legacy::value::float_to_half_full(2.0f),
+      lightusd::legacy::value::float_to_half_full(3.0f)};
+  auto half_encoded = lightusd::legacy::tydra::ValueToMiniJSON(
+      lightusd::legacy::value::Value(half_point));
   TEST_CHECK(half_encoded["type"].get_string() == "point3h");
   TEST_CHECK(std::fabs(half_encoded["value"][1].get_double() - 2.0) <
              1.0e-3);
 
-  auto schema = lightusd::tydra::ValueTypeToMiniJSONSchema("float3[]");
+  auto schema = lightusd::legacy::tydra::ValueTypeToMiniJSONSchema("float3[]");
   TEST_CHECK(schema["type"].get_string() == "object");
   TEST_CHECK(schema["properties"]["value"]["type"].get_string() ==
              "array");
   TEST_CHECK(schema["properties"]["value"]["items"]["type"].get_string() ==
              "array");
 
-  lightusd::value::Value token_array_source(std::vector<lightusd::value::token>{
-      lightusd::value::token("st"), lightusd::value::token("st1")});
-  auto token_array = lightusd::tydra::ValueToMiniJSON(token_array_source);
+  lightusd::legacy::value::Value token_array_source(std::vector<lightusd::legacy::value::token>{
+      lightusd::legacy::value::token("st"), lightusd::legacy::value::token("st1")});
+  auto token_array = lightusd::legacy::tydra::ValueToMiniJSON(token_array_source);
   TEST_CHECK(token_array["type"].get_string() == "token[]");
   TEST_CHECK(token_array["value"][0].get_string() == "st");
-  auto decoded_tokens = lightusd::tydra::MiniJSONToValue(token_array, &err);
+  auto decoded_tokens = lightusd::legacy::tydra::MiniJSONToValue(token_array, &err);
   TEST_CHECK(decoded_tokens.has_value());
   if (decoded_tokens) {
-    auto tokens = decoded_tokens->get_value<std::vector<lightusd::value::token>>();
+    auto tokens = decoded_tokens->get_value<std::vector<lightusd::legacy::value::token>>();
     TEST_CHECK(tokens.has_value() && tokens->size() == 2);
     if (tokens) TEST_CHECK(tokens->at(1).str() == "st1");
   }

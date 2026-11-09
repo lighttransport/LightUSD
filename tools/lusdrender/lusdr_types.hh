@@ -34,16 +34,16 @@ extern "C" {
 
 namespace lusdr {
 
-using lightusd::value::color3f;
-using lightusd::value::float3;
-using lightusd::value::matrix4d;
-using lightusd::tydra::Node;
-using lightusd::tydra::NodeType;
-using lightusd::tydra::RenderCamera;
-using lightusd::tydra::RenderLight;
-using lightusd::tydra::RenderMaterial;
-using lightusd::tydra::RenderMesh;
-using lightusd::tydra::RenderScene;
+using lightusd::legacy::value::color3f;
+using lightusd::legacy::value::float3;
+using lightusd::legacy::value::matrix4d;
+using lightusd::legacy::tydra::Node;
+using lightusd::legacy::tydra::NodeType;
+using lightusd::legacy::tydra::RenderCamera;
+using lightusd::legacy::tydra::RenderLight;
+using lightusd::legacy::tydra::RenderMaterial;
+using lightusd::legacy::tydra::RenderMesh;
+using lightusd::legacy::tydra::RenderScene;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
@@ -662,7 +662,7 @@ struct Options {
   Vec3 view_dir{0.0f, 0.0f, 0.0f};
   bool has_view_dir{false};
   uint32_t purpose_mask{kPurposeDefaultMask};
-  double timecode{lightusd::value::TimeCode::Default()};
+  double timecode{lightusd::legacy::value::TimeCode::Default()};
   int samples{1};
   Vec3 bg{0.0f, 0.0f, 0.0f};
   float ambient{0.05f};
@@ -816,7 +816,7 @@ struct DirectShape {
   matrix4d inv_world{matrix4d::identity()};
   double radius{1.0};
   double height{2.0};
-  lightusd::Axis axis{lightusd::Axis::Z};
+  lightusd::legacy::Axis axis{lightusd::legacy::Axis::Z};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
 };
@@ -963,9 +963,9 @@ struct BorrowedArrayView {
 };
 
 struct MeshJob {
-  const lightusd::GeomMesh *mesh{nullptr};
+  const lightusd::legacy::GeomMesh *mesh{nullptr};
   matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
   std::string prim_path;
 };
 
@@ -1131,7 +1131,7 @@ struct ResolvedMat;
 struct MeshJobNext {
   lightusd::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
   // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
   // material-bound per GeomSubset becomes one job per bound subset + a
   // remainder job.
@@ -1271,14 +1271,14 @@ struct ResolvedMat {
 
 struct ProtoBuildReq {
   std::string path;
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
 struct CurveJobNext {
   lightusd::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
 };
 
 // One placement of a curve prototype's curve BLAS (deduped curve geometry stored

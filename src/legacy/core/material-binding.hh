@@ -13,7 +13,7 @@
 #include "relationship.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // for bindMaterialAs
 constexpr auto kWeakerThanDescendants = "weakerThanDescendants";
@@ -255,4 +255,5 @@ class MaterialBinding {
   std::map<std::string, ordered_dict<Relationship>> _materialBindingCollectionMap;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

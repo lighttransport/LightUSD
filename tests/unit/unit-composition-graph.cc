@@ -33,7 +33,9 @@
 #include "usdGeom.hh"
 
 using namespace lightusd;
-using namespace lightusd::composition_graph;
+
+using namespace lightusd::legacy;  // NOLINT
+using namespace lightusd::legacy::composition_graph;
 
 // ---------------------------------------------------------------------------
 // Pseudo-random number generator (xoshiro128**, deterministic)
@@ -1137,23 +1139,23 @@ def Xform "Root"
 
 void compgraph_validate_no_duplicate_sibling_names_test(void) {
   // Build a minimal layer with duplicate children.
-  lightusd::Layer layer;
-  lightusd::PrimSpec root(lightusd::Specifier::Def, "root");
+  lightusd::legacy::Layer layer;
+  lightusd::legacy::PrimSpec root(lightusd::legacy::Specifier::Def, "root");
 
-  lightusd::PrimSpec child_a(lightusd::Specifier::Def, "ChildA");
+  lightusd::legacy::PrimSpec child_a(lightusd::legacy::Specifier::Def, "ChildA");
   root.children().push_back(child_a);
 
-  lightusd::PrimSpec child_b(lightusd::Specifier::Def, "ChildB");
+  lightusd::legacy::PrimSpec child_b(lightusd::legacy::Specifier::Def, "ChildB");
   root.children().push_back(child_b);
 
   // First duplicate.
-  lightusd::PrimSpec child_a_dup(lightusd::Specifier::Def, "ChildA");
+  lightusd::legacy::PrimSpec child_a_dup(lightusd::legacy::Specifier::Def, "ChildA");
   root.children().push_back(child_a_dup);
 
   TEST_CHECK(layer.add_primspec("root", root));
 
   std::string warn, err;
-  bool valid = lightusd::composition_graph::ValidateNoDuplicateSiblingNames(
+  bool valid = lightusd::legacy::composition_graph::ValidateNoDuplicateSiblingNames(
       layer, &warn, &err);
   TEST_CHECK_(!valid, "ValidateNoDuplicateSiblingNames must reject duplicate "
               "sibling names");
@@ -1161,13 +1163,13 @@ void compgraph_validate_no_duplicate_sibling_names_test(void) {
               "duplicate");
 
   // Now test a valid layer (no duplicates) must pass.
-  lightusd::Layer clean_layer;
+  lightusd::legacy::Layer clean_layer;
   root.children().resize(2);  // Remove the duplicate ChildA.
   root.children()[0] = child_a;
   root.children()[1] = child_b;
   clean_layer.add_primspec("root", root);
   std::string cwarn, cerr;
-  bool valid2 = lightusd::composition_graph::ValidateNoDuplicateSiblingNames(
+  bool valid2 = lightusd::legacy::composition_graph::ValidateNoDuplicateSiblingNames(
       clean_layer, &cwarn, &cerr);
   TEST_CHECK_(valid2, "ValidateNoDuplicateSiblingNames must accept valid "
               "layers without duplicates");

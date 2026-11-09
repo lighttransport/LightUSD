@@ -17,7 +17,7 @@
 #include "primvar.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim.
@@ -455,4 +455,5 @@ class Attribute {
   AttrMeta _metas;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

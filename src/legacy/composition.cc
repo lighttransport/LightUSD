@@ -40,7 +40,7 @@
 #include "usdShade.hh"
 #include "usda-reader.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -447,7 +447,7 @@ bool PropagateAssetResolverState(PrimSpec &ps,
 bool LoadAsset(AssetResolutionResolver &resolver,
                const std::string &current_working_path,
                const std::vector<std::string> &search_paths,
-               const lightusd::HashMap<std::string, FileFormatHandler> &fileformats,
+               const lightusd::legacy::HashMap<std::string, FileFormatHandler> &fileformats,
                const value::AssetPath &assetPath, const Path &primPath,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
@@ -1261,7 +1261,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   }
 
   // AOUSD Core Spec 9.5: Build expression variables map for asset path substitution
-  lightusd::HashMap<std::string, std::string> expr_vars;
+  lightusd::legacy::HashMap<std::string, std::string> expr_vars;
   if (in_layer.metas().expressionVariables) {
     for (const auto &var : in_layer.metas().expressionVariables.value()) {
       if (auto sv = var.second.get_value<std::string>()) {
@@ -1301,7 +1301,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                                         resolver.search_paths_str()));
     }
 
-    lightusd::Layer sublayer;
+    lightusd::legacy::Layer sublayer;
     if (!LoadAsset(resolver, in_layer.get_current_working_path(),
                    in_layer.get_asset_search_paths(), options.fileformats,
                    layer.assetPath, /* not_used */ Path::make_root_path(),
@@ -2520,7 +2520,7 @@ void CollectWarmArcsRec(const PrimSpec &ps, uint32_t depth,
 
 void WarmLayerCacheParallel(
     const AssetResolutionResolver &base_resolver, const Layer &in_layer,
-    const lightusd::HashMap<std::string, FileFormatHandler> &fileformats,
+    const lightusd::legacy::HashMap<std::string, FileFormatHandler> &fileformats,
     bool allow_parent_relative_paths, size_t max_asset_bytes,
     std::map<std::string, Layer> *layer_cache, std::string *warn,
     bool warm_verbose) {
@@ -4609,4 +4609,5 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   return true;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

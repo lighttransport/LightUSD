@@ -9,7 +9,7 @@
 // All are USDCReader::Impl methods declared in usdc-reader-impl.hh.
 #include "usdc-reader-impl.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
@@ -455,4 +455,5 @@ bool USDCReader::Impl::ParseCommonPrimFields(
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

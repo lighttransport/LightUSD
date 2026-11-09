@@ -53,11 +53,11 @@ int main(int argc, char **argv) {
   std::cout << "Converting USDZ to JSON: " << filename << std::endl;
 
   // Convert USDZ to JSON
-  lightusd::USDZToJSONResult result;
+  lightusd::legacy::USDZToJSONResult result;
   std::string warn, err;
-  lightusd::USDToJSONOptions options;
+  lightusd::legacy::USDToJSONOptions options;
 
-  bool success = lightusd::USDZToJSON(filename, &result, &warn, &err, options);
+  bool success = lightusd::legacy::USDZToJSON(filename, &result, &warn, &err, options);
 
   if (!warn.empty()) {
     std::cerr << "Warnings: " << warn << std::endl;

@@ -7,7 +7,7 @@
 //
 // create simple scene composed of Xform and Mesh.
 //
-void SimpleScene(lightusd::Stage *stage)
+void SimpleScene(lightusd::legacy::Stage *stage)
 {
   //
   // lightusd currently does not provide scene construction API yet, so edit parameters directly.
@@ -16,12 +16,12 @@ void SimpleScene(lightusd::Stage *stage)
   // API is not multi-thread safe, thus if you need to manipulate a scene in multi-threaded context,
   // The app must take care of resource locks in app layer.
   //
-  lightusd::Xform xform;
+  lightusd::legacy::Xform xform;
   xform.name = "root";
 
-  lightusd::XformOp op;
-  op.op_type = lightusd::XformOp::OpType::Translate;
-  lightusd::value::double3 translate;
+  lightusd::legacy::XformOp op;
+  op.op_type = lightusd::legacy::XformOp::OpType::Translate;
+  lightusd::legacy::value::double3 translate;
   translate[0] = 1.0;
   translate[1] = 2.0;
   translate[2] = 3.0;
@@ -29,11 +29,11 @@ void SimpleScene(lightusd::Stage *stage)
 
   xform.xformOps.push_back(op);
 
-  lightusd::GeomMesh mesh;
+  lightusd::legacy::GeomMesh mesh;
   mesh.name = "quad";
 
   {
-    std::vector<lightusd::value::point3f> pts;
+    std::vector<lightusd::legacy::value::point3f> pts;
     pts.push_back({0.0f, 0.0f, 0.0f});
 
     pts.push_back({1.0f, 0.0f, 0.0f});
@@ -72,8 +72,8 @@ void SimpleScene(lightusd::Stage *stage)
     // int[] primvars:uv:indices = [ ... ]
     //
     {
-      lightusd::Attribute uvAttr;
-      std::vector<lightusd::value::texcoord2f> uvs;
+      lightusd::legacy::Attribute uvAttr;
+      std::vector<lightusd::legacy::value::texcoord2f> uvs;
 
       uvs.push_back({0.0f, 0.0f});
       uvs.push_back({1.0f, 0.0f});
@@ -84,20 +84,20 @@ void SimpleScene(lightusd::Stage *stage)
       uvAttr.set_value(std::move(uvs));
 
       // or we can first build primvar::PrimVar
-      //lightusd::primvar::PrimVar uvVar;
+      //lightusd::legacy::primvar::PrimVar uvVar;
       //uvVar.set_value(uvs);
       //uvAttr.set_var(std::move(uvVar));
 
       // Currently `interpolation` is described in Attribute metadataum.
-      uvAttr.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
+      uvAttr.metas().set_interpolation_enum(lightusd::legacy::Interpolation::Vertex);
 
-      lightusd::Property uvProp(uvAttr, /* custom*/false);
+      lightusd::legacy::Property uvProp(uvAttr, /* custom*/false);
 
       mesh.props.emplace("primvars:uv", uvProp);
 
       // ----------------------
 
-      lightusd::Attribute uvIndexAttr;
+      lightusd::legacy::Attribute uvIndexAttr;
       std::vector<int> uvIndices;
 
       // FIXME: Validate
@@ -107,36 +107,36 @@ void SimpleScene(lightusd::Stage *stage)
       uvIndices.push_back(3);
 
 
-      lightusd::primvar::PrimVar uvIndexVar;
+      lightusd::legacy::primvar::PrimVar uvIndexVar;
       uvIndexVar.set_value(std::move(uvIndices));
       uvIndexAttr.set_var(std::move(uvIndexVar));
 
-      lightusd::Property uvIndexProp(uvIndexAttr, /* custom*/false);
+      lightusd::legacy::Property uvIndexProp(uvIndexAttr, /* custom*/false);
       mesh.props.emplace("primvars:uv:indices", uvIndexProp);
 
     }
 
     // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
     {
-      lightusd::Attribute attrib;
+      lightusd::legacy::Attribute attrib;
       double myvalue = 3.0;
-      lightusd::primvar::PrimVar var;
+      lightusd::legacy::primvar::PrimVar var;
       var.set_value(myvalue);
       attrib.set_var(std::move(var));
 
-      attrib.variability() = lightusd::Variability::Uniform;
+      attrib.variability() = lightusd::legacy::Variability::Uniform;
 
       attrib.metas().set_hidden(false);
 
-      lightusd::Property prop(attrib, /* custom*/true);
+      lightusd::legacy::Property prop(attrib, /* custom*/true);
 
       mesh.props.emplace("myvalue", prop);
     }
 
   }
 
-  lightusd::Prim meshPrim(mesh);
-  lightusd::Prim xformPrim(xform);
+  lightusd::legacy::Prim meshPrim(mesh);
+  lightusd::legacy::Prim xformPrim(xform);
 
   // [Xform]
   //  |
@@ -149,13 +149,13 @@ void SimpleScene(lightusd::Stage *stage)
 
 int main(int argc, char **argv)
 {
-  lightusd::Stage stage; // empty scene
+  lightusd::legacy::Stage stage; // empty scene
 
   SimpleScene(&stage);
 
   std::string warn;
   std::string err;
-  bool ret = lightusd::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
+  bool ret = lightusd::legacy::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";

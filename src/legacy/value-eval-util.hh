@@ -3,7 +3,7 @@
 #include "value-types.hh"
 #include "linear-algebra.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 #define FOUR_ARITH_OP_2(__ty, __basety) \
 inline __ty operator+(const __ty &a, const __ty &b) { \
@@ -476,4 +476,5 @@ inline value::quatd lerp(const value::quatd &a, const value::quatd &b, const dou
 
 
 
+}  // namespace legacy
 } // namespace lightusd

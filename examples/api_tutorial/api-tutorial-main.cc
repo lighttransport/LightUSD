@@ -20,7 +20,7 @@
 //
 // create a Scene
 //
-void CreateScene(lightusd::Stage *stage) {
+void CreateScene(lightusd::legacy::Stage *stage) {
   // LightUSD API does not use mutex, smart pointers(e.g. unique_ptr/shared_ptr) and C++
   // exception. Also threading is opional in LightUSD and currently
   // multi-threading is not used. `value::token` implementation is simply copy
@@ -39,19 +39,19 @@ void CreateScene(lightusd::Stage *stage) {
   //
   // Create simple material with UsdPrevieSurface.
   //
-  lightusd::Material mat;
+  lightusd::legacy::Material mat;
   mat.name = "mat";
 
-  lightusd::Shader shader;  // Shader container
+  lightusd::legacy::Shader shader;  // Shader container
   shader.name = "defaultPBR";
   {
-    lightusd::UsdPreviewSurface surfaceShader;  // Concrete Shader node object
+    lightusd::legacy::UsdPreviewSurface surfaceShader;  // Concrete Shader node object
 
     //
     // Asssign actual shader object to Shader::value.
     // Also do not forget set its shader node type name through Shader::info_id
     //
-    shader.info_id = lightusd::kUsdPreviewSurface;  // "UsdPreviewSurface" token
+    shader.info_id = lightusd::legacy::kUsdPreviewSurface;  // "UsdPreviewSurface" token
 
     //
     // Currently no shader network/connection API.
@@ -66,7 +66,7 @@ void CreateScene(lightusd::Stage *stage) {
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
     //
     // token outputs:surface = </mat/defaultPBR.outputs:surface>
-    mat.surface.set(lightusd::Path(/* prim path */ "/mat/defaultPBR",
+    mat.surface.set(lightusd::legacy::Path(/* prim path */ "/mat/defaultPBR",
                                    /* prop path */ "outputs:surface"));
 
     //
@@ -76,8 +76,8 @@ void CreateScene(lightusd::Stage *stage) {
     shader.value = std::move(surfaceShader);
   }
 
-  lightusd::Prim shaderPrim(shader);
-  lightusd::Prim matPrim(mat);
+  lightusd::legacy::Prim shaderPrim(shader);
+  lightusd::legacy::Prim matPrim(mat);
 
   // matPrim.children().emplace_back(std::move(shaderPrim)); // no uniqueness
   // check
@@ -91,21 +91,21 @@ void CreateScene(lightusd::Stage *stage) {
 
   //
   // To construct Prim, first create concrete Prim object(e.g. Xform, GeomMesh),
-  // then add it to lightusd::Prim.
+  // then add it to lightusd::legacy::Prim.
   //
   //
-  lightusd::Xform xform;
+  lightusd::legacy::Xform xform;
   {
     xform.name = "root";  // Prim's name(elementPath)
 
     {
-      lightusd::XformOp op;
-      op.op_type = lightusd::XformOp::OpType::Transform;
-      lightusd::value::matrix4d a0;
-      lightusd::value::matrix4d b0;
+      lightusd::legacy::XformOp op;
+      op.op_type = lightusd::legacy::XformOp::OpType::Transform;
+      lightusd::legacy::value::matrix4d a0;
+      lightusd::legacy::value::matrix4d b0;
 
-      lightusd::Identity(&a0);
-      lightusd::Identity(&b0);
+      lightusd::legacy::Identity(&a0);
+      lightusd::legacy::Identity(&b0);
 
       a0.m[1][1] = 2.1;
 
@@ -114,7 +114,7 @@ void CreateScene(lightusd::Stage *stage) {
       b0.m[3][1] = 3.1;
       b0.m[3][2] = 5.1;
 
-      lightusd::value::matrix4d transform = a0 * b0;
+      lightusd::legacy::value::matrix4d transform = a0 * b0;
 
       op.set_value(std::move(transform));
 
@@ -124,9 +124,9 @@ void CreateScene(lightusd::Stage *stage) {
 
     {
       // `xformOp:***` attribute is represented as XformOp class
-      lightusd::XformOp op;
-      op.op_type = lightusd::XformOp::OpType::Translate;
-      lightusd::value::double3 translate;
+      lightusd::legacy::XformOp op;
+      op.op_type = lightusd::legacy::XformOp::OpType::Translate;
+      lightusd::legacy::value::double3 translate;
       translate[0] = 1.0;
       translate[1] = 2.0;
       translate[2] = 3.0;
@@ -139,10 +139,10 @@ void CreateScene(lightusd::Stage *stage) {
     {
       // .suffix will be prepended to `xformOp:translate`
       // 'xformOp:translate:move'
-      lightusd::XformOp op;
-      op.op_type = lightusd::XformOp::OpType::Translate;
+      lightusd::legacy::XformOp op;
+      op.op_type = lightusd::legacy::XformOp::OpType::Translate;
       op.suffix = "move";
-      lightusd::value::double3 translate;
+      lightusd::legacy::value::double3 translate;
 
       // TimeSamples value can be added with `set_timesample`
       // NOTE: TimeSamples data will be automatically sorted by time when using
@@ -161,12 +161,12 @@ void CreateScene(lightusd::Stage *stage) {
     }
   }
 
-  lightusd::GeomMesh mesh;
+  lightusd::legacy::GeomMesh mesh;
   {
     mesh.name = "quad";
 
     {
-      std::vector<lightusd::value::point3f> pts;
+      std::vector<lightusd::legacy::value::point3f> pts;
       pts.push_back({0.0f, 0.0f, 0.0f});
       pts.push_back({1.0f, 0.0f, 0.0f});
       pts.push_back({1.0f, 1.0f, 0.0f});
@@ -203,8 +203,8 @@ void CreateScene(lightusd::Stage *stage) {
       // int[] primvars:uv:indices = [ ... ]
       //
       {
-        lightusd::Attribute uvAttr;
-        std::vector<lightusd::value::texcoord2f> uvs;
+        lightusd::legacy::Attribute uvAttr;
+        std::vector<lightusd::legacy::value::texcoord2f> uvs;
 
         uvs.push_back({0.0f, 0.0f});
         uvs.push_back({1.0f, 0.0f});
@@ -215,22 +215,22 @@ void CreateScene(lightusd::Stage *stage) {
         uvAttr.set_value(std::move(uvs));
 
         // or we can first build primvar::PrimVar
-        // lightusd::primvar::PrimVar uvVar;
+        // lightusd::legacy::primvar::PrimVar uvVar;
         // uvVar.set_value(uvs);
         // uvAttr.set_var(std::move(uvVar));
 
         // Currently `interpolation` is described in Attribute metadataum.
         // You can set builtin(predefined) Attribute Metadatum(e.g.
         // `interpolation`, `hidden`) through `metas()`.
-        uvAttr.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
+        uvAttr.metas().set_interpolation_enum(lightusd::legacy::Interpolation::Vertex);
 
-        lightusd::Property uvProp(uvAttr);
+        lightusd::legacy::Property uvProp(uvAttr);
 
         mesh.props.emplace("primvars:uv", uvProp);
 
         // ----------------------
 
-        lightusd::Attribute uvIndexAttr;
+        lightusd::legacy::Attribute uvIndexAttr;
         std::vector<int> uvIndices;
 
         // FIXME: Validate
@@ -239,41 +239,41 @@ void CreateScene(lightusd::Stage *stage) {
         uvIndices.push_back(3);
         uvIndices.push_back(2);
 
-        lightusd::primvar::PrimVar uvIndexVar;
+        lightusd::legacy::primvar::PrimVar uvIndexVar;
         uvIndexVar.set_value(std::move(uvIndices));
         uvIndexAttr.set_var(std::move(uvIndexVar));
         // Or you can use this approach(if you want to keep a copy of PrimVar
         // data)
         // uvIndexAttr.set_var(uvIndexVar);
 
-        lightusd::Property uvIndexProp(uvIndexAttr);
+        lightusd::legacy::Property uvIndexProp(uvIndexAttr);
         mesh.props.emplace("primvars:uv:indices", uvIndexProp);
       }
 
       // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
       {
-        lightusd::Attribute attrib;
+        lightusd::legacy::Attribute attrib;
         double myvalue = 3.0;
-        lightusd::primvar::PrimVar var;
+        lightusd::legacy::primvar::PrimVar var;
         var.set_value(myvalue);
         attrib.set_var(std::move(var));
-        attrib.variability() = lightusd::Variability::Uniform;
+        attrib.variability() = lightusd::legacy::Variability::Uniform;
 
         attrib.metas().set_hidden(false);
 
         // NOTE: `custom` keyword would be deprecated in the future USD syntax,
         // so you can set it false.
-        lightusd::Property prop(attrib, /* custom*/ true);
+        lightusd::legacy::Property prop(attrib, /* custom*/ true);
 
         mesh.props.emplace("myvalue", prop);
       }
 
       // Add Primvar through GeomPrimvar;
       {
-        lightusd::GeomPrimvar uvPrimvar;
+        lightusd::legacy::GeomPrimvar uvPrimvar;
 
         uvPrimvar.set_name("my_uv");
-        std::vector<lightusd::value::texcoord2f> uvs;
+        std::vector<lightusd::legacy::value::texcoord2f> uvs;
 
         uvs.push_back({0.0f, 0.0f});
         uvs.push_back({1.0f, 0.0f});
@@ -281,7 +281,7 @@ void CreateScene(lightusd::Stage *stage) {
         uvs.push_back({0.0f, 1.0f});
 
         uvPrimvar.set_value(std::move(uvs)); // value at 'default' time
-        uvPrimvar.set_interpolation(lightusd::Interpolation::Vertex);
+        uvPrimvar.set_interpolation(lightusd::legacy::Interpolation::Vertex);
 
         std::vector<int> uvIndices;
         uvIndices.push_back(0);
@@ -315,23 +315,23 @@ void CreateScene(lightusd::Stage *stage) {
 
     // Material binding(`rel material:binding` is done by manually setup
     // targetPath.
-    lightusd::Relationship materialBinding;
+    lightusd::legacy::Relationship materialBinding;
     materialBinding.set(
-        lightusd::Path(/* prim path */ "/mat/defaultPBR", /* prop path */ ""));
+        lightusd::legacy::Path(/* prim path */ "/mat/defaultPBR", /* prop path */ ""));
 
     mesh.materialBinding = materialBinding;
 
     // TODO: Explicitly author MaterialBindingAPI apiSchema in Mesh Prim.
   }
 
-  lightusd::GeomSphere sphere1;
+  lightusd::legacy::GeomSphere sphere1;
   {
     sphere1.name = "sphere";
 
     sphere1.radius = 3.14;
   }
 
-  lightusd::GeomSphere sphere2;
+  lightusd::legacy::GeomSphere sphere2;
   {
     sphere2.name =
         "sphere";  // name will be modified to be unique at add_child().
@@ -355,39 +355,39 @@ void CreateScene(lightusd::Stage *stage) {
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
   // Xform::name, ...)
-  lightusd::Prim meshPrim(mesh);
+  lightusd::legacy::Prim meshPrim(mesh);
   {
     // `references`, `paylaod`
 
     {
-      lightusd::Reference ref;
-      ref.asset_path = lightusd::value::AssetPath("submesh-000.usd");
+      lightusd::legacy::Reference ref;
+      ref.asset_path = lightusd::legacy::value::AssetPath("submesh-000.usd");
 
-      std::vector<lightusd::Reference> referencesList;
+      std::vector<lightusd::legacy::Reference> referencesList;
       referencesList.push_back(ref);
 
-      meshPrim.metas().references = std::vector<std::pair<lightusd::ListEditQual, std::vector<lightusd::Reference>>>{
-          std::make_pair(lightusd::ListEditQual::Append, referencesList)};
+      meshPrim.metas().references = std::vector<std::pair<lightusd::legacy::ListEditQual, std::vector<lightusd::legacy::Reference>>>{
+          std::make_pair(lightusd::legacy::ListEditQual::Append, referencesList)};
     }
 
     {
-      lightusd::Payload pl;
-      pl.asset_path = lightusd::value::AssetPath("submesh-payload-000.usd");
+      lightusd::legacy::Payload pl;
+      pl.asset_path = lightusd::legacy::value::AssetPath("submesh-payload-000.usd");
 
-      std::vector<lightusd::Payload> payloadList;
+      std::vector<lightusd::legacy::Payload> payloadList;
       payloadList.push_back(pl);
 
-      meshPrim.metas().payload = std::vector<std::pair<lightusd::ListEditQual, std::vector<lightusd::Payload>>>{
-          std::make_pair(lightusd::ListEditQual::Append, payloadList)};
+      meshPrim.metas().payload = std::vector<std::pair<lightusd::legacy::ListEditQual, std::vector<lightusd::legacy::Payload>>>{
+          std::make_pair(lightusd::legacy::ListEditQual::Append, payloadList)};
     }
   }
 
-  lightusd::Prim spherePrim(sphere1);
+  lightusd::legacy::Prim spherePrim(sphere1);
   {
     // variantSet is maniuplated in Prim.
     // Currently we don't provide easy API for variantSet.
     // Need to add variantSet information manually for a while.
-    lightusd::VariantSelectionMap vsmap;
+    lightusd::legacy::VariantSelectionMap vsmap;
 
     // List of variantSet in the Prim.
     std::vector<std::string> variantSetList;
@@ -397,25 +397,25 @@ void CreateScene(lightusd::Stage *stage) {
     vsmap.emplace("colorVariant", "red");
 
     spherePrim.metas().variants = vsmap;
-    spherePrim.metas().variantSets = std::vector<std::pair<lightusd::ListEditQual, std::vector<std::string>>>{
-        std::make_pair(lightusd::ListEditQual::Append, variantSetList)};
+    spherePrim.metas().variantSets = std::vector<std::pair<lightusd::legacy::ListEditQual, std::vector<std::string>>>{
+        std::make_pair(lightusd::legacy::ListEditQual::Append, variantSetList)};
 
     // VariantSet is composed of metas + properties + childPrims
-    lightusd::VariantSet variantSet;
+    lightusd::legacy::VariantSet variantSet;
 
-    lightusd::Variant redVariant;
+    lightusd::legacy::Variant redVariant;
     redVariant.metas().set_comment("red color");
-    lightusd::value::color3f redColor({1.0f, 0.0f, 0.0f});
-    lightusd::Attribute redColorAttr;
+    lightusd::legacy::value::color3f redColor({1.0f, 0.0f, 0.0f});
+    lightusd::legacy::Attribute redColorAttr;
     redColorAttr.set_value(std::move(redColor));
     redVariant.properties().emplace("mycolor", redColorAttr);
     // TODO: Add example to add childPrims under Variant
     // redVariant.primChildren().emplace(...)
 
-    lightusd::Variant greenVariant;
+    lightusd::legacy::Variant greenVariant;
     greenVariant.metas().set_comment("green color");
-    lightusd::value::color3f greenColor({0.0f, 1.0f, 0.0f});
-    lightusd::Attribute greenColorAttr;
+    lightusd::legacy::value::color3f greenColor({0.0f, 1.0f, 0.0f});
+    lightusd::legacy::Attribute greenColorAttr;
     greenColorAttr.set_value(std::move(greenColor));
     greenVariant.properties().emplace("mycolor", greenColorAttr);
 
@@ -428,9 +428,9 @@ void CreateScene(lightusd::Stage *stage) {
     spherePrim.variantSets().emplace("colorVariant", variantSet);
   }
 
-  lightusd::Prim spherePrim2(sphere2);
+  lightusd::legacy::Prim spherePrim2(sphere2);
 
-  lightusd::Prim xformPrim(xform);
+  lightusd::legacy::Prim xformPrim(xform);
 
   // xformPrim.children().emplace_back(std::move(meshPrim));
   // xformPrim.children().emplace_back(std::move(spherePrim));
@@ -467,11 +467,11 @@ void CreateScene(lightusd::Stage *stage) {
   // metadata xfromPrim.metas().primChildren.size() must be identical to
   // xformPrim.children().size()
   xformPrim.metas().primChildren.push_back(
-      lightusd::value::token(xformPrim.children()[1].element_name()));
+      lightusd::legacy::value::token(xformPrim.children()[1].element_name()));
   xformPrim.metas().primChildren.push_back(
-      lightusd::value::token(xformPrim.children()[0].element_name()));
+      lightusd::legacy::value::token(xformPrim.children()[0].element_name()));
   xformPrim.metas().primChildren.push_back(
-      lightusd::value::token(xformPrim.children()[2].element_name()));
+      lightusd::legacy::value::token(xformPrim.children()[2].element_name()));
 #else
   // You can replace(or add if corresponding Prim does not exist) existing child
   // Prim using replace_child()
@@ -491,13 +491,13 @@ void CreateScene(lightusd::Stage *stage) {
   ///
   /// Add subLayers
   ///
-  std::vector<lightusd::SubLayer> sublayers;
-  lightusd::SubLayer slayer0;
-  slayer0.assetPath = lightusd::value::AssetPath("sublayer-000.usd");
+  std::vector<lightusd::legacy::SubLayer> sublayers;
+  lightusd::legacy::SubLayer slayer0;
+  slayer0.assetPath = lightusd::legacy::value::AssetPath("sublayer-000.usd");
   sublayers.push_back(slayer0);
   stage->metas().subLayers = sublayers;
   stage->metas().defaultPrim =
-      lightusd::value::token(xformPrim.element_name());  // token
+      lightusd::legacy::value::token(xformPrim.element_name());  // token
 
   if (!stage->add_root_prim(std::move(xformPrim))) {
     std::cerr << "Failed to add Prim to Stage root: " << stage->get_error()
@@ -515,8 +515,8 @@ void CreateScene(lightusd::Stage *stage) {
   // Prim using `replace_root_prim`.
 #if 0
   {
-    lightusd::Scope scope;
-    lightusd::Prim scopePrim(scope);
+    lightusd::legacy::Scope scope;
+    lightusd::legacy::Prim scopePrim(scope);
     if (!stage->replace_root_prim(/* root Prim name */"root", std::move(scopePrim))) {
       std::cerr << "Failed to replace Prim to Stage root: " << stage->get_error() << "\n";
       exit(-1);
@@ -532,14 +532,14 @@ void CreateScene(lightusd::Stage *stage) {
     // it is a map<string, MetaVariable>
     // MetaVariable is similar to Value, but accepts limited variation of
     // types(double, token, string, float3[], ...)
-    lightusd::Dictionary customData;
+    lightusd::legacy::Dictionary customData;
 
-    lightusd::MetaVariable metavar;
+    lightusd::legacy::MetaVariable metavar;
     double mycustom = 1.3;
     metavar.set_value("mycustom", mycustom);
 
     std::string mystring = "hello";
-    lightusd::MetaVariable metavar2("mystring", mystring);
+    lightusd::legacy::MetaVariable metavar2("mystring", mystring);
 
     customData.emplace("mycustom", metavar);
     customData.emplace("mystring", metavar2);
@@ -548,8 +548,8 @@ void CreateScene(lightusd::Stage *stage) {
     // You can also use SetCustomDataByKey to set custom value with key having
     // namespaces(':')
 
-    lightusd::MetaVariable intval = int(5);
-    lightusd::SetCustomDataByKey("mydict:myval", intval,
+    lightusd::legacy::MetaVariable intval = int(5);
+    lightusd::legacy::SetCustomDataByKey("mydict:myval", intval,
                                  /* inout */ customData);
 
     stage->metas().customLayerData = customData;
@@ -567,7 +567,7 @@ void CreateScene(lightusd::Stage *stage) {
 }
 
 int main(int argc, char **argv) {
-  lightusd::Stage stage;  // empty scene
+  lightusd::legacy::Stage stage;  // empty scene
 
   CreateScene(&stage);
 
@@ -584,17 +584,17 @@ int main(int argc, char **argv) {
   std::cout << stage.dump_prim_tree() << "\n";
 
   {
-    lightusd::Path path(/* absolute prim path */ "/root",
+    lightusd::legacy::Path path(/* absolute prim path */ "/root",
                         /* property path */ "");
 
-    const lightusd::Prim *prim{nullptr};
+    const lightusd::legacy::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_at_path(path, prim, &err);
     if (ret) {
-      std::cout << "Found Prim at path: " << lightusd::to_string(path) << "\n";
+      std::cout << "Found Prim at path: " << lightusd::legacy::to_string(path) << "\n";
       std::cout << "Prim ID: " << prim->prim_id() << "\n";
       std::cout << "Prim's absolute_path: "
-                << lightusd::to_string(prim->absolute_path()) << "\n";
+                << lightusd::legacy::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -605,14 +605,14 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    if (!prim->is<lightusd::Xform>()) {
+    if (!prim->is<lightusd::legacy::Xform>()) {
       std::cerr << "Expected Xform prim."
                 << "\n";
       return -1;
     }
 
     // Cast to Xform
-    const lightusd::Xform *xform = prim->as<lightusd::Xform>();
+    const lightusd::legacy::Xform *xform = prim->as<lightusd::legacy::Xform>();
     if (!xform) {
       std::cerr << "Expected Xform prim."
                 << "\n";
@@ -624,13 +624,13 @@ int main(int argc, char **argv) {
   {
     uint64_t prim_id = 2;
 
-    const lightusd::Prim *prim{nullptr};
+    const lightusd::legacy::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_by_prim_id(prim_id, prim, &err);
     if (ret && prim) {
       std::cout << "Found Prim by ID: " << prim_id << "\n";
       std::cout << "Prim's absolute_path: "
-                << lightusd::to_string(prim->absolute_path()) << "\n";
+                << lightusd::legacy::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -638,17 +638,17 @@ int main(int argc, char **argv) {
 
   // GetAttribute and GeomPrimvar
   {
-    lightusd::Path path(/* absolute prim path */ "/root/quad",
+    lightusd::legacy::Path path(/* absolute prim path */ "/root/quad",
                         /* property path */ "");
 
-    const lightusd::Prim *prim{nullptr};
+    const lightusd::legacy::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_at_path(path, prim, &err);
     if (ret && prim) {
-      std::cout << "Found Prim at path: " << lightusd::to_string(path) << "\n";
+      std::cout << "Found Prim at path: " << lightusd::legacy::to_string(path) << "\n";
       std::cout << "Prim ID: " << prim->prim_id() << "\n";
       std::cout << "Prim's absolute_path: "
-                << lightusd::to_string(prim->absolute_path()) << "\n";
+                << lightusd::legacy::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -659,21 +659,21 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    const lightusd::GeomMesh *mesh = prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh *mesh = prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh) {
       std::cerr << "Expected GeomMesh.\n";
       return -1;
     }
 
 #if defined(LIGHTUSD_WITH_TYDRA)
-    lightusd::Attribute attr;
+    lightusd::legacy::Attribute attr;
     // TODO: Use EvaluateAttribute
     if (lightusd::tydra::GetAttribute(*prim, "points", &attr, &err)) {
       std::cout << "point attribute type = " << attr.type_name() << "\n";
 
       // Ensure Attribute has a value(not Attribute connection)
       if (attr.is_value()) {
-        std::vector<lightusd::value::point3f> pts;
+        std::vector<lightusd::legacy::value::point3f> pts;
         if (attr.is_timesamples()) {
           // TODO: timesamples
         } else {
@@ -695,7 +695,7 @@ int main(int argc, char **argv) {
     // Access GeomPrimvar
     {
       std::cout << "uv is primvar? " << mesh->has_primvar("uv") << "\n";
-      lightusd::GeomPrimvar primvar;
+      lightusd::legacy::GeomPrimvar primvar;
       std::string err;
       if (mesh->get_primvar("uv", &primvar, &err)) {
         std::cout << "uv primvar has default indices? " << primvar.has_default_indices()
@@ -708,32 +708,32 @@ int main(int argc, char **argv) {
 
       // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
       // elems[i] = values[indices[i]]
-      lightusd::value::Value value;
+      lightusd::legacy::value::Value value;
       if (primvar.flatten_with_indices(&value, &err)) {
         // value;:Value can contain any types, but value.array_size() should
         // work well only for primvar types(e.g. `float[]`, `color3f[]`) It
         // would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
         std::cout << "uv primvars. array size = " << value.array_size() << "\n";
         std::cout << "uv primvars. expand_by_indices result = "
-                  << lightusd::value::pprint_value(value) << "\n";
+                  << lightusd::legacy::value::pprint_value(value) << "\n";
       } else {
         std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
       // Typed version
-      std::vector<lightusd::value::texcoord2f> uvs;
+      std::vector<lightusd::legacy::value::texcoord2f> uvs;
       if (primvar.flatten_with_indices(&uvs, &err)) {
         // value;:Value can contain any types, but value.array_size() should
         // work well only for primvar types(e.g. `float[]`, `color3f[]`) It
         // would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
         std::cout << "uv primvars. array size = " << uvs.size() << "\n";
         std::cout << "uv primvars. expand_by_indices result = "
-                  << lightusd::value::pprint_value(uvs) << "\n";
+                  << lightusd::legacy::value::pprint_value(uvs) << "\n";
       } else {
         std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
-      std::vector<lightusd::GeomPrimvar> gpvars = mesh->get_primvars();
+      std::vector<lightusd::legacy::GeomPrimvar> gpvars = mesh->get_primvars();
       std::cout << "# of primvars = " << gpvars.size();
       for (const auto &item : gpvars) {
         std::cout << "  primvar = " << item.name() << "\n";

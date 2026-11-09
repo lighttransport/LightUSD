@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// unit-pcp-cache.h - declarations for lightusd::pcp::Cache tests.
+// unit-pcp-cache.h - declarations for lightusd::legacy::pcp::Cache tests.
 //
 #pragma once
 

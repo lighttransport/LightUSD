@@ -29,35 +29,35 @@ namespace lusdview {
 // by weight; offsets are parallel to the BlendShape's pointIndices (USD inbetween
 // semantics, same indexing as the primary `offsets`).
 using InbetweenSamples =
-    std::vector<std::pair<float, std::vector<lightusd::value::vector3f>>>;
+    std::vector<std::pair<float, std::vector<lightusd::legacy::value::vector3f>>>;
 
 // Collect in-between samples for every BlendShape in the stage, keyed by the
 // BlendShape's prim name (== morph target name == SkelAnimation weight key). The
 // tydra converter does not carry in-betweens, so they are read here from the
 // `inbetweens:*` attributes (vector3f[] value + a `weight` attr-meta).
 std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
-    const lightusd::Stage& stage);
+    const lightusd::legacy::Stage& stage);
 
 // True if any mesh in `render` carries skeletal skinning data or blendshape
 // targets (i.e. would deform over time). Cheap topology check.
-bool SceneHasDeformation(const lightusd::tydra::RenderScene& render);
-bool SceneHasSkeletalSkinning(const lightusd::tydra::RenderScene& render);
-bool SceneHasBlendShapes(const lightusd::tydra::RenderScene& render);
-bool SceneHasNonSkeletalAnimation(const lightusd::tydra::RenderScene& render);
-int MaxSkinInfluenceCount(const lightusd::tydra::RenderScene& render);
+bool SceneHasDeformation(const lightusd::legacy::tydra::RenderScene& render);
+bool SceneHasSkeletalSkinning(const lightusd::legacy::tydra::RenderScene& render);
+bool SceneHasBlendShapes(const lightusd::legacy::tydra::RenderScene& render);
+bool SceneHasNonSkeletalAnimation(const lightusd::legacy::tydra::RenderScene& render);
+int MaxSkinInfluenceCount(const lightusd::legacy::tydra::RenderScene& render);
 
 // Per-skeleton skinning matrices:
 // skinMat[j] = inverse(bind[j]) * posedWorld[j] (USD row-vector convention).
-bool BuildSkinningMatrices(const lightusd::tydra::RenderScene& render,
+bool BuildSkinningMatrices(const lightusd::legacy::tydra::RenderScene& render,
                            int skelId, double timecode,
-                           std::vector<lightusd::value::matrix4d>* skinOut);
+                           std::vector<lightusd::legacy::value::matrix4d>* skinOut);
 
 // Per-skeleton animated joint world matrices in skeleton/model space. This is
 // the same posed hierarchy used to build skinning matrices, but without the
 // inverse-bind step, for drawing joint overlays/debug bones.
-bool BuildSkeletonJointWorlds(const lightusd::tydra::RenderScene& render,
+bool BuildSkeletonJointWorlds(const lightusd::legacy::tydra::RenderScene& render,
                               int skelId, double timecode,
-                              std::vector<lightusd::value::matrix4d>* worldOut);
+                              std::vector<lightusd::legacy::value::matrix4d>* worldOut);
 
 // Per-mesh composed skinning matrices (geomBind * skinMat * skeletonWorld *
 // inverse(meshWorld), USD row-vector convention -- exactly what
@@ -67,17 +67,17 @@ bool BuildSkeletonJointWorlds(const lightusd::tydra::RenderScene& render,
 // if that reuse isn't wanted. False (composed left empty) if `dm` isn't
 // skinned or its skeleton has no matrices at `timecode`.
 bool BuildComposedSkinningMatrices(
-    const lightusd::tydra::RenderScene& render, const DrawMeshCPU& dm,
+    const lightusd::legacy::tydra::RenderScene& render, const DrawMeshCPU& dm,
     double timecode,
-    std::unordered_map<int, std::vector<lightusd::value::matrix4d>>* skinCache,
-    std::vector<lightusd::value::matrix4d>* composed);
+    std::unordered_map<int, std::vector<lightusd::legacy::value::matrix4d>>* skinCache,
+    std::vector<lightusd::legacy::value::matrix4d>* composed);
 
 // Linear-blend-skin `dm`'s vertices (rest pose, read from *verts on input) in
 // place using `mats` (one composed matrix per joint, BuildComposedSkinningMatrices'
 // output; indexed by dm.jointIdx's absolute bone-matrix rows via dm.skinMatrixBase).
 // No-op (returns false) if `dm` carries no skin attributes matching *verts's size.
 bool ApplySkinningToVertices(const DrawMeshCPU& dm,
-                             const std::vector<lightusd::value::matrix4d>& mats,
+                             const std::vector<lightusd::legacy::value::matrix4d>& mats,
                              std::vector<DrawVertex>* verts);
 
 // Pack the per-frame GPU bone texture from `render` into `frame`, using the
@@ -92,9 +92,9 @@ bool ApplySkinningToVertices(const DrawMeshCPU& dm,
 // `stage` (and any manual weight overrides) to include it; without a stage the
 // bounds are skin-only, as they used to be.
 bool BuildGpuSkinningFrame(
-    const lightusd::tydra::RenderScene& render, DrawScene* draw, double timecode,
+    const lightusd::legacy::tydra::RenderScene& render, DrawScene* draw, double timecode,
     SkinningFrameCPU* frame, bool updateSkinnedHelpers,
-    const lightusd::Stage* stage = nullptr,
+    const lightusd::legacy::Stage* stage = nullptr,
     const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
 struct RtSkinnedMeshUpload {
@@ -144,8 +144,8 @@ inline void DeformParallelFor(size_t n, size_t grainMin, F&& fn) {
 // `skipMeshes` (optional) excludes meshes the GPU compute-skinning path already
 // handled this frame (see BuildRtGpuSkinUpdates).
 bool BuildRtSkinnedMeshVertices(
-    const lightusd::Stage& stage,
-    const lightusd::tydra::RenderScene& render, DrawScene* draw,
+    const lightusd::legacy::Stage& stage,
+    const lightusd::legacy::tydra::RenderScene& render, DrawScene* draw,
     double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     bool updateSkinnedHelpers,
@@ -177,7 +177,7 @@ struct RtGpuSkinUpdate {
 // meshes. Handled meshes are recorded so BuildRtSkinnedMeshVertices can skip
 // them; their dm/scene bounds are updated from the conservative bound.
 // Ineligible meshes are left for the CPU path.
-bool BuildRtGpuSkinUpdates(const lightusd::tydra::RenderScene& render,
+bool BuildRtGpuSkinUpdates(const lightusd::legacy::tydra::RenderScene& render,
                            DrawScene* draw, double timecode,
                            std::vector<RtGpuSkinUpdate>* outUpdates,
                            std::unordered_set<int>* outHandled);
@@ -187,7 +187,7 @@ bool BuildRtGpuSkinUpdates(const lightusd::tydra::RenderScene& render,
 // alongside GPU skeletal skinning (e.g. a moving SkelRoot), this poses node
 // motion without a geometry re-pack. Returns true if any world changed; the
 // renderer must be told separately (Renderer::updateMeshWorld).
-bool UpdateAnimatedMeshWorlds(const lightusd::Stage& stage, DrawScene* draw,
+bool UpdateAnimatedMeshWorlds(const lightusd::legacy::Stage& stage, DrawScene* draw,
                               double timecode);
 
 // Deform every skinned / blendshaped mesh in `render` to its pose at
@@ -203,7 +203,7 @@ bool UpdateAnimatedMeshWorlds(const lightusd::Stage& stage, DrawScene* draw,
 // CPU-skinned path's equivalent of BuildGpuSkinningFrame's override. In-between
 // shapes are honored (the baked offset is interpolated through them).
 void DeformSkinnedMeshes(
-    const lightusd::Stage& stage, lightusd::tydra::RenderScene& render,
+    const lightusd::legacy::Stage& stage, lightusd::legacy::tydra::RenderScene& render,
     double timecode,
     const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
@@ -213,7 +213,7 @@ void DeformSkinnedMeshes(
 // with morph channels; the renderer uploads `coeffs` via updateMorphWeights so the
 // vertex shader applies the morph (no CPU vertex morph / VBO re-upload).
 void BuildMorphChannelWeights(
-    const lightusd::Stage& stage, const DrawScene& draw, double timecode,
+    const lightusd::legacy::Stage& stage, const DrawScene& draw, double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<std::pair<int, std::vector<float>>>* out);
 

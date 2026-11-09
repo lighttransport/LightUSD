@@ -60,7 +60,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -484,4 +484,5 @@ size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

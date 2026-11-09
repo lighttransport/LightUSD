@@ -13,7 +13,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Metadata for Property(Relationship and Attribute)
 // Uses Dictionary-based storage via MetadataBase for memory efficiency.
@@ -152,4 +152,5 @@ using AttrMeta = AttrMetas;
 
 using PropMetas = AttrMetas;
 
+}  // namespace legacy
 }  // namespace lightusd

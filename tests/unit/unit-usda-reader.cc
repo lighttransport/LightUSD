@@ -27,6 +27,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ---------------------------------------------------------------------------
 // Helper: parse a USDA string into a Stage
 // ---------------------------------------------------------------------------
@@ -126,7 +128,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::half>();
+      auto v = attr.get_value<lightusd::legacy::value::half>();
       TEST_CHECK(v.has_value());
     }
   }
@@ -174,7 +176,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::token>();
+      auto v = attr.get_value<lightusd::legacy::value::token>();
       TEST_CHECK(v.has_value());
       if (v) { TEST_CHECK(v.value().str() == "myTokenValue"); }
     }
@@ -186,7 +188,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::AssetPath>();
+      auto v = attr.get_value<lightusd::legacy::value::AssetPath>();
       TEST_CHECK(v.has_value());
       if (v) { TEST_CHECK(v.value().GetAssetPath() == "./texture.png"); }
     }
@@ -226,7 +228,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::float2>();
+      auto v = attr.get_value<lightusd::legacy::value::float2>();
       TEST_CHECK(v.has_value());
       if (v) {
         TEST_CHECK(math::is_close(v.value()[0], 1.0f));
@@ -241,7 +243,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::float3>();
+      auto v = attr.get_value<lightusd::legacy::value::float3>();
       TEST_CHECK(v.has_value());
       if (v) {
         TEST_CHECK(math::is_close(v.value()[0], 1.0f));
@@ -257,7 +259,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::double3>();
+      auto v = attr.get_value<lightusd::legacy::value::double3>();
       TEST_CHECK(v.has_value());
       if (v) {
         TEST_CHECK(math::is_close(v.value()[0], 10.0));
@@ -273,7 +275,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::color3f>();
+      auto v = attr.get_value<lightusd::legacy::value::color3f>();
       TEST_CHECK(v.has_value());
       if (v) {
         TEST_CHECK(math::is_close(v.value()[0], 0.5f));
@@ -289,7 +291,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::quatf>();
+      auto v = attr.get_value<lightusd::legacy::value::quatf>();
       TEST_CHECK(v.has_value());
     }
   }
@@ -300,7 +302,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<value::matrix4d>();
+      auto v = attr.get_value<lightusd::legacy::value::matrix4d>();
       TEST_CHECK(v.has_value());
       if (v) {
         // Identity matrix: m[0][0] = 1, m[1][1] = 1, etc.
@@ -435,7 +437,7 @@ def Scope "test" {
     TEST_CHECK(it != props.end());
     if (it != props.end()) {
       const auto &attr = it->second.get_attribute();
-      auto v = attr.get_value<std::vector<value::token>>();
+      auto v = attr.get_value<std::vector<lightusd::legacy::value::token>>();
       TEST_CHECK(v.has_value());
       if (v) {
         TEST_CHECK(v.value().size() == 3);
@@ -1389,7 +1391,7 @@ def GeomSubset "subset" {
   if (!subset) return;
 
   TEST_CHECK(subset->elementType.get_value() == GeomSubset::ElementType::Face);
-  value::token fam;
+  lightusd::legacy::value::token fam;
   TEST_CHECK(subset->familyName.get_value(&fam));
   TEST_CHECK(fam.str() == "materialBind");
   TEST_CHECK(subset->indices.authored());
@@ -1543,7 +1545,7 @@ def Skeleton "skel" {
 
   TEST_CHECK(skel->joints.authored());
   {
-    std::vector<value::token> joints;
+    std::vector<lightusd::legacy::value::token> joints;
     if (skel->joints.get_value(&joints)) {
       TEST_CHECK(joints.size() == 2);
     }
@@ -1629,7 +1631,7 @@ def PhysicsCollisionGroup "cg2" {}
   if (!cg) return;
 
   TEST_CHECK(cg->mergeGroup.authored());
-  value::token mg;
+  lightusd::legacy::value::token mg;
   if (cg->mergeGroup.get_value(&mg)) TEST_CHECK(mg.str() == "groupA");
   TEST_CHECK(cg->invertFilteredGroups.authored());
   TEST_CHECK(cg->invertFilteredGroups.get_value() == true);
@@ -1676,7 +1678,7 @@ def PhysicsScene "Scene" {}
     if (auto v = rb.mass.get_value()) TEST_CHECK(math::is_close(*v, 2.5f));
     TEST_CHECK(rb.velocity.authored());
     if (rb.velocity.get_value()) {
-      value::vector3f vel;
+      lightusd::legacy::value::vector3f vel;
       if (rb.velocity.get_value().value().get_scalar(&vel)) {
         TEST_CHECK(math::is_close(vel[0], 1.0f) && math::is_close(vel[2], 3.0f));
       }
@@ -1812,7 +1814,7 @@ def PluginLightFilter "plug" {
       if (plf) {
         TEST_CHECK(plf->shaderId.authored());
         if (plf->shaderId.get_value()) {
-          value::token sid;
+          lightusd::legacy::value::token sid;
           if (plf->shaderId.get_value().value().get_scalar(&sid)) {
             TEST_CHECK(sid.str() == "MyFilterShader");
           }

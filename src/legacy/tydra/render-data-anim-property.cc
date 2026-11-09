@@ -72,7 +72,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 #if defined(__GNUC__)
@@ -1473,4 +1473,5 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

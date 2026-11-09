@@ -62,7 +62,7 @@
 #pragma clang diagnostic ignored "-Wundefined-func-template"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 // constexpr auto kTypeName = "typeName";
@@ -1654,7 +1654,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // Dedup map: ValueRep raw data -> first sample index in TimeSamples.
   // USDC files often deduplicate time sample values (multiple frames pointing
   // to the same file offset). Caching avoids redundant reads/decompression.
-  lightusd::HashMap<uint64_t, size_t> dedup_map;
+  lightusd::legacy::HashMap<uint64_t, size_t> dedup_map;
   dedup_map.reserve(vreps.size());
 
   for (size_t i = 0; i < vreps.size(); i++) {
@@ -1732,6 +1732,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
 
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd
 
 #ifdef __clang__

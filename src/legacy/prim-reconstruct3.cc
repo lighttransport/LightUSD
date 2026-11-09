@@ -51,7 +51,7 @@
 // - Relationship : Typeless relation(e.g. `rel material:binding`)
 // - TypedConnection : Typed relation(e.g. `token outputs:result = </material/diffuse.rgb>`)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 //constexpr auto kTag = "[PrimReconstruct]";
@@ -231,4 +231,5 @@ bool ReconstructPrim(
 
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

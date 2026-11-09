@@ -13,7 +13,7 @@
 #include "variant-support.hh"
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 bool VariantApplier::ApplyVariantSelection(RenderScene *scene,
@@ -370,4 +370,5 @@ int32_t VariantApplier::FindVariantMaterial(RenderScene *scene,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

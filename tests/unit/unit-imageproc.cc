@@ -16,6 +16,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 std::vector<float> MakeRGB(size_t n) {

@@ -18,11 +18,12 @@
 
 class GPrim;
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdVox {
 
 //bool ReadVoxFromString(const std::string &str, GPrim *prim, std::string *err = nullptr);
 bool ReadVoxFromFile(const std::string &filepath, GPrim *prim, std::string *err = nullptr);
 
 } // namespace usdVox
+}  // namespace legacy
 } // namespace lightusd

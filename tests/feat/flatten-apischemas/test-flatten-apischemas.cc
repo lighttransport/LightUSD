@@ -10,7 +10,7 @@
 // modifications on UE-exported scenes (every referenced mesh authors
 // `prepend apiSchemas = ["MaterialBindingAPI"]`).
 //
-// lightusd::FlattenAppliedSchemas(Layer&) performs this finalize. This test
+// lightusd::legacy::FlattenAppliedSchemas(Layer&) performs this finalize. This test
 // drives it directly on a parsed Layer and checks the resolved form; it also
 // confirms that WITHOUT the call the authored `prepend` is preserved (the
 // finalize must be flatten-only, so a plain load+write round-trip is lossless).
@@ -22,6 +22,8 @@
 #include "lightusd.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 
 namespace {
 

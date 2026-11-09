@@ -40,7 +40,7 @@
 //   [ ] resources/list_changed
 //   [ ] tools/list_changed
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -637,12 +637,13 @@ bool MCPServer::stop() {
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 
 #else
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -677,6 +678,7 @@ bool MCPServer::stop() {
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 #endif

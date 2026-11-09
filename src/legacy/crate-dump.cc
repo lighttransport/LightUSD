@@ -29,7 +29,7 @@
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 // Helper function to convert SpecType to string
@@ -639,6 +639,7 @@ bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string
 }
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd
 
 #if defined(__clang__)

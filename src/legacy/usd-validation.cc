@@ -31,7 +31,7 @@
 #include "str-util.hh"
 #include "lightusd.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace {
 
 constexpr const char *kLayerLocation = "<layer>";
@@ -5988,4 +5988,5 @@ std::string ValidationOptions::group_summary() const {
   return s;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -30,6 +30,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 // Safe integer parser: returns true and sets `out` on full-string parse.
@@ -508,7 +510,7 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
 }  // namespace
 
 int main(int argc, char **argv) {
-  using namespace lightusd::argparser;
+  using namespace lightusd::legacy::argparser;
 
   ArgParser parser;
   parser.add_option("-h", false, "Show help");

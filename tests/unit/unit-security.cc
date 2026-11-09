@@ -30,6 +30,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void security_stream_exact_read_test(void) {
   const uint8_t input[] = {1, 2, 3, 4, 5};
   uint8_t output[] = {9, 9, 9, 9};
@@ -471,8 +473,8 @@ void security_unsafe_asset_path_rejected_test(void) {
   std::string resolved;
   std::string warn, err;
 
-  value::AssetPath unsafe_path("../textures/albedo.png");
-  bool ok = tydra::RawAssetRead(unsafe_path, asset_info, resolver, &asset,
+  lightusd::legacy::value::AssetPath unsafe_path("../textures/albedo.png");
+  bool ok = lightusd::legacy::tydra::RawAssetRead(unsafe_path, asset_info, resolver, &asset,
                                 resolved, nullptr, &warn, &err);
   TEST_CHECK(!ok);
   TEST_CHECK(err.find("Unsafe asset path") != std::string::npos);
@@ -880,12 +882,12 @@ void security_common_utils_overflow_test(void) {
   std::vector<uint8_t> src(4, 0xAB);  // 4 bytes = 1 float
 
   // A huge elementSize that would overflow when multiplied by vertex count.
-  const auto result = lightusd::tydra::utils::ConstantToVertex(
+  const auto result = lightusd::legacy::tydra::utils::ConstantToVertex(
       src, uint32_t(1024 * 1024 * 1024), size_t(1024 * 1024));
   TEST_CHECK(!result.has_value());  // must fail with overflow error
 
   // Normal usage must still work.
-  const auto ok_result = lightusd::tydra::utils::ConstantToVertex(src, 4, 3);
+  const auto ok_result = lightusd::legacy::tydra::utils::ConstantToVertex(src, 4, 3);
   TEST_CHECK(ok_result.has_value());
   TEST_CHECK(ok_result->size() == 12);  // 3 vertices * 4 bytes
 }
@@ -896,9 +898,9 @@ void security_merge_path_overflow_test(void) {
   // Test is on the rendering data structures via composition graph.
   // Verify the composition graph GetMutableNode returns sentinel for
   // out-of-bounds indices rather than crashing.
-  lightusd::composition_graph::PrimIndex index;
-  lightusd::composition_graph::CompNode &node =
-      lightusd::composition_graph::GetMutableNode(index, uint16_t(65535));
+  lightusd::legacy::composition_graph::PrimIndex index;
+  lightusd::legacy::composition_graph::CompNode &node =
+      lightusd::legacy::composition_graph::GetMutableNode(index, uint16_t(65535));
   // Must not crash; the sentinel node is safe to reference.
   TEST_CHECK(true);
 }

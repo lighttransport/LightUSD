@@ -27,7 +27,7 @@
 #include "pcp/layer-registry.hh"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct LargeSceneLoadOptions {
   // How payload arcs are handled during the initial composition.
@@ -180,4 +180,5 @@ bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        const LargeSceneLoadOptions &options = {});
 #endif
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -60,7 +60,7 @@
 #include "tydra/shader-network.hh"
 #include "tydra/render-data-material-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #if defined(LIGHTUSD_WITH_TEXTOOLS)
@@ -199,4 +199,5 @@ bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
 #endif  // LIGHTUSD_WITH_TEXTOOLS
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

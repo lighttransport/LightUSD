@@ -13,7 +13,7 @@
 
 using namespace nlohmann;
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -68,4 +68,5 @@ bool ReadResource(const Context &ctx, const std::string &name, nlohmann::json &r
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

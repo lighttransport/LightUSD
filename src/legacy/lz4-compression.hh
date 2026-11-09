@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class StreamReader;
 
@@ -49,4 +49,5 @@ public:
 
 
 
+}  // namespace legacy
 } // namespace lightusd

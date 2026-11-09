@@ -23,6 +23,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 bool ContainsString(const std::vector<std::string> &v, const std::string &s) {
@@ -58,8 +60,8 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::PathPrimMap<GeomMesh> mesh_map;
-  ok = tydra::ListPrims(stage, mesh_map);
+  lightusd::legacy::tydra::PathPrimMap<GeomMesh> mesh_map;
+  ok = lightusd::legacy::tydra::ListPrims(stage, mesh_map);
   TEST_CHECK(ok);
   TEST_MSG("ListPrims<GeomMesh> should succeed");
 
@@ -108,8 +110,8 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::PathShaderMap<UsdPreviewSurface> shader_map;
-  ok = tydra::ListShaders(stage, shader_map);
+  lightusd::legacy::tydra::PathShaderMap<UsdPreviewSurface> shader_map;
+  ok = lightusd::legacy::tydra::ListShaders(stage, shader_map);
   TEST_CHECK(ok);
   TEST_MSG("ListShaders<UsdPreviewSurface> should succeed");
 
@@ -172,7 +174,7 @@ def Xform "Root" {
   const Material *material = nullptr;
   err.clear();
 
-  ok = tydra::GetBoundMaterial(
+  ok = lightusd::legacy::tydra::GetBoundMaterial(
       stage, Path("/Root/Box", ""), "", &mat_path, &material, &err);
   TEST_CHECK(ok);
   TEST_MSG("GetBoundMaterial should succeed: %s", err.c_str());
@@ -224,7 +226,7 @@ def Scope "Looks" {
   }
   Path material_path;
   const Material *material = nullptr;
-  TEST_CHECK(tydra::GetBoundMaterial(stage, Path("/Root/Included", ""), "",
+  TEST_CHECK(lightusd::legacy::tydra::GetBoundMaterial(stage, Path("/Root/Included", ""), "",
                                      &material_path, &material, &err));
   TEST_CHECK(material != nullptr);
   TEST_CHECK(material_path.prim_part() == "/Looks/CollectionMat");
@@ -232,7 +234,7 @@ def Scope "Looks" {
   material = nullptr;
   material_path = Path();
   err.clear();
-  TEST_CHECK(!tydra::GetBoundMaterial(stage, Path("/Excluded", ""), "",
+  TEST_CHECK(!lightusd::legacy::tydra::GetBoundMaterial(stage, Path("/Excluded", ""), "",
                                       &material_path, &material, &err));
   TEST_CHECK(material == nullptr);
 }
@@ -269,7 +271,7 @@ def Mesh "TestMesh" {
   // GetPropertyNames
   std::vector<std::string> prop_names;
   err.clear();
-  ok = tydra::GetPropertyNames(*prim_ptr, &prop_names, &err);
+  ok = lightusd::legacy::tydra::GetPropertyNames(*prim_ptr, &prop_names, &err);
   TEST_CHECK(ok);
   TEST_MSG("GetPropertyNames should succeed: %s", err.c_str());
 
@@ -288,7 +290,7 @@ def Mesh "TestMesh" {
   // GetAttribute for "points"
   Attribute attr;
   err.clear();
-  ok = tydra::GetAttribute(*prim_ptr, "points", &attr, &err);
+  ok = lightusd::legacy::tydra::GetAttribute(*prim_ptr, "points", &attr, &err);
   TEST_CHECK(ok);
   TEST_MSG("GetAttribute('points') should succeed: %s", err.c_str());
 }
@@ -319,8 +321,8 @@ def Xform "Root" {
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
 
-  tydra::XformNode root;
-  ok = tydra::BuildXformNodeFromStage(stage, &root);
+  lightusd::legacy::tydra::XformNode root;
+  ok = lightusd::legacy::tydra::BuildXformNodeFromStage(stage, &root);
   TEST_CHECK(ok);
   TEST_MSG("BuildXformNodeFromStage should succeed");
 

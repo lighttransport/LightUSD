@@ -28,7 +28,7 @@
 #include "value-to-json.hh"
 #include "mcp-context.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -313,7 +313,7 @@ bool StageLoad(Context &ctx, const nlohmann::json &args,
 
   std::string uri = args["uri"].get<std::string>();
 
-  lightusd::USDLoadOptions options;
+  lightusd::legacy::USDLoadOptions options;
   if (args.contains("options") && args["options"].is_object()) {
     const auto &opts = args["options"];
     if (opts.contains("loadPayloads") && opts["loadPayloads"].is_boolean())
@@ -327,7 +327,7 @@ bool StageLoad(Context &ctx, const nlohmann::json &args,
   auto stage = std::unique_ptr<Stage>(new Stage());
   std::string warn;
 
-  bool ok = lightusd::LoadUSDFromFile(uri, stage.get(), &warn, &err, options);
+  bool ok = lightusd::legacy::LoadUSDFromFile(uri, stage.get(), &warn, &err, options);
   if (!ok) {
     return false;
   }
@@ -342,7 +342,7 @@ bool StageLoad(Context &ctx, const nlohmann::json &args,
   }
 
   // Basic stage info
-  result["upAxis"] = lightusd::to_string(ctx.stage->metas().upAxis.get_value());
+  result["upAxis"] = lightusd::legacy::to_string(ctx.stage->metas().upAxis.get_value());
   result["defaultPrim"] = ctx.stage->metas().defaultPrim.str();
   result["rootPrimCount"] = ctx.stage->root_prims().size();
 
@@ -364,21 +364,21 @@ bool StageLoadData(Context &ctx, const nlohmann::json &args,
   std::string name = args.value("name", std::string("memory.usd"));
   std::string format = args.value("format", std::string("auto"));
 
-  lightusd::USDLoadOptions options;
+  lightusd::legacy::USDLoadOptions options;
   auto stage = std::unique_ptr<Stage>(new Stage());
   std::string warn;
 
   bool ok = false;
   if (format == "usda") {
-    ok = lightusd::LoadUSDAFromMemory(
+    ok = lightusd::legacy::LoadUSDAFromMemory(
         reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
         name, stage.get(), &warn, &err, options);
   } else if (format == "usdc") {
-    ok = lightusd::LoadUSDCFromMemory(
+    ok = lightusd::legacy::LoadUSDCFromMemory(
         reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
         name, stage.get(), &warn, &err, options);
   } else {
-    ok = lightusd::LoadUSDFromMemory(
+    ok = lightusd::legacy::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
         name, stage.get(), &warn, &err, options);
   }
@@ -413,13 +413,13 @@ bool StageExport(Context &ctx, const nlohmann::json &args,
 
   bool ok = false;
   if (format == "usdc") {
-    ok = lightusd::usdc::SaveAsUSDCToFile(uri, *ctx.stage, &warn, &err);
+    ok = lightusd::legacy::usdc::SaveAsUSDCToFile(uri, *ctx.stage, &warn, &err);
   } else if (format == "usdz") {
-    ok = lightusd::SaveAsUSDZToFile(
+    ok = lightusd::legacy::SaveAsUSDZToFile(
         uri, *ctx.stage, std::map<std::string, std::vector<uint8_t>>(),
         &warn, &err);
   } else {
-    ok = lightusd::usda::SaveAsUSDA(uri, *ctx.stage, &warn, &err);
+    ok = lightusd::legacy::usda::SaveAsUSDA(uri, *ctx.stage, &warn, &err);
   }
 
   if (!ok) return false;
@@ -458,7 +458,7 @@ bool StageInfo(Context &ctx, const nlohmann::json &args,
   }
 
   const auto &metas = ctx.stage->metas();
-  result["upAxis"] = lightusd::to_string(metas.upAxis.get_value());
+  result["upAxis"] = lightusd::legacy::to_string(metas.upAxis.get_value());
   result["defaultPrim"] = metas.defaultPrim.str();
   result["metersPerUnit"] = metas.metersPerUnit.get_value();
   result["timeCodesPerSecond"] = metas.timeCodesPerSecond.get_value();
@@ -508,7 +508,7 @@ bool PrimList(Context &ctx, const nlohmann::json &args,
   bool include_attributes = args.value("include_attributes", false);
 
   // Find starting prim
-  lightusd::Path start_path(path, "");
+  lightusd::legacy::Path start_path(path, "");
   if (!start_path.is_valid() || path == "/") {
     // List root prims
     nlohmann::json prims = nlohmann::json::array();
@@ -558,7 +558,7 @@ bool PrimGet(Context &ctx, const nlohmann::json &args,
   }
 
   std::string path_str = args["path"].get<std::string>();
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -598,13 +598,13 @@ bool PrimCreate(Context &ctx, const nlohmann::json &args,
   std::string type_name = args.value("type_name", std::string("Xform"));
   std::string specifier = args.value("specifier", std::string("def"));
 
-  lightusd::Path dst_path(path_str, "");
+  lightusd::legacy::Path dst_path(path_str, "");
   if (!dst_path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
   }
 
-  lightusd::Path parent_p = dst_path.get_parent_path();
+  lightusd::legacy::Path parent_p = dst_path.get_parent_path();
   std::string parent_path_str = parent_p.full_path_name();
   std::string element_name = dst_path.element_name();
 
@@ -645,7 +645,7 @@ bool PrimCreate(Context &ctx, const nlohmann::json &args,
       return false;
     }
   } else {
-    lightusd::Path parent_path(parent_path_str, "");
+    lightusd::legacy::Path parent_path(parent_path_str, "");
     const Prim *parent_prim_const = nullptr;
     if (!ctx.stage->find_prim_at_path(parent_path, parent_prim_const, &err)) {
       err = "Parent prim not found: " + parent_path_str;
@@ -683,7 +683,7 @@ bool PrimRemove(Context &ctx, const nlohmann::json &args,
   }
 
   std::string path_str = args["path"].get<std::string>();
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -717,7 +717,7 @@ bool PrimRename(Context &ctx, const nlohmann::json &args,
   std::string path_str = args["path"].get<std::string>();
   std::string new_name = args["new_name"].get<std::string>();
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -751,7 +751,7 @@ bool PrimGetMetadata(Context &ctx, const nlohmann::json &args,
   }
 
   std::string path_str = args["path"].get<std::string>();
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -783,7 +783,7 @@ bool AttrList(Context &ctx, const nlohmann::json &args,
   }
 
   std::string path_str = args["path"].get<std::string>();
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -842,7 +842,7 @@ bool AttrGet(Context &ctx, const nlohmann::json &args,
   std::string path_str = args["path"].get<std::string>();
   std::string attr_name = args["attr_name"].get<std::string>();
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -916,7 +916,7 @@ bool AttrSet(Context &ctx, const nlohmann::json &args,
     return false;
   }
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return false;
@@ -985,4 +985,5 @@ bool AttrConnections(Context &ctx, const nlohmann::json &args,
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

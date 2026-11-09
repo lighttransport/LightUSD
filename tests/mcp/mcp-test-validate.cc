@@ -16,13 +16,13 @@
 #include "tydra/js-script.hh"
 #include "usdc-writer.hh"
 
-using namespace lightusd::tydra::mcp;
+using namespace lightusd::legacy::tydra::mcp;
 using json = nlohmann::json;
 
 namespace {
 
 std::string B64(const std::string &s) {
-  return lightusd::base64_encode(
+  return lightusd::legacy::base64_encode(
       reinterpret_cast<const unsigned char *>(s.data()),
       static_cast<unsigned int>(s.size()));
 }
@@ -183,11 +183,11 @@ def Xform "World"
   // Binary data uses the same wrapper as lusdcat/web, so all-groups validation
   // includes USDC crate checks when the source bytes are USDC.
   {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     std::vector<uint8_t> usdc;
     std::string warn;
     std::string write_err;
-    TEST_CHECK(lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &warn,
+    TEST_CHECK(lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &usdc, &warn,
                                                   &write_err));
     TEST_CHECK(!usdc.empty());
 

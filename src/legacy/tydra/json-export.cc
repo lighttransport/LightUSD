@@ -9,7 +9,7 @@
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 
@@ -30,5 +30,6 @@ bool export_to_json(const RenderScene &scene, bool asset_as_binary,
 
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 

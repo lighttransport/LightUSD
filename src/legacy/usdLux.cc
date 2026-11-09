@@ -11,7 +11,7 @@
 #include "value-types.hh"
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 //
 // Utility functions for DomeLight::TextureFormat
@@ -199,6 +199,7 @@ value::color3f GetEffectiveShadowColor(const ShadowAPI &shadow) {
   return color;
 }
 
+}  // namespace legacy
 } // namespace lightusd
 
 

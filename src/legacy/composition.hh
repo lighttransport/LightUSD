@@ -40,7 +40,7 @@
 // - [ ] Multi-level implied inherits/specializes propagation (currently single-level)
 // - [ ] `order` ListEditQual for references/payloads (implemented for inherits/specializes)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward decl.
 class Stage;
@@ -67,7 +67,7 @@ struct SublayersCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
+  lightusd::legacy::HashMap<std::string, FileFormatHandler> fileformats;
 
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -92,7 +92,7 @@ struct ReferencesCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
+  lightusd::legacy::HashMap<std::string, FileFormatHandler> fileformats;
 
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -147,7 +147,7 @@ struct PayloadCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
+  lightusd::legacy::HashMap<std::string, FileFormatHandler> fileformats;
 
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -588,4 +588,5 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
 bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err);
 
 
+}  // namespace legacy
 }  // namespace lightusd

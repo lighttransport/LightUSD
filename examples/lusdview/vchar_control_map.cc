@@ -12,20 +12,20 @@ namespace {
 struct ControlVisit { std::vector<VcharControl> controls; };
 
 template <typename T>
-bool CustomValue(const lightusd::Dictionary& data, const std::string& key,
+bool CustomValue(const lightusd::legacy::Dictionary& data, const std::string& key,
                  T* value) {
-  lightusd::MetaVariable variable;
-  return lightusd::GetCustomDataByKey(data, key, &variable) &&
+  lightusd::legacy::MetaVariable variable;
+  return lightusd::legacy::GetCustomDataByKey(data, key, &variable) &&
          variable.get_value<T>(value);
 }
 
-bool VisitControls(const lightusd::Path&, const lightusd::Prim& prim,
+bool VisitControls(const lightusd::legacy::Path&, const lightusd::legacy::Prim& prim,
                    const int32_t, void* userdata, std::string*) {
   auto* visit = static_cast<ControlVisit*>(userdata);
   if (!visit || !visit->controls.empty() || !prim.metas().has_customData()) return true;
-  const lightusd::Dictionary data = prim.metas().get_customData();
+  const lightusd::legacy::Dictionary data = prim.metas().get_customData();
   std::vector<std::string> names, mappings;
-  std::vector<lightusd::value::float2> ranges;
+  std::vector<lightusd::legacy::value::float2> ranges;
   std::vector<float> defaults;
   if (!CustomValue(data, "vchar:controlNames", &names)) return true;
   CustomValue(data, "vchar:controlMappings", &mappings);
@@ -47,10 +47,10 @@ bool VisitControls(const lightusd::Path&, const lightusd::Prim& prim,
 
 }  // namespace
 
-std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage) {
+std::vector<VcharControl> ReadVcharControls(const lightusd::legacy::Stage& stage) {
   ControlVisit visit;
   std::string ignored;
-  lightusd::tydra::VisitPrims(stage, VisitControls, &visit, &ignored);
+  lightusd::legacy::tydra::VisitPrims(stage, VisitControls, &visit, &ignored);
   return visit.controls;
 }
 

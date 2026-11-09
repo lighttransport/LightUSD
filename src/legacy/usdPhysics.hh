@@ -40,7 +40,7 @@
 #include "mjcPhysics.hh"
 #include "newtonPhysics.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Prim type name constants
 constexpr auto kPhysicsScene = "PhysicsScene";
@@ -516,4 +516,5 @@ DEFINE_TYPE_TRAIT(PhysicsCollisionGroup, kPhysicsCollisionGroup, TYPE_ID_PHYSICS
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

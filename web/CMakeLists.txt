@@ -502,6 +502,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   # (src/legacy/tydra). Appended after src/ so core/shared headers always win.
   # Removed once the serializer is ported to core RenderMaterial.
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
+    ${PROJECT_SOURCE_DIR}/binding-next-render-material-output.cc
+    PROPERTIES COMPILE_FLAGS "-include ${PROJECT_SOURCE_DIR}/../src/legacy/legacy-namespace.hh")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/feature-runtime.js"
@@ -721,6 +725,9 @@ endif()
 # same-named shared paths, as in the root legacy build.
 target_include_directories(${BUILD_TARGET} BEFORE
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
+# Legacy code lives in lightusd::legacy (see src/legacy/legacy-namespace.hh).
+target_compile_options(${BUILD_TARGET} PRIVATE
+  "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${PROJECT_SOURCE_DIR}/../src/legacy/legacy-namespace.hh>")
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
 

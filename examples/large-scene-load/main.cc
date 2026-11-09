@@ -67,19 +67,19 @@ size_t root_prim_count(const lightusd::next::Stage &stage) {
   return stage.GetRootPrims().size();
 }
 #else
-size_t count_prim_tree(const lightusd::Prim &p) {
+size_t count_prim_tree(const lightusd::legacy::Prim &p) {
   size_t n = 1;
   for (const auto &c : p.children()) n += count_prim_tree(c);
   return n;
 }
 
-size_t count_prims(const lightusd::Stage &stage) {
+size_t count_prims(const lightusd::legacy::Stage &stage) {
   size_t n = 0;
   for (const auto &rp : stage.root_prims()) n += count_prim_tree(rp);
   return n;
 }
 
-size_t root_prim_count(const lightusd::Stage &stage) {
+size_t root_prim_count(const lightusd::legacy::Stage &stage) {
   return stage.root_prims().size();
 }
 #endif
@@ -97,19 +97,19 @@ int main(int argc, char **argv) {
   }
 
   const std::string filename = argv[1];
-  lightusd::LargeSceneLoadOptions opts;
-  opts.payload_mode = lightusd::LargeSceneLoadOptions::PayloadMode::LoadNone;
+  lightusd::legacy::LargeSceneLoadOptions opts;
+  opts.payload_mode = lightusd::legacy::LargeSceneLoadOptions::PayloadMode::LoadNone;
   int load_some = 0;
   bool do_unload = false;
 
   for (int i = 2; i < argc; i++) {
     const std::string a = argv[i];
     if (a == "--mode=none") {
-      opts.payload_mode = lightusd::LargeSceneLoadOptions::PayloadMode::LoadNone;
+      opts.payload_mode = lightusd::legacy::LargeSceneLoadOptions::PayloadMode::LoadNone;
     } else if (a == "--mode=all") {
-      opts.payload_mode = lightusd::LargeSceneLoadOptions::PayloadMode::LoadAll;
+      opts.payload_mode = lightusd::legacy::LargeSceneLoadOptions::PayloadMode::LoadAll;
     } else if (a == "--mode=budget") {
-      opts.payload_mode = lightusd::LargeSceneLoadOptions::PayloadMode::Budget;
+      opts.payload_mode = lightusd::legacy::LargeSceneLoadOptions::PayloadMode::Budget;
     } else if (a.rfind("--budget-mb=", 0) == 0) {
       opts.payload_budget_mb = std::stoul(a.substr(strlen("--budget-mb=")));
     } else if (a.rfind("--extent-budget=", 0) == 0) {
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
               opts.payload_extent_budget, int(opts.mmap_zero_copy));
   print_mem("before");
 
-  lightusd::LargeSceneLoader loader;
+  lightusd::legacy::LargeSceneLoader loader;
   std::string warn, err;
   if (!loader.Load(filename, opts, &warn, &err)) {
     std::printf("Load FAILED: %s\n", err.c_str());
@@ -165,7 +165,7 @@ int main(int argc, char **argv) {
   print_mem("after-load");
 
   if (load_some > 0) {
-    const std::vector<lightusd::Path> deferred = loader.deferred_payload_paths();
+    const std::vector<lightusd::legacy::Path> deferred = loader.deferred_payload_paths();
     const int n = std::min<int>(load_some, int(deferred.size()));
     std::printf("Streaming in %d deferred payload(s)...\n", n);
     int ok = 0;

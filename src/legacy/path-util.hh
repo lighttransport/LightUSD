@@ -6,7 +6,7 @@
 
 #include "core/path.hh"  // Path
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pathutil {
 
 ///
@@ -81,4 +81,5 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path,
 Path ToUnixishPath(const Path &path);
 
 }  // namespace pathutil
+}  // namespace legacy
 }  // namespace lightusd

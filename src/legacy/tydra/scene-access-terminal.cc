@@ -11,7 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) \
@@ -24,8 +24,8 @@ namespace {
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
-bool GetTerminalAttributeImpl(const lightusd::Stage &stage,
-                              const lightusd::Prim &prim,
+bool GetTerminalAttributeImpl(const lightusd::legacy::Stage &stage,
+                              const lightusd::legacy::Prim &prim,
                               const std::string &attr_name, Attribute *value,
                               std::string *err,
                               std::unordered_set<std::string, FNV1StringHash>
@@ -100,8 +100,8 @@ bool GetTerminalAttributeImpl(const lightusd::Stage &stage,
 
 }  // namespace
 
-bool GetTerminalAttribute(const lightusd::Stage &stage,
-                          const lightusd::Attribute &attr,
+bool GetTerminalAttribute(const lightusd::legacy::Stage &stage,
+                          const lightusd::legacy::Attribute &attr,
                           const std::string &attr_name, Attribute *value,
                           std::string *err) {
   if (!value) {
@@ -180,4 +180,5 @@ bool GetTerminalAttribute(const lightusd::Stage &stage,
 #undef PushError
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

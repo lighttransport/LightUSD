@@ -9,7 +9,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Helper: print a RelationshipProperty if authored
 static std::string print_rel_prop(const RelationshipProperty &rp,
@@ -41,8 +41,8 @@ static std::string print_rel_prop(const RelationshipProperty &rp,
 
 std::string to_string(const Preliminary_PhysicsGravitationalForce &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_PhysicsGravitationalForce");
   ss << print_typed_attr(prim.acceleration, "physics:gravitationalForce:acceleration", indent + 1);
   PRINT_PRIM_FOOTER(prim);
@@ -51,8 +51,8 @@ std::string to_string(const Preliminary_PhysicsGravitationalForce &prim,
 
 std::string to_string(const Preliminary_InfiniteColliderPlane &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_InfiniteColliderPlane");
   ss << print_typed_attr(prim.position, "position", indent + 1);
   ss << print_typed_attr(prim.normal, "normal", indent + 1);
@@ -62,8 +62,8 @@ std::string to_string(const Preliminary_InfiniteColliderPlane &prim,
 
 std::string to_string(const Preliminary_ReferenceImage &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_ReferenceImage");
   ss << print_typed_attr(prim.image, "image", indent + 1);
   ss << print_typed_attr(prim.physicalWidth, "physicalWidth", indent + 1);
@@ -73,8 +73,8 @@ std::string to_string(const Preliminary_ReferenceImage &prim,
 
 std::string to_string(const Preliminary_Behavior &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_Behavior");
   ss << print_rel_prop(prim.triggers, "triggers", indent + 1);
   ss << print_rel_prop(prim.actions, "actions", indent + 1);
@@ -85,8 +85,8 @@ std::string to_string(const Preliminary_Behavior &prim,
 
 std::string to_string(const Preliminary_Trigger &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_Trigger");
   ss << print_typed_attr(prim.info_id, "info:id", indent + 1);
   PRINT_PRIM_FOOTER(prim);
@@ -95,8 +95,8 @@ std::string to_string(const Preliminary_Trigger &prim,
 
 std::string to_string(const Preliminary_Action &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_Action");
   ss << print_typed_attr(prim.info_id, "info:id", indent + 1);
   ss << print_typed_attr(prim.multiplePerformOperation, "multiplePerformOperation", indent + 1);
@@ -108,8 +108,8 @@ std::string to_string(const Preliminary_Action &prim,
 static std::string print_string_attr(const TypedAttributeWithFallback<std::string> &attr,
                                      const std::string &name, uint32_t indent) {
   if (!attr.authored()) return "";
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << "string " << name << " = "
      << quote(attr.get_value()) << "\n";
   return pp_ss.str();
@@ -121,8 +121,8 @@ static std::string print_string_array_attr(const TypedAttribute<std::vector<std:
   if (!attr.authored()) return "";
   auto v = attr.get_value();
   if (!v) return "";
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent) << "string[] " << name << " = [";
   for (size_t i = 0; i < v.value().size(); i++) {
     if (i > 0) ss << ", ";
@@ -134,8 +134,8 @@ static std::string print_string_array_attr(const TypedAttribute<std::vector<std:
 
 std::string to_string(const Preliminary_Text &prim,
                       const uint32_t indent, bool closing_brace) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   PRINT_PRIM_HEADER(prim, "Preliminary_Text");
   ss << print_string_attr(prim.content, "content", indent + 1);
   ss << print_string_array_attr(prim.font, "font", indent + 1);
@@ -150,4 +150,5 @@ std::string to_string(const Preliminary_Text &prim,
   return pp_ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

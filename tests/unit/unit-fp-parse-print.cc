@@ -19,6 +19,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Math constants using lightusd definitions where available
 static constexpr double kPi    = math::constants<double>::pi();
 static constexpr double kE     = 2.71828182845904523536028747135266250;
@@ -118,7 +120,7 @@ void fp_roundtrip_basic_test(void) {
 
     for (double v : test_values) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double basic roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -156,7 +158,7 @@ void fp_roundtrip_basic_test(void) {
 
     for (float v : test_values) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float basic roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -174,7 +176,7 @@ void fp_roundtrip_edge_cases_test(void) {
     for (int exp = -300; exp <= 300; exp += 50) {
       double v = std::ldexp(1.0, exp);
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double power of 2 (2^%d) roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   exp, v, s.c_str(), parsed);
@@ -184,7 +186,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = std::numeric_limits<double>::max();
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double max roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -193,7 +195,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = std::numeric_limits<double>::min();  // smallest normal
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double min normal roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -202,7 +204,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = std::numeric_limits<double>::denorm_min();  // smallest denormal
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double denorm_min roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -212,7 +214,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = std::numeric_limits<double>::epsilon();
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double epsilon roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -222,7 +224,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = 1.0 + std::numeric_limits<double>::epsilon();
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double 1+eps roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -231,7 +233,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       double v = 1.0 - std::numeric_limits<double>::epsilon() / 2;
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double 1-eps/2 roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -247,14 +249,14 @@ void fp_roundtrip_edge_cases_test(void) {
 
     for (double v : boundary_values) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double boundary roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
 
       // Also test negative
       s = dtos(-v);
-      parsed = lightusd::atof(s);
+      parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_double(parsed, -v, 1e-14),
                   "double negative boundary roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   -v, s.c_str(), parsed);
@@ -267,7 +269,7 @@ void fp_roundtrip_edge_cases_test(void) {
     for (int exp = -120; exp <= 120; exp += 20) {
       float v = std::ldexp(1.0f, exp);
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float power of 2 (2^%d) roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   exp, v, s.c_str(), parsed);
@@ -277,7 +279,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       float v = std::numeric_limits<float>::max();
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float max roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -286,7 +288,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       float v = std::numeric_limits<float>::min();  // smallest normal
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float min normal roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -295,7 +297,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       float v = std::numeric_limits<float>::denorm_min();  // smallest denormal
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float denorm_min roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -305,7 +307,7 @@ void fp_roundtrip_edge_cases_test(void) {
     {
       float v = std::numeric_limits<float>::epsilon();
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-6f),
                   "float epsilon roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -321,7 +323,7 @@ void fp_roundtrip_edge_cases_test(void) {
 
     for (float v : boundary_values) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(nearly_equal_float(static_cast<float>(parsed), v, 1e-5f),
                   "float boundary roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -340,7 +342,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = 0.0;
       std::string s = dtos(v);
       TEST_CHECK_(s == "0", "double +0 should print as '0', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(parsed == 0.0, "double +0 roundtrip failed");
     }
 
@@ -349,7 +351,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = -0.0;
       std::string s = dtos(v);
       TEST_CHECK_(s == "-0", "double -0 should print as '-0', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(parsed == 0.0, "double -0 roundtrip value failed");
       TEST_CHECK_(std::signbit(parsed), "double -0 roundtrip sign failed");
     }
@@ -366,7 +368,7 @@ void fp_roundtrip_special_values_test(void) {
       float v = -0.0f;
       std::string s = dtos(v);
       TEST_CHECK_(s == "-0", "float -0 should print as '-0', got '%s'", s.c_str());
-      TEST_CHECK_(std::signbit(static_cast<float>(lightusd::atof(s))),
+      TEST_CHECK_(std::signbit(static_cast<float>(lightusd::legacy::atof(s))),
                   "float -0 roundtrip sign failed");
     }
   }
@@ -378,7 +380,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = 1.0;
       std::string s = dtos(v);
       TEST_CHECK_(s == "1", "double 1.0 should print as '1', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(parsed == 1.0, "double 1.0 roundtrip failed");
     }
 
@@ -387,7 +389,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = -1.0;
       std::string s = dtos(v);
       TEST_CHECK_(s == "-1", "double -1.0 should print as '-1', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(parsed == -1.0, "double -1.0 roundtrip failed");
     }
 
@@ -412,14 +414,14 @@ void fp_roundtrip_special_values_test(void) {
     double v = std::nextafter(1.0, 2.0);
     std::string s = dtos(v);
     TEST_CHECK_(s != "1", "nextafter(1.0, 2.0) should NOT print as '1', got '%s'", s.c_str());
-    double parsed = lightusd::atof(s);
+    double parsed = lightusd::legacy::atof(s);
     TEST_CHECK_(parsed == v, "nextafter(1.0, 2.0) roundtrip failed");
 
     // nextafter(1.0, 0.0) - largest double < 1.0
     v = std::nextafter(1.0, 0.0);
     s = dtos(v);
     TEST_CHECK_(s != "1", "nextafter(1.0, 0.0) should NOT print as '1', got '%s'", s.c_str());
-    parsed = lightusd::atof(s);
+    parsed = lightusd::legacy::atof(s);
     TEST_CHECK_(parsed == v, "nextafter(1.0, 0.0) roundtrip failed");
   }
 
@@ -463,7 +465,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = std::numeric_limits<double>::infinity();
       std::string s = dtos(v);
       TEST_CHECK_(s == "inf", "double +inf should print as 'inf', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(std::isinf(parsed) && parsed > 0, "double +inf roundtrip failed");
     }
 
@@ -472,7 +474,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = -std::numeric_limits<double>::infinity();
       std::string s = dtos(v);
       TEST_CHECK_(s == "-inf", "double -inf should print as '-inf', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(std::isinf(parsed) && parsed < 0, "double -inf roundtrip failed");
     }
 
@@ -481,7 +483,7 @@ void fp_roundtrip_special_values_test(void) {
       double v = std::numeric_limits<double>::quiet_NaN();
       std::string s = dtos(v);
       TEST_CHECK_(s == "nan", "double nan should print as 'nan', got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(std::isnan(parsed), "double nan roundtrip failed");
     }
 
@@ -490,7 +492,7 @@ void fp_roundtrip_special_values_test(void) {
       float v = std::numeric_limits<float>::infinity();
       std::string s = dtos(v);
       TEST_CHECK_(s == "inf", "float +inf should print as 'inf', got '%s'", s.c_str());
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
       TEST_CHECK_(std::isinf(parsed) && parsed > 0, "float +inf roundtrip failed");
     }
 
@@ -499,7 +501,7 @@ void fp_roundtrip_special_values_test(void) {
       float v = -std::numeric_limits<float>::infinity();
       std::string s = dtos(v);
       TEST_CHECK_(s == "-inf", "float -inf should print as '-inf', got '%s'", s.c_str());
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
       TEST_CHECK_(std::isinf(parsed) && parsed < 0, "float -inf roundtrip failed");
     }
 
@@ -508,7 +510,7 @@ void fp_roundtrip_special_values_test(void) {
       float v = std::numeric_limits<float>::quiet_NaN();
       std::string s = dtos(v);
       TEST_CHECK_(s == "nan", "float nan should print as 'nan', got '%s'", s.c_str());
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
       TEST_CHECK_(std::isnan(parsed), "float nan roundtrip failed");
     }
   }
@@ -544,7 +546,7 @@ void fp_roundtrip_precision_test(void) {
     for (int i = 0; i < 100; i++) {
       double v = dist(rng);
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(bitwise_equal_double(parsed, v) || nearly_equal_double(parsed, v, 1e-15),
                   "double random precision test failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -568,9 +570,9 @@ void fp_roundtrip_precision_test(void) {
                   "adjacent doubles should produce different strings or be equal");
 
       // Each should round-trip correctly
-      double p1 = lightusd::atof(s1);
-      double p2 = lightusd::atof(s2);
-      double p3 = lightusd::atof(s3);
+      double p1 = lightusd::legacy::atof(s1);
+      double p2 = lightusd::legacy::atof(s2);
+      double p3 = lightusd::legacy::atof(s3);
 
       TEST_CHECK_(bitwise_equal_double(p1, v1) || nearly_equal_double(p1, v1, 1e-15),
                   "adjacent double roundtrip failed");
@@ -591,7 +593,7 @@ void fp_roundtrip_precision_test(void) {
     for (int i = 0; i < 100; i++) {
       float v = dist(rng);
       std::string s = dtos(v);
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
       TEST_CHECK_(bitwise_equal_float(parsed, v) || nearly_equal_float(parsed, v, 1e-6f),
                   "float random precision test failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -606,8 +608,8 @@ void fp_roundtrip_precision_test(void) {
       std::string s1 = dtos(v1);
       std::string s2 = dtos(v2);
 
-      float p1 = static_cast<float>(lightusd::atof(s1));
-      float p2 = static_cast<float>(lightusd::atof(s2));
+      float p1 = static_cast<float>(lightusd::legacy::atof(s1));
+      float p2 = static_cast<float>(lightusd::legacy::atof(s2));
 
       TEST_CHECK_(bitwise_equal_float(p1, v1) || nearly_equal_float(p1, v1, 1e-6f),
                   "adjacent float roundtrip failed");
@@ -632,7 +634,7 @@ void fp_roundtrip_precision_test(void) {
 
     for (double v : problematic_doubles) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(bitwise_equal_double(parsed, v) || nearly_equal_double(parsed, v, 1e-14),
                   "problematic double roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, s.c_str(), parsed);
@@ -649,7 +651,7 @@ void fp_roundtrip_precision_test(void) {
 
     for (float v : problematic_floats) {
       std::string s = dtos(v);
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
       TEST_CHECK_(bitwise_equal_float(parsed, v) || nearly_equal_float(parsed, v, 1e-6f),
                   "problematic float roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, s.c_str(), parsed);
@@ -695,7 +697,7 @@ void fp_roundtrip_buffer_test(void) {
                   "double buffer sentinel overwritten");
 
       // Verify roundtrip
-      double parsed = lightusd::atof(buf_str);
+      double parsed = lightusd::legacy::atof(buf_str);
       TEST_CHECK_(nearly_equal_double(parsed, v, 1e-14),
                   "double buffer roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   v, buf_str.c_str(), parsed);
@@ -736,7 +738,7 @@ void fp_roundtrip_buffer_test(void) {
                   "float buffer sentinel overwritten");
 
       // Verify roundtrip
-      float parsed = static_cast<float>(lightusd::atof(buf_str));
+      float parsed = static_cast<float>(lightusd::legacy::atof(buf_str));
       TEST_CHECK_(nearly_equal_float(parsed, v, 1e-6f),
                   "float buffer roundtrip failed: v=%.9g, s=%s, parsed=%.9g",
                   v, buf_str.c_str(), parsed);
@@ -752,7 +754,7 @@ void fp_roundtrip_buffer_test(void) {
       double v = static_cast<double>(i) * 0.001 - 5.0;
       size_t len = dtos(v, buffer);
       std::string s(buffer, len);
-      sum += lightusd::atof(s);
+      sum += lightusd::legacy::atof(s);
     }
 
     // Just verify no crashes and reasonable output
@@ -802,7 +804,7 @@ void fp_shortest_representation_test(void) {
       std::string printf_str(printf_buf);
 
       // Both should round-trip correctly
-      double dtos_parsed = lightusd::atof(dtos_str);
+      double dtos_parsed = lightusd::legacy::atof(dtos_str);
 
       TEST_CHECK_(bitwise_equal_double(dtos_parsed, v),
                   "dtos double roundtrip failed: v=%.17g, s=%s", v, dtos_str.c_str());
@@ -847,7 +849,7 @@ void fp_shortest_representation_test(void) {
                   tc.max_digits, tc.value, s.c_str(), digits);
 
       // Verify roundtrip
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(bitwise_equal_double(parsed, tc.value),
                   "known case roundtrip failed: v=%.17g, s=%s, parsed=%.17g",
                   tc.value, s.c_str(), parsed);
@@ -908,7 +910,7 @@ void fp_shortest_representation_test(void) {
       std::string shortened = remove_last_significand_digit(s);
       if (shortened == s) continue;  // Couldn't shorten
 
-      double parsed = lightusd::atof(shortened);
+      double parsed = lightusd::legacy::atof(shortened);
 
       // Removing the last digit should break the roundtrip
       TEST_CHECK_(!bitwise_equal_double(parsed, v),
@@ -978,7 +980,7 @@ void fp_shortest_representation_test(void) {
       // Should be short, not the full precision representation
       TEST_CHECK_(s.size() <= 4,  // "0.3" or similar
                   "0.3 should have short representation, got '%s'", s.c_str());
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(bitwise_equal_double(parsed, v),
                   "0.3 roundtrip failed: s='%s', parsed=%.17g", s.c_str(), parsed);
     }
@@ -991,7 +993,7 @@ void fp_shortest_representation_test(void) {
       // Should need fewer than 17 digits
       TEST_CHECK_(digits <= 17,
                   "1/3 produced too many digits: '%s' (%zu)", s.c_str(), digits);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
       TEST_CHECK_(bitwise_equal_double(parsed, v),
                   "1/3 roundtrip failed");
     }
@@ -1041,7 +1043,7 @@ void fp_shortest_representation_test(void) {
       total_printf_digits += count_significand_digits(printf_str);
 
       // Verify roundtrip
-      double parsed = lightusd::atof(dtos_str);
+      double parsed = lightusd::legacy::atof(dtos_str);
       TEST_CHECK_(bitwise_equal_double(parsed, v) || nearly_equal_double(parsed, v, 1e-15),
                   "random shortest test roundtrip failed");
     }
@@ -1070,7 +1072,7 @@ void fp_shortest_representation_test(void) {
 
     for (float v : test_floats) {
       std::string s = dtos(v);
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
 
       // The string representation should round-trip correctly for float
       TEST_CHECK_(bitwise_equal_float(parsed, v),
@@ -1115,7 +1117,7 @@ void fp_shortest_representation_test(void) {
     // Helper to verify shortest representation
     auto verify_shortest = [&](double v, const char* description) {
       std::string s = dtos(v);
-      double parsed = lightusd::atof(s);
+      double parsed = lightusd::legacy::atof(s);
 
       // Must round-trip correctly
       TEST_CHECK_(bitwise_equal_double(parsed, v),
@@ -1233,7 +1235,7 @@ void fp_shortest_representation_test(void) {
 
       for (double v : exact_integers) {
         std::string s = dtos(v);
-        double parsed = lightusd::atof(s);
+        double parsed = lightusd::legacy::atof(s);
         TEST_CHECK_(bitwise_equal_double(parsed, v),
                     "exact integer roundtrip failed: %.17g -> '%s' -> %.17g",
                     v, s.c_str(), parsed);
@@ -1264,7 +1266,7 @@ void fp_shortest_representation_test(void) {
 
       for (double v : long_decimal_values) {
         std::string s = dtos(v);
-        double parsed = lightusd::atof(s);
+        double parsed = lightusd::legacy::atof(s);
         TEST_CHECK_(bitwise_equal_double(parsed, v),
                     "long decimal roundtrip failed: %.17g -> '%s' -> %.17g",
                     v, s.c_str(), parsed);
@@ -1281,7 +1283,7 @@ void fp_shortest_representation_test(void) {
   {
     auto is_shorter_valid = [](double original, const std::string& shorter) -> bool {
       // Try to parse the shorter string
-      double parsed = lightusd::atof(shorter);
+      double parsed = lightusd::legacy::atof(shorter);
       return bitwise_equal_double(parsed, original);
     };
 
@@ -1401,7 +1403,7 @@ void fp_shortest_representation_test(void) {
       else ties++;
 
       // Verify roundtrip
-      double parsed = lightusd::atof(dtos_str);
+      double parsed = lightusd::legacy::atof(dtos_str);
       TEST_CHECK_(bitwise_equal_double(parsed, v),
                   "statistical test roundtrip failed: %.17g -> '%s'", v, dtos_str.c_str());
     }
@@ -1442,7 +1444,7 @@ void fp_shortest_representation_test(void) {
       if (!std::isfinite(f)) continue;
 
       std::string s = dtos(f);
-      float parsed = static_cast<float>(lightusd::atof(s));
+      float parsed = static_cast<float>(lightusd::legacy::atof(s));
 
       TEST_CHECK_(bitwise_equal_float(parsed, f),
                   "float edge case roundtrip failed: bits=0x%08X, f=%.9g, s='%s', parsed=%.9g",

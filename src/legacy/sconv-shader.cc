@@ -16,7 +16,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 // ============================================================================
@@ -1706,6 +1706,7 @@ bool CrateWriter::ExtractNodeGraphProperties(
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

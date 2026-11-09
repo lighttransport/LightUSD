@@ -7,7 +7,7 @@
 //
 #include "attribute-eval-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) \
@@ -17,7 +17,7 @@ namespace tydra {
 
 template<>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage, const TypedAttribute<std::string> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttribute<std::string> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err) {
@@ -68,7 +68,7 @@ bool EvaluateTypedAttribute(
 }
 
 template<> bool EvaluateTypedAnimatableAttribute<std::string>(
-    const lightusd::Stage &stage, const TypedAttribute<Animatable<std::string>> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttribute<Animatable<std::string>> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err,
@@ -132,7 +132,7 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
 
 template<>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage, const TypedAttributeWithFallback<std::string> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<std::string> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err) {
@@ -175,7 +175,7 @@ bool EvaluateTypedAttribute(
 
 template<>
 bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err,
@@ -243,4 +243,5 @@ bool EvaluateTypedAnimatableAttribute(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

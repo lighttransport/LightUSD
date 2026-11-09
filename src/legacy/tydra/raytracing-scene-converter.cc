@@ -16,7 +16,7 @@
 #include "usdShade.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 void RaytracingSceneConverter::SetProgressCallback(
@@ -374,4 +374,5 @@ bool RaytracingSceneConverter::ComputeTangents(RTGeometry* geom) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

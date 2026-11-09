@@ -145,12 +145,12 @@ bool ViewportRay(const OrbitCamera& camera, bool zeroToOneDepth, float px,
 }
 
 std::string LightUsdVersionString() {
-  std::string v = std::to_string(lightusd::version_major) + "." +
-                  std::to_string(lightusd::version_minor) + "." +
-                  std::to_string(lightusd::version_micro);
-  if (lightusd::version_rev && lightusd::version_rev[0] != '\0') {
+  std::string v = std::to_string(lightusd::legacy::version_major) + "." +
+                  std::to_string(lightusd::legacy::version_minor) + "." +
+                  std::to_string(lightusd::legacy::version_micro);
+  if (lightusd::legacy::version_rev && lightusd::legacy::version_rev[0] != '\0') {
     v += "-";
-    v += lightusd::version_rev;
+    v += lightusd::legacy::version_rev;
   }
   return v;
 }
@@ -208,24 +208,24 @@ const char* CompilerString() {
 #endif
 }
 
-const lightusd::Prim* FindPrimByPath(const lightusd::Prim& prim,
+const lightusd::legacy::Prim* FindPrimByPath(const lightusd::legacy::Prim& prim,
                                      const std::string& path) {
   if (prim.absolute_path().full_path_name() == path) return &prim;
   for (const auto& c : prim.children()) {
-    if (const lightusd::Prim* p = FindPrimByPath(c, path)) return p;
+    if (const lightusd::legacy::Prim* p = FindPrimByPath(c, path)) return p;
   }
   return nullptr;
 }
 
 // --- Hierarchy search predicates (name + type + abs path) ---
-bool PrimPasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
+bool PrimPasses(ImGuiTextFilter& f, const lightusd::legacy::Prim& prim) {
   std::string typeName = prim.prim_type_name();
   if (typeName.empty()) typeName = prim.type_name();
   std::string s = prim.element_name() + " " + typeName + " " +
                   prim.absolute_path().full_path_name();
   return f.PassFilter(s.c_str());
 }
-bool PrimSubtreePasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
+bool PrimSubtreePasses(ImGuiTextFilter& f, const lightusd::legacy::Prim& prim) {
   if (PrimPasses(f, prim)) return true;
   for (const auto& c : prim.children()) {
     if (PrimSubtreePasses(f, c)) return true;
@@ -1319,7 +1319,7 @@ void Gui::applySelection(const std::string& absPath, int meshIndex,
   revealSelectionInHierarchy_ = !absPath.empty();
   if (loaded_) {
     for (const auto& root : loaded_->stage.root_prims()) {
-      if (const lightusd::Prim* p = FindPrimByPath(root, absPath)) {
+      if (const lightusd::legacy::Prim* p = FindPrimByPath(root, absPath)) {
         selPrim_ = p;
         break;
       }
@@ -1327,9 +1327,9 @@ void Gui::applySelection(const std::string& absPath, int meshIndex,
     // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
     // GeomSubset children); fall back to the stage's path lookup.
     if (!selPrim_ && !absPath.empty()) {
-      const lightusd::Prim* p = nullptr;
+      const lightusd::legacy::Prim* p = nullptr;
       std::string err;
-      if (loaded_->stage.find_prim_at_path(lightusd::Path(absPath, ""), p, &err) && p) {
+      if (loaded_->stage.find_prim_at_path(lightusd::legacy::Path(absPath, ""), p, &err) && p) {
         selPrim_ = p;
       }
     }
@@ -1634,8 +1634,8 @@ void Gui::rebuildSubsetHighlight() {
   const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
 
   if (selPrim_) {
-    if (const auto* gs = selPrim_->as<lightusd::GeomSubset>()) {
-      if (gs->elementType.get_value() == lightusd::GeomSubset::ElementType::Face) {
+    if (const auto* gs = selPrim_->as<lightusd::legacy::GeomSubset>()) {
+      if (gs->elementType.get_value() == lightusd::legacy::GeomSubset::ElementType::Face) {
         std::set<uint32_t> faces;
         if (auto opt = gs->indices.get_value()) {
           std::vector<int32_t> fi;
@@ -2066,7 +2066,7 @@ bool Gui::framePath(const std::string& absPath) {
   return found;
 }
 
-bool Gui::drawPrimTree(const lightusd::Prim& prim) {
+bool Gui::drawPrimTree(const lightusd::legacy::Prim& prim) {
   // When filtering, hide whole subtrees that contain no match; expand the rest
   // so matches are visible in context.
   const bool filtering = hierFilter_.IsActive();
@@ -2089,44 +2089,44 @@ bool Gui::drawPrimTree(const lightusd::Prim& prim) {
     auto tryPurpose = [&](auto* gprim) -> std::string {
       if (gprim->purpose.authored()) {
         auto v = gprim->purpose.get_value();
-        if (v != lightusd::Purpose::Default) return lightusd::to_string(v);
+        if (v != lightusd::legacy::Purpose::Default) return lightusd::legacy::to_string(v);
       }
       return {};
     };
     std::string purpose;
-    if (auto* m = prim.as<lightusd::GeomMesh>()) purpose = tryPurpose(m);
-    else if (auto* s = prim.as<lightusd::GeomSphere>()) purpose = tryPurpose(s);
-    else if (auto* c = prim.as<lightusd::GeomCube>()) purpose = tryPurpose(c);
-    else if (auto* y = prim.as<lightusd::GeomCylinder>()) purpose = tryPurpose(y);
-    else if (auto* o = prim.as<lightusd::GeomCone>()) purpose = tryPurpose(o);
-    else if (auto* p = prim.as<lightusd::GeomCapsule>()) purpose = tryPurpose(p);
-    else if (auto* n = prim.as<lightusd::GeomPlane>()) purpose = tryPurpose(n);
-    else if (auto* b = prim.as<lightusd::GeomBasisCurves>()) purpose = tryPurpose(b);
-    else if (auto* pt = prim.as<lightusd::GeomPoints>()) purpose = tryPurpose(pt);
+    if (auto* m = prim.as<lightusd::legacy::GeomMesh>()) purpose = tryPurpose(m);
+    else if (auto* s = prim.as<lightusd::legacy::GeomSphere>()) purpose = tryPurpose(s);
+    else if (auto* c = prim.as<lightusd::legacy::GeomCube>()) purpose = tryPurpose(c);
+    else if (auto* y = prim.as<lightusd::legacy::GeomCylinder>()) purpose = tryPurpose(y);
+    else if (auto* o = prim.as<lightusd::legacy::GeomCone>()) purpose = tryPurpose(o);
+    else if (auto* p = prim.as<lightusd::legacy::GeomCapsule>()) purpose = tryPurpose(p);
+    else if (auto* n = prim.as<lightusd::legacy::GeomPlane>()) purpose = tryPurpose(n);
+    else if (auto* b = prim.as<lightusd::legacy::GeomBasisCurves>()) purpose = tryPurpose(b);
+    else if (auto* pt = prim.as<lightusd::legacy::GeomPoints>()) purpose = tryPurpose(pt);
     if (!purpose.empty()) badges += " [purpose:" + purpose + "]";
   }
   // Material badge
   const std::string absPath = prim.absolute_path().full_path_name();
   if (loaded_ && loaded_->ok &&
-      (prim.is<lightusd::GeomMesh>() || prim.is<lightusd::GeomBasisCurves>() ||
-       prim.is<lightusd::GeomPoints>())) {
-    lightusd::Path matPath;
-    const lightusd::Material* matPtr = nullptr;
+      (prim.is<lightusd::legacy::GeomMesh>() || prim.is<lightusd::legacy::GeomBasisCurves>() ||
+       prim.is<lightusd::legacy::GeomPoints>())) {
+    lightusd::legacy::Path matPath;
+    const lightusd::legacy::Material* matPtr = nullptr;
     std::string matErr;
-    if (lightusd::tydra::GetDirectlyBoundMaterial(
+    if (lightusd::legacy::tydra::GetDirectlyBoundMaterial(
             loaded_->stage, prim, "", &matPath, &matPtr, &matErr)) {
       badges += " [mat:" + std::string(matPath.prim_part().c_str()) + "]";
     }
   }
   // Instance / composition arc badges
   if (!prim.IsActive()) badges += " [inactive]";
-  if (prim.specifier() == lightusd::Specifier::Over) badges += " [over]";
-  else if (prim.specifier() == lightusd::Specifier::Class) badges += " [class]";
+  if (prim.specifier() == lightusd::legacy::Specifier::Over) badges += " [over]";
+  else if (prim.specifier() == lightusd::legacy::Specifier::Class) badges += " [class]";
   if (prim.IsInstance()) badges += " [instance]";
   if (prim.metas().get_instanceable()) badges += " [instanceable]";
   {
     const auto& m = prim.metas();
-    if (m.has_kind()) badges += " [" + lightusd::to_string(m.get_kind()) + "]";
+    if (m.has_kind()) badges += " [" + lightusd::legacy::to_string(m.get_kind()) + "]";
     if (m.references.has_value() && !m.references->empty()) {
       size_t count = 0;
       for (const auto& [qual, refs] : *m.references) count += refs.size();
@@ -2308,7 +2308,7 @@ void Gui::rebuildInspectorCache() {
   for (const std::string& name : names) {
     InspectorPropRow row;
     row.name = name;
-    lightusd::Property prop;
+    lightusd::legacy::Property prop;
     std::string perr;
     row.gotProperty = tydra::GetProperty(*selPrim_, name, &prop, &perr);
     if (row.gotProperty) {
@@ -2325,19 +2325,19 @@ void Gui::rebuildInspectorCache() {
         if (a.has_value() && (tn == "color3f" || tn == "color4f" || tn == "color3d")) {
           const auto& v = a.get_var().value_raw();
           if (tn == "color3f") {
-            if (const auto* c = v.as<lightusd::value::color3f>()) {
+            if (const auto* c = v.as<lightusd::legacy::value::color3f>()) {
               row.hasColor = true;
               row.color[0] = c->r; row.color[1] = c->g;
               row.color[2] = c->b; row.color[3] = 1.0f;
             }
           } else if (tn == "color4f") {
-            if (const auto* c = v.as<lightusd::value::color4f>()) {
+            if (const auto* c = v.as<lightusd::legacy::value::color4f>()) {
               row.hasColor = true;
               row.color[0] = c->r; row.color[1] = c->g;
               row.color[2] = c->b; row.color[3] = c->a;
             }
           } else if (tn == "color3d") {
-            if (const auto* c = v.as<lightusd::value::color3d>()) {
+            if (const auto* c = v.as<lightusd::legacy::value::color3d>()) {
               row.hasColor = true;
               row.color[0] = static_cast<float>(c->r); row.color[1] = static_cast<float>(c->g);
               row.color[2] = static_cast<float>(c->b); row.color[3] = 1.0f;
@@ -2791,12 +2791,12 @@ void Gui::drawInspector() {
 
     // Material binding
     if (loaded_ && loaded_->ok &&
-        (selPrim_->is<lightusd::GeomMesh>() || selPrim_->is<lightusd::GeomBasisCurves>() ||
-         selPrim_->is<lightusd::GeomPoints>())) {
-      lightusd::Path matPath;
-      const lightusd::Material* matPtr = nullptr;
+        (selPrim_->is<lightusd::legacy::GeomMesh>() || selPrim_->is<lightusd::legacy::GeomBasisCurves>() ||
+         selPrim_->is<lightusd::legacy::GeomPoints>())) {
+      lightusd::legacy::Path matPath;
+      const lightusd::legacy::Material* matPtr = nullptr;
       std::string matErr;
-      if (lightusd::tydra::GetDirectlyBoundMaterial(
+      if (lightusd::legacy::tydra::GetDirectlyBoundMaterial(
               loaded_->stage, *selPrim_, "", &matPath, &matPtr, &matErr)) {
         const std::string matPathStr = matPath.full_path_name();
         std::string matLabel = "Material: " + matPathStr;
@@ -2811,15 +2811,15 @@ void Gui::drawInspector() {
     }
 
     // Shader graph viewer (for Material/Shader prims).
-    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<lightusd::Material>()) {
+    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<lightusd::legacy::Material>()) {
       if (ImGui::CollapsingHeader("Shader graph", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Recursive lambda to trace shader connections.
         std::function<void(const std::string&, int)> traceShader;
         traceShader = [&](const std::string& shaderPath, int depth) {
           if (depth > 4) { ImGui::TextDisabled("  ..."); return; }
-          const lightusd::Prim* sprim = nullptr;
-          std::function<void(const lightusd::Prim&, const std::string&)> findPrim;
-          findPrim = [&](const lightusd::Prim& p, const std::string& target) {
+          const lightusd::legacy::Prim* sprim = nullptr;
+          std::function<void(const lightusd::legacy::Prim&, const std::string&)> findPrim;
+          findPrim = [&](const lightusd::legacy::Prim& p, const std::string& target) {
             if (p.absolute_path().full_path_name() == target) { sprim = &p; return; }
             for (const auto& c : p.children()) findPrim(c, target);
           };
@@ -2830,7 +2830,7 @@ void Gui::drawInspector() {
           std::string perr;
           if (tydra::GetPropertyNames(*sprim, &names, &perr)) {
             for (const auto& n : names) {
-              lightusd::Property prop;
+              lightusd::legacy::Property prop;
               if (tydra::GetProperty(*sprim, n, &prop, &perr) &&
                   prop.is_attribute() && prop.get_attribute().has_connections()) {
                 for (const auto& cpath : prop.get_attribute().connections()) {
@@ -2846,7 +2846,7 @@ void Gui::drawInspector() {
         std::string perr;
         if (tydra::GetPropertyNames(*selPrim_, &pnames, &perr)) {
           for (const auto& n : pnames) {
-            lightusd::Property prop;
+            lightusd::legacy::Property prop;
             if (tydra::GetProperty(*selPrim_, n, &prop, &perr) &&
                 prop.is_attribute() && prop.get_attribute().has_connections()) {
               for (const auto& cp : prop.get_attribute().connections()) {
@@ -4143,7 +4143,7 @@ void Gui::drawCompositionGraph() {
   if (m.references.has_value() && !m.references->empty()) {
     for (const auto& [qual, refs] : *m.references) {
       for (const auto& ref : refs) {
-        std::string qstr = lightusd::to_string(qual);
+        std::string qstr = lightusd::legacy::to_string(qual);
         std::string detail = qstr + " " + ref.asset_path.GetAssetPath();
         addArc("reference", detail, IM_COL32(100, 180, 255, 220));
       }
@@ -5695,14 +5695,14 @@ Gui::posedPickVertices() const {
   if (!loaded_) return out;
   // Legacy/tydra scene: compose the current skinning matrices and skin each
   // deformable mesh's rest vertices on the CPU.
-  std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
+  std::unordered_map<int, std::vector<lightusd::legacy::value::matrix4d>> skinCache;
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
     const DrawMeshCPU& m = draw_->meshes[mi];
     if (m.vertices.empty() ||
         (m.jointIdx.empty() && m.morphDeltaHalf.empty())) {
       continue;
     }
-    std::vector<lightusd::value::matrix4d> composed;
+    std::vector<lightusd::legacy::value::matrix4d> composed;
     if (!BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
                                        &skinCache, &composed)) {
       continue;
@@ -7625,7 +7625,7 @@ void Gui::buildHelpers() {
 
   // Extent attribute bbox
   if (showExtent_ && loaded_ && selPrim_) {
-    lightusd::Property extentProp;
+    lightusd::legacy::Property extentProp;
     std::string extentErr;
     if (tydra::GetProperty(*selPrim_, "extent", &extentProp, &extentErr)) {
       if (extentProp.is_attribute()) {
@@ -7770,7 +7770,7 @@ void Gui::buildHelpers() {
         if (drewDenseSamples) continue;
       }
       const light3d::Mat4 W = skelWorld(si, densePointSamples);
-      std::vector<lightusd::value::matrix4d> jointWorlds;
+      std::vector<lightusd::legacy::value::matrix4d> jointWorlds;
       if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
                                     timeline_.applied, &jointWorlds) ||
           jointWorlds.size() != nj) {

@@ -15,7 +15,7 @@
 #include "value-to-json.hh"
 #include "mcp-context.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -34,10 +34,10 @@ namespace {
 
 // Helper: find a PrimSpec by path in the context's layers
 const PrimSpec *FindPrimSpecInLayers(
-    const lightusd::HashMap<std::string, USDLayer> &layers,
+    const lightusd::legacy::HashMap<std::string, USDLayer> &layers,
     const std::string &path_str, std::string &layer_name,
     std::string &err) {
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return nullptr;
@@ -58,10 +58,10 @@ const PrimSpec *FindPrimSpecInLayers(
 
 // Helper: find mutable PrimSpec by path
 PrimSpec *FindMutablePrimSpecInLayers(
-    lightusd::HashMap<std::string, USDLayer> &layers,
+    lightusd::legacy::HashMap<std::string, USDLayer> &layers,
     const std::string &path_str, std::string &layer_uuid,
     std::string &err) {
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     err = "Invalid path: " + path_str;
     return nullptr;
@@ -554,4 +554,5 @@ bool VariantDefine(Context &ctx, const nlohmann::json &args,
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

@@ -7,7 +7,7 @@
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const lightusd::crate::Index &i) {
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::crate::Index &i) {
   os << std::to_string(i.value);
   return os;
 }

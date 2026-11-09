@@ -2,7 +2,7 @@
 // Copyright 2021 - Present, Light Transport Entertainment Inc.
 //
 // Shared helpers + member-template definitions for the ascii basic-type parser.
-// Included (inside namespace lightusd::ascii) by ascii-parser-basetype.cc and by
+// Included (inside namespace lightusd::legacy::ascii) by ascii-parser-basetype.cc and by
 // ascii-parser-basetype-inst.cc (which emits the explicit instantiations).
 // Keeping the bodies here lets the heavy explicit instantiations compile in a
 // separate, parallel TU.

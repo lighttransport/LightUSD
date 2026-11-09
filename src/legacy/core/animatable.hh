@@ -10,7 +10,7 @@
 
 #include "timesamples.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace animatable_detail {
 // True iff value::TypeTraits<T> is a complete specialization (i.e. T is a
@@ -270,4 +270,5 @@ struct Animatable {
   std::unique_ptr<value::TimeSamples> _ts;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -242,10 +242,10 @@ struct DeferredArc {
 // composed Stage alone is not enough to load payloads later).
 struct CompositionInfo {
   bool composed{false};
-  std::shared_ptr<const lightusd::Layer> rootLayer;
+  std::shared_ptr<const lightusd::legacy::Layer> rootLayer;
   std::vector<std::string> searchPaths;
   // Retained package backing for composition and later payload recomposition.
-  std::shared_ptr<lightusd::USDZAsset> usdzAsset;
+  std::shared_ptr<lightusd::legacy::USDZAsset> usdzAsset;
   // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
   // RenderScene conversion applies the same '..' policy to texture/light asset
   // resolution that composition used (the tydra asset resolver defaults to
@@ -258,8 +258,8 @@ struct CompositionInfo {
 // Holds both the parsed Stage (for the hierarchy browser / property inspector)
 // and the converted RenderScene (for rendering). Both must stay alive together.
 struct LoadedScene {
-  lightusd::Stage stage;
-  lightusd::tydra::RenderScene render;
+  lightusd::legacy::Stage stage;
+  lightusd::legacy::tydra::RenderScene render;
   std::string filepath;
   std::string warn;
   std::string err;
@@ -330,7 +330,7 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 // geometry belongs to the old scene). NOT thread-safe: only one RenderSceneAtTime
 // may touch a given cache at a time (the app gates reconverts to one in flight).
 struct RestSceneCache {
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   double timecode = 0.0;
   bool valid = false;
 };

@@ -20,19 +20,20 @@
 #include "core/prim-enums.hh"
 #include "core/prim-metas.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations needed before variant-types.hh
 class Prim;
 class PrimSpec;
 struct VariantSet;
 
+}  // namespace legacy
 } // namespace lightusd
 
 // variant-types.hh uses Prim/PrimSpec forward declarations
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Get elementName from Prim(e.g., Xform::name, GeomMesh::name)
@@ -353,4 +354,5 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                   value::TimeSampleInterpolationType tinterp =
                                       value::TimeSampleInterpolationType::Linear);
 
+}  // namespace legacy
 } // namespace lightusd

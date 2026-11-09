@@ -24,7 +24,7 @@ namespace lusdr {
 // ===========================================================================
 // Legacy stage load WITH composition.
 //
-// `lightusd::LoadUSDFromFile` parses a single layer; it does NOT expand
+// `lightusd::legacy::LoadUSDFromFile` parses a single layer; it does NOT expand
 // composition arcs. The legacy path used it directly, so every prim contributed
 // by a reference / payload / sublayer / inherit / variant simply did not exist:
 // a Material referenced from a look layer was missing (the mesh fell back to the
@@ -35,7 +35,7 @@ namespace lusdr {
 
 namespace {
 
-bool LayerHasCompositionArcs(const lightusd::Layer &layer) {
+bool LayerHasCompositionArcs(const lightusd::legacy::Layer &layer) {
   return !layer.metas().subLayers.empty() ||
          layer.check_unresolved_references() ||
          layer.check_unresolved_payload() ||
@@ -46,18 +46,18 @@ bool LayerHasCompositionArcs(const lightusd::Layer &layer) {
 
 // LIVRPS to a fixed point. lusdrender's legacy path is eager: every payload and
 // reference loads (no deferred-arc policy — that lives on the `next` path).
-bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
-                         lightusd::Layer &&src, lightusd::Layer *composed,
+bool ComposeToFixedPoint(lightusd::legacy::AssetResolutionResolver &resolver,
+                         lightusd::legacy::Layer &&src, lightusd::legacy::Layer *composed,
                          std::string *warn, std::string *err) {
-  lightusd::Layer work = std::move(src);
+  lightusd::legacy::Layer work = std::move(src);
 
   // A layer-relative asset path may climb with '..' — real layer stacks reach
   // sibling asset directories that way (ALab's looks live several levels up), and
   // rejecting them fails composition outright. Matches lusdview's default and the
   // `next` resolver's `allow_parent_paths`.
-  lightusd::ReferencesCompositionOptions ref_opts;
+  lightusd::legacy::ReferencesCompositionOptions ref_opts;
   ref_opts.allow_parent_relative_paths = true;
-  lightusd::PayloadCompositionOptions pl_opts;
+  lightusd::legacy::PayloadCompositionOptions pl_opts;
   pl_opts.allow_parent_relative_paths = true;
 
   constexpr int kMaxIteration = 64;
@@ -66,8 +66,8 @@ bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_references()) {
       has_unresolved = true;
-      lightusd::Layer tmp;
-      if (!lightusd::CompositeReferences(resolver, work, &tmp, warn, err,
+      lightusd::legacy::Layer tmp;
+      if (!lightusd::legacy::CompositeReferences(resolver, work, &tmp, warn, err,
                                          ref_opts)) {
         return false;
       }
@@ -76,8 +76,8 @@ bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_payload()) {
       has_unresolved = true;
-      lightusd::Layer tmp;
-      if (!lightusd::CompositePayload(resolver, work, &tmp, warn, err,
+      lightusd::legacy::Layer tmp;
+      if (!lightusd::legacy::CompositePayload(resolver, work, &tmp, warn, err,
                                       pl_opts)) {
         return false;
       }
@@ -86,8 +86,8 @@ bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_inherits()) {
       has_unresolved = true;
-      lightusd::Layer tmp;
-      if (!lightusd::CompositeInherits(work, &tmp, warn, err)) return false;
+      lightusd::legacy::Layer tmp;
+      if (!lightusd::legacy::CompositeInherits(work, &tmp, warn, err)) return false;
       work = std::move(tmp);
     }
 
@@ -99,16 +99,16 @@ bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
       const bool arcs_settled = !work.check_unresolved_references() &&
                                 !work.check_unresolved_payload();
       if (arcs_settled) {
-        lightusd::Layer tmp;
-        if (!lightusd::CompositeVariant(work, &tmp, warn, err)) return false;
+        lightusd::legacy::Layer tmp;
+        if (!lightusd::legacy::CompositeVariant(work, &tmp, warn, err)) return false;
         work = std::move(tmp);
       }
     }
 
     if (work.check_unresolved_specializes()) {
       has_unresolved = true;
-      lightusd::Layer tmp;
-      if (!lightusd::CompositeSpecializes(work, &tmp, warn, err)) return false;
+      lightusd::legacy::Layer tmp;
+      if (!lightusd::legacy::CompositeSpecializes(work, &tmp, warn, err)) return false;
       work = std::move(tmp);
     }
 
@@ -125,8 +125,8 @@ bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
 }  // namespace
 
 bool LoadStageComposedLegacy(const std::string &path,
-                             const lightusd::USDLoadOptions &load_options,
-                             lightusd::Stage *stage, std::string *warn,
+                             const lightusd::legacy::USDLoadOptions &load_options,
+                             lightusd::legacy::Stage *stage, std::string *warn,
                              std::string *err) {
   if (!stage) return false;
 
@@ -138,58 +138,58 @@ bool LoadStageComposedLegacy(const std::string &path,
   const bool is_usdz =
       lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".usdz") == 0;
   if (is_usdz) {
-    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::legacy::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
-  lightusd::Layer root;
+  lightusd::legacy::Layer root;
   std::string lwarn, lerr;
-  if (!lightusd::LoadLayerFromFile(path, &root, &lwarn, &lerr)) {
+  if (!lightusd::legacy::LoadLayerFromFile(path, &root, &lwarn, &lerr)) {
     // Not layer-loadable (or an unsupported flavor) — fall back to the direct
     // parser rather than failing the render outright.
-    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::legacy::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
   if (!LayerHasCompositionArcs(root)) {
     // No arcs: keep the direct parser path. LayerToStage drops some less-common
     // concrete schemas (e.g. NurbsPatch) and the direct load retains zero-copy
     // USDC storage, so composing here would only lose things.
-    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::legacy::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
   if (warn) *warn += lwarn;
 
-  lightusd::AssetResolutionResolver resolver;
+  lightusd::legacy::AssetResolutionResolver resolver;
   resolver.set_search_paths({DirName(path)});
 
   if (!root.metas().subLayers.empty()) {
-    lightusd::SublayersCompositionOptions sl_opts;
+    lightusd::legacy::SublayersCompositionOptions sl_opts;
     sl_opts.allow_parent_relative_paths = true;
-    lightusd::Layer tmp;
-    if (!lightusd::CompositeSublayers(resolver, root, &tmp, warn, err,
+    lightusd::legacy::Layer tmp;
+    if (!lightusd::legacy::CompositeSublayers(resolver, root, &tmp, warn, err,
                                       sl_opts)) {
       return false;
     }
     root = std::move(tmp);
   }
 
-  lightusd::Layer composed;
+  lightusd::legacy::Layer composed;
   if (!ComposeToFixedPoint(resolver, std::move(root), &composed, warn, err)) {
     return false;
   }
-  return lightusd::LayerToStage(std::move(composed), stage, warn, err);
+  return lightusd::legacy::LayerToStage(std::move(composed), stage, warn, err);
 }
 
 
-using lightusd::value::color3f;
-using lightusd::value::float3;
-using lightusd::value::matrix4d;
-using lightusd::tydra::Node;
-using lightusd::tydra::NodeType;
-using lightusd::tydra::RenderCamera;
-using lightusd::tydra::RenderLight;
-using lightusd::tydra::RenderMaterial;
-using lightusd::tydra::RenderMesh;
-using lightusd::tydra::RenderScene;
+using lightusd::legacy::value::color3f;
+using lightusd::legacy::value::float3;
+using lightusd::legacy::value::matrix4d;
+using lightusd::legacy::tydra::Node;
+using lightusd::legacy::tydra::NodeType;
+using lightusd::legacy::tydra::RenderCamera;
+using lightusd::legacy::tydra::RenderLight;
+using lightusd::legacy::tydra::RenderMaterial;
+using lightusd::legacy::tydra::RenderMesh;
+using lightusd::legacy::tydra::RenderScene;
 
 // ===========================================================================
 // Memory budget / manager.
@@ -220,8 +220,8 @@ using lightusd::tydra::RenderScene;
 
 namespace {
 
-WrapMode ToTusdrWrapLegacy(lightusd::tydra::UVTexture::WrapMode m) {
-  using W = lightusd::tydra::UVTexture::WrapMode;
+WrapMode ToTusdrWrapLegacy(lightusd::legacy::tydra::UVTexture::WrapMode m) {
+  using W = lightusd::legacy::tydra::UVTexture::WrapMode;
   switch (m) {
     case W::REPEAT: return WrapMode::Repeat;
     case W::MIRROR: return WrapMode::Mirror;
@@ -233,8 +233,8 @@ WrapMode ToTusdrWrapLegacy(lightusd::tydra::UVTexture::WrapMode m) {
 
 // Source channel of a scalar (roughness/metallic/occlusion/opacity) texture:
 // 0=r, 1=g, 2=b, 3=a — matching TriInfo::{rough,metal,occ,opacity}_ch.
-uint8_t ScalarChannel(const lightusd::tydra::UVTexture &tex) {
-  using C = lightusd::tydra::UVTexture::Channel;
+uint8_t ScalarChannel(const lightusd::legacy::tydra::UVTexture &tex) {
+  using C = lightusd::legacy::tydra::UVTexture::Channel;
   switch (tex.connectedOutputChannel) {
     case C::G: return 1;
     case C::B: return 2;
@@ -250,7 +250,7 @@ uint8_t ScalarChannel(const lightusd::tydra::UVTexture &tex) {
 // (examples/lusdview/mesh_build.cc DecodeToRGBA8): tydra may hand back UInt8,
 // UInt16, Half or Float texels depending on the source image.
 bool DecodeLegacyImageRGBA8(const RenderScene &scene,
-                            const lightusd::tydra::TextureImage &img,
+                            const lightusd::legacy::tydra::TextureImage &img,
                             Texture *out) {
   if (img.buffer_id < 0 || size_t(img.buffer_id) >= scene.buffers.size()) {
     return false;
@@ -258,7 +258,7 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
   if (!img.decoded || img.width <= 0 || img.height <= 0 || img.channels <= 0) {
     return false;
   }
-  const lightusd::tydra::BufferData &buf =
+  const lightusd::legacy::tydra::BufferData &buf =
       scene.buffers[size_t(img.buffer_id)];
   const size_t w = size_t(img.width);
   const size_t h = size_t(img.height);
@@ -290,7 +290,7 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
     return c < ch ? float(p[i * ch + c]) * scale : 0.0f;
   };
 
-  using CT = lightusd::tydra::ComponentType;
+  using CT = lightusd::legacy::tydra::ComponentType;
   switch (img.texelComponentType) {
     case CT::UInt8: {
       if (buf.data.size() < npix * ch) return false;
@@ -328,11 +328,11 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
   }
 }
 
-bool SetLegacyTextureColorTransform(lightusd::tydra::ColorSpace color_space,
+bool SetLegacyTextureColorTransform(lightusd::legacy::tydra::ColorSpace color_space,
                                     Texture *texture) {
   if (!texture) return false;
   const char *source = nullptr;
-  using LegacyColorSpace = lightusd::tydra::ColorSpace;
+  using LegacyColorSpace = lightusd::legacy::tydra::ColorSpace;
   switch (color_space) {
     case LegacyColorSpace::sRGB:
     case LegacyColorSpace::sRGB_Texture:
@@ -401,7 +401,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
     if (slot != -2) return slot;  // decoded (or already known-bad)
     slot = -1;
 
-    const lightusd::tydra::UVTexture &tex = scene.textures[size_t(tydra_id)];
+    const lightusd::legacy::tydra::UVTexture &tex = scene.textures[size_t(tydra_id)];
     if (tex.texture_image_id < 0 ||
         size_t(tex.texture_image_id) >= scene.images.size()) {
       return slot;
@@ -413,10 +413,10 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
     }
     t.wrap_s = ToTusdrWrapLegacy(tex.wrapS);
     t.wrap_t = ToTusdrWrapLegacy(tex.wrapT);
-    const lightusd::tydra::TextureImage &image =
+    const lightusd::legacy::tydra::TextureImage &image =
         scene.images[size_t(tex.texture_image_id)];
-    const lightusd::tydra::ColorSpace image_color_space = image.colorSpace;
-    t.srgb = image_color_space == lightusd::tydra::ColorSpace::sRGB;
+    const lightusd::legacy::tydra::ColorSpace image_color_space = image.colorSpace;
+    t.srgb = image_color_space == lightusd::legacy::tydra::ColorSpace::sRGB;
     if (image.colorTransformValid && !image.colorTransformApplied) {
       lightusd::color::ColorTransform transform;
       transform.source.name = image.sourceColorSpaceName;
@@ -449,7 +449,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
   };
 
   for (size_t i = 0; i < scene.materials.size(); ++i) {
-    const lightusd::tydra::RenderMaterial &mat = scene.materials[i];
+    const lightusd::legacy::tydra::RenderMaterial &mat = scene.materials[i];
     LegacyMaterialTex &b = bindings[i];
 
     auto chan = [&](int32_t tydra_id) -> uint8_t {
@@ -464,7 +464,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       b.uv_names[lane] = scene.textures[size_t(tydra_id)].varname_uv;
     };
     if (mat.surfaceShader.has_value()) {
-      const lightusd::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+      const lightusd::legacy::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
       b.diffuse = resolve(s.diffuseColor.texture_id);
       b.emissive = resolve(s.emissiveColor.texture_id);
       b.normal = resolve(s.normal.texture_id);
@@ -488,7 +488,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       // Preview Surface counterparts. Previously only constants were read from
       // openPBRShader, leaving every MaterialX texture unbound even though
       // Tydra had decoded it and resolved its colorspace transform.
-      const lightusd::tydra::OpenPBRSurfaceShader &s = *mat.openPBRShader;
+      const lightusd::legacy::tydra::OpenPBRSurfaceShader &s = *mat.openPBRShader;
       b.diffuse = resolve(s.base_color.texture_id);
       b.normal = resolve(s.normal.texture_id);
       b.roughness = resolve(s.base_roughness.texture_id);
@@ -512,7 +512,7 @@ std::vector<int> FaceMaterialIds(const RenderMesh &mesh) {
   const std::vector<uint32_t> &counts = mesh.faceVertexCounts();
   std::vector<int> ids(counts.size(), mesh.material_id);
   for (const auto &kv : mesh.material_subsetMap) {
-    const lightusd::tydra::MaterialSubset &subset = kv.second;
+    const lightusd::legacy::tydra::MaterialSubset &subset = kv.second;
     const std::vector<int> &faces = subset.indices();
     for (int f : faces) {
       if (f >= 0 && size_t(f) < ids.size()) {
@@ -551,7 +551,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
   // is the first UV name the bound material references. A textured lane whose
   // UsdPrimvarReader names the second primvar samples `tri_uvs1`; every other
   // lane (and all lanes when no second set exists) samples `tri_uvs`.
-  const lightusd::tydra::VertexAttribute *uv_attrs[2] = {nullptr, nullptr};
+  const lightusd::legacy::tydra::VertexAttribute *uv_attrs[2] = {nullptr, nullptr};
   if (tri_uvs) {
     for (uint32_t slot = 0; slot < 2; ++slot) {
       auto it = mesh.texcoords.find(slot);
@@ -576,7 +576,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
   // v-flip, so do not pre-flip here (matches the `next` path).
   auto uv_at = [&](uint32_t stream, size_t fv,
                    uint32_t pi) -> std::pair<float, float> {
-    const lightusd::tydra::VertexAttribute *attr = uv_attrs[stream];
+    const lightusd::legacy::tydra::VertexAttribute *attr = uv_attrs[stream];
     if (!attr) return {0.0f, 0.0f};
     const size_t i = uv_facevarying[stream] ? fv : size_t(pi);
     if (i >= attr->vertex_count()) return {0.0f, 0.0f};
@@ -795,7 +795,7 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
     CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights,
                     tri_uvs, tri_uvs1, mat_tex, pv);
   }
-  for (const lightusd::tydra::RenderInstance &inst : scene.instances) {
+  for (const lightusd::legacy::tydra::RenderInstance &inst : scene.instances) {
     if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < scene.meshes.size() &&
         inst.visible) {
       const RenderMesh &mesh = scene.meshes[size_t(inst.mesh_id)];
@@ -808,13 +808,13 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
 
 
 template <typename T>
-bool BorrowMMapArray(const lightusd::Stage &stage, const std::string &prim_path,
+bool BorrowMMapArray(const lightusd::legacy::Stage &stage, const std::string &prim_path,
                      const std::string &attr_name, BorrowedArrayView<T> *out) {
   if (!out || !stage.has_mmap_zero_copy()) return false;
-  const lightusd::MMapArrayRef *ref =
+  const lightusd::legacy::MMapArrayRef *ref =
       stage.mmap_table()->find_compatible(prim_path, attr_name);
   if (!ref) return false;
-  const lightusd::MMapDataSource *source = stage.mmap_source();
+  const lightusd::legacy::MMapDataSource *source = stage.mmap_source();
   if (!source || !source->is_valid()) return false;
   if (ref->element_size != sizeof(T)) return false;
   if (ref->element_count > (UINT64_MAX / sizeof(T))) return false;
@@ -862,11 +862,11 @@ T ReadBorrowedArrayValue(const BorrowedArrayView<T> &view, size_t index) {
 // mmap_zero_copy mode; the caller should try BorrowMMapArray() first).
 template <typename T>
 const std::vector<T> *BorrowScalarVector(
-    const lightusd::TypedAttribute<lightusd::Animatable<std::vector<T>>> &attr) {
+    const lightusd::legacy::TypedAttribute<lightusd::legacy::Animatable<std::vector<T>>> &attr) {
   if (attr.is_blocked() || attr.has_connections()) return nullptr;
   const auto &opt = attr.get_value_ref();
   if (!opt) return nullptr;
-  const lightusd::Animatable<std::vector<T>> &anim = opt.value();
+  const lightusd::legacy::Animatable<std::vector<T>> &anim = opt.value();
   if (anim.is_scalar() && anim.has_default()) {
     return &anim.get_scalar_ref();
   }
@@ -881,95 +881,95 @@ unsigned WorkerThreadCount(int requested) {
   return hw > 0 ? hw : 1u;
 }
 
-const lightusd::Xformable *AsPreviewXformable(const lightusd::Prim &prim) {
-  if (const lightusd::Xform *x = prim.as<lightusd::Xform>()) return x;
-  if (const lightusd::GeomMesh *m = prim.as<lightusd::GeomMesh>()) return m;
-  if (const lightusd::GeomCamera *c = prim.as<lightusd::GeomCamera>()) return c;
+const lightusd::legacy::Xformable *AsPreviewXformable(const lightusd::legacy::Prim &prim) {
+  if (const lightusd::legacy::Xform *x = prim.as<lightusd::legacy::Xform>()) return x;
+  if (const lightusd::legacy::GeomMesh *m = prim.as<lightusd::legacy::GeomMesh>()) return m;
+  if (const lightusd::legacy::GeomCamera *c = prim.as<lightusd::legacy::GeomCamera>()) return c;
   return nullptr;
 }
 
-const lightusd::GPrim *AsPreviewGPrim(const lightusd::Prim &prim) {
-  if (const lightusd::Xform *p = prim.as<lightusd::Xform>()) return p;
-  if (const lightusd::GeomMesh *p = prim.as<lightusd::GeomMesh>()) return p;
-  if (const lightusd::GeomCamera *p = prim.as<lightusd::GeomCamera>()) return p;
-  if (const lightusd::GeomCube *p = prim.as<lightusd::GeomCube>()) return p;
-  if (const lightusd::GeomSphere *p = prim.as<lightusd::GeomSphere>()) return p;
-  if (const lightusd::GeomCone *p = prim.as<lightusd::GeomCone>()) return p;
-  if (const lightusd::GeomCylinder *p = prim.as<lightusd::GeomCylinder>()) return p;
-  if (const lightusd::GeomCapsule *p = prim.as<lightusd::GeomCapsule>()) return p;
-  if (const lightusd::GeomPlane *p = prim.as<lightusd::GeomPlane>()) return p;
-  if (const lightusd::GeomTetMesh *p = prim.as<lightusd::GeomTetMesh>()) return p;
-  if (const lightusd::GeomNurbsPatch *p = prim.as<lightusd::GeomNurbsPatch>()) {
+const lightusd::legacy::GPrim *AsPreviewGPrim(const lightusd::legacy::Prim &prim) {
+  if (const lightusd::legacy::Xform *p = prim.as<lightusd::legacy::Xform>()) return p;
+  if (const lightusd::legacy::GeomMesh *p = prim.as<lightusd::legacy::GeomMesh>()) return p;
+  if (const lightusd::legacy::GeomCamera *p = prim.as<lightusd::legacy::GeomCamera>()) return p;
+  if (const lightusd::legacy::GeomCube *p = prim.as<lightusd::legacy::GeomCube>()) return p;
+  if (const lightusd::legacy::GeomSphere *p = prim.as<lightusd::legacy::GeomSphere>()) return p;
+  if (const lightusd::legacy::GeomCone *p = prim.as<lightusd::legacy::GeomCone>()) return p;
+  if (const lightusd::legacy::GeomCylinder *p = prim.as<lightusd::legacy::GeomCylinder>()) return p;
+  if (const lightusd::legacy::GeomCapsule *p = prim.as<lightusd::legacy::GeomCapsule>()) return p;
+  if (const lightusd::legacy::GeomPlane *p = prim.as<lightusd::legacy::GeomPlane>()) return p;
+  if (const lightusd::legacy::GeomTetMesh *p = prim.as<lightusd::legacy::GeomTetMesh>()) return p;
+  if (const lightusd::legacy::GeomNurbsPatch *p = prim.as<lightusd::legacy::GeomNurbsPatch>()) {
     return p;
   }
-  if (const lightusd::GeomBasisCurves *p = prim.as<lightusd::GeomBasisCurves>()) {
+  if (const lightusd::legacy::GeomBasisCurves *p = prim.as<lightusd::legacy::GeomBasisCurves>()) {
     return p;
   }
-  if (const lightusd::GeomHermiteCurves *p =
-          prim.as<lightusd::GeomHermiteCurves>()) {
+  if (const lightusd::legacy::GeomHermiteCurves *p =
+          prim.as<lightusd::legacy::GeomHermiteCurves>()) {
     return p;
   }
-  if (const lightusd::GeomNurbsCurves *p = prim.as<lightusd::GeomNurbsCurves>()) {
+  if (const lightusd::legacy::GeomNurbsCurves *p = prim.as<lightusd::legacy::GeomNurbsCurves>()) {
     return p;
   }
-  if (const lightusd::GeomPoints *p = prim.as<lightusd::GeomPoints>()) return p;
-  if (const lightusd::GeomPointInstancer *p =
-          prim.as<lightusd::GeomPointInstancer>()) {
+  if (const lightusd::legacy::GeomPoints *p = prim.as<lightusd::legacy::GeomPoints>()) return p;
+  if (const lightusd::legacy::GeomPointInstancer *p =
+          prim.as<lightusd::legacy::GeomPointInstancer>()) {
     return p;
   }
   return nullptr;
 }
 
-matrix4d LocalMatrixOrIdentity(const lightusd::Xformable *xformable, double time,
+matrix4d LocalMatrixOrIdentity(const lightusd::legacy::Xformable *xformable, double time,
                                bool *reset) {
   if (reset) *reset = false;
   if (!xformable) return matrix4d::identity();
   bool local_reset = false;
   auto ret = xformable->GetLocalMatrix(
-      time, lightusd::value::TimeSampleInterpolationType::Linear, &local_reset);
+      time, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &local_reset);
   if (reset) *reset = local_reset;
   if (!ret) return matrix4d::identity();
   return ret.value();
 }
 
 template <typename T>
-bool EvalAnim(const lightusd::Stage &stage,
-              const lightusd::TypedAttribute<lightusd::Animatable<T>> &attr,
+bool EvalAnim(const lightusd::legacy::Stage &stage,
+              const lightusd::legacy::TypedAttribute<lightusd::legacy::Animatable<T>> &attr,
               const std::string &name, double time, T *out) {
   std::string err;
-  return lightusd::tydra::EvaluateTypedAnimatableAttribute(
+  return lightusd::legacy::tydra::EvaluateTypedAnimatableAttribute(
       stage, attr, name, out, &err, time);
 }
 
 template <typename T>
 bool EvalAnimFallback(
-    const lightusd::Stage &stage,
-    const lightusd::TypedAttributeWithFallback<lightusd::Animatable<T>> &attr,
+    const lightusd::legacy::Stage &stage,
+    const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::Animatable<T>> &attr,
     const std::string &name, double time, T *out) {
   std::string err;
-  return lightusd::tydra::EvaluateTypedAnimatableAttribute(
+  return lightusd::legacy::tydra::EvaluateTypedAnimatableAttribute(
       stage, attr, name, out, &err, time);
 }
 
-uint32_t PurposeBit(lightusd::Purpose purpose) {
+uint32_t PurposeBit(lightusd::legacy::Purpose purpose) {
   switch (purpose) {
-    case lightusd::Purpose::Render:
+    case lightusd::legacy::Purpose::Render:
       return kPurposeRenderBit;
-    case lightusd::Purpose::Proxy:
+    case lightusd::legacy::Purpose::Proxy:
       return kPurposeProxyBit;
-    case lightusd::Purpose::Guide:
+    case lightusd::legacy::Purpose::Guide:
       return kPurposeGuideBit;
-    case lightusd::Purpose::Default:
+    case lightusd::legacy::Purpose::Default:
     default:
       return kPurposeDefaultBit;
   }
 }
 
-lightusd::Purpose ResolvePurpose(const lightusd::Prim &prim,
-                                 lightusd::Purpose inherited) {
-  if (const lightusd::GPrim *gprim = AsPreviewGPrim(prim)) {
-    lightusd::Purpose purpose = gprim->purpose.get_value();
-    if (purpose != lightusd::Purpose::Default) return purpose;
+lightusd::legacy::Purpose ResolvePurpose(const lightusd::legacy::Prim &prim,
+                                 lightusd::legacy::Purpose inherited) {
+  if (const lightusd::legacy::GPrim *gprim = AsPreviewGPrim(prim)) {
+    lightusd::legacy::Purpose purpose = gprim->purpose.get_value();
+    if (purpose != lightusd::legacy::Purpose::Default) return purpose;
   }
   return inherited;
 }
@@ -984,43 +984,43 @@ bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask) {
 // tydra RenderScene carries neither, so without this the legacy shaded path
 // drew guide/proxy geometry unconditionally (-purpose/-hideProxy/... were
 // no-ops) and rendered invisible prims.
-void BuildLegacyPurposeVisibility(const lightusd::Stage &stage,
+void BuildLegacyPurposeVisibility(const lightusd::legacy::Stage &stage,
                                   PurposeVisibilityMap *out) {
   if (!out) return;
-  std::function<void(const lightusd::Prim &, lightusd::Purpose, bool)> walk =
-      [&](const lightusd::Prim &prim, lightusd::Purpose inherited,
+  std::function<void(const lightusd::legacy::Prim &, lightusd::legacy::Purpose, bool)> walk =
+      [&](const lightusd::legacy::Prim &prim, lightusd::legacy::Purpose inherited,
           bool invisible) {
-        if (const lightusd::GPrim *gp = AsPreviewGPrim(prim)) {
-          lightusd::Visibility vis = lightusd::Visibility::Inherited;
+        if (const lightusd::legacy::GPrim *gp = AsPreviewGPrim(prim)) {
+          lightusd::legacy::Visibility vis = lightusd::legacy::Visibility::Inherited;
           if (gp->visibility.get_value().get_default(&vis) &&
-              vis == lightusd::Visibility::Invisible) {
+              vis == lightusd::legacy::Visibility::Invisible) {
             invisible = true;
           }
         }
         inherited = ResolvePurpose(prim, inherited);
         const std::string path = prim.absolute_path().full_path_name();
         (*out)[path] = invisible ? 0u : PurposeBit(inherited);
-        for (const lightusd::Prim &child : prim.children()) {
+        for (const lightusd::legacy::Prim &child : prim.children()) {
           walk(child, inherited, invisible);
         }
       };
-  for (const lightusd::Prim &root : stage.root_prims()) {
-    walk(root, lightusd::Purpose::Default, false);
+  for (const lightusd::legacy::Prim &root : stage.root_prims()) {
+    walk(root, lightusd::legacy::Purpose::Default, false);
   }
 }
 
 
-bool AddRTPreviewMesh(const lightusd::Stage &stage, const std::string &prim_path,
-                      const lightusd::GeomMesh &mesh, const matrix4d &world,
-                      double time, lightusd::Purpose purpose,
+bool AddRTPreviewMesh(const lightusd::legacy::Stage &stage, const std::string &prim_path,
+                      const lightusd::legacy::GeomMesh &mesh, const matrix4d &world,
+                      double time, lightusd::legacy::Purpose purpose,
                       uint32_t purpose_mask,
                       std::vector<float> *vertices, std::vector<TriInfo> *tris,
                       Bounds *bounds, RTPreviewStats *stats) {
   if (!vertices || !tris || !bounds || !stats) return false;
-  BorrowedArrayView<lightusd::value::point3f> points;
+  BorrowedArrayView<lightusd::legacy::value::point3f> points;
   if (BorrowMMapArray(stage, prim_path, "points", &points)) {
     stats->meshes_with_mmap_points++;
-  } else if (const std::vector<lightusd::value::point3f> *pv =
+  } else if (const std::vector<lightusd::legacy::value::point3f> *pv =
                  BorrowScalarVector(mesh.points)) {
     // Zero-copy: in-memory (materialized) points vector.
     points.data = pv->data();
@@ -1040,7 +1040,7 @@ bool AddRTPreviewMesh(const lightusd::Stage &stage, const std::string &prim_path
     points.mmap = false;
     stats->meshes_with_owned_points++;
     stats->copied_point_bytes +=
-        uint64_t(points.count) * sizeof(lightusd::value::point3f);
+        uint64_t(points.count) * sizeof(lightusd::legacy::value::point3f);
   }
 
   // Topology: prefer zero-copy const-ref to the in-memory vectors; fall back to
@@ -1149,16 +1149,16 @@ bool AddRTPreviewMesh(const lightusd::Stage &stage, const std::string &prim_path
 // Serial: resolve world matrices / purpose (parent-dependent) and flatten the
 // renderable GeomMesh prims into `jobs`. The per-triangle work happens later in
 // parallel; this walk only does cheap per-prim xform/purpose evaluation.
-void CollectRTPreviewMeshes(const lightusd::Prim &prim,
+void CollectRTPreviewMeshes(const lightusd::legacy::Prim &prim,
                             const matrix4d &parent_world, double time,
-                            lightusd::Purpose inherited_purpose,
+                            lightusd::legacy::Purpose inherited_purpose,
                             std::vector<MeshJob> *jobs) {
   bool reset = false;
   const matrix4d local =
       LocalMatrixOrIdentity(AsPreviewXformable(prim), time, &reset);
   const matrix4d world = reset ? local : (local * parent_world);
-  const lightusd::Purpose purpose = ResolvePurpose(prim, inherited_purpose);
-  if (const lightusd::GeomMesh *mesh = prim.as<lightusd::GeomMesh>()) {
+  const lightusd::legacy::Purpose purpose = ResolvePurpose(prim, inherited_purpose);
+  if (const lightusd::legacy::GeomMesh *mesh = prim.as<lightusd::legacy::GeomMesh>()) {
     MeshJob job;
     job.mesh = mesh;
     job.world = world;
@@ -1166,7 +1166,7 @@ void CollectRTPreviewMeshes(const lightusd::Prim &prim,
     job.prim_path = prim.absolute_path().full_path_name();
     jobs->push_back(std::move(job));
   }
-  for (const lightusd::Prim &child : prim.children()) {
+  for (const lightusd::legacy::Prim &child : prim.children()) {
     CollectRTPreviewMeshes(child, world, time, purpose, jobs);
   }
 }
@@ -1190,7 +1190,7 @@ void MergeBounds(Bounds *dst, const Bounds &src) {
   Expand(dst, src.hi);
 }
 
-bool BuildRTPreviewScene(const lightusd::Stage &stage, const Options &opt,
+bool BuildRTPreviewScene(const lightusd::legacy::Stage &stage, const Options &opt,
                          std::vector<float> *vertices,
                          std::vector<TriInfo> *tris, Bounds *bounds,
                          RTPreviewStats *stats, std::string *err) {
@@ -1206,9 +1206,9 @@ bool BuildRTPreviewScene(const lightusd::Stage &stage, const Options &opt,
 
   // Pass A (serial, cheap): flatten the prim tree into per-mesh jobs.
   std::vector<MeshJob> jobs;
-  for (const lightusd::Prim &root : stage.root_prims()) {
+  for (const lightusd::legacy::Prim &root : stage.root_prims()) {
     CollectRTPreviewMeshes(root, matrix4d::identity(), opt.timecode,
-                           lightusd::Purpose::Default, &jobs);
+                           lightusd::legacy::Purpose::Default, &jobs);
   }
   stats->meshes = jobs.size();
 
@@ -1275,23 +1275,23 @@ bool BuildRTPreviewScene(const lightusd::Stage &stage, const Options &opt,
   return true;
 }
 
-bool MatchPrimNameOrPath(const lightusd::Prim &prim, const std::string &query) {
+bool MatchPrimNameOrPath(const lightusd::legacy::Prim &prim, const std::string &query) {
   if (query.empty()) return true;
   const std::string path = prim.absolute_path().full_path_name();
   return path == query || prim.element_name() == query;
 }
 
-bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
-                               const lightusd::GeomCamera &cam,
+bool CameraFrameFromGeomCamera(const lightusd::legacy::Stage &stage,
+                               const lightusd::legacy::GeomCamera &cam,
                                const matrix4d &world, double time,
                                CameraFrame *frame) {
   if (!frame) return false;
   float focal_length = 50.0f;
   float vertical_aperture = 15.2908f;
   float horizontal_aperture = 20.955f;
-  lightusd::value::float2 clipping_range{0.1f, 1000000.0f};
-  lightusd::GeomCamera::Projection projection =
-      lightusd::GeomCamera::Projection::Perspective;
+  lightusd::legacy::value::float2 clipping_range{0.1f, 1000000.0f};
+  lightusd::legacy::GeomCamera::Projection projection =
+      lightusd::legacy::GeomCamera::Projection::Perspective;
   EvalAnimFallback(stage, cam.focalLength, "focalLength", time, &focal_length);
   EvalAnimFallback(stage, cam.verticalAperture, "verticalAperture", time,
                    &vertical_aperture);
@@ -1317,12 +1317,12 @@ bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
   frame->shift_y=2.0f*offset_y/std::max(1.0e-6f,vertical_aperture);
   frame->znear = std::max(1.0e-5f, clipping_range[0]);
   frame->zfar = std::max(frame->znear, clipping_range[1]);
-  frame->ortho = projection == lightusd::GeomCamera::Projection::Orthographic;
+  frame->ortho = projection == lightusd::legacy::GeomCamera::Projection::Orthographic;
   return true;
 }
 
-bool FindStageCameraFrameRecursive(const lightusd::Stage &stage,
-                                   const lightusd::Prim &prim,
+bool FindStageCameraFrameRecursive(const lightusd::legacy::Stage &stage,
+                                   const lightusd::legacy::Prim &prim,
                                    const std::string &query,
                                    const matrix4d &parent_world, double time,
                                    CameraFrame *frame) {
@@ -1330,12 +1330,12 @@ bool FindStageCameraFrameRecursive(const lightusd::Stage &stage,
   const matrix4d local =
       LocalMatrixOrIdentity(AsPreviewXformable(prim), time, &reset);
   const matrix4d world = reset ? local : (local * parent_world);
-  if (const lightusd::GeomCamera *cam = prim.as<lightusd::GeomCamera>()) {
+  if (const lightusd::legacy::GeomCamera *cam = prim.as<lightusd::legacy::GeomCamera>()) {
     if (MatchPrimNameOrPath(prim, query)) {
       return CameraFrameFromGeomCamera(stage, *cam, world, time, frame);
     }
   }
-  for (const lightusd::Prim &child : prim.children()) {
+  for (const lightusd::legacy::Prim &child : prim.children()) {
     if (FindStageCameraFrameRecursive(stage, child, query, world, time, frame)) {
       return true;
     }
@@ -1343,9 +1343,9 @@ bool FindStageCameraFrameRecursive(const lightusd::Stage &stage,
   return false;
 }
 
-bool FindStageCameraFrame(const lightusd::Stage &stage, const std::string &query,
+bool FindStageCameraFrame(const lightusd::legacy::Stage &stage, const std::string &query,
                           double time, CameraFrame *frame) {
-  for (const lightusd::Prim &root : stage.root_prims()) {
+  for (const lightusd::legacy::Prim &root : stage.root_prims()) {
     if (FindStageCameraFrameRecursive(stage, root, query, matrix4d::identity(),
                                       time, frame)) {
       return true;
@@ -1355,21 +1355,21 @@ bool FindStageCameraFrame(const lightusd::Stage &stage, const std::string &query
 }
 
 template <typename T>
-bool EvalFallback(const lightusd::Stage &stage,
-                  const lightusd::TypedAttributeWithFallback<T> &attr,
+bool EvalFallback(const lightusd::legacy::Stage &stage,
+                  const lightusd::legacy::TypedAttributeWithFallback<T> &attr,
                   const std::string &name, T *out) {
   std::string err;
-  return lightusd::tydra::EvaluateTypedAttribute(stage, attr, name, out, &err);
+  return lightusd::legacy::tydra::EvaluateTypedAttribute(stage, attr, name, out, &err);
 }
 
-bool EvalAxis(const lightusd::TypedAttributeWithFallback<lightusd::Axis> &attr,
-              lightusd::Axis *out) {
+bool EvalAxis(const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::Axis> &attr,
+              lightusd::legacy::Axis *out) {
   if (!out) return false;
   *out = attr.get_value();
   return true;
 }
 
-std::string PrimPathString(const lightusd::Prim &prim) {
+std::string PrimPathString(const lightusd::legacy::Prim &prim) {
   return prim.absolute_path().full_path_name();
 }
 
@@ -1440,18 +1440,18 @@ void AddDirectCube(double size, const matrix4d &world, std::vector<float> *verti
   }
 }
 
-void AddDirectPlane(double width, double length, lightusd::Axis axis,
+void AddDirectPlane(double width, double length, lightusd::legacy::Axis axis,
                     const matrix4d &world, std::vector<float> *vertices,
                     std::vector<TriInfo> *tris, Bounds *bounds) {
   float hw = float(width * 0.5);
   float hl = float(length * 0.5);
   Vec3 local[4];
-  if (axis == lightusd::Axis::X) {
+  if (axis == lightusd::legacy::Axis::X) {
     local[0] = Vec3{0.0f, -hw, -hl};
     local[1] = Vec3{0.0f,  hw, -hl};
     local[2] = Vec3{0.0f,  hw,  hl};
     local[3] = Vec3{0.0f, -hw,  hl};
-  } else if (axis == lightusd::Axis::Y) {
+  } else if (axis == lightusd::legacy::Axis::Y) {
     local[0] = Vec3{-hw, 0.0f, -hl};
     local[1] = Vec3{ hw, 0.0f, -hl};
     local[2] = Vec3{ hw, 0.0f,  hl};
@@ -1490,7 +1490,7 @@ double BSplineBasis(int i, int degree, double u, const std::vector<double> &knot
   return left + right;
 }
 
-Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::value::point3f> &points,
+Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::legacy::value::point3f> &points,
                          const std::vector<double> &weights, int u_count,
                          int v_count, int u_order, int v_order,
                          const std::vector<double> &u_knots,
@@ -1519,12 +1519,12 @@ Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::value::point3f> &points,
   return sum;
 }
 
-void AddNurbsPatchTriangles(const lightusd::Stage &stage,
-                            const lightusd::GeomNurbsPatch &patch,
+void AddNurbsPatchTriangles(const lightusd::legacy::Stage &stage,
+                            const lightusd::legacy::GeomNurbsPatch &patch,
                             const matrix4d &world, double time,
                             std::vector<float> *vertices,
                             std::vector<TriInfo> *tris, Bounds *bounds) {
-  std::vector<lightusd::value::point3f> points;
+  std::vector<lightusd::legacy::value::point3f> points;
   int u_count = 0, v_count = 0, u_order = 0, v_order = 0;
   std::vector<double> u_knots, v_knots, weights;
   if (!EvalAnim(stage, patch.points, "points", time, &points) ||
@@ -1545,7 +1545,7 @@ void AddNurbsPatchTriangles(const lightusd::Stage &stage,
   double u1 = u_knots[u_knots.size() - size_t(std::max(1, u_order))];
   double v0 = v_knots[size_t(std::max(0, v_order - 1))];
   double v1 = v_knots[v_knots.size() - size_t(std::max(1, v_order))];
-  lightusd::value::double2 range;
+  lightusd::legacy::value::double2 range;
   if (EvalAnim(stage, patch.uRange, "uRange", time, &range)) {
     u0 = range[0];
     u1 = range[1];
@@ -1581,7 +1581,7 @@ void AddNurbsPatchTriangles(const lightusd::Stage &stage,
 // Fixed base color for unmaterialed curve geometry (the `next` path doesn't
 // resolve curve displayColor yet). One value for every hair segment.
 
-void AppendLinearCurveStrands(const std::vector<lightusd::value::point3f> &points,
+void AppendLinearCurveStrands(const std::vector<lightusd::legacy::value::point3f> &points,
                               const std::vector<int> &counts,
                               const std::vector<float> &widths,
                               const matrix4d &world,
@@ -1761,7 +1761,7 @@ void AppendHermiteCurveStrands(const float *points, const float *tangents,
   }
 }
 
-void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &prim,
+void TraverseDirectPrims(const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
                          const std::unordered_map<std::string, matrix4d> &matrices,
                          double time, DirectScene *direct,
                          std::vector<float> *vertices, std::vector<TriInfo> *tris,
@@ -1781,9 +1781,9 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
   const std::string path = PrimPathString(prim);
   const matrix4d world = MatrixForPath(matrices, path);
   matrix4d inv_world;
-  bool has_inv = lightusd::inverse(world, inv_world, 1.0e-12);
+  bool has_inv = lightusd::legacy::inverse(world, inv_world, 1.0e-12);
 
-  if (const lightusd::GeomSphere *sphere = prim.as<lightusd::GeomSphere>()) {
+  if (const lightusd::legacy::GeomSphere *sphere = prim.as<lightusd::legacy::GeomSphere>()) {
     double radius = 2.0;
     EvalAnimFallback(stage, sphere->radius, "radius", time, &radius);
     Vec3 c = TransformPoint(world, Vec3{0.0f, 0.0f, 0.0f});
@@ -1799,19 +1799,19 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
   } else if (has_inv) {
     DirectShape shape;
     bool add_shape = false;
-    if (const lightusd::GeomCylinder *cyl = prim.as<lightusd::GeomCylinder>()) {
+    if (const lightusd::legacy::GeomCylinder *cyl = prim.as<lightusd::legacy::GeomCylinder>()) {
       shape.type = DirectShape::Type::Cylinder;
       EvalAnimFallback(stage, cyl->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cyl->height, "height", time, &shape.height);
       EvalAxis(cyl->axis, &shape.axis);
       add_shape = true;
-    } else if (const lightusd::GeomCone *cone = prim.as<lightusd::GeomCone>()) {
+    } else if (const lightusd::legacy::GeomCone *cone = prim.as<lightusd::legacy::GeomCone>()) {
       shape.type = DirectShape::Type::Cone;
       EvalAnimFallback(stage, cone->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cone->height, "height", time, &shape.height);
       EvalAxis(cone->axis, &shape.axis);
       add_shape = true;
-    } else if (const lightusd::GeomCapsule *cap = prim.as<lightusd::GeomCapsule>()) {
+    } else if (const lightusd::legacy::GeomCapsule *cap = prim.as<lightusd::legacy::GeomCapsule>()) {
       shape.type = DirectShape::Type::Capsule;
       EvalAnimFallback(stage, cap->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cap->height, "height", time, &shape.height);
@@ -1831,22 +1831,22 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
     }
   }
 
-  if (const lightusd::GeomCube *cube = prim.as<lightusd::GeomCube>()) {
+  if (const lightusd::legacy::GeomCube *cube = prim.as<lightusd::legacy::GeomCube>()) {
     double size = 2.0;
     EvalAnimFallback(stage, cube->size, "size", time, &size);
     AddDirectCube(size, world, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const lightusd::GeomPlane *plane = prim.as<lightusd::GeomPlane>()) {
+  } else if (const lightusd::legacy::GeomPlane *plane = prim.as<lightusd::legacy::GeomPlane>()) {
     double width = 2.0;
     double length = 2.0;
-    lightusd::Axis axis = lightusd::Axis::Z;
+    lightusd::legacy::Axis axis = lightusd::legacy::Axis::Z;
     EvalAnimFallback(stage, plane->width, "width", time, &width);
     EvalAnimFallback(stage, plane->length, "length", time, &length);
     EvalAxis(plane->axis, &axis);
     AddDirectPlane(width, length, axis, world, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const lightusd::GeomPoints *pts = prim.as<lightusd::GeomPoints>()) {
-    std::vector<lightusd::value::point3f> points;
+  } else if (const lightusd::legacy::GeomPoints *pts = prim.as<lightusd::legacy::GeomPoints>()) {
+    std::vector<lightusd::legacy::value::point3f> points;
     std::vector<float> widths;
     if (EvalAnim(stage, pts->points, "points", time, &points)) {
       EvalAnim(stage, pts->widths, "widths", time, &widths);
@@ -1866,9 +1866,9 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const lightusd::GeomTetMesh *tet = prim.as<lightusd::GeomTetMesh>()) {
-    std::vector<lightusd::value::point3f> points;
-    std::vector<lightusd::value::int4> indices;
+  } else if (const lightusd::legacy::GeomTetMesh *tet = prim.as<lightusd::legacy::GeomTetMesh>()) {
+    std::vector<lightusd::legacy::value::point3f> points;
+    std::vector<lightusd::legacy::value::int4> indices;
     if (EvalAnim(stage, tet->points, "points", time, &points) &&
         EvalAnim(stage, tet->tetVertexIndices, "tetVertexIndices", time, &indices)) {
       for (const auto &idx : indices) {
@@ -1902,8 +1902,8 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
     }
   }
 
-  if (const lightusd::GeomBasisCurves *curves = prim.as<lightusd::GeomBasisCurves>()) {
-    std::vector<lightusd::value::point3f> points;
+  if (const lightusd::legacy::GeomBasisCurves *curves = prim.as<lightusd::legacy::GeomBasisCurves>()) {
+    std::vector<lightusd::legacy::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, curves->points, "points", time, &points) &&
@@ -1920,8 +1920,8 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const lightusd::GeomNurbsCurves *nurbsCurves = prim.as<lightusd::GeomNurbsCurves>()) {
-    std::vector<lightusd::value::point3f> points;
+  } else if (const lightusd::legacy::GeomNurbsCurves *nurbsCurves = prim.as<lightusd::legacy::GeomNurbsCurves>()) {
+    std::vector<lightusd::legacy::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, nurbsCurves->points, "points", time, &points) &&
@@ -1932,12 +1932,12 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
                                &direct->round_curve_info, bounds);
       direct->direct_paths.insert(path);
     }
-  } else if (const lightusd::GeomNurbsPatch *patch = prim.as<lightusd::GeomNurbsPatch>()) {
+  } else if (const lightusd::legacy::GeomNurbsPatch *patch = prim.as<lightusd::legacy::GeomNurbsPatch>()) {
     AddNurbsPatchTriangles(stage, *patch, world, time, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const lightusd::GeomHermiteCurves *hermiteCurves = prim.as<lightusd::GeomHermiteCurves>()) {
-    std::vector<lightusd::value::point3f> points;
-    std::vector<lightusd::value::vector3f> tangents;
+  } else if (const lightusd::legacy::GeomHermiteCurves *hermiteCurves = prim.as<lightusd::legacy::GeomHermiteCurves>()) {
+    std::vector<lightusd::legacy::value::point3f> points;
+    std::vector<lightusd::legacy::value::vector3f> tangents;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, hermiteCurves->points, "points", time, &points) &&
@@ -1986,7 +1986,7 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
     }
   }
 
-  for (const lightusd::Prim &child : prim.children()) {
+  for (const lightusd::legacy::Prim &child : prim.children()) {
     TraverseDirectPrims(stage, child, matrices, time, direct, vertices, tris,
                         bounds, sphere_data, round_points, round_radii,
                         round_first, round_count, flat_points, flat_radii,
@@ -1995,7 +1995,7 @@ void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &pri
   }
 }
 
-bool BuildDirectScene(const lightusd::Stage &stage, const RenderScene &render_scene,
+bool BuildDirectScene(const lightusd::legacy::Stage &stage, const RenderScene &render_scene,
                       const Options &opt, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       DirectScene *direct, std::string *err) {
@@ -2007,7 +2007,7 @@ bool BuildDirectScene(const lightusd::Stage &stage, const RenderScene &render_sc
   std::vector<float> tet_aabbs;
   std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
   std::unordered_map<std::string, matrix4d> matrices = BuildNodeMatrixMap(render_scene);
-  for (const lightusd::Prim &root : stage.root_prims()) {
+  for (const lightusd::legacy::Prim &root : stage.root_prims()) {
     TraverseDirectPrims(stage, root, matrices, opt.timecode, direct, vertices,
                         tris, bounds, &sphere_data, &round_points, &round_radii,
                         &round_first, &round_count, &flat_points, &flat_radii,
@@ -2120,7 +2120,7 @@ const Node *FindCameraNode(const RenderScene &scene, const std::string &query) {
 
 CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
                             const Bounds &bounds, int height,
-                            lightusd::Axis up_axis) {
+                            lightusd::legacy::Axis up_axis) {
   CameraFrame frame;
   const Node *cam_node = FindCameraNode(scene, opt.camera);
   if (!cam_node && !opt.camera.empty()) {
@@ -2140,7 +2140,7 @@ CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
     frame.ymag = cam.ymag;
     frame.znear = std::max(1.0e-5f, cam.znear);
     frame.zfar = cam.zfar;
-    frame.ortho = cam.projection == lightusd::GeomCamera::Projection::Orthographic;
+    frame.ortho = cam.projection == lightusd::legacy::GeomCamera::Projection::Orthographic;
     return frame;
   }
 
@@ -2158,10 +2158,10 @@ CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
   }
   Vec3 up_axis_vec{0.0f, 1.0f, 0.0f};
   Vec3 view_dir{0.0f, 0.15f, 1.8f};
-  if (up_axis == lightusd::Axis::Z) {
+  if (up_axis == lightusd::legacy::Axis::Z) {
     up_axis_vec = Vec3{0.0f, 0.0f, 1.0f};
     view_dir = Normalize(Vec3{-0.95f, -1.15f, 0.62f});
-  } else if (up_axis == lightusd::Axis::X) {
+  } else if (up_axis == lightusd::legacy::Axis::X) {
     up_axis_vec = Vec3{1.0f, 0.0f, 0.0f};
     view_dir = Normalize(Vec3{0.62f, -0.95f, -1.15f});
   }

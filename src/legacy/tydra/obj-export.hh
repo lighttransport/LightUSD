@@ -24,7 +24,7 @@
 /// ```cpp
 /// std::string obj_content, mtl_content;
 /// std::string warn, err;
-/// bool success = lightusd::tydra::export_to_obj(
+/// bool success = lightusd::legacy::tydra::export_to_obj(
 ///   render_scene, mesh_id, obj_content, mtl_content, &warn, &err);
 /// ```
 ///
@@ -32,7 +32,7 @@
 
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -57,4 +57,5 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <fstream>
 
-using namespace lightusd::spatial;
+using namespace lightusd::legacy::spatial;
 
 class CityPointGenerator {
 private:

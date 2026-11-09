@@ -26,7 +26,7 @@
 /// ```cpp
 /// std::string usda_content;
 /// std::string warn, err;
-/// bool success = lightusd::tydra::export_to_usda(
+/// bool success = lightusd::legacy::tydra::export_to_usda(
 ///   render_scene, usda_content, &warn, &err);
 /// ```
 ///
@@ -34,7 +34,7 @@
 
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -52,4 +52,5 @@ bool export_to_usda(const RenderScene &scene,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

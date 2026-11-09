@@ -47,7 +47,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace str {
 
@@ -401,12 +401,12 @@ static inline bool parse_single(const char **p, const char *end, T *value) {
 }
 
 static inline bool parse_single_half(const char **p, const char *end,
-                                     lightusd::value::half *value) {
+                                     lightusd::legacy::value::half *value) {
   float f;
   if (!parse_single<float>(p, end, &f)) {
     return false;
   }
-  *value = lightusd::value::float_to_half_full(f);
+  *value = lightusd::legacy::value::float_to_half_full(f);
   return true;
 }
 
@@ -550,13 +550,13 @@ bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result) {
     });
 }
 
-bool parse_half_array(const tstring_view &sv, std::vector<lightusd::value::half> *result) {
-  return parse_scalar_array_impl<lightusd::value::half>(sv, result,
-    [](const char *start, const char *end, lightusd::value::half *val) -> bool {
+bool parse_half_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half> *result) {
+  return parse_scalar_array_impl<lightusd::legacy::value::half>(sv, result,
+    [](const char *start, const char *end, lightusd::legacy::value::half *val) -> bool {
       float f;
       auto r = fast_float::from_chars(start, end, f);
       if (r.ec != std::errc{}) return false;
-      *val = lightusd::value::float_to_half_full(f);
+      *val = lightusd::legacy::value::float_to_half_full(f);
       return true;
     });
 }
@@ -867,7 +867,7 @@ static bool parse_quoted_array_impl(const tstring_view &sv,
 
 }  // namespace
 
-bool parse_token_array(const tstring_view &sv, std::vector<lightusd::value::token> *result) {
+bool parse_token_array(const tstring_view &sv, std::vector<lightusd::legacy::value::token> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -915,11 +915,11 @@ bool parse_token_array(const tstring_view &sv, std::vector<lightusd::value::toke
   return false;
 }
 
-bool parse_string_array(const tstring_view &sv, std::vector<lightusd::value::StringData> *result) {
+bool parse_string_array(const tstring_view &sv, std::vector<lightusd::legacy::value::StringData> *result) {
   if (!result) return false;
   result->clear();
   return parse_quoted_array_impl(sv, true, [&](ParsedStringLiteral parsed) {
-    lightusd::value::StringData sdata;
+    lightusd::legacy::value::StringData sdata;
     sdata.value = std::move(parsed.value);
     sdata.is_triple_quoted = parsed.is_triple_quoted;
     sdata.single_quote = parsed.single_quote;
@@ -1035,63 +1035,63 @@ static bool parse_quat_array_impl(const tstring_view &sv, std::vector<QuatT> *re
   return true;
 }
 
-bool parse_half2_array(const tstring_view &sv, std::vector<lightusd::value::half2> *result) {
-  return parse_tuple_array_impl<lightusd::value::half2, 2>(sv, result, parse_single_half);
+bool parse_half2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half2> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::half2, 2>(sv, result, parse_single_half);
 }
-bool parse_half3_array(const tstring_view &sv, std::vector<lightusd::value::half3> *result) {
-  return parse_tuple_array_impl<lightusd::value::half3, 3>(sv, result, parse_single_half);
+bool parse_half3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half3> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::half3, 3>(sv, result, parse_single_half);
 }
-bool parse_half4_array(const tstring_view &sv, std::vector<lightusd::value::half4> *result) {
-  return parse_tuple_array_impl<lightusd::value::half4, 4>(sv, result, parse_single_half);
+bool parse_half4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::half4> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::half4, 4>(sv, result, parse_single_half);
 }
-bool parse_float2_array(const tstring_view &sv, std::vector<lightusd::value::float2> *result) {
-  return parse_tuple_array_impl<lightusd::value::float2, 2>(sv, result, parse_single<float>);
+bool parse_float2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float2> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::float2, 2>(sv, result, parse_single<float>);
 }
-bool parse_float3_array(const tstring_view &sv, std::vector<lightusd::value::float3> *result) {
-  return parse_tuple_array_impl<lightusd::value::float3, 3>(sv, result, parse_single<float>);
+bool parse_float3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float3> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::float3, 3>(sv, result, parse_single<float>);
 }
-bool parse_float4_array(const tstring_view &sv, std::vector<lightusd::value::float4> *result) {
-  return parse_tuple_array_impl<lightusd::value::float4, 4>(sv, result, parse_single<float>);
+bool parse_float4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::float4> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::float4, 4>(sv, result, parse_single<float>);
 }
-bool parse_point3f_array(const tstring_view &sv, std::vector<lightusd::value::point3f> *result) {
-  return parse_tuple_array_impl<lightusd::value::point3f, 3>(sv, result, parse_single<float>);
+bool parse_point3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::point3f> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::point3f, 3>(sv, result, parse_single<float>);
 }
-bool parse_normal3f_array(const tstring_view &sv, std::vector<lightusd::value::normal3f> *result) {
-  return parse_tuple_array_impl<lightusd::value::normal3f, 3>(sv, result, parse_single<float>);
+bool parse_normal3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::normal3f> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::normal3f, 3>(sv, result, parse_single<float>);
 }
-bool parse_double2_array(const tstring_view &sv, std::vector<lightusd::value::double2> *result) {
-  return parse_tuple_array_impl<lightusd::value::double2, 2>(sv, result, parse_single<double>);
+bool parse_double2_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double2> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::double2, 2>(sv, result, parse_single<double>);
 }
-bool parse_double3_array(const tstring_view &sv, std::vector<lightusd::value::double3> *result) {
-  return parse_tuple_array_impl<lightusd::value::double3, 3>(sv, result, parse_single<double>);
+bool parse_double3_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double3> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::double3, 3>(sv, result, parse_single<double>);
 }
-bool parse_double4_array(const tstring_view &sv, std::vector<lightusd::value::double4> *result) {
-  return parse_tuple_array_impl<lightusd::value::double4, 4>(sv, result, parse_single<double>);
+bool parse_double4_array(const tstring_view &sv, std::vector<lightusd::legacy::value::double4> *result) {
+  return parse_tuple_array_impl<lightusd::legacy::value::double4, 4>(sv, result, parse_single<double>);
 }
-bool parse_quath_array(const tstring_view &sv, std::vector<lightusd::value::quath> *result) {
-  return parse_quat_array_impl<lightusd::value::quath, float>(
+bool parse_quath_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quath> *result) {
+  return parse_quat_array_impl<lightusd::legacy::value::quath, float>(
     sv, result, parse_single<float>,
-    [](const float values[4], lightusd::value::quath *quat) {
-      quat->real = lightusd::value::float_to_half_full(values[0]);
-      quat->imag[0] = lightusd::value::float_to_half_full(values[1]);
-      quat->imag[1] = lightusd::value::float_to_half_full(values[2]);
-      quat->imag[2] = lightusd::value::float_to_half_full(values[3]);
+    [](const float values[4], lightusd::legacy::value::quath *quat) {
+      quat->real = lightusd::legacy::value::float_to_half_full(values[0]);
+      quat->imag[0] = lightusd::legacy::value::float_to_half_full(values[1]);
+      quat->imag[1] = lightusd::legacy::value::float_to_half_full(values[2]);
+      quat->imag[2] = lightusd::legacy::value::float_to_half_full(values[3]);
     });
 }
-bool parse_quatf_array(const tstring_view &sv, std::vector<lightusd::value::quatf> *result) {
-  return parse_quat_array_impl<lightusd::value::quatf, float>(
+bool parse_quatf_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quatf> *result) {
+  return parse_quat_array_impl<lightusd::legacy::value::quatf, float>(
     sv, result, parse_single<float>,
-    [](const float values[4], lightusd::value::quatf *quat) {
+    [](const float values[4], lightusd::legacy::value::quatf *quat) {
       quat->real = values[0];
       quat->imag[0] = values[1];
       quat->imag[1] = values[2];
       quat->imag[2] = values[3];
     });
 }
-bool parse_quatd_array(const tstring_view &sv, std::vector<lightusd::value::quatd> *result) {
-  return parse_quat_array_impl<lightusd::value::quatd, double>(
+bool parse_quatd_array(const tstring_view &sv, std::vector<lightusd::legacy::value::quatd> *result) {
+  return parse_quat_array_impl<lightusd::legacy::value::quatd, double>(
     sv, result, parse_single<double>,
-    [](const double values[4], lightusd::value::quatd *quat) {
+    [](const double values[4], lightusd::legacy::value::quatd *quat) {
       quat->real = values[0];
       quat->imag[0] = values[1];
       quat->imag[1] = values[2];
@@ -1162,26 +1162,27 @@ static bool parse_matrix_array_impl(const tstring_view &sv, std::vector<MatT> *r
   return true;
 }
 
-bool parse_matrix2f_array(const tstring_view &sv, std::vector<lightusd::value::matrix2f> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix2f, 2>(sv, result, parse_single<float>);
+bool parse_matrix2f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix2f> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix2f, 2>(sv, result, parse_single<float>);
 }
-bool parse_matrix3f_array(const tstring_view &sv, std::vector<lightusd::value::matrix3f> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix3f, 3>(sv, result, parse_single<float>);
+bool parse_matrix3f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix3f> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix3f, 3>(sv, result, parse_single<float>);
 }
-bool parse_matrix4f_array(const tstring_view &sv, std::vector<lightusd::value::matrix4f> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix4f, 4>(sv, result, parse_single<float>);
+bool parse_matrix4f_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix4f> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix4f, 4>(sv, result, parse_single<float>);
 }
-bool parse_matrix2d_array(const tstring_view &sv, std::vector<lightusd::value::matrix2d> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix2d, 2>(sv, result, parse_single<double>);
+bool parse_matrix2d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix2d> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix2d, 2>(sv, result, parse_single<double>);
 }
-bool parse_matrix3d_array(const tstring_view &sv, std::vector<lightusd::value::matrix3d> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix3d, 3>(sv, result, parse_single<double>);
+bool parse_matrix3d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix3d> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix3d, 3>(sv, result, parse_single<double>);
 }
-bool parse_matrix4d_array(const tstring_view &sv, std::vector<lightusd::value::matrix4d> *result) {
-  return parse_matrix_array_impl<lightusd::value::matrix4d, 4>(sv, result, parse_single<double>);
-}
-
+bool parse_matrix4d_array(const tstring_view &sv, std::vector<lightusd::legacy::value::matrix4d> *result) {
+  return parse_matrix_array_impl<lightusd::legacy::value::matrix4d, 4>(sv, result, parse_single<double>);
 }
 
+}
 
+
+}  // namespace legacy
 } // namespace lightusd

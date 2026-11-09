@@ -7,7 +7,10 @@
 #include <cstring>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 int main() {
     std::cout << "Testing compact ValueView implementation...\n\n";

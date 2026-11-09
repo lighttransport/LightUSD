@@ -14,7 +14,7 @@
 #include "tydra/render-data.hh"
 #include "usdGeom.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -154,4 +154,5 @@ double RenderSceneConverter::BuildStageInstances(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

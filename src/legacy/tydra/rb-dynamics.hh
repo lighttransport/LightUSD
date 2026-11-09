@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Stage;
 
@@ -59,4 +59,5 @@ bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,
 void FreePhysWorld(TydraPhysWorld *world);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

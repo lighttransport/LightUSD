@@ -10,6 +10,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Helper function to parse a USD string
 static bool parseUSDString(const std::string &usd_content, std::string *err) {
   Stage stage;

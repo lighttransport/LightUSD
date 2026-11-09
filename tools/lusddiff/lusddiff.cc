@@ -298,7 +298,7 @@ bool has_float_storage(const std::string &text) {
 }
 
 bool num_eq(double a, double b, bool float_storage,
-            const lightusd::tydra::DiffOptions &o) {
+            const lightusd::legacy::tydra::DiffOptions &o) {
   if (a == b) return true;
   double d = std::fabs(a - b);
   if (o.absEps >= 0.0 && d <= o.absEps) return true;
@@ -351,7 +351,7 @@ std::string canonicalize_attribute_metadata(const std::string &text) {
 
 // Whitespace/indent-insensitive + ULP-tolerant line equality.
 bool line_sem_equal(const std::string &a, const std::string &b,
-                    const lightusd::tydra::DiffOptions &o) {
+                    const lightusd::legacy::tydra::DiffOptions &o) {
   const std::string left = canonicalize_attribute_metadata(a);
   const std::string right = canonicalize_attribute_metadata(b);
   const bool float_storage =
@@ -421,13 +421,13 @@ struct DiffCtx {
   bool fuzzyAssets = false;  // --fuzzy-assets: compare @path@ by leaf/suffix
   std::string pathFilter;
   Domain domain = Domain::All;
-  lightusd::tydra::DiffOptions opts;
+  lightusd::legacy::tydra::DiffOptions opts;
   const std::unordered_map<std::string, std::string> *protoA = nullptr;
   const std::unordered_map<std::string, std::string> *protoB = nullptr;
 };
 
 bool path_selected(const std::string &filter, const std::string &path) {
-  return filter.empty() || lightusd::GlobMatchPath(filter, path);
+  return filter.empty() || lightusd::legacy::GlobMatchPath(filter, path);
 }
 
 bool contains_any(const std::string &s,
@@ -695,7 +695,7 @@ build_proto_map(const char *p, size_t n, const std::vector<FBlock> &roots) {
   std::unordered_map<std::string, std::string> m;
   for (const auto &r : roots) {
     if (!targets.count(r.name)) continue;
-    m[r.name] = "__P" + lightusd::fmt::hex(block_body_hash(p, r), 16);
+    m[r.name] = "__P" + lightusd::legacy::fmt::hex(block_body_hash(p, r), 16);
   }
   return m;
 }
@@ -796,11 +796,11 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       any = true;
       os << "~ " << path << " (modified)\n";
       if (hdrDiff) {
-        auto pr = lightusd::tydra::CenterValuePairForDiff(hdrA, hdrB);
+        auto pr = lightusd::legacy::tydra::CenterValuePairForDiff(hdrA, hdrB);
         os << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
       for (auto &m : mods) {
-        auto pr = lightusd::tydra::CenterValuePairForDiff(m.first, m.second);
+        auto pr = lightusd::legacy::tydra::CenterValuePairForDiff(m.first, m.second);
         os << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
       for (auto &d : dels) os << "  - " << firstline(d) << "\n";
@@ -816,7 +816,7 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
             !line_matches_domain(lb[i], ctx.domain)) {
           continue;
         }
-        auto pr = lightusd::tydra::CenterValuePairForDiff(la[i], lb[i]);
+        auto pr = lightusd::legacy::tydra::CenterValuePairForDiff(la[i], lb[i]);
         body << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
     } else {
@@ -864,7 +864,7 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
 // 1 diffs, -1 fall back to the full semantic path.
 int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
                 bool semantic, bool fuzzyAssets,
-                const lightusd::tydra::DiffOptions &opts,
+                const lightusd::legacy::tydra::DiffOptions &opts,
                 const std::string &pathFilter, DiffCtx::Domain domain) {
   MMapFile m1, m2;
   if (!mmap_open(f1, m1) || !mmap_open(f2, m2)) {
@@ -1040,7 +1040,7 @@ int main(int argc, char **argv) {
   std::string path_filter;
   DiffCtx::Domain diff_domain = DiffCtx::Domain::All;
   std::string file1, file2;
-  lightusd::tydra::DiffOptions diff_opts;
+  lightusd::legacy::tydra::DiffOptions diff_opts;
 
   // Parse command line arguments
   for (size_t i = 0; i < args.size(); i++) {
@@ -1230,17 +1230,17 @@ int main(int argc, char **argv) {
   // canonicalized (and, in --low-mem, its big arrays stripped to fingerprints)
   // right after load, BEFORE the next file is loaded — so the two full layers
   // never coexist and peak RSS roughly halves.
-  lightusd::Layer layer1, layer2;
+  lightusd::legacy::Layer layer1, layer2;
   std::string warn, err;
 
-  auto prepare = [&](lightusd::Layer &layer) {
+  auto prepare = [&](lightusd::legacy::Layer &layer) {
     // Canonicalize instance-flatten prototypes by content so non-deterministic
     // /Flattened_Prototype_N numbering does not show up as spurious diffs.
-    if (canonicalize_instances) lightusd::tydra::CanonicalizeInstances(layer);
-    if (low_mem) lightusd::tydra::StripLargeArrays(layer);
+    if (canonicalize_instances) lightusd::legacy::tydra::CanonicalizeInstances(layer);
+    if (low_mem) lightusd::legacy::tydra::StripLargeArrays(layer);
   };
 
-  if (!lightusd::LoadLayerFromFile(file1, &layer1, &warn, &err)) {
+  if (!lightusd::legacy::LoadLayerFromFile(file1, &layer1, &warn, &err)) {
     std::cerr << "Error loading " << file1 << ": " << err << std::endl;
     return 2;
   }
@@ -1252,7 +1252,7 @@ int main(int argc, char **argv) {
   warn.clear();
   err.clear();
 
-  if (!lightusd::LoadLayerFromFile(file2, &layer2, &warn, &err)) {
+  if (!lightusd::legacy::LoadLayerFromFile(file2, &layer2, &warn, &err)) {
     std::cerr << "Error loading " << file2 << ": " << err << std::endl;
     return 2;
   }
@@ -1262,10 +1262,10 @@ int main(int argc, char **argv) {
   prepare(layer2);
 
   // Perform diff
-  lightusd::HashMap<std::string, lightusd::tydra::PrimSpecDiff> psDiffs;
-  lightusd::HashMap<std::string, lightusd::tydra::PropDiff> propDiffs;
-  lightusd::tydra::LayerMetaDiff layerMetaDiff;
-  lightusd::tydra::Diff(layer1, layer2, psDiffs, propDiffs, diff_opts,
+  lightusd::legacy::HashMap<std::string, lightusd::legacy::tydra::PrimSpecDiff> psDiffs;
+  lightusd::legacy::HashMap<std::string, lightusd::legacy::tydra::PropDiff> propDiffs;
+  lightusd::legacy::tydra::LayerMetaDiff layerMetaDiff;
+  lightusd::legacy::tydra::Diff(layer1, layer2, psDiffs, propDiffs, diff_opts,
                         &layerMetaDiff);
 
   bool has_diffs =
@@ -1274,12 +1274,12 @@ int main(int argc, char **argv) {
   if (!quiet) {
     if (json_output) {
       std::string jsonDiff =
-          lightusd::tydra::DiffToJSON(layer1, layer2, file1, file2, diff_opts);
+          lightusd::legacy::tydra::DiffToJSON(layer1, layer2, file1, file2, diff_opts);
       std::cout << jsonDiff;
     } else {
       if (has_diffs) {
         std::string textDiff =
-            lightusd::tydra::DiffToText(layer1, layer2, file1, file2, diff_opts);
+            lightusd::legacy::tydra::DiffToText(layer1, layer2, file1, file2, diff_opts);
         std::cout << textDiff;
       } else {
         std::cout << "No differences found." << std::endl;

@@ -9,7 +9,7 @@
 #include "tiny-format.hh"
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace utils {
 
@@ -328,4 +328,5 @@ std::string SanitizeAssetPath(const std::string& path, bool allow_parent_refs) {
 
 }  // namespace utils
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

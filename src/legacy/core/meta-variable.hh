@@ -12,7 +12,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 //
 // variant in pxrUSD is something like a Scene variation(different scene
@@ -171,4 +171,5 @@ DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA,
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

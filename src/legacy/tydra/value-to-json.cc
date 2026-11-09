@@ -27,7 +27,7 @@
 #endif
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 minijson::Value ValueToMiniJSON(const value::Value &, uint32_t);
@@ -2195,5 +2195,6 @@ nlohmann::json PrimSpecToJSON(const PrimSpec &ps, uint32_t max_depth,
   return j;
 }
 
+}  // namespace legacy
 } // namespace tydra
 } // namespace lightusd

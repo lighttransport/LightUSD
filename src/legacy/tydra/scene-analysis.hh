@@ -34,7 +34,7 @@
 #include "core/extent.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -71,4 +71,5 @@ bool ComputePrimSpecBound(const PrimSpec &ps, const bool use_extent, Extent &bbo
                   const double t = value::TimeCode::Default());
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

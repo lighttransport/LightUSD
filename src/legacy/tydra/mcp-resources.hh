@@ -17,7 +17,7 @@
 #include "mcp-resources.hh"
 #include "mcp-context.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -31,4 +31,5 @@ bool ReadResource(const Context &ctx, const std::string &uri, nlohmann::json &co
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

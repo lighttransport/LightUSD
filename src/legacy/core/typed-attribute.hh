@@ -15,7 +15,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Tyeped Attribute without fallback(default) value.
@@ -456,4 +456,5 @@ bool ConvertTokenAttributeToStringAttribute(
       const TypedAttribute<Animatable<value::token>> &inp,
       TypedAttribute<Animatable<std::string>> &out);
 
+}  // namespace legacy
 }  // namespace lightusd

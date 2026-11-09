@@ -26,11 +26,9 @@
 #include "lightusd.hh"
 #include "usdGeom.hh"  // GeomMesh/Xform etc. (no longer re-exported by lightusd.hh)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
-namespace minijson {
-class Value;
-}
+// minijson::Value is shared (core/minijson.hh); forward-declared in legacy-namespace.hh.
 
 ///
 /// Array serialization mode
@@ -109,82 +107,82 @@ struct USDToJSONContext {
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage);
+nonstd::expected<std::string, std::string> ToJSON(const lightusd::legacy::Stage &stage);
 
 ///
 /// Convert USD Stage to JSON with options
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage, const USDToJSONOptions& options);
+nonstd::expected<std::string, std::string> ToJSON(const lightusd::legacy::Stage &stage, const USDToJSONOptions& options);
 
 ///
 /// Convert USD Stage to JSON value.
 ///
-minijson::Value ToJSONValue(const lightusd::Stage &stage, USDToJSONContext* context);
+minijson::Value ToJSONValue(const lightusd::legacy::Stage &stage, USDToJSONContext* context);
 
 ///
 /// Convert USD Layer to JSON value.
 ///
-minijson::Value ToJSONValue(const lightusd::Layer &layer);
+minijson::Value ToJSONValue(const lightusd::legacy::Layer &layer);
 
 ///
 /// Convert USD Layer to JSON value with context.
 ///
-minijson::Value ToJSONValue(const lightusd::Layer &layer, USDToJSONContext& context);
+minijson::Value ToJSONValue(const lightusd::legacy::Layer &layer, USDToJSONContext& context);
 
 ///
 /// Convert USD Layer to JSON
 ///
-bool to_json_string(const lightusd::Layer &layer, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const lightusd::legacy::Layer &layer, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert USD Layer to JSON with options
 ///
-bool to_json_string(const lightusd::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const lightusd::legacy::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert GeomMesh to JSON value with context
 ///
-minijson::Value ToJSONValue(lightusd::GeomMesh& mesh, USDToJSONContext* context);
+minijson::Value ToJSONValue(lightusd::legacy::GeomMesh& mesh, USDToJSONContext* context);
 
 ///
 /// Convert Attribute to JSON value
 ///
-minijson::Value ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* context = nullptr);
+minijson::Value ToJSONValue(const lightusd::legacy::Attribute& attribute, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Relationship to JSON value
 ///
-minijson::Value ToJSONValue(const lightusd::Relationship& relationship);
+minijson::Value ToJSONValue(const lightusd::legacy::Relationship& relationship);
 
 ///
 /// Convert Property to JSON value
 ///
-minijson::Value ToJSONValue(const lightusd::Property& property, USDToJSONContext* context = nullptr);
+minijson::Value ToJSONValue(const lightusd::legacy::Property& property, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Properties map to JSON value
 ///
-minijson::Value PropertiesToJSONValue(const std::map<std::string, lightusd::Property>& properties, USDToJSONContext* context = nullptr);
+minijson::Value PropertiesToJSONValue(const std::map<std::string, lightusd::legacy::Property>& properties, USDToJSONContext* context = nullptr);
 
 #if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
 /// Deprecated: use ToJSONValue or string-producing ToJSON instead.
-nlohmann::json ToJSON(const lightusd::Stage &stage, USDToJSONContext* context);
+nlohmann::json ToJSON(const lightusd::legacy::Stage &stage, USDToJSONContext* context);
 /// Deprecated: use ToJSONValue or to_json_string instead.
-nlohmann::json ToJSON(const lightusd::Layer &layer);
+nlohmann::json ToJSON(const lightusd::legacy::Layer &layer);
 /// Deprecated: use ToJSONValue or to_json_string instead.
-nlohmann::json ToJSON(const lightusd::Layer &layer, USDToJSONContext& context);
+nlohmann::json ToJSON(const lightusd::legacy::Layer &layer, USDToJSONContext& context);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(lightusd::GeomMesh& mesh, USDToJSONContext* context);
+nlohmann::json ToJSON(lightusd::legacy::GeomMesh& mesh, USDToJSONContext* context);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const lightusd::Attribute& attribute, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const lightusd::legacy::Attribute& attribute, USDToJSONContext* context = nullptr);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const lightusd::Relationship& relationship);
+nlohmann::json ToJSON(const lightusd::legacy::Relationship& relationship);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const lightusd::Property& property, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const lightusd::legacy::Property& property, USDToJSONContext* context = nullptr);
 /// Deprecated: use PropertiesToJSONValue instead.
-nlohmann::json PropertiesToJSON(const std::map<std::string, lightusd::Property>& properties, USDToJSONContext* context = nullptr);
+nlohmann::json PropertiesToJSON(const std::map<std::string, lightusd::legacy::Property>& properties, USDToJSONContext* context = nullptr);
 #endif
 
 ///
@@ -241,7 +239,8 @@ bool USDZToJSONFromMemory(const uint8_t* addr, size_t length, const std::string&
 ///
 /// @return true on success, false on failure
 ///
-bool USDZAssetsToJSON(const lightusd::USDZAsset& usdz_asset, std::string* assets_json,
+bool USDZAssetsToJSON(const lightusd::legacy::USDZAsset& usdz_asset, std::string* assets_json,
                       std::string* warn, std::string* err);
 
+}  // namespace legacy
 } // namespace lightusd

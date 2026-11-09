@@ -304,7 +304,9 @@ void rb_stacking_sleep_test(void) {
 
 void rb_phys_world_memory_limit_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   using namespace lightusd::tydra;
+  using namespace lightusd::legacy::tydra;  // NOLINT
 
   Stage stage;
   TydraPhysWorld world;
@@ -337,7 +339,9 @@ void rb_phys_world_memory_limit_test(void) {
 
 void rb_phys_world_transform_sync_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   using namespace lightusd::tydra;
+  using namespace lightusd::legacy::tydra;  // NOLINT
   const std::string source = R"USD(#usda 1.0
 def Cube "Body" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]
@@ -369,8 +373,8 @@ def Cube "Body" (
   TEST_ASSERT(cube != nullptr);
   auto matrix = cube->GetLocalMatrix();
   TEST_ASSERT(matrix.has_value());
-  value::double3 translation, scale;
-  value::quatd rotation;
+  lightusd::legacy::value::double3 translation, scale;
+  lightusd::legacy::value::quatd rotation;
   TEST_ASSERT(decompose(matrix.value(), &translation, &rotation, &scale));
   TEST_CHECK(std::fabs(translation[0] - 4.0) < 1.0e-8);
   TEST_CHECK(std::fabs(translation[1] - 5.0) < 1.0e-8);

@@ -32,7 +32,7 @@
 #include <thread>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Suggested upper bound for auto-detected worker counts.
@@ -167,6 +167,7 @@ class TaskArena {
 };
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_TYDRA_TASK_ARENA_HH_

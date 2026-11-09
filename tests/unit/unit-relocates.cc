@@ -13,9 +13,11 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 static bool LoadUSDA(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) {
@@ -89,7 +91,7 @@ void relocates_crate_roundtrip_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w, e;
-  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  bool sret = lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
   if (!sret) return;
   TEST_CHECK(!usdc.empty());
@@ -102,7 +104,7 @@ void relocates_crate_roundtrip_test(void) {
 
   Stage stage2;
   std::string w2, e2;
-  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::legacy::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w2, &e2);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
   if (!lret) return;

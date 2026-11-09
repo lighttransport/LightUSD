@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 /// String similarity utilities for suggesting fixes
 namespace string_similarity {
@@ -138,4 +138,5 @@ inline std::vector<std::string> FindTopMatches(
 
 }  // namespace string_similarity
 
+}  // namespace legacy
 }  // namespace lightusd

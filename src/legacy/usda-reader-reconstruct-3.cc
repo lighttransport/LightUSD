@@ -8,7 +8,7 @@
 
 #if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usda {
 
 #define USDA_INST_REGISTER_RECONSTRUCT(__T) \
@@ -31,6 +31,7 @@ USDA_INST_REGISTER_RECONSTRUCT(PhysicsSphericalJoint)
 #undef USDA_INST_REGISTER_RECONSTRUCT
 
 }  // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

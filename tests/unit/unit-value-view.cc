@@ -13,7 +13,10 @@
 #include <cstring>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 void value_view_size_test(void) {
   // ValueView layout: void* ptr_ + uint32_t type_id_ + uint8_t flags_

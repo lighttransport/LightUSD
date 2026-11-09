@@ -5,9 +5,10 @@
 //
 #include "task-queue.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Header-only implementation
 // This file exists for consistency with LightUSD source structure
 
+}  // namespace legacy
 }  // namespace lightusd

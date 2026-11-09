@@ -29,7 +29,7 @@
 
 #include "value-types.hh"  // value::PathExpression
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // A single component of a path pattern (the portion following the literal
 // prefix path). A "stretch" component (`//`) has empty text and no predicate.
@@ -127,4 +127,5 @@ class ParsedPathExpression {
 ParsedPathExpression ParsePathExpression(const value::PathExpression &expr,
                                          std::string *err = nullptr);
 
+}  // namespace legacy
 }  // namespace lightusd

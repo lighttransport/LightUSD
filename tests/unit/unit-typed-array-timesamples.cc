@@ -14,7 +14,10 @@
 #include <string>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 // Helper: test TypedArray dedup for a given type
 template<typename T>

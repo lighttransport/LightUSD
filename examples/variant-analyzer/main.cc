@@ -9,7 +9,10 @@
 #include "tydra/variant-support.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 void print_help() {
   std::cout << "Usage: variant-analyzer [options] input.usda/usdc/usdz\n\n";
@@ -255,7 +258,7 @@ int main(int argc, char** argv) {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN: " << warn << "\n";
   }

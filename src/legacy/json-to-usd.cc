@@ -22,7 +22,7 @@ constexpr int kJSONMaxParseDepth = 256;
 
 #include <limits>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 using json = minijson::Value;
 
@@ -1872,11 +1872,11 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
     if (metas.contains("upAxis") && metas["upAxis"].is_string()) {
       std::string s = metas["upAxis"].get_string();
       if (s == "X") {
-        layer.metas().upAxis = lightusd::Axis::X;
+        layer.metas().upAxis = lightusd::legacy::Axis::X;
       } else if (s == "Y") {
-        layer.metas().upAxis = lightusd::Axis::Y;
+        layer.metas().upAxis = lightusd::legacy::Axis::Y;
       } else if (s == "Z") {
-        layer.metas().upAxis = lightusd::Axis::Z;
+        layer.metas().upAxis = lightusd::legacy::Axis::Z;
       } else {
         if (err) {
           (*err) = "Unknown upAxis value: " + s;
@@ -2098,4 +2098,5 @@ bool JSONToGeomMesh(const std::string &j_str, GeomMesh *mesh,
   return JSONToGeomMesh(j_str, mesh, warn, err, JSONToUSDOptions());
 }
 
+}  // namespace legacy
 } // namespace lightusd

@@ -12,7 +12,7 @@
 #include <string>
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class StringPool {
 public:
@@ -73,11 +73,12 @@ private:
   std::deque<std::string> _storage;
 };
 
+}  // namespace legacy
 }  // namespace lightusd
 
 // Pre-intern common USD strings. Call once at library init.
 // Safe to call multiple times (idempotent).
-namespace lightusd {
+namespace lightusd { namespace legacy {
 inline void PreInternCommonStrings() {
   StringPool::instance().pre_intern({
     // Metadata keys
@@ -110,4 +111,5 @@ inline void PreInternCommonStrings() {
     "primChildren", "properties",
   });
 }
+}  // namespace legacy
 }  // namespace lightusd

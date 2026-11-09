@@ -23,7 +23,7 @@
 #include "value-clip-utils.hh"
 #include "value-pprint.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 #if defined(__GNUC__)
@@ -1277,4 +1277,5 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -46,7 +46,7 @@ namespace pxr {
 
 //namespace Sdf {
 
-using TfToken = lightusd::value::token;
+using TfToken = lightusd::legacy::value::token;
 
 struct SdfLayer;
 
@@ -68,10 +68,10 @@ typedef UsdStagePtr UsdStageWeakPtr;
 struct UsdPrim
 {
   UsdPrim() : _prim(nullptr) {}
-  //UsdPrim(lightusd::GPrim *prim) : _prim(prim) {}
+  //UsdPrim(lightusd::legacy::GPrim *prim) : _prim(prim) {}
 
   bool IsValid() const {
-    if (_prim.type_id() == lightusd::value::TypeId::TYPE_ID_INVALID) {
+    if (_prim.type_id() == lightusd::legacy::value::TypeId::TYPE_ID_INVALID) {
       return false;
     }
 
@@ -85,7 +85,7 @@ struct UsdPrim
   }
 
   // TODO: Use raw pointer?
-  lightusd::value::Value _prim;
+  lightusd::legacy::value::Value _prim;
 };
 
 struct SdfPath

@@ -11,13 +11,13 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
-std::vector<std::pair<std::string, const lightusd::BlendShape *>>
-GetBlendShapes(const lightusd::Stage &stage, const lightusd::Prim &prim,
+std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
+GetBlendShapes(const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
                std::string *err) {
-  std::vector<std::pair<std::string, const lightusd::BlendShape *>> dst;
+  std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> dst;
 
   auto *pmesh = prim.as<GeomMesh>();
   if (!pmesh) {
@@ -124,4 +124,5 @@ GetBlendShapes(const lightusd::Stage &stage, const lightusd::Prim &prim,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

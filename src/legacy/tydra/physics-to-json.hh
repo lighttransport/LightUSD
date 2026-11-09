@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Stage;
 
@@ -41,4 +41,5 @@ bool ConvertPhysicsToJson(
     const PhysicsJsonExportOptions &options = {});
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

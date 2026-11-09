@@ -21,6 +21,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 static bool Matches(const char *expr_text, const char *path,
                     const PathExpressionEvalContext &ctx = {}) {
   auto e = ParsedPathExpression::Parse(expr_text);
@@ -295,7 +297,7 @@ void path_expression_collection_membership_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -305,7 +307,7 @@ void path_expression_collection_membership_test(void) {
   TEST_CHECK_(bool(wret), "missing /World");
   if (!wret) return;
   const Collection *coll = nullptr;
-  TEST_CHECK_(tydra::GetCollection(*wret.value(), &coll) && coll,
+  TEST_CHECK_(lightusd::legacy::tydra::GetCollection(*wret.value(), &coll) && coll,
               "no collection on /World");
   if (!coll) return;
 
@@ -314,11 +316,11 @@ void path_expression_collection_membership_test(void) {
     const CollectionInstance *inst = nullptr;
     TEST_CHECK(coll->get_instance("expr", &inst) && inst);
     if (inst) {
-      auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
-      TEST_CHECK(q.mode == tydra::CollectionMembershipQuery::Mode::Expression);
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
-      TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
+      auto q = lightusd::legacy::tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
+      TEST_CHECK(q.mode == lightusd::legacy::tydra::CollectionMembershipQuery::Mode::Expression);
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
+      TEST_CHECK(!lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
     }
   }
 
@@ -328,10 +330,10 @@ void path_expression_collection_membership_test(void) {
     const CollectionInstance *inst = nullptr;
     TEST_CHECK(coll->get_instance("outer", &inst) && inst);
     if (inst) {
-      auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
-      TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
+      auto q = lightusd::legacy::tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
+      TEST_CHECK(!lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
     }
   }
 
@@ -340,27 +342,27 @@ void path_expression_collection_membership_test(void) {
     const CollectionInstance *inst = nullptr;
     TEST_CHECK(coll->get_instance("models", &inst) && inst);
     if (inst) {
-      auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Asset", "")));
-      TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
+      auto q = lightusd::legacy::tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Asset", "")));
+      TEST_CHECK(!lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
     }
   }
 
   // Predicate helper directly.
-  TEST_CHECK(tydra::EvalPathExpressionPredicate(stage, "component", "/World/Asset"));
-  TEST_CHECK(!tydra::EvalPathExpressionPredicate(stage, "component", "/World/Cube"));
-  TEST_CHECK(tydra::EvalPathExpressionPredicate(stage, "isa:Mesh", "/World/Cube"));
+  TEST_CHECK(lightusd::legacy::tydra::EvalPathExpressionPredicate(stage, "component", "/World/Asset"));
+  TEST_CHECK(!lightusd::legacy::tydra::EvalPathExpressionPredicate(stage, "component", "/World/Cube"));
+  TEST_CHECK(lightusd::legacy::tydra::EvalPathExpressionPredicate(stage, "isa:Mesh", "/World/Cube"));
 
   // Relationship mode: includes /World, excludes /World/Box.
   {
     const CollectionInstance *inst = nullptr;
     TEST_CHECK(coll->get_instance("rel", &inst) && inst);
     if (inst) {
-      auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
-      TEST_CHECK(q.mode == tydra::CollectionMembershipQuery::Mode::Relationship);
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
-      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
-      TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
+      auto q = lightusd::legacy::tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
+      TEST_CHECK(q.mode == lightusd::legacy::tydra::CollectionMembershipQuery::Mode::Relationship);
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
+      TEST_CHECK(lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
+      TEST_CHECK(!lightusd::legacy::tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
     }
   }
 }
@@ -382,16 +384,16 @@ void path_expression_light_linking_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
   if (!ok) return;
 
   // Manually assemble a RenderScene with three meshes and the two lights.
-  tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   {
-    tydra::RenderMesh m;
+    lightusd::legacy::tydra::RenderMesh m;
     m.abs_path = "/World/Geom/LitA";
     scene.meshes.push_back(m);
     m.abs_path = "/World/Geom/LitB";
@@ -400,18 +402,18 @@ void path_expression_light_linking_test(void) {
     scene.meshes.push_back(m);
   }
   {
-    tydra::RenderLight l;
+    lightusd::legacy::tydra::RenderLight l;
     l.abs_path = "/Linked";
     scene.lights.push_back(l);
     l.abs_path = "/All";
     scene.lights.push_back(l);
   }
 
-  size_t resolved = tydra::ResolveLightLinking(stage, &scene);
+  size_t resolved = lightusd::legacy::tydra::ResolveLightLinking(stage, &scene);
   TEST_CHECK_(resolved == 1, "expected 1 light resolved, got %zu", resolved);
 
   // Light "Linked": illuminates LitA(0), LitB(1) but not Dark(2).
-  const tydra::RenderLight &linked = scene.lights[0];
+  const lightusd::legacy::tydra::RenderLight &linked = scene.lights[0];
   TEST_CHECK(!linked.light_links_all);
   TEST_CHECK(linked.light_link_mesh_indices.size() == 2);
   bool has0 = false, has1 = false, has2 = false;
@@ -423,7 +425,7 @@ void path_expression_light_linking_test(void) {
   TEST_CHECK(has0 && has1 && !has2);
 
   // Light "All": no link collection -> illuminates everything (default).
-  const tydra::RenderLight &all = scene.lights[1];
+  const lightusd::legacy::tydra::RenderLight &all = scene.lights[1];
   TEST_CHECK(all.light_links_all);
   TEST_CHECK(all.light_link_mesh_indices.empty());
 }
@@ -440,7 +442,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   Stage stage;
   std::string w, e;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &w, &e);
   TEST_CHECK_(ok, "USDA parse failed: %s", e.c_str());
@@ -448,7 +450,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w2, e2;
-  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w2, &e2);
+  bool sret = lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &usdc, &w2, &e2);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e2.c_str());
   if (!sret) return;
 
@@ -459,7 +461,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   Stage stage2;
   std::string w3, e3;
-  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::legacy::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w3, &e3);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e3.c_str());
   if (!lret) return;
@@ -467,12 +469,12 @@ void path_expression_crate_roundtrip_test(void) {
   auto pr = stage2.GetPrimAtPath(Path("/World", ""));
   TEST_CHECK(bool(pr));
   if (pr && pr.value()) {
-    tydra::TerminalAttributeValue tav;
+    lightusd::legacy::tydra::TerminalAttributeValue tav;
     std::string ee;
-    bool ev = tydra::EvaluateAttribute(stage2, *pr.value(), "primvars:expr",
+    bool ev = lightusd::legacy::tydra::EvaluateAttribute(stage2, *pr.value(), "primvars:expr",
                                        &tav, &ee);
     TEST_CHECK_(ev, "eval failed: %s", ee.c_str());
-    const value::PathExpression *pe = tav.as<value::PathExpression>();
+    const lightusd::legacy::value::PathExpression *pe = tav.as<lightusd::legacy::value::PathExpression>();
     TEST_CHECK(pe != nullptr);
     if (pe) {
       TEST_CHECK_(pe->GetText() == "/World/Geom//C*",
@@ -494,7 +496,7 @@ void path_expression_usda_roundtrip_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -644,13 +646,13 @@ void path_expression_predicate_library_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
   if (!ok) return;
 
-  using tydra::EvalPathExpressionPredicate;
+  using lightusd::legacy::tydra::EvalPathExpressionPredicate;
   auto P = [&](const char *pred, const char *path) {
     return EvalPathExpressionPredicate(stage, pred, path);
   };
@@ -730,19 +732,19 @@ void path_expression_openusd_crate_read_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDCFromFile(path, &stage, &warn, &err);
+  bool ok = lightusd::legacy::LoadUSDCFromFile(path, &stage, &warn, &err);
   TEST_CHECK_(ok, "LoadUSDCFromFile(%s) failed: %s", path.c_str(), err.c_str());
   if (!ok) return;
 
   auto pr = stage.GetPrimAtPath(Path("/World", ""));
   TEST_CHECK(bool(pr));
   if (pr && pr.value()) {
-    tydra::TerminalAttributeValue tav;
+    lightusd::legacy::tydra::TerminalAttributeValue tav;
     std::string ee;
-    bool ev = tydra::EvaluateAttribute(stage, *pr.value(), "primvars:expr",
+    bool ev = lightusd::legacy::tydra::EvaluateAttribute(stage, *pr.value(), "primvars:expr",
                                        &tav, &ee);
     TEST_CHECK_(ev, "eval failed: %s", ee.c_str());
-    const value::PathExpression *pe = tav.as<value::PathExpression>();
+    const lightusd::legacy::value::PathExpression *pe = tav.as<lightusd::legacy::value::PathExpression>();
     TEST_CHECK(pe != nullptr);
     if (pe) {
       TEST_CHECK_(pe->GetText() == "/World/Geom//C*",

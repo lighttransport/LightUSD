@@ -11,7 +11,7 @@
 #include "meta-variable.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// MetadataBase: Dictionary-based metadata storage with typed accessors
@@ -424,4 +424,5 @@ class MetadataBase {
   Dictionary _data;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

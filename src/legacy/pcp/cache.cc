@@ -21,7 +21,7 @@
 #include "core/security-policy.hh"
 #include "stage.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pcp {
 
 namespace {
@@ -639,4 +639,5 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
 }
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd

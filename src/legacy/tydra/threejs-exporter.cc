@@ -15,7 +15,7 @@
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Parameter mapping tables
@@ -1354,4 +1354,5 @@ bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& scene,
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

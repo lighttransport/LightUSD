@@ -11,7 +11,7 @@
 #include <string>
 #include <cstdint>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class StreamWriter;
@@ -89,4 +89,5 @@ void set_threaded_print_threshold(size_t threshold);
 ///
 void set_threaded_print_num_threads(unsigned int num_threads);
 
+}  // namespace legacy
 } // namespace lightusd

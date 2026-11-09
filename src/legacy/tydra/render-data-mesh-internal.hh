@@ -14,7 +14,7 @@
 #include "tydra/render-data.hh"           // RenderMesh, VertexAttribute, vec2, vec3
 #include "tydra/render-data-internal.hh"  // MeshConverterConfig
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Checked decoding shared by deferred computation and legacy WASM adapters.
@@ -56,4 +56,5 @@ bool QuantizeMeshNormals(
     MeshConverterConfig::NormalStorageFormat format);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

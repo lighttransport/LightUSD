@@ -14,26 +14,28 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void timesamples_test(void) {
 
   {
-    value::token tok1("bora");
-    value::token tok2("muda");
+    lightusd::legacy::value::token tok1("bora");
+    lightusd::legacy::value::token tok2("muda");
 
-    Animatable<value::token> toks;
+    Animatable<lightusd::legacy::value::token> toks;
     toks.add_sample(0, tok1);
     toks.add_sample(10, tok2);
 
     {
-      value::token tok;
-      TEST_CHECK(toks.get(value::TimeCode::Default(), &tok));
+      lightusd::legacy::value::token tok;
+      TEST_CHECK(toks.get(lightusd::legacy::value::TimeCode::Default(), &tok));
       // return the value of the first item(= timecode 0)
       TEST_CHECK(tok.str() == "bora");
     }
 
     // Held interpolation
     {
-      value::token tok;
+      lightusd::legacy::value::token tok;
       TEST_CHECK(toks.get(0.0, &tok));
       TEST_CHECK(tok.str() == "bora");
 
@@ -58,7 +60,7 @@ void timesamples_test(void) {
 
     {
       float f;
-      TEST_CHECK(samples.get(value::TimeCode::Default(), &f));
+      TEST_CHECK(samples.get(lightusd::legacy::value::TimeCode::Default(), &f));
       // return the value of the first item(= timecode 0)
       TEST_CHECK(math::is_close(f, 0.0f));
     }
@@ -80,15 +82,15 @@ void timesamples_test(void) {
 
   {
     primvar::PrimVar pbar;
-    value::TimeSamples ts;
-    ts.add_sample(0, value::Value(0.0f));
-    ts.add_sample(1, value::Value(10.0f));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(0, lightusd::legacy::value::Value(0.0f));
+    ts.add_sample(1, lightusd::legacy::value::Value(10.0f));
     pbar.set_timesamples(ts);
     pbar.set_value(2000.0f); // default value
 
     {
       float f;
-      TEST_CHECK(pbar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Held, &f));
+      TEST_CHECK(pbar.get_interpolated_value(lightusd::legacy::value::TimeCode::Default(), lightusd::legacy::value::TimeSampleInterpolationType::Held, &f));
       // return the value of the first item(= timecode 0)
       TEST_CHECK(math::is_close(f, 2000.0f));
     }
@@ -96,28 +98,28 @@ void timesamples_test(void) {
     // Linear interpolation
     {
       float f;
-      TEST_CHECK(pbar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &f));
+      TEST_CHECK(pbar.get_interpolated_value(-10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &f));
       TEST_CHECK(math::is_close(f, 0.0f));
 
-      TEST_CHECK(pbar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &f));
+      TEST_CHECK(pbar.get_interpolated_value(0.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &f));
       TEST_CHECK(math::is_close(f, 0.0f));
 
-      TEST_CHECK(pbar.get_interpolated_value(0.5, value::TimeSampleInterpolationType::Linear, &f));
+      TEST_CHECK(pbar.get_interpolated_value(0.5, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &f));
       TEST_CHECK(math::is_close(f, 5.0f));
 
-      TEST_CHECK(pbar.get_interpolated_value(1.0, value::TimeSampleInterpolationType::Linear, &f));
+      TEST_CHECK(pbar.get_interpolated_value(1.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &f));
       TEST_CHECK(math::is_close(f, 10.0f));
 
-      TEST_CHECK(pbar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &f));
+      TEST_CHECK(pbar.get_interpolated_value(lightusd::legacy::value::TimeCode::Default(), lightusd::legacy::value::TimeSampleInterpolationType::Linear, &f));
       TEST_CHECK(math::is_close(f, 2000.0f));
     }
   }
 
   {
     primvar::PrimVar pbar;
-    value::TimeSamples ts;
-    ts.add_sample(0, value::Value(0.0f));
-    ts.add_sample(1, value::Value(10.0f));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(0, lightusd::legacy::value::Value(0.0f));
+    ts.add_sample(1, lightusd::legacy::value::Value(10.0f));
     pbar.set_timesamples(ts);
     pbar.set_value(2000.0f); // default value
 
@@ -126,7 +128,7 @@ void timesamples_test(void) {
 
     {
       float f;
-      TEST_CHECK(attr.get(value::TimeCode::Default(), &f, value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(attr.get(lightusd::legacy::value::TimeCode::Default(), &f, lightusd::legacy::value::TimeSampleInterpolationType::Held));
       // return the value of the first item(= timecode 0)
       TEST_CHECK(math::is_close(f, 2000.0f));
     }
@@ -134,41 +136,41 @@ void timesamples_test(void) {
     // Linear interpolation
     {
       float f;
-      TEST_CHECK(attr.get(-10.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(-10.0, &f, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(math::is_close(f, 0.0f));
 
-      TEST_CHECK(attr.get(0.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(0.0, &f, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(math::is_close(f, 0.0f));
 
-      TEST_CHECK(attr.get(0.5, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(0.5, &f, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(math::is_close(f, 5.0f));
 
-      TEST_CHECK(attr.get(1.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(1.0, &f, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(math::is_close(f, 10.0f));
 
-      TEST_CHECK(attr.get(value::TimeCode::Default(), &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(lightusd::legacy::value::TimeCode::Default(), &f, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(math::is_close(f, 2000.0f));
     }
   }
 
   {
     primvar::PrimVar pbar;
-    value::TimeSamples ts;
-    std::vector<value::float2> ts0 = {{0.0f, 5.0f}};
-    std::vector<value::float2> ts1 = {{10.0f, 15.0f}};
+    lightusd::legacy::value::TimeSamples ts;
+    std::vector<lightusd::legacy::value::float2> ts0 = {{0.0f, 5.0f}};
+    std::vector<lightusd::legacy::value::float2> ts1 = {{10.0f, 15.0f}};
 
     ts.add_sample(0, ts0);
     ts.add_sample(1, ts1);
     pbar.set_timesamples(ts);
-    std::vector<value::float2> default_value = {{100.0f, 200.0f}};
+    std::vector<lightusd::legacy::value::float2> default_value = {{100.0f, 200.0f}};
     pbar.set_value(default_value); // default value
 
     Attribute attr;
     attr.set_var(pbar);
 
     {
-      std::vector<value::float2> v;
-      TEST_CHECK(attr.get(value::TimeCode::Default(), &v, value::TimeSampleInterpolationType::Held));
+      std::vector<lightusd::legacy::value::float2> v;
+      TEST_CHECK(attr.get(lightusd::legacy::value::TimeCode::Default(), &v, lightusd::legacy::value::TimeSampleInterpolationType::Held));
       TEST_CHECK(v.size() == 1);
 
       TEST_CHECK(math::is_close(v[0][0], 100.0f));
@@ -177,13 +179,13 @@ void timesamples_test(void) {
 
     // Linear interpolation
     {
-      std::vector<value::float2> vs;
-      TEST_CHECK(attr.get(0.0, &vs, value::TimeSampleInterpolationType::Linear));
+      std::vector<lightusd::legacy::value::float2> vs;
+      TEST_CHECK(attr.get(0.0, &vs, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(vs.size() == 1);
       TEST_CHECK(math::is_close(vs[0][0], 0.0f));
       TEST_CHECK(math::is_close(vs[0][1], 5.0f));
 
-      TEST_CHECK(attr.get(0.5, &vs, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(attr.get(0.5, &vs, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
       TEST_CHECK(vs.size() == 1);
       TEST_CHECK(math::is_close(vs[0][0], 5.0f));
       TEST_CHECK(math::is_close(vs[0][1], 10.0f));
@@ -192,38 +194,38 @@ void timesamples_test(void) {
   }
 
   {
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::float2>::type_id()));
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::float2>>::type_id()));
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::texcoord2f>::type_id()));
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::texcoord2f>>::type_id()));
-    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<int>::type_id()));
-    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<int>>::type_id()));
-    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::string>::type_id()));
-    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<std::string>>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<lightusd::legacy::value::float2>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::vector<lightusd::legacy::value::float2>>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<lightusd::legacy::value::texcoord2f>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::vector<lightusd::legacy::value::texcoord2f>>::type_id()));
+    TEST_CHECK(!lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<int>::type_id()));
+    TEST_CHECK(!lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::vector<int>>::type_id()));
+    TEST_CHECK(!lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::string>::type_id()));
+    TEST_CHECK(!lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::vector<std::string>>::type_id()));
 
     // Matrices are interpolatable and now have a consistent Lerp() arm. Previously
     // IsLerpSupportedType() reported true but Lerp() had no matrix case and returned
     // false (so array matrix timesamples failed to interpolate). Guard the fix.
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::matrix4d>::type_id()));
-    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::matrix4d>>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<lightusd::legacy::value::matrix4d>::type_id()));
+    TEST_CHECK(lightusd::legacy::value::IsLerpSupportedType(lightusd::legacy::value::TypeTraits<std::vector<lightusd::legacy::value::matrix4d>>::type_id()));
     {
-      value::matrix4d ma{};
-      value::matrix4d mb{};
-      value::Value a(ma), b(mb), out;
-      TEST_CHECK(value::Lerp(a, b, 0.5, &out));
-      TEST_CHECK(out.as<value::matrix4d>() != nullptr);
+      lightusd::legacy::value::matrix4d ma{};
+      lightusd::legacy::value::matrix4d mb{};
+      lightusd::legacy::value::Value a(ma), b(mb), out;
+      TEST_CHECK(lightusd::legacy::value::Lerp(a, b, 0.5, &out));
+      TEST_CHECK(out.as<lightusd::legacy::value::matrix4d>() != nullptr);
     }
   }
 
   // Test TimeSamples sorting
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     // Add samples out of order
-    ts.add_sample(5.0, value::Value(50.0f));
-    ts.add_sample(2.0, value::Value(20.0f));
-    ts.add_sample(8.0, value::Value(80.0f));
-    ts.add_sample(1.0, value::Value(10.0f));
+    ts.add_sample(5.0, lightusd::legacy::value::Value(50.0f));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(20.0f));
+    ts.add_sample(8.0, lightusd::legacy::value::Value(80.0f));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(10.0f));
 
     // Force sorting by accessing samples
     const auto& samples = ts.get_samples();
@@ -260,15 +262,15 @@ void timesamples_test(void) {
 
   // Test TimeSamples with blocked (None) values
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     // Add mix of regular and blocked samples using ValueBlock
-    ts.add_sample(0.0, value::Value(10.0));
-    ts.add_sample(1.0, value::Value(20.0));
-    ts.add_sample(2.0, value::Value(value::ValueBlock()));  // blocked sample
-    ts.add_sample(3.0, value::Value(30.0));
-    ts.add_sample(4.0, value::Value(value::ValueBlock()));  // blocked sample
-    ts.add_sample(5.0, value::Value(50.0));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(10.0));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(20.0));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(lightusd::legacy::value::ValueBlock()));  // blocked sample
+    ts.add_sample(3.0, lightusd::legacy::value::Value(30.0));
+    ts.add_sample(4.0, lightusd::legacy::value::Value(lightusd::legacy::value::ValueBlock()));  // blocked sample
+    ts.add_sample(5.0, lightusd::legacy::value::Value(50.0));
 
     const auto& samples = ts.get_samples();
 
@@ -307,14 +309,14 @@ void timesamples_test(void) {
 
   // Test sorting with blocked values
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     // Add samples out of order with blocked values
-    ts.add_sample(5.0, value::Value(50.0));
-    ts.add_sample(2.0, value::Value(value::ValueBlock()));
-    ts.add_sample(1.0, value::Value(10.0));
-    ts.add_sample(4.0, value::Value(value::ValueBlock()));
-    ts.add_sample(3.0, value::Value(30.0));
+    ts.add_sample(5.0, lightusd::legacy::value::Value(50.0));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(lightusd::legacy::value::ValueBlock()));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(10.0));
+    ts.add_sample(4.0, lightusd::legacy::value::Value(lightusd::legacy::value::ValueBlock()));
+    ts.add_sample(3.0, lightusd::legacy::value::Value(30.0));
 
     const auto& samples = ts.get_samples();
 
@@ -336,7 +338,7 @@ void timesamples_test(void) {
 
   // Test dedup array sorting with index remap
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     // Build nearly-sorted samples so insertion sort would be chosen without
     // dedup-aware fallback.
@@ -360,7 +362,7 @@ void timesamples_test(void) {
   // Empty array samples may use vector::data() == nullptr, but a non-empty
   // sample must provide storage. Rejected input must not add a partial sample.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
     TEST_CHECK(ts.add_array_sample<float>(0.0, nullptr, 0, &err));
     TEST_CHECK(ts.size() == 1);
@@ -385,7 +387,7 @@ void timesamples_test(void) {
 
   // Unified small-binary storage should keep values aligned with sorted times.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TEST_CHECK(ts.add_sample<float>(5.0, 50.0f));
     TEST_CHECK(ts.add_blocked_sample<float>(3.0));
@@ -415,7 +417,7 @@ void timesamples_test(void) {
       // value at the exact sample time t=4.0
       float sample_value = 0.0f;
       TEST_CHECK(ts.get<float>(&sample_value, 4.0,
-                               value::TimeSampleInterpolationType::Held));
+                               lightusd::legacy::value::TimeSampleInterpolationType::Held));
       TEST_CHECK(math::is_close(sample_value, 40.0f));
     }
 
@@ -440,13 +442,13 @@ void timesamples_test(void) {
 
   // Blocked-only generic samples should allow deferred type initialization.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
 
-    TEST_CHECK(ts.add_blocked_sample(5.0, value::Value(), &err));
+    TEST_CHECK(ts.add_blocked_sample(5.0, lightusd::legacy::value::Value(), &err));
     TEST_CHECK(ts.type_id() == 0);
-    TEST_CHECK(ts.add_sample(10.0, value::Value(42.0f), &err));
-    TEST_CHECK(ts.type_id() == value::TypeTraits<float>::type_id());
+    TEST_CHECK(ts.add_sample(10.0, lightusd::legacy::value::Value(42.0f), &err));
+    TEST_CHECK(ts.type_id() == lightusd::legacy::value::TypeTraits<float>::type_id());
 
     const auto &samples = ts.get_samples();
     TEST_CHECK(samples.size() == 2);
@@ -461,7 +463,7 @@ void timesamples_test(void) {
 
   // Scalar and array unified backends must not be mixed.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
 
     TEST_CHECK(ts.add_sample<float>(0.0, 1.0f, &err));
@@ -472,7 +474,7 @@ void timesamples_test(void) {
   // In the flat buffer design, std::vector and TypedArray share the same binary storage.
   // Mixing them is allowed since the underlying data layout is identical.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
 
     TEST_CHECK(ts.add_array_sample<float>(0.0, std::vector<float>{1.0f, 2.0f}, &err));
@@ -484,7 +486,7 @@ void timesamples_test(void) {
   // The raw-pointer overload is public too; it must not bypass type checking
   // and reinterpret a later sample using a new element size.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
     const float f = 1.0f;
     const int32_t i = 2;
@@ -497,7 +499,7 @@ void timesamples_test(void) {
 
   // Variable-sized unified arrays should preserve per-sample element counts.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
     TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f, 2.0f}));
@@ -572,7 +574,7 @@ void timesamples_test(void) {
 
   // Out-of-order arrays must preserve per-sample counts after sorting.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
     TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f}));
@@ -595,12 +597,12 @@ void timesamples_test(void) {
 
   // Generic blocked and non-blocked array samples should preserve array values and block state.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
 
-    TEST_CHECK(ts.add_sample(3.0, value::Value(std::vector<float>{3.0f, 4.0f}), &err));
-    TEST_CHECK(ts.add_blocked_sample(1.0, value::Value(std::vector<float>{}), &err));
-    TEST_CHECK(ts.add_sample(5.0, value::Value(std::vector<float>{5.0f, 6.0f, 7.0f}), &err));
+    TEST_CHECK(ts.add_sample(3.0, lightusd::legacy::value::Value(std::vector<float>{3.0f, 4.0f}), &err));
+    TEST_CHECK(ts.add_blocked_sample(1.0, lightusd::legacy::value::Value(std::vector<float>{}), &err));
+    TEST_CHECK(ts.add_sample(5.0, lightusd::legacy::value::Value(std::vector<float>{5.0f, 6.0f, 7.0f}), &err));
 
     const auto &samples = ts.get_samples();
     TEST_CHECK(samples.size() == 3);
@@ -621,7 +623,7 @@ void timesamples_test(void) {
 
   // TypedArray-backed unified storage should keep the TypedArray type id and counts.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TypedArray<float> late = {7.0f, 8.0f};
     TypedArray<float> early = {1.0f, 2.0f, 3.0f};
@@ -630,7 +632,7 @@ void timesamples_test(void) {
     TEST_CHECK(ts.add_array_sample<float>(1.0, early));
 
     TEST_CHECK(ts.is_array());
-    TEST_CHECK(ts.type_id() == value::TypeTraits<TypedArray<float>>::type_id());
+    TEST_CHECK(ts.type_id() == lightusd::legacy::value::TypeTraits<TypedArray<float>>::type_id());
 
     TypedArray<float> out;
     TEST_CHECK(ts.get_typed_array_at_time<float>(1.0, &out));
@@ -683,7 +685,7 @@ void timesamples_test(void) {
 
   // Empty TypedArray samples should round-trip through unified reconstruction.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TypedArray<float> empty;
     TEST_CHECK(ts.add_array_sample<float>(2.0, empty));
@@ -713,16 +715,16 @@ void timesamples_test(void) {
 
   // Bool scalars should stay on the generic Value path instead of binary storage.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
 
     TEST_CHECK(ts.add_sample<bool>(3.0, true, &err));
     TEST_CHECK(ts.add_blocked_sample<bool>(1.0, &err));
     TEST_CHECK(!ts.is_using_binary_storage());
-    TEST_CHECK(ts.type_id() == value::TypeTraits<bool>::type_id());
+    TEST_CHECK(ts.type_id() == lightusd::legacy::value::TypeTraits<bool>::type_id());
 
     bool out = false;
-    TEST_CHECK(ts.get(&out, 3.0, value::TimeSampleInterpolationType::Held));
+    TEST_CHECK(ts.get(&out, 3.0, lightusd::legacy::value::TimeSampleInterpolationType::Held));
     TEST_CHECK(out == true);
 
     const auto& samples = ts.get_samples();
@@ -740,14 +742,14 @@ void timesamples_test(void) {
 
   // Bool arrays should use the generic Value path and generic dedup.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
     std::vector<bool> authored = {true, false, true};
 
     TEST_CHECK(ts.add_array_sample<bool>(1.0, authored, &err));
-    TEST_CHECK(ts.add_sample(3.0, value::Value(authored), &err));
+    TEST_CHECK(ts.add_sample(3.0, lightusd::legacy::value::Value(authored), &err));
     TEST_CHECK(!ts.is_using_binary_storage());
-    TEST_CHECK(ts.type_id() == value::TypeTraits<std::vector<bool>>::type_id());
+    TEST_CHECK(ts.type_id() == lightusd::legacy::value::TypeTraits<std::vector<bool>>::type_id());
 
     std::vector<bool> out;
     bool blocked = true;
@@ -772,7 +774,7 @@ void timesamples_test(void) {
 
   // Value-array storage should sort times and keep per-sample array sizes aligned.
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
 
     TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
     TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f, 2.0f}));
@@ -806,7 +808,7 @@ void timesamples_test(void) {
 
   // Test empty TimeSamples
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     TEST_CHECK(ts.empty() == true);
     TEST_CHECK(ts.size() == 0);
 
@@ -816,8 +818,8 @@ void timesamples_test(void) {
 
   // Test single sample
   {
-    value::TimeSamples ts;
-    ts.add_sample(5.0, value::Value(50.0));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(5.0, lightusd::legacy::value::Value(50.0));
 
     TEST_CHECK(ts.empty() == false);
     TEST_CHECK(ts.size() == 1);
@@ -833,10 +835,10 @@ void timesamples_test(void) {
 
   // Test has_sample_at and get_sample_at
   {
-    value::TimeSamples ts;
-    ts.add_sample(1.0, value::Value(10.0f));
-    ts.add_sample(2.0, value::Value(20.0f));
-    ts.add_sample(3.0, value::Value(30.0f));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(1.0, lightusd::legacy::value::Value(10.0f));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(20.0f));
+    ts.add_sample(3.0, lightusd::legacy::value::Value(30.0f));
 
     TEST_CHECK(ts.has_sample_at(1.0) == true);
     TEST_CHECK(ts.has_sample_at(2.0) == true);
@@ -848,7 +850,7 @@ void timesamples_test(void) {
       TEST_CHECK(ts.has_sample_at(2.0));
       float v = 0.0f;
       TEST_CHECK(ts.get<float>(&v, 2.0,
-                               value::TimeSampleInterpolationType::Held));
+                               lightusd::legacy::value::TimeSampleInterpolationType::Held));
       TEST_CHECK(math::is_close(v, 20.0f));
     }
 
@@ -858,10 +860,10 @@ void timesamples_test(void) {
 
   // Test get_time API
   {
-    value::TimeSamples ts;
-    ts.add_sample(5.0, value::Value(50.0));
-    ts.add_sample(2.0, value::Value(20.0));
-    ts.add_sample(8.0, value::Value(80.0));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(5.0, lightusd::legacy::value::Value(50.0));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(20.0));
+    ts.add_sample(8.0, lightusd::legacy::value::Value(80.0));
 
     // Get times at indices (after sorting)
     auto t0 = ts.get_time(0);
@@ -891,10 +893,10 @@ void timesamples_test(void) {
 
   // Test duplicate time entries (std::stable_sort preserves order)
   {
-    value::TimeSamples ts;
-    ts.add_sample(1.0, value::Value(10.0f));
-    ts.add_sample(2.0, value::Value(20.0f));
-    ts.add_sample(1.0, value::Value(15.0f)); // Duplicate time
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(1.0, lightusd::legacy::value::Value(10.0f));
+    ts.add_sample(2.0, lightusd::legacy::value::Value(20.0f));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(15.0f)); // Duplicate time
 
     const auto& samples = ts.get_samples();
     TEST_CHECK(samples.size() == 3);
@@ -912,17 +914,17 @@ void timesamples_test(void) {
   // Test interpolation of arrays with different sizes
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::vector<float> v1 = {1.0f, 2.0f};
     std::vector<float> v2 = {3.0f, 4.0f, 5.0f};
-    ts.add_sample(0.0, value::Value(v1));
-    ts.add_sample(1.0, value::Value(v2));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(v1));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(v2));
     pvar.set_timesamples(ts);
 
-    value::Value result_val;
+    lightusd::legacy::value::Value result_val;
     // Linear interpolation should fail because array sizes are different,
     // and it should return the value of the lower sample (held interpolation).
-    TEST_CHECK(pvar.get_interpolated_value(0.5, value::TimeSampleInterpolationType::Linear, &result_val) == true);
+    TEST_CHECK(pvar.get_interpolated_value(0.5, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result_val) == true);
     const std::vector<float> *result = result_val.as<std::vector<float>>();
     TEST_CHECK(result != nullptr);
     if (result) {
@@ -940,27 +942,27 @@ void timesamples_test(void) {
   // Test 1: Single TimeSample Behavior (should be held constant for all times)
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    value::float3 scale_value = {0.1f, 0.2f, 0.3f};
-    ts.add_sample(0.0, value::Value(scale_value));
+    lightusd::legacy::value::TimeSamples ts;
+    lightusd::legacy::value::float3 scale_value = {0.1f, 0.2f, 0.3f};
+    ts.add_sample(0.0, lightusd::legacy::value::Value(scale_value));
     pvar.set_timesamples(ts);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // Test before the sample (t = -10)
-    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
 
     // Test at the sample (t = 0)
-    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(0.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
 
     // Test after the sample (t = 10)
-    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
@@ -971,34 +973,34 @@ void timesamples_test(void) {
   // TimeSamples should be used for numeric time codes
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    value::float3 sample_value = {0.1f, 0.2f, 0.3f};
-    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+    lightusd::legacy::value::TimeSamples ts;
+    lightusd::legacy::value::float3 sample_value = {0.1f, 0.2f, 0.3f};
+    lightusd::legacy::value::float3 default_value = {7.0f, 8.0f, 9.0f};
 
-    ts.add_sample(0.0, value::Value(sample_value));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(sample_value));
     pvar.set_timesamples(ts);
     pvar.set_value(default_value);  // Set default value
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // Test Default TimeCode - should return default value (7, 8, 9)
-    TEST_CHECK(pvar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(lightusd::legacy::value::TimeCode::Default(), lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
 
     // Test numeric time codes - should use time samples
-    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
 
-    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(0.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
 
-    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.2f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
@@ -1007,50 +1009,50 @@ void timesamples_test(void) {
   // Test 3: Multiple TimeSamples with Linear Interpolation
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    value::float3 sample1 = {0.1f, 0.1f, 0.1f};
-    value::float3 sample2 = {0.5f, 0.5f, 0.5f};
-    value::float3 sample3 = {1.0f, 1.0f, 1.0f};
+    lightusd::legacy::value::TimeSamples ts;
+    lightusd::legacy::value::float3 sample1 = {0.1f, 0.1f, 0.1f};
+    lightusd::legacy::value::float3 sample2 = {0.5f, 0.5f, 0.5f};
+    lightusd::legacy::value::float3 sample3 = {1.0f, 1.0f, 1.0f};
 
-    ts.add_sample(-5.0, value::Value(sample1));
-    ts.add_sample(0.0, value::Value(sample2));
-    ts.add_sample(5.0, value::Value(sample3));
+    ts.add_sample(-5.0, lightusd::legacy::value::Value(sample1));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(sample2));
+    ts.add_sample(5.0, lightusd::legacy::value::Value(sample3));
     pvar.set_timesamples(ts);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // Test before first sample (t = -10) - should hold first value
-    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
     TEST_CHECK(math::is_close(result[1], 0.1f));
     TEST_CHECK(math::is_close(result[2], 0.1f));
 
     // Test at first sample (t = -5)
-    TEST_CHECK(pvar.get_interpolated_value(-5.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(-5.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.1f));
 
     // Test between samples (t = -2.5) - should interpolate
-    TEST_CHECK(pvar.get_interpolated_value(-2.5, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(-2.5, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.3f));  // Linear interpolation between 0.1 and 0.5
     TEST_CHECK(math::is_close(result[1], 0.3f));
     TEST_CHECK(math::is_close(result[2], 0.3f));
 
     // Test at middle sample (t = 0)
-    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(0.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.5f));
 
     // Test between samples (t = 2.5) - should interpolate
-    TEST_CHECK(pvar.get_interpolated_value(2.5, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(2.5, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 0.75f));  // Linear interpolation between 0.5 and 1.0
     TEST_CHECK(math::is_close(result[1], 0.75f));
     TEST_CHECK(math::is_close(result[2], 0.75f));
 
     // Test at last sample (t = 5)
-    TEST_CHECK(pvar.get_interpolated_value(5.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(5.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 1.0f));
 
     // Test after last sample (t = 10) - should hold last value
-    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(10.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 1.0f));
     TEST_CHECK(math::is_close(result[1], 1.0f));
     TEST_CHECK(math::is_close(result[2], 1.0f));
@@ -1059,74 +1061,74 @@ void timesamples_test(void) {
   // Test 4: Attribute::get() with Default Value and TimeSamples
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    value::float3 sample1 = {0.1f, 0.1f, 0.1f};
-    value::float3 sample2 = {0.5f, 0.5f, 0.5f};
-    value::float3 sample3 = {1.0f, 1.0f, 1.0f};
-    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+    lightusd::legacy::value::TimeSamples ts;
+    lightusd::legacy::value::float3 sample1 = {0.1f, 0.1f, 0.1f};
+    lightusd::legacy::value::float3 sample2 = {0.5f, 0.5f, 0.5f};
+    lightusd::legacy::value::float3 sample3 = {1.0f, 1.0f, 1.0f};
+    lightusd::legacy::value::float3 default_value = {7.0f, 8.0f, 9.0f};
 
-    ts.add_sample(-5.0, value::Value(sample1));
-    ts.add_sample(0.0, value::Value(sample2));
-    ts.add_sample(5.0, value::Value(sample3));
+    ts.add_sample(-5.0, lightusd::legacy::value::Value(sample1));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(sample2));
+    ts.add_sample(5.0, lightusd::legacy::value::Value(sample3));
     pvar.set_timesamples(ts);
     pvar.set_value(default_value);
 
     Attribute attr;
     attr.set_var(pvar);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // Test Default TimeCode via Attribute::get()
-    TEST_CHECK(attr.get(value::TimeCode::Default(), &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(lightusd::legacy::value::TimeCode::Default(), &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
 
     // Test numeric time codes via Attribute::get()
-    TEST_CHECK(attr.get(-10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(-10.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 0.1f));  // Before samples, held constant
 
-    TEST_CHECK(attr.get(-2.5, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(-2.5, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 0.3f));  // Interpolated
 
-    TEST_CHECK(attr.get(0.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(0.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 0.5f));  // At sample
 
-    TEST_CHECK(attr.get(2.5, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(2.5, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 0.75f));  // Interpolated
 
-    TEST_CHECK(attr.get(10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(10.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 1.0f));  // After samples, held constant
   }
 
   // Test 5: Default Value Only (no time samples)
   {
     primvar::PrimVar pvar;
-    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+    lightusd::legacy::value::float3 default_value = {7.0f, 8.0f, 9.0f};
     pvar.set_value(default_value);  // Only default value, no time samples
 
     Attribute attr;
     attr.set_var(pvar);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // All time codes should return the default value when no time samples exist
-    TEST_CHECK(attr.get(value::TimeCode::Default(), &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(lightusd::legacy::value::TimeCode::Default(), &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
 
-    TEST_CHECK(attr.get(-10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(-10.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
 
-    TEST_CHECK(attr.get(0.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(0.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
 
-    TEST_CHECK(attr.get(10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(attr.get(10.0, &result, lightusd::legacy::value::TimeSampleInterpolationType::Linear));
     TEST_CHECK(math::is_close(result[0], 7.0f));
     TEST_CHECK(math::is_close(result[1], 8.0f));
     TEST_CHECK(math::is_close(result[2], 9.0f));
@@ -1135,74 +1137,74 @@ void timesamples_test(void) {
   // Test 6: Held Interpolation Mode
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    value::float3 sample1 = {1.0f, 1.0f, 1.0f};
-    value::float3 sample2 = {2.0f, 2.0f, 2.0f};
-    value::float3 sample3 = {3.0f, 3.0f, 3.0f};
+    lightusd::legacy::value::TimeSamples ts;
+    lightusd::legacy::value::float3 sample1 = {1.0f, 1.0f, 1.0f};
+    lightusd::legacy::value::float3 sample2 = {2.0f, 2.0f, 2.0f};
+    lightusd::legacy::value::float3 sample3 = {3.0f, 3.0f, 3.0f};
 
-    ts.add_sample(0.0, value::Value(sample1));
-    ts.add_sample(5.0, value::Value(sample2));
-    ts.add_sample(10.0, value::Value(sample3));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(sample1));
+    ts.add_sample(5.0, lightusd::legacy::value::Value(sample2));
+    ts.add_sample(10.0, lightusd::legacy::value::Value(sample3));
     pvar.set_timesamples(ts);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // With Held interpolation, values between samples should hold the earlier sample
-    TEST_CHECK(pvar.get_interpolated_value(2.5, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(pvar.get_interpolated_value(2.5, lightusd::legacy::value::TimeSampleInterpolationType::Held, &result));
     TEST_CHECK(math::is_close(result[0], 1.0f));  // Should hold earlier value
 
-    TEST_CHECK(pvar.get_interpolated_value(7.5, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(pvar.get_interpolated_value(7.5, lightusd::legacy::value::TimeSampleInterpolationType::Held, &result));
     TEST_CHECK(math::is_close(result[0], 2.0f));  // Should hold earlier value
 
     // At exact sample times
-    TEST_CHECK(pvar.get_interpolated_value(5.0, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(pvar.get_interpolated_value(5.0, lightusd::legacy::value::TimeSampleInterpolationType::Held, &result));
     TEST_CHECK(math::is_close(result[0], 2.0f));  // Exact value at sample
   }
 
   // Test 7: Edge Cases - Empty TimeSamples with Default Value
   {
     primvar::PrimVar pvar;
-    value::float3 default_value = {100.0f, 200.0f, 300.0f};
+    lightusd::legacy::value::float3 default_value = {100.0f, 200.0f, 300.0f};
     pvar.set_value(default_value);  // Default value only
 
     // TimeSamples exist but are empty
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     pvar.set_timesamples(ts);
 
-    value::float3 result;
+    lightusd::legacy::value::float3 result;
 
     // Should still return default value for all time codes
-    TEST_CHECK(pvar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(lightusd::legacy::value::TimeCode::Default(), lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 100.0f));
     TEST_CHECK(math::is_close(result[1], 200.0f));
     TEST_CHECK(math::is_close(result[2], 300.0f));
 
-    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(0.0, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result[0], 100.0f));
   }
 
   // Test 8: Test Boundary Conditions with Epsilon Values
   {
     primvar::PrimVar pvar;
-    value::TimeSamples ts;
-    ts.add_sample(0.0, value::Value(10.0f));
-    ts.add_sample(1.0, value::Value(20.0f));
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(0.0, lightusd::legacy::value::Value(10.0f));
+    ts.add_sample(1.0, lightusd::legacy::value::Value(20.0f));
     pvar.set_timesamples(ts);
 
     float result;
     const float epsilon = 1e-6f;
 
     // Just before and after samples
-    TEST_CHECK(pvar.get_interpolated_value(0.0 - epsilon, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(0.0 - epsilon, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result, 10.0f, 1e-3f));  // Should be very close to first sample
 
-    TEST_CHECK(pvar.get_interpolated_value(1.0 + epsilon, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(pvar.get_interpolated_value(1.0 + epsilon, lightusd::legacy::value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result, 20.0f, 1e-3f));  // Should be very close to last sample
   }
 
   // ----------------------------------------------------------------------
   // [Phase 1] Parity guard: the production TimeSamples::get<T>() (now the
-  // binary-direct evaluator for scalar T) must match a naive value::Value-path
+  // binary-direct evaluator for scalar T) must match a naive lightusd::legacy::value::Value-path
   // reference across {default, held, lerp} x {blocked variants}. The reference
   // is the generic get_samples()/Lerp path that get<T>() used to inline; this
   // guards that the consolidated non-template core stayed behavior-compatible.
@@ -1211,20 +1213,20 @@ void timesamples_test(void) {
   // two paths intentionally diverge there until Phase 2 unifies Lerp.)
   // ----------------------------------------------------------------------
   {
-    using Interp = value::TimeSampleInterpolationType;
+    using Interp = lightusd::legacy::value::TimeSampleInterpolationType;
     const Interp Held = Interp::Held;
     const Interp Linear = Interp::Linear;
 
     // Independent reference: interpolate via the generic get_samples()/Lerp path.
-    auto reference_get = [&](const value::TimeSamples &ts, double t, Interp interp,
+    auto reference_get = [&](const lightusd::legacy::value::TimeSamples &ts, double t, Interp interp,
                              auto tag, bool *ok) {
       using T = decltype(tag);
-      using Sample = value::TimeSamples::Sample;
+      using Sample = lightusd::legacy::value::TimeSamples::Sample;
       T out{};
       *ok = false;
       const auto &samples = ts.get_samples();
       if (samples.empty()) return out;
-      if (value::TimeCode(t).is_default()) {
+      if (lightusd::legacy::value::TimeCode(t).is_default()) {
         for (const auto &s : samples) {
           if (!s.blocked) {
             if (const T *pv = s.value.template as<T>()) { out = *pv; *ok = true; }
@@ -1238,7 +1240,7 @@ void timesamples_test(void) {
         if (const T *pv = samples[0].value.template as<T>()) { out = *pv; *ok = true; }
         return out;
       }
-      if (interp == Linear && value::IsLerpSupportedType(ts.type_id())) {
+      if (interp == Linear && lightusd::legacy::value::IsLerpSupportedType(ts.type_id())) {
         auto it = std::lower_bound(samples.begin(), samples.end(), t,
             [](const Sample &a, double tv) { return a.t < tv; });
         const auto itm1 = (it == samples.begin()) ? samples.begin() : (it - 1);
@@ -1260,8 +1262,8 @@ void timesamples_test(void) {
         double dt = (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon())
                         ? 0.0 : (t - tl) / (tu - tl);
         dt = std::max(0.0, std::min(1.0, dt));
-        value::Value p;
-        if (value::Lerp(samples[i0].value, samples[i1].value, dt, &p)) {
+        lightusd::legacy::value::Value p;
+        if (lightusd::legacy::value::Lerp(samples[i0].value, samples[i1].value, dt, &p)) {
           if (const T *pv = p.template as<T>()) { out = *pv; *ok = true; }
         }
         return out;
@@ -1274,7 +1276,7 @@ void timesamples_test(void) {
       return out;
     };
 
-    auto check = [&](const value::TimeSamples &ts, double t, Interp interp,
+    auto check = [&](const lightusd::legacy::value::TimeSamples &ts, double t, Interp interp,
                      auto tag) {
       using T = decltype(tag);
       T a{};
@@ -1287,46 +1289,46 @@ void timesamples_test(void) {
       }
     };
 
-    const double T_DEFAULT = value::TimeCode::Default();
+    const double T_DEFAULT = lightusd::legacy::value::TimeCode::Default();
     const double times[] = {-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 100.0, T_DEFAULT};
 
     // float (lerp scalar), two samples
     {
-      value::TimeSamples ts;
+      lightusd::legacy::value::TimeSamples ts;
       ts.add_sample<float>(0.0, 1.0f);
       ts.add_sample<float>(2.0, 5.0f);
       for (double t : times) { check(ts, t, Held, float{}); check(ts, t, Linear, float{}); }
     }
     // double, single sample
     {
-      value::TimeSamples ts;
+      lightusd::legacy::value::TimeSamples ts;
       ts.add_sample<double>(5.0, 42.0);
       for (double t : times) { check(ts, t, Held, double{}); check(ts, t, Linear, double{}); }
     }
     // float3 (lerp vector)
     {
-      value::TimeSamples ts;
-      ts.add_sample<value::float3>(0.0, value::float3{0.f, 0.f, 0.f});
-      ts.add_sample<value::float3>(2.0, value::float3{2.f, 4.f, 6.f});
-      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+      lightusd::legacy::value::TimeSamples ts;
+      ts.add_sample<lightusd::legacy::value::float3>(0.0, lightusd::legacy::value::float3{0.f, 0.f, 0.f});
+      ts.add_sample<lightusd::legacy::value::float3>(2.0, lightusd::legacy::value::float3{2.f, 4.f, 6.f});
+      for (double t : times) { check(ts, t, Held, lightusd::legacy::value::float3{}); check(ts, t, Linear, lightusd::legacy::value::float3{}); }
     }
     // color3f (role type — shares float3 layout via shared switch arm)
     {
-      value::TimeSamples ts;
-      ts.add_sample<value::color3f>(0.0, value::color3f{0.f, 0.f, 0.f});
-      ts.add_sample<value::color3f>(1.0, value::color3f{1.f, 0.5f, 0.25f});
-      for (double t : times) { check(ts, t, Held, value::color3f{}); check(ts, t, Linear, value::color3f{}); }
+      lightusd::legacy::value::TimeSamples ts;
+      ts.add_sample<lightusd::legacy::value::color3f>(0.0, lightusd::legacy::value::color3f{0.f, 0.f, 0.f});
+      ts.add_sample<lightusd::legacy::value::color3f>(1.0, lightusd::legacy::value::color3f{1.f, 0.5f, 0.25f});
+      for (double t : times) { check(ts, t, Held, lightusd::legacy::value::color3f{}); check(ts, t, Linear, lightusd::legacy::value::color3f{}); }
     }
     // int32 (non-lerp scalar): Linear must behave as Held
     {
-      value::TimeSamples ts;
+      lightusd::legacy::value::TimeSamples ts;
       ts.add_sample<int32_t>(0.0, 3);
       ts.add_sample<int32_t>(2.0, 9);
       for (double t : times) { check(ts, t, Held, int32_t{}); check(ts, t, Linear, int32_t{}); }
     }
     // blocked middle (double)
     {
-      value::TimeSamples ts;
+      lightusd::legacy::value::TimeSamples ts;
       ts.add_sample<double>(0.0, 10.0);
       ts.add_blocked_sample<double>(1.0);
       ts.add_sample<double>(2.0, 20.0);
@@ -1334,7 +1336,7 @@ void timesamples_test(void) {
     }
     // blocked endpoints (float)
     {
-      value::TimeSamples ts;
+      lightusd::legacy::value::TimeSamples ts;
       ts.add_blocked_sample<float>(0.0);
       ts.add_sample<float>(1.0, 7.0f);
       ts.add_blocked_sample<float>(2.0);
@@ -1342,24 +1344,24 @@ void timesamples_test(void) {
     }
     // dedup: duplicate_sample shares the same _data offset (zero-copy)
     {
-      value::TimeSamples ts;
-      ts.add_sample<value::float3>(0.0, value::float3{1.f, 2.f, 3.f});
+      lightusd::legacy::value::TimeSamples ts;
+      ts.add_sample<lightusd::legacy::value::float3>(0.0, lightusd::legacy::value::float3{1.f, 2.f, 3.f});
       ts.duplicate_sample(0, 5.0);
-      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+      for (double t : times) { check(ts, t, Held, lightusd::legacy::value::float3{}); check(ts, t, Linear, lightusd::legacy::value::float3{}); }
     }
     // generic (non-binary) storage: token
     {
-      value::TimeSamples ts;
-      ts.add_sample<value::token>(0.0, value::token("a"));
-      ts.add_sample<value::token>(2.0, value::token("b"));
-      for (double t : times) { check(ts, t, Held, value::token{}); check(ts, t, Linear, value::token{}); }
+      lightusd::legacy::value::TimeSamples ts;
+      ts.add_sample<lightusd::legacy::value::token>(0.0, lightusd::legacy::value::token("a"));
+      ts.add_sample<lightusd::legacy::value::token>(2.0, lightusd::legacy::value::token("b"));
+      for (double t : times) { check(ts, t, Held, lightusd::legacy::value::token{}); check(ts, t, Linear, lightusd::legacy::value::token{}); }
     }
   }
 }
 
 void timesamples_variable_array_inmemory_test(void) {
   // Variable per-sample counts in binary storage.
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<float> a = {1.0f, 2.0f, 3.0f};
   std::vector<float> b = {4.0f};
   std::vector<float> c = {};  // empty (will be blocked via array-blocked)
@@ -1380,7 +1382,7 @@ void timesamples_variable_array_inmemory_test(void) {
   TEST_CHECK(ts.get_array_count(3) == 0);  // t=3 -> empty non-blocked
 
   // Blocked flag.
-  value::TimeSamples::Sample s;
+  lightusd::legacy::value::TimeSamples::Sample s;
   TEST_CHECK(ts.get_sample_at(1, &s) && s.blocked);
 
   // duplicate_sample propagates count.

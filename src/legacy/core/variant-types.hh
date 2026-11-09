@@ -12,7 +12,7 @@
 #include "prim-metas.hh"
 #include "property.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Prim;
@@ -102,4 +102,5 @@ struct VariantSetSpec
   std::map<std::string, PrimSpec> variantSet;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

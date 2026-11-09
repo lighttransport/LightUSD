@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2026-Present Light Transport Entertainment Inc.
 //
-// C API implementation for lightusd::tydra::RenderScene conversion.
+// C API implementation for lightusd::legacy::tydra::RenderScene conversion.
 
 #include "c-lightusd-tydra.h"
 
@@ -18,32 +18,32 @@
 
 namespace {
 
-using lightusd::Stage;
-using lightusd::tydra::AnimationChannel;
-using lightusd::tydra::AnimationClip;
-using lightusd::tydra::AnimationInterpolation;
-using lightusd::tydra::AnimationPath;
-using lightusd::tydra::BufferData;
-using lightusd::tydra::ChannelTargetType;
-using lightusd::tydra::ComponentType;
-using lightusd::tydra::KeyframeSampler;
-using lightusd::tydra::Node;
-using lightusd::tydra::NodeCategory;
-using lightusd::tydra::NodeType;
-using lightusd::tydra::OpenPBRSurfaceShader;
-using lightusd::tydra::PreviewSurfaceShader;
-using lightusd::tydra::RenderCamera;
-using lightusd::tydra::RenderLight;
-using lightusd::tydra::RenderMaterial;
-using lightusd::tydra::RenderMesh;
-using lightusd::tydra::RenderScene;
-using lightusd::tydra::RenderSceneConverter;
-using lightusd::tydra::RenderSceneConverterEnv;
-using lightusd::tydra::SkelHierarchy;
-using lightusd::tydra::TextureImage;
-using lightusd::tydra::UVTexture;
-using lightusd::tydra::VertexAttribute;
-using lightusd::tydra::VertexAttributeFormat;
+using lightusd::legacy::Stage;
+using lightusd::legacy::tydra::AnimationChannel;
+using lightusd::legacy::tydra::AnimationClip;
+using lightusd::legacy::tydra::AnimationInterpolation;
+using lightusd::legacy::tydra::AnimationPath;
+using lightusd::legacy::tydra::BufferData;
+using lightusd::legacy::tydra::ChannelTargetType;
+using lightusd::legacy::tydra::ComponentType;
+using lightusd::legacy::tydra::KeyframeSampler;
+using lightusd::legacy::tydra::Node;
+using lightusd::legacy::tydra::NodeCategory;
+using lightusd::legacy::tydra::NodeType;
+using lightusd::legacy::tydra::OpenPBRSurfaceShader;
+using lightusd::legacy::tydra::PreviewSurfaceShader;
+using lightusd::legacy::tydra::RenderCamera;
+using lightusd::legacy::tydra::RenderLight;
+using lightusd::legacy::tydra::RenderMaterial;
+using lightusd::legacy::tydra::RenderMesh;
+using lightusd::legacy::tydra::RenderScene;
+using lightusd::legacy::tydra::RenderSceneConverter;
+using lightusd::legacy::tydra::RenderSceneConverterEnv;
+using lightusd::legacy::tydra::SkelHierarchy;
+using lightusd::legacy::tydra::TextureImage;
+using lightusd::legacy::tydra::UVTexture;
+using lightusd::legacy::tydra::VertexAttribute;
+using lightusd::legacy::tydra::VertexAttributeFormat;
 
 inline const Stage *S(const CLightUSDStage *s) {
   return reinterpret_cast<const Stage *>(s);
@@ -446,7 +446,7 @@ float c_lightusd_render_camera_vertical_aperture(const CLightUSDRenderCamera *ca
 }
 int c_lightusd_render_camera_projection(const CLightUSDRenderCamera *cam) {
   if (!cam) return 0;
-  return RC(cam)->projection == lightusd::GeomCamera::Projection::Orthographic
+  return RC(cam)->projection == lightusd::legacy::GeomCamera::Projection::Orthographic
              ? 1 : 0;
 }
 

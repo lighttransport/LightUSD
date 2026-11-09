@@ -19,6 +19,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 static bool parse_layer(const char *usda, Layer *layer, std::string *warn,
@@ -1689,7 +1691,7 @@ void usd_validation_relationship_bind_material_as_metadata_test(void) {
   PrimSpec root(Specifier::Def, "Xform", "Root");
   Relationship rel;
   rel.set(Path("/Root", ""));
-  rel.metas().set_bindMaterialAs(value::token("sideways"));
+  rel.metas().set_bindMaterialAs(lightusd::legacy::value::token("sideways"));
   root.props()["material:binding"] = Property(rel);
   TEST_CHECK(layer.add_primspec("Root", root));
 

@@ -15,7 +15,7 @@
 
 #include "tydra/render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 
@@ -430,4 +430,5 @@ size_t RenderSceneConverter::DeduplicateTexturesByIdentityImpl() {
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

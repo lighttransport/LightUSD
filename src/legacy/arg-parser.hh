@@ -9,7 +9,7 @@
 
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace argparser {
 
 struct Option {
@@ -46,9 +46,10 @@ public:
     void print_help() const;
 
 private:
-    lightusd::HashMap<std::string, Option> options_;
+    lightusd::legacy::HashMap<std::string, Option> options_;
     std::vector<std::string> positional_args_;
 };
 
 } // namespace argparser
+}  // namespace legacy
 } // namespace lightusd

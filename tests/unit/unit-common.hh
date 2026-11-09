@@ -35,9 +35,10 @@ static bool float_array_equals(const T *a, const T *b, const int n) {
 }  // namespace lightusd_test
 
 // Forward declarations for test helpers
-namespace lightusd {
+namespace lightusd { namespace legacy {
 class Stage;
 class Layer;
+}  // namespace legacy
 }
 
 #include <cstring>
@@ -46,25 +47,25 @@ class Layer;
 namespace lightusd_test {
 
 /// Parse USDA string into a Stage. Returns true on success.
-static inline bool parse_usda_to_stage(const char *usda, lightusd::Stage *stage,
+static inline bool parse_usda_to_stage(const char *usda, lightusd::legacy::Stage *stage,
                                         std::string *warn = nullptr,
                                         std::string *err = nullptr) {
   std::string w, e;
   if (!warn) warn = &w;
   if (!err) err = &e;
-  return lightusd::LoadUSDAFromMemory(
+  return lightusd::legacy::LoadUSDAFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
       "test.usda", stage, warn, err);
 }
 
 /// Parse USDA string into a Layer. Returns true on success.
-static inline bool parse_usda_to_layer(const char *usda, lightusd::Layer *layer,
+static inline bool parse_usda_to_layer(const char *usda, lightusd::legacy::Layer *layer,
                                         std::string *warn = nullptr,
                                         std::string *err = nullptr) {
   std::string w, e;
   if (!warn) warn = &w;
   if (!err) err = &e;
-  return lightusd::LoadLayerFromMemory(
+  return lightusd::legacy::LoadLayerFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
       "test.usda", layer, warn, err);
 }

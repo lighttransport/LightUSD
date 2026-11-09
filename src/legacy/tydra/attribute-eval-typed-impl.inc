@@ -14,7 +14,7 @@
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage, const TypedAttribute<T> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttribute<T> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err) {
@@ -67,7 +67,7 @@ bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err,
@@ -136,7 +136,7 @@ bool EvaluateTypedAnimatableAttribute(
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage, const TypedAttributeWithFallback<T> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<T> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err) {
@@ -176,7 +176,7 @@ bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
+    const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err,

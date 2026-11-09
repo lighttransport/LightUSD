@@ -22,7 +22,7 @@
 
 #include "usdc-reader-prim-detail.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
@@ -546,6 +546,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

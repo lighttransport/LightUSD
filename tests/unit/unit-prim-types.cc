@@ -12,6 +12,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void prim_type_test(void) {
   // Path
   {

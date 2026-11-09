@@ -9,7 +9,7 @@
 #include "ascii-parser.hh"
 //#include "asset-resolution.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace usda {
 
@@ -164,4 +164,5 @@ class USDAReader {
 
 } // namespace usda
 
+}  // namespace legacy
 } // namespace lightusd

@@ -20,7 +20,7 @@
 #include "extent.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 struct VariantSet;
@@ -180,4 +180,5 @@ DEFINE_TYPE_TRAIT(GenerativeProcedural, "GenerativeProcedural", TYPE_ID_GENERATI
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -9,14 +9,14 @@
 
 namespace lusdview {
 
-std::string PropertyToString(const lightusd::Property& prop);
+std::string PropertyToString(const lightusd::legacy::Property& prop);
 
-std::string PrimMetaSummary(const lightusd::Prim& prim);
-std::string AttrMetaSummary(const lightusd::Attribute& attr);
-std::string GPrimPropertySummary(const lightusd::Prim& prim);
-std::string SubdivisionSchemeName(const lightusd::Prim& prim);
-std::string VisibilityState(const lightusd::Prim& prim);
-std::string VariantSetDetail(const lightusd::Prim& prim);
-std::string GeometrySummary(const lightusd::Prim& prim);
+std::string PrimMetaSummary(const lightusd::legacy::Prim& prim);
+std::string AttrMetaSummary(const lightusd::legacy::Attribute& attr);
+std::string GPrimPropertySummary(const lightusd::legacy::Prim& prim);
+std::string SubdivisionSchemeName(const lightusd::legacy::Prim& prim);
+std::string VisibilityState(const lightusd::legacy::Prim& prim);
+std::string VariantSetDetail(const lightusd::legacy::Prim& prim);
+std::string GeometrySummary(const lightusd::legacy::Prim& prim);
 
 }  // namespace lusdview

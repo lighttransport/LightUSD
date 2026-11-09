@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(Xform);
@@ -37,4 +37,5 @@ INSTANTIATE_RECONSTRUCT_PRIM(GeomPlane);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomCylinder_1);
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

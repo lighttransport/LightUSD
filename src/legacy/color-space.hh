@@ -9,7 +9,7 @@
 #include <string>
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// ColorSpace tokens - canonical set of interoperable color spaces in OpenUSD
@@ -107,4 +107,5 @@ inline ColorSpace get_default() {
 // Note: ColorSpaceAPI struct is defined in prim-types.hh
 // This header provides the colorspace tokens and utility functions
 
+}  // namespace legacy
 }  // namespace lightusd

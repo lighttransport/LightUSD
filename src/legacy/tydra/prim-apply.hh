@@ -5,7 +5,7 @@
 
 #include <functional>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // forward decl.
 class Stage;
@@ -42,4 +42,5 @@ bool ApplyToCollection(
   std::function<bool(const Collection *coll)> fn);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

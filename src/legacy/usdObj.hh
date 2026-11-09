@@ -16,15 +16,11 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 struct GPrim;
 class Stage;
 class Layer;
-namespace tydra {
-namespace import_asset {
-struct Options;
-}
-}  // namespace tydra
+// tydra::import_asset::Options is shared; forward-declared in legacy-namespace.hh.
 
 namespace usdObj {
 
@@ -52,4 +48,5 @@ bool ReadObjLayerFromMemory(const std::string& text, const std::string& source,
 
 }  // namespace usdObj
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -1835,12 +1835,12 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     vd.dim[2] = f.dim[2];
     // Vector fields are shaded through their magnitude (the integrator reads
     // one scalar per cell).
-    if (!lightusd::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
+    if (!lightusd::legacy::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
     vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
     vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
     vd.world = v.world_matrix;
     matrix4d invw;
-    if (!lightusd::inverse(v.world_matrix, invw, 1.0e-12)) {
+    if (!lightusd::legacy::inverse(v.world_matrix, invw, 1.0e-12)) {
       invw = matrix4d::identity();
     }
     vd.inv_world = invw;
@@ -1875,7 +1875,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
         dst_field = &vd.emission_field;
       }
       if (dst_field) {
-        if (!lightusd::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
+        if (!lightusd::legacy::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
         for (int a = 0; a < 3; ++a) {
           dst_field->dim[a] = aux.dim[a];
         }

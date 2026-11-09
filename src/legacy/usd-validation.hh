@@ -12,7 +12,7 @@
 #include "core/layer-types.hh"
 #include "layer.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct USDLoadOptions;
 
@@ -114,4 +114,5 @@ void MergeValidationResults(USDValidationResult *dst,
 
 std::string FormatValidationResult(const USDValidationResult &result);
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -5,7 +5,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // forward decl
 class RenderScene;
@@ -30,4 +30,5 @@ std::string DumpRenderScene(const RenderScene &scene,
                             const std::string &format = "yaml");
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

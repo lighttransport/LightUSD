@@ -43,7 +43,7 @@
 #include "tydra/shader-network.hh"
 #include "tydra/render-data-material-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -359,10 +359,10 @@ struct MtlxConnectionResolveCacheEntry {
 
 struct ConnectionResolveCache {
   const Stage *stage{nullptr};
-  lightusd::HashMap<std::string, UVConnectionResolveCacheEntry,
+  lightusd::legacy::HashMap<std::string, UVConnectionResolveCacheEntry,
                     FNV1StringHash>
       uv_texture_by_connection;
-  lightusd::HashMap<std::string, MtlxConnectionResolveCacheEntry,
+  lightusd::legacy::HashMap<std::string, MtlxConnectionResolveCacheEntry,
                     FNV1StringHash>
       mtlx_texture_by_connection;
 };
@@ -381,11 +381,11 @@ void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
   // Swap with empty maps to release bucket memory (clear() keeps capacity)
   {
-    lightusd::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    lightusd::legacy::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.uv_texture_by_connection.swap(tmp);
   }
   {
-    lightusd::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    lightusd::legacy::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.mtlx_texture_by_connection.swap(tmp);
   }
 }
@@ -2514,7 +2514,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << lightusd::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << lightusd::legacy::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
     } else {
@@ -2531,7 +2531,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << lightusd::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << lightusd::legacy::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
 
@@ -2679,7 +2679,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapS.authored()) {
-    lightusd::UsdUVTexture::Wrap wrap;
+    lightusd::legacy::UsdUVTexture::Wrap wrap;
     std::string wrap_err;
 
     if (!ResolveTextureWrap(env.stage, texture.wrapS, "inputs:wrapS",
@@ -2702,7 +2702,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapT.authored()) {
-    lightusd::UsdUVTexture::Wrap wrap;
+    lightusd::legacy::UsdUVTexture::Wrap wrap;
     std::string wrap_err;
 
     if (!ResolveTextureWrap(env.stage, texture.wrapT, "inputs:wrapT",
@@ -3749,4 +3749,5 @@ template bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam<float, floa
     ShaderParam<float> &, bool);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

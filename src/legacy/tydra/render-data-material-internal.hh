@@ -15,7 +15,7 @@
 #include "core/prim.hh"     // Prim, Stage, Path
 #include "tydra/render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #if defined(LIGHTUSD_WITH_TEXTOOLS)
@@ -73,4 +73,5 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
     const std::vector<Path> &connections, std::string *err);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -33,7 +33,7 @@ extern "C" {
  * Internal structure for stage handle
  */
 struct lightusd_stage_impl {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     std::string last_error;
     std::vector<std::unique_ptr<lightusd_prim_impl>> prim_cache;
     std::vector<std::unique_ptr<lightusd_value_impl>> value_cache;
@@ -43,7 +43,7 @@ struct lightusd_stage_impl {
  * Internal structure for prim handle
  */
 struct lightusd_prim_impl {
-    const lightusd::Prim* prim;        // Borrowed pointer from stage
+    const lightusd::legacy::Prim* prim;        // Borrowed pointer from stage
     lightusd_stage_impl* parent_stage;    // Owning stage
     std::string cached_path;            // Cached path string
     std::string cached_name;            // Cached name string
@@ -53,7 +53,7 @@ struct lightusd_prim_impl {
  * Internal structure for value handle
  */
 struct lightusd_value_impl {
-    lightusd::value::Value value;      // Owned value
+    lightusd::legacy::value::Value value;      // Owned value
     lightusd_value_type cached_type;      // Cached type for fast access
     std::string string_cache;          // For string returns
 };
@@ -70,38 +70,38 @@ static void copy_error_message(const std::string& error, char* error_buf, size_t
     }
 }
 
-static lightusd_prim_type get_prim_type(const lightusd::Prim& prim) {
+static lightusd_prim_type get_prim_type(const lightusd::legacy::Prim& prim) {
     // Check concrete prim types
-    if (prim.is<lightusd::Xform>()) return LIGHTUSD_PRIM_XFORM;
-    if (prim.is<lightusd::GeomMesh>()) return LIGHTUSD_PRIM_MESH;
-    if (prim.is<lightusd::Material>()) return LIGHTUSD_PRIM_MATERIAL;
-    if (prim.is<lightusd::Shader>()) return LIGHTUSD_PRIM_SHADER;
-    if (prim.is<lightusd::GeomCamera>()) return LIGHTUSD_PRIM_CAMERA;
-    if (prim.is<lightusd::SphereLight>()) return LIGHTUSD_PRIM_SPHERE_LIGHT;
-    if (prim.is<lightusd::DistantLight>()) return LIGHTUSD_PRIM_DISTANT_LIGHT;
-    if (prim.is<lightusd::DiskLight>()) return LIGHTUSD_PRIM_DISK_LIGHT;
-    if (prim.is<lightusd::RectLight>()) return LIGHTUSD_PRIM_RECT_LIGHT;
-    if (prim.is<lightusd::CylinderLight>()) return LIGHTUSD_PRIM_CYLINDER_LIGHT;
-    if (prim.is<lightusd::DomeLight>()) return LIGHTUSD_PRIM_DOME_LIGHT;
-    if (prim.is<lightusd::Skeleton>()) return LIGHTUSD_PRIM_SKELETON;
-    if (prim.is<lightusd::SkelRoot>()) return LIGHTUSD_PRIM_SKELROOT;
-    if (prim.is<lightusd::SkelAnimation>()) return LIGHTUSD_PRIM_SKELANIMATION;
-    if (prim.is<lightusd::Scope>()) return LIGHTUSD_PRIM_SCOPE;
-    if (prim.is<lightusd::GeomSubset>()) return LIGHTUSD_PRIM_GEOMSUBSET;
-    if (prim.is<lightusd::GeomSphere>()) return LIGHTUSD_PRIM_SPHERE;
-    if (prim.is<lightusd::GeomCube>()) return LIGHTUSD_PRIM_CUBE;
-    if (prim.is<lightusd::GeomCylinder>()) return LIGHTUSD_PRIM_CYLINDER;
-    if (prim.is<lightusd::GeomCapsule>()) return LIGHTUSD_PRIM_CAPSULE;
-    if (prim.is<lightusd::GeomCone>()) return LIGHTUSD_PRIM_CONE;
-    if (prim.is<lightusd::GeomBasisCurves>()) return LIGHTUSD_PRIM_BASIS_CURVES;
-    if (prim.is<lightusd::GeomNurbsCurves>()) return LIGHTUSD_PRIM_NURBS_CURVE;
-    if (prim.is<lightusd::GeomNurbsPatch>()) return LIGHTUSD_PRIM_NURBS_PATCH;
-    if (prim.is<lightusd::GeomPointInstancer>()) return LIGHTUSD_PRIM_POINT_INSTANCER;
+    if (prim.is<lightusd::legacy::Xform>()) return LIGHTUSD_PRIM_XFORM;
+    if (prim.is<lightusd::legacy::GeomMesh>()) return LIGHTUSD_PRIM_MESH;
+    if (prim.is<lightusd::legacy::Material>()) return LIGHTUSD_PRIM_MATERIAL;
+    if (prim.is<lightusd::legacy::Shader>()) return LIGHTUSD_PRIM_SHADER;
+    if (prim.is<lightusd::legacy::GeomCamera>()) return LIGHTUSD_PRIM_CAMERA;
+    if (prim.is<lightusd::legacy::SphereLight>()) return LIGHTUSD_PRIM_SPHERE_LIGHT;
+    if (prim.is<lightusd::legacy::DistantLight>()) return LIGHTUSD_PRIM_DISTANT_LIGHT;
+    if (prim.is<lightusd::legacy::DiskLight>()) return LIGHTUSD_PRIM_DISK_LIGHT;
+    if (prim.is<lightusd::legacy::RectLight>()) return LIGHTUSD_PRIM_RECT_LIGHT;
+    if (prim.is<lightusd::legacy::CylinderLight>()) return LIGHTUSD_PRIM_CYLINDER_LIGHT;
+    if (prim.is<lightusd::legacy::DomeLight>()) return LIGHTUSD_PRIM_DOME_LIGHT;
+    if (prim.is<lightusd::legacy::Skeleton>()) return LIGHTUSD_PRIM_SKELETON;
+    if (prim.is<lightusd::legacy::SkelRoot>()) return LIGHTUSD_PRIM_SKELROOT;
+    if (prim.is<lightusd::legacy::SkelAnimation>()) return LIGHTUSD_PRIM_SKELANIMATION;
+    if (prim.is<lightusd::legacy::Scope>()) return LIGHTUSD_PRIM_SCOPE;
+    if (prim.is<lightusd::legacy::GeomSubset>()) return LIGHTUSD_PRIM_GEOMSUBSET;
+    if (prim.is<lightusd::legacy::GeomSphere>()) return LIGHTUSD_PRIM_SPHERE;
+    if (prim.is<lightusd::legacy::GeomCube>()) return LIGHTUSD_PRIM_CUBE;
+    if (prim.is<lightusd::legacy::GeomCylinder>()) return LIGHTUSD_PRIM_CYLINDER;
+    if (prim.is<lightusd::legacy::GeomCapsule>()) return LIGHTUSD_PRIM_CAPSULE;
+    if (prim.is<lightusd::legacy::GeomCone>()) return LIGHTUSD_PRIM_CONE;
+    if (prim.is<lightusd::legacy::GeomBasisCurves>()) return LIGHTUSD_PRIM_BASIS_CURVES;
+    if (prim.is<lightusd::legacy::GeomNurbsCurves>()) return LIGHTUSD_PRIM_NURBS_CURVE;
+    if (prim.is<lightusd::legacy::GeomNurbsPatch>()) return LIGHTUSD_PRIM_NURBS_PATCH;
+    if (prim.is<lightusd::legacy::GeomPointInstancer>()) return LIGHTUSD_PRIM_POINT_INSTANCER;
 
     return LIGHTUSD_PRIM_UNKNOWN;
 }
 
-static lightusd_value_type get_value_type(const lightusd::value::Value& value) {
+static lightusd_value_type get_value_type(const lightusd::legacy::value::Value& value) {
     // Map LightUSD value types to our C enum
     // This is simplified - real implementation would check actual type
     if (value.is_bool()) return LIGHTUSD_VALUE_BOOL;
@@ -188,7 +188,7 @@ lightusd_result lightusd_load_from_file(
     auto stage_impl = std::make_unique<lightusd_stage_impl>();
 
     // Setup load options
-    lightusd::USDLoadOptions load_opts;
+    lightusd::legacy::USDLoadOptions load_opts;
     if (options) {
         if (options->max_memory_limit_mb > 0) {
             load_opts.max_memory_limit_in_mb = static_cast<int32_t>(options->max_memory_limit_mb);
@@ -201,7 +201,7 @@ lightusd_result lightusd_load_from_file(
 
     // Load the file
     std::string warn, err;
-    bool ret = lightusd::LoadUSDFromFile(
+    bool ret = lightusd::legacy::LoadUSDFromFile(
         filepath,
         &stage_impl->stage,
         &warn,
@@ -245,7 +245,7 @@ lightusd_result lightusd_load_from_memory(
     auto stage_impl = std::make_unique<lightusd_stage_impl>();
 
     // Setup load options
-    lightusd::USDLoadOptions load_opts;
+    lightusd::legacy::USDLoadOptions load_opts;
     if (options) {
         if (options->max_memory_limit_mb > 0) {
             load_opts.max_memory_limit_in_mb = static_cast<int32_t>(options->max_memory_limit_mb);
@@ -272,7 +272,7 @@ lightusd_result lightusd_load_from_memory(
 
     // Load from memory
     std::string warn, err;
-    bool ret = lightusd::LoadUSDFromMemory(
+    bool ret = lightusd::legacy::LoadUSDFromMemory(
         static_cast<const uint8_t*>(data),
         size,
         "memory" + detected_ext,  // Filename with extension for format detection
@@ -302,7 +302,7 @@ lightusd_prim lightusd_stage_get_root_prim(lightusd_stage stage) {
     }
 
     // Get the pseudo root
-    const lightusd::Prim* root = &stage->stage.root_prims();
+    const lightusd::legacy::Prim* root = &stage->stage.root_prims();
     if (!root) {
         return nullptr;
     }
@@ -330,7 +330,7 @@ lightusd_prim lightusd_prim_get_child_at(lightusd_prim prim, size_t index) {
         return nullptr;
     }
 
-    const lightusd::Prim& child = prim->prim->children()[index];
+    const lightusd::legacy::Prim& child = prim->prim->children()[index];
 
     // Create wrapper for child
     auto child_impl = std::make_unique<lightusd_prim_impl>();
@@ -382,8 +382,8 @@ lightusd_prim lightusd_stage_get_prim_at_path(lightusd_stage stage, const char* 
 
     // Find prim by path
     // Note: This is simplified - real implementation would traverse the hierarchy
-    lightusd::Path usd_path(path);
-    const lightusd::Prim* found = stage->stage.GetPrimAtPath(usd_path);
+    lightusd::legacy::Path usd_path(path);
+    const lightusd::legacy::Prim* found = stage->stage.GetPrimAtPath(usd_path);
 
     if (!found) {
         return nullptr;
@@ -596,7 +596,7 @@ lightusd_result lightusd_mesh_get_points(
     }
 
     // Check if this is a mesh
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
@@ -625,7 +625,7 @@ lightusd_result lightusd_mesh_get_face_counts(
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
@@ -651,7 +651,7 @@ lightusd_result lightusd_mesh_get_indices(
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
@@ -752,8 +752,8 @@ void lightusd_stage_print_hierarchy(lightusd_stage stage, int max_depth) {
     }
 
     // Simple hierarchy printer
-    std::function<void(const lightusd::Prim*, int)> print_prim;
-    print_prim = [&](const lightusd::Prim* prim, int depth) {
+    std::function<void(const lightusd::legacy::Prim*, int)> print_prim;
+    print_prim = [&](const lightusd::legacy::Prim* prim, int depth) {
         if (max_depth > 0 && depth >= max_depth) {
             return;
         }
@@ -1003,7 +1003,7 @@ lightusd_result lightusd_mesh_get_normals(
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
@@ -1030,7 +1030,7 @@ lightusd_result lightusd_mesh_get_uvs(
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
@@ -1054,7 +1054,7 @@ const char* lightusd_mesh_get_subdivision_scheme(lightusd_prim mesh) {
         return "none";
     }
 
-    const lightusd::GeomMesh* mesh_prim = mesh->prim->as<lightusd::GeomMesh>();
+    const lightusd::legacy::GeomMesh* mesh_prim = mesh->prim->as<lightusd::legacy::GeomMesh>();
     if (!mesh_prim) {
         return "none";
     }
@@ -1083,13 +1083,13 @@ lightusd_result lightusd_xform_get_local_matrix(
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
-    const lightusd::Xform* xform_prim = xform->prim->as<lightusd::Xform>();
+    const lightusd::legacy::Xform* xform_prim = xform->prim->as<lightusd::legacy::Xform>();
     if (!xform_prim) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
     }
 
     // Evaluate transform at time
-    lightusd::value::matrix4d mat;
+    lightusd::legacy::value::matrix4d mat;
     bool ret = xform_prim->getLocalMatrix(time, &mat);
     if (!ret) {
         return LIGHTUSD_ERROR_INVALID_ARGUMENT;
@@ -1114,13 +1114,13 @@ lightusd_result lightusd_prim_get_world_matrix(
 
     // Build world matrix by accumulating parent transforms
     // This is a simplified version - real implementation would traverse up
-    lightusd::value::matrix4d world_mat = lightusd::value::matrix4d::identity();
+    lightusd::legacy::value::matrix4d world_mat = lightusd::legacy::value::matrix4d::identity();
 
-    const lightusd::Prim* current = prim->prim;
+    const lightusd::legacy::Prim* current = prim->prim;
     while (current) {
-        const lightusd::Xform* xform = current->as<lightusd::Xform>();
+        const lightusd::legacy::Xform* xform = current->as<lightusd::legacy::Xform>();
         if (xform) {
-            lightusd::value::matrix4d local_mat;
+            lightusd::legacy::value::matrix4d local_mat;
             if (xform->getLocalMatrix(time, &local_mat)) {
                 world_mat = local_mat * world_mat;
             }
@@ -1169,7 +1169,7 @@ lightusd_prim lightusd_material_get_surface_shader(lightusd_prim material) {
         return nullptr;
     }
 
-    const lightusd::Material* mat = material->prim->as<lightusd::Material>();
+    const lightusd::legacy::Material* mat = material->prim->as<lightusd::legacy::Material>();
     if (!mat) {
         return nullptr;
     }
@@ -1189,7 +1189,7 @@ lightusd_value lightusd_shader_get_input(lightusd_prim shader, const char* input
         return nullptr;
     }
 
-    const lightusd::Shader* shdr = shader->prim->as<lightusd::Shader>();
+    const lightusd::legacy::Shader* shdr = shader->prim->as<lightusd::legacy::Shader>();
     if (!shdr) {
         return nullptr;
     }
@@ -1215,7 +1215,7 @@ const char* lightusd_shader_get_type_id(lightusd_prim shader) {
         return "Unknown";
     }
 
-    const lightusd::Shader* shdr = shader->prim->as<lightusd::Shader>();
+    const lightusd::legacy::Shader* shdr = shader->prim->as<lightusd::legacy::Shader>();
     if (!shdr) {
         return "Unknown";
     }

@@ -13,7 +13,7 @@
 #include "value-types.hh"
 #include "tiny-string.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Return false when invalid character(e.g. '%') exists in a given string.
 // This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
@@ -518,4 +518,5 @@ DEFINE_TYPE_TRAIT(SdfRelocates, "Relocates", TYPE_ID_RELOCATES, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

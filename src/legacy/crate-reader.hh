@@ -20,7 +20,7 @@
 #include "stream-reader.hh"
 #include "typed-array-core.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 ///
@@ -97,9 +97,9 @@ struct CrateReaderConfig {
 ///
 /// Usage:
 /// ```cpp
-/// lightusd::StreamReader reader(filename);
-/// lightusd::crate::CrateReader cratereader(&reader);
-/// lightusd::Layer layer;
+/// lightusd::legacy::StreamReader reader(filename);
+/// lightusd::legacy::crate::CrateReader cratereader(&reader);
+/// lightusd::legacy::Layer layer;
 /// if (cratereader.Read(&layer)) {
 ///   // Success - use the layer
 /// } else {
@@ -727,4 +727,5 @@ extern template bool CrateReader::ReadListOp<std::string>(ListOp<std::string>*);
 extern template bool CrateReader::ReadListOp<Token>(ListOp<Token>*);
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd

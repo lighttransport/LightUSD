@@ -38,10 +38,10 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
 
   if (ext.compare("usdc") == 0) {
-    bool ret = lightusd::LoadUSDCFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else if (ext.compare("usda") == 0) {
-    bool ret = lightusd::LoadUSDAFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDAFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
     }
   } else if (ext.compare("usdz") == 0) {
     //std::cout << "usdz\n";
-    bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
     }
   } else {
     // try to auto detect format.
-    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }

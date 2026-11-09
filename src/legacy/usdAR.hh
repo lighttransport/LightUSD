@@ -35,7 +35,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Prim type name constants (typed schemas only)
 constexpr auto kPreliminary_PhysicsGravitationalForce = "Preliminary_PhysicsGravitationalForce";
@@ -329,4 +329,5 @@ DEFINE_TYPE_TRAIT(Preliminary_Text, kPreliminary_Text, TYPE_ID_PRELIMINARY_TEXT,
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

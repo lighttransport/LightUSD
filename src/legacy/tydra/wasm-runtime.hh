@@ -6,7 +6,7 @@
 #include <vector>
 #include <memory>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 struct WasmExecutionResult {
@@ -47,6 +47,7 @@ private:
 };
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 #endif // LIGHTUSD_WITH_WAMR

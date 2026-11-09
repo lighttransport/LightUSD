@@ -30,7 +30,7 @@
 
 #include "compiler-features.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 template <typename Key, typename Value, typename Hash = std::hash<Key>,
           typename KeyEqual = std::equal_to<Key>>
@@ -555,4 +555,5 @@ inline void swap(HashMap<K, V, H, E> &a, HashMap<K, V, H, E> &b) noexcept {
   a.swap(b);
 }
 
+}  // namespace legacy
 }  // namespace lightusd

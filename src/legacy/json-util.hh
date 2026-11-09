@@ -1,11 +1,10 @@
 #pragma once
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
-namespace minijson {
-class Value;
-}
+// minijson::Value is shared (core/minijson.hh); forward-declared in legacy-namespace.hh.
 
 using json = minijson::Value;
 
+}  // namespace legacy
 } // namespace lightusd

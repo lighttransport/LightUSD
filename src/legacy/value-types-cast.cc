@@ -15,7 +15,7 @@
 #include "common-macros.inc"
 #include "math-util.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 size_t Value::array_size() const {
@@ -627,4 +627,5 @@ bool operator==(const matrix2f &a, const matrix2f &b) {
 }
 
 } // namespace value
+}  // namespace legacy
 } // namespace lightusd

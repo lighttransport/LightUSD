@@ -10,6 +10,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void ioutil_test(void) {
   // Variables and home directories belong to the caller, not process state.
   const std::map<std::string, std::string> first{{"HOME", "one"}, {"ASSET", "mesh"}};

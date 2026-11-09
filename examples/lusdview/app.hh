@@ -53,7 +53,7 @@
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
 #include "tydra/js-script.hh"    // complete JSEngineState (held in Context)
-#include "tydra/mcp-context.hh"  // lightusd::tydra::mcp::Context (library tool bridge)
+#include "tydra/mcp-context.hh"  // lightusd::legacy::tydra::mcp::Context (library tool bridge)
 #endif
 
 struct GLFWwindow;
@@ -413,7 +413,7 @@ class App
   TydraPhysWorld physicsWorld_{};
   bool physicsWorldReady_{false};
   std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
-  std::unique_ptr<lightusd::Stage> physicsInitialStage_;
+  std::unique_ptr<lightusd::legacy::Stage> physicsInitialStage_;
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
@@ -1214,7 +1214,7 @@ class App
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.
-  lightusd::tydra::mcp::Context mcpCtx_;
+  lightusd::legacy::tydra::mcp::Context mcpCtx_;
   std::uint64_t mcpCtxGen_{~std::uint64_t(0)};
 #endif
 };

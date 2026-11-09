@@ -3,7 +3,7 @@
 //
 // layer-registry.hh - Parse-once, resolved-path-keyed Layer cache.
 //
-// Part of the lightusd::pcp cached composition engine. A referenced, sublayer,
+// Part of the lightusd::legacy::pcp cached composition engine. A referenced, sublayer,
 // or payload asset is resolved and parsed exactly once and then shared across
 // every prim that needs it -- the single biggest efficiency win the eager
 // CompositionGraph lacks (it re-parses each file per use).
@@ -21,7 +21,7 @@
 #include "layer.hh"
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pcp {
 
 /// Caches parsed Layers keyed by their RESOLVED asset path, so the same file
@@ -81,4 +81,5 @@ class LayerRegistry {
 };
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd

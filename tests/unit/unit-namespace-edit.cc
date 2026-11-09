@@ -12,9 +12,11 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 static bool LoadUSDA(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) TEST_MSG("USDA parse failed: %s", err.c_str());

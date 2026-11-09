@@ -24,10 +24,12 @@
 #include <limits>
 
 using namespace lightusd;
-using namespace lightusd::experimental;
 
-using CrateDataTypeId = lightusd::crate::CrateDataTypeId;
-using CrateValueRep = lightusd::crate::ValueRep;
+using namespace lightusd::legacy;  // NOLINT
+using namespace lightusd::legacy::experimental;
+
+using CrateDataTypeId = lightusd::legacy::crate::CrateDataTypeId;
+using CrateValueRep = lightusd::legacy::crate::ValueRep;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,8 +54,8 @@ static std::string TempPath(const std::string& name) {
 // attribute named "animAttr".
 static Stage MakeAnimStage(const std::string& primName,
                            const std::string& typeName,
-                           const value::TimeSamples& ts,
-                           const value::Value& defaultValue) {
+                           const lightusd::legacy::value::TimeSamples& ts,
+                           const lightusd::legacy::value::Value& defaultValue) {
   Stage stage;
 
   Xform xform;
@@ -76,8 +78,8 @@ static Stage MakeAnimStage(const std::string& primName,
 
 static void AddCustomAttribute(Xform* xform, const std::string& name,
                                const std::string& typeName,
-                               const value::Value& defaultValue,
-                               const value::TimeSamples* ts = nullptr) {
+                               const lightusd::legacy::value::Value& defaultValue,
+                               const lightusd::legacy::value::TimeSamples* ts = nullptr) {
   Attribute attr;
   attr.set_type_name(typeName);
   primvar::PrimVar pv;
@@ -92,8 +94,8 @@ static void AddCustomAttribute(Xform* xform, const std::string& name,
 static Stage MakeMultiAttrAnimStage(
     const std::string& primName,
     const std::string& typeName,
-    const std::vector<value::TimeSamples>& samples,
-    const value::Value& defaultValue) {
+    const std::vector<lightusd::legacy::value::TimeSamples>& samples,
+    const lightusd::legacy::value::Value& defaultValue) {
   Stage stage;
 
   Xform xform;
@@ -132,7 +134,7 @@ static bool WriteStageUSDC(const Stage& stage, const std::string& filename,
 
 // Read back a written file as a Layer and return the named attribute's
 // TimeSamples (or nullptr).
-static const value::TimeSamples* GetLayerAttrTS(const Layer& layer,
+static const lightusd::legacy::value::TimeSamples* GetLayerAttrTS(const Layer& layer,
                                                 const std::string& primName,
                                                 const std::string& propName) {
   const auto& pss = layer.primspecs();
@@ -154,9 +156,9 @@ static bool ReadFieldValueRepsByToken(const std::string& filename,
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  lightusd::crate::CrateReaderConfig config;
+  lightusd::legacy::crate::CrateReaderConfig config;
   config.numThreads = 1;
-  lightusd::crate::CrateReader reader(&sr, config);
+  lightusd::legacy::crate::CrateReader reader(&sr, config);
 
   if (!reader.ReadBootStrap() || !reader.ReadTOC() || !reader.ReadTokens() ||
       !reader.ReadFields()) {
@@ -186,7 +188,7 @@ static bool HasValueRep(const std::vector<CrateValueRep>& reps,
 }
 
 template <typename T>
-static void CheckVectorSample(const value::TimeSamples& ts, size_t sample_idx,
+static void CheckVectorSample(const lightusd::legacy::value::TimeSamples& ts, size_t sample_idx,
                               const std::vector<T>& expected) {
   std::vector<T> got;
   bool blocked = false;
@@ -208,11 +210,11 @@ static void CheckVectorSample(const value::TimeSamples& ts, size_t sample_idx,
 }
 
 static void CheckTexcoord2fVectorSample(
-    const value::TimeSamples& ts, size_t sample_idx,
-    const std::vector<value::texcoord2f>& expected) {
-  std::vector<value::texcoord2f> got_role;
+    const lightusd::legacy::value::TimeSamples& ts, size_t sample_idx,
+    const std::vector<lightusd::legacy::value::texcoord2f>& expected) {
+  std::vector<lightusd::legacy::value::texcoord2f> got_role;
   bool blocked = false;
-  if (ts.get_vector_at<value::texcoord2f>(sample_idx, &got_role, &blocked)) {
+  if (ts.get_vector_at<lightusd::legacy::value::texcoord2f>(sample_idx, &got_role, &blocked)) {
     TEST_CHECK(!blocked);
     TEST_CHECK(got_role.size() == expected.size());
     if (got_role.size() != expected.size()) {
@@ -231,8 +233,8 @@ static void CheckTexcoord2fVectorSample(
     return;
   }
 
-  std::vector<value::float2> got_base;
-  TEST_CHECK(ts.get_vector_at<value::float2>(sample_idx, &got_base, &blocked));
+  std::vector<lightusd::legacy::value::float2> got_base;
+  TEST_CHECK(ts.get_vector_at<lightusd::legacy::value::float2>(sample_idx, &got_base, &blocked));
   TEST_CHECK(!blocked);
   TEST_CHECK(got_base.size() == expected.size());
   if (got_base.size() != expected.size()) {
@@ -256,14 +258,14 @@ static void CheckTexcoord2fVectorSample(
 
 // Test 1: Basic deduplication - repeated float arrays
 void dedup_float_array_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<float> array1 = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
   std::vector<float> array2 = {6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
   for (int frame = 1; frame <= 100; frame++) {
     ts.add_sample(static_cast<double>(frame),
-                  value::Value(frame <= 50 ? array1 : array2));
+                  lightusd::legacy::value::Value(frame <= 50 ? array1 : array2));
   }
-  Stage stage = MakeAnimStage("DedupTest", "float[]", ts, value::Value(array1));
+  Stage stage = MakeAnimStage("DedupTest", "float[]", ts, lightusd::legacy::value::Value(array1));
 
   std::string f_dedup = TempPath("test_dedup_enabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
@@ -273,29 +275,29 @@ void dedup_float_array_test(void) {
   // deduplicated file loads and preserves the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
-  const value::TimeSamples* rts = GetLayerAttrTS(layer, "DedupTest", "animAttr");
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "DedupTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) TEST_CHECK(rts->size() == 100);
 }
 
 // Test 2: Double array deduplication (all-same array)
 void dedup_double_array_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<double> constant_array = {1.5, 2.5, 3.5, 4.5};
   for (int frame = 1; frame <= 50; frame++) {
-    ts.add_sample(static_cast<double>(frame), value::Value(constant_array));
+    ts.add_sample(static_cast<double>(frame), lightusd::legacy::value::Value(constant_array));
   }
   Stage stage = MakeAnimStage("DedupDoubleTest", "double[]", ts,
-                              value::Value(constant_array));
+                              lightusd::legacy::value::Value(constant_array));
 
   std::string filename = TempPath("test_dedup_double.usdc");
   TEST_CHECK(WriteStageUSDC(stage, filename, true));
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
-  const value::TimeSamples* rts =
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(filename, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts =
       GetLayerAttrTS(layer, "DedupDoubleTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) TEST_CHECK(rts->size() == 50);
@@ -303,7 +305,7 @@ void dedup_double_array_test(void) {
 
 // Test 3: Int array deduplication
 void dedup_int_array_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<int32_t> array1 = {10, 20, 30};
   std::vector<int32_t> array2 = {40, 50, 60};
   std::vector<int32_t> array3 = {70, 80, 90};
@@ -311,9 +313,9 @@ void dedup_int_array_test(void) {
     int pattern = ((frame - 1) / 2) % 3;
     const std::vector<int32_t>& a =
         (pattern == 0) ? array1 : (pattern == 1) ? array2 : array3;
-    ts.add_sample(static_cast<double>(frame), value::Value(a));
+    ts.add_sample(static_cast<double>(frame), lightusd::legacy::value::Value(a));
   }
-  Stage stage = MakeAnimStage("DedupIntTest", "int[]", ts, value::Value(array1));
+  Stage stage = MakeAnimStage("DedupIntTest", "int[]", ts, lightusd::legacy::value::Value(array1));
 
   std::string f_dedup = TempPath("test_dedup_int_enabled.usdc");
   std::string f_no = TempPath("test_dedup_int_disabled.usdc");
@@ -324,17 +326,17 @@ void dedup_int_array_test(void) {
 
 // Test 4: No deduplication opportunity (all unique arrays)
 void dedup_unique_arrays_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   for (int frame = 1; frame <= 20; frame++) {
     std::vector<float> unique_array;
     for (int i = 0; i < 5; i++) {
       unique_array.push_back(static_cast<float>(frame * 10 + i));
     }
-    ts.add_sample(static_cast<double>(frame), value::Value(unique_array));
+    ts.add_sample(static_cast<double>(frame), lightusd::legacy::value::Value(unique_array));
   }
   std::vector<float> default_arr = {0.0f};
   Stage stage =
-      MakeAnimStage("UniqueArraysTest", "float[]", ts, value::Value(default_arr));
+      MakeAnimStage("UniqueArraysTest", "float[]", ts, lightusd::legacy::value::Value(default_arr));
 
   std::string f_dedup = TempPath("test_unique_dedup.usdc");
   std::string f_no = TempPath("test_unique_no_dedup.usdc");
@@ -351,15 +353,15 @@ void dedup_unique_arrays_test(void) {
 
 // Test 5: String array deduplication
 void dedup_string_array_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<std::string> repeated_array = {"hello", "world", "usd"};
   std::vector<std::string> different_array = {"foo", "bar", "baz"};
   for (int frame = 1; frame <= 50; frame++) {
     ts.add_sample(static_cast<double>(frame),
-                  value::Value(frame <= 30 ? repeated_array : different_array));
+                  lightusd::legacy::value::Value(frame <= 30 ? repeated_array : different_array));
   }
   Stage stage = MakeAnimStage("StringArrayTest", "string[]", ts,
-                              value::Value(repeated_array));
+                              lightusd::legacy::value::Value(repeated_array));
 
   std::string f_dedup = TempPath("test_dedup_string_enabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
@@ -368,8 +370,8 @@ void dedup_string_array_test(void) {
   // dedup for string[]; verify the result loads and preserves the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
-  const value::TimeSamples* rts =
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts =
       GetLayerAttrTS(layer, "StringArrayTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) TEST_CHECK(rts->size() == 50);
@@ -377,9 +379,9 @@ void dedup_string_array_test(void) {
 
 // Test 6: Matrix4d scalar deduplication (transform animations)
 void dedup_matrix4d_test(void) {
-  value::TimeSamples ts;
-  value::matrix4d identity_matrix;
-  value::matrix4d transform_matrix;
+  lightusd::legacy::value::TimeSamples ts;
+  lightusd::legacy::value::matrix4d identity_matrix;
+  lightusd::legacy::value::matrix4d transform_matrix;
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
       identity_matrix.m[i][j] = (i == j) ? 1.0 : 0.0;
@@ -388,10 +390,10 @@ void dedup_matrix4d_test(void) {
   }
   for (int frame = 1; frame <= 50; frame++) {
     ts.add_sample(static_cast<double>(frame),
-                  value::Value(frame <= 40 ? identity_matrix : transform_matrix));
+                  lightusd::legacy::value::Value(frame <= 40 ? identity_matrix : transform_matrix));
   }
   Stage stage = MakeAnimStage("MatrixTest", "matrix4d", ts,
-                              value::Value(identity_matrix));
+                              lightusd::legacy::value::Value(identity_matrix));
 
   std::string f_dedup = TempPath("test_dedup_matrix_enabled.usdc");
   std::string f_no = TempPath("test_dedup_matrix_disabled.usdc");
@@ -415,19 +417,19 @@ void dedup_matrix4d_test(void) {
 void dedup_cross_attribute_timesamples_test(void) {
   const size_t k_attrs = 8;
   const int k_frames = 48;
-  std::vector<value::TimeSamples> samples(k_attrs);
+  std::vector<lightusd::legacy::value::TimeSamples> samples(k_attrs);
 
   for (size_t a = 0; a < k_attrs; ++a) {
     for (int f = 0; f < k_frames; ++f) {
-      value::double3 v = {{double(f) * 1.25, double(f * f) + 0.5,
+      lightusd::legacy::value::double3 v = {{double(f) * 1.25, double(f * f) + 0.5,
                            double(f) * -3.0}};
-      samples[a].add_sample(double(f), value::Value(v));
+      samples[a].add_sample(double(f), lightusd::legacy::value::Value(v));
     }
   }
 
-  value::double3 default_value = {{0.0, 0.0, 0.0}};
+  lightusd::legacy::value::double3 default_value = {{0.0, 0.0, 0.0}};
   Stage stage = MakeMultiAttrAnimStage("CrossAttrTS", "double3", samples,
-                                       value::Value(default_value));
+                                       lightusd::legacy::value::Value(default_value));
 
   const std::string f_dedup = TempPath("test_cross_attr_ts_dedup.usdc");
   const std::string f_no = TempPath("test_cross_attr_ts_no_dedup.usdc");
@@ -442,9 +444,9 @@ void dedup_cross_attribute_timesamples_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   for (size_t a = 0; a < k_attrs; ++a) {
-    const value::TimeSamples* rts =
+    const lightusd::legacy::value::TimeSamples* rts =
         GetLayerAttrTS(layer, "CrossAttrTS", "animAttr_" + std::to_string(a));
     TEST_CHECK(rts != nullptr);
     if (rts) TEST_CHECK(rts->size() == size_t(k_frames));
@@ -456,13 +458,13 @@ void dedup_cross_attribute_timesamples_test(void) {
 // half uses a non-float-exact double so it still catches the out-of-line
 // primitive scalar path now that OpenUSD-style inline doubles are supported.
 void dedup_default_scalar_values_test(void) {
-  value::matrix4d mat;
+  lightusd::legacy::value::matrix4d mat;
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 4; ++c) {
       mat.m[r][c] = (r == c) ? 1.0 : 0.0;
     }
   }
-  value::double3 vec = {{1.25, 2.5, 3.75}};
+  lightusd::legacy::value::double3 vec = {{1.25, 2.5, 3.75}};
 
   {
     Stage stage;
@@ -471,9 +473,9 @@ void dedup_default_scalar_values_test(void) {
     xform.spec = Specifier::Def;
     for (int i = 0; i < 48; ++i) {
       AddCustomAttribute(&xform, "m_" + std::to_string(i), "matrix4d",
-                         value::Value(mat));
+                         lightusd::legacy::value::Value(mat));
       AddCustomAttribute(&xform, "v_" + std::to_string(i), "double3",
-                         value::Value(vec));
+                         lightusd::legacy::value::Value(vec));
     }
     Prim prim("DefaultScalars", xform);
     stage.root_prims().emplace_back(prim);
@@ -496,7 +498,7 @@ void dedup_default_scalar_values_test(void) {
     xform.spec = Specifier::Def;
     for (int i = 0; i < 1024; ++i) {
       AddCustomAttribute(&xform, "d_" + std::to_string(i), "double",
-                         value::Value(0.1));
+                         lightusd::legacy::value::Value(0.1));
     }
     Prim prim("DefaultDoubles", xform);
     stage.root_prims().emplace_back(prim);
@@ -514,31 +516,31 @@ void dedup_default_scalar_values_test(void) {
 }
 
 void inline_openusd_value_coverage_test(void) {
-  value::matrix2d m2 = {};
+  lightusd::legacy::value::matrix2d m2 = {};
   m2.m[0][0] = -1.0;
   m2.m[1][1] = 2.0;
 
-  value::matrix3d m3 = {};
+  lightusd::legacy::value::matrix3d m3 = {};
   m3.m[0][0] = 1.0;
   m3.m[1][1] = -2.0;
   m3.m[2][2] = 3.0;
 
-  value::matrix4d m4 = {};
+  lightusd::legacy::value::matrix4d m4 = {};
   m4.m[0][0] = 1.0;
   m4.m[1][1] = 2.0;
   m4.m[2][2] = 3.0;
   m4.m[3][3] = 4.0;
 
-  value::matrix4d m4_noninline = m4;
+  lightusd::legacy::value::matrix4d m4_noninline = m4;
   m4_noninline.m[0][1] = 0.5;
 
-  value::half4 h4 = {{
-      value::float_to_half_full(1.0f),
-      value::float_to_half_full(-2.0f),
-      value::float_to_half_full(3.0f),
-      value::float_to_half_full(4.0f),
+  lightusd::legacy::value::half4 h4 = {{
+      lightusd::legacy::value::float_to_half_full(1.0f),
+      lightusd::legacy::value::float_to_half_full(-2.0f),
+      lightusd::legacy::value::float_to_half_full(3.0f),
+      lightusd::legacy::value::float_to_half_full(4.0f),
   }};
-  value::double4 d4 = {{1.0, 2.0, -3.0, 4.0}};
+  lightusd::legacy::value::double4 d4 = {{1.0, 2.0, -3.0, 4.0}};
   int64_t i64_inline = int64_t((std::numeric_limits<int32_t>::min)());
   int64_t i64_noninline = int64_t((std::numeric_limits<int32_t>::min)()) - 1;
   uint64_t u64_inline = uint64_t((std::numeric_limits<uint32_t>::max)());
@@ -549,26 +551,26 @@ void inline_openusd_value_coverage_test(void) {
   xform.name = "InlineCoverage";
   xform.spec = Specifier::Def;
 
-  AddCustomAttribute(&xform, "m2", "matrix2d", value::Value(m2));
-  AddCustomAttribute(&xform, "m3", "matrix3d", value::Value(m3));
-  AddCustomAttribute(&xform, "m4", "matrix4d", value::Value(m4));
+  AddCustomAttribute(&xform, "m2", "matrix2d", lightusd::legacy::value::Value(m2));
+  AddCustomAttribute(&xform, "m3", "matrix3d", lightusd::legacy::value::Value(m3));
+  AddCustomAttribute(&xform, "m4", "matrix4d", lightusd::legacy::value::Value(m4));
   AddCustomAttribute(&xform, "m4_noninline", "matrix4d",
-                     value::Value(m4_noninline));
-  AddCustomAttribute(&xform, "h4", "half4", value::Value(h4));
-  AddCustomAttribute(&xform, "d4", "double4", value::Value(d4));
+                     lightusd::legacy::value::Value(m4_noninline));
+  AddCustomAttribute(&xform, "h4", "half4", lightusd::legacy::value::Value(h4));
+  AddCustomAttribute(&xform, "d4", "double4", lightusd::legacy::value::Value(d4));
   AddCustomAttribute(&xform, "i64_inline", "int64",
-                     value::Value(i64_inline));
+                     lightusd::legacy::value::Value(i64_inline));
   AddCustomAttribute(&xform, "i64_noninline", "int64",
-                     value::Value(i64_noninline));
+                     lightusd::legacy::value::Value(i64_noninline));
   AddCustomAttribute(&xform, "u64_inline", "uint64",
-                     value::Value(u64_inline));
+                     lightusd::legacy::value::Value(u64_inline));
   AddCustomAttribute(&xform, "u64_noninline", "uint64",
-                     value::Value(u64_noninline));
+                     lightusd::legacy::value::Value(u64_noninline));
 
   Attribute attr_with_custom_data;
   attr_with_custom_data.set_type_name("double");
   primvar::PrimVar pv;
-  pv._value = value::Value(1.0);
+  pv._value = lightusd::legacy::value::Value(1.0);
   attr_with_custom_data.set_var(pv);
   attr_with_custom_data.metas().set_customData(Dictionary());
   xform.props["emptyCustomData"] =
@@ -625,7 +627,7 @@ void inline_openusd_value_coverage_test(void) {
   Layer layer;
   std::string warn;
   err.clear();
-  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(filename, &layer, &warn, &err));
   if (!err.empty()) {
     TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
   }
@@ -637,20 +639,20 @@ void inline_openusd_value_coverage_test(void) {
 void dedup_shared_times_arrays_test(void) {
   const size_t k_attrs = 8;
   const int k_frames = 128;
-  std::vector<value::TimeSamples> samples(k_attrs);
+  std::vector<lightusd::legacy::value::TimeSamples> samples(k_attrs);
 
   for (size_t a = 0; a < k_attrs; ++a) {
     for (int f = 0; f < k_frames; ++f) {
-      value::double3 v = {{double(a) * 10000.0 + double(f),
+      lightusd::legacy::value::double3 v = {{double(a) * 10000.0 + double(f),
                            double(a) * -17.0 + double(f) * 0.25,
                            double(a + 1) * double(f + 3)}};
-      samples[a].add_sample(double(f) * 0.5, value::Value(v));
+      samples[a].add_sample(double(f) * 0.5, lightusd::legacy::value::Value(v));
     }
   }
 
-  value::double3 default_value = {{-1.0, -2.0, -3.0}};
+  lightusd::legacy::value::double3 default_value = {{-1.0, -2.0, -3.0}};
   Stage stage = MakeMultiAttrAnimStage("SharedTimes", "double3", samples,
-                                       value::Value(default_value));
+                                       lightusd::legacy::value::Value(default_value));
 
   const std::string f_dedup = TempPath("test_shared_times_dedup.usdc");
   const std::string f_no = TempPath("test_shared_times_no_dedup.usdc");
@@ -670,12 +672,12 @@ void dedup_low_memory_budget_test(void) {
     large_array[i] = float(i) * 0.125f;
   }
 
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   for (int f = 0; f < 4; ++f) {
-    ts.add_sample(double(f), value::Value(large_array));
+    ts.add_sample(double(f), lightusd::legacy::value::Value(large_array));
   }
   Stage stage = MakeAnimStage("LowMemDedup", "float[]", ts,
-                              value::Value(large_array));
+                              lightusd::legacy::value::Value(large_array));
 
   const std::string filename = TempPath("test_low_memory_dedup.usdc");
   std::string err;
@@ -692,8 +694,8 @@ void dedup_low_memory_budget_test(void) {
 
   Layer layer;
   std::string warn;
-  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
-  const value::TimeSamples* rts =
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(filename, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts =
       GetLayerAttrTS(layer, "LowMemDedup", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) TEST_CHECK(rts->size() == 4);
@@ -706,28 +708,28 @@ void dedup_low_memory_budget_test(void) {
 // correctly.
 void dedup_role_array_test(void) {
   // Same array repeated, plus a fresh-but-equal copy, plus a distinct array.
-  const std::vector<value::texcoord2f> uvA_expected = {
+  const std::vector<lightusd::legacy::value::texcoord2f> uvA_expected = {
       {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}};
-  const std::vector<value::texcoord2f> uvB_expected = {
+  const std::vector<lightusd::legacy::value::texcoord2f> uvB_expected = {
       {0.5f, 0.5f}, {0.25f, 0.75f}};
 
-  value::TimeSamples ts;
-  std::vector<std::vector<value::texcoord2f>> expected;
+  lightusd::legacy::value::TimeSamples ts;
+  std::vector<std::vector<lightusd::legacy::value::texcoord2f>> expected;
   for (int f = 0; f < 64; f++) {  // 64 identical samples
-    ts.add_sample(double(f), value::Value(std::vector<value::texcoord2f>(
+    ts.add_sample(double(f), lightusd::legacy::value::Value(std::vector<lightusd::legacy::value::texcoord2f>(
                                uvA_expected)));
     expected.push_back(uvA_expected);
   }
-  ts.add_sample(64.0, value::Value(std::vector<value::texcoord2f>(
+  ts.add_sample(64.0, lightusd::legacy::value::Value(std::vector<lightusd::legacy::value::texcoord2f>(
                          uvA_expected)));  // equal-but-distinct -> hash dedup
   expected.push_back(uvA_expected);
-  ts.add_sample(65.0, value::Value(std::vector<value::texcoord2f>(
+  ts.add_sample(65.0, lightusd::legacy::value::Value(std::vector<lightusd::legacy::value::texcoord2f>(
                          uvB_expected)));  // genuinely different
   expected.push_back(uvB_expected);
 
   Stage stage =
       MakeAnimStage("RoleArrayTest", "texCoord2f[]", ts,
-                    value::Value(std::vector<value::texcoord2f>(
+                    lightusd::legacy::value::Value(std::vector<lightusd::legacy::value::texcoord2f>(
                         uvA_expected)));
 
   std::string f_dedup = TempPath("test_dedup_role_enabled.usdc");
@@ -744,8 +746,8 @@ void dedup_role_array_test(void) {
   // Read back: the deduplicated file must load and preserve every sample value.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
-  const value::TimeSamples* rts =
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts =
       GetLayerAttrTS(layer, "RoleArrayTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) {
@@ -774,18 +776,18 @@ void dedup_compressed_int_array_test(void) {
   const std::vector<int32_t> arrA_expected = arrA;
   const std::vector<int32_t> arrB_expected = arrB;
 
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<const std::vector<int32_t>*> expected;
   const int kFrames = 32;
   for (int f = 0; f < kFrames; f++) {
     const std::vector<int32_t>& a =
         (f < kFrames / 2) ? arrA_expected : arrB_expected;
-    ts.add_sample(double(f), value::Value(std::vector<int32_t>(a)));
+    ts.add_sample(double(f), lightusd::legacy::value::Value(std::vector<int32_t>(a)));
     expected.push_back(&a);
   }
   Stage stage =
       MakeAnimStage("CompIntTest", "int[]", ts,
-                    value::Value(std::vector<int32_t>(arrA_expected)));
+                    lightusd::legacy::value::Value(std::vector<int32_t>(arrA_expected)));
 
   std::string f_dedup = TempPath("test_dedup_compint_enabled.usdc");
   std::string f_no = TempPath("test_dedup_compint_disabled.usdc");
@@ -801,8 +803,8 @@ void dedup_compressed_int_array_test(void) {
   // The deduplicated compressed file must load and preserve the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
-  const value::TimeSamples* rts = GetLayerAttrTS(layer, "CompIntTest", "animAttr");
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "CompIntTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) {
     TEST_CHECK(rts->size() == size_t(kFrames));
@@ -816,8 +818,8 @@ void dedup_compressed_int_array_test(void) {
   Layer layer_no;
   warn.clear();
   err.clear();
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_no, &layer_no, &warn, &err));
-  const value::TimeSamples* rts_no =
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_no, &layer_no, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts_no =
       GetLayerAttrTS(layer_no, "CompIntTest", "animAttr");
   TEST_CHECK(rts_no != nullptr);
   if (rts_no) {
@@ -857,14 +859,14 @@ static void CheckTSArrayNoInflation(
     const std::function<std::vector<T>(int /*frame*/)>& make_for_frame) {
   const std::vector<T> seed = make_for_frame(0);
 
-  value::TimeSamples ts_id, ts_uq;
+  lightusd::legacy::value::TimeSamples ts_id, ts_uq;
   for (int f = 0; f < k_frames; ++f) {
-    ts_id.add_sample(double(f), value::Value(seed));               // identical
-    ts_uq.add_sample(double(f), value::Value(make_for_frame(f)));  // distinct
+    ts_id.add_sample(double(f), lightusd::legacy::value::Value(seed));               // identical
+    ts_uq.add_sample(double(f), lightusd::legacy::value::Value(make_for_frame(f)));  // distinct
   }
 
-  Stage s_id = MakeAnimStage("TSInfl", type_name, ts_id, value::Value(seed));
-  Stage s_uq = MakeAnimStage("TSInfl", type_name, ts_uq, value::Value(seed));
+  Stage s_id = MakeAnimStage("TSInfl", type_name, ts_id, lightusd::legacy::value::Value(seed));
+  Stage s_uq = MakeAnimStage("TSInfl", type_name, ts_uq, lightusd::legacy::value::Value(seed));
 
   const std::string base = TempPath("tsinfl_" + SanitizeForPath(type_name));
   const std::string f_id = base + "_id.usdc";
@@ -923,10 +925,10 @@ void timesample_array_dedup_no_inflation_test(void) {
     for (size_t i = 0; i < N; ++i) v[i] = uint64_t(i) * 7 + uint64_t(f) * 1000003;
     return v;
   });
-  CheckTSArrayNoInflation<value::half>("half[]", K, [&](int f) {
-    std::vector<value::half> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::half>("half[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::half> v(N);
     for (size_t i = 0; i < N; ++i)
-      v[i] = value::float_to_half_full(float(i) * 0.5f + float(f));
+      v[i] = lightusd::legacy::value::float_to_half_full(float(i) * 0.5f + float(f));
     return v;
   });
   CheckTSArrayNoInflation<float>("float[]", K, [&](int f) {
@@ -941,98 +943,98 @@ void timesample_array_dedup_no_inflation_test(void) {
   });
 
   // --- multi-component (std::array) arrays ---
-  CheckTSArrayNoInflation<value::float2>("float2[]", K, [&](int f) {
-    std::vector<value::float2> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::float2>("float2[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::float2> v(N);
     for (size_t i = 0; i < N; ++i) v[i] = {{float(i) + f, float(i) * 2 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::float3>("float3[]", K, [&](int f) {
-    std::vector<value::float3> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::float3>("float3[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::float3> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{float(i) + f, float(i) * 2 + f, float(i) * 3 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::float4>("float4[]", K, [&](int f) {
-    std::vector<value::float4> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::float4>("float4[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::float4> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{float(i) + f, float(i) + 1, float(i) + 2, float(i) * 4 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::double2>("double2[]", K, [&](int f) {
-    std::vector<value::double2> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::double2>("double2[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::double2> v(N);
     for (size_t i = 0; i < N; ++i) v[i] = {{double(i) + f, double(i) * 2 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::double3>("double3[]", K, [&](int f) {
-    std::vector<value::double3> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::double3>("double3[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::double3> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{double(i) + f, double(i) * 2 + f, double(i) * 3 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::double4>("double4[]", K, [&](int f) {
-    std::vector<value::double4> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::double4>("double4[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::double4> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{double(i) + f, double(i) + 1, double(i) + 2, double(i) * 4 + f}};
     return v;
   });
-  CheckTSArrayNoInflation<value::int2>("int2[]", K, [&](int f) {
-    std::vector<value::int2> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::int2>("int2[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::int2> v(N);
     for (size_t i = 0; i < N; ++i) v[i] = {{int32_t(i + f), int32_t(i * 2 + f)}};
     return v;
   });
-  CheckTSArrayNoInflation<value::int3>("int3[]", K, [&](int f) {
-    std::vector<value::int3> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::int3>("int3[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::int3> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{int32_t(i + f), int32_t(i * 2 + f), int32_t(i * 3 + f)}};
     return v;
   });
-  CheckTSArrayNoInflation<value::int4>("int4[]", K, [&](int f) {
-    std::vector<value::int4> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::int4>("int4[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::int4> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {{int32_t(i + f), int32_t(i + 1), int32_t(i + 2), int32_t(i * 4 + f)}};
     return v;
   });
-  CheckTSArrayNoInflation<value::half3>("half3[]", K, [&](int f) {
-    std::vector<value::half3> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::half3>("half3[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::half3> v(N);
     for (size_t i = 0; i < N; ++i) {
-      v[i] = {{value::float_to_half_full(float(i) + f),
-               value::float_to_half_full(float(i) * 2 + f),
-               value::float_to_half_full(float(i) * 3 + f)}};
+      v[i] = {{lightusd::legacy::value::float_to_half_full(float(i) + f),
+               lightusd::legacy::value::float_to_half_full(float(i) * 2 + f),
+               lightusd::legacy::value::float_to_half_full(float(i) * 3 + f)}};
     }
     return v;
   });
 
   // --- role types: must normalize to their base (float3 / float2) before the
   // dedup descriptor, so they dedup via the base-type path ---
-  CheckTSArrayNoInflation<value::point3f>("point3f[]", K, [&](int f) {
-    std::vector<value::point3f> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::point3f>("point3f[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::point3f> v(N);
     for (size_t i = 0; i < N; ++i)
       v[i] = {float(i) + f, float(i) * 2 + f, float(i) * 3 + f};
     return v;
   });
-  CheckTSArrayNoInflation<value::texcoord2f>("texcoord2f[]", K, [&](int f) {
-    std::vector<value::texcoord2f> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::texcoord2f>("texcoord2f[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::texcoord2f> v(N);
     for (size_t i = 0; i < N; ++i) v[i] = {float(i) + f, float(i) * 2 + f};
     return v;
   });
 
   // --- matrices ---
-  CheckTSArrayNoInflation<value::matrix2d>("matrix2d[]", K, [&](int f) {
-    std::vector<value::matrix2d> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::matrix2d>("matrix2d[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::matrix2d> v(N);
     for (size_t i = 0; i < N; ++i)
       for (int r = 0; r < 2; ++r)
         for (int c = 0; c < 2; ++c) v[i].m[r][c] = double(i * 4 + r * 2 + c) + f;
     return v;
   });
-  CheckTSArrayNoInflation<value::matrix3d>("matrix3d[]", K, [&](int f) {
-    std::vector<value::matrix3d> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::matrix3d>("matrix3d[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::matrix3d> v(N);
     for (size_t i = 0; i < N; ++i)
       for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c) v[i].m[r][c] = double(i * 9 + r * 3 + c) + f;
     return v;
   });
-  CheckTSArrayNoInflation<value::matrix4d>("matrix4d[]", K, [&](int f) {
-    std::vector<value::matrix4d> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::matrix4d>("matrix4d[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::matrix4d> v(N);
     for (size_t i = 0; i < N; ++i)
       for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) v[i].m[r][c] = double(i * 16 + r * 4 + c) + f;
@@ -1040,29 +1042,29 @@ void timesample_array_dedup_no_inflation_test(void) {
   });
 
   // --- quaternions ---
-  CheckTSArrayNoInflation<value::quatf>("quatf[]", K, [&](int f) {
-    std::vector<value::quatf> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::quatf>("quatf[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::quatf> v(N);
     for (size_t i = 0; i < N; ++i) {
       v[i].imag = {{float(i) + f, float(i) + 1, float(i) + 2}};
       v[i].real = float(i) * 0.5f + f;
     }
     return v;
   });
-  CheckTSArrayNoInflation<value::quatd>("quatd[]", K, [&](int f) {
-    std::vector<value::quatd> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::quatd>("quatd[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::quatd> v(N);
     for (size_t i = 0; i < N; ++i) {
       v[i].imag = {{double(i) + f, double(i) + 1, double(i) + 2}};
       v[i].real = double(i) * 0.5 + f;
     }
     return v;
   });
-  CheckTSArrayNoInflation<value::quath>("quath[]", K, [&](int f) {
-    std::vector<value::quath> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::quath>("quath[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::quath> v(N);
     for (size_t i = 0; i < N; ++i) {
-      v[i].imag = {{value::float_to_half_full(float(i) + f),
-                    value::float_to_half_full(float(i) + 1),
-                    value::float_to_half_full(float(i) + 2)}};
-      v[i].real = value::float_to_half_full(float(i) * 0.5f + f);
+      v[i].imag = {{lightusd::legacy::value::float_to_half_full(float(i) + f),
+                    lightusd::legacy::value::float_to_half_full(float(i) + 1),
+                    lightusd::legacy::value::float_to_half_full(float(i) + 2)}};
+      v[i].real = lightusd::legacy::value::float_to_half_full(float(i) * 0.5f + f);
     }
     return v;
   });
@@ -1075,16 +1077,16 @@ void timesample_array_dedup_no_inflation_test(void) {
       v[i] = "s" + std::to_string(i) + "_" + std::to_string(f);
     return v;
   });
-  CheckTSArrayNoInflation<value::token>("token[]", K, [&](int f) {
-    std::vector<value::token> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::token>("token[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::token> v(N);
     for (size_t i = 0; i < N; ++i)
-      v[i] = value::token("t" + std::to_string(i) + "_" + std::to_string(f));
+      v[i] = lightusd::legacy::value::token("t" + std::to_string(i) + "_" + std::to_string(f));
     return v;
   });
-  CheckTSArrayNoInflation<value::AssetPath>("asset[]", K, [&](int f) {
-    std::vector<value::AssetPath> v(N);
+  CheckTSArrayNoInflation<lightusd::legacy::value::AssetPath>("asset[]", K, [&](int f) {
+    std::vector<lightusd::legacy::value::AssetPath> v(N);
     for (size_t i = 0; i < N; ++i)
-      v[i] = value::AssetPath("a" + std::to_string(i) + "_" + std::to_string(f) +
+      v[i] = lightusd::legacy::value::AssetPath("a" + std::to_string(i) + "_" + std::to_string(f) +
                               ".usd");
     return v;
   });
@@ -1097,25 +1099,25 @@ void timesample_array_dedup_no_inflation_test(void) {
 void uchar_roundtrip_test(void) {
   const std::vector<uint8_t> default_arr = {0, 1, 127, 128, 254, 255};
 
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<std::vector<uint8_t>> expected;
   for (int f = 0; f < 8; ++f) {
     std::vector<uint8_t> a(6);
     for (size_t i = 0; i < a.size(); ++i) {
       a[i] = static_cast<uint8_t>((i * 37 + f * 53) & 0xFF);
     }
-    expected.push_back(a);  // capture before value::Value(a) takes ownership of a
-    ts.add_sample(double(f), value::Value(a));
+    expected.push_back(a);  // capture before lightusd::legacy::value::Value(a) takes ownership of a
+    ts.add_sample(double(f), lightusd::legacy::value::Value(a));
   }
 
   Stage stage =
-      MakeAnimStage("UCharPrim", "uchar[]", ts, value::Value(default_arr));
+      MakeAnimStage("UCharPrim", "uchar[]", ts, lightusd::legacy::value::Value(default_arr));
   const std::string fn = TempPath("uchar_roundtrip.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
 
   const auto& pss = layer.primspecs();
   auto pit = pss.find("UCharPrim");
@@ -1127,13 +1129,13 @@ void uchar_roundtrip_test(void) {
   const primvar::PrimVar& pv = prit->second.get_attribute().get_var();
 
   // (a) default uchar[] value survives the general value read path.
-  const value::Value& dv = pv.value_raw();
+  const lightusd::legacy::value::Value& dv = pv.value_raw();
   const std::vector<uint8_t>* dptr = dv.as<std::vector<uint8_t>>();
   TEST_CHECK(dptr != nullptr);
   if (dptr) TEST_CHECK(*dptr == default_arr);
 
   // (b) uchar[] timesamples survive UnpackTimeSampleValue_UCHAR.
-  const value::TimeSamples& rts = pv.ts_raw();
+  const lightusd::legacy::value::TimeSamples& rts = pv.ts_raw();
   TEST_CHECK(rts.size() == expected.size());
   for (size_t i = 0; i < expected.size() && i < rts.size(); ++i) {
     std::vector<uint8_t> got;
@@ -1155,7 +1157,7 @@ void uchar_roundtrip_test(void) {
 // ---------------------------------------------------------------------------
 
 // Fetch a Layer attribute's default (non-timesampled) value, or nullptr.
-static const value::Value* GetLayerAttrValue(const Layer& layer,
+static const lightusd::legacy::value::Value* GetLayerAttrValue(const Layer& layer,
                                              const std::string& primName,
                                              const std::string& propName) {
   const auto& pss = layer.primspecs();
@@ -1173,7 +1175,7 @@ static const value::Value* GetLayerAttrValue(const Layer& layer,
 // (b) every attribute in the deduplicated file materializes the shared value,
 // and (c) the deduplicated file is value-identical to the non-deduplicated one.
 void dedup_cross_attr_value_readback_test(void) {
-  const std::vector<value::float3> shared_f3 = {
+  const std::vector<lightusd::legacy::value::float3> shared_f3 = {
       {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f, 9.0f},
       {-1.5f, -2.5f, -3.5f}};
   const std::vector<double> shared_d = {0.1, 0.2, 0.3, 0.4, 0.5};
@@ -1189,11 +1191,11 @@ void dedup_cross_attr_value_readback_test(void) {
     xform.spec = Specifier::Def;
     for (int i = 0; i < kAttrs; ++i) {
       const std::string s = std::to_string(i);
-      AddCustomAttribute(&xform, "f3_" + s, "float3[]", value::Value(shared_f3));
-      AddCustomAttribute(&xform, "d_" + s, "double[]", value::Value(shared_d));
-      AddCustomAttribute(&xform, "i_" + s, "int[]", value::Value(shared_i));
-      AddCustomAttribute(&xform, "s_" + s, "string[]", value::Value(shared_s));
-      AddCustomAttribute(&xform, "sc_" + s, "double", value::Value(shared_scalar));
+      AddCustomAttribute(&xform, "f3_" + s, "float3[]", lightusd::legacy::value::Value(shared_f3));
+      AddCustomAttribute(&xform, "d_" + s, "double[]", lightusd::legacy::value::Value(shared_d));
+      AddCustomAttribute(&xform, "i_" + s, "int[]", lightusd::legacy::value::Value(shared_i));
+      AddCustomAttribute(&xform, "s_" + s, "string[]", lightusd::legacy::value::Value(shared_s));
+      AddCustomAttribute(&xform, "sc_" + s, "double", lightusd::legacy::value::Value(shared_scalar));
     }
     Prim prim("ShareRoot", xform);
     stage.root_prims().emplace_back(prim);
@@ -1214,15 +1216,15 @@ void dedup_cross_attr_value_readback_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK_(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err),
+    TEST_CHECK_(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err),
                 "load %s: %s", fn.c_str(), err.c_str());
     for (int i = 0; i < kAttrs; ++i) {
       const std::string s = std::to_string(i);
 
-      const value::Value* vf3 = GetLayerAttrValue(layer, "ShareRoot", "f3_" + s);
+      const lightusd::legacy::value::Value* vf3 = GetLayerAttrValue(layer, "ShareRoot", "f3_" + s);
       TEST_CHECK(vf3 != nullptr);
       if (vf3) {
-        const auto* p = vf3->as<std::vector<value::float3>>();
+        const auto* p = vf3->as<std::vector<lightusd::legacy::value::float3>>();
         TEST_CHECK(p != nullptr);
         if (p) {
           TEST_CHECK(p->size() == shared_f3.size());
@@ -1236,28 +1238,28 @@ void dedup_cross_attr_value_readback_test(void) {
         }
       }
 
-      const value::Value* vd = GetLayerAttrValue(layer, "ShareRoot", "d_" + s);
+      const lightusd::legacy::value::Value* vd = GetLayerAttrValue(layer, "ShareRoot", "d_" + s);
       TEST_CHECK(vd != nullptr);
       if (vd) {
         const auto* p = vd->as<std::vector<double>>();
         TEST_CHECK(p != nullptr && p && *p == shared_d);
       }
 
-      const value::Value* vi = GetLayerAttrValue(layer, "ShareRoot", "i_" + s);
+      const lightusd::legacy::value::Value* vi = GetLayerAttrValue(layer, "ShareRoot", "i_" + s);
       TEST_CHECK(vi != nullptr);
       if (vi) {
         const auto* p = vi->as<std::vector<int32_t>>();
         TEST_CHECK(p != nullptr && p && *p == shared_i);
       }
 
-      const value::Value* vs = GetLayerAttrValue(layer, "ShareRoot", "s_" + s);
+      const lightusd::legacy::value::Value* vs = GetLayerAttrValue(layer, "ShareRoot", "s_" + s);
       TEST_CHECK(vs != nullptr);
       if (vs) {
         const auto* p = vs->as<std::vector<std::string>>();
         TEST_CHECK(p != nullptr && p && *p == shared_s);
       }
 
-      const value::Value* vsc = GetLayerAttrValue(layer, "ShareRoot", "sc_" + s);
+      const lightusd::legacy::value::Value* vsc = GetLayerAttrValue(layer, "ShareRoot", "sc_" + s);
       TEST_CHECK(vsc != nullptr);
       if (vsc) {
         const auto* p = vsc->as<double>();
@@ -1276,10 +1278,10 @@ void dedup_cross_attr_value_readback_test(void) {
 // and require each to read back at its own correct length/value.
 void dedup_cross_type_no_false_share_test(void) {
   const std::vector<float> f1 = {1.5f, 2.5f, 3.5f, 4.5f};        // count 4
-  const std::vector<value::float2> f2 = {{1.5f, 2.5f},
+  const std::vector<lightusd::legacy::value::float2> f2 = {{1.5f, 2.5f},
                                          {3.5f, 4.5f}};           // count 2, == bytes
   const std::vector<int32_t> i1 = {7, 8, 9, 10};                 // count 4
-  const std::vector<value::int2> i2 = {{7, 8}, {9, 10}};          // count 2, == bytes
+  const std::vector<lightusd::legacy::value::int2> i2 = {{7, 8}, {9, 10}};          // count 2, == bytes
   const double ds = 0.1;                                          // scalar double
   const std::vector<double> da = {0.1};                          // count 1, == 8 bytes
 
@@ -1287,12 +1289,12 @@ void dedup_cross_type_no_false_share_test(void) {
   Xform xform;
   xform.name = "NoFalseShare";
   xform.spec = Specifier::Def;
-  AddCustomAttribute(&xform, "f1", "float[]", value::Value(f1));
-  AddCustomAttribute(&xform, "f2", "float2[]", value::Value(f2));
-  AddCustomAttribute(&xform, "i1", "int[]", value::Value(i1));
-  AddCustomAttribute(&xform, "i2", "int2[]", value::Value(i2));
-  AddCustomAttribute(&xform, "ds", "double", value::Value(ds));
-  AddCustomAttribute(&xform, "da", "double[]", value::Value(da));
+  AddCustomAttribute(&xform, "f1", "float[]", lightusd::legacy::value::Value(f1));
+  AddCustomAttribute(&xform, "f2", "float2[]", lightusd::legacy::value::Value(f2));
+  AddCustomAttribute(&xform, "i1", "int[]", lightusd::legacy::value::Value(i1));
+  AddCustomAttribute(&xform, "i2", "int2[]", lightusd::legacy::value::Value(i2));
+  AddCustomAttribute(&xform, "ds", "double", lightusd::legacy::value::Value(ds));
+  AddCustomAttribute(&xform, "da", "double[]", lightusd::legacy::value::Value(da));
   Prim prim("NoFalseShare", xform);
   stage.root_prims().emplace_back(prim);
 
@@ -1301,17 +1303,17 @@ void dedup_cross_type_no_false_share_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
 
-  const value::Value* vf1 = GetLayerAttrValue(layer, "NoFalseShare", "f1");
+  const lightusd::legacy::value::Value* vf1 = GetLayerAttrValue(layer, "NoFalseShare", "f1");
   TEST_CHECK(vf1 && vf1->as<std::vector<float>>());
   if (vf1 && vf1->as<std::vector<float>>()) {
     TEST_CHECK(*vf1->as<std::vector<float>>() == f1);
   }
-  const value::Value* vf2 = GetLayerAttrValue(layer, "NoFalseShare", "f2");
-  TEST_CHECK(vf2 && vf2->as<std::vector<value::float2>>());
-  if (vf2 && vf2->as<std::vector<value::float2>>()) {
-    const auto& g = *vf2->as<std::vector<value::float2>>();
+  const lightusd::legacy::value::Value* vf2 = GetLayerAttrValue(layer, "NoFalseShare", "f2");
+  TEST_CHECK(vf2 && vf2->as<std::vector<lightusd::legacy::value::float2>>());
+  if (vf2 && vf2->as<std::vector<lightusd::legacy::value::float2>>()) {
+    const auto& g = *vf2->as<std::vector<lightusd::legacy::value::float2>>();
     TEST_CHECK(g.size() == f2.size());
     if (g.size() == f2.size()) {
       for (size_t k = 0; k < g.size(); ++k) {
@@ -1319,15 +1321,15 @@ void dedup_cross_type_no_false_share_test(void) {
       }
     }
   }
-  const value::Value* vi1 = GetLayerAttrValue(layer, "NoFalseShare", "i1");
+  const lightusd::legacy::value::Value* vi1 = GetLayerAttrValue(layer, "NoFalseShare", "i1");
   TEST_CHECK(vi1 && vi1->as<std::vector<int32_t>>());
   if (vi1 && vi1->as<std::vector<int32_t>>()) {
     TEST_CHECK(*vi1->as<std::vector<int32_t>>() == i1);
   }
-  const value::Value* vi2 = GetLayerAttrValue(layer, "NoFalseShare", "i2");
-  TEST_CHECK(vi2 && vi2->as<std::vector<value::int2>>());
-  if (vi2 && vi2->as<std::vector<value::int2>>()) {
-    const auto& g = *vi2->as<std::vector<value::int2>>();
+  const lightusd::legacy::value::Value* vi2 = GetLayerAttrValue(layer, "NoFalseShare", "i2");
+  TEST_CHECK(vi2 && vi2->as<std::vector<lightusd::legacy::value::int2>>());
+  if (vi2 && vi2->as<std::vector<lightusd::legacy::value::int2>>()) {
+    const auto& g = *vi2->as<std::vector<lightusd::legacy::value::int2>>();
     TEST_CHECK(g.size() == i2.size());
     if (g.size() == i2.size()) {
       for (size_t k = 0; k < g.size(); ++k) {
@@ -1335,12 +1337,12 @@ void dedup_cross_type_no_false_share_test(void) {
       }
     }
   }
-  const value::Value* vds = GetLayerAttrValue(layer, "NoFalseShare", "ds");
+  const lightusd::legacy::value::Value* vds = GetLayerAttrValue(layer, "NoFalseShare", "ds");
   TEST_CHECK(vds && vds->as<double>());
   if (vds && vds->as<double>()) {
     TEST_CHECK(*vds->as<double>() == ds);
   }
-  const value::Value* vda = GetLayerAttrValue(layer, "NoFalseShare", "da");
+  const lightusd::legacy::value::Value* vda = GetLayerAttrValue(layer, "NoFalseShare", "da");
   TEST_CHECK(vda && vda->as<std::vector<double>>());
   if (vda && vda->as<std::vector<double>>()) {
     TEST_CHECK(*vda->as<std::vector<double>>() == da);
@@ -1357,26 +1359,26 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
   const float qnan = std::numeric_limits<float>::quiet_NaN();
 
   // (1) Timesamples: K identical {NaN, 1, 2} samples + one distinct sample.
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   const std::vector<float> nan_arr = {qnan, 1.0f, 2.0f};
   const std::vector<float> other = {3.0f, 4.0f, 5.0f};
   const int kRepeat = 40;
   for (int f = 0; f < kRepeat; ++f) {
-    ts.add_sample(double(f), value::Value(std::vector<float>(nan_arr)));
+    ts.add_sample(double(f), lightusd::legacy::value::Value(std::vector<float>(nan_arr)));
   }
-  ts.add_sample(double(kRepeat), value::Value(std::vector<float>(other)));
+  ts.add_sample(double(kRepeat), lightusd::legacy::value::Value(std::vector<float>(other)));
 
   Stage stage;
   {
     Xform xform;
     xform.name = "NanPrim";
     xform.spec = Specifier::Def;
-    AddCustomAttribute(&xform, "animAttr", "float[]", value::Value(nan_arr), &ts);
+    AddCustomAttribute(&xform, "animAttr", "float[]", lightusd::legacy::value::Value(nan_arr), &ts);
     // Signed-zero default array on a second attribute.
     AddCustomAttribute(&xform, "negzero", "float[]",
-                       value::Value(std::vector<float>{-0.0f, 1.0f}));
+                       lightusd::legacy::value::Value(std::vector<float>{-0.0f, 1.0f}));
     AddCustomAttribute(&xform, "poszero", "float[]",
-                       value::Value(std::vector<float>{+0.0f, 1.0f}));
+                       lightusd::legacy::value::Value(std::vector<float>{+0.0f, 1.0f}));
     Prim prim("NanPrim", xform);
     stage.root_prims().emplace_back(prim);
   }
@@ -1390,8 +1392,8 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
-  const value::TimeSamples* rts = GetLayerAttrTS(layer, "NanPrim", "animAttr");
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "NanPrim", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) {
     TEST_CHECK(rts->size() == size_t(kRepeat + 1));
@@ -1412,7 +1414,7 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
   }
 
   // Signed zero: authored representation survives value deduplication.
-  const value::Value* nz = GetLayerAttrValue(layer, "NanPrim", "negzero");
+  const lightusd::legacy::value::Value* nz = GetLayerAttrValue(layer, "NanPrim", "negzero");
   TEST_CHECK(nz != nullptr);
   if (nz) {
     const auto* p = nz->as<std::vector<float>>();
@@ -1426,7 +1428,7 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
       }
     }
   }
-  const value::Value* pz = GetLayerAttrValue(layer, "NanPrim", "poszero");
+  const lightusd::legacy::value::Value* pz = GetLayerAttrValue(layer, "NanPrim", "poszero");
   TEST_CHECK(pz != nullptr);
   if (pz) {
     const auto* p = pz->as<std::vector<float>>();
@@ -1448,19 +1450,19 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
 // (Scalar/vector storage is used here; array-element timesamples + blocked is a
 // separate, dedup-orthogonal roundtrip path.)
 void dedup_blocked_timesamples_roundtrip_test(void) {
-  const value::double3 v = {{1.0, 2.0, 3.0}};
+  const lightusd::legacy::value::double3 v = {{1.0, 2.0, 3.0}};
   const int kFrames = 32;
   auto is_blocked_frame = [](int f) { return (f % 5) == 2; };
 
   auto make_ts = [&]() {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     // Establish the type with a real sample first.
-    ts.add_sample(0.0, value::Value(v));
+    ts.add_sample(0.0, lightusd::legacy::value::Value(v));
     for (int f = 1; f < kFrames; ++f) {
       if (is_blocked_frame(f)) {
-        ts.add_blocked_sample(double(f), value::Value(value::double3{}));
+        ts.add_blocked_sample(double(f), lightusd::legacy::value::Value(lightusd::legacy::value::double3{}));
       } else {
-        ts.add_sample(double(f), value::Value(v));
+        ts.add_sample(double(f), lightusd::legacy::value::Value(v));
       }
     }
     return ts;
@@ -1468,7 +1470,7 @@ void dedup_blocked_timesamples_roundtrip_test(void) {
 
   Stage stage =
       MakeMultiAttrAnimStage("BlockedTS", "double3", {make_ts(), make_ts()},
-                             value::Value(v));
+                             lightusd::legacy::value::Value(v));
 
   const std::string f_dedup = TempPath("test_blocked_ts_dedup.usdc");
   const std::string f_no = TempPath("test_blocked_ts_no_dedup.usdc");
@@ -1482,14 +1484,14 @@ void dedup_blocked_timesamples_roundtrip_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+    TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
     for (const char* attr : {"animAttr_0", "animAttr_1"}) {
-      const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedTS", attr);
+      const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedTS", attr);
       TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
       if (!rts) continue;
       TEST_CHECK(rts->size() == size_t(kFrames));
       for (int f = 0; f < kFrames; ++f) {
-        value::TimeSamples::Sample s;
+        lightusd::legacy::value::TimeSamples::Sample s;
         const bool ok = rts->get_sample_at(size_t(f), &s);
         TEST_CHECK_(ok, "%s/%s frame %d get_sample_at failed", fn.c_str(), attr,
                     f);
@@ -1500,7 +1502,7 @@ void dedup_blocked_timesamples_roundtrip_test(void) {
         } else {
           TEST_CHECK_(!s.blocked, "%s/%s frame %d unexpectedly blocked",
                       fn.c_str(), attr, f);
-          const auto* dv = s.value.as<value::double3>();
+          const auto* dv = s.value.as<lightusd::legacy::value::double3>();
           TEST_CHECK_(dv != nullptr, "%s/%s frame %d wrong type", fn.c_str(),
                       attr, f);
           if (dv) {
@@ -1527,13 +1529,13 @@ void dedup_blocked_array_timesamples_roundtrip_test(void) {
   auto is_blocked_frame = [](int f) { return (f % 5) == 2; };
 
   auto make_ts = [&]() {
-    value::TimeSamples ts;
-    ts.add_sample(0.0, value::Value(std::vector<float>(arr)));  // establish type
+    lightusd::legacy::value::TimeSamples ts;
+    ts.add_sample(0.0, lightusd::legacy::value::Value(std::vector<float>(arr)));  // establish type
     for (int f = 1; f < kFrames; ++f) {
       if (is_blocked_frame(f)) {
-        ts.add_blocked_sample(double(f), value::Value(std::vector<float>{}));
+        ts.add_blocked_sample(double(f), lightusd::legacy::value::Value(std::vector<float>{}));
       } else {
-        ts.add_sample(double(f), value::Value(std::vector<float>(arr)));
+        ts.add_sample(double(f), lightusd::legacy::value::Value(std::vector<float>(arr)));
       }
     }
     return ts;
@@ -1541,7 +1543,7 @@ void dedup_blocked_array_timesamples_roundtrip_test(void) {
 
   Stage stage =
       MakeMultiAttrAnimStage("BlockedArrTS", "float[]", {make_ts(), make_ts()},
-                             value::Value(std::vector<float>(arr)));
+                             lightusd::legacy::value::Value(std::vector<float>(arr)));
 
   const std::string f_dedup = TempPath("test_blocked_arr_ts_dedup.usdc");
   const std::string f_no = TempPath("test_blocked_arr_ts_no_dedup.usdc");
@@ -1551,9 +1553,9 @@ void dedup_blocked_array_timesamples_roundtrip_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+    TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
     for (const char* attr : {"animAttr_0", "animAttr_1"}) {
-      const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedArrTS", attr);
+      const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedArrTS", attr);
       TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
       if (!rts) continue;
       // The bug dropped every sample -> size 0. Require the full count back.
@@ -1590,15 +1592,15 @@ void dedup_empty_array_roundtrip_test(void) {
   xform.name = "EmptyArr";
   xform.spec = Specifier::Def;
   AddCustomAttribute(&xform, "empty_f", "float[]",
-                     value::Value(std::vector<float>{}));
+                     lightusd::legacy::value::Value(std::vector<float>{}));
   AddCustomAttribute(&xform, "empty_f2", "float[]",
-                     value::Value(std::vector<float>{}));  // 2nd empty float[]
+                     lightusd::legacy::value::Value(std::vector<float>{}));  // 2nd empty float[]
   AddCustomAttribute(&xform, "empty_i", "int[]",
-                     value::Value(std::vector<int32_t>{}));
+                     lightusd::legacy::value::Value(std::vector<int32_t>{}));
   AddCustomAttribute(&xform, "empty_s", "string[]",
-                     value::Value(std::vector<std::string>{}));
-  AddCustomAttribute(&xform, "full_f", "float[]", value::Value(nonempty_f));
-  AddCustomAttribute(&xform, "full_i", "int[]", value::Value(nonempty_i));
+                     lightusd::legacy::value::Value(std::vector<std::string>{}));
+  AddCustomAttribute(&xform, "full_f", "float[]", lightusd::legacy::value::Value(nonempty_f));
+  AddCustomAttribute(&xform, "full_i", "int[]", lightusd::legacy::value::Value(nonempty_i));
   Prim prim("EmptyArr", xform);
   stage.root_prims().emplace_back(prim);
 
@@ -1607,10 +1609,10 @@ void dedup_empty_array_roundtrip_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
 
   for (const char* name : {"empty_f", "empty_f2"}) {
-    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", name);
+    const lightusd::legacy::value::Value* v = GetLayerAttrValue(layer, "EmptyArr", name);
     TEST_CHECK_(v != nullptr, "missing %s", name);
     if (v) {
       const auto* p = v->as<std::vector<float>>();
@@ -1618,7 +1620,7 @@ void dedup_empty_array_roundtrip_test(void) {
     }
   }
   {
-    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_i");
+    const lightusd::legacy::value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_i");
     TEST_CHECK(v != nullptr);
     if (v) {
       const auto* p = v->as<std::vector<int32_t>>();
@@ -1626,7 +1628,7 @@ void dedup_empty_array_roundtrip_test(void) {
     }
   }
   {
-    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_s");
+    const lightusd::legacy::value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_s");
     TEST_CHECK(v != nullptr);
     if (v) {
       const auto* p = v->as<std::vector<std::string>>();
@@ -1634,7 +1636,7 @@ void dedup_empty_array_roundtrip_test(void) {
     }
   }
   {
-    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_f");
+    const lightusd::legacy::value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_f");
     TEST_CHECK(v != nullptr);
     if (v) {
       const auto* p = v->as<std::vector<float>>();
@@ -1642,7 +1644,7 @@ void dedup_empty_array_roundtrip_test(void) {
     }
   }
   {
-    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_i");
+    const lightusd::legacy::value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_i");
     TEST_CHECK(v != nullptr);
     if (v) {
       const auto* p = v->as<std::vector<int32_t>>();
@@ -1665,9 +1667,9 @@ void inline_inf_double_test(void) {
   Xform xform;
   xform.name = "InfDouble";
   xform.spec = Specifier::Def;
-  AddCustomAttribute(&xform, "pinf", "double", value::Value(pinf));
-  AddCustomAttribute(&xform, "ninf", "double", value::Value(ninf));
-  AddCustomAttribute(&xform, "notexact", "double", value::Value(0.1));
+  AddCustomAttribute(&xform, "pinf", "double", lightusd::legacy::value::Value(pinf));
+  AddCustomAttribute(&xform, "ninf", "double", lightusd::legacy::value::Value(ninf));
+  AddCustomAttribute(&xform, "notexact", "double", lightusd::legacy::value::Value(0.1));
   Prim prim("InfDouble", xform);
   stage.root_prims().emplace_back(prim);
 
@@ -1686,10 +1688,10 @@ void inline_inf_double_test(void) {
   // Values must survive the roundtrip.
   Layer layer;
   std::string warn;
-  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
-  const value::Value* vp = GetLayerAttrValue(layer, "InfDouble", "pinf");
-  const value::Value* vn = GetLayerAttrValue(layer, "InfDouble", "ninf");
-  const value::Value* vx = GetLayerAttrValue(layer, "InfDouble", "notexact");
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
+  const lightusd::legacy::value::Value* vp = GetLayerAttrValue(layer, "InfDouble", "pinf");
+  const lightusd::legacy::value::Value* vn = GetLayerAttrValue(layer, "InfDouble", "ninf");
+  const lightusd::legacy::value::Value* vx = GetLayerAttrValue(layer, "InfDouble", "notexact");
   TEST_CHECK(vp && vp->as<double>() && std::isinf(*vp->as<double>()) &&
              *vp->as<double>() > 0.0);
   TEST_CHECK(vn && vn->as<double>() && std::isinf(*vn->as<double>()) &&
@@ -1701,7 +1703,7 @@ void inline_inf_double_test(void) {
 // USDC, exercising the binary `_array_counts` storage. Each frame carries a
 // different length; verify every sample's count and contents survive.
 void dedup_variable_array_size_roundtrip_test(void) {
-  value::TimeSamples ts;
+  lightusd::legacy::value::TimeSamples ts;
   std::vector<std::vector<float>> expected;
   for (int f = 0; f < 12; ++f) {
     size_t n = (f == 0) ? 0 : (size_t(f) * 3 + (f % 4));
@@ -1716,16 +1718,16 @@ void dedup_variable_array_size_roundtrip_test(void) {
   }
 
   const std::vector<float> default_arr = {1.0f, 2.0f};
-  Stage stage = MakeAnimStage("VarArrSize", "float[]", ts, value::Value(default_arr));
+  Stage stage = MakeAnimStage("VarArrSize", "float[]", ts, lightusd::legacy::value::Value(default_arr));
 
   const std::string fn = TempPath("test_var_arr_size.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
 
-  const value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrSize", "animAttr");
+  const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrSize", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (!rts) return;
   TEST_CHECK(rts->size() == expected.size());
@@ -1755,7 +1757,7 @@ void dedup_variable_array_size_roundtrip_test(void) {
 void dedup_variable_array_size_cross_attr_test(void) {
   const int kFrames = 16;
   auto make_ts = [&]() {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     for (int f = 0; f < kFrames; ++f) {
       size_t n = (size_t(f) % 5) + 1;  // 1..5, varies per frame but same across attrs
       std::vector<float> a(n);
@@ -1767,7 +1769,7 @@ void dedup_variable_array_size_cross_attr_test(void) {
 
   Stage stage = MakeMultiAttrAnimStage("VarArrCross", "float[]",
                                       {make_ts(), make_ts()},
-                                      value::Value(std::vector<float>{0.0f}));
+                                      lightusd::legacy::value::Value(std::vector<float>{0.0f}));
 
   const std::string f_dedup = TempPath("test_var_arr_cross_dedup.usdc");
   const std::string f_no = TempPath("test_var_arr_cross_no.usdc");
@@ -1778,9 +1780,9 @@ void dedup_variable_array_size_cross_attr_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
+    TEST_CHECK(lightusd::legacy::LoadLayerFromFile(fn, &layer, &warn, &err));
     for (const char* attr : {"animAttr_0", "animAttr_1"}) {
-      const value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrCross", attr);
+      const lightusd::legacy::value::TimeSamples* rts = GetLayerAttrTS(layer, "VarArrCross", attr);
       TEST_CHECK_(rts != nullptr, "%s missing %s", fn.c_str(), attr);
       if (!rts) continue;
       TEST_CHECK_(rts->size() == kFrames, "%s %s size", fn.c_str(), attr);

@@ -14,7 +14,7 @@
 #include "common-macros.inc"
 #include "value-type-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 static const std::unordered_set<uint32_t> &GetLerpSupportedTypeIds() {
@@ -130,4 +130,5 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
 //
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

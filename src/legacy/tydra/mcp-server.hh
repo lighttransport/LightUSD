@@ -7,7 +7,7 @@
 
 #include "core/security-policy.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 namespace mcp {
@@ -40,4 +40,5 @@ class MCPServer
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

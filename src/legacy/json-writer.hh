@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Layer;
 class Stage;
@@ -31,8 +31,8 @@ class JsonWriter {
 
   // Serialize through the canonical minijson USD representation. Returns
   // false for a null output pointer or a serialization failure.
-  bool to_json(const lightusd::Layer &layer, std::string *out_json);
-  bool to_json(const lightusd::Stage &stage, std::string *out_json);
+  bool to_json(const lightusd::legacy::Layer &layer, std::string *out_json);
+  bool to_json(const lightusd::legacy::Stage &stage, std::string *out_json);
 
  private:
   uint32_t indent_ = 2;
@@ -41,4 +41,5 @@ class JsonWriter {
 };
 
 } // namespace json
+}  // namespace legacy
 } // namespace lightusd

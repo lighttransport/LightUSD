@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Stage;
@@ -69,7 +69,7 @@ class VariantConverter {
   /// @return The extracted VariantSet, or empty on error
   tydra::VariantSet ExtractVariantSetDefinition(
       const std::string &variant_set_name,
-      const lightusd::VariantSet &usd_variant_set,
+      const lightusd::legacy::VariantSet &usd_variant_set,
       RenderScene *scene,
       std::string *err);
 
@@ -81,7 +81,7 @@ class VariantConverter {
   /// @return The extracted VariantOption
   VariantOption ExtractVariantOption(
       const std::string &variant_name,
-      const lightusd::Variant &variant,
+      const lightusd::legacy::Variant &variant,
       RenderScene *scene,
       std::string *err);
 
@@ -91,7 +91,7 @@ class VariantConverter {
   /// @param err Error message
   /// @return List of nested VariantSets
   std::vector<std::shared_ptr<tydra::VariantSet>> ExtractNestedVariantSets(
-      const lightusd::Variant &variant,
+      const lightusd::legacy::Variant &variant,
       RenderScene *scene,
       std::string *err);
 
@@ -116,4 +116,5 @@ class VariantConverter {
 };
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

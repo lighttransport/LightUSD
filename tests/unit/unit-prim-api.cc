@@ -12,6 +12,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void prim_type_check_test(void) {
   // Create Xform and wrap in Prim
   Xform xform;
@@ -250,7 +252,7 @@ void prim_data_access_test(void) {
   }
 
   // Access via data()
-  const value::Value &data = prim.data();
+  const lightusd::legacy::value::Value &data = prim.data();
   TEST_CHECK(data.type_name().size() > 0);
   TEST_MSG("data() should return a valid Value");
 
@@ -262,7 +264,7 @@ void prim_data_access_test(void) {
     GeomMesh mesh;
     mesh.name = "TestMesh";
     mesh.points.set_value(
-        std::vector<value::point3f>{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}});
+        std::vector<lightusd::legacy::value::point3f>{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}});
     Prim mesh_prim("TestMesh", mesh);
 
     const GeomMesh *m = mesh_prim.as<GeomMesh>();

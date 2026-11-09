@@ -140,19 +140,19 @@ bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
   if (!out || texture_id < 0 || size_t(texture_id) >= scene.images.size()) {
     return false;
   }
-  const lightusd::tydra::TextureImage &tex = scene.images[size_t(texture_id)];
+  const lightusd::legacy::tydra::TextureImage &tex = scene.images[size_t(texture_id)];
   if (!tex.decoded || tex.width <= 0 || tex.height <= 0 || tex.channels <= 0 ||
       tex.buffer_id < 0 || size_t(tex.buffer_id) >= scene.buffers.size()) {
     return false;
   }
-  const lightusd::tydra::BufferData &buf = scene.buffers[size_t(tex.buffer_id)];
+  const lightusd::legacy::tydra::BufferData &buf = scene.buffers[size_t(tex.buffer_id)];
   const size_t pixel_count = size_t(tex.width) * size_t(tex.height);
   const size_t channels = size_t(tex.channels);
   EnvImage img;
   img.width = tex.width;
   img.height = tex.height;
   img.pixels.resize(pixel_count);
-  if (buf.componentType == lightusd::tydra::ComponentType::UInt8) {
+  if (buf.componentType == lightusd::legacy::tydra::ComponentType::UInt8) {
     if (buf.data.size() < pixel_count * channels) return false;
     for (size_t i = 0; i < pixel_count; i++) {
       const uint8_t *p = buf.data.data() + i * channels;
@@ -160,7 +160,7 @@ bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                            float(p[std::min<size_t>(1, channels - 1)]) / 255.0f,
                            float(p[std::min<size_t>(2, channels - 1)]) / 255.0f};
     }
-  } else if (buf.componentType == lightusd::tydra::ComponentType::Float) {
+  } else if (buf.componentType == lightusd::legacy::tydra::ComponentType::Float) {
     if (buf.data.size() < pixel_count * channels * sizeof(float)) return false;
     const float *src = reinterpret_cast<const float *>(buf.data.data());
     for (size_t i = 0; i < pixel_count; i++) {

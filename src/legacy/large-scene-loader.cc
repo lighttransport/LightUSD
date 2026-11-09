@@ -28,7 +28,7 @@
 #include "next/types/value-view.hh"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -515,12 +515,12 @@ bool LargeSceneLoader::Load(const std::string &filename,
   return true;
 }
 
-/// Helper: convert lightusd::Path (old) to lightusd::next::Path (new).
+/// Helper: convert lightusd::legacy::Path (old) to lightusd::next::Path (new).
 static next::Path ToNextPath(const Path &p) {
   return next::Path(p.full_path_name());
 }
 
-/// Helper: convert lightusd::next::Path (new) to lightusd::Path (old).
+/// Helper: convert lightusd::next::Path (new) to lightusd::legacy::Path (old).
 static Path FromNextPath(const next::Path &np) {
   return Path(np.str(), "");
 }
@@ -636,4 +636,5 @@ bool LoadStageFromFile(const std::string &filename, Stage *stage,
 
 #endif  // !LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
 
+}  // namespace legacy
 }  // namespace lightusd

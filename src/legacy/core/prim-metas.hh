@@ -15,7 +15,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Metadata for Prim
 // Uses Dictionary-based storage via MetadataBase for memory efficiency.
@@ -209,4 +209,5 @@ struct PrimMetas : public MetadataBase {
 // For backward compatibility
 using PrimMeta = PrimMetas;
 
+}  // namespace legacy
 }  // namespace lightusd

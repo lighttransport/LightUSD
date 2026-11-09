@@ -14,7 +14,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 // ============================================================================
@@ -35,7 +35,7 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     // upAxis (token: "X", "Y", or "Z")
     if (metas.upAxis.authored()) {
       Axis axis = metas.upAxis.get_value();
-      std::string axis_str = lightusd::to_string(axis);  // "X", "Y", or "Z"
+      std::string axis_str = lightusd::legacy::to_string(axis);  // "X", "Y", or "Z"
       crate::CrateValue axis_value;
       value::token axis_tok(axis_str);
       axis_value.Set(axis_tok);
@@ -907,6 +907,7 @@ bool CrateWriter::ConvertVariantSpecToFields(
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

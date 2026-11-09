@@ -28,7 +28,7 @@ int main() {
 
   // Test parser
   std::cout << "\n=== Parser Test ===\n";
-  lightusd::mtlx::SimpleXMLParser parser;
+  lightusd::legacy::mtlx::SimpleXMLParser parser;
   if (parser.Parse(simple_xml)) {
     std::cout << "Parse successful!\n";
     auto root = parser.GetRoot();

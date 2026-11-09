@@ -27,7 +27,9 @@
 #include "core/prim-spec.hh"
 
 using namespace lightusd;
-using namespace lightusd::crate;
+
+using namespace lightusd::legacy;  // NOLINT
+using namespace lightusd::legacy::crate;
 
 enum class OutputFormat {
   YAML,

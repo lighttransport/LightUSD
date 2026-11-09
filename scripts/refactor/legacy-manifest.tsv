@@ -489,3 +489,4 @@ src/xform.hh	src/legacy/xform.hh
 src/zstd-compression.cc	src/legacy/zstd-compression.cc
 src/zstd-compression.hh	src/legacy/zstd-compression.hh
 src/tydra/material-serializer.cc	src/legacy/tydra/material-serializer.cc
+src/str-util.hh	src/legacy/str-util.hh

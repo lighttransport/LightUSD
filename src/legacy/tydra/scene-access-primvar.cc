@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) \
@@ -91,7 +91,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   const auto indexIt = gprim->props.find(index_name);
 
   // Primvar indices are only relevant for non-constant interpolation modes
-  bool constant_interpolation = primvar.get_interpolation() == lightusd::Interpolation::Constant;
+  bool constant_interpolation = primvar.get_interpolation() == lightusd::legacy::Interpolation::Constant;
 
   if (indexIt != gprim->props.end() && !constant_interpolation) {
     if (indexIt->second.is_attribute()) {
@@ -285,4 +285,5 @@ bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
 #undef PushError
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -63,11 +63,11 @@ std::string MakeGridUsda(uint32_t n, const std::string &extra) {
   return usda;
 }
 
-lightusd::Stage LoadStageFromString(const std::string &usda) {
-  lightusd::Stage stage;
+lightusd::legacy::Stage LoadStageFromString(const std::string &usda) {
+  lightusd::legacy::Stage stage;
   std::string warn;
   std::string err;
-  bool ret = lightusd::LoadUSDAFromMemory(
+  bool ret = lightusd::legacy::LoadUSDAFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), ".", &stage,
       &warn, &err);
   TEST_CHECK(ret);
@@ -78,15 +78,15 @@ lightusd::Stage LoadStageFromString(const std::string &usda) {
 }
 
 bool ConvertSceneWithSubdivision(const std::string &usda, int32_t subdivision_level,
-                                 lightusd::tydra::RenderScene *scene,
+                                 lightusd::legacy::tydra::RenderScene *scene,
                                  std::string *err,
                                  std::string *warn = nullptr) {
-  lightusd::Stage stage = LoadStageFromString(usda);
+  lightusd::legacy::Stage stage = LoadStageFromString(usda);
 
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.subdivision_level = subdivision_level;
 
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   bool ret = converter.ConvertToRenderScene(env, scene);
   if (err) {
     *err = converter.GetError();
@@ -100,14 +100,14 @@ bool ConvertSceneWithSubdivision(const std::string &usda, int32_t subdivision_le
 bool ConvertSceneWithSubdivision(
     const std::string &usda, int32_t subdivision_level,
     const std::map<std::string, int32_t> &subdivision_prim_levels,
-    lightusd::tydra::RenderScene *scene, std::string *err) {
-  lightusd::Stage stage = LoadStageFromString(usda);
+    lightusd::legacy::tydra::RenderScene *scene, std::string *err) {
+  lightusd::legacy::Stage stage = LoadStageFromString(usda);
 
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.subdivision_level = subdivision_level;
   env.mesh_config.subdivision_prim_levels = subdivision_prim_levels;
 
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   bool ret = converter.ConvertToRenderScene(env, scene);
   if (err) {
     *err = converter.GetError();
@@ -151,7 +151,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -200,7 +200,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -244,7 +244,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -299,7 +299,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -360,7 +360,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -446,7 +446,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 2, &scene, &err);
   TEST_CHECK(ret);
@@ -525,7 +525,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -584,7 +584,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 2, &scene, &err);
   TEST_CHECK(ret);
@@ -641,7 +641,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -703,7 +703,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -756,7 +756,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 0, &scene, &err);
   TEST_CHECK(ret);
@@ -806,7 +806,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(
       usda, 0, {{"/Root/Refined", 1}}, &scene, &err);
@@ -817,8 +817,8 @@ def Xform "Root"
   }
   TEST_CHECK(scene.meshes.size() == 2);
 
-  const lightusd::tydra::RenderMesh *base = nullptr;
-  const lightusd::tydra::RenderMesh *refined = nullptr;
+  const lightusd::legacy::tydra::RenderMesh *base = nullptr;
+  const lightusd::legacy::tydra::RenderMesh *refined = nullptr;
   for (const auto &mesh : scene.meshes) {
     if (mesh.abs_path == "/Root/Base") {
       base = &mesh;
@@ -861,7 +861,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 2, &scene, &err);
   TEST_CHECK(ret);
@@ -914,7 +914,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -967,7 +967,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   std::string warn;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err, &warn);
@@ -1017,7 +1017,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   std::string warn;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err, &warn);
@@ -1060,7 +1060,7 @@ def Xform "Root"
 )usda";
 
   {
-    lightusd::tydra::RenderScene scene;
+    lightusd::legacy::tydra::RenderScene scene;
     std::string err;
     bool ret = ConvertSceneWithSubdivision(usda_constant, 1, &scene, &err);
     TEST_CHECK(ret);
@@ -1105,7 +1105,7 @@ def Xform "Root"
 )usda";
 
   {
-    lightusd::tydra::RenderScene scene;
+    lightusd::legacy::tydra::RenderScene scene;
     std::string err;
     bool ret = ConvertSceneWithSubdivision(usda_vertex, 1, &scene, &err);
     TEST_CHECK(ret);
@@ -1153,7 +1153,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -1195,7 +1195,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -1249,7 +1249,7 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -1315,7 +1315,7 @@ def Xform "Root"
   // Left vertices (0, 3) bind fully to joint 0, right vertices (1, 2) to
   // joint 1. Refined weights must keep elementSize entries per refined
   // point, sum to 1, and blend 50/50 along the vertical center line.
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
   TEST_CHECK(ret);
@@ -1388,13 +1388,13 @@ def Xform "Root"
 }
 )usda";
 
-  lightusd::Stage stage = LoadStageFromString(usda);
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::Stage stage = LoadStageFromString(usda);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.subdivision_level = 1;
   env.mesh_config.max_skin_elementSize = 1;
 
-  lightusd::tydra::RenderScene scene;
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   const bool ret = converter.ConvertToRenderScene(env, &scene);
   TEST_CHECK(!ret);
   TEST_CHECK(converter.GetError().find("elementSize") != std::string::npos);
@@ -1457,9 +1457,9 @@ def Xform "Root"
   // Scene C: mesh with the in-between shape applied, no blendshape prim.
   snprintf(usda_c, sizeof(usda_c), mesh_tmpl, "0.4", "");
 
-  lightusd::tydra::RenderScene scene_a;
-  lightusd::tydra::RenderScene scene_b;
-  lightusd::tydra::RenderScene scene_c;
+  lightusd::legacy::tydra::RenderScene scene_a;
+  lightusd::legacy::tydra::RenderScene scene_b;
+  lightusd::legacy::tydra::RenderScene scene_c;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda_a, 2, &scene_a, &err);
   TEST_CHECK(ret);
@@ -1550,7 +1550,7 @@ namespace {
 // Refines `usda` at `level` and returns the first mesh's points (flattened),
 // or an empty vector on failure.
 std::vector<float> RefinedPoints(const std::string &usda, int32_t level) {
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   if (!ConvertSceneWithSubdivision(usda, level, &scene, &err) ||
       scene.meshes.empty()) {
@@ -1579,7 +1579,7 @@ bool PointsDiffer(const std::vector<float> &a, const std::vector<float> &b) {
 }
 
 size_t RefinedFaceCount(const std::string &usda, int32_t level) {
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::string err;
   if (!ConvertSceneWithSubdivision(usda, level, &scene, &err) ||
       scene.meshes.empty()) {
@@ -1682,7 +1682,7 @@ void tydra_subdivision_facevarying_linear_mode_changes_uv_test(void) {
            mode + "\"\n";
     }
     u += "    }\n}\n";
-    lightusd::tydra::RenderScene scene;
+    lightusd::legacy::tydra::RenderScene scene;
     std::string err;
     std::vector<float> uvs;
     if (ConvertSceneWithSubdivision(u, 2, &scene, &err) &&

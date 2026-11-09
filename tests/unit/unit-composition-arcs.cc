@@ -20,6 +20,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 bool WriteTextFileForCompositionTest(const std::string &path,
@@ -273,7 +275,7 @@ void comp_variant_two_sets_test(void) {
     PrimSpec red(Specifier::Def, "", "red");
     {
       Attribute attr;
-      attr.set_value(value::token("red"));
+      attr.set_value(lightusd::legacy::value::token("red"));
       attr.set_type_name("token");
       red.props()["colorName"] = Property(attr, false);
     }
@@ -282,7 +284,7 @@ void comp_variant_two_sets_test(void) {
     PrimSpec blue(Specifier::Def, "", "blue");
     {
       Attribute attr;
-      attr.set_value(value::token("blue"));
+      attr.set_value(lightusd::legacy::value::token("blue"));
       attr.set_type_name("token");
       blue.props()["colorName"] = Property(attr, false);
     }
@@ -335,7 +337,7 @@ void comp_variant_two_sets_test(void) {
   // Verify colorName = "red" from color variant
   TEST_CHECK(it->second.props().count("colorName") > 0);
   if (it->second.props().count("colorName")) {
-    auto v = it->second.props().at("colorName").get_attribute().get_value<value::token>();
+    auto v = it->second.props().at("colorName").get_attribute().get_value<lightusd::legacy::value::token>();
     TEST_CHECK(v.has_value());
     if (v.has_value()) {
       TEST_CHECK(v.value().str() == "red");
@@ -796,7 +798,7 @@ over "World"
       "collection:test:membershipExpression");
   TEST_CHECK(prop != world->second.props().end());
   if (prop == world->second.props().end() || !prop->second.is_attribute()) return;
-  auto expr = prop->second.get_attribute().get_value<value::PathExpression>();
+  auto expr = prop->second.get_attribute().get_value<lightusd::legacy::value::PathExpression>();
   TEST_CHECK(expr.has_value());
   if (!expr) return;
   TEST_CHECK(expr->GetText().find("%_") == std::string::npos);
@@ -1014,7 +1016,7 @@ void comp_override_primspec_api_test(void) {
   PrimSpec dst(Specifier::Def, "Scope", "Prim");
   {
     Attribute attr;
-    attr.set_value(value::token("original"));
+    attr.set_value(lightusd::legacy::value::token("original"));
     attr.set_type_name("token");
     dst.props()["name"] = Property(attr, false);
 
@@ -1028,7 +1030,7 @@ void comp_override_primspec_api_test(void) {
   {
     // Override name
     Attribute attr;
-    attr.set_value(value::token("overridden"));
+    attr.set_value(lightusd::legacy::value::token("overridden"));
     attr.set_type_name("token");
     src.props()["name"] = Property(attr, false);
 
@@ -1050,7 +1052,7 @@ void comp_override_primspec_api_test(void) {
   // "name" should be overridden
   TEST_CHECK(dst.props().count("name") > 0);
   if (dst.props().count("name")) {
-    auto v = dst.props().at("name").get_attribute().get_value<value::token>();
+    auto v = dst.props().at("name").get_attribute().get_value<lightusd::legacy::value::token>();
     TEST_CHECK(v.has_value());
     if (v.has_value()) {
       TEST_CHECK(v.value().str() == "overridden");
@@ -1105,7 +1107,7 @@ void comp_has_references_test(void) {
     PrimSpec ps(Specifier::Def, "Scope", "Ref");
 
     Reference ref;
-    ref.asset_path = value::AssetPath("other.usda");
+    ref.asset_path = lightusd::legacy::value::AssetPath("other.usda");
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::ResetToExplicit, {ref}});
     ps.metas().references = refs;
@@ -1143,7 +1145,7 @@ void comp_has_payload_test(void) {
     PrimSpec ps(Specifier::Def, "Scope", "Pay");
 
     Payload pl;
-    pl.asset_path = value::AssetPath("payload.usda");
+    pl.asset_path = lightusd::legacy::value::AssetPath("payload.usda");
     std::vector<std::pair<ListEditQual, std::vector<Payload>>> payloads;
     payloads.push_back({ListEditQual::ResetToExplicit, {pl}});
     ps.metas().payload = payloads;
@@ -1223,7 +1225,7 @@ void comp_extract_variants_from_layer_test(void) {
     PrimSpec green(Specifier::Def, "", "green");
     {
       Attribute attr;
-      attr.set_value(value::token("green"));
+      attr.set_value(lightusd::legacy::value::token("green"));
       attr.set_type_name("token");
       green.props()["color"] = Property(attr, false);
     }
@@ -1412,7 +1414,7 @@ void comp_variant_select_primspec_test(void) {
     PrimSpec metal(Specifier::Def, "", "metal");
     {
       Attribute attr;
-      attr.set_value(value::token("metallic"));
+      attr.set_value(lightusd::legacy::value::token("metallic"));
       attr.set_type_name("token");
       metal.props()["material"] = Property(attr, false);
     }
@@ -1421,7 +1423,7 @@ void comp_variant_select_primspec_test(void) {
     PrimSpec wood(Specifier::Def, "", "wood");
     {
       Attribute attr;
-      attr.set_value(value::token("wooden"));
+      attr.set_value(lightusd::legacy::value::token("wooden"));
       attr.set_type_name("token");
       wood.props()["material"] = Property(attr, false);
     }
@@ -1461,7 +1463,7 @@ void comp_variant_select_primspec_test(void) {
   // dst should have material="metallic" from metal variant
   TEST_CHECK(dst.props().count("material") > 0);
   if (dst.props().count("material")) {
-    auto v = dst.props().at("material").get_attribute().get_value<value::token>();
+    auto v = dst.props().at("material").get_attribute().get_value<lightusd::legacy::value::token>();
     TEST_CHECK(v.has_value());
     if (v.has_value()) {
       TEST_CHECK(v.value().str() == "metallic");
@@ -1497,7 +1499,7 @@ void comp_apply_variant_selector_test(void) {
     {
       PrimSpec red(Specifier::Def, "", "red");
       Attribute attr;
-      attr.set_value(value::token("red_color"));
+      attr.set_value(lightusd::legacy::value::token("red_color"));
       attr.set_type_name("token");
       red.props()["color"] = Property(attr, false);
       vss.variantSet["red"] = red;
@@ -1506,7 +1508,7 @@ void comp_apply_variant_selector_test(void) {
     {
       PrimSpec blue(Specifier::Def, "", "blue");
       Attribute attr;
-      attr.set_value(value::token("blue_color"));
+      attr.set_value(lightusd::legacy::value::token("blue_color"));
       attr.set_type_name("token");
       blue.props()["color"] = Property(attr, false);
       vss.variantSet["blue"] = blue;
@@ -1534,7 +1536,7 @@ void comp_apply_variant_selector_test(void) {
       if (it != result.primspecs().end()) {
         TEST_CHECK(it->second.props().count("color") > 0);
         if (it->second.props().count("color")) {
-          auto v = it->second.props().at("color").get_attribute().get_value<value::token>();
+          auto v = it->second.props().at("color").get_attribute().get_value<lightusd::legacy::value::token>();
           TEST_CHECK(v.has_value());
           if (v.has_value()) {
             TEST_CHECK(v.value().str() == "red_color");
@@ -1562,7 +1564,7 @@ void comp_apply_variant_selector_test(void) {
       if (it != result.primspecs().end()) {
         TEST_CHECK(it->second.props().count("color") > 0);
         if (it->second.props().count("color")) {
-          auto v = it->second.props().at("color").get_attribute().get_value<value::token>();
+          auto v = it->second.props().at("color").get_attribute().get_value<lightusd::legacy::value::token>();
           TEST_CHECK(v.has_value());
           if (v.has_value()) {
             TEST_CHECK(v.value().str() == "blue_color");
@@ -2196,7 +2198,7 @@ void comp_payload_load_policy_test(void) {
   PrimSpec model(Specifier::Def, "Scope", "Model");
   {
     Payload pl;
-    pl.asset_path = value::AssetPath("nonexistent_heavy_geo.usd");
+    pl.asset_path = lightusd::legacy::value::AssetPath("nonexistent_heavy_geo.usd");
     pl.prim_path = Path("/Geo", "");
 
     std::vector<std::pair<ListEditQual, std::vector<Payload>>> payload_ops;
@@ -2630,7 +2632,7 @@ void comp_append_reference_local_wins_test(void) {
     root.props()["x"] = Property(ax, false);
 
     Reference ref;
-    ref.asset_path = value::AssetPath("");  // in-layer reference
+    ref.asset_path = lightusd::legacy::value::AssetPath("");  // in-layer reference
     ref.prim_path = Path("/base", "");
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::Append, {ref}});
@@ -2785,7 +2787,7 @@ void comp_reference_keeps_local_children_test(void) {
     root.children().push_back(local_child);
 
     Reference ref;
-    ref.asset_path = value::AssetPath("");  // in-layer reference
+    ref.asset_path = lightusd::legacy::value::AssetPath("");  // in-layer reference
     ref.prim_path = Path("/base", "");
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::Prepend, {ref}});
@@ -2830,7 +2832,7 @@ void comp_reference_keeps_local_children_test(void) {
 void comp_timesamples_time_transform_test(void) {
   // Unified binary storage (add_binary_sample)
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
     TEST_CHECK(ts.add_binary_sample<double>(0.0, 1.5, &err));
     TEST_CHECK(ts.add_binary_sample<double>(10.0, 2.5, &err));
@@ -2848,10 +2850,10 @@ void comp_timesamples_time_transform_test(void) {
 
   // Generic Value storage (add_sample)
   {
-    value::TimeSamples ts;
+    lightusd::legacy::value::TimeSamples ts;
     std::string err;
-    TEST_CHECK(ts.add_sample(0.0, value::Value(std::string("a")), &err));
-    TEST_CHECK(ts.add_sample(10.0, value::Value(std::string("b")), &err));
+    TEST_CHECK(ts.add_sample(0.0, lightusd::legacy::value::Value(std::string("a")), &err));
+    TEST_CHECK(ts.add_sample(10.0, lightusd::legacy::value::Value(std::string("b")), &err));
 
     ts.apply_time_transform(2.0, 5.0);
 

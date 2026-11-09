@@ -4,7 +4,7 @@
 
 #include <chrono>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace performance {
 
 double now() {
@@ -17,4 +17,5 @@ double now() {
 }
 
 } // namespace performance
+}  // namespace legacy
 } // namespace lightusd

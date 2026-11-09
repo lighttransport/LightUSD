@@ -55,7 +55,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -1080,4 +1080,5 @@ template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*
 template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
 
 } // namespace crate
+}  // namespace legacy
 } // namespace lightusd

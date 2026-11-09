@@ -15,6 +15,8 @@ int main(int argc, char **argv) {
 
   using namespace lightusd;
 
+  using namespace lightusd::legacy;  // NOLINT
+
   argparser::ArgParser parser;
   parser.add_option("--port", true, "Port number for the MCP server");
   parser.add_option("--host", true, "Hostname(default `localhost`)");

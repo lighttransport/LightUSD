@@ -18,7 +18,7 @@
 #include "color-space.hh"
 #include "render-data.hh"  // For SpectralData, SpectralIOR, SpectralEmission
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 std::string EscapeJsonString(const std::string &input) {
@@ -798,4 +798,5 @@ std::string SpectralEmissionToJson(const SpectralEmission &data) {
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

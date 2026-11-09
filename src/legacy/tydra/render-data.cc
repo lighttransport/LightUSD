@@ -38,7 +38,7 @@
 #include "usdShade.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -776,4 +776,5 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

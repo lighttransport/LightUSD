@@ -16,7 +16,7 @@
 #include "value-types.hh"
 #include "value-pprint.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace primvar {
 
 bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *dst) const {
@@ -110,5 +110,6 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
 }
 
 } // namespace primvar
+}  // namespace legacy
 }  // namespace lightusd
 

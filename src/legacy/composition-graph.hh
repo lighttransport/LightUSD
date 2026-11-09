@@ -37,7 +37,7 @@
 #include "namespace-mapping.hh"
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Stage;
@@ -863,4 +863,5 @@ class PrimIndexBuilder {
 using CompositionGraph = composition_graph::CompositionGraph;
 using CompositionGraphOptions = composition_graph::CompositionGraphOptions;
 
+}  // namespace legacy
 }  // namespace lightusd

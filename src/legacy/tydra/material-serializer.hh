@@ -9,7 +9,7 @@
 #include "nonstd/expected.hpp"
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 enum class SerializationFormat {
@@ -34,4 +34,5 @@ nonstd::expected<std::string, std::string> serializeLight(
     const RenderScene* renderScene = nullptr);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

@@ -19,7 +19,7 @@
 #include "str-util.hh"
 #include "zstd-compression.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usda {
 
 namespace {
@@ -147,12 +147,13 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
 #endif
 
 } // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 
 
 #else
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usda {
 
 bool ExportToUSDAString(const Stage &stage, std::string *output, std::string *warn, std::string *err) {
@@ -195,6 +196,7 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage, std::string *w
 #endif
 
 } // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 #endif
 

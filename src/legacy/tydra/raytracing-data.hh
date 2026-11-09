@@ -26,8 +26,8 @@
 ///
 /// Usage:
 /// ```cpp
-/// lightusd::tydra::RaytracingSceneConverter converter;
-/// lightusd::tydra::RaytracingScene rt_scene;
+/// lightusd::legacy::tydra::RaytracingSceneConverter converter;
+/// lightusd::legacy::tydra::RaytracingScene rt_scene;
 /// converter.ConvertToRaytracingScene(stage, &rt_scene);
 /// rt_scene.build_acceleration_structure(config);
 /// ```
@@ -44,7 +44,7 @@
 
 // Forward declare spectral types from render-data.hh
 // Full definitions available when including render-data.hh
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
   struct SpectralData;
   struct SpectralIOR;
@@ -53,9 +53,10 @@ namespace tydra {
   enum class IlluminantPreset;
   enum class WavelengthUnit;
 }
+}  // namespace legacy
 }
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Stage;
@@ -654,4 +655,5 @@ class RaytracingScene {
 };
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

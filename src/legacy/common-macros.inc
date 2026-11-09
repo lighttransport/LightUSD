@@ -5,12 +5,13 @@
 #include <string>
 
 // Global flag to control DCOUT output. Set via LIGHTUSD_ENABLE_DCOUT environment variable.
-namespace lightusd {
+namespace lightusd { namespace legacy {
 extern bool g_enable_dcout_output;
 
 // Default limit for recursive/iterative traversals to prevent infinite loops.
 // Used as max recursion depth or max iteration count in tree/graph traversals.
 constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
+}  // namespace legacy
 }
 
 #if !defined(LIGHTUSD_PRODUCTION_BUILD) && !defined(LIGHTUSD_FUZZER_BUILD)

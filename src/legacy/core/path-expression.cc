@@ -15,7 +15,7 @@
 #endif
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -557,6 +557,7 @@ ParsedPathExpression ParsePathExpression(const value::PathExpression &expr,
   return ParsedPathExpression::Parse(expr.GetText(), err);
 }
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #if defined(__clang__)

@@ -438,7 +438,7 @@ TydraIKVec3 tydra_ik_effector_position(const TydraIKChain *chain) {
 #include <algorithm>
 #include <cstring>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 static void mat4d_to_ik(const value::matrix4d &src, TydraIKMat4 *dst) {
@@ -568,6 +568,7 @@ void FreeIKChain(TydraIKChain *chain) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // __cplusplus

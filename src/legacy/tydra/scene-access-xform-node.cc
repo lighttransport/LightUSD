@@ -10,7 +10,7 @@
 
 #include <sstream>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -19,7 +19,7 @@ namespace {
 static void ComputeXformNodeProperties(
     const Prim *prim, const Path &parent_abs_path,
     const value::matrix4d &parent_world_mat, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp,
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp,
     XformNode &node) {
 
   node.element_name = prim->element_name();
@@ -64,10 +64,10 @@ static void ComputeXformNodeProperties(
 
 // Iterative version of BuildXformNodeFromStage using explicit stack
 bool BuildXformNodeFromStageIterative(
-    const lightusd::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
+    const lightusd::legacy::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
     XformNode *nodeOut, /* out */
     value::matrix4d rootMat, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp,
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp,
     size_t max_iter = kMaxDefaultTraversalLimit) {
 
   (void)stage;  // Currently unused
@@ -194,9 +194,9 @@ std::string DumpXformNodeIterative(const XformNode &root,
 }  // namespace local
 
 bool BuildXformNodeFromStage(
-    const lightusd::Stage &stage, XformNode *rootNode, /* out */
+    const lightusd::legacy::Stage &stage, XformNode *rootNode, /* out */
     const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
   if (!rootNode) {
     return false;
   }
@@ -236,4 +236,5 @@ std::string DumpXformNode(const XformNode &node) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

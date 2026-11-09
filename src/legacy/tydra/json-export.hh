@@ -25,7 +25,7 @@
 
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -53,4 +53,5 @@ bool export_to_json(const RenderScene &scene, bool asset_as_binary,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

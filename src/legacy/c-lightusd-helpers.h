@@ -639,7 +639,7 @@ c_lightusd_prim_get_relationship_targets(const CLightUSDPrim *prim,
  * list; pass NULL for `prim_path` (or empty string) when no specific
  * prim should be targeted within the referenced layer.
  *
- * Qualifier values match `lightusd::ListEditQual`:
+ * Qualifier values match `lightusd::legacy::ListEditQual`:
  *   0 = ResetToExplicit (no qualifier — replaces any existing list)
  *   1 = Append
  *   2 = Add

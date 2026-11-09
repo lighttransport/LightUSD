@@ -3,7 +3,7 @@
 // #include "prim-types.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace math {
 
@@ -550,4 +550,5 @@ inline bool is_close(const value::ushort4 &a, const value::ushort4 &b) {
 
 }  // namespace math
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -15,7 +15,7 @@
 #include "js-script.hh"
 #include "mcp-context.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -85,4 +85,5 @@ bool RunScript(Context &ctx, const nlohmann::json &args,
 
 } // namespace mcp
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

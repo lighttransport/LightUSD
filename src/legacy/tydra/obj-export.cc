@@ -13,7 +13,7 @@
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) do { \
@@ -311,4 +311,5 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

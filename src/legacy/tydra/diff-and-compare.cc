@@ -32,7 +32,7 @@
 #pragma GCC diagnostic ignored "-Wfloat-equal"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace detail {
@@ -135,12 +135,12 @@ static bool ScalarAlmostEqual(float a, float b, const DiffOptions &o) {
       std::fabs(static_cast<double>(a) - static_cast<double>(b)) <= o.absEps) {
     return true;
   }
-  return lightusd::math::almost_equals_by_ulps(a, b, o.floatUlps);
+  return lightusd::legacy::math::almost_equals_by_ulps(a, b, o.floatUlps);
 }
 static bool ScalarAlmostEqual(double a, double b, const DiffOptions &o) {
   if (a == b) return true;
   if (o.absEps >= 0.0 && std::fabs(a - b) <= o.absEps) return true;
-  return lightusd::math::almost_equals_by_ulps(a, b, o.doubleUlps);
+  return lightusd::legacy::math::almost_equals_by_ulps(a, b, o.doubleUlps);
 }
 static bool ScalarAlmostEqual(value::half a, value::half b,
                               const DiffOptions &o) {
@@ -313,7 +313,7 @@ static bool ValuesEquivalentForDiff(const value::Value &lhs,
 }
 
 static std::string ListEditQualForDiff(ListEditQual qual) {
-  std::string s = lightusd::to_string(qual);
+  std::string s = lightusd::legacy::to_string(qual);
   if (s.empty()) {
     s = "explicit";
   }
@@ -338,7 +338,7 @@ static std::string FormatAttributeForDiff(const Attribute &attr) {
   std::stringstream ss;
   ss << "attr";
   ss << " type=" << attr.type_name();
-  ss << " variability=" << lightusd::to_string(attr.variability());
+  ss << " variability=" << lightusd::legacy::to_string(attr.variability());
   if (attr.is_varying_authored()) {
     ss << " varyingAuthored=true";
   }
@@ -495,7 +495,7 @@ static std::string ArcOpsToStr(
   std::stringstream ss;
   for (const auto &op : a.value()) {
     ss << ListEditQualForDiff(op.first) << "[";
-    for (const auto &e : op.second) ss << lightusd::to_string(e) << ",";
+    for (const auto &e : op.second) ss << lightusd::legacy::to_string(e) << ",";
     ss << "]";
   }
   return ss.str();
@@ -526,7 +526,7 @@ static std::string ApiSchemasToStr(const APISchemas &a) {
   std::stringstream ss;
   ss << ListEditQualForDiff(a.listOpQual) << "[";
   for (const auto &n : a.names) {
-    ss << lightusd::to_string(n.first);
+    ss << lightusd::legacy::to_string(n.first);
     if (!n.second.empty()) ss << ":" << n.second;
     ss << ",";
   }
@@ -758,7 +758,7 @@ static bool ComparePrimSpecs(const PrimSpec &lhs, const PrimSpec &rhs,
 
 static void ComputePropDiff(const std::string &path, const PrimSpec &lhs,
                             const PrimSpec &rhs, const DiffOptions &opts,
-                            lightusd::HashMap<std::string, PropDiff> &propDiffs) {
+                            lightusd::legacy::HashMap<std::string, PropDiff> &propDiffs) {
   const auto &lhs_props = lhs.props();
   const auto &rhs_props = rhs.props();
 
@@ -803,8 +803,8 @@ static void ComputePropDiff(const std::string &path, const PrimSpec &lhs,
 
 static bool ComputeDiffImpl(
     uint32_t depth, const std::string &path, const PrimSpec &lhs,
-    const PrimSpec &rhs, lightusd::HashMap<std::string, PrimSpecDiff> &psDiffs,
-    lightusd::HashMap<std::string, PropDiff> &propDiffs, const DiffOptions &opts,
+    const PrimSpec &rhs, lightusd::legacy::HashMap<std::string, PrimSpecDiff> &psDiffs,
+    lightusd::legacy::HashMap<std::string, PropDiff> &propDiffs, const DiffOptions &opts,
     std::vector<std::string> *selfReasons) {
 
   if (size_t(depth) > kMaxDefaultTraversalLimit) {
@@ -823,8 +823,8 @@ static bool ComputeDiffImpl(
   const auto &lhs_children = lhs.children();
   const auto &rhs_children = rhs.children();
 
-  lightusd::HashMap<std::string, const PrimSpec *, FNV1StringHash> lhs_child_map;
-  lightusd::HashMap<std::string, const PrimSpec *, FNV1StringHash> rhs_child_map;
+  lightusd::legacy::HashMap<std::string, const PrimSpec *, FNV1StringHash> lhs_child_map;
+  lightusd::legacy::HashMap<std::string, const PrimSpec *, FNV1StringHash> rhs_child_map;
   lhs_child_map.reserve(lhs_children.size());
   rhs_child_map.reserve(rhs_children.size());
 
@@ -913,8 +913,8 @@ static bool CompareLayerMetas(const LayerMetas &lhs, const LayerMetas &rhs,
   cmpDouble("kilogramsPerUnit", lhs.kilogramsPerUnit, rhs.kilogramsPerUnit);
 
   if (lhs.upAxis.get_value() != rhs.upAxis.get_value()) {
-    noteField("upAxis", lightusd::to_string(lhs.upAxis.get_value()),
-              lightusd::to_string(rhs.upAxis.get_value()));
+    noteField("upAxis", lightusd::legacy::to_string(lhs.upAxis.get_value()),
+              lightusd::legacy::to_string(rhs.upAxis.get_value()));
   }
   if (lhs.defaultPrim.str() != rhs.defaultPrim.str()) {
     noteField("defaultPrim", lhs.defaultPrim.str(), rhs.defaultPrim.str());
@@ -1190,8 +1190,8 @@ std::pair<std::string, std::string> CenterValuePairForDiff(
 }
 
 void Diff(const Layer &lhs, const Layer &rhs,
-  lightusd::HashMap<std::string, PrimSpecDiff> &psDiffs,
-  lightusd::HashMap<std::string, PropDiff> &propDiffs,
+  lightusd::legacy::HashMap<std::string, PrimSpecDiff> &psDiffs,
+  lightusd::legacy::HashMap<std::string, PropDiff> &propDiffs,
   const DiffOptions &opts,
   LayerMetaDiff *layerMetaDiff) {
 
@@ -1250,8 +1250,8 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
                        const std::string &lhs_name,
                        const std::string &rhs_name,
                        const DiffOptions &opts) {
-  lightusd::HashMap<std::string, PrimSpecDiff> psDiffs;
-  lightusd::HashMap<std::string, PropDiff> propDiffs;
+  lightusd::legacy::HashMap<std::string, PrimSpecDiff> psDiffs;
+  lightusd::legacy::HashMap<std::string, PropDiff> propDiffs;
   LayerMetaDiff layerMetaDiff;
 
   Diff(lhs, rhs, psDiffs, propDiffs, opts, &layerMetaDiff);
@@ -1368,8 +1368,8 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
                        const std::string &lhs_name,
                        const std::string &rhs_name,
                        const DiffOptions &opts) {
-  lightusd::HashMap<std::string, PrimSpecDiff> psDiffs;
-  lightusd::HashMap<std::string, PropDiff> propDiffs;
+  lightusd::legacy::HashMap<std::string, PrimSpecDiff> psDiffs;
+  lightusd::legacy::HashMap<std::string, PropDiff> propDiffs;
   LayerMetaDiff layerMetaDiff;
 
   Diff(lhs, rhs, psDiffs, propDiffs, opts, &layerMetaDiff);
@@ -1493,4 +1493,5 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

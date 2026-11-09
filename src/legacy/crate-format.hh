@@ -33,7 +33,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 constexpr size_t kMinCompressedArraySize = 16;
@@ -354,8 +354,8 @@ inline void hash_combine(std::size_t &seed, const T &v) {
 
 struct PathHasher {
   size_t operator()(const Path &path) const {
-    size_t seed = std::hash<lightusd::tstring_view>()(path.prim_part());
-    hash_combine(seed, std::hash<lightusd::tstring_view>()(path.prop_part()));
+    size_t seed = std::hash<lightusd::legacy::tstring_view>()(path.prim_part());
+    hash_combine(seed, std::hash<lightusd::legacy::tstring_view>()(path.prop_part()));
     hash_combine(seed, std::hash<bool>()(path.is_valid()));
     // Variant parts: typically empty for spec paths, but mixing them in
     // makes the hasher robust if a variant-bearing path is ever passed.
@@ -539,4 +539,5 @@ namespace value {
 
 } // namespace value
 
+}  // namespace legacy
 } // namespace lightusd

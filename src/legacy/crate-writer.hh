@@ -30,7 +30,7 @@
 #include "crate-path-utils/path_sort.hh"
 #include "crate-path-utils/tree_encode.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 // Maximum prim nesting depth supported by the USDC writer. The path-tree
@@ -1098,11 +1098,11 @@ private:
   std::vector<std::string> validation_warnings_;  // Collected validation warnings
 
   // Deduplication tables
-  lightusd::HashMap<std::string, crate::TokenIndex> token_to_index_;
+  lightusd::legacy::HashMap<std::string, crate::TokenIndex> token_to_index_;
   std::vector<std::string> tokens_;  // Index -> token string
   std::map<int32_t, uint32_t> path_tree_token_remap_;  // Maps path tree token index -> our token index
 
-  lightusd::HashMap<std::string, crate::StringIndex> string_to_index_;
+  lightusd::legacy::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
   // Open-addressed index over paths_: slot = (hash32, index into paths_ + 1;
@@ -1119,10 +1119,10 @@ private:
   std::vector<Path> paths_;  // Index -> path
 
 
-  lightusd::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
+  lightusd::legacy::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
-  lightusd::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
+  lightusd::legacy::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
   std::vector<std::vector<crate::FieldIndex>> fieldsets_;  // Index -> fieldset
 
   // Spec data (accumulated before writing)
@@ -1240,4 +1240,5 @@ private:
 };
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd

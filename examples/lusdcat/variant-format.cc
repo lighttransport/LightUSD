@@ -44,7 +44,7 @@ static std::string escape_json_string(const std::string& str) {
 }
 
 // Helper to convert MetaVariable value to string for output
-static std::string meta_value_to_string(const lightusd::MetaVariable& meta) {
+static std::string meta_value_to_string(const lightusd::legacy::MetaVariable& meta) {
   // Try to extract common types
   if (auto v = meta.get_value<std::string>()) {
     return *v;
@@ -110,7 +110,7 @@ static std::string meta_value_to_string(const lightusd::MetaVariable& meta) {
 }
 
 // Helper function to convert a value to YAML string
-static std::string meta_value_to_yaml(const lightusd::MetaVariable& meta) {
+static std::string meta_value_to_yaml(const lightusd::legacy::MetaVariable& meta) {
   std::string str_val = meta_value_to_string(meta);
 
   // For strings, arrays, and complex types, quote the value
@@ -131,7 +131,7 @@ static std::string meta_value_to_yaml(const lightusd::MetaVariable& meta) {
 }
 
 // Helper function to convert a value to JSON string
-static std::string meta_value_to_json(const lightusd::MetaVariable& meta) {
+static std::string meta_value_to_json(const lightusd::legacy::MetaVariable& meta) {
   // Try to extract common types
   if (auto v = meta.get_value<std::string>()) {
     return "\"" + escape_json_string(*v) + "\"";
@@ -196,15 +196,15 @@ static std::string meta_value_to_json(const lightusd::MetaVariable& meta) {
   return "\"" + escape_json_string(meta.type_name()) + "\"";
 }
 
-std::string dictionary_to_yaml(const lightusd::Dictionary& dict) {
+std::string dictionary_to_yaml(const lightusd::legacy::Dictionary& dict) {
   std::ostringstream oss;
 
   for (const auto& item : dict) {
     const std::string& key = item.first;
-    const lightusd::MetaVariable& meta = item.second;
+    const lightusd::legacy::MetaVariable& meta = item.second;
 
     // Check if value is a nested Dictionary
-    if (auto nested_dict = meta.get_value<lightusd::Dictionary>()) {
+    if (auto nested_dict = meta.get_value<lightusd::legacy::Dictionary>()) {
       oss << key << ":\n";
       std::string nested_yaml = dictionary_to_yaml(*nested_dict);
       // Indent nested content
@@ -221,14 +221,14 @@ std::string dictionary_to_yaml(const lightusd::Dictionary& dict) {
   return oss.str();
 }
 
-std::string dictionary_to_json(const lightusd::Dictionary& dict) {
+std::string dictionary_to_json(const lightusd::legacy::Dictionary& dict) {
   std::ostringstream oss;
   oss << "{\n";
 
   bool first = true;
   for (const auto& item : dict) {
     const std::string& key = item.first;
-    const lightusd::MetaVariable& meta = item.second;
+    const lightusd::legacy::MetaVariable& meta = item.second;
 
     if (!first) {
       oss << ",\n";
@@ -238,7 +238,7 @@ std::string dictionary_to_json(const lightusd::Dictionary& dict) {
     oss << "  \"" << escape_json_string(key) << "\": ";
 
     // Check if value is a nested Dictionary
-    if (auto nested_dict = meta.get_value<lightusd::Dictionary>()) {
+    if (auto nested_dict = meta.get_value<lightusd::legacy::Dictionary>()) {
       std::string nested_json = dictionary_to_json(*nested_dict);
       // Indent nested JSON
       std::istringstream iss(nested_json);

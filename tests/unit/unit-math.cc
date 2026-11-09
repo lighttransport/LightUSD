@@ -19,10 +19,12 @@
 #include <cmath>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd_test;
 
 // Helper: check if two quatf are close (component-wise)
-static bool quatf_close(const value::quatf &a, const value::quatf &b,
+static bool quatf_close(const lightusd::legacy::value::quatf &a, const lightusd::legacy::value::quatf &b,
                         float eps = 1e-5f) {
   // Quaternion q and -q represent the same rotation, so check both signs
   bool same_sign = (std::fabs(a.imag[0] - b.imag[0]) < eps) &&
@@ -37,13 +39,13 @@ static bool quatf_close(const value::quatf &a, const value::quatf &b,
 }
 
 // Helper: compute quaternion length
-static float quat_length(const value::quatf &q) {
+static float quat_length(const lightusd::legacy::value::quatf &q) {
   return std::sqrt(q.imag[0] * q.imag[0] + q.imag[1] * q.imag[1] +
                    q.imag[2] * q.imag[2] + q.real * q.real);
 }
 
 // Helper: check if a 4x4 matrix upper-left 3x3 matches (for rotation comparison)
-static bool matrix3x3_close(const value::matrix4d &a, const value::matrix4d &b,
+static bool matrix3x3_close(const lightusd::legacy::value::matrix4d &a, const lightusd::legacy::value::matrix4d &b,
                             double eps = 1e-6) {
   for (int i = 0; i < 3; i++) {
     for (int j = 0; j < 3; j++) {
@@ -131,7 +133,7 @@ void quat_to_quaternion_test(void) {
 
   // Identity: 0 degree rotation about any axis -> (0,0,0,1)
   {
-    value::quatf q = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, 0.0f);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{1.0f, 0.0f, 0.0f}, 0.0f);
     TEST_CHECK(float_equals(q.imag[0], 0.0f));
     TEST_CHECK(float_equals(q.imag[1], 0.0f));
     TEST_CHECK(float_equals(q.imag[2], 0.0f));
@@ -141,7 +143,7 @@ void quat_to_quaternion_test(void) {
 
   // 180 degrees about X: (1,0,0,0)
   {
-    value::quatf q = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, 180.0f);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{1.0f, 0.0f, 0.0f}, 180.0f);
     TEST_CHECK(float_equals(q.imag[0], 1.0f, 1e-6f));
     TEST_CHECK(float_equals(q.imag[1], 0.0f, 1e-6f));
     TEST_CHECK(float_equals(q.imag[2], 0.0f, 1e-6f));
@@ -151,7 +153,7 @@ void quat_to_quaternion_test(void) {
 
   // 90 degrees about Y: (0, sin(45), 0, cos(45)) = (0, sqrt(2)/2, 0, sqrt(2)/2)
   {
-    value::quatf q = to_quaternion(value::float3{0.0f, 1.0f, 0.0f}, 90.0f);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{0.0f, 1.0f, 0.0f}, 90.0f);
     float s2 = std::sqrt(2.0f) / 2.0f;
     TEST_CHECK(float_equals(q.imag[0], 0.0f, 1e-6f));
     TEST_CHECK(float_equals(q.imag[1], s2, 1e-6f));
@@ -162,7 +164,7 @@ void quat_to_quaternion_test(void) {
 
   // 90 degrees about Z: (0, 0, sin(45), cos(45))
   {
-    value::quatf q = to_quaternion(value::float3{0.0f, 0.0f, 1.0f}, 90.0f);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{0.0f, 0.0f, 1.0f}, 90.0f);
     float s2 = std::sqrt(2.0f) / 2.0f;
     TEST_CHECK(float_equals(q.imag[0], 0.0f, 1e-6f));
     TEST_CHECK(float_equals(q.imag[1], 0.0f, 1e-6f));
@@ -172,7 +174,7 @@ void quat_to_quaternion_test(void) {
 
   // -90 degrees about X: (-sin(45), 0, 0, cos(45))
   {
-    value::quatf q = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, -90.0f);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{1.0f, 0.0f, 0.0f}, -90.0f);
     float s2 = std::sqrt(2.0f) / 2.0f;
     TEST_CHECK(float_equals(q.imag[0], -s2, 1e-6f));
     TEST_CHECK(float_equals(q.imag[1], 0.0f, 1e-6f));
@@ -183,10 +185,10 @@ void quat_to_quaternion_test(void) {
   // All quaternions from to_quaternion should be unit quaternions
   {
     float test_angles[] = {0, 30, 45, 60, 90, 120, 135, 180, 270, 360, -45, -90, -180};
-    value::float3 axes[] = {{1,0,0}, {0,1,0}, {0,0,1}};
+    lightusd::legacy::value::float3 axes[] = {{1,0,0}, {0,1,0}, {0,0,1}};
     for (auto &axis : axes) {
       for (float angle : test_angles) {
-        value::quatf q = to_quaternion(axis, angle);
+        lightusd::legacy::value::quatf q = to_quaternion(axis, angle);
         float len = quat_length(q);
         TEST_CHECK(float_equals(len, 1.0f, 1e-5f));
         if (!float_equals(len, 1.0f, 1e-5f)) {
@@ -199,7 +201,7 @@ void quat_to_quaternion_test(void) {
 
   // Double-precision version
   {
-    value::quatd q = to_quaternion(value::double3{0.0, 1.0, 0.0}, 90.0);
+    lightusd::legacy::value::quatd q = to_quaternion(lightusd::legacy::value::double3{0.0, 1.0, 0.0}, 90.0);
     double s2 = std::sqrt(2.0) / 2.0;
     double eps = std::numeric_limits<double>::epsilon() * 10;
     TEST_CHECK(float_equals(q.imag[0], 0.0, eps));
@@ -215,23 +217,23 @@ void quat_to_matrix_roundtrip_test(void) {
 
   // 90 degrees about X
   {
-    value::quatf q = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, 90.0f);
-    value::matrix4d mq = to_matrix(q);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{1.0f, 0.0f, 0.0f}, 90.0f);
+    lightusd::legacy::value::matrix4d mq = to_matrix(q);
 
     // Expected: Rx(90) = (1,0,0; 0,0,-1; 0,1,0)
     // Note: row-major convention in lightusd, but rotation matrices from quat
     // should match EvaluateXformOps result.
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
-    op.set_value(value::double3{90.0, 0.0, 0.0});
+    op.set_value(lightusd::legacy::value::double3{90.0, 0.0, 0.0});
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d mref;
+    lightusd::legacy::value::matrix4d mref;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &mref, &resetXformStack, &err);
     TEST_CHECK(ret);
     TEST_CHECK(matrix3x3_close(mq, mref, 1e-6));
@@ -242,20 +244,20 @@ void quat_to_matrix_roundtrip_test(void) {
 
   // 45 degrees about Y
   {
-    value::quatf q = to_quaternion(value::float3{0.0f, 1.0f, 0.0f}, 45.0f);
-    value::matrix4d mq = to_matrix(q);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{0.0f, 1.0f, 0.0f}, 45.0f);
+    lightusd::legacy::value::matrix4d mq = to_matrix(q);
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
-    op.set_value(value::double3{0.0, 45.0, 0.0});
+    op.set_value(lightusd::legacy::value::double3{0.0, 45.0, 0.0});
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d mref;
+    lightusd::legacy::value::matrix4d mref;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &mref, &resetXformStack, &err);
     TEST_CHECK(ret);
     TEST_CHECK(matrix3x3_close(mq, mref, 1e-6));
@@ -263,20 +265,20 @@ void quat_to_matrix_roundtrip_test(void) {
 
   // Arbitrary: 33.3 degrees about Z
   {
-    value::quatf q = to_quaternion(value::float3{0.0f, 0.0f, 1.0f}, 33.3f);
-    value::matrix4d mq = to_matrix(q);
+    lightusd::legacy::value::quatf q = to_quaternion(lightusd::legacy::value::float3{0.0f, 0.0f, 1.0f}, 33.3f);
+    lightusd::legacy::value::matrix4d mq = to_matrix(q);
 
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
-    op.set_value(value::double3{0.0, 0.0, 33.3});
+    op.set_value(lightusd::legacy::value::double3{0.0, 0.0, 33.3});
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d mref;
+    lightusd::legacy::value::matrix4d mref;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &mref, &resetXformStack, &err);
     TEST_CHECK(ret);
     TEST_CHECK(matrix3x3_close(mq, mref, 1e-6));
@@ -285,7 +287,7 @@ void quat_to_matrix_roundtrip_test(void) {
 
 void quat_operator_bracket_test(void) {
   // Test that quatf operator[] gives correct indexing (x,y,z,w)
-  value::quatf q;
+  lightusd::legacy::value::quatf q;
   q.imag[0] = 1.0f;
   q.imag[1] = 2.0f;
   q.imag[2] = 3.0f;
@@ -307,7 +309,7 @@ void quat_operator_bracket_test(void) {
   TEST_CHECK(float_equals(q.real, 40.0f));
 
   // Same for quatd
-  value::quatd qd;
+  lightusd::legacy::value::quatd qd;
   qd.imag[0] = 1.0;
   qd.imag[1] = 2.0;
   qd.imag[2] = 3.0;
@@ -325,20 +327,20 @@ void quat_decompose_roundtrip_test(void) {
   {
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;
-    op.set_value(value::double3{30.0, 45.0, 60.0});
+    op.set_value(lightusd::legacy::value::double3{30.0, 45.0, 60.0});
     Xformable x;
     x.xformOps.push_back(op);
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &m, &resetXformStack, &err);
     TEST_CHECK(ret);
 
-    value::double3 t, s;
-    value::quatd rot;
+    lightusd::legacy::value::double3 t, s;
+    lightusd::legacy::value::quatd rot;
     ret = decompose(m, &t, &rot, &s);
     TEST_CHECK(ret);
 
@@ -355,7 +357,7 @@ void quat_decompose_roundtrip_test(void) {
     // Rotation quaternion -> matrix should match original
     // Use relaxed tolerance: decompose extracts rotation via Gram-Schmidt
     // which accumulates errors through sqrt and normalization
-    value::matrix4d mrot = to_matrix(rot);
+    lightusd::legacy::value::matrix4d mrot = to_matrix(rot);
     double max_err = 0.0;
     for (int ri = 0; ri < 3; ri++) {
       for (int ci = 0; ci < 3; ci++) {
@@ -375,32 +377,32 @@ void quat_decompose_roundtrip_test(void) {
     {
       XformOp op;
       op.op_type = XformOp::OpType::Translate;
-      op.set_value(value::double3{1.0, 2.0, 3.0});
+      op.set_value(lightusd::legacy::value::double3{1.0, 2.0, 3.0});
       x.xformOps.push_back(op);
     }
     {
       XformOp op;
       op.op_type = XformOp::OpType::RotateXYZ;
-      op.set_value(value::double3{10.0, 20.0, 30.0});
+      op.set_value(lightusd::legacy::value::double3{10.0, 20.0, 30.0});
       x.xformOps.push_back(op);
     }
     {
       XformOp op;
       op.op_type = XformOp::OpType::Scale;
-      op.set_value(value::double3{2.0, 3.0, 4.0});
+      op.set_value(lightusd::legacy::value::double3{2.0, 3.0, 4.0});
       x.xformOps.push_back(op);
     }
 
-    value::matrix4d m;
+    lightusd::legacy::value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(value::TimeCode::Default(),
-                                  value::TimeSampleInterpolationType::Held,
+    bool ret = x.EvaluateXformOps(lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Held,
                                   &m, &resetXformStack, &err);
     TEST_CHECK(ret);
 
-    value::double3 t, s;
-    value::quatd rot;
+    lightusd::legacy::value::double3 t, s;
+    lightusd::legacy::value::quatd rot;
     ret = decompose(m, &t, &rot, &s);
     TEST_CHECK(ret);
 

@@ -33,7 +33,7 @@
 #include "value-types.hh"
 #include "xform.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace {
 
@@ -3226,4 +3226,5 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

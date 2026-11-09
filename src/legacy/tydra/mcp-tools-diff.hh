@@ -20,7 +20,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace mcp {
 
@@ -69,4 +69,5 @@ void DiffComputeTree(const DiffSession &d, const std::string &root, int depth,
 
 }  // namespace mcp
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

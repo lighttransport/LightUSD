@@ -24,6 +24,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 struct RoundtripStages {
@@ -170,8 +172,8 @@ void json_layer_primspec_roundtrip_test(void) {
       MetaVariable(std::move(layer_nested));
   source.metas().customLayerData["samples"] =
       MetaVariable(std::vector<int>{1, 2, 3});
-  source.metas().colorConfiguration = value::AssetPath("ocio/config.ocio");
-  source.metas().colorManagementSystem = value::token("ocio");
+  source.metas().colorConfiguration = lightusd::legacy::value::AssetPath("ocio/config.ocio");
+  source.metas().colorManagementSystem = lightusd::legacy::value::token("ocio");
   source.metas().renderSettingsPrimPath = std::string("/Render/Settings");
   source.metas().owner = std::string("lightusd");
   source.metas().hasOwnedSubLayers = true;
@@ -203,7 +205,7 @@ void json_layer_primspec_roundtrip_test(void) {
   root.children().push_back(std::move(child));
 
   Reference reference;
-  reference.asset_path = value::AssetPath("assets/reference.usda");
+  reference.asset_path = lightusd::legacy::value::AssetPath("assets/reference.usda");
   reference.prim_path = Path("/Referenced", "");
   reference.layerOffset._offset = 2.0;
   reference.layerOffset._scale = 0.5;
@@ -212,7 +214,7 @@ void json_layer_primspec_roundtrip_test(void) {
                                                   std::vector<Reference>>>{
       {ListEditQual::Prepend, {reference}}};
   Payload payload;
-  payload.asset_path = value::AssetPath("assets/payload.usdc");
+  payload.asset_path = lightusd::legacy::value::AssetPath("assets/payload.usdc");
   payload.prim_path = Path("/Payload", "");
   root.metas().payload = std::vector<std::pair<ListEditQual,
                                                std::vector<Payload>>>{
@@ -350,7 +352,7 @@ void json_writer_facade_test(void) {
   root.typeName() = "Xform";
   layer.primspecs()["/Root"] = std::move(root);
 
-  lightusd::json::JsonWriter writer;
+  lightusd::legacy::json::JsonWriter writer;
   writer.set_indent(0);
   std::string encoded;
   TEST_CHECK(writer.to_json(layer, &encoded));
@@ -389,7 +391,7 @@ void json_stage_runtime_roundtrip_test(void) {
     TEST_CHECK(stage.root_prims()[0].children().size() == 1);
     TEST_CHECK(stage.root_prims()[0].children()[0].specifier() == Specifier::Over);
   }
-  lightusd::json::JsonWriter writer;
+  lightusd::legacy::json::JsonWriter writer;
   writer.set_indent(0);
   std::string writer_json;
   TEST_CHECK(writer.to_json(stage, &writer_json));
@@ -479,8 +481,8 @@ def Mesh "Mesh" {
         auto decoded_points = decoded_mesh->points.get_value();
         TEST_CHECK(decoded_points.has_value());
         if (decoded_points) {
-          std::vector<value::point3f> points;
-          TEST_CHECK(decoded_points->get(value::TimeCode::Default(), &points));
+          std::vector<lightusd::legacy::value::point3f> points;
+          TEST_CHECK(decoded_points->get(lightusd::legacy::value::TimeCode::Default(), &points));
           TEST_CHECK(points.size() == 3);
         }
       }
@@ -960,7 +962,7 @@ def Mesh "AnimatedMesh"
       return;
     }
 
-    const value::TimeSamples *ts = points_attr.value().get_timesamples_ptr();
+    const lightusd::legacy::value::TimeSamples *ts = points_attr.value().get_timesamples_ptr();
     TEST_CHECK(ts != nullptr);
     if (!ts) {
       return;
@@ -973,9 +975,9 @@ def Mesh "AnimatedMesh"
       TEST_CHECK(math::is_close(samples[0].t, 1.0));
       TEST_CHECK(math::is_close(samples[1].t, 2.0));
       TEST_CHECK(math::is_close(samples[2].t, 3.0));
-      const auto *v0 = samples[0].value.as<std::vector<value::point3f>>();
-      const auto *v1 = samples[1].value.as<std::vector<value::point3f>>();
-      const auto *v2 = samples[2].value.as<std::vector<value::point3f>>();
+      const auto *v0 = samples[0].value.as<std::vector<lightusd::legacy::value::point3f>>();
+      const auto *v1 = samples[1].value.as<std::vector<lightusd::legacy::value::point3f>>();
+      const auto *v2 = samples[2].value.as<std::vector<lightusd::legacy::value::point3f>>();
       TEST_CHECK(v0 && v0->size() == 3);
       TEST_CHECK(v1 && v1->size() == 3);
       TEST_CHECK(v2 && v2->size() == 3);
@@ -989,8 +991,8 @@ def Mesh "AnimatedMesh"
       }
     }
 
-    std::vector<value::point3f> held_points;
-    TEST_CHECK(ts->get(&held_points, 2.0, value::TimeSampleInterpolationType::Held));
+    std::vector<lightusd::legacy::value::point3f> held_points;
+    TEST_CHECK(ts->get(&held_points, 2.0, lightusd::legacy::value::TimeSampleInterpolationType::Held));
     TEST_CHECK(held_points.size() == 3);
     if (held_points.size() == 3) {
       TEST_CHECK(math::is_close(held_points[1].x, 2.0f));

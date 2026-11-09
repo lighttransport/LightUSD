@@ -75,7 +75,7 @@
 
 // Extern template declarations for ParseBasicTypeArray
 // These templates are explicitly instantiated in ascii-parser-basetype.cc
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace ascii {
 
 // Int tuple types
@@ -110,9 +110,10 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -346,6 +347,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 }
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDA_READER

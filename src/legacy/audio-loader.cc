@@ -14,7 +14,7 @@
 
 #include "audio-loader.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace audio {
 
 namespace {
@@ -34,4 +34,5 @@ nonstd::expected<audio::AudioResult, std::string> LoadAudioFromMemory(
 }
 
 }  // namespace audio
+}  // namespace legacy
 }  // namespace lightusd

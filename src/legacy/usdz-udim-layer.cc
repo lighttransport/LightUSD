@@ -10,7 +10,7 @@
 
 #include "core/attribute.hh"
 #include "timesamples.hh"
-namespace lightusd::usdz {
+namespace lightusd { namespace legacy { namespace usdz {
 namespace {
 bool Paths(const PrimSpec& prim, const std::string& path,
            std::vector<std::string>* out, const udim::LayerAccess& access,
@@ -497,4 +497,6 @@ void LegacyUDIMLayer::setTargets(const std::string& p, const std::string& n,
     spec->props()[n].relationship().set(std::move(paths));
   }
 }
-}  // namespace lightusd::usdz
+}  // namespace usdz
+}  // namespace legacy
+}  // namespace lightusd::legacy::usdz

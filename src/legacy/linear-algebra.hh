@@ -4,7 +4,7 @@
 
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr float kFloatNormalizeEps = std::numeric_limits<float>::epsilon();
 constexpr double kDoubleNormalizeEps = std::numeric_limits<double>::epsilon();
@@ -81,4 +81,5 @@ inline double vdot(const value::normal3d &a, const value::normal3d &b)
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+}  // namespace legacy
 } // namespace lightusd

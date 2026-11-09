@@ -42,7 +42,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pprint {
 
 /// A std::streambuf that appends everything written to it to a std::string.
@@ -216,4 +216,5 @@ class ScratchRef {
 };
 
 }  // namespace pprint
+}  // namespace legacy
 }  // namespace lightusd

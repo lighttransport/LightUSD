@@ -6,7 +6,10 @@
 #include "tydra/threejs-exporter.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 int main() {
   // Create a simple OpenPBR material

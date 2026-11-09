@@ -124,8 +124,9 @@ bool WritePNG(const std::string &path, const lightusd::Image &img) {
                                       enc.value().size(), &werr);
 }
 
-size_t CountAggregateFaces(const lightusd::Layer &layer) {
+size_t CountAggregateFaces(const lightusd::legacy::Layer &layer) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   const PrimSpec *root = nullptr;
   std::string err;
   if (!layer.find_primspec_at(Path("/__LightUSD_MeshMerge", ""), &root,
@@ -147,8 +148,9 @@ size_t CountAggregateFaces(const lightusd::Layer &layer) {
   return total;
 }
 
-size_t CountAggregateMeshes(const lightusd::Layer &layer) {
+size_t CountAggregateMeshes(const lightusd::legacy::Layer &layer) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   const PrimSpec *root = nullptr;
   std::string err;
   if (!layer.find_primspec_at(Path("/__LightUSD_MeshMerge", ""), &root,
@@ -260,14 +262,14 @@ bool WriteTwoTexturedUSDA(const std::string &path, const std::string &tex0,
       &werr);
 }
 
-bool FindTextureFilePath(const lightusd::Prim &prim, std::string *out) {
-  const lightusd::Shader *shd = prim.as<lightusd::Shader>();
+bool FindTextureFilePath(const lightusd::legacy::Prim &prim, std::string *out) {
+  const lightusd::legacy::Shader *shd = prim.as<lightusd::legacy::Shader>();
   if (shd && shd->info_id == "UsdUVTexture") {
-    const lightusd::UsdUVTexture *tex = shd->value.as<lightusd::UsdUVTexture>();
+    const lightusd::legacy::UsdUVTexture *tex = shd->value.as<lightusd::legacy::UsdUVTexture>();
     if (tex) {
       const auto av = tex->file.get_value();
       if (av && av.value().is_scalar()) {
-        lightusd::value::AssetPath ap;
+        lightusd::legacy::value::AssetPath ap;
         if (av.value().get_scalar(&ap)) {
           *out = ap.GetAssetPath();
           return true;
@@ -283,7 +285,7 @@ bool FindTextureFilePath(const lightusd::Prim &prim, std::string *out) {
   return false;
 }
 
-bool FindTextureFilePath(const lightusd::Stage &stage, std::string *out) {
+bool FindTextureFilePath(const lightusd::legacy::Stage &stage, std::string *out) {
   for (const auto &prim : stage.root_prims()) {
     if (FindTextureFilePath(prim, out)) {
       return true;
@@ -313,6 +315,7 @@ std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
 // fpnge/fpng PNG encode -> decode roundtrip preserves pixels.
 void usdz_convert_png_roundtrip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Image img = MakeSolidImage(16, 12, 4, 10, 20, 30, 40);
   // Add a varying pixel to avoid trivial all-same encoding.
@@ -353,13 +356,14 @@ void usdz_convert_png_roundtrip_test(void) {
 // pointer before the lookup table. Alpha remains linear for RGBA.
 void usdz_convert_srgb_resize_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   for (int channels = 1; channels <= 4; ++channels) {
     for (uint8_t value : {uint8_t(0), uint8_t(128), uint8_t(255)}) {
       const Image img = MakeSolidImage(32, 16, channels, value, value, value, 200);
       Image out;
       std::string err;
-      const bool ok = tydra::ResizeImage(
-          img, 16, 8, &out, tydra::ResizeFilter::SRGB, &err);
+      const bool ok = lightusd::legacy::tydra::ResizeImage(
+          img, 16, 8, &out, lightusd::legacy::tydra::ResizeFilter::SRGB, &err);
       TEST_CHECK(ok);
       if (!ok) { TEST_MSG("sRGB resize: %s", err.c_str()); continue; }
       TEST_CHECK(out.width == 16 && out.height == 8 && out.channels == channels);
@@ -375,11 +379,12 @@ void usdz_convert_srgb_resize_test(void) {
 // ResizeImage downsamples and preserves channel count.
 void usdz_convert_resize_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Image img = MakeSolidImage(8, 8, 4, 50, 60, 70, 255);
   Image out;
   std::string err;
-  bool ok = tydra::ResizeImage(img, 4, 4, &out, tydra::ResizeFilter::Linear, &err);
+  bool ok = lightusd::legacy::tydra::ResizeImage(img, 4, 4, &out, lightusd::legacy::tydra::ResizeFilter::Linear, &err);
   TEST_CHECK(ok);
   if (!ok) {
     TEST_MSG("resize error: %s", err.c_str());
@@ -400,12 +405,13 @@ void usdz_convert_resize_test(void) {
 // PackChannels merges two single-source images into R/G.
 void usdz_convert_pack_channels_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Image red = MakeSolidImage(4, 4, 1, 111, 0, 0, 0);    // 1ch value 111
   Image grn = MakeSolidImage(4, 4, 1, 222, 0, 0, 0);    // 1ch value 222
 
   std::vector<Image> inputs = {red, grn};
-  tydra::ChannelPackSpec spec;
+  lightusd::legacy::tydra::ChannelPackSpec spec;
   spec.out_channels = 3;
   spec.r.input_index = 0;
   spec.r.channel = 0;
@@ -416,7 +422,7 @@ void usdz_convert_pack_channels_test(void) {
 
   Image packed;
   std::string err;
-  bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+  bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
   TEST_CHECK(ok);
   if (!ok) {
     TEST_MSG("pack error: %s", err.c_str());
@@ -436,11 +442,12 @@ void usdz_convert_pack_channels_test(void) {
 // represented with empty buffers and zero channels by callers.
 void usdz_convert_orm_scalar_fallback_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   std::vector<uint8_t> out;
   size_t out_w = 0;
   size_t out_h = 0;
-  bool ok = tydra::BuildOcclusionRoughnessMetallicTexture(
+  bool ok = lightusd::legacy::tydra::BuildOcclusionRoughnessMetallicTexture(
       0.25f, 0.5f, 0.75f,
       {}, 0, 0, 0, 0,
       {}, 0, 0, 0, 0,
@@ -460,11 +467,12 @@ void usdz_convert_orm_scalar_fallback_test(void) {
 
 void usdz_convert_orm_scalar_nonfinite_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   std::vector<uint8_t> out;
   size_t out_w = 0;
   size_t out_h = 0;
-  bool ok = tydra::BuildOcclusionRoughnessMetallicTexture(
+  bool ok = lightusd::legacy::tydra::BuildOcclusionRoughnessMetallicTexture(
       std::numeric_limits<float>::infinity(),
       -1000.0f,
       std::numeric_limits<float>::quiet_NaN(),
@@ -486,6 +494,7 @@ void usdz_convert_orm_scalar_nonfinite_test(void) {
 
 void usdz_convert_archive_collision_name_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string a_dir = lightusd::io::JoinPath(dir, "collision_a");
@@ -539,10 +548,11 @@ void usdz_convert_archive_collision_name_test(void) {
 // FitTexturesToBudget shrinks a set of textures to a tight byte budget.
 void usdz_convert_fit_budget_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
-  std::vector<tydra::FitTextureInput> inputs;
+  std::vector<lightusd::legacy::tydra::FitTextureInput> inputs;
   for (auto dim : {256, 512, 128}) {
-    tydra::FitTextureInput fi;
+    lightusd::legacy::tydra::FitTextureInput fi;
     fi.image = MakeNoisyImage(dim, dim, 3);
     fi.original_bytes = EncodePNG(fi.image);
     fi.ext = "png";
@@ -555,7 +565,7 @@ void usdz_convert_fit_budget_test(void) {
   for (const auto &fi : inputs) fullTotal += fi.original_bytes.size();
   TEST_CHECK(fullTotal > 0);
 
-  auto sumOut = [](const std::vector<tydra::FitTextureOutput> &outs) {
+  auto sumOut = [](const std::vector<lightusd::legacy::tydra::FitTextureOutput> &outs) {
     size_t s = 0;
     for (const auto &o : outs) s += o.bytes.size();
     return s;
@@ -563,14 +573,14 @@ void usdz_convert_fit_budget_test(void) {
 
   // --- Size strategy: tight budget should shrink dimensions. ---
   {
-    tydra::FitTextureOptions opt;
+    lightusd::legacy::tydra::FitTextureOptions opt;
     opt.target_total_bytes = fullTotal / 4;
-    opt.strategy = tydra::FitStrategy::Size;
+    opt.strategy = lightusd::legacy::tydra::FitStrategy::Size;
     opt.min_texture_size = 16;
 
-    std::vector<tydra::FitTextureOutput> outs;
+    std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
     std::string warn, err;
-    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    bool ok = lightusd::legacy::tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
     TEST_CHECK(ok);
     if (!ok) { TEST_MSG("fit(size) err: %s", err.c_str()); return; }
     TEST_CHECK(outs.size() == inputs.size());
@@ -584,14 +594,14 @@ void usdz_convert_fit_budget_test(void) {
 
   // --- Quality strategy: outputs are JPEG and smaller than full PNG. ---
   {
-    tydra::FitTextureOptions opt;
+    lightusd::legacy::tydra::FitTextureOptions opt;
     opt.target_total_bytes = fullTotal / 4;
-    opt.strategy = tydra::FitStrategy::Quality;
+    opt.strategy = lightusd::legacy::tydra::FitStrategy::Quality;
     opt.min_jpeg_quality = 20;
 
-    std::vector<tydra::FitTextureOutput> outs;
+    std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
     std::string warn, err;
-    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    bool ok = lightusd::legacy::tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
     TEST_CHECK(ok);
     if (!ok) { TEST_MSG("fit(quality) err: %s", err.c_str()); return; }
     TEST_CHECK(outs.size() == inputs.size());
@@ -603,6 +613,7 @@ void usdz_convert_fit_budget_test(void) {
 // End-to-end: USDA + on-disk PNG -> resized/re-encoded -> USDZ (validated).
 void usdz_convert_pipeline_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string png_path = lightusd::io::JoinPath(dir, "tex.png");
@@ -699,7 +710,7 @@ void usdz_convert_pipeline_test(void) {
     return;
   }
   std::string vwarn, verr;
-  bool valid = lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
+  bool valid = lightusd::legacy::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
                                       &vwarn, &verr);
   TEST_CHECK(valid);
   if (!valid) {
@@ -709,6 +720,7 @@ void usdz_convert_pipeline_test(void) {
 
 void usdz_convert_flat_output_size_stats_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string usda_path = lightusd::io::JoinPath(dir, "flat_stats.usda");
@@ -746,6 +758,7 @@ void usdz_convert_flat_output_size_stats_test(void) {
 
 void usdz_convert_usdz_root_layer_format_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string png_path = lightusd::io::JoinPath(dir, "root_format_tex.png");
@@ -805,6 +818,7 @@ void usdz_convert_usdz_root_layer_format_test(void) {
 
 void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string png_path = lightusd::io::JoinPath(dir, "arkit_tex.png");
@@ -863,6 +877,7 @@ void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
 // Standalone RepackTextureFiles: two grayscale PNGs -> packed RG image.
 void usdz_convert_repack_files_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string a_path = lightusd::io::JoinPath(dir, "gloss.png");
@@ -918,6 +933,7 @@ void usdz_convert_repack_files_test(void) {
 // JPEG encode -> decode roundtrip preserves approximate pixel values.
 void usdz_convert_jpeg_roundtrip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   // Use a solid-color image (JPEG is lossy, so avoid exact pixel comparisons
   // for high-frequency content).
@@ -962,6 +978,7 @@ void usdz_convert_jpeg_roundtrip_test(void) {
 // RemapTextureAssetPaths handles an empty stage gracefully (returns 0).
 void usdz_convert_remap_asset_paths_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Stage stage;
   std::map<std::string, std::string> remap;
@@ -974,6 +991,7 @@ void usdz_convert_remap_asset_paths_test(void) {
 
 void usdz_convert_regression_texture_remap_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = lightusd::io::JoinPath(TempDir(), "regression_remap");
   lightusd::io::CreateDirectories(dir);
@@ -1040,6 +1058,7 @@ void usdz_convert_regression_texture_remap_test(void) {
 
 void usdz_convert_regression_material_preview_dedupe_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1083,6 +1102,7 @@ void usdz_convert_regression_material_preview_dedupe_test(void) {
 
 void usdz_convert_regression_invalid_index_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1111,6 +1131,7 @@ void usdz_convert_regression_invalid_index_skip_test(void) {
 
 void usdz_convert_material_dedupe_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1153,6 +1174,7 @@ void usdz_convert_material_dedupe_test(void) {
 
 void usdz_convert_material_preview_atlas_fallback_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   {
     Layer layer;
@@ -1237,6 +1259,7 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
 
 void usdz_convert_material_preview_transitive_key_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1278,6 +1301,7 @@ void usdz_convert_material_preview_transitive_key_test(void) {
 
 void usdz_convert_geometry_merge_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1328,7 +1352,7 @@ void usdz_convert_geometry_merge_test(void) {
   TEST_CHECK(points_it != merged->props().end());
   if (points_it != merged->props().end()) {
     auto points =
-        points_it->second.get_attribute().get_value<std::vector<value::point3f>>();
+        points_it->second.get_attribute().get_value<std::vector<lightusd::legacy::value::point3f>>();
     TEST_CHECK(points.has_value());
     if (points && points->size() == 6) {
       TEST_CHECK((*points)[0].x == 1.0f);
@@ -1357,7 +1381,7 @@ void usdz_convert_geometry_merge_test(void) {
     TEST_CHECK(attr.metas().has_interpolation());
     TEST_CHECK(attr.metas().get_interpolation_enum() ==
                Interpolation::FaceVarying);
-    auto normals = attr.get_value<std::vector<value::normal3f>>();
+    auto normals = attr.get_value<std::vector<lightusd::legacy::value::normal3f>>();
     TEST_CHECK(normals.has_value());
     if (normals && normals->size() == 6) {
       TEST_CHECK((*normals)[0].z == 1.0f);
@@ -1375,7 +1399,7 @@ void usdz_convert_geometry_merge_test(void) {
     TEST_CHECK(attr.metas().has_interpolation());
     TEST_CHECK(attr.metas().get_interpolation_enum() ==
                Interpolation::FaceVarying);
-    auto st = attr.get_value<std::vector<value::texcoord2f>>();
+    auto st = attr.get_value<std::vector<lightusd::legacy::value::texcoord2f>>();
     TEST_CHECK(st.has_value());
     if (st && st->size() == 6) {
       TEST_CHECK((*st)[0].s == 0.0f);
@@ -1392,6 +1416,7 @@ void usdz_convert_geometry_merge_test(void) {
 
 void usdz_convert_geometry_subset_merge_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1420,6 +1445,7 @@ void usdz_convert_geometry_subset_merge_test(void) {
 
 void usdz_convert_geometry_subset_partition_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1450,6 +1476,7 @@ void usdz_convert_geometry_subset_partition_test(void) {
 
 void usdz_convert_geometry_subset_overlap_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1478,6 +1505,7 @@ void usdz_convert_geometry_subset_overlap_skip_test(void) {
 
 void usdz_convert_geometry_descendant_material_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1505,6 +1533,7 @@ void usdz_convert_geometry_descendant_material_skip_test(void) {
 
 void usdz_convert_geometry_authored_semantics_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1532,6 +1561,7 @@ void usdz_convert_geometry_authored_semantics_skip_test(void) {
 
 void usdz_convert_geometry_normal_inverse_transpose_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1564,7 +1594,7 @@ void usdz_convert_geometry_normal_inverse_transpose_test(void) {
   TEST_CHECK(normals_it != merged->props().end());
   if (normals_it != merged->props().end()) {
     auto normals =
-        normals_it->second.get_attribute().get_value<std::vector<value::normal3f>>();
+        normals_it->second.get_attribute().get_value<std::vector<lightusd::legacy::value::normal3f>>();
     TEST_CHECK(normals.has_value());
     if (normals && !normals->empty()) {
       TEST_CHECK(std::fabs((*normals)[0].x - 0.4472136f) < 1.0e-5f);
@@ -1576,6 +1606,7 @@ void usdz_convert_geometry_normal_inverse_transpose_test(void) {
 
 void usdz_convert_geometry_multi_binding_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1605,6 +1636,7 @@ void usdz_convert_geometry_multi_binding_skip_test(void) {
 
 void usdz_convert_geometry_display_constant_size_skip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Layer layer;
   std::string warn, err;
@@ -1634,6 +1666,7 @@ void usdz_convert_geometry_display_constant_size_skip_test(void) {
 // Error-path: invalid inputs should return errors, not crash.
 void usdz_convert_error_path_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   // 1) Convert with nonexistent input file.
   {
@@ -1663,7 +1696,7 @@ void usdz_convert_error_path_test(void) {
     Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
     Image out;
     std::string err;
-    bool ok = tydra::ResizeImage(img, 0, 0, &out, tydra::ResizeFilter::Linear,
+    bool ok = lightusd::legacy::tydra::ResizeImage(img, 0, 0, &out, lightusd::legacy::tydra::ResizeFilter::Linear,
                                  &err);
     TEST_CHECK(!ok);
   }
@@ -1672,6 +1705,7 @@ void usdz_convert_error_path_test(void) {
 // Adversarial: feed truncated/corrupted image data to decoders; must not crash.
 void usdz_convert_adversarial_image_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   // 1) Truncated PNG (valid header, then garbage).
   {
@@ -1713,8 +1747,8 @@ void usdz_convert_adversarial_image_test(void) {
     Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
     Image out;
     std::string err;
-    bool ok = tydra::ResizeImage(img, 20000, 20000, &out,
-                                 tydra::ResizeFilter::Linear, &err);
+    bool ok = lightusd::legacy::tydra::ResizeImage(img, 20000, 20000, &out,
+                                 lightusd::legacy::tydra::ResizeFilter::Linear, &err);
     TEST_CHECK(!ok);
     TEST_CHECK(!err.empty());
   }
@@ -1724,8 +1758,8 @@ void usdz_convert_adversarial_image_test(void) {
     Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
     Image out;
     std::string err;
-    bool ok = tydra::ResizeImage(img, -1, -1, &out,
-                                 tydra::ResizeFilter::Linear, &err);
+    bool ok = lightusd::legacy::tydra::ResizeImage(img, -1, -1, &out,
+                                 lightusd::legacy::tydra::ResizeFilter::Linear, &err);
     TEST_CHECK(!ok);
   }
 }
@@ -1733,17 +1767,18 @@ void usdz_convert_adversarial_image_test(void) {
 // PackChannels error paths.
 void usdz_convert_pack_channels_error_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   // 1) Empty inputs vector.
   {
     std::vector<Image> inputs;
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 3;
     spec.r.input_index = 0;
     spec.r.channel = 0;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(!ok);
     TEST_CHECK(!err.empty());
   }
@@ -1751,35 +1786,35 @@ void usdz_convert_pack_channels_error_test(void) {
   // 2) out_channels = 0.
   {
     std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 0;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(!ok);
   }
 
   // 3) out_channels = 5.
   {
     std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 5;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(!ok);
   }
 
   // 4) Input index out of range.
   {
     std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 1;
     spec.r.input_index = 99;
     spec.r.channel = 0;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(!ok);
   }
 
@@ -1790,7 +1825,7 @@ void usdz_convert_pack_channels_error_test(void) {
     Image b = MakeSolidImage(4, 4, 1, 150, 0, 0, 0);
     Image a = MakeSolidImage(4, 4, 1, 200, 0, 0, 0);
     std::vector<Image> inputs = {r, g, b, a};
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 4;
     spec.r.input_index = 0; spec.r.channel = 0;
     spec.g.input_index = 1; spec.g.channel = 0;
@@ -1798,7 +1833,7 @@ void usdz_convert_pack_channels_error_test(void) {
     spec.a.input_index = 3; spec.a.channel = 0;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(ok);
     if (ok) {
       TEST_CHECK(packed.channels == 4);
@@ -1818,13 +1853,13 @@ void usdz_convert_pack_channels_error_test(void) {
     Image bad = MakeSolidImage(4, 4, 1, 10, 0, 0, 0);
     bad.data.resize(1);
     std::vector<Image> inputs = {bad};
-    tydra::ChannelPackSpec spec;
+    lightusd::legacy::tydra::ChannelPackSpec spec;
     spec.out_channels = 1;
     spec.r.input_index = 0;
     spec.r.channel = 0;
     Image packed;
     std::string err;
-    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    bool ok = lightusd::legacy::tydra::PackChannels(inputs, spec, &packed, &err);
     TEST_CHECK(!ok);
     TEST_CHECK(!err.empty());
   }
@@ -1848,39 +1883,40 @@ void usdz_convert_pack_channels_error_test(void) {
 // FitTexturesToBudget error paths and edge cases.
 void usdz_convert_fit_budget_error_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   // 1) Empty inputs.
   {
-    std::vector<tydra::FitTextureInput> inputs;
-    tydra::FitTextureOptions opt;
+    std::vector<lightusd::legacy::tydra::FitTextureInput> inputs;
+    lightusd::legacy::tydra::FitTextureOptions opt;
     opt.target_total_bytes = 1000;
-    opt.strategy = tydra::FitStrategy::Size;
+    opt.strategy = lightusd::legacy::tydra::FitStrategy::Size;
     opt.min_texture_size = 16;
-    std::vector<tydra::FitTextureOutput> outs;
+    std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
     std::string warn, err;
-    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    bool ok = lightusd::legacy::tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
     TEST_CHECK(ok);
     TEST_CHECK(outs.empty());
   }
 
   // 2) Non-reencodable textures only.
   {
-    std::vector<tydra::FitTextureInput> inputs;
+    std::vector<lightusd::legacy::tydra::FitTextureInput> inputs;
     for (int i = 0; i < 3; i++) {
-      tydra::FitTextureInput fi;
+      lightusd::legacy::tydra::FitTextureInput fi;
       fi.image = MakeSolidImage(32, 32, 3, 100, 100, 100, 255);
       fi.original_bytes = EncodePNG(fi.image);
       fi.ext = "png";
       fi.reencodable = false;
       inputs.push_back(std::move(fi));
     }
-    tydra::FitTextureOptions opt;
+    lightusd::legacy::tydra::FitTextureOptions opt;
     opt.target_total_bytes = 100;
-    opt.strategy = tydra::FitStrategy::Size;
+    opt.strategy = lightusd::legacy::tydra::FitStrategy::Size;
     opt.min_texture_size = 8;
-    std::vector<tydra::FitTextureOutput> outs;
+    std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
     std::string warn, err;
-    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    bool ok = lightusd::legacy::tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
     TEST_CHECK(ok);
     TEST_CHECK(outs.size() == inputs.size());
   }
@@ -1890,8 +1926,8 @@ void usdz_convert_fit_budget_error_test(void) {
     Image img = MakeSolidImage(16, 8, 3, 128, 128, 128, 255);
     Image out;
     std::string err;
-    bool ok = tydra::ResizeImage(img, 8, 4, &out,
-                                 tydra::ResizeFilter::SRGB, &err);
+    bool ok = lightusd::legacy::tydra::ResizeImage(img, 8, 4, &out,
+                                 lightusd::legacy::tydra::ResizeFilter::SRGB, &err);
     TEST_CHECK(ok);
     if (ok) {
       TEST_CHECK(out.width == 8);
@@ -1906,8 +1942,8 @@ void usdz_convert_fit_budget_error_test(void) {
     img.colorspace = "sRGB";
     Image out;
     std::string err;
-    bool ok = tydra::ResizeImage(img, 8, 8, &out,
-                                 tydra::ResizeFilter::Auto, &err);
+    bool ok = lightusd::legacy::tydra::ResizeImage(img, 8, 8, &out,
+                                 lightusd::legacy::tydra::ResizeFilter::Auto, &err);
     TEST_CHECK(ok);
     if (ok) {
       TEST_CHECK(out.width == 8);
@@ -1918,27 +1954,27 @@ void usdz_convert_fit_budget_error_test(void) {
   // 5) Fixed overhead over budget should still shrink reencodable textures
   // to the configured floor instead of keeping the largest setting.
   {
-    std::vector<tydra::FitTextureInput> inputs;
-    tydra::FitTextureInput shrinkable;
+    std::vector<lightusd::legacy::tydra::FitTextureInput> inputs;
+    lightusd::legacy::tydra::FitTextureInput shrinkable;
     shrinkable.image = MakeNoisyImage(128, 128, 3);
     shrinkable.ext = "png";
     shrinkable.reencodable = true;
     inputs.push_back(std::move(shrinkable));
 
-    tydra::FitTextureInput fixed;
+    lightusd::legacy::tydra::FitTextureInput fixed;
     fixed.original_bytes.assign(1024, uint8_t(7));
     fixed.ext = "exr";
     fixed.reencodable = false;
     inputs.push_back(std::move(fixed));
 
-    tydra::FitTextureOptions opt;
+    lightusd::legacy::tydra::FitTextureOptions opt;
     opt.target_total_bytes = 16;
-    opt.strategy = tydra::FitStrategy::Size;
+    opt.strategy = lightusd::legacy::tydra::FitStrategy::Size;
     opt.min_texture_size = 16;
 
-    std::vector<tydra::FitTextureOutput> outs;
+    std::vector<lightusd::legacy::tydra::FitTextureOutput> outs;
     std::string warn, err;
-    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    bool ok = lightusd::legacy::tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
     TEST_CHECK(ok);
     if (ok) {
       TEST_CHECK(outs.size() == 2);
@@ -1951,6 +1987,7 @@ void usdz_convert_fit_budget_error_test(void) {
 
 void usdz_convert_missing_texture_reference_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
 
@@ -2015,6 +2052,7 @@ void usdz_convert_missing_texture_reference_test(void) {
 // Pipeline test with JPEG output format.
 void usdz_convert_pipeline_jpeg_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   const std::string dir = TempDir();
   const std::string png_path = lightusd::io::JoinPath(dir, "tex_jpg.png");
@@ -2095,7 +2133,7 @@ void usdz_convert_pipeline_jpeg_test(void) {
   TEST_CHECK(rok);
   if (!rok) return;
   std::string vwarn, verr;
-  bool valid = lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
+  bool valid = lightusd::legacy::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
                                       &vwarn, &verr);
   TEST_CHECK(valid);
   if (!valid) {
@@ -2119,6 +2157,7 @@ void usdz_convert_cleanup_test(void) {
 // (which made every successful EXR decode report failure).
 void usdz_convert_exr_roundtrip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Image img;
   img.width = 4; img.height = 4; img.channels = 4; img.bpp = 32;
@@ -2165,6 +2204,7 @@ void usdz_convert_exr_roundtrip_test(void) {
 // fp32 (HDR) resize support in ResizeImage (previously 8-bit only).
 void usdz_convert_resize_float_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
 
   Image img;
   img.width = 8; img.height = 8; img.channels = 3; img.bpp = 32;
@@ -2177,7 +2217,7 @@ void usdz_convert_resize_float_test(void) {
 
   Image out;
   std::string err;
-  bool ok = tydra::ResizeImage(img, 4, 4, &out, tydra::ResizeFilter::Auto, &err);
+  bool ok = lightusd::legacy::tydra::ResizeImage(img, 4, 4, &out, lightusd::legacy::tydra::ResizeFilter::Auto, &err);
   TEST_CHECK(ok);
   if (!ok) { TEST_MSG("float resize: %s", err.c_str()); return; }
   TEST_CHECK(out.width == 4 && out.height == 4 && out.channels == 3);
@@ -2188,6 +2228,7 @@ void usdz_convert_resize_float_test(void) {
 
 void usdz_convert_udim_bake_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   const std::string dir = io::JoinPath(TempDir(), "udim_bake");
   TEST_ASSERT(io::CreateDirectories(dir));
   std::string err;
@@ -2214,7 +2255,7 @@ void usdz_convert_udim_bake_test(void) {
   TEST_ASSERT(LoadLayerFromFile(options.output, &layer, &warn, &err));
   auto root = layer.primspecs().find("Texture");
   TEST_ASSERT(root != layer.primspecs().end());
-  value::AssetPath asset;
+  lightusd::legacy::value::AssetPath asset;
   TEST_ASSERT(root->second.props().at("inputs:file").get_attribute().get_value(&asset));
   TEST_CHECK(asset.GetAssetPath().find("<UDIM>") == std::string::npos);
   auto image = image::LoadImageFromFile(io::JoinPath(dir, asset.GetAssetPath()));
@@ -2262,6 +2303,7 @@ void usdz_convert_udim_bake_test(void) {
 
 void usdz_convert_udim_layout_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   udim::Options o; o.mode = udim::BakeMode::Dense;
   udim::Layout l; std::string err;
   TEST_ASSERT(udim::MakeLayout({1001, 1101}, 4, 8, o, &l, &err));
@@ -2311,6 +2353,7 @@ void usdz_convert_udim_layout_test(void) {
 
 void usdz_convert_udim_clip_test(void) {
   using namespace lightusd;
+  using namespace lightusd::legacy;  // NOLINT
   udim::Options options; options.mode = udim::BakeMode::Dense;
   udim::UVSet uv; uv.name = "baked";
   std::string error;

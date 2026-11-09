@@ -27,7 +27,7 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace detail {
 // Round `n` up to the next power of two (>= 1). Used to size the ring so the
@@ -363,4 +363,5 @@ class TaskQueueFunc {
   std::atomic<size_t> _read_pos;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

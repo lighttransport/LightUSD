@@ -22,6 +22,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -125,17 +127,17 @@ GeomMesh generate_mesh(const std::string& name, size_t points_size, size_t indic
   mesh.name = name;
 
   // Generate points
-  std::vector<value::point3f> points;
+  std::vector<lightusd::legacy::value::point3f> points;
   points.reserve(points_size);
   for (size_t i = 0; i < points_size; i++) {
     float x = static_cast<float>(rand() % 1000) / 10.0f;
     float y = static_cast<float>(rand() % 1000) / 10.0f;
     float z = static_cast<float>(rand() % 1000) / 10.0f;
-    points.push_back(value::point3f{x, y, z});
+    points.push_back(lightusd::legacy::value::point3f{x, y, z});
   }
 
   // Set points as attribute
-  TypedAttribute<Animatable<std::vector<value::point3f>>> points_attr;
+  TypedAttribute<Animatable<std::vector<lightusd::legacy::value::point3f>>> points_attr;
   points_attr.set_value(points);
   mesh.points = points_attr;
 
@@ -176,7 +178,7 @@ Prim generate_prim_with_timesamples(
   GeomMesh mesh = generate_mesh(name, array_size, array_size * 3);
 
   // Create Prim with the mesh and set the name
-  Prim prim(name, value::Value(mesh));
+  Prim prim(name, lightusd::legacy::value::Value(mesh));
 
   // Note: Timesamples properties removed for simplicity
   // The mesh already contains arrays that test array printing performance

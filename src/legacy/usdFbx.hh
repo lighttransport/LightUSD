@@ -19,7 +19,7 @@
 
 class GPrim;
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace usdFbx {
 
@@ -28,4 +28,5 @@ bool ReadFbxFromFile(const std::string &filepath, GPrim *prim, std::string *err 
 
 } // namespace usdFbx
 
+}  // namespace legacy
 } // namespace lightusd

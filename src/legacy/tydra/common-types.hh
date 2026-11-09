@@ -6,7 +6,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace common {
 
@@ -134,5 +134,6 @@ private:
 
 }  // namespace common
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 

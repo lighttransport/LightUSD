@@ -49,7 +49,7 @@
 // guard the operands to a finite range before comparing).
 #include "math-util.inc"
 
-// Namespace alias to avoid collision between lightusd::crate and ::crate (path library)
+// Namespace alias to avoid collision between lightusd::legacy::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
 // Disable specific clang warnings for this file
@@ -71,7 +71,7 @@ namespace pathlib = ::crate;
 #endif
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 CrateWriter::InternSink::~InternSink() = default;
@@ -324,7 +324,7 @@ namespace {
 // prim-then-its-own-properties interleave, which made the column cycle). On a
 // 4000-mesh layer this is the difference between a 24 KB and a sub-KB SPECS
 // section. Property specs are leaves, so their relative order is free.
-std::string BuildCratePathSortKeyImpl(const lightusd::Path& path) {
+std::string BuildCratePathSortKeyImpl(const lightusd::legacy::Path& path) {
   const std::string& prim = path.prim_part();
   const std::string& prop = path.prop_part();
   std::string key;
@@ -357,7 +357,7 @@ std::string BuildCratePathSortKeyImpl(const lightusd::Path& path) {
   return key;
 }
 
-std::string BuildCratePathSortKey(const lightusd::Path& path) {
+std::string BuildCratePathSortKey(const lightusd::legacy::Path& path) {
   const bool is_property = !path.prop_part().empty();
   std::string key;
   key.reserve(path.prim_part().size() + path.prop_part().size() + 4);
@@ -1371,7 +1371,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
           !p.variant_selection_raw().empty()) {
         all_simple = false;
       } else {
-        const lightusd::tstring_view prim = p.prim_part();
+        const lightusd::legacy::tstring_view prim = p.prim_part();
         const char* pd = prim.c_str();
         for (size_t ci = 0; ci < prim.size(); ci++) {
           const char c = pd[ci];
@@ -1389,7 +1389,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
           }
         }
         if (all_simple) {
-          const lightusd::tstring_view prop = p.prop_part();
+          const lightusd::legacy::tstring_view prop = p.prop_part();
           const char* qd = prop.c_str();
           for (size_t ci = 0; ci < prop.size(); ci++) {
             if (static_cast<unsigned char>(qd[ci]) <= '/') {
@@ -3104,6 +3104,7 @@ std::string CrateWriter::GetValidationSummary() const {
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

@@ -2,7 +2,7 @@
 // https://gist.github.com/calebh/fd00632d9c616d4b0c14e7c2865f3085
 //
 // Modification by Syoyo Fujita.
-// - Use lightusd::value::TypeTraits for type_id
+// - Use lightusd::legacy::value::TypeTraits for type_id
 // - Disable exception
 // - Implement set and get, get_if
 //
@@ -44,7 +44,7 @@ For more information, please refer to <http://unlicense.org/>
 #include "nonstd/optional.hpp" // for optional<T>& get()
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace variant_detail {
 
@@ -338,4 +338,5 @@ DEFINE_TYPE_TRAIT(monostate, "monostate", TYPE_ID_MONOSTATE, 1);
 #pragma clang diagnostic pop
 #endif
 
+}  // namespace legacy
 }  // namespace lightusd

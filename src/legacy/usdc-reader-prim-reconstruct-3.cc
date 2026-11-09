@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(PluginLightFilter);
@@ -25,4 +25,5 @@ INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

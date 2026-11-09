@@ -29,7 +29,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 const PrimMeta *GetPrimMeta(const value::Value &v) {
   // Lookup PrimMeta variable in Prim class
@@ -542,4 +542,5 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
 }
 
 
+}  // namespace legacy
 }  // namespace lightusd

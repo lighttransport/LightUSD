@@ -12,7 +12,7 @@
 
 #include "compiler-features.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Simple Python-like OrderedDict implementation.
@@ -160,4 +160,5 @@ class ordered_dict {
   std::map<std::string, T> _m;
 };
 
+}  // namespace legacy
 }  // namespace lightusd

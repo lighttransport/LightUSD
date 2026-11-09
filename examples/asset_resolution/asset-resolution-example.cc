@@ -138,9 +138,9 @@ def "dora" {
 
   std::string warn, err;
 
-  lightusd::AssetResolutionResolver resolver;
+  lightusd::legacy::AssetResolutionResolver resolver;
   // Register filesystem handler for `.my` asset.
-  lightusd::AssetResolutionHandler ar_handler;
+  lightusd::legacy::AssetResolutionHandler ar_handler;
   ar_handler.resolve_fun = MyARResolve;
   ar_handler.size_fun = MyARSize;
   ar_handler.read_fun = MyARRead;
@@ -148,8 +148,8 @@ def "dora" {
   ar_handler.userdata = nullptr;   // not used in this example;
   resolver.register_asset_resolution_handler("usda", ar_handler);
 
-  lightusd::Layer layer;
-  bool ret = lightusd::LoadLayerFromAsset(resolver, input_usd_name, &layer,
+  lightusd::legacy::Layer layer;
+  bool ret = lightusd::legacy::LoadLayerFromAsset(resolver, input_usd_name, &layer,
                                           &warn, &err);
 
   if (warn.size()) {

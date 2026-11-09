@@ -14,7 +14,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct AssetInfo {
   // builtin fields
@@ -217,4 +217,5 @@ DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -15,7 +15,7 @@
 
 #include "nonstd/optional.hpp"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations - we'll include the full types in the implementation
 class PrimSpec;
@@ -188,4 +188,5 @@ class Layer {
 
 };
 
+}  // namespace legacy
 }  // namespace lightusd

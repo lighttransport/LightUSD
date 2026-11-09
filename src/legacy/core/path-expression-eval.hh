@@ -17,7 +17,7 @@
 
 #include "core/path-expression.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Caller-provided hooks. Both are optional; when unset the matcher evaluates
 // structurally (predicates pass, references match nothing).
@@ -47,4 +47,5 @@ bool MatchPattern(const PathPattern &pattern, const std::string &path,
 bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
                const PathExpressionEvalContext &ctx = {});
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -3,7 +3,7 @@
 #include "mtlx-simple-parser.hh"
 #include <cstring>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace mtlx {
 
 bool SimpleXMLParser::Parse(const std::string& xml) {
@@ -129,4 +129,5 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
 }
 
 } // namespace mtlx
+}  // namespace legacy
 } // namespace lightusd

@@ -8,7 +8,10 @@
 #include "value-types.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 // Helper function to check if two arrays are equal
 template<typename T>

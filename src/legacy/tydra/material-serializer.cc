@@ -25,7 +25,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -601,4 +601,5 @@ nonstd::expected<std::string, std::string> serializeLight(
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

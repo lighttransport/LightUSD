@@ -11,7 +11,7 @@
 #include "usdShade.hh"
 #include "usdz-udim-layer.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdz {
 udim::Options UDIMOptions(const UsdzConvertOptions& o) {
   udim::Options r;
@@ -168,4 +168,5 @@ bool BakeUDIMInLayer(const UsdzConvertOptions& options, Layer* layer,
   return udim::ApplyPlans(access, plans, geometry_options, error);
 }
 }  // namespace usdz
+}  // namespace legacy
 }  // namespace lightusd

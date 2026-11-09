@@ -286,7 +286,7 @@ struct BenchResult {
 
 namespace legacy_bench {
 
-void HashVertexAttribute(const lightusd::tydra::VertexAttribute &va,
+void HashVertexAttribute(const lightusd::legacy::tydra::VertexAttribute &va,
                          Hasher *hsh) {
   hsh->Str(va.name);
   hsh->Pod(va.format);
@@ -299,7 +299,7 @@ void HashVertexAttribute(const lightusd::tydra::VertexAttribute &va,
   hsh->Pod(va.variability);
 }
 
-void HashNode(const lightusd::tydra::Node &node, Hasher *hsh) {
+void HashNode(const lightusd::legacy::tydra::Node &node, Hasher *hsh) {
   hsh->Str(node.abs_path);
   hsh->U64(uint64_t(node.id));
   hsh->Pod(node.local_matrix);
@@ -310,7 +310,7 @@ void HashNode(const lightusd::tydra::Node &node, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
+uint64_t HashScene(const lightusd::legacy::tydra::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -326,7 +326,7 @@ uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
   for (const auto &m : scene.meshes) {
     hsh.Str(m.abs_path);
     hsh.U64(m.points.size());
-    hsh.Bytes(m.points.data(), m.points.size() * sizeof(lightusd::tydra::vec3));
+    hsh.Bytes(m.points.data(), m.points.size() * sizeof(lightusd::legacy::tydra::vec3));
     hsh.U64(m.faceVertexIndices().size());
     hsh.Bytes(m.faceVertexIndices().data(),
               m.faceVertexIndices().size() * sizeof(uint32_t));
@@ -365,24 +365,24 @@ uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int num_threads) {
   BenchResult res;
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn, err;
-  if (!lightusd::LoadUSDFromFile(path, &stage, &warn, &err)) {
+  if (!lightusd::legacy::LoadUSDFromFile(path, &stage, &warn, &err)) {
     res.err = "load failed: " + err;
     if (!warn.empty()) res.err += " warn: " + warn;
     return res;
   }
 
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   if (num_threads != -2) {
     // -2 keeps the config default (auto); otherwise override for A/B runs.
     env.scene_config.num_threads = num_threads;
   }
 
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::vector<double> times;
   for (int it = 0; it < iters; it++) {
     const auto t0 = std::chrono::steady_clock::now();

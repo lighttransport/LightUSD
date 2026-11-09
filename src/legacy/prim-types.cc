@@ -31,7 +31,7 @@
 
 // PushError macro removed - Layer implementation moved to layer.cc
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 template<class InputIt1, class InputIt2>
 bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
@@ -1596,4 +1596,5 @@ size_t Attribute::estimate_actual_usage() const {
   return total;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

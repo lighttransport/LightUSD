@@ -16,7 +16,7 @@
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -413,7 +413,7 @@ bool ConvertPhysicsToJson(
       // key. Used to surface PhysX (`physxJoint:* / physxLimit:*`) and
       // Newton (`state:*:physics:*`) attrs that aren't consumed into any
       // typed schema struct. Returns true on success.
-      auto getNum = [](const std::map<std::string, lightusd::Property> &props,
+      auto getNum = [](const std::map<std::string, lightusd::legacy::Property> &props,
                        const std::string &key, double *out) -> bool {
         auto it = props.find(key);
         if (it == props.end()) return false;
@@ -426,7 +426,7 @@ bool ConvertPhysicsToJson(
 
       auto emitJoint = [&](const std::string &path, const std::string &type,
                            const PhysicsJointBase &base,
-                           const std::map<std::string, lightusd::Property> &props,
+                           const std::map<std::string, lightusd::legacy::Property> &props,
                            auto emitTypedFields) {
         if (!first) ss << ",\n";
         first = false;
@@ -754,4 +754,5 @@ bool ConvertPhysicsToJson(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

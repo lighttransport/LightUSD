@@ -16,7 +16,7 @@
 #include "usdAR.hh"
 #include "usdMedia.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -254,4 +254,5 @@ bool ConvertARToJson(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

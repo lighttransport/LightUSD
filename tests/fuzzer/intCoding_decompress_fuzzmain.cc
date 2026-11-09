@@ -25,7 +25,7 @@ static void parse_intCoding4(const uint8_t *data, size_t size)
     return;
   }
 
-  using Compressor = lightusd::Usd_IntegerCompression;
+  using Compressor = lightusd::legacy::Usd_IntegerCompression;
   size_t compBufferSize = Compressor::GetCompressedBufferSize(n);
 
 
@@ -45,7 +45,7 @@ static void parse_intCoding4(const uint8_t *data, size_t size)
     return;
   }
 
-  if (compBufferSize > lightusd::LZ4Compression::GetMaxInputSize()) {
+  if (compBufferSize > lightusd::legacy::LZ4Compression::GetMaxInputSize()) {
     return;
   }
 

@@ -58,7 +58,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -3871,4 +3871,5 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 }
 
 } // namespace crate
+}  // namespace legacy
 } // namespace lightusd

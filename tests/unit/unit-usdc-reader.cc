@@ -28,6 +28,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ---------------------------------------------------------------------------
 // Helper: parse USDA, write USDC in-memory, read back to Stage
 // ---------------------------------------------------------------------------
@@ -82,7 +84,7 @@ def Camera "cam" {
     TEST_ASSERT(usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2));
 
     StreamReader sr(bytes.data(), bytes.size(), /* swap_endian */ false);
-    lightusd::crate::CrateReader reader(&sr, {});
+    lightusd::legacy::crate::CrateReader reader(&sr, {});
     TEST_ASSERT(reader.ReadBootStrap());
     TEST_ASSERT(reader.ReadTOC());
     TEST_ASSERT(reader.ReadTokens());
@@ -97,7 +99,7 @@ def Camera "cam" {
       if (!path || path->find("radius") == std::string::npos) {
         continue;
       }
-      lightusd::crate::FieldValuePairVector pairs;
+      lightusd::legacy::crate::FieldValuePairVector pairs;
       TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
       for (const auto &pair : pairs) {
         if (pair.first != "default") {
@@ -140,7 +142,7 @@ def Camera "cam" {
             const GeomSphere *sp2 = (*r2)->as<GeomSphere>();
             if (sp2) {
               double v2 = -1;
-              sp2->radius.get_value().get(value::TimeCode::Default(), &v2);
+              sp2->radius.get_value().get(lightusd::legacy::value::TimeCode::Default(), &v2);
               TEST_CHECK(math::is_close(v2, 2.5));
               TEST_MSG("USDA-only radius: %f", v2);
             }
@@ -149,7 +151,7 @@ def Camera "cam" {
 
         double val = -999.0;
         const auto &anim = sp->radius.get_value();
-        bool got = anim.get(value::TimeCode::Default(), &val);
+        bool got = anim.get(lightusd::legacy::value::TimeCode::Default(), &val);
         TEST_CHECK(got);
         if (got) {
           TEST_CHECK(math::is_close(val, 2.5));
@@ -167,7 +169,7 @@ def Camera "cam" {
       TEST_CHECK(cam != nullptr);
       if (cam) {
         float val;
-        bool got = cam->focalLength.get_value().get(value::TimeCode::Default(), &val);
+        bool got = cam->focalLength.get_value().get(lightusd::legacy::value::TimeCode::Default(), &val);
         TEST_CHECK(got);
         if (got) { TEST_CHECK(math::is_close(val, 50.0f)); }
       }
@@ -259,7 +261,7 @@ def Skeleton "skel" {
       const Skeleton *sk = (*r)->as<Skeleton>();
       TEST_CHECK(sk != nullptr);
       if (sk && sk->bindTransforms.has_value()) {
-        std::vector<value::matrix4d> bt;
+        std::vector<lightusd::legacy::value::matrix4d> bt;
         sk->bindTransforms.get_value(&bt);
         TEST_CHECK(bt.size() == 1);
       }
@@ -518,52 +520,52 @@ def Material "mat" {
     std::string warn2;
     std::string err2;
     auto stream =
-        std::make_unique<lightusd::experimental::MemoryOutputStream>();
+        std::make_unique<lightusd::legacy::experimental::MemoryOutputStream>();
     auto *stream_ptr = stream.get();
-    lightusd::experimental::CrateWriter writer(std::move(stream));
+    lightusd::legacy::experimental::CrateWriter writer(std::move(stream));
 
     TEST_CHECK(writer.Open(&build_err));
     if (!build_err.empty()) {
       TEST_MSG("failed to open writer: %s", build_err.c_str());
     }
 
-    lightusd::crate::FieldValuePairVector pseudo_fields;
+    lightusd::legacy::crate::FieldValuePairVector pseudo_fields;
     TEST_CHECK(writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields,
                             &build_err));
 
-    lightusd::crate::FieldValuePairVector mat_fields;
-    lightusd::crate::CrateValue spec_value;
+    lightusd::legacy::crate::FieldValuePairVector mat_fields;
+    lightusd::legacy::crate::CrateValue spec_value;
     spec_value.Set(Specifier::Def);
     mat_fields.push_back({"specifier", spec_value});
-    lightusd::crate::CrateValue type_name_value;
-    type_name_value.Set(value::token("Material"));
+    lightusd::legacy::crate::CrateValue type_name_value;
+    type_name_value.Set(lightusd::legacy::value::token("Material"));
     mat_fields.push_back({"typeName", type_name_value});
     TEST_CHECK(writer.AddSpec(Path("/mat", ""), SpecType::Prim, mat_fields,
                             &build_err));
 
-    lightusd::crate::FieldValuePairVector mat_empty_fields = mat_fields;
+    lightusd::legacy::crate::FieldValuePairVector mat_empty_fields = mat_fields;
     TEST_CHECK(writer.AddSpec(Path("/mat_empty", ""), SpecType::Prim,
                             mat_empty_fields, &build_err));
 
-    lightusd::crate::FieldValuePairVector conn_fields;
-    lightusd::crate::CrateValue target_paths;
+    lightusd::legacy::crate::FieldValuePairVector conn_fields;
+    lightusd::legacy::crate::CrateValue target_paths;
     std::vector<Path> conn_targets;
     conn_targets.push_back(Path("/surf", "outputs:surface"));
     target_paths.Set(conn_targets);
     conn_fields.push_back({"targetPaths", target_paths});
-    lightusd::crate::CrateValue conn_type_name;
-    conn_type_name.Set(value::token("token"));
+    lightusd::legacy::crate::CrateValue conn_type_name;
+    conn_type_name.Set(lightusd::legacy::value::token("token"));
     conn_fields.push_back({"typeName", conn_type_name});
     TEST_CHECK(writer.AddSpec(Path("/mat", "outputs:surface.connect"),
                              SpecType::Connection, conn_fields, &build_err));
 
-    lightusd::crate::FieldValuePairVector empty_conn_fields;
-    lightusd::crate::CrateValue empty_target_paths;
+    lightusd::legacy::crate::FieldValuePairVector empty_conn_fields;
+    lightusd::legacy::crate::CrateValue empty_target_paths;
     std::vector<Path> empty_conn_targets;
     empty_target_paths.Set(empty_conn_targets);
     empty_conn_fields.push_back({"targetPaths", empty_target_paths});
-    lightusd::crate::CrateValue empty_conn_type_name;
-    empty_conn_type_name.Set(value::token("token"));
+    lightusd::legacy::crate::CrateValue empty_conn_type_name;
+    empty_conn_type_name.Set(lightusd::legacy::value::token("token"));
     empty_conn_fields.push_back({"typeName", empty_conn_type_name});
     TEST_CHECK(writer.AddSpec(Path("/mat_empty", "outputs:surface.connect"),
                              SpecType::Connection, empty_conn_fields,
@@ -838,7 +840,7 @@ def SphereLight "l1" {
       TEST_CHECK(sp != nullptr);
       if (sp) {
         double val;
-        bool got = sp->radius.get_value().get(value::TimeCode::Default(), &val);
+        bool got = sp->radius.get_value().get(lightusd::legacy::value::TimeCode::Default(), &val);
         TEST_CHECK(got);
         if (got) { TEST_CHECK(math::is_close(val, 1.0)); }
       }
@@ -976,7 +978,7 @@ void usdc_reader_truncated_array_test(void) {
   size_t payload = 0;
   {
     StreamReader stream(bytes.data(), bytes.size(), false);
-    lightusd::crate::CrateReader reader(&stream);
+    lightusd::legacy::crate::CrateReader reader(&stream);
     TEST_ASSERT(reader.ReadBootStrap());
     TEST_ASSERT(reader.ReadTOC());
     TEST_ASSERT(reader.ReadTokens());
@@ -984,7 +986,7 @@ void usdc_reader_truncated_array_test(void) {
     for (const auto &field : reader.GetFields()) {
       const auto &rep = field.value_rep;
       if (rep.IsArray() && !rep.IsCompressed() && !rep.IsInlined() &&
-          rep.GetType() == int(lightusd::crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT)) {
+          rep.GetType() == int(lightusd::legacy::crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT)) {
         payload = static_cast<size_t>(rep.GetPayload());
       }
     }

@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) \
@@ -47,7 +47,7 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 
 namespace {
 
-bool ListSceneNamesRec(const lightusd::Prim &root, uint32_t depth,
+bool ListSceneNamesRec(const lightusd::legacy::Prim &root, uint32_t depth,
                        std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames || depth > kMaxDefaultTraversalLimit) return false;
   if (root.metas().has_sceneName()) {
@@ -1605,11 +1605,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 }  // namespace
 
-bool GetPropertyNamesForPrim(const lightusd::Prim &prim,
+bool GetPropertyNamesForPrim(const lightusd::legacy::Prim &prim,
                              std::vector<std::string> *out_prop_names,
                              bool attr_prop, bool rel_prop, std::string *err);
 
-bool GetProperty(const lightusd::Prim &prim, const std::string &attr_name,
+bool GetProperty(const lightusd::legacy::Prim &prim, const std::string &attr_name,
                  Property *out_prop, std::string *err) {
 #define GET_PRIM_PROPERTY(__ty)                                         \
   if (prim.is<__ty>()) {                                                \
@@ -1656,25 +1656,25 @@ bool GetProperty(const lightusd::Prim &prim, const std::string &attr_name,
   return true;
 }
 
-bool GetPropertyNames(const lightusd::Prim &prim,
+bool GetPropertyNames(const lightusd::legacy::Prim &prim,
                       std::vector<std::string> *out_prop_names,
                       std::string *err) {
   return GetPropertyNamesForPrim(prim, out_prop_names, true, true, err);
 }
 
-bool GetAttributeNames(const lightusd::Prim &prim,
+bool GetAttributeNames(const lightusd::legacy::Prim &prim,
                        std::vector<std::string> *out_attr_names,
                        std::string *err) {
   return GetPropertyNamesForPrim(prim, out_attr_names, true, false, err);
 }
 
-bool GetRelationshipNames(const lightusd::Prim &prim,
+bool GetRelationshipNames(const lightusd::legacy::Prim &prim,
                           std::vector<std::string> *out_rel_names,
                           std::string *err) {
   return GetPropertyNamesForPrim(prim, out_rel_names, false, true, err);
 }
 
-bool GetAttribute(const lightusd::Prim &prim, const std::string &attr_name,
+bool GetAttribute(const lightusd::legacy::Prim &prim, const std::string &attr_name,
                   Attribute *out_attr, std::string *err) {
   if (!out_attr) {
     PUSH_ERROR_AND_RETURN("`out_attr` argument is nullptr.");
@@ -1694,7 +1694,7 @@ bool GetAttribute(const lightusd::Prim &prim, const std::string &attr_name,
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Attribute.", attr_name));
 }
 
-bool GetRelationship(const lightusd::Prim &prim, const std::string &rel_name,
+bool GetRelationship(const lightusd::legacy::Prim &prim, const std::string &rel_name,
                      Relationship *out_rel, std::string *err) {
   if (!out_rel) {
     PUSH_ERROR_AND_RETURN("`out_rel` argument is nullptr.");
@@ -1716,7 +1716,7 @@ bool GetRelationship(const lightusd::Prim &prim, const std::string &rel_name,
   return true;
 }
 
-bool ListSceneNames(const lightusd::Prim &root,
+bool ListSceneNames(const lightusd::legacy::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
     return false;
@@ -1784,4 +1784,5 @@ bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps,
 #undef PushError
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

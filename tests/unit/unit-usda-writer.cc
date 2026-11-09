@@ -15,6 +15,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 static bool parse_usda(const std::string &usda_str, Stage *stage) {
@@ -78,7 +80,7 @@ void usda_writer_mesh_test(void) {
   GeomMesh mesh;
   mesh.name = "MyMesh";
   mesh.points.set_value(
-      std::vector<value::point3f>{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}});
+      std::vector<lightusd::legacy::value::point3f>{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}});
   mesh.faceVertexCounts.set_value(std::vector<int32_t>({3}));
   mesh.faceVertexIndices.set_value(std::vector<int32_t>({0, 1, 2}));
 
@@ -146,7 +148,7 @@ void usda_writer_metadata_test(void) {
   Stage stage;
 
   // Set stage metadata
-  stage.metas().defaultPrim = value::token("Root");
+  stage.metas().defaultPrim = lightusd::legacy::value::token("Root");
   stage.metas().upAxis.set_value(Axis::Y);
   stage.metas().metersPerUnit.set_value(0.01);
 

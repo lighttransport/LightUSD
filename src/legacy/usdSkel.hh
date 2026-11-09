@@ -41,7 +41,7 @@
 #include "core/variant-types.hh"    // VariantSet
 #include "xform.hh"                 // Xformable
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kSkelRoot = "SkelRoot";
 constexpr auto kSkeleton = "Skeleton";
@@ -402,4 +402,5 @@ DEFINE_TYPE_TRAIT(BlendShape, kBlendShape, TYPE_ID_BLENDSHAPE, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -62,10 +62,10 @@ def Xform "Root" {
 }
 )";
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
   std::string err;
-  if (!lightusd::LoadUSDAFromMemory(
+  if (!lightusd::legacy::LoadUSDAFromMemory(
           reinterpret_cast<const uint8_t*>(kUSDA), std::strlen(kUSDA), "",
           &stage, &warn, &err)) {
     std::fprintf(stderr, "LoadUSDAFromMemory failed: %s\n", err.c_str());
@@ -117,7 +117,7 @@ bool TestInstanceOpacityPacking() {
     tydra::RenderInstance inst;
     inst.mesh_id = 0;
     inst.visible = true;
-    inst.global_matrix = lightusd::value::matrix4d::identity();
+    inst.global_matrix = lightusd::legacy::value::matrix4d::identity();
     inst.global_matrix.m[3][0] = static_cast<double>(i) * 2.0;
     if (i == 1) {
       inst.has_display_color = true;
@@ -195,13 +195,13 @@ int main() {
       tydra::vec3{0.0f, 1.0f, 0.0f}, tydra::vec3{0.0f, 1.0f, 0.0f},
       tydra::vec3{0.0f, 1.0f, 0.0f}, tydra::vec3{-1.0f, 0.0f, 0.0f},
       tydra::vec3{-1.0f, 0.0f, 0.0f}, tydra::vec3{-1.0f, 0.0f, 0.0f}};
-  const std::array<lightusd::value::texcoord2f, 6> uv1 = {
-      lightusd::value::texcoord2f{0.1f, 0.2f},
-      lightusd::value::texcoord2f{0.8f, 0.2f},
-      lightusd::value::texcoord2f{0.8f, 0.9f},
-      lightusd::value::texcoord2f{0.1f, 0.2f},
-      lightusd::value::texcoord2f{0.8f, 0.9f},
-      lightusd::value::texcoord2f{0.1f, 0.9f}};
+  const std::array<lightusd::legacy::value::texcoord2f, 6> uv1 = {
+      lightusd::legacy::value::texcoord2f{0.1f, 0.2f},
+      lightusd::legacy::value::texcoord2f{0.8f, 0.2f},
+      lightusd::legacy::value::texcoord2f{0.8f, 0.9f},
+      lightusd::legacy::value::texcoord2f{0.1f, 0.2f},
+      lightusd::legacy::value::texcoord2f{0.8f, 0.9f},
+      lightusd::legacy::value::texcoord2f{0.1f, 0.9f}};
   const std::array<tydra::vec3, 6> display = {
       tydra::vec3{1.0f, 0.0f, 0.0f}, tydra::vec3{0.0f, 1.0f, 0.0f},
       tydra::vec3{0.0f, 0.0f, 1.0f}, tydra::vec3{1.0f, 1.0f, 0.0f},

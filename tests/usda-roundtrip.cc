@@ -51,10 +51,10 @@ int main(int argc, char **argv) {
   }
 
   // Step 1: Load original USDA file
-  lightusd::Stage stage1;
+  lightusd::legacy::Stage stage1;
   std::string warn1, err1;
 
-  bool ret1 = lightusd::LoadUSDAFromFile(filepath, &stage1, &warn1, &err1);
+  bool ret1 = lightusd::legacy::LoadUSDAFromFile(filepath, &stage1, &warn1, &err1);
   if (!warn1.empty() && verbose) {
     std::cerr << "WARN (load1): " << warn1 << "\n";
   }
@@ -80,10 +80,10 @@ int main(int argc, char **argv) {
   }
 
   // Step 3: Re-parse the exported string
-  lightusd::Stage stage2;
+  lightusd::legacy::Stage stage2;
   std::string warn2, err2;
 
-  bool ret2 = lightusd::LoadUSDFromMemory(
+  bool ret2 = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(exported.data()),
       exported.size(),
       "roundtrip.usda",
@@ -109,15 +109,15 @@ int main(int argc, char **argv) {
 
   // Step 4: Convert both stages to JSON and compare
 #if defined(LIGHTUSD_WITH_JSON)
-  lightusd::USDToJSONOptions options;
+  lightusd::legacy::USDToJSONOptions options;
 
-  auto json1_result = lightusd::ToJSON(stage1, options);
+  auto json1_result = lightusd::legacy::ToJSON(stage1, options);
   if (!json1_result) {
     std::cerr << "Error: Failed to convert stage1 to JSON: " << json1_result.error() << "\n";
     return EXIT_FAILURE;
   }
 
-  auto json2_result = lightusd::ToJSON(stage2, options);
+  auto json2_result = lightusd::legacy::ToJSON(stage2, options);
   if (!json2_result) {
     std::cerr << "Error: Failed to convert stage2 to JSON: " << json2_result.error() << "\n";
     return EXIT_FAILURE;

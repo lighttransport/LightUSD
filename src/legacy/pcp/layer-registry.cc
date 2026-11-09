@@ -10,7 +10,7 @@
 #include "core/security-policy.hh"
 #include "lightusd.hh"  // LoadLayerFromMemory
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pcp {
 
 LayerRegistry::LayerRegistry()
@@ -126,4 +126,5 @@ size_t LayerRegistry::size() const {
 }
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd

@@ -30,19 +30,19 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
-using XformMap = lightusd::tydra::PathPrimMap<lightusd::Xform>;
-using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
-using MaterialMap = lightusd::tydra::PathPrimMap<lightusd::Material>;
+using XformMap = lightusd::legacy::tydra::PathPrimMap<lightusd::legacy::Xform>;
+using MeshMap = lightusd::legacy::tydra::PathPrimMap<lightusd::legacy::GeomMesh>;
+using MaterialMap = lightusd::legacy::tydra::PathPrimMap<lightusd::legacy::Material>;
 using PreviewSurfaceMap =
-    std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdPreviewSurface *>>;
-using UVTextureMap = std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdUVTexture *>>;
+    std::map<std::string, std::pair<const lightusd::legacy::Shader *, const lightusd::legacy::UsdPreviewSurface *>>;
+using UVTextureMap = std::map<std::string, std::pair<const lightusd::legacy::Shader *, const lightusd::legacy::UsdUVTexture *>>;
 using PrimvarReader_float2Map =
-    std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdPrimvarReader_float2 *>>;
+    std::map<std::string, std::pair<const lightusd::legacy::Shader *, const lightusd::legacy::UsdPrimvarReader_float2 *>>;
 
 #if 0
 template <typename T>
 static bool TraverseRec(const std::string &path_prefix,
-                        const lightusd::Prim &prim, uint32_t depth,
+                        const lightusd::legacy::Prim &prim, uint32_t depth,
                         std::map<std::string, const T *> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -51,10 +51,10 @@ static bool TraverseRec(const std::string &path_prefix,
 
   std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
-  if (prim.is<lightusd::Material>()) {
+  if (prim.is<lightusd::legacy::Material>()) {
     if (const T *pv = prim.as<T>()) {
       std::cout << "Path : <" << prim_abs_path << "> is "
-                << lightusd::value::TypeTraits<T>::type_name() << ".\n";
+                << lightusd::legacy::value::TypeTraits<T>::type_name() << ".\n";
       itemmap[prim_abs_path] = pv;
     }
   }
@@ -70,7 +70,7 @@ static bool TraverseRec(const std::string &path_prefix,
 
 template <typename T>
 static bool TraverseShaderRec(const std::string &path_prefix,
-                        const lightusd::Prim &prim, uint32_t depth,
+                        const lightusd::legacy::Prim &prim, uint32_t depth,
                         std::map<std::string, const T *> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -80,11 +80,11 @@ static bool TraverseShaderRec(const std::string &path_prefix,
   std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
   // First test if Shader prim.
-  if (const lightusd::Shader *ps = prim.as<lightusd::Shader>()) {
+  if (const lightusd::legacy::Shader *ps = prim.as<lightusd::legacy::Shader>()) {
     // Concrete Shader object(e.g. UsdUVTexture) is stored in .data.
     if (const T *s = ps->value.as<T>()) {
       std::cout << "Path : <" << prim_abs_path << "> is "
-                << lightusd::value::TypeTraits<T>::type_name() << ".\n";
+                << lightusd::legacy::value::TypeTraits<T>::type_name() << ".\n";
       itemmap[prim_abs_path] = s;
     }
   }
@@ -98,26 +98,26 @@ static bool TraverseShaderRec(const std::string &path_prefix,
   return true;
 }
 
-static void TraverseMaterial(const lightusd::Stage &stage, MaterialMap &m) {
+static void TraverseMaterial(const lightusd::legacy::Stage &stage, MaterialMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraversePreviewSurface(const lightusd::Stage &stage,
+static void TraversePreviewSurface(const lightusd::legacy::Stage &stage,
                                    PreviewSurfaceMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraverseUVTexture(const lightusd::Stage &stage, UVTextureMap &m) {
+static void TraverseUVTexture(const lightusd::legacy::Stage &stage, UVTextureMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraversePrimvarReader_float2(const lightusd::Stage &stage,
+static void TraversePrimvarReader_float2(const lightusd::legacy::Stage &stage,
                                          PrimvarReader_float2Map &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
@@ -137,13 +137,13 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
 
-  if (!lightusd::IsUSD(filepath)) {
+  if (!lightusd::legacy::IsUSD(filepath)) {
     std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
 
-  bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
   }
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // bool is_usdz = lightusd::IsUSDZ(filepath);
+  // bool is_usdz = lightusd::legacy::IsUSDZ(filepath);
 
   std::string s = stage.ExportToString();
   std::cout << s << "\n";
@@ -165,14 +165,14 @@ int main(int argc, char **argv) {
             << "\n";
 
   // Visit all Prims in the Stage.
-  auto prim_visit_fun = [](const lightusd::Path &abs_path, const lightusd::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
+  auto prim_visit_fun = [](const lightusd::legacy::Path &abs_path, const lightusd::legacy::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
     (void)err;
-    std::cout << lightusd::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << lightusd::to_string(abs_path) << "\n";
+    std::cout << lightusd::legacy::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << lightusd::legacy::to_string(abs_path) << "\n";
 
     // Use as() or is() for Prim specific processing.
-    if (const lightusd::Material *pm = prim.as<lightusd::Material>()) {
+    if (const lightusd::legacy::Material *pm = prim.as<lightusd::legacy::Material>()) {
       (void)pm;
-      std::cout << lightusd::pprint::Indent(level) << "  Got Material!\n";
+      std::cout << lightusd::legacy::pprint::Indent(level) << "  Got Material!\n";
       // return false + `err` empty if you want to terminate traversal earlier.
       //return false;
     }
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
 
   void *userdata = nullptr;
 
-  lightusd::tydra::VisitPrims(stage, prim_visit_fun, userdata);
+  lightusd::legacy::tydra::VisitPrims(stage, prim_visit_fun, userdata);
 
 
   std::cout << "--------------------------------------"
@@ -190,14 +190,14 @@ int main(int argc, char **argv) {
 
   // Compute Xform of each Prim at time t.
   {
-    lightusd::tydra::XformNode xformnode;
-    double t = lightusd::value::TimeCode::Default();
-    lightusd::value::TimeSampleInterpolationType tinterp = lightusd::value::TimeSampleInterpolationType::Held; // Held or Linear
+    lightusd::legacy::tydra::XformNode xformnode;
+    double t = lightusd::legacy::value::TimeCode::Default();
+    lightusd::legacy::value::TimeSampleInterpolationType tinterp = lightusd::legacy::value::TimeSampleInterpolationType::Held; // Held or Linear
 
-    if (!lightusd::tydra::BuildXformNodeFromStage(stage, &xformnode, t, tinterp)) {
+    if (!lightusd::legacy::tydra::BuildXformNodeFromStage(stage, &xformnode, t, tinterp)) {
       std::cerr << "BuildXformNodeFromStage error.\n";
     } else {
-      std::cout << lightusd::tydra::DumpXformNode(xformnode) << "\n";
+      std::cout << lightusd::legacy::tydra::DumpXformNode(xformnode) << "\n";
     }
   }
 
@@ -212,22 +212,22 @@ int main(int argc, char **argv) {
   PrimvarReader_float2Map preadermap;
 
   // Collect and make full path <-> Prim/Shader mapping
-  lightusd::tydra::ListPrims(stage, xformmap);
-  lightusd::tydra::ListPrims(stage, meshmap);
-  lightusd::tydra::ListPrims(stage, matmap);
-  lightusd::tydra::ListShaders(stage, surfacemap);
-  lightusd::tydra::ListShaders(stage, texmap);
-  lightusd::tydra::ListShaders(stage, preadermap);
+  lightusd::legacy::tydra::ListPrims(stage, xformmap);
+  lightusd::legacy::tydra::ListPrims(stage, meshmap);
+  lightusd::legacy::tydra::ListPrims(stage, matmap);
+  lightusd::legacy::tydra::ListShaders(stage, surfacemap);
+  lightusd::legacy::tydra::ListShaders(stage, texmap);
+  lightusd::legacy::tydra::ListShaders(stage, preadermap);
 
   //
   // Query example
   //
   for (const auto &item : matmap) {
-    nonstd::expected<const lightusd::Prim*, std::string> mat = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::legacy::Prim*, std::string> mat = stage.GetPrimAtPath(lightusd::legacy::Path(item.first, /* prop name */""));
     if (mat) {
       std::cout << "Found Material <" << item.first << "> from Stage:\n";
-      if (const lightusd::Material *mp = mat.value()->as<lightusd::Material>()) { // this should be true though.
-        std::cout << lightusd::to_string(*mp) << "\n";
+      if (const lightusd::legacy::Material *mp = mat.value()->as<lightusd::legacy::Material>()) { // this should be true though.
+        std::cout << lightusd::legacy::to_string(*mp) << "\n";
       }
     } else {
       std::cerr << "Err: " << mat.error() << "\n";
@@ -236,16 +236,16 @@ int main(int argc, char **argv) {
 
   for (const auto &item : surfacemap) {
     // Returned Prim is Shader class
-    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::legacy::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::legacy::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPreviewSurface) <" << item.first << "> from Stage:\n";
 
-      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
+      const lightusd::legacy::Shader *sp = shader.value()->as<lightusd::legacy::Shader>();
       if (sp) { // this should be true though.
 
-        if (const lightusd::UsdPreviewSurface *surf = sp->value.as<lightusd::UsdPreviewSurface>()) {
+        if (const lightusd::legacy::UsdPreviewSurface *surf = sp->value.as<lightusd::legacy::UsdPreviewSurface>()) {
           // Print Shader
-          std::cout << lightusd::to_string(*sp) << "\n";
+          std::cout << lightusd::legacy::to_string(*sp) << "\n";
         }
       }
 
@@ -256,14 +256,14 @@ int main(int argc, char **argv) {
 
   for (const auto &item : texmap) {
     // Returned Prim is Shader class
-    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::legacy::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::legacy::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdUVTexture) <" << item.first << "> from Stage:\n";
 
-      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
+      const lightusd::legacy::Shader *sp = shader.value()->as<lightusd::legacy::Shader>();
       if (sp) { // this should be true though.
-        if (const lightusd::UsdUVTexture *tex = sp->value.as<lightusd::UsdUVTexture>()) {
-          std::cout << lightusd::to_string(*sp);
+        if (const lightusd::legacy::UsdUVTexture *tex = sp->value.as<lightusd::legacy::UsdUVTexture>()) {
+          std::cout << lightusd::legacy::to_string(*sp);
         }
       }
 
@@ -274,15 +274,15 @@ int main(int argc, char **argv) {
 
   for (const auto &item : preadermap) {
     // Returned Prim is Shader class
-    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::legacy::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::legacy::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
 
-      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
+      const lightusd::legacy::Shader *sp = shader.value()->as<lightusd::legacy::Shader>();
       if (sp) { // this should be true though.
 
-        if (const lightusd::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::UsdPrimvarReader_float2>()) {
-          std::cout << lightusd::to_string(*sp) << "\n";
+        if (const lightusd::legacy::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::legacy::UsdPrimvarReader_float2>()) {
+          std::cout << lightusd::legacy::to_string(*sp) << "\n";
         }
       }
 
@@ -297,9 +297,9 @@ int main(int argc, char **argv) {
   for (const auto &item : surfacemap) {
     // Usually Parent is Material
     std::string err;
-    if (const lightusd::Prim *p = lightusd::tydra::GetParentPrim(stage, lightusd::Path(item.first, /* property */""), &err)) {
-      std::cout << "Input path = " << lightusd::to_string(item.first) << "\n";
-      std::cout << "Parent prim = " << lightusd::prim::print_prim(*p) << "\n";
+    if (const lightusd::legacy::Prim *p = lightusd::legacy::tydra::GetParentPrim(stage, lightusd::legacy::Path(item.first, /* property */""), &err)) {
+      std::cout << "Input path = " << lightusd::legacy::to_string(item.first) << "\n";
+      std::cout << "Parent prim = " << lightusd::legacy::prim::print_prim(*p) << "\n";
     } else {
       std::cerr << err;
     }
@@ -308,8 +308,8 @@ int main(int argc, char **argv) {
   std::cout << "GetProperty example -------------\n";
   for (const auto &item : xformmap) {
     std::string err;
-    lightusd::Property prop;
-    if (lightusd::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
+    lightusd::legacy::Property prop;
+    if (lightusd::legacy::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
       std::cout << "Property value = " << print_prop(prop, "xformOp:transform", 0) << "\n";
     } else {
       std::cerr << err;
@@ -334,11 +334,11 @@ int main(int argc, char **argv) {
   std::cout << "GetBoundMaterial example -------------\n";
   for (const auto &item : meshmap) {
 
-    lightusd::Path matPath;
-    const lightusd::Material *material{nullptr};
+    lightusd::legacy::Path matPath;
+    const lightusd::legacy::Material *material{nullptr};
     std::string err;
 
-    bool ret = lightusd::tydra::GetDirectlyBoundMaterial(stage, lightusd::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
+    bool ret = lightusd::legacy::tydra::GetDirectlyBoundMaterial(stage, lightusd::legacy::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
     std::cout << "Prim : " << item.first << "\n";
     if (ret) {
       std::cout << "has directlyBoundMaterial: " << matPath.full_path_name() << "\n";
@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
       std::cout << "GetDirectlyBoundMaterial failed: " << err << "\n";
     }
 
-    ret = lightusd::tydra::GetBoundMaterial(stage, lightusd::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
+    ret = lightusd::legacy::tydra::GetBoundMaterial(stage, lightusd::legacy::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
 
     if (ret) {
       std::cout << item.first << " has bound Material. Material Path = " << matPath << "\n";
@@ -369,18 +369,18 @@ int main(int argc, char **argv) {
   std::cout << "EvaluateAttribute example -------------\n";
   for (const auto &item : preadermap) {
     // Returned Prim is Shader class
-    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::legacy::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::legacy::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
 
-      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
+      const lightusd::legacy::Shader *sp = shader.value()->as<lightusd::legacy::Shader>();
       if (sp) { // this should be true though.
 
-        if (const lightusd::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::UsdPrimvarReader_float2>()) {
+        if (const lightusd::legacy::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::legacy::UsdPrimvarReader_float2>()) {
 
-          lightusd::tydra::TerminalAttributeValue tav;
+          lightusd::legacy::tydra::TerminalAttributeValue tav;
           std::string err;
-          bool ret = lightusd::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
+          bool ret = lightusd::legacy::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
 
           if (!ret) {
             std::cout << "Resolving `inputs:varname` failed: " << err << "\n";
@@ -388,7 +388,7 @@ int main(int argc, char **argv) {
 
           std::cout << "type = " << tav.type_name() << "\n";
 
-          if (auto pv = tav.as<lightusd::value::token>()) {
+          if (auto pv = tav.as<lightusd::legacy::value::token>()) {
             std::cout << "inputs:varname = " << (*pv) << "\n";
           }
         }

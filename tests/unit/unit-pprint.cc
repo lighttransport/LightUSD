@@ -14,17 +14,19 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void value_type_pprint_test(void) {
 
   {
     std::stringstream ss;
-    lightusd::Interpolation interp = lightusd::Interpolation::Vertex;
+    lightusd::legacy::Interpolation interp = lightusd::legacy::Interpolation::Vertex;
     ss << interp;
     TEST_CHECK(ss.str() == "vertex");
   }
 
   {
-    value::normal3f v{1.0f, 2.0f, 3.f};
+    lightusd::legacy::value::normal3f v{1.0f, 2.0f, 3.f};
     std::string s = to_string(v);
     TEST_CHECK(s == "(1, 2, 3)");
   }
@@ -46,7 +48,7 @@ void column_wrap_float3_array_test(void) {
   pprint::SetColumnLimit(80);
 
   // Build an array of float3 that will exceed 80 columns
-  std::vector<value::float3> v;
+  std::vector<lightusd::legacy::value::float3> v;
   for (int i = 0; i < 10; i++) {
     v.push_back({static_cast<float>(i), static_cast<float>(i + 1),
                  static_cast<float>(i + 2)});
@@ -151,10 +153,10 @@ void column_wrap_deep_indent_test(void) {
 void column_wrap_string_no_wrap_test(void) {
   pprint::SetColumnLimit(40);
 
-  std::vector<value::token> v;
-  v.push_back(value::token("hello"));
-  v.push_back(value::token("world"));
-  v.push_back(value::token("this_is_a_long_token_name"));
+  std::vector<lightusd::legacy::value::token> v;
+  v.push_back(lightusd::legacy::value::token("hello"));
+  v.push_back(lightusd::legacy::value::token("world"));
+  v.push_back(lightusd::legacy::value::token("this_is_a_long_token_name"));
 
   {
     pprint::ScopedPrefixColumns spc(10);

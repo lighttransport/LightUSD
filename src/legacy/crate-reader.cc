@@ -55,7 +55,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 //constexpr auto kTypeName = "typeName";
@@ -2459,7 +2459,7 @@ bool CrateReader::ReadSpecs() {
     DCOUT("spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
                   << ", fieldset_index = " << _specs[i].fieldset_index.value
                   << ", spec_type = "
-                  << lightusd::to_string(_specs[i].spec_type));
+                  << lightusd::legacy::to_string(_specs[i].spec_type));
     if (auto specstr = GetSpecString(crate::Index(uint32_t(i)))) {
       DCOUT("spec[" << i << "] string_repr = " << specstr.value());
     }
@@ -2776,4 +2776,5 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
 
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd

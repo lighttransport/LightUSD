@@ -26,7 +26,7 @@
 
 #if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 namespace {}
@@ -448,11 +448,12 @@ USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDC_READER
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 //
@@ -497,6 +498,7 @@ USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
 }
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_DISABLE_MODULE_USDC_READER

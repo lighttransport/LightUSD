@@ -253,40 +253,40 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
 
 // Record `src -> ktx2` on every asset-valued attribute whose value is `src`,
 // as a customData "ktx2" hint. `inputs:file` itself is left unchanged.
-size_t AddKtx2Hints(lightusd::PrimSpec &ps,
+size_t AddKtx2Hints(lightusd::legacy::PrimSpec &ps,
                     const std::map<std::string, std::string> &hint,
                     int depth = 0) {
   if (depth > 512) return 0;
   size_t n = 0;
   for (auto &item : ps.props()) {
-    lightusd::Attribute *attr = item.second.get_attribute_or_null();
+    lightusd::legacy::Attribute *attr = item.second.get_attribute_or_null();
     if (!attr || !attr->has_value()) continue;
-    lightusd::value::AssetPath ap;
+    lightusd::legacy::value::AssetPath ap;
     if (!attr->get_value(&ap)) continue;
     const auto it = hint.find(ap.GetAssetPath());
     if (it == hint.end()) continue;
 
-    lightusd::Dictionary cd;
+    lightusd::legacy::Dictionary cd;
     if (attr->metas().has_customData()) cd = attr->metas().get_customData();
-    lightusd::MetaVariable mv;
-    mv.set_value("ktx2", lightusd::value::AssetPath(it->second));
+    lightusd::legacy::MetaVariable mv;
+    mv.set_value("ktx2", lightusd::legacy::value::AssetPath(it->second));
     cd["ktx2"] = mv;
     attr->metas().set_customData(cd);
     ++n;
   }
-  for (lightusd::PrimSpec &child : ps.children()) {
+  for (lightusd::legacy::PrimSpec &child : ps.children()) {
     n += AddKtx2Hints(child, hint, depth + 1);
   }
   return n;
 }
 
-void CollectAssetPaths(const lightusd::PrimSpec &ps, std::vector<std::string> *out,
+void CollectAssetPaths(const lightusd::legacy::PrimSpec &ps, std::vector<std::string> *out,
                        int depth = 0) {
   if (depth > 512) return;
   for (const auto &item : ps.props()) {
-    const lightusd::Attribute *attr = item.second.get_attribute_or_null();
+    const lightusd::legacy::Attribute *attr = item.second.get_attribute_or_null();
     if (!attr || !attr->has_value()) continue;
-    lightusd::value::AssetPath ap;
+    lightusd::legacy::value::AssetPath ap;
     if (!attr->get_value(&ap)) continue;
     const std::string p = ap.GetAssetPath();
     if (!p.empty() && HasImageExt(p)) out->push_back(p);
@@ -333,9 +333,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  lightusd::Layer layer;
+  lightusd::legacy::Layer layer;
   std::string warn, err;
-  if (!lightusd::LoadLayerFromFile(in_path, &layer, &warn, &err)) {
+  if (!lightusd::legacy::LoadLayerFromFile(in_path, &layer, &warn, &err)) {
     std::fprintf(stderr, "failed to load %s: %s\n", in_path.c_str(), err.c_str());
     return 1;
   }
@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
     nhint += AddKtx2Hints(item.second, hint);
   }
 
-  const std::string usda = lightusd::to_string(layer);
+  const std::string usda = lightusd::legacy::to_string(layer);
   std::ofstream o(out_path);
   if (!o) {
     std::fprintf(stderr, "cannot write %s\n", out_path.c_str());

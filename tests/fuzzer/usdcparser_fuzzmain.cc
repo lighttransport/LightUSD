@@ -19,20 +19,20 @@ static void parse_usdc(const uint8_t *data, size_t size)
   size_t total_size = content.size() + size;
 
 
-  lightusd::StreamReader sr(buf.data(), total_size, /* endianswap */false);
+  lightusd::legacy::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
-  lightusd::usdc::USDCReaderConfig config;
+  lightusd::legacy::usdc::USDCReaderConfig config;
 
   // For fuzzer run
   config.kMaxAllowedMemoryInMB = 1024*4; // 4GB.
 
-  lightusd::usdc::USDCReader reader(&sr, config);
+  lightusd::legacy::usdc::USDCReader reader(&sr, config);
 
   bool ret = reader.ReadUSDC();
   if (ret) {
     // Crate fields/sections alone do not decode all authored values. Exercise
     // stage reconstruction too, including array storage and property payloads.
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     (void)reader.ReconstructStage(&stage);
   }
 

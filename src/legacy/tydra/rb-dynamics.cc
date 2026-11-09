@@ -1186,7 +1186,7 @@ void tydra_phys_wake_body(TydraPhysWorld *world, int32_t body_index) {
 #include <unordered_map>
 #include <functional>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -1889,6 +1889,7 @@ void FreePhysWorld(TydraPhysWorld *world) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif /* __cplusplus */

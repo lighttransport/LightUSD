@@ -87,7 +87,83 @@
 
 #include "tydra/render-data-mesh-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy { namespace tydra {
+namespace {
+using namespace ::lightusd::tydra::tangent_quantize;  // NOLINT
+// Moved from src/tydra/tangent-quantize.hh: packs quantized tangents into
+// the legacy RenderMesh VertexAttribute.
+/// Store packed tangents into a VertexAttribute for use in RenderMesh.
+/// Format: Uint (single uint32 per vertex) for 10_10_10_2.
+inline VertexAttribute PackToVertexAttribute(
+    const std::vector<PackedTangent1010102> &packed) {
+  VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(uint32_t), &byte_size)) return attr;
+  attr.format = VertexAttributeFormat::Uint;
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
+  return attr;
+}
+
+/// Store packed tangents into a VertexAttribute for use in RenderMesh.
+/// Format: Char4 (4 × int8) for SNORM8x4.
+inline VertexAttribute PackToVertexAttribute(
+    const std::vector<PackedTangentSNorm8x4> &packed) {
+  VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), size_t(4), &byte_size)) return attr;
+  attr.format = VertexAttributeFormat::Char4;
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
+  return attr;
+}
+
+/// Store packed tangents into a VertexAttribute for use in RenderMesh.
+/// Format: Half4 (4 × fp16) for FP16x4.
+inline VertexAttribute PackToVertexAttribute(
+    const std::vector<PackedTangentFp16x4> &packed) {
+  VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(PackedTangentFp16x4), &byte_size))
+    return attr;
+  attr.format = VertexAttributeFormat::Half4;
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
+  return attr;
+}
+
+/// Store packed SNorm8x3 normals into a VertexAttribute.
+/// Format: Char3 (3 × int8) for SNorm8x3.
+inline VertexAttribute PackNormalsToVertexAttribute(
+    const std::vector<PackedNormalSNorm8x3> &packed) {
+  VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), size_t(3), &byte_size)) return attr;
+  attr.format = VertexAttributeFormat::Char3;
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
+  return attr;
+}
+
+/// Store packed SNorm16x3 normals into a VertexAttribute.
+/// Format: Short3 (3 × int16) for SNorm16x3.
+inline VertexAttribute PackNormalsToVertexAttribute(
+    const std::vector<PackedNormalSNorm16x3> &packed) {
+  VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(PackedNormalSNorm16x3), &byte_size))
+    return attr;
+  attr.format = VertexAttributeFormat::Short3;
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
+  return attr;
+}
+}  // namespace
+}  // namespace tydra
+}  // namespace legacy
+}  // namespace lightusd
+
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
@@ -1033,4 +1109,5 @@ bool QuantizeMeshNormals(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

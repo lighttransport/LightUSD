@@ -21,7 +21,7 @@ CLightUSDValueType c_lightusd_value_type(const CLightUSDValue *value) {
     return C_LIGHTUSD_VALUE_UNKNOWN;
   }
 
-  const lightusd::value::Value *pv = reinterpret_cast<const lightusd::value::Value *>(value);
+  const lightusd::legacy::value::Value *pv = reinterpret_cast<const lightusd::legacy::value::Value *>(value);
   uint32_t tyid = pv->type_id();
 
   bool is_array = false;
@@ -918,15 +918,15 @@ uint32_t c_lightusd_value_type_sizeof(CLightUSDValueType value_type) {
 }
 
 CLightUSDFormat c_lightusd_detect_format(const char *filename) {
-  if (lightusd::IsUSDA(filename)) {
+  if (lightusd::legacy::IsUSDA(filename)) {
     return C_LIGHTUSD_FORMAT_USDA;
   }
 
-  if (lightusd::IsUSDC(filename)) {
+  if (lightusd::legacy::IsUSDC(filename)) {
     return C_LIGHTUSD_FORMAT_USDC;
   }
 
-  if (lightusd::IsUSDZ(filename)) {
+  if (lightusd::legacy::IsUSDZ(filename)) {
     return C_LIGHTUSD_FORMAT_USDZ;
   }
 
@@ -1041,7 +1041,7 @@ const char *c_lightusd_prim_element_name(
     return nullptr;
   }
 
-  const lightusd::Prim *p = reinterpret_cast<const lightusd::Prim *>(prim);
+  const lightusd::legacy::Prim *p = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   return p->element_name().c_str();
 }
 
@@ -1058,8 +1058,8 @@ int c_lightusd_prim_append_child(CLightUSDPrim *prim, CLightUSDPrim *child_prim)
     return 0;
   }
 
-  lightusd::Prim *pprim = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Prim *pchild = reinterpret_cast<lightusd::Prim *>(child_prim);
+  lightusd::legacy::Prim *pprim = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Prim *pchild = reinterpret_cast<lightusd::legacy::Prim *>(child_prim);
 
   pprim->children().emplace_back(*pchild);
 
@@ -1075,8 +1075,8 @@ int c_lightusd_prim_append_child_move(CLightUSDPrim *prim, CLightUSDPrim *child_
     return 0;
   }
 
-  lightusd::Prim *pprim = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Prim *pchild = reinterpret_cast<lightusd::Prim *>(child_prim);
+  lightusd::legacy::Prim *pprim = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Prim *pchild = reinterpret_cast<lightusd::legacy::Prim *>(child_prim);
 
   pprim->children().emplace_back(std::move(*pchild));
 
@@ -1088,7 +1088,7 @@ uint64_t c_lightusd_prim_num_children(const CLightUSDPrim *prim) {
     return 0;
   }
 
-  const lightusd::Prim *pprim = reinterpret_cast<const lightusd::Prim *>(prim);
+  const lightusd::legacy::Prim *pprim = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   return pprim->children().size();
 }
 
@@ -1097,7 +1097,7 @@ const char *c_lightusd_prim_type(const CLightUSDPrim *prim) {
     return nullptr;
   }
 
-  const lightusd::Prim *pprim = reinterpret_cast<const lightusd::Prim *>(prim);
+  const lightusd::legacy::Prim *pprim = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
 
   // prim_type_name() is the user/parser-set string; for prims constructed
   // programmatically through c_lightusd_prim_new() it is empty. Fall back
@@ -1119,12 +1119,12 @@ int c_lightusd_prim_get_child(const CLightUSDPrim *prim,
     return 0;
   }
 
-  const lightusd::Prim *pprim = reinterpret_cast<const lightusd::Prim *>(prim);
+  const lightusd::legacy::Prim *pprim = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   if (child_index >= pprim->children().size()) {
     return 0;
   }
 
-  const lightusd::Prim *pchild = &pprim->children()[size_t(child_index)];
+  const lightusd::legacy::Prim *pchild = &pprim->children()[size_t(child_index)];
 
   (*child_prim) = reinterpret_cast<const CLightUSDPrim *>(pchild);
 
@@ -1136,7 +1136,7 @@ int c_lightusd_prim_del_child(CLightUSDPrim *prim, uint64_t child_idx) {
     return 0;
   }
 
-  lightusd::Prim *pprim = reinterpret_cast<lightusd::Prim *>(prim);
+  lightusd::legacy::Prim *pprim = reinterpret_cast<lightusd::legacy::Prim *>(prim);
   if (child_idx >= pprim->children().size()) {
     return 0;
   }
@@ -1151,7 +1151,7 @@ c_lightusd_token_t *c_lightusd_token_new(const char *str) {
     return nullptr;
   }
 
-  auto *value = new lightusd::value::token(str);
+  auto *value = new lightusd::legacy::value::token(str);
 
   return reinterpret_cast<c_lightusd_token_t *>(value);
 }
@@ -1162,9 +1162,9 @@ c_lightusd_token_t *c_lightusd_token_dup(const c_lightusd_token_t *_tok) {
     return nullptr;
   }
 
-  auto *tok = reinterpret_cast<const lightusd::value::token *>(_tok);
+  auto *tok = reinterpret_cast<const lightusd::legacy::value::token *>(_tok);
 
-  auto *value = new lightusd::value::token(tok->str());
+  auto *value = new lightusd::legacy::value::token(tok->str());
 
   return reinterpret_cast<c_lightusd_token_t *>(value);
 }
@@ -1174,7 +1174,7 @@ int c_lightusd_token_free(c_lightusd_token_t *tok) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<lightusd::value::token *>(tok);
+  auto *p = reinterpret_cast<lightusd::legacy::value::token *>(tok);
   delete p;
 
   return 1;  // ok
@@ -1185,7 +1185,7 @@ const char *c_lightusd_token_str(const c_lightusd_token_t *tok) {
     return nullptr;
   }
 
-  auto *p = reinterpret_cast<const lightusd::value::token *>(tok);
+  auto *p = reinterpret_cast<const lightusd::legacy::value::token *>(tok);
   return p->c_str();
 }
 
@@ -1194,14 +1194,14 @@ size_t c_lightusd_token_size(const c_lightusd_token_t *tok) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<const lightusd::value::token *>(tok);
+  auto *p = reinterpret_cast<const lightusd::legacy::value::token *>(tok);
 
   return p->str().size();
 }
 
 c_lightusd_token_vector_t *c_lightusd_token_vector_new_empty() {
 
-  auto *value = new std::vector<lightusd::value::token>();
+  auto *value = new std::vector<lightusd::legacy::value::token>();
   return reinterpret_cast<c_lightusd_token_vector_t *>(value);
 }
 
@@ -1214,13 +1214,13 @@ c_lightusd_token_vector_t *c_lightusd_token_vector_new(const size_t n, const cha
       }
     }
 
-    auto *value = new std::vector<lightusd::value::token>(n);
+    auto *value = new std::vector<lightusd::legacy::value::token>(n);
     for (size_t i = 0; i < n; i++) {
-      value->at(i) = lightusd::value::token(strs[i]);
+      value->at(i) = lightusd::legacy::value::token(strs[i]);
     }
     return reinterpret_cast<c_lightusd_token_vector_t *>(value);
   } else {
-    auto *value = new std::vector<lightusd::value::token>(n);
+    auto *value = new std::vector<lightusd::legacy::value::token>(n);
     return reinterpret_cast<c_lightusd_token_vector_t *>(value);
   }
 }
@@ -1230,7 +1230,7 @@ size_t c_lightusd_token_vector_size(const c_lightusd_token_vector_t *sv) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<const std::vector<lightusd::value::token> *>(sv);
+  auto *p = reinterpret_cast<const std::vector<lightusd::legacy::value::token> *>(sv);
 
   return p->size();
 }
@@ -1240,7 +1240,7 @@ int c_lightusd_token_vector_clear(c_lightusd_token_vector_t *sv) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<std::vector<lightusd::value::token> *>(sv);
+  auto *p = reinterpret_cast<std::vector<lightusd::legacy::value::token> *>(sv);
   p->clear();
 
   return 1;
@@ -1251,7 +1251,7 @@ int c_lightusd_token_vector_resize(c_lightusd_token_vector_t *sv, const size_t n
     return 0;
   }
 
-  auto *p = reinterpret_cast<std::vector<lightusd::value::token> *>(sv);
+  auto *p = reinterpret_cast<std::vector<lightusd::legacy::value::token> *>(sv);
 
   p->resize(n);
 
@@ -1267,12 +1267,12 @@ int c_lightusd_token_vector_replace(c_lightusd_token_vector_t *sv, const size_t 
     return 0;
   }
 
-  std::vector<lightusd::value::token> *pv = reinterpret_cast<std::vector<lightusd::value::token> *>(sv);
+  std::vector<lightusd::legacy::value::token> *pv = reinterpret_cast<std::vector<lightusd::legacy::value::token> *>(sv);
   if (idx >= pv->size()) {
     return 0;
   }
 
-  pv->at(idx) = lightusd::value::token(str);
+  pv->at(idx) = lightusd::legacy::value::token(str);
 
   return 1;  // ok
 }
@@ -1282,7 +1282,7 @@ int c_lightusd_token_vector_free(c_lightusd_token_vector_t *sv) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<std::vector<lightusd::value::token> *>(sv);
+  auto *p = reinterpret_cast<std::vector<lightusd::legacy::value::token> *>(sv);
   delete p;
 
   return 1;  // ok
@@ -1293,7 +1293,7 @@ const char *c_lightusd_token_vector_str(const c_lightusd_token_vector_t *sv, con
     return nullptr;
   }
 
-  auto *p = reinterpret_cast<const std::vector<lightusd::value::token> *>(sv);
+  auto *p = reinterpret_cast<const std::vector<lightusd::legacy::value::token> *>(sv);
   if (idx >= p->size()) {
     return nullptr;
   }
@@ -1496,28 +1496,28 @@ const char *c_lightusd_string_vector_str(const c_lightusd_string_vector *sv, con
 
 
 int c_lightusd_is_usda_file(const char *filename) {
-  if (lightusd::IsUSDA(filename)) {
+  if (lightusd::legacy::IsUSDA(filename)) {
     return 1;
   }
   return 0;
 }
 
 int c_lightusd_is_usdc_file(const char *filename) {
-  if (lightusd::IsUSDC(filename)) {
+  if (lightusd::legacy::IsUSDC(filename)) {
     return 1;
   }
   return 0;
 }
 
 int c_lightusd_is_usdz_file(const char *filename) {
-  if (lightusd::IsUSDZ(filename)) {
+  if (lightusd::legacy::IsUSDZ(filename)) {
     return 1;
   }
   return 0;
 }
 
 int c_lightusd_is_usd_file(const char *filename) {
-  if (lightusd::IsUSD(filename)) {
+  if (lightusd::legacy::IsUSD(filename)) {
     return 1;
   }
   return 0;
@@ -1526,7 +1526,7 @@ int c_lightusd_is_usd_file(const char *filename) {
 int c_lightusd_load_usd_from_file(const char *filename, CLightUSDStage *stage,
                                  c_lightusd_string_t *warn,
                                  c_lightusd_string_t *err) {
-  // lightusd::Stage *p = new lightusd::Stage();
+  // lightusd::legacy::Stage *p = new lightusd::legacy::Stage();
 
   if (!stage) {
     if (err) {
@@ -1545,8 +1545,8 @@ int c_lightusd_load_usd_from_file(const char *filename, CLightUSDStage *stage,
   std::string _warn;
   std::string _err;
 
-  bool ret = lightusd::LoadUSDFromFile(
-      filename, reinterpret_cast<lightusd::Stage *>(stage), &_warn,
+  bool ret = lightusd::legacy::LoadUSDFromFile(
+      filename, reinterpret_cast<lightusd::legacy::Stage *>(stage), &_warn,
       &_err);
 
   if (_warn.size() && warn) {
@@ -1567,7 +1567,7 @@ int c_lightusd_load_usd_from_file(const char *filename, CLightUSDStage *stage,
 int c_lightusd_load_usda_from_file(const char *filename, CLightUSDStage *stage,
                                  c_lightusd_string_t *warn,
                                  c_lightusd_string_t *err) {
-  // lightusd::Stage *p = new lightusd::Stage();
+  // lightusd::legacy::Stage *p = new lightusd::legacy::Stage();
 
   if (!stage) {
     if (err) {
@@ -1586,8 +1586,8 @@ int c_lightusd_load_usda_from_file(const char *filename, CLightUSDStage *stage,
   std::string _warn;
   std::string _err;
 
-  bool ret = lightusd::LoadUSDAFromFile(
-      filename, reinterpret_cast<lightusd::Stage *>(stage), &_warn,
+  bool ret = lightusd::legacy::LoadUSDAFromFile(
+      filename, reinterpret_cast<lightusd::legacy::Stage *>(stage), &_warn,
       &_err);
 
   if (_warn.size() && warn) {
@@ -1608,7 +1608,7 @@ int c_lightusd_load_usda_from_file(const char *filename, CLightUSDStage *stage,
 int c_lightusd_load_usdc_from_file(const char *filename, CLightUSDStage *stage,
                                  c_lightusd_string_t *warn,
                                  c_lightusd_string_t *err) {
-  // lightusd::Stage *p = new lightusd::Stage();
+  // lightusd::legacy::Stage *p = new lightusd::legacy::Stage();
 
   if (!stage) {
     if (err) {
@@ -1620,8 +1620,8 @@ int c_lightusd_load_usdc_from_file(const char *filename, CLightUSDStage *stage,
   std::string _warn;
   std::string _err;
 
-  bool ret = lightusd::LoadUSDCFromFile(
-      filename, reinterpret_cast<lightusd::Stage *>(stage), &_warn,
+  bool ret = lightusd::legacy::LoadUSDCFromFile(
+      filename, reinterpret_cast<lightusd::legacy::Stage *>(stage), &_warn,
       &_err);
 
   if (_warn.size() && warn) {
@@ -1642,7 +1642,7 @@ int c_lightusd_load_usdc_from_file(const char *filename, CLightUSDStage *stage,
 int c_lightusd_load_usdz_from_file(const char *filename, CLightUSDStage *stage,
                                  c_lightusd_string_t *warn,
                                  c_lightusd_string_t *err) {
-  // lightusd::Stage *p = new lightusd::Stage();
+  // lightusd::legacy::Stage *p = new lightusd::legacy::Stage();
 
   if (!stage) {
     if (err) {
@@ -1661,8 +1661,8 @@ int c_lightusd_load_usdz_from_file(const char *filename, CLightUSDStage *stage,
   std::string _warn;
   std::string _err;
 
-  bool ret = lightusd::LoadUSDZFromFile(
-      filename, reinterpret_cast<lightusd::Stage *>(stage), &_warn,
+  bool ret = lightusd::legacy::LoadUSDZFromFile(
+      filename, reinterpret_cast<lightusd::legacy::Stage *>(stage), &_warn,
       &_err);
 
   if (_warn.size() && warn) {
@@ -1724,7 +1724,7 @@ CLightUSDPrim *c_lightusd_prim_new(const char *_prim_type, c_lightusd_string_t *
   }
 
   std::string prim_type_name = std::string(_prim_type);
-  if (!lightusd::isValidIdentifier(prim_type_name)) {
+  if (!lightusd::legacy::isValidIdentifier(prim_type_name)) {
     if (err) {
       c_lightusd_string_replace(err, "prim_type contains invalid character.");
     }
@@ -1891,7 +1891,7 @@ int c_lightusd_prim_to_string(const CLightUSDPrim *prim, c_lightusd_string_t *st
 
   const Prim *p = reinterpret_cast<const Prim *>(prim);
 
-  std::string s = lightusd::to_string(*p);
+  std::string s = lightusd::legacy::to_string(*p);
 
   if (!c_lightusd_string_replace(str, s.c_str())) {
     return 0;
@@ -1902,7 +1902,7 @@ int c_lightusd_prim_to_string(const CLightUSDPrim *prim, c_lightusd_string_t *st
 
 CLightUSDStage *c_lightusd_stage_new() {
 
-  auto *buf = new lightusd::Stage();
+  auto *buf = new lightusd::legacy::Stage();
   return reinterpret_cast<CLightUSDStage*>(buf);
 }
 
@@ -1916,7 +1916,7 @@ int c_lightusd_stage_to_string(const CLightUSDStage *stage,
     return 0;
   }
 
-  const auto *p = reinterpret_cast<const lightusd::Stage *>(stage);
+  const auto *p = reinterpret_cast<const lightusd::legacy::Stage *>(stage);
   std::string s = p->ExportToString();
 
   return c_lightusd_string_replace(str, s.c_str());
@@ -1927,7 +1927,7 @@ int c_lightusd_stage_free(CLightUSDStage *stage) {
     return 0;
   }
 
-  lightusd::Stage *ptr = reinterpret_cast<lightusd::Stage *>(stage);
+  lightusd::legacy::Stage *ptr = reinterpret_cast<lightusd::legacy::Stage *>(stage);
   delete ptr;
 
   return 1;
@@ -1943,13 +1943,13 @@ int c_lightusd_stage_traverse(const CLightUSDStage *_stage,
     return 0;
   }
 
-  const lightusd::Stage *pstage =
-      reinterpret_cast<const lightusd::Stage *>(_stage);
+  const lightusd::legacy::Stage *pstage =
+      reinterpret_cast<const lightusd::legacy::Stage *>(_stage);
 
   DCOUT("visit prims\n");
 
   std::string err;
-  if (!lightusd::tydra::VisitPrims(*pstage, CVisitPrimFunction,
+  if (!lightusd::legacy::tydra::VisitPrims(*pstage, CVisitPrimFunction,
                                    reinterpret_cast<void *>(callback_fun),
                                    &err)) {
     if (_err) {
@@ -1963,7 +1963,7 @@ int c_lightusd_stage_traverse(const CLightUSDStage *_stage,
 
 CLightUSDValue *c_lightusd_value_new_null() {
 
-  auto *pv = new lightusd::value::Value(nullptr);
+  auto *pv = new lightusd::legacy::value::Value(nullptr);
 
   return reinterpret_cast<CLightUSDValue *>(pv);
 }
@@ -1974,7 +1974,7 @@ int c_lightusd_value_is_type(const CLightUSDValue *_value, CLightUSDValueType va
     return 0;
   }
 
-  const lightusd::value::Value *value = reinterpret_cast<const lightusd::value::Value *>(_value);
+  const lightusd::legacy::value::Value *value = reinterpret_cast<const lightusd::legacy::value::Value *>(_value);
   const char *ctyname = c_lightusd_value_type_name(value_type);
 
   if (value->type_name() == std::string(ctyname)) {
@@ -1989,7 +1989,7 @@ int c_lightusd_value_free(CLightUSDValue *aval) {
     return 0;
   }
 
-  lightusd::value::Value *vp = reinterpret_cast<lightusd::value::Value *>(aval);
+  lightusd::legacy::value::Value *vp = reinterpret_cast<lightusd::legacy::value::Value *>(aval);
   delete vp;
 
   return 1;
@@ -2000,10 +2000,10 @@ CLightUSDValue *c_lightusd_value_new_token(const c_lightusd_token_t *tok) {
     return nullptr;
   }
 
-  auto *pv = reinterpret_cast<const lightusd::value::token *>(tok);
+  auto *pv = reinterpret_cast<const lightusd::legacy::value::token *>(tok);
 
   // copies.
-  lightusd::value::Value *vp = new lightusd::value::Value(*pv);
+  lightusd::legacy::value::Value *vp = new lightusd::legacy::value::Value(*pv);
 
   return reinterpret_cast<CLightUSDValue *>(vp);
 }
@@ -2016,7 +2016,7 @@ CLightUSDValue *c_lightusd_value_new_string(const c_lightusd_string_t *str) {
   auto *pv = reinterpret_cast<const std::string *>(str);
 
   // copies.
-  lightusd::value::Value *vp = new lightusd::value::Value(*pv);
+  lightusd::legacy::value::Value *vp = new lightusd::legacy::value::Value(*pv);
 
   return reinterpret_cast<CLightUSDValue *>(vp);
 }
@@ -2028,7 +2028,7 @@ CLightUSDValue *c_lightusd_value_new_##__tyname(__cty val) { \
   static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
   __cppty cppval; \
   memcpy(&cppval, &val, sizeof(__cppty)); \
-  lightusd::value::Value *vp = new lightusd::value::Value(cppval); \
+  lightusd::legacy::value::Value *vp = new lightusd::legacy::value::Value(cppval); \
   return reinterpret_cast<CLightUSDValue *>(vp); \
 }
 
@@ -2052,7 +2052,7 @@ CLightUSDValue *c_lightusd_value_new_array_##__tyname(uint64_t n, const __cty *v
   std::vector<__cppty> cppvalarray; \
   cppvalarray.resize(size_t(n)); \
   if (n > 0 && vals) memcpy(cppvalarray.data(), vals, sizeof(__cppty) * size_t(n)); \
-  lightusd::value::Value *vp = new lightusd::value::Value(std::move(cppvalarray)); \
+  lightusd::legacy::value::Value *vp = new lightusd::legacy::value::Value(std::move(cppvalarray)); \
   return reinterpret_cast<CLightUSDValue *>(vp); \
 }
 
@@ -2073,7 +2073,7 @@ int c_lightusd_value_as_##__tyname(const CLightUSDValue *_value, __cty *val) { \
   /* ensure C++ and C types has same size. */ \
   static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
   if (!_value) { return 0; } \
-  const lightusd::value::Value *vp = reinterpret_cast<const lightusd::value::Value *>(_value); \
+  const lightusd::legacy::value::Value *vp = reinterpret_cast<const lightusd::legacy::value::Value *>(_value); \
   if (auto pv = vp->as<__cppty>()) { \
     memcpy(val, pv, sizeof(__cppty)); \
     return 1; \
@@ -2101,9 +2101,9 @@ int c_lightusd_value_to_string(const CLightUSDValue *aval, c_lightusd_string_t *
     return 0;
   }
 
-  const lightusd::value::Value *cp = reinterpret_cast<const lightusd::value::Value *>(aval);
+  const lightusd::legacy::value::Value *cp = reinterpret_cast<const lightusd::legacy::value::Value *>(aval);
 
-  std::string s = lightusd::value::pprint_value(*cp, /* indent */0, /* closing_brace */false);
+  std::string s = lightusd::legacy::value::pprint_value(*cp, /* indent */0, /* closing_brace */false);
 
   if (!c_lightusd_string_replace(str, s.c_str())) {
     return 0;

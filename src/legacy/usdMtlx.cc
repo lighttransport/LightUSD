@@ -40,7 +40,7 @@
     }                  \
   } while (0);
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // defined in ascii-parser-base-types.cc
 namespace ascii {
@@ -95,10 +95,10 @@ bool is_supported_type(const std::string &typeName) {
 }
 
 template <typename T>
-bool ParseValue(lightusd::ascii::AsciiParser &parser, T &ret, std::string *err);
+bool ParseValue(lightusd::legacy::ascii::AsciiParser &parser, T &ret, std::string *err);
 
 template <>
-bool ParseValue<int>(lightusd::ascii::AsciiParser &parser, int &ret,
+bool ParseValue<int>(lightusd::legacy::ascii::AsciiParser &parser, int &ret,
                      std::string *err) {
   int val;
   if (!parser.ReadBasicType(&val)) {
@@ -112,7 +112,7 @@ bool ParseValue<int>(lightusd::ascii::AsciiParser &parser, int &ret,
 }
 
 template <>
-bool ParseValue<bool>(lightusd::ascii::AsciiParser &parser, bool &ret,
+bool ParseValue<bool>(lightusd::legacy::ascii::AsciiParser &parser, bool &ret,
                       std::string *err) {
   bool val;
   if (!parser.ReadBasicType(&val)) {
@@ -126,7 +126,7 @@ bool ParseValue<bool>(lightusd::ascii::AsciiParser &parser, bool &ret,
 }
 
 template <>
-bool ParseValue<float>(lightusd::ascii::AsciiParser &parser, float &ret,
+bool ParseValue<float>(lightusd::legacy::ascii::AsciiParser &parser, float &ret,
                        std::string *err) {
   float val;
   if (!parser.ReadBasicType(&val)) {
@@ -140,7 +140,7 @@ bool ParseValue<float>(lightusd::ascii::AsciiParser &parser, float &ret,
 }
 
 template <>
-bool ParseValue<std::string>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<std::string>(lightusd::legacy::ascii::AsciiParser &parser,
                              std::string &ret, std::string *err) {
   std::string val;
   if (!parser.ReadBasicType(&val)) {
@@ -155,7 +155,7 @@ bool ParseValue<std::string>(lightusd::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float2>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::float2>(lightusd::legacy::ascii::AsciiParser &parser,
                                value::float2 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -177,7 +177,7 @@ bool ParseValue<value::float2>(lightusd::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float3>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::float3>(lightusd::legacy::ascii::AsciiParser &parser,
                                value::float3 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -200,7 +200,7 @@ bool ParseValue<value::float3>(lightusd::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::vector3f>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::vector3f>(lightusd::legacy::ascii::AsciiParser &parser,
                                  value::vector3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -223,7 +223,7 @@ bool ParseValue<value::vector3f>(lightusd::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::normal3f>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::normal3f>(lightusd::legacy::ascii::AsciiParser &parser,
                                  value::normal3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -247,7 +247,7 @@ bool ParseValue<value::normal3f>(lightusd::ascii::AsciiParser &parser,
 
 
 template <>
-bool ParseValue<value::color3f>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::color3f>(lightusd::legacy::ascii::AsciiParser &parser,
                                  value::color3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -270,7 +270,7 @@ bool ParseValue<value::color3f>(lightusd::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float4>(lightusd::ascii::AsciiParser &parser,
+bool ParseValue<value::float4>(lightusd::legacy::ascii::AsciiParser &parser,
                                value::float4 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -324,9 +324,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
         fmt::format("Invalid/unsupported type: {}", typeName));
   }
 
-  lightusd::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  lightusd::legacy::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  lightusd::ascii::AsciiParser parser(&sr);
+  lightusd::legacy::ascii::AsciiParser parser(&sr);
 
   if (typeName.compare("integer") == 0) {
     int val;
@@ -522,9 +522,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
 
 template <typename T>
 bool ParseMaterialXValue(const std::string &str, T *value, std::string *err) {
-  lightusd::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  lightusd::legacy::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  lightusd::ascii::AsciiParser parser(&sr);
+  lightusd::legacy::ascii::AsciiParser parser(&sr);
 
   T val{};
 
@@ -558,7 +558,7 @@ static void InitializeShader(PrimSpec &ps, const std::string &info_id) {
   ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(info_id)));
 }
 
-static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec &ps,
+static bool ConvertPlace2d(const lightusd::legacy::mtlx::pugi::xml_node &node, PrimSpec &ps,
                            std::string * /* warn */, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
@@ -567,12 +567,12 @@ static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec 
   // offset(vector2)
 
   // Get node name
-  lightusd::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  lightusd::legacy::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
   if (name_attr) {
     ps.name() = name_attr.as_string();
   }
 
-  if (lightusd::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+  if (lightusd::legacy::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
     // MaterialX texcoord attribute specifies the UV set name (e.g., "UV0", "st")
     // Map to USD's inputs:varname for UsdPrimvarReader
     std::string texcoord_name = texcoord_attr.as_string();
@@ -581,14 +581,14 @@ static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec 
     }
   }
 
-  if (lightusd::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+  if (lightusd::legacy::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
     value::float2 value{};
     if (ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
       ps.props()["inputs:pivot"] = Property(Attribute::Uniform(value));
     }
   }
 
-  if (lightusd::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
+  if (lightusd::legacy::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value{};
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
@@ -597,7 +597,7 @@ static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec 
     ps.props()["inputs:scale"] = Property(Attribute::Uniform(value));
   }
 
-  if (lightusd::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+  if (lightusd::legacy::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value{};
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
@@ -606,7 +606,7 @@ static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec 
     ps.props()["inputs:rotation"] = Property(Attribute::Uniform(value));
   }
 
-  lightusd::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
+  lightusd::legacy::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
     value::float2 value{};
     if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
@@ -622,12 +622,12 @@ static bool ConvertPlace2d(const lightusd::mtlx::pugi::xml_node &node, PrimSpec 
 }
 
 // Convert MaterialX tiledimage node to USD UsdUVTexture
-static bool ConvertTiledImage(const lightusd::mtlx::pugi::xml_node &node, PrimSpec &ps,
+static bool ConvertTiledImage(const lightusd::legacy::mtlx::pugi::xml_node &node, PrimSpec &ps,
                               std::string *warn, std::string *err) {
   (void)warn;
 
   // Get node name and type
-  lightusd::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  lightusd::legacy::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
   if (name_attr) {
     ps.name() = name_attr.as_string();
   }
@@ -638,23 +638,23 @@ static bool ConvertTiledImage(const lightusd::mtlx::pugi::xml_node &node, PrimSp
     std::string input_type;
     std::string input_value;
 
-    lightusd::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    lightusd::legacy::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
     if (inp_name_attr) {
       input_name = inp_name_attr.as_string();
     }
 
-    lightusd::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+    lightusd::legacy::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
     if (type_attr) {
       input_type = type_attr.as_string();
     }
 
-    lightusd::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    lightusd::legacy::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
     if (value_attr) {
       input_value = value_attr.as_string();
     }
 
     // Check for per-input colorspace attribute
-    lightusd::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+    lightusd::legacy::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
     std::string input_colorspace;
     if (colorspace_attr) {
       input_colorspace = colorspace_attr.as_string();
@@ -707,20 +707,20 @@ static bool ConvertTiledImage(const lightusd::mtlx::pugi::xml_node &node, PrimSp
 }
 
 // Convert MaterialX texcoord node to USD UsdPrimvarReader_float2
-static bool ConvertTexCoord(const lightusd::mtlx::pugi::xml_node &node, PrimSpec &ps,
+static bool ConvertTexCoord(const lightusd::legacy::mtlx::pugi::xml_node &node, PrimSpec &ps,
                             const MtlxConfig &config,
                             std::string *warn, std::string *err) {
   (void)warn;
 
   // Get node name
-  lightusd::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  lightusd::legacy::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
   if (name_attr) {
     ps.name() = name_attr.as_string();
   }
 
   // Parse index attribute (UV set index)
   int uv_index = 0;
-  lightusd::mtlx::pugi::xml_attribute index_attr = node.attribute("index");
+  lightusd::legacy::mtlx::pugi::xml_attribute index_attr = node.attribute("index");
   if (index_attr) {
     std::string index_str = index_attr.as_string();
     if (!ParseMaterialXValue(index_str, &uv_index, err)) {
@@ -758,10 +758,10 @@ static bool ConvertTexCoord(const lightusd::mtlx::pugi::xml_node &node, PrimSpec
 // ============================================================================
 
 // Helper to parse a single input element and store in PrimSpec
-static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpec &ps,
+static bool ParseInputElement(const lightusd::legacy::mtlx::pugi::xml_node &inp, PrimSpec &ps,
                               std::string *err) {
   std::string input_name;
-  lightusd::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+  lightusd::legacy::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
   if (inp_name_attr) {
     input_name = inp_name_attr.as_string();
   }
@@ -769,21 +769,21 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
   std::string prop_name = "inputs:" + input_name;
 
   // Check for per-input colorspace attribute (MaterialX allows per-input colorspace override)
-  lightusd::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+  lightusd::legacy::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
   std::string input_colorspace;
   if (colorspace_attr) {
     input_colorspace = colorspace_attr.as_string();
   }
 
   // Check for connection first (nodename or nodegraph)
-  lightusd::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
-  lightusd::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
-  lightusd::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+  lightusd::legacy::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+  lightusd::legacy::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+  lightusd::legacy::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
 
   if (nodename_attr || nodegraph_attr) {
     // This is a connection - store connection info
     Attribute attr;
-    lightusd::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+    lightusd::legacy::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
     if (type_attr) {
       attr.set_type_name(type_attr.as_string());
     }
@@ -806,13 +806,13 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
   }
 
   // Parse value
-  lightusd::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+  lightusd::legacy::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
   if (!value_attr) {
     return true;  // No value, skip
   }
 
   std::string input_value = value_attr.as_string();
-  lightusd::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+  lightusd::legacy::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
   std::string type_str = type_attr ? type_attr.as_string() : "float";
 
   if (type_str == "float") {
@@ -932,12 +932,12 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
 }
 
 // Generic converter for any MaterialX node - parses all inputs and sets info:id
-static bool ConvertGenericNode(const lightusd::mtlx::pugi::xml_node &node, PrimSpec &ps,
+static bool ConvertGenericNode(const lightusd::legacy::mtlx::pugi::xml_node &node, PrimSpec &ps,
                                const std::string &info_id,
                                std::string *warn, std::string *err) {
   (void)warn;
 
-  lightusd::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  lightusd::legacy::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
   if (name_attr) {
     ps.name() = name_attr.as_string();
   }
@@ -961,19 +961,19 @@ static bool ConvertGenericNode(const lightusd::mtlx::pugi::xml_node &node, PrimS
 // ============================================================================
 
 // Helper: get the node's "type" attribute or a default
-static std::string GetNodeTypeAttr(const lightusd::mtlx::pugi::xml_node &node,
+static std::string GetNodeTypeAttr(const lightusd::legacy::mtlx::pugi::xml_node &node,
                                    const char *default_type) {
-  lightusd::mtlx::pugi::xml_attribute ta = node.attribute("type");
+  lightusd::legacy::mtlx::pugi::xml_attribute ta = node.attribute("type");
   return ta ? ta.as_string() : default_type;
 }
 
 // Helper: find the "type" attribute of the named input child
-static std::string GetInputTypeAttr(const lightusd::mtlx::pugi::xml_node &node,
+static std::string GetInputTypeAttr(const lightusd::legacy::mtlx::pugi::xml_node &node,
                                     const char *input_name, const char *default_type) {
   for (auto inp : node.children("input")) {
-    lightusd::mtlx::pugi::xml_attribute n = inp.attribute("name");
+    lightusd::legacy::mtlx::pugi::xml_attribute n = inp.attribute("name");
     if (n && std::string(n.as_string()) == input_name) {
-      lightusd::mtlx::pugi::xml_attribute t = inp.attribute("type");
+      lightusd::legacy::mtlx::pugi::xml_attribute t = inp.attribute("type");
       if (t) return t.as_string();
       break;
     }
@@ -1068,8 +1068,8 @@ static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
   {"constant",    {nullptr, nullptr, "MaterialXConstant"}},
 };
 
-static const lightusd::HashMap<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
-  static const lightusd::HashMap<std::string, NodeDispatchEntry> table(
+static const lightusd::legacy::HashMap<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
+  static const lightusd::legacy::HashMap<std::string, NodeDispatchEntry> table(
       std::begin(kNodeDispatchPairs), std::end(kNodeDispatchPairs));
   return table;
 }
@@ -1077,7 +1077,7 @@ static const lightusd::HashMap<std::string, NodeDispatchEntry> &GetNodeDispatchT
 // Helper to convert a single MaterialX node to PrimSpec
 // Returns true if successful (including skip case), false on error
 // Sets is_skip to true if the node should be skipped (input/output)
-static bool ConvertSingleNode(const lightusd::mtlx::pugi::xml_node &node,
+static bool ConvertSingleNode(const lightusd::legacy::mtlx::pugi::xml_node &node,
                               PrimSpec &ps, bool &is_skip,
                               const MtlxConfig &config,
                               std::string *warn, std::string *err) {
@@ -1135,7 +1135,7 @@ static bool ConvertSingleNode(const lightusd::mtlx::pugi::xml_node &node,
 }
 
 // Iterative version of ConvertNodeGraph using explicit stack
-static bool ConvertNodeGraphIterative(const lightusd::mtlx::pugi::xml_node &root_node,
+static bool ConvertNodeGraphIterative(const lightusd::legacy::mtlx::pugi::xml_node &root_node,
                                       PrimSpec &ps_out,
                                       const MtlxConfig &config,
                                       std::string *warn, std::string *err) {
@@ -1144,13 +1144,13 @@ static bool ConvertNodeGraphIterative(const lightusd::mtlx::pugi::xml_node &root
   // Stack entry for iterative processing
   // We need to collect children into a vector since the iterator is temporary
   struct StackEntry {
-    lightusd::mtlx::pugi::xml_node xml_node;
-    std::vector<lightusd::mtlx::pugi::xml_node> children;
+    lightusd::legacy::mtlx::pugi::xml_node xml_node;
+    std::vector<lightusd::legacy::mtlx::pugi::xml_node> children;
     size_t child_idx;
     PrimSpec ps;
     bool is_skip;
 
-    explicit StackEntry(const lightusd::mtlx::pugi::xml_node &n)
+    explicit StackEntry(const lightusd::legacy::mtlx::pugi::xml_node &n)
         : xml_node(n), child_idx(0), is_skip(false) {
       // Collect children into vector
       for (auto it = n.begin(); it != n.end(); ++it) {
@@ -1180,7 +1180,7 @@ static bool ConvertNodeGraphIterative(const lightusd::mtlx::pugi::xml_node &root
     // Check if there are more children to process
     if (curr.child_idx < curr.children.size()) {
       // Get current child and advance index
-      lightusd::mtlx::pugi::xml_node child = curr.children[curr.child_idx];
+      lightusd::legacy::mtlx::pugi::xml_node child = curr.children[curr.child_idx];
       curr.child_idx++;
 
       // Push child onto stack
@@ -1369,7 +1369,7 @@ static bool ProcessIncludes(const std::string &base_dir, std::string &xml_str,
 }  // namespace detail
 
 static MtlxLookElement ParseLookElement(
-    const lightusd::mtlx::pugi::xml_node &node) {
+    const lightusd::legacy::mtlx::pugi::xml_node &node) {
   MtlxLookElement element;
   element.name = node.name();
   for (const auto &attr : node.attributes()) {
@@ -1387,7 +1387,7 @@ bool ReadMaterialXFromString(const std::string &str,
                              const MtlxConfig &config) {
 #define GET_ATTR_VALUE(__xml, __name, __ty, __var)                        \
   do {                                                                    \
-    lightusd::mtlx::pugi::xml_attribute attr = __xml.attribute(__name);                   \
+    lightusd::legacy::mtlx::pugi::xml_attribute attr = __xml.attribute(__name);                   \
     if (!attr) {                                                          \
       PUSH_ERROR_AND_RETURN(                                              \
           fmt::format("Required XML Attribute `{}` not found.", __name)); \
@@ -1422,21 +1422,21 @@ bool ReadMaterialXFromString(const std::string &str,
     PUSH_ERROR_AND_RETURN("Input MaterialX string is empty.");
   }
 
-  lightusd::mtlx::pugi::xml_document doc;
-  lightusd::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
+  lightusd::legacy::mtlx::pugi::xml_document doc;
+  lightusd::legacy::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
   if (!result) {
     std::string msg(result.description());
     PUSH_ERROR_AND_RETURN("Failed to parse XML: " + msg);
   }
 
-  lightusd::mtlx::pugi::xml_node root = doc.child("materialx");
+  lightusd::legacy::mtlx::pugi::xml_node root = doc.child("materialx");
   if (!root) {
     PUSH_ERROR_AND_RETURN("<materialx> tag not found: " + asset_path);
   }
 
   // Attributes for a <materialx> element:
   //
-  lightusd::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
+  lightusd::legacy::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
                           asset_path);
@@ -1459,21 +1459,21 @@ bool ReadMaterialXFromString(const std::string &str,
     mtlx->version = ver_attr.as_string();
   }
 
-  lightusd::mtlx::pugi::xml_attribute cms_attr = root.attribute("cms");
+  lightusd::legacy::mtlx::pugi::xml_attribute cms_attr = root.attribute("cms");
   if (cms_attr) {
     mtlx->cms = cms_attr.as_string();
   }
 
-  lightusd::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cmsconfig");
+  lightusd::legacy::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cmsconfig");
   if (cmsconfig_attr) {
     mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
-  lightusd::mtlx::pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
+  lightusd::legacy::mtlx::pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
   if (colorspace_attr) {
     mtlx->color_space = colorspace_attr.as_string();
   }
 
-  lightusd::mtlx::pugi::xml_attribute namespace_attr = root.attribute("namespace");
+  lightusd::legacy::mtlx::pugi::xml_attribute namespace_attr = root.attribute("namespace");
   if (namespace_attr) {
     mtlx->name_space = namespace_attr.as_string();
   }
@@ -1485,7 +1485,7 @@ bool ReadMaterialXFromString(const std::string &str,
     std::string ng_name;
 
     // Get nodegraph name
-    lightusd::mtlx::pugi::xml_attribute name_attr = ng.attribute("name");
+    lightusd::legacy::mtlx::pugi::xml_attribute name_attr = ng.attribute("name");
     if (!name_attr) {
       PUSH_WARN("NodeGraph without name attribute. Skipping.\n");
       continue;
@@ -1508,21 +1508,21 @@ bool ReadMaterialXFromString(const std::string &str,
         std::string nodename_ref;
         std::string output_ref = "out";
 
-        lightusd::mtlx::pugi::xml_attribute out_name_attr = child.attribute("name");
+        lightusd::legacy::mtlx::pugi::xml_attribute out_name_attr = child.attribute("name");
         if (out_name_attr) {
           output_name = out_name_attr.as_string();
         }
 
-        lightusd::mtlx::pugi::xml_attribute out_type_attr = child.attribute("type");
+        lightusd::legacy::mtlx::pugi::xml_attribute out_type_attr = child.attribute("type");
         if (out_type_attr) {
           output_type = out_type_attr.as_string();
         }
-        lightusd::mtlx::pugi::xml_attribute output_attr_xml = child.attribute("output");
+        lightusd::legacy::mtlx::pugi::xml_attribute output_attr_xml = child.attribute("output");
         if (output_attr_xml) {
           output_ref = output_attr_xml.as_string();
         }
 
-        lightusd::mtlx::pugi::xml_attribute nodename_attr = child.attribute("nodename");
+        lightusd::legacy::mtlx::pugi::xml_attribute nodename_attr = child.attribute("nodename");
         if (nodename_attr) {
           nodename_ref = nodename_attr.as_string();
 
@@ -1592,23 +1592,23 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
 
       // Check for value attribute (direct value)
-      lightusd::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      lightusd::legacy::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
       if (value_attr) {
         valueStr = value_attr.as_string();
       }
 
       // Check for connection attributes
-      lightusd::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
       if (nodegraph_attr) {
         nodegraphRef = nodegraph_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      lightusd::legacy::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
       if (output_attr) {
         outputRef = output_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
       if (nodename_attr) {
         nodenameRef = nodename_attr.as_string();
       }
@@ -1886,23 +1886,23 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
 
       // Check for value attribute (direct value)
-      lightusd::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      lightusd::legacy::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
       if (value_attr) {
         valueStr = value_attr.as_string();
       }
 
       // Check for connection attributes
-      lightusd::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
       if (nodegraph_attr) {
         nodegraphRef = nodegraph_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      lightusd::legacy::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
       if (output_attr) {
         outputRef = output_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
       if (nodename_attr) {
         nodenameRef = nodename_attr.as_string();
       }
@@ -1964,7 +1964,7 @@ bool ReadMaterialXFromString(const std::string &str,
   }
 
   // OpenPBR Surface - check both "OpenPBRSurface" and "open_pbr_surface"
-  std::vector<lightusd::mtlx::pugi::xml_node> openpbr_nodes;
+  std::vector<lightusd::legacy::mtlx::pugi::xml_node> openpbr_nodes;
   {
     auto nodes1 = root.children("OpenPBRSurface");
     auto nodes2 = root.children("open_pbr_surface");
@@ -1999,23 +1999,23 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
 
       // Check for value attribute (direct value)
-      lightusd::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      lightusd::legacy::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
       if (value_attr) {
         valueStr = value_attr.as_string();
       }
 
       // Check for connection attributes
-      lightusd::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
       if (nodegraph_attr) {
         nodegraphRef = nodegraph_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      lightusd::legacy::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
       if (output_attr) {
         outputRef = output_attr.as_string();
       }
 
-      lightusd::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      lightusd::legacy::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
       if (nodename_attr) {
         nodenameRef = nodename_attr.as_string();
       }
@@ -2162,7 +2162,7 @@ bool ReadMaterialXFromString(const std::string &str,
   // pairs is more useful than rejecting or silently dropping the look.
   for (auto look : root.children("look")) {
     MtlxLook parsed_look;
-    lightusd::mtlx::pugi::xml_attribute name_attr = look.attribute("name");
+    lightusd::legacy::mtlx::pugi::xml_attribute name_attr = look.attribute("name");
     if (name_attr) parsed_look.name = name_attr.as_string();
     for (auto child : look) {
       parsed_look.elements.push_back(ParseLookElement(child));
@@ -2487,11 +2487,12 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
 }
 
 //} // namespace usdMtlx
+}  // namespace legacy
 }  // namespace lightusd
 
 #else
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 bool ReadMaterialXFromString(const std::string &str,
                              const std::string &asset_name, MtlxModel *mtlx,
@@ -2577,6 +2578,7 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
   return false;
 }
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_USE_USDMTLX

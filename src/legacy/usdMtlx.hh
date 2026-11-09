@@ -25,7 +25,7 @@
 #include "usdShade.hh"
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
 constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandardSurface";
@@ -454,4 +454,5 @@ DEFINE_TYPE_TRAIT(MtlxLight, kMtlxLight,
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

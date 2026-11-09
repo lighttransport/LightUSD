@@ -8,7 +8,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 void ParserTimer::StartTimer(const std::string& operation_name) {
   active_timers_[operation_name] = Clock::now();
@@ -182,4 +182,5 @@ void ParserProfiler::ClearAll() {
   }
 }
 
+}  // namespace legacy
 }  // namespace lightusd

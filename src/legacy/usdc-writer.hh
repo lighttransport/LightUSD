@@ -13,7 +13,7 @@
 
 #include "lightusd.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 ///
@@ -65,4 +65,5 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         bool profile_crate = false);
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd

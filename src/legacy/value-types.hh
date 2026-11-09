@@ -64,15 +64,16 @@
 #include "typed-array-core.hh"
 
 // forward decls defined below or in lower-level typed-array headers.
-namespace lightusd {
+namespace lightusd { namespace legacy {
 template <typename T>
 class ChunkedTypedArray;
 namespace value {
 class any_value;
 }
+}  // namespace legacy
 }  // namespace lightusd
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace value {
 
@@ -190,7 +191,7 @@ constexpr auto kRelationship = "rel";
 
 inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
-using token = lightusd::Token;
+using token = lightusd::legacy::Token;
 
 // single or triple-quoted('"""' or ''') string
 struct StringData {
@@ -1644,9 +1645,10 @@ bool IsRoleType(const uint32_t tyid);
 bool IsReasonableValueVectorSize(size_t size);
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 ///
@@ -2977,4 +2979,5 @@ static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

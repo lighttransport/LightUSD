@@ -279,7 +279,7 @@ bool CameraPoseDiffers(const NextCameraPose& a, const NextCameraPose& b) {
 }
 
 bool FindCameraPoseAtTime(const lightusd_stage* stage,
-                          const lightusd::Stage* legacyStage,
+                          const lightusd::legacy::Stage* legacyStage,
                           const std::string& cameraName, double time,
                           NextCameraPose* out) {
   if (!out || cameraName.empty()) return false;
@@ -306,7 +306,7 @@ ShutterMotionPlan MakeShutterMotionPlan(
     const DrawScene& draw, const lightusd_stage* stage,
     const std::string& cameraName, double frameTime,
     const RtCameraShutter& shutter, uint32_t requestedSamples,
-    const lightusd::Stage* legacyStage = nullptr) {
+    const lightusd::legacy::Stage* legacyStage = nullptr) {
   ShutterMotionPlan plan;
   plan.frameTime = frameTime;
   plan.shutter = shutter;
@@ -1886,7 +1886,7 @@ App::~App() {
   // its members are being destroyed.
   if (mcp_) mcp_->stop();
 #endif
-  if (physicsWorldReady_) lightusd::tydra::FreePhysWorld(&physicsWorld_);
+  if (physicsWorldReady_) lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
   // Finish any in-flight RT build: std::thread's destructor calls
   // std::terminate() if it is destroyed still joinable (e.g. a headless

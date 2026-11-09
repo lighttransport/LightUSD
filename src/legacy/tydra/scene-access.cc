@@ -24,16 +24,16 @@
 #endif
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #include "tydra/scene-access-traverse-impl.inc"
 
-const Prim *GetParentPrim(const lightusd::Stage &stage,
-                          const lightusd::Path &path, std::string *err) {
+const Prim *GetParentPrim(const lightusd::legacy::Stage &stage,
+                          const lightusd::legacy::Path &path, std::string *err) {
   if (!path.is_valid()) {
     if (err) {
-      (*err) = "Input Path " + lightusd::to_string(path) + " is invalid.\n";
+      (*err) = "Input Path " + lightusd::legacy::to_string(path) + " is invalid.\n";
     }
     return nullptr;
   }
@@ -59,7 +59,7 @@ const Prim *GetParentPrim(const lightusd::Stage &stage,
     return nullptr;
   }
 
-  lightusd::Path parentPath = path.get_parent_prim_path();
+  lightusd::legacy::Path parentPath = path.get_parent_prim_path();
 
   nonstd::expected<const Prim *, std::string> ret =
       stage.GetPrimAtPath(parentPath);
@@ -68,7 +68,7 @@ const Prim *GetParentPrim(const lightusd::Stage &stage,
   } else {
     if (err) {
       (*err) += "Failed to get parent Prim from Path " +
-                lightusd::to_string(path) + ". Reason = " + ret.error() + "\n";
+                lightusd::legacy::to_string(path) + ". Reason = " + ret.error() + "\n";
     }
     return nullptr;
   }
@@ -83,20 +83,20 @@ namespace {
 
 // Optimized iterative version of VisitPrimsRec
 // Handles primChildren ordering and early termination
-bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
-                         const lightusd::Prim &start_prim, int32_t start_level,
+bool VisitPrimsIterative(const lightusd::legacy::Path &start_abs_path,
+                         const lightusd::legacy::Prim &start_prim, int32_t start_level,
                          VisitPrimFunction visitor_fun, void *userdata,
                          std::string *err,
                          size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
   struct StackEntry {
-    const lightusd::Prim *prim;
-    std::vector<const lightusd::Prim *> ordered_children;
+    const lightusd::legacy::Prim *prim;
+    std::vector<const lightusd::legacy::Prim *> ordered_children;
     size_t child_idx;
     int32_t level;
-    lightusd::Path abs_path;
+    lightusd::legacy::Path abs_path;
 
-    StackEntry(const lightusd::Prim *p, int32_t lvl, lightusd::Path path)
+    StackEntry(const lightusd::legacy::Prim *p, int32_t lvl, lightusd::legacy::Path path)
         : prim(p), child_idx(0), level(lvl), abs_path(std::move(path)) {}
   };
 
@@ -104,9 +104,9 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
   stack.reserve(64);
 
   // Helper to get ordered children list
-  auto get_ordered_children = [err](const lightusd::Prim &prim)
-      -> std::pair<bool, std::vector<const lightusd::Prim *>> {
-    std::vector<const lightusd::Prim *> result;
+  auto get_ordered_children = [err](const lightusd::legacy::Prim &prim)
+      -> std::pair<bool, std::vector<const lightusd::legacy::Prim *>> {
+    std::vector<const lightusd::legacy::Prim *> result;
 
     if (prim.children().empty()) {
       return {true, result};
@@ -114,7 +114,7 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
 
     // If primChildren metadata matches children count, use it for ordering
     if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::unordered_map<std::string, const lightusd::Prim *, FNV1StringHash>
+      std::unordered_map<std::string, const lightusd::legacy::Prim *, FNV1StringHash>
           primNameTable;
       primNameTable.reserve(prim.children().size());
       for (size_t i = 0; i < prim.children().size(); i++) {
@@ -166,7 +166,7 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
   }
 
   // Get ordered children for start prim
-  std::pair<bool, std::vector<const lightusd::Prim *>> start_result =
+  std::pair<bool, std::vector<const lightusd::legacy::Prim *>> start_result =
       get_ordered_children(start_prim);
   if (!start_result.first) {
     return false;
@@ -195,11 +195,11 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
       continue;
     }
 
-    const lightusd::Prim *child = top.ordered_children[top.child_idx];
+    const lightusd::legacy::Prim *child = top.ordered_children[top.child_idx];
     ++top.child_idx;
 
     // Build path for this child
-    lightusd::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
+    lightusd::legacy::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
     int32_t child_level = top.level + 1;
 
     // Call visitor
@@ -219,7 +219,7 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
     }
 
     // Get ordered children for this child
-    std::pair<bool, std::vector<const lightusd::Prim *>> child_result =
+    std::pair<bool, std::vector<const lightusd::legacy::Prim *>> child_result =
         get_ordered_children(*child);
     if (!child_result.first) {
       return false;
@@ -240,7 +240,7 @@ bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 }  // namespace
 
-bool VisitPrims(const lightusd::Stage &stage, VisitPrimFunction visitor_fun,
+bool VisitPrims(const lightusd::legacy::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
@@ -346,8 +346,8 @@ bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err) {
 }
 
 std::vector<const GeomSubset *> GetGeomSubsets(
-    const lightusd::Stage &stage, const lightusd::Path &prim_path,
-    const lightusd::value::token &familyName, bool prim_must_be_geommesh) {
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Path &prim_path,
+    const lightusd::legacy::value::token &familyName, bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
   const Prim *pprim{nullptr};
@@ -390,7 +390,7 @@ std::vector<const GeomSubset *> GetGeomSubsets(
 }
 
 std::vector<const GeomSubset *> GetGeomSubsetChildren(
-    const lightusd::Prim &prim, const lightusd::value::token &familyName,
+    const lightusd::legacy::Prim &prim, const lightusd::legacy::value::token &familyName,
     bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
@@ -442,6 +442,7 @@ bool GetCollection(const Prim &prim, const Collection **dst) {
 
 }  // namespace tydra
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #if defined(__clang__)

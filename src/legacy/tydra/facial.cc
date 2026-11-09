@@ -8,7 +8,7 @@
 //
 #include "facial.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 constexpr std::array<const char *, 52> gARKitBlendShapeLocationKV = {
@@ -93,5 +93,6 @@ bool GetARKitBlendShapeLocationEnumFromString(const std::string &s,
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 

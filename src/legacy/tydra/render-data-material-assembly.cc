@@ -60,7 +60,7 @@
 #include "tydra/shader-network.hh"
 #include "tydra/render-data-material-internal.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -639,7 +639,7 @@ static const Prim *ResolveSurfaceShaderThroughNodeGraph(const Stage &stage,
 
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
-                                           const lightusd::Material &material,
+                                           const lightusd::legacy::Material &material,
                                            RenderMaterial *rmat_out) {
   if (!rmat_out) {
     PUSH_ERROR_AND_RETURN("rmat_out argument is nullptr.");
@@ -1238,4 +1238,5 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

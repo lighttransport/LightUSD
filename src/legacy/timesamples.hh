@@ -30,7 +30,7 @@
 // (widely included via animatable.hh / primvar.hh) was a leftover from the
 // deleted header-inline TypedTimeSamples::get.
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace value {
 
@@ -1170,4 +1170,5 @@ DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 } // namespace lightusd

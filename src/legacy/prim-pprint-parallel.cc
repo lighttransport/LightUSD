@@ -8,7 +8,7 @@
 #include "stream-writer.hh"
 #include <sstream>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -417,4 +417,5 @@ template void print_primspecs_parallel<4096, 16>(
 #endif  // LIGHTUSD_ENABLE_THREAD
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

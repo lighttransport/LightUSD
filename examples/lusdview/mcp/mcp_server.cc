@@ -7,7 +7,7 @@
 #include "log.hh"
 #include "mcp/mcp_host.hh"
 #include "tydra/js-script.hh"    // complete JSEngineState (held in Context by value)
-#include "tydra/mcp-context.hh"  // lightusd::tydra::mcp::Context
+#include "tydra/mcp-context.hh"  // lightusd::legacy::tydra::mcp::Context
 #include "tydra/mcp-tools.hh"    // GetToolsList (library tool schemas)
 
 namespace lusdview {
@@ -293,9 +293,9 @@ json MCPServer::buildToolsList() const {
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
   // is safe to call here on the transport thread.
   try {
-    lightusd::tydra::mcp::Context ctx;
+    lightusd::legacy::tydra::mcp::Context ctx;
     json libList;
-    if (lightusd::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
+    if (lightusd::legacy::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
         libList["tools"].is_array()) {
       for (auto& t : libList["tools"]) tools.push_back(t);
     }

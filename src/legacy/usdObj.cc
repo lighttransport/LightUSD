@@ -12,7 +12,7 @@
 #include "usdGeom.hh"
 #include "usda-writer.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdObj {
 namespace {
 template <class T>
@@ -184,4 +184,5 @@ bool ReadObjLayerFromMemory(const std::string& text, const std::string& source,
 }
 
 }  // namespace usdObj
+}  // namespace legacy
 }  // namespace lightusd

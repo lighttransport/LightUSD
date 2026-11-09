@@ -11,7 +11,7 @@
 #include "external/mapbox/eternal/include/mapbox/eternal.hpp"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 // Section constructor implementation
@@ -209,4 +209,5 @@ std::string GetCrateDataTypeName(CrateDataTypeId did) {
 // uint32_t CrateValue::GetTypeId() const { return value_.type_id(); }
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd

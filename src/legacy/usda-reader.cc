@@ -85,7 +85,7 @@
 #include "common-macros.inc"
 #include "usda-reader-impl.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 
 namespace usda {
@@ -1154,8 +1154,8 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  lightusd::ascii::AsciiParser parser(&sr);
+  lightusd::legacy::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::legacy::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
 }
@@ -1207,11 +1207,12 @@ void USDAReader::SetProgressCallback(std::function<bool(float progress, void *us
 }
 
 }  // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 
 #else
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usda {
 
 USDAReader::USDAReader(StreamReader *sr) {
@@ -1264,6 +1265,7 @@ void USDAReader::SetProgressCallback(std::function<bool(float progress, void *us
 }
 
 }  // namespace usda
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif

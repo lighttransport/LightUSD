@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 class Stage;
 
 namespace tydra {
@@ -50,4 +50,5 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 
 }  // namespace color_management
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

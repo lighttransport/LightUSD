@@ -48,18 +48,18 @@ extern "C" {
 namespace lusdview {
 
 namespace tydra = lightusd::tydra;
-using lightusd::value::matrix4d;
+using lightusd::legacy::value::matrix4d;
 
 namespace {
 
 constexpr int kInfluenceTexWidth = 1024;
 
-const char* PurposeName(lightusd::Purpose purpose) {
+const char* PurposeName(lightusd::legacy::Purpose purpose) {
   switch (purpose) {
-    case lightusd::Purpose::Render: return "render";
-    case lightusd::Purpose::Proxy: return "proxy";
-    case lightusd::Purpose::Guide: return "guide";
-    case lightusd::Purpose::Default:
+    case lightusd::legacy::Purpose::Render: return "render";
+    case lightusd::legacy::Purpose::Proxy: return "proxy";
+    case lightusd::legacy::Purpose::Guide: return "guide";
+    case lightusd::legacy::Purpose::Default:
     default: return "default";
   }
 }
@@ -70,34 +70,34 @@ const char* PurposeName(lightusd::Purpose purpose) {
 // `proxy` and `render` Scopes), and missing that made every mesh under it
 // resolve to `default`.
 template <typename T>
-bool TypedAuthoredPurpose(const lightusd::Prim& prim, std::string* out) {
+bool TypedAuthoredPurpose(const lightusd::legacy::Prim& prim, std::string* out) {
   const auto* p = prim.as<T>();
   if (!p || !p->purpose.authored()) return false;
   *out = PurposeName(p->purpose.get_value());
   return true;
 }
 
-bool AuthoredPurpose(const lightusd::Prim& prim, std::string* out) {
-  return TypedAuthoredPurpose<lightusd::Scope>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomMesh>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::Xform>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomSphere>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomCube>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomCylinder>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomCone>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomCapsule>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomPlane>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomBasisCurves>(prim, out) ||
-         TypedAuthoredPurpose<lightusd::GeomPoints>(prim, out);
+bool AuthoredPurpose(const lightusd::legacy::Prim& prim, std::string* out) {
+  return TypedAuthoredPurpose<lightusd::legacy::Scope>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomMesh>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::Xform>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomSphere>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomCube>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomCylinder>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomCone>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomCapsule>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomPlane>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomBasisCurves>(prim, out) ||
+         TypedAuthoredPurpose<lightusd::legacy::GeomPoints>(prim, out);
 }
 
-std::string ResolveInheritedPurpose(const lightusd::Stage& stage,
+std::string ResolveInheritedPurpose(const lightusd::legacy::Stage& stage,
                                     const std::string& absPath) {
   std::string path = absPath;
   while (!path.empty()) {
-    const lightusd::Prim* prim = nullptr;
+    const lightusd::legacy::Prim* prim = nullptr;
     std::string err;
-    if (stage.find_prim_at_path(lightusd::Path(path, ""), prim, &err) && prim) {
+    if (stage.find_prim_at_path(lightusd::legacy::Path(path, ""), prim, &err) && prim) {
       std::string purpose;
       if (AuthoredPurpose(*prim, &purpose)) return purpose;
     }
@@ -118,13 +118,13 @@ std::string ResolveInheritedPurpose(const lightusd::Stage& stage,
 // authored kind other than `group`, which is the container for many models
 // (/World) rather than one asset. Empty when there is none. Used to scope
 // proxy/render purpose alternatives to the asset that authored both.
-std::string ResolveModelRoot(const lightusd::Stage& stage,
+std::string ResolveModelRoot(const lightusd::legacy::Stage& stage,
                              const std::string& absPath) {
   std::string path = absPath;
   while (!path.empty()) {
-    const lightusd::Prim* prim = nullptr;
+    const lightusd::legacy::Prim* prim = nullptr;
     std::string err;
-    if (stage.find_prim_at_path(lightusd::Path(path, ""), prim, &err) && prim &&
+    if (stage.find_prim_at_path(lightusd::legacy::Path(path, ""), prim, &err) && prim &&
         prim->metas().has_kind()) {
       const std::string kind = prim->metas().get_kind_str();
       if (!kind.empty() && kind != "group") return path;
@@ -136,12 +136,12 @@ std::string ResolveModelRoot(const lightusd::Stage& stage,
   return {};
 }
 
-int ResolveInheritedKind(const lightusd::Stage& stage, const std::string& absPath) {
+int ResolveInheritedKind(const lightusd::legacy::Stage& stage, const std::string& absPath) {
   std::string path = absPath;
   while (!path.empty()) {
-    const lightusd::Prim* prim = nullptr;
+    const lightusd::legacy::Prim* prim = nullptr;
     std::string err;
-    if (stage.find_prim_at_path(lightusd::Path(path, ""), prim, &err) && prim) {
+    if (stage.find_prim_at_path(lightusd::legacy::Path(path, ""), prim, &err) && prim) {
       if (prim->metas().has_kind()) return KindId(prim->metas().get_kind_str());
     }
     if (path == "/") break;
@@ -3049,7 +3049,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     }
     // Pass 2: scatter [channelId, dx, dy, dz] halfs at a running per-vertex
     // cursor, plus the parallel uint16 channelId side buffer (GL skip pre-check).
-    auto h = [](float f) { return lightusd::value::float_to_half_full(f).value; };
+    auto h = [](float f) { return lightusd::legacy::value::float_to_half_full(f).value; };
     dm.morphDeltaHalf.assign(total * 4, 0);
     dm.morphChannelId.assign(total, 0);
     std::vector<uint32_t> cursor(nv, 0u);
@@ -3491,7 +3491,7 @@ void UpdatePreviewLight(DrawScene* draw) {
   draw->hasPreviewLight = true;
 }
 
-void ApplyMeshPurposes(const lightusd::Stage& stage, DrawScene* draw) {
+void ApplyMeshPurposes(const lightusd::legacy::Stage& stage, DrawScene* draw) {
   if (!draw) return;
   for (DrawMeshCPU& mesh : draw->meshes) {
     mesh.purpose = mesh.absPath.empty() ? "default"
@@ -3610,7 +3610,7 @@ F3 Normalize(F3 a, F3 fallback = {0, 1, 0}) {
   return l > 1.0e-12f ? Mul(a, 1.0f / l) : fallback;
 }
 
-F3 ToF3(const lightusd::value::point3f& p) { return {p[0], p[1], p[2]}; }
+F3 ToF3(const lightusd::legacy::value::point3f& p) { return {p[0], p[1], p[2]}; }
 void AppendGeneratedMaterial(DrawScene* out, const float color[3],
                              const std::string& name, int* materialId) {
   if (!out || !materialId) return;
@@ -3668,12 +3668,12 @@ float CurveWidthAt(const std::vector<float>& widths, size_t pointIndex,
   return widths.back();
 }
 
-bool BuildBasisCurveRibbonMesh(const lightusd::GeomBasisCurves& curves,
+bool BuildBasisCurveRibbonMesh(const lightusd::legacy::GeomBasisCurves& curves,
                                const std::string& absPath,
-                               const lightusd::value::matrix4d& world,
+                               const lightusd::legacy::value::matrix4d& world,
                                int materialId, DrawMeshCPU* dm) {
   if (!dm) return false;
-  const std::vector<lightusd::value::point3f> pts = curves.get_points();
+  const std::vector<lightusd::legacy::value::point3f> pts = curves.get_points();
   const std::vector<int> counts = curves.get_curveVertexCounts();
   const std::vector<float> widths = curves.get_widths();
   if (pts.empty() || counts.empty()) return false;
@@ -3744,7 +3744,7 @@ double BsplineBasis(int i, int degree, double u, const std::vector<double>& knot
   return v;
 }
 
-F3 EvalNurbsPatch(const std::vector<lightusd::value::point3f>& pts,
+F3 EvalNurbsPatch(const std::vector<lightusd::legacy::value::point3f>& pts,
                   const std::vector<double>& weights, int uCount, int vCount,
                   int uOrder, int vOrder, const std::vector<double>& uKnots,
                   const std::vector<double>& vKnots, double u, double v) {
@@ -3770,9 +3770,9 @@ F3 EvalNurbsPatch(const std::vector<lightusd::value::point3f>& pts,
   return sum;
 }
 
-bool BuildNurbsPatchMesh(const lightusd::GeomNurbsPatch& patch,
+bool BuildNurbsPatchMesh(const lightusd::legacy::GeomNurbsPatch& patch,
                          const std::string& absPath,
-                         const lightusd::value::matrix4d& world,
+                         const lightusd::legacy::value::matrix4d& world,
                          int materialId, DrawMeshCPU* dm) {
   if (!dm) return false;
   auto ptsOpt = patch.points.get_value();
@@ -3793,7 +3793,7 @@ bool BuildNurbsPatchMesh(const lightusd::GeomNurbsPatch& patch,
   const auto& vOrderAnim = vOrderOpt.value();
   const auto& uKnotsAnim = uKnotsOpt.value();
   const auto& vKnotsAnim = vKnotsOpt.value();
-  std::vector<lightusd::value::point3f> pts;
+  std::vector<lightusd::legacy::value::point3f> pts;
   std::vector<double> uKnots, vKnots, weights;
   int uCount = 0, vCount = 0, uOrder = 0, vOrder = 0;
   if (!ptsAnim.get_scalar(&pts) || !uCountAnim.get_scalar(&uCount) ||
@@ -3816,11 +3816,11 @@ bool BuildNurbsPatchMesh(const lightusd::GeomNurbsPatch& patch,
   double v0 = vKnots[static_cast<size_t>(vOrder - 1)];
   double v1 = vKnots[static_cast<size_t>(vCount)];
   if (auto r = patch.uRange.get_value()) {
-    lightusd::value::double2 rr;
+    lightusd::legacy::value::double2 rr;
     if (r.value().get_scalar(&rr)) { u0 = rr[0]; u1 = rr[1]; }
   }
   if (auto r = patch.vRange.get_value()) {
-    lightusd::value::double2 rr;
+    lightusd::legacy::value::double2 rr;
     if (r.value().get_scalar(&rr)) { v0 = rr[0]; v1 = rr[1]; }
   }
 
@@ -3873,24 +3873,24 @@ bool BuildNurbsPatchMesh(const lightusd::GeomNurbsPatch& patch,
   return !dm->indices.empty();
 }
 
-std::string ChildPath(const std::string& parent, const lightusd::Prim& prim) {
+std::string ChildPath(const std::string& parent, const lightusd::legacy::Prim& prim) {
   const std::string name = prim.element_name();
   if (parent.empty() || parent == "/") return "/" + name;
   return parent + "/" + name;
 }
 
-void AppendCurveAndPatchMeshesRec(const lightusd::Prim& prim,
+void AppendCurveAndPatchMeshesRec(const lightusd::legacy::Prim& prim,
                                   const std::string& absPath,
-                                  const lightusd::value::matrix4d& parentWorld,
+                                  const lightusd::legacy::value::matrix4d& parentWorld,
                                   int* curveMat, int* patchMat, DrawScene* out) {
   if (!out || !curveMat || !patchMat) return;
   bool reset = false;
-  lightusd::value::matrix4d local =
-      lightusd::GetLocalTransform(prim, &reset, lightusd::value::TimeCode::Default(),
-                                  lightusd::value::TimeSampleInterpolationType::Linear);
-  lightusd::value::matrix4d world =
+  lightusd::legacy::value::matrix4d local =
+      lightusd::legacy::GetLocalTransform(prim, &reset, lightusd::legacy::value::TimeCode::Default(),
+                                  lightusd::legacy::value::TimeSampleInterpolationType::Linear);
+  lightusd::legacy::value::matrix4d world =
       reset ? local : (local * parentWorld);  // row-major local-first convention
-  if (const auto* curves = prim.as<lightusd::GeomBasisCurves>()) {
+  if (const auto* curves = prim.as<lightusd::legacy::GeomBasisCurves>()) {
     if (*curveMat < 0) {
       const float curveColor[3] = {0.95f, 0.55f, 0.12f};
       AppendGeneratedMaterial(out, curveColor, "__lusdview_basis_curve_ribbon",
@@ -3903,7 +3903,7 @@ void AppendCurveAndPatchMeshesRec(const lightusd::Prim& prim,
     } else {
       out->skipped.push_back("BasisCurves '" + absPath + "': unsupported/empty");
     }
-  } else if (const auto* patch = prim.as<lightusd::GeomNurbsPatch>()) {
+  } else if (const auto* patch = prim.as<lightusd::legacy::GeomNurbsPatch>()) {
     if (*patchMat < 0) {
       const float patchColor[3] = {0.18f, 0.52f, 0.95f};
       AppendGeneratedMaterial(out, patchColor, "__lusdview_nurbs_patch",
@@ -3917,17 +3917,17 @@ void AppendCurveAndPatchMeshesRec(const lightusd::Prim& prim,
       out->skipped.push_back("NurbsPatch '" + absPath + "': unsupported/empty");
     }
   }
-  for (const lightusd::Prim& child : prim.children()) {
+  for (const lightusd::legacy::Prim& child : prim.children()) {
     AppendCurveAndPatchMeshesRec(child, ChildPath(absPath, child), world,
                                  curveMat, patchMat, out);
   }
 }
 
-void AppendCurveAndPatchMeshes(const lightusd::Stage& stage, DrawScene* out) {
+void AppendCurveAndPatchMeshes(const lightusd::legacy::Stage& stage, DrawScene* out) {
   if (!out) return;
   int curveMat = -1, patchMat = -1;
-  const lightusd::value::matrix4d ident = lightusd::value::matrix4d::identity();
-  for (const lightusd::Prim& root : stage.root_prims()) {
+  const lightusd::legacy::value::matrix4d ident = lightusd::legacy::value::matrix4d::identity();
+  for (const lightusd::legacy::Prim& root : stage.root_prims()) {
     AppendCurveAndPatchMeshesRec(root, ChildPath("", root), ident, &curveMat,
                                  &patchMat, out);
   }
@@ -4106,7 +4106,7 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
 }
 
 DrawCameraCPU MakeDrawCameraFromTydra(
-    const lightusd::value::matrix4d& worldMatrix,
+    const lightusd::legacy::value::matrix4d& worldMatrix,
     const tydra::RenderCamera& cam) {
   DrawCameraCPU dc;
   float up[3] = {float(worldMatrix.m[1][0]), float(worldMatrix.m[1][1]),
@@ -4134,10 +4134,10 @@ DrawCameraCPU MakeDrawCameraFromTydra(
   dc.shutterOpen = cam.shutterOpen;
   dc.shutterClose = cam.shutterClose;
   switch (cam.stereoRole) {
-    case lightusd::GeomCamera::StereoRole::Left:
+    case lightusd::legacy::GeomCamera::StereoRole::Left:
       dc.stereoRole = DrawCameraCPU::StereoRole::Left;
       break;
-    case lightusd::GeomCamera::StereoRole::Right:
+    case lightusd::legacy::GeomCamera::StereoRole::Right:
       dc.stereoRole = DrawCameraCPU::StereoRole::Right;
       break;
     default:
@@ -4145,13 +4145,13 @@ DrawCameraCPU MakeDrawCameraFromTydra(
       break;
   }
   dc.clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
-  for (const lightusd::value::float4& plane : cam.clippingPlanes) {
+  for (const lightusd::legacy::value::float4& plane : cam.clippingPlanes) {
     for (size_t i = 0; i < 4; ++i) dc.clippingPlanes.push_back(plane[i]);
   }
   dc.zNear = std::max(1.0e-4f, cam.znear);
   dc.zFar = std::max(dc.zNear + 1.0e-3f, cam.zfar);
   dc.projection =
-      cam.projection == lightusd::GeomCamera::Projection::Orthographic
+      cam.projection == lightusd::legacy::GeomCamera::Projection::Orthographic
           ? DrawCameraCPU::Projection::Orthographic
           : DrawCameraCPU::Projection::Perspective;
   dc.fovYDeg = 2.0f *
@@ -4186,7 +4186,7 @@ void BuildDrawCameras(const tydra::RenderScene& rs, DrawScene* out) {
 }
 
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
-                    LoadControl* ctrl, const lightusd::Stage* stage,
+                    LoadControl* ctrl, const lightusd::legacy::Stage* stage,
                     const TextureRuntimeOptions& textureOptions) {
   *out = DrawScene{};
   out->metersPerUnit = rs.meta.metersPerUnit > 0.0

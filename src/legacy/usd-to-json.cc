@@ -33,14 +33,14 @@
 #endif
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 using json = minijson::Value;
 
 // Defined below with the context-aware array serializer. The declaration is
 // needed by the generic value dispatcher used for runtime Stage JSON.
-static json ToJSON(lightusd::GeomMesh& mesh);
-static json ToJSON(lightusd::Model& model);
+static json ToJSON(lightusd::legacy::GeomMesh& mesh);
+static json ToJSON(lightusd::legacy::Model& model);
 
 // Implementation of USDToJSONContext::AddArrayData
 size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size_t elementCount,
@@ -978,7 +978,7 @@ json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& norm
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 
-json ToJSON(lightusd::Xform& xform) {
+json ToJSON(lightusd::legacy::Xform& xform) {
   json j;
 
   j["name"] = xform.name;
@@ -1004,7 +1004,7 @@ json ToJSONScalarGeom(const PrimT &prim, const char *type_name) {
   return j;
 }
 
-json ToJSON(lightusd::GeomSphere& sphere) {
+json ToJSON(lightusd::legacy::GeomSphere& sphere) {
   json j = ToJSONScalarGeom(sphere, "GeomSphere");
   double radius = 0.0;
   if (sphere.radius.get_value().get(value::TimeCode::Default(), &radius)) {
@@ -1013,7 +1013,7 @@ json ToJSON(lightusd::GeomSphere& sphere) {
   return j;
 }
 
-json ToJSON(lightusd::GeomCube& cube) {
+json ToJSON(lightusd::legacy::GeomCube& cube) {
   json j = ToJSONScalarGeom(cube, "GeomCube");
   double size = 0.0;
   if (cube.size.get_value().get(value::TimeCode::Default(), &size)) {
@@ -1022,7 +1022,7 @@ json ToJSON(lightusd::GeomCube& cube) {
   return j;
 }
 
-json ToJSON(lightusd::GeomCone& cone) {
+json ToJSON(lightusd::legacy::GeomCone& cone) {
   json j = ToJSONScalarGeom(cone, "GeomCone");
   double value = 0.0;
   if (cone.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
@@ -1031,7 +1031,7 @@ json ToJSON(lightusd::GeomCone& cone) {
   return j;
 }
 
-json ToJSON(lightusd::GeomCylinder& cylinder) {
+json ToJSON(lightusd::legacy::GeomCylinder& cylinder) {
   json j = ToJSONScalarGeom(cylinder, "GeomCylinder");
   double value = 0.0;
   if (cylinder.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
@@ -1040,7 +1040,7 @@ json ToJSON(lightusd::GeomCylinder& cylinder) {
   return j;
 }
 
-json ToJSON(lightusd::GeomCapsule& capsule) {
+json ToJSON(lightusd::legacy::GeomCapsule& capsule) {
   json j = ToJSONScalarGeom(capsule, "GeomCapsule");
   double value = 0.0;
   if (capsule.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
@@ -1049,7 +1049,7 @@ json ToJSON(lightusd::GeomCapsule& capsule) {
   return j;
 }
 
-json ToJSON(lightusd::GeomPlane& plane) {
+json ToJSON(lightusd::legacy::GeomPlane& plane) {
   json j = ToJSONScalarGeom(plane, "GeomPlane");
   double value = 0.0;
   if (plane.width.get_value().get(value::TimeCode::Default(), &value)) j["width"] = value;
@@ -1059,7 +1059,7 @@ json ToJSON(lightusd::GeomPlane& plane) {
 }
 
 
-json ToJSON(lightusd::GeomBasisCurves& curves, USDToJSONContext *context) {
+json ToJSON(lightusd::legacy::GeomBasisCurves& curves, USDToJSONContext *context) {
 
   json j;
   j["name"] = curves.name;
@@ -1115,39 +1115,39 @@ json ToJSON(lightusd::GeomBasisCurves& curves, USDToJSONContext *context) {
   return j;
 }
 
-json ToJSON(lightusd::GeomBasisCurves& curves) {
+json ToJSON(lightusd::legacy::GeomBasisCurves& curves) {
   return ToJSON(curves, nullptr);
 }
 
-json ToJSON(const lightusd::value::Value &v) {
-  if (auto pv = v.get_value<lightusd::Xform>()) {
+json ToJSON(const lightusd::legacy::value::Value &v) {
+  if (auto pv = v.get_value<lightusd::legacy::Xform>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomMesh>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomMesh>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomBasisCurves>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomBasisCurves>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomSphere>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomSphere>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomCube>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomCube>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomCone>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomCone>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomCylinder>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomCylinder>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomCapsule>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomCapsule>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::GeomPlane>()) {
+  if (auto pv = v.get_value<lightusd::legacy::GeomPlane>()) {
     return ToJSON(pv.value());
   }
-  if (auto pv = v.get_value<lightusd::Model>()) {
+  if (auto pv = v.get_value<lightusd::legacy::Model>()) {
     return ToJSON(pv.value());
   }
 
@@ -1157,7 +1157,7 @@ json ToJSON(const lightusd::value::Value &v) {
 
 }
 
-nonstd::expected<json, std::string> ToJSON(const lightusd::StageMetas& metas) {
+nonstd::expected<json, std::string> ToJSON(const lightusd::legacy::StageMetas& metas) {
   json j;
 
   if (metas.upAxis.authored()) {
@@ -1172,31 +1172,31 @@ nonstd::expected<json, std::string> ToJSON(const lightusd::StageMetas& metas) {
   return j;
 }
 
-json PrimDataToJSON(const lightusd::Prim &prim, USDToJSONContext *context) {
+json PrimDataToJSON(const lightusd::legacy::Prim &prim, USDToJSONContext *context) {
   // Geometry arrays are the context-sensitive part of runtime Stage JSON.
   // Preserve the iterative traversal while routing meshes through the same
   // buffer/accessor serializer used by Layer JSON.
-  if (auto mesh = prim.data().get_value<lightusd::GeomMesh>()) {
+  if (auto mesh = prim.data().get_value<lightusd::legacy::GeomMesh>()) {
     return ToJSONValue(mesh.value(), context);
   }
-  if (auto curves = prim.data().get_value<lightusd::GeomBasisCurves>()) {
+  if (auto curves = prim.data().get_value<lightusd::legacy::GeomBasisCurves>()) {
     return ToJSON(curves.value(), context);
   }
   return ToJSON(prim.data());
 }
 
 // Iterative version of PrimToJSON using explicit stack
-bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim,
+bool PrimToJSONIterative(json &root, const lightusd::legacy::Prim& root_prim,
                          USDToJSONContext *context = nullptr) {
   // Stack entry for iterative processing
   struct StackEntry {
-    const lightusd::Prim *prim;
+    const lightusd::legacy::Prim *prim;
     size_t child_idx;
     USDToJSONContext *context;
     json j;
     json jchildren;
 
-    StackEntry(const lightusd::Prim *p, USDToJSONContext *ctx)
+    StackEntry(const lightusd::legacy::Prim *p, USDToJSONContext *ctx)
         : prim(p), child_idx(0), context(ctx), jchildren(json::object()) {
       // Convert prim data to JSON immediately
       j = PrimDataToJSON(*p, context);
@@ -1220,7 +1220,7 @@ bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim,
 
     if (curr.child_idx < children.size()) {
       // Push next child
-      const lightusd::Prim &child = children[curr.child_idx];
+      const lightusd::legacy::Prim &child = children[curr.child_idx];
       curr.child_idx++;
 
       stack.emplace_back(&child, context);
@@ -1250,7 +1250,7 @@ bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim,
 }
 
 // Wrapper to maintain backward compatibility with PrimToJSONRec signature
-bool PrimToJSONRec(json &root, const lightusd::Prim& prim, int depth) {
+bool PrimToJSONRec(json &root, const lightusd::legacy::Prim& prim, int depth) {
   (void)depth;  // Iterative version doesn't need depth
   return PrimToJSONIterative(root, prim);
 }
@@ -1323,12 +1323,12 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
 }  // namespace
 
 // GeomMesh ToJSON functions (moved outside anonymous namespace for proper linking)
-static json ToJSON(lightusd::GeomMesh& mesh) {
+static json ToJSON(lightusd::legacy::GeomMesh& mesh) {
   USDToJSONContext context;  // Use default context
   return ToJSONValue(mesh, &context);
 }
 
-json ToJSONValue(lightusd::GeomMesh& mesh, USDToJSONContext* context) {
+json ToJSONValue(lightusd::legacy::GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
   j["name"] = mesh.name;
@@ -1383,7 +1383,7 @@ json ToJSONValue(lightusd::GeomMesh& mesh, USDToJSONContext* context) {
   return j;
 }
 
-json ToJSONValue(const lightusd::Layer& layer) {
+json ToJSONValue(const lightusd::legacy::Layer& layer) {
   USDToJSONContext context;  // Default context (base64 mode)
   return ToJSONValue(layer, context);
 }
@@ -1391,7 +1391,7 @@ json ToJSONValue(const lightusd::Layer& layer) {
 // Preserve the complete low-level PrimSpec tree in layer JSON.  The legacy
 // implementation used to emit only {name, typeName}, which silently discarded
 // authored properties and nested prims whenever a Layer was converted.
-static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
+static json PrimSpecToJSONValue(const lightusd::legacy::PrimSpec &ps,
                                 USDToJSONContext *context) {
   json j;
   j["name"] = ps.name();
@@ -1515,7 +1515,7 @@ static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
   return j;
 }
 
-json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
+json ToJSONValue(const lightusd::legacy::Layer& layer, USDToJSONContext& context) {
   json j;
 
   // Layer name
@@ -1697,7 +1697,7 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
 }
 
 nonstd::expected<std::string, std::string> ToJSON(
-    const lightusd::Stage& stage) {
+    const lightusd::legacy::Stage& stage) {
   json j;  // root
 
   auto jstageMetas = ToJSON(stage.metas());
@@ -1725,7 +1725,7 @@ nonstd::expected<std::string, std::string> ToJSON(
   return SerializeJSONValue(j, "Stage JSON", 2);
 }
 
-bool to_json_string(const lightusd::Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
+bool to_json_string(const lightusd::legacy::Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
   if (!json_str) {
     return false;
   }
@@ -1746,7 +1746,7 @@ bool to_json_string(const lightusd::Layer &layer, std::string *json_str, std::st
 #pragma GCC diagnostic pop
 #endif
 
-bool to_json_string(const lightusd::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
+bool to_json_string(const lightusd::legacy::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
 
   if (!json_str) {
     return false;
@@ -1765,7 +1765,7 @@ bool to_json_string(const lightusd::Layer &layer, const USDToJSONOptions& option
 // Property, Attribute, and Relationship to JSON conversion
 // ================================================================
 
-json ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* /* context */) {
+json ToJSONValue(const lightusd::legacy::Attribute& attribute, USDToJSONContext* /* context */) {
   json j;
 
   // Basic attribute information
@@ -1888,7 +1888,7 @@ json ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* /* cont
   return j;
 }
 
-json ToJSONValue(const lightusd::Relationship& relationship) {
+json ToJSONValue(const lightusd::legacy::Relationship& relationship) {
   json j;
 
   j["type"] = "relationship";
@@ -1954,7 +1954,7 @@ json ToJSONValue(const lightusd::Relationship& relationship) {
   return j;
 }
 
-json ToJSONValue(const lightusd::Property& property, USDToJSONContext* context) {
+json ToJSONValue(const lightusd::legacy::Property& property, USDToJSONContext* context) {
   json j;
 
   // Property type
@@ -2040,7 +2040,7 @@ json ToJSONValue(const lightusd::Property& property, USDToJSONContext* context) 
   return j;
 }
 
-json PropertiesToJSONValue(const std::map<std::string, lightusd::Property>& properties, USDToJSONContext* context) {
+json PropertiesToJSONValue(const std::map<std::string, lightusd::legacy::Property>& properties, USDToJSONContext* context) {
   json j = json::object();
 
   for (const auto& prop_pair : properties) {
@@ -2055,7 +2055,7 @@ json PropertiesToJSONValue(const std::map<std::string, lightusd::Property>& prop
 
 // Unknown schemas are represented by Model in the core scene graph. Preserve
 // both their authored schema and generic properties in runtime JSON.
-static json ToJSON(lightusd::Model& model) {
+static json ToJSON(lightusd::legacy::Model& model) {
   json j;
   j["name"] = model.name;
   j["typeName"] = model.prim_type_name.empty() ? "Model" : model.prim_type_name;
@@ -2073,7 +2073,7 @@ static json ToJSON(lightusd::Model& model) {
 // ================================================================
 
 // Helper function to convert Stage to JSON object (for internal use)
-json ToJSONValue(const lightusd::Stage& stage, USDToJSONContext* context) {
+json ToJSONValue(const lightusd::legacy::Stage& stage, USDToJSONContext* context) {
   // Reuse existing implementation pattern but return json object instead of string
   json j;  // root
 
@@ -2115,7 +2115,7 @@ json ToJSONValue(const lightusd::Stage& stage, USDToJSONContext* context) {
 }
 
 // Overload with options
-nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage, const USDToJSONOptions& options) {
+nonstd::expected<std::string, std::string> ToJSON(const lightusd::legacy::Stage &stage, const USDToJSONOptions& options) {
   USDToJSONContext context(options);
   json j = ToJSONValue(stage, &context);
 
@@ -2127,38 +2127,38 @@ nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage, 
 }
 
 #if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
-nlohmann::json ToJSON(const lightusd::Stage &stage, USDToJSONContext* context) {
+nlohmann::json ToJSON(const lightusd::legacy::Stage &stage, USDToJSONContext* context) {
   return ToNlohmannJSON(ToJSONValue(stage, context));
 }
 
-nlohmann::json ToJSON(const lightusd::Layer &layer) {
+nlohmann::json ToJSON(const lightusd::legacy::Layer &layer) {
   return ToNlohmannJSON(ToJSONValue(layer));
 }
 
-nlohmann::json ToJSON(const lightusd::Layer &layer, USDToJSONContext& context) {
+nlohmann::json ToJSON(const lightusd::legacy::Layer &layer, USDToJSONContext& context) {
   return ToNlohmannJSON(ToJSONValue(layer, context));
 }
 
-nlohmann::json ToJSON(lightusd::GeomMesh& mesh, USDToJSONContext* context) {
+nlohmann::json ToJSON(lightusd::legacy::GeomMesh& mesh, USDToJSONContext* context) {
   return ToNlohmannJSON(ToJSONValue(mesh, context));
 }
 
-nlohmann::json ToJSON(const lightusd::Attribute& attribute,
+nlohmann::json ToJSON(const lightusd::legacy::Attribute& attribute,
                       USDToJSONContext* context) {
   return ToNlohmannJSON(ToJSONValue(attribute, context));
 }
 
-nlohmann::json ToJSON(const lightusd::Relationship& relationship) {
+nlohmann::json ToJSON(const lightusd::legacy::Relationship& relationship) {
   return ToNlohmannJSON(ToJSONValue(relationship));
 }
 
-nlohmann::json ToJSON(const lightusd::Property& property,
+nlohmann::json ToJSON(const lightusd::legacy::Property& property,
                       USDToJSONContext* context) {
   return ToNlohmannJSON(ToJSONValue(property, context));
 }
 
 nlohmann::json PropertiesToJSON(
-    const std::map<std::string, lightusd::Property>& properties,
+    const std::map<std::string, lightusd::legacy::Property>& properties,
     USDToJSONContext* context) {
   return ToNlohmannJSON(PropertiesToJSONValue(properties, context));
 }
@@ -2177,7 +2177,7 @@ namespace {
   }
 }
 
-bool USDZAssetsToJSON(const lightusd::USDZAsset& usdz_asset, std::string* assets_json,
+bool USDZAssetsToJSON(const lightusd::legacy::USDZAsset& usdz_asset, std::string* assets_json,
                       std::string* warn, std::string* err) {
   if (!assets_json) {
     if (err) {
@@ -2431,4 +2431,5 @@ bool USDZToJSON(const std::string& filename, USDZToJSONResult* result,
 #endif
 
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -26,7 +26,7 @@
 
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 // OpenUSD Vt_ArrayEditOps::Op (pxr/base/vt/arrayEditOps.h). Values are part of
@@ -103,4 +103,5 @@ DEFINE_TYPE_TRAIT(ArrayEdit, "ArrayEdit", TYPE_ID_ARRAY_EDIT, 1);
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

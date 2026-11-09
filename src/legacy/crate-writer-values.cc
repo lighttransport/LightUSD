@@ -37,7 +37,7 @@
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 namespace {
@@ -2722,6 +2722,7 @@ crate::ValueRep CrateWriter::PackLayerOffsetVectorValue(
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

@@ -37,7 +37,7 @@
 #include <unordered_map>
 
 //PXR_NAMESPACE_OPEN_SCOPE
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 /*
 
@@ -527,5 +527,6 @@ Usd_IntegerCompression64::DecompressFromBuffer(
 
 //PXR_NAMESPACE_CLOSE_SCOPE
 
+}  // namespace legacy
 } // namespace lightusd
 

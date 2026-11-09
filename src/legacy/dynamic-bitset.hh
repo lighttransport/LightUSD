@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class DynamicBitset {
  public:
@@ -167,4 +167,5 @@ class DynamicBitset {
   size_t _num_bits{0};
 };
 
+}  // namespace legacy
 }  // namespace lightusd

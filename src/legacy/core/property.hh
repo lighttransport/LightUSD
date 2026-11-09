@@ -16,7 +16,7 @@
 #include "path.hh"
 #include "prim-enums.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
@@ -341,4 +341,5 @@ class Property {
                             // deprecated though
 };
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -21,7 +21,7 @@
 
 #if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace usdc {
 
 Prim *USDCReader::Impl::ResolveVariantOwnerPrim(int32_t parent_node_id,
@@ -2020,6 +2020,7 @@ bool USDCReader::Impl::ReconstructPrimSpecHierarchyParallel(
 
 
 }  // namespace usdc
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

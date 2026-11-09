@@ -125,7 +125,7 @@ int MyARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
 //
 // custom File-format handlers
 //
-static bool MyCheck(const lightusd::Asset &asset, std::string *warn,
+static bool MyCheck(const lightusd::legacy::Asset &asset, std::string *warn,
                     std::string *err, void *user_data) {
   if (asset.size() != 4) {
     return false;
@@ -134,11 +134,11 @@ static bool MyCheck(const lightusd::Asset &asset, std::string *warn,
   return true;
 }
 
-static bool MyRead(const lightusd::Asset &asset,
-                   lightusd::PrimSpec &ps /* inout */, std::string *warn,
+static bool MyRead(const lightusd::legacy::Asset &asset,
+                   lightusd::legacy::PrimSpec &ps /* inout */, std::string *warn,
                    std::string *err, void *user_data) {
   //
-  // `lightusd::Asset` is a simple buffer: data() : bytes buffer, size() :
+  // `lightusd::legacy::Asset` is a simple buffer: data() : bytes buffer, size() :
   // buffer size
   //
 
@@ -157,19 +157,19 @@ static bool MyRead(const lightusd::Asset &asset,
   float val;
   memcpy(&val, asset.data(), 4);
 
-  lightusd::Attribute attr;
+  lightusd::legacy::Attribute attr;
   attr.set_value(std::move(val));
   attr.set_name("myval");
-  attr.variability() = lightusd::Variability::Uniform;
+  attr.variability() = lightusd::legacy::Variability::Uniform;
 
-  ps.props()["myval"] = lightusd::Property(attr, /* custom */ false);
+  ps.props()["myval"] = lightusd::legacy::Property(attr, /* custom */ false);
 
   ps.name() = "my01";  // must set PrimSpec name
 
   return true;
 }
 
-static bool MyWrite(const lightusd::PrimSpec &ps, lightusd::Asset *asset_out,
+static bool MyWrite(const lightusd::legacy::PrimSpec &ps, lightusd::legacy::Asset *asset_out,
                     std::string *warn, std::string *err, void *user_data) {
   // TOOD
   return false;
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
   g_map["bora.my"] = 3.14f;
   g_map["dora.my"] = 6.14f;
 
-  lightusd::FileFormatHandler my_handler;
+  lightusd::legacy::FileFormatHandler my_handler;
   my_handler.extension = "my";
   my_handler.description = "Custom fileformat example.";
   my_handler.checker = MyCheck;
@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
   my_handler.writer = MyWrite;
   my_handler.userdata = nullptr;
 
-  lightusd::Stage stage;  // empty scene
+  lightusd::legacy::Stage stage;  // empty scene
 
   // path to <lightusd>/data/fileformat_my.usda
   std::string input_usd_filepath = "../data/fileformat_my.usda";
@@ -197,9 +197,9 @@ int main(int argc, char **argv) {
 
   std::string warn, err;
 
-  lightusd::Layer layer;
+  lightusd::legacy::Layer layer;
   bool ret =
-      lightusd::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
+      lightusd::legacy::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";
@@ -210,9 +210,9 @@ int main(int argc, char **argv) {
     exit(-1);
   }
 
-  lightusd::AssetResolutionResolver resolver;
+  lightusd::legacy::AssetResolutionResolver resolver;
   // Register on-memory filesystem handler for `.my` asset.
-  lightusd::AssetResolutionHandler ar_handler;
+  lightusd::legacy::AssetResolutionHandler ar_handler;
   ar_handler.resolve_fun = MyARResolve;
   ar_handler.size_fun = MyARSize;
   ar_handler.read_fun = MyARRead;
@@ -220,12 +220,12 @@ int main(int argc, char **argv) {
   ar_handler.userdata = nullptr;   // not used in this example;
   resolver.register_asset_resolution_handler("my", ar_handler);
 
-  lightusd::ReferencesCompositionOptions options;
+  lightusd::legacy::ReferencesCompositionOptions options;
   options.fileformats["my"] = my_handler;
 
   // Do `references` composition to materialize `references = @***.my@`
-  lightusd::Layer composited_layer;
-  if (!lightusd::CompositeReferences(resolver, layer, &composited_layer, &warn,
+  lightusd::legacy::Layer composited_layer;
+  if (!lightusd::legacy::CompositeReferences(resolver, layer, &composited_layer, &warn,
                                      &err, options)) {
     std::cerr << "Failed to composite `references`: " << err << "\n";
     return -1;

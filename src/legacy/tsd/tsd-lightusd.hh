@@ -13,7 +13,7 @@
 
 #include "tsd/tinysubdiv.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct GeomMesh;
 
@@ -62,6 +62,7 @@ inline bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
 }
 
 }  // namespace tsd
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_TSD_LIGHTUSD_HH_

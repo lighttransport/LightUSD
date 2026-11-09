@@ -16,6 +16,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Test basic operations: push_back, pop_back, size, empty, back, operator[]
 void stack_vector_basic_test(void) {
   // Test with small number of elements (should stay on stack)

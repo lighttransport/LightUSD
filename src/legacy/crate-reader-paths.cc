@@ -57,7 +57,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -875,4 +875,5 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 }
 
 } // namespace crate
+}  // namespace legacy
 } // namespace lightusd

@@ -41,7 +41,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Prim type name constants
 constexpr auto kMjcActuator = "MjcActuator";
@@ -456,4 +456,5 @@ DEFINE_TYPE_TRAIT(MjcSensor, kMjcSensor, TYPE_ID_MJC_SENSOR, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

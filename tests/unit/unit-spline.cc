@@ -22,9 +22,11 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 static bool LoadStage(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) {
@@ -37,9 +39,9 @@ static bool EvalF(Stage &stage, const char *primpath, const char *attr,
                   double t, float *out) {
   auto pr = stage.GetPrimAtPath(Path(primpath, ""));
   if (!pr || !pr.value()) return false;
-  tydra::TerminalAttributeValue tav;
+  lightusd::legacy::tydra::TerminalAttributeValue tav;
   std::string err;
-  if (!tydra::EvaluateAttribute(stage, *pr.value(), attr, &tav, &err, t)) {
+  if (!lightusd::legacy::tydra::EvaluateAttribute(stage, *pr.value(), attr, &tav, &err, t)) {
     return false;
   }
   const float *f = tav.as<float>();
@@ -112,7 +114,7 @@ void spline_binary_roundtrip_test(void) {
   {
     SK k0;
     k0.time = 0.0;
-    k0.val = value::Value(0.0f);
+    k0.val = lightusd::legacy::value::Value(0.0f);
     k0.interpolationMode = 3;  // curve
     k0.postTangentWidth = 1.0;
     k0.postTangentSlope = 2.0;
@@ -120,8 +122,8 @@ void spline_binary_roundtrip_test(void) {
 
     SK k1;
     k1.time = 10.0;
-    k1.val = value::Value(10.0f);
-    k1.preValue = value::Value(9.0f);
+    k1.val = lightusd::legacy::value::Value(10.0f);
+    k1.preValue = lightusd::legacy::value::Value(9.0f);
     k1.hasDualValue = true;
     k1.interpolationMode = 3;
     k1.preTangentWidth = 1.0;
@@ -166,7 +168,7 @@ void spline_binary_roundtrip_test(void) {
   {
     SK k;
     k.time = 1.0;
-    k.val = value::Value(3.0);  // double
+    k.val = lightusd::legacy::value::Value(3.0);  // double
     k.interpolationMode = 2;    // linear
     sd2.knots.push_back(k);
   }
@@ -227,7 +229,7 @@ void spline_crate_roundtrip_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w, e;
-  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  bool sret = lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
   if (!sret) return;
   TEST_CHECK(!usdc.empty());
@@ -239,7 +241,7 @@ void spline_crate_roundtrip_test(void) {
 
   Stage stage2;
   std::string w2, e2;
-  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::legacy::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w2, &e2);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
   if (!lret) return;
@@ -279,7 +281,7 @@ void spline_usda_roundtrip_test(void) {
   // Re-parse and check the value still interpolates (linear: t=2 -> 4).
   Stage stage2;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDFromMemory(
+  bool ok = lightusd::legacy::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(exported.data()), exported.size(),
       "mem2.usda", &stage2, &warn, &err);
   TEST_CHECK_(ok, "re-parse of exported spline failed: %s\n%s", err.c_str(),
@@ -289,9 +291,9 @@ void spline_usda_roundtrip_test(void) {
   auto pr = stage2.GetPrimAtPath(Path("/W", ""));
   TEST_CHECK(bool(pr));
   if (pr && pr.value()) {
-    tydra::TerminalAttributeValue tav;
+    lightusd::legacy::tydra::TerminalAttributeValue tav;
     std::string e2;
-    if (tydra::EvaluateAttribute(stage2, *pr.value(), "s", &tav, &e2, 2.0)) {
+    if (lightusd::legacy::tydra::EvaluateAttribute(stage2, *pr.value(), "s", &tav, &e2, 2.0)) {
       const double *d = tav.as<double>();
       TEST_CHECK(d && std::fabs(*d - 4.0) < 1e-6);
     } else {
@@ -356,9 +358,9 @@ void spline_extrapolation_modes_test(void) {
   auto evalD = [&](const char *attr, double t, double *out) -> bool {
     auto pr = stage.GetPrimAtPath(Path("/W", ""));
     if (!pr || !pr.value()) return false;
-    tydra::TerminalAttributeValue tav;
+    lightusd::legacy::tydra::TerminalAttributeValue tav;
     std::string e;
-    if (!tydra::EvaluateAttribute(stage, *pr.value(), attr, &tav, &e, t)) return false;
+    if (!lightusd::legacy::tydra::EvaluateAttribute(stage, *pr.value(), attr, &tav, &e, t)) return false;
     const double *d = tav.as<double>();
     if (!d) return false;
     *out = *d;
@@ -389,10 +391,10 @@ void spline_binary_types_test(void) {
   {
     SD sd;
     sd.curveType = 0;
-    SK k0; k0.time = 0.0; k0.val = value::Value(value::float_to_half_full(1.5f));
+    SK k0; k0.time = 0.0; k0.val = lightusd::legacy::value::Value(lightusd::legacy::value::float_to_half_full(1.5f));
     k0.interpolationMode = 2;  // linear
     sd.knots.push_back(k0);
-    SK k1; k1.time = 4.0; k1.val = value::Value(value::float_to_half_full(3.5f));
+    SK k1; k1.time = 4.0; k1.val = lightusd::legacy::value::Value(lightusd::legacy::value::float_to_half_full(3.5f));
     sd.knots.push_back(k1);
 
     std::vector<uint8_t> blob;
@@ -402,8 +404,8 @@ void spline_binary_types_test(void) {
     TEST_CHECK(DecodeSplineFromBinary(blob.data(), blob.size(), &out, &err));
     TEST_CHECK(out.knots.size() == 2);
     if (out.knots.size() == 2) {
-      auto h = out.knots[0].val.get_value<value::half>();
-      TEST_CHECK(h && std::fabs(value::half_to_float(h.value()) - 1.5f) < 1e-2f);
+      auto h = out.knots[0].val.get_value<lightusd::legacy::value::half>();
+      TEST_CHECK(h && std::fabs(lightusd::legacy::value::half_to_float(h.value()) - 1.5f) < 1e-2f);
       TEST_CHECK(out.knots[0].interpolationMode == 2);
     }
   }
@@ -424,7 +426,7 @@ void spline_binary_types_test(void) {
       sd.loopNumPostLoops = 1;
       sd.loopValueOffset = 0.5;
     }
-    SK k; k.time = 0.0; k.val = value::Value(1.0); k.interpolationMode = 3;
+    SK k; k.time = 0.0; k.val = lightusd::legacy::value::Value(1.0); k.interpolationMode = 3;
     k.postTangentSlope = 2.0;
     sd.knots.push_back(k);
 
@@ -502,7 +504,7 @@ void spline_openusd_crate_read_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = lightusd::LoadUSDCFromFile(path, &stage, &warn, &err);
+  bool ok = lightusd::legacy::LoadUSDCFromFile(path, &stage, &warn, &err);
   TEST_CHECK_(ok, "LoadUSDCFromFile(%s) failed: %s", path.c_str(), err.c_str());
   if (!ok) return;
 
@@ -521,10 +523,10 @@ void spline_openusd_crate_read_test(void) {
     auto pr = stage.GetPrimAtPath(Path("/Splines", ""));
     TEST_CHECK(bool(pr));
     if (pr && pr.value()) {
-      tydra::TerminalAttributeValue tav;
+      lightusd::legacy::tydra::TerminalAttributeValue tav;
       std::string e2;
       bool ev =
-          tydra::EvaluateAttribute(stage, *pr.value(), "held", &tav, &e2, 5.0);
+          lightusd::legacy::tydra::EvaluateAttribute(stage, *pr.value(), "held", &tav, &e2, 5.0);
       TEST_CHECK_(ev, "held eval failed: %s", e2.c_str());
       const double *d = tav.as<double>();
       TEST_CHECK(d && std::fabs(*d - 0.0) < 1e-9);
@@ -542,12 +544,12 @@ void spline_tangent_algorithm_crate_013_test(void) {
     sd.curveType = 0;  // bezier
     primvar::PrimVar::SplineKnotData k0;
     k0.time = 0.0;
-    k0.val = value::Value(0.0f);
+    k0.val = lightusd::legacy::value::Value(0.0f);
     k0.postTangentAlgorithm = 2;  // AutoEase
     sd.knots.push_back(k0);
     primvar::PrimVar::SplineKnotData k1;
     k1.time = 10.0;
-    k1.val = value::Value(10.0f);
+    k1.val = lightusd::legacy::value::Value(10.0f);
     k1.preTangentAlgorithm = 2;  // AutoEase
     sd.knots.push_back(k1);
 
@@ -596,7 +598,7 @@ void spline_tangent_algorithm_crate_013_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w, e;
-  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  bool sret = lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
   if (!sret) return;
 
@@ -607,7 +609,7 @@ void spline_tangent_algorithm_crate_013_test(void) {
 
   Stage stage2;
   std::string w2, e2;
-  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::legacy::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w2, &e2);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
   if (!lret) return;

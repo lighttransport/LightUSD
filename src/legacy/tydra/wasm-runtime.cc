@@ -9,7 +9,7 @@
 // WAMR includes
 #include "wasm_export.h"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 class WasmRuntime::Impl {
@@ -188,6 +188,7 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasmFromFile(
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 #endif // LIGHTUSD_WITH_WAMR

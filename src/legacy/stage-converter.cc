@@ -45,7 +45,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 // Per-thread spec sink for the parallel stage->specs conversion (see
@@ -3379,6 +3379,7 @@ bool CrateWriter::ConvertVariantToFields(
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

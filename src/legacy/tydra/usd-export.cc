@@ -11,7 +11,7 @@
 #include "tiny-format.hh"
 #include "math-util.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #define PushError(msg) { \
@@ -1115,4 +1115,5 @@ bool export_to_usda(const RenderScene &scene,
 
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

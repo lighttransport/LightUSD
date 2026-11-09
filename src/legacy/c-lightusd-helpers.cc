@@ -28,12 +28,12 @@
 
 namespace {
 
-using lightusd::Attribute;
-using lightusd::Path;
-using lightusd::Prim;
-using lightusd::Property;
-using lightusd::Relationship;
-using lightusd::Stage;
+using lightusd::legacy::Attribute;
+using lightusd::legacy::Path;
+using lightusd::legacy::Prim;
+using lightusd::legacy::Property;
+using lightusd::legacy::Relationship;
+using lightusd::legacy::Stage;
 
 inline const Stage *S(const CLightUSDStage *s) {
   return reinterpret_cast<const Stage *>(s);
@@ -48,8 +48,8 @@ inline const Attribute *A(const CLightUSDAttribute *a) {
 inline Attribute *Am(CLightUSDAttribute *a) {
   return reinterpret_cast<Attribute *>(a);
 }
-inline const lightusd::value::Value *V(const CLightUSDValue *v) {
-  return reinterpret_cast<const lightusd::value::Value *>(v);
+inline const lightusd::legacy::value::Value *V(const CLightUSDValue *v) {
+  return reinterpret_cast<const lightusd::legacy::value::Value *>(v);
 }
 
 inline bool set_err(c_lightusd_string_t *err, const std::string &msg) {
@@ -90,9 +90,9 @@ struct ArrayView {
 
 // Returns true if `v` holds a std::vector<T> and fills `out`.
 template <typename T>
-inline bool try_vector_raw(const lightusd::value::any_value *av,
+inline bool try_vector_raw(const lightusd::legacy::value::any_value *av,
                            const void **ptr, uint64_t *n) {
-  auto pv = lightusd::value::any_value_cast<const std::vector<T>>(av);
+  auto pv = lightusd::legacy::value::any_value_cast<const std::vector<T>>(av);
   if (!pv) return false;
   *ptr = static_cast<const void *>(pv->data());
   *n = static_cast<uint64_t>(pv->size());
@@ -100,7 +100,7 @@ inline bool try_vector_raw(const lightusd::value::any_value *av,
 }
 
 template <typename T>
-inline bool plain_scalar_array(const lightusd::value::any_value *av,
+inline bool plain_scalar_array(const lightusd::legacy::value::any_value *av,
                                ArrayView *out, uint32_t comp_size,
                                const char *fmt) {
   const void *ptr = nullptr;
@@ -115,7 +115,7 @@ inline bool plain_scalar_array(const lightusd::value::any_value *av,
 }
 
 template <typename T>
-inline bool role_array(const lightusd::value::any_value *av, ArrayView *out,
+inline bool role_array(const lightusd::legacy::value::any_value *av, ArrayView *out,
                        uint32_t n_inner, uint32_t comp_size,
                        const char *fmt) {
   const void *ptr = nullptr;
@@ -129,7 +129,7 @@ inline bool role_array(const lightusd::value::any_value *av, ArrayView *out,
   return true;
 }
 
-bool resolve_array_view(const lightusd::value::Value *v, ArrayView *out) {
+bool resolve_array_view(const lightusd::legacy::value::Value *v, ArrayView *out) {
   using namespace lightusd::value;
   if (!v->is_array()) return false;
   const any_value *av = &v->get_raw();
@@ -273,14 +273,14 @@ int c_lightusd_stage_save_to_file(const CLightUSDStage *stage,
   bool ok = false;
   switch (format) {
     case C_LIGHTUSD_FORMAT_USDA:
-      ok = lightusd::usda::SaveAsUSDA(filename, *s, &w, &e);
+      ok = lightusd::legacy::usda::SaveAsUSDA(filename, *s, &w, &e);
       break;
     case C_LIGHTUSD_FORMAT_USDC:
-      ok = lightusd::usdc::SaveAsUSDCToFile(filename, *s, &w, &e);
+      ok = lightusd::legacy::usdc::SaveAsUSDCToFile(filename, *s, &w, &e);
       break;
     case C_LIGHTUSD_FORMAT_USDZ: {
       const std::map<std::string, std::vector<uint8_t>> assets;
-      ok = lightusd::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
+      ok = lightusd::legacy::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
       break;
     }
     default:
@@ -305,8 +305,8 @@ int c_lightusd_stage_save_as_usdz_with_assets(
     if (err) c_lightusd_string_replace(err, "stage or filename is null");
     return 0;
   }
-  const lightusd::Stage *s =
-      reinterpret_cast<const lightusd::Stage *>(stage);
+  const lightusd::legacy::Stage *s =
+      reinterpret_cast<const lightusd::legacy::Stage *>(stage);
 
   std::map<std::string, std::vector<uint8_t>> assets;
   for (uint64_t i = 0; i < num_assets; ++i) {
@@ -326,7 +326,7 @@ int c_lightusd_stage_save_as_usdz_with_assets(
   }
 
   std::string w, e;
-  bool ok = lightusd::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
+  bool ok = lightusd::legacy::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
   if (warn && !w.empty()) c_lightusd_string_replace(warn, w.c_str());
   if (err && !e.empty()) c_lightusd_string_replace(err, e.c_str());
   return ok ? 1 : 0;
@@ -377,13 +377,13 @@ int c_lightusd_stage_load_from_memory(CLightUSDStage *stage,
   Stage *s = Sm(stage);
   switch (fmt) {
     case C_LIGHTUSD_FORMAT_USDA:
-      ok = lightusd::LoadUSDAFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
+      ok = lightusd::legacy::LoadUSDAFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
       break;
     case C_LIGHTUSD_FORMAT_USDC:
-      ok = lightusd::LoadUSDCFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
+      ok = lightusd::legacy::LoadUSDCFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
       break;
     case C_LIGHTUSD_FORMAT_USDZ:
-      ok = lightusd::LoadUSDZFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
+      ok = lightusd::legacy::LoadUSDZFromMemory(data, nbytes, /*filename*/"", s, &w, &e);
       break;
     default:
       e = "Unsupported format for load-from-memory.";
@@ -500,8 +500,8 @@ static bool fill_attr_from_typed(const T &input, const std::string &type_name,
   attr.set_name(attr_name);
   attr.set_type_name(type_name);
   if (auto pv = input.get_value()) {
-    lightusd::value::Value val(pv.value());
-    lightusd::primvar::PrimVar pvar;
+    lightusd::legacy::value::Value val(pv.value());
+    lightusd::legacy::primvar::PrimVar pvar;
     pvar.set_value(val);
     attr.set_var(std::move(pvar));
   } else {
@@ -515,15 +515,15 @@ static bool fill_attr_from_typed(const T &input, const std::string &type_name,
 // optional, and the value should only be exposed when actually authored.
 template <typename T>
 static bool fill_attr_from_typed_fb(
-    const lightusd::TypedAttributeWithFallback<T> &input,
+    const lightusd::legacy::TypedAttributeWithFallback<T> &input,
     const std::string &type_name, const std::string &attr_name,
     Property *out) {
   if (!input.authored()) return false;
   Attribute attr;
   attr.set_name(attr_name);
   attr.set_type_name(type_name);
-  lightusd::value::Value val(input.get_value());
-  lightusd::primvar::PrimVar pvar;
+  lightusd::legacy::value::Value val(input.get_value());
+  lightusd::legacy::primvar::PrimVar pvar;
   pvar.set_value(val);
   attr.set_var(std::move(pvar));
   *out = Property(std::move(attr), /* custom */ false);
@@ -531,18 +531,18 @@ static bool fill_attr_from_typed_fb(
 }
 
 // Convert an enum-typed TypedAttributeWithFallback<E> to a token Property
-// using a stringifier (e.g. lightusd::to_string(E)).
+// using a stringifier (e.g. lightusd::legacy::to_string(E)).
 template <typename E, typename Stringify>
 static bool fill_attr_from_typed_enum_token(
-    const lightusd::TypedAttributeWithFallback<E> &input,
+    const lightusd::legacy::TypedAttributeWithFallback<E> &input,
     const std::string &attr_name, Stringify s, Property *out) {
   if (!input.authored()) return false;
   Attribute attr;
   attr.set_name(attr_name);
   attr.set_type_name("token");
-  lightusd::value::token tok(s(input.get_value()));
-  lightusd::value::Value val(tok);
-  lightusd::primvar::PrimVar pvar;
+  lightusd::legacy::value::token tok(s(input.get_value()));
+  lightusd::legacy::value::Value val(tok);
+  lightusd::legacy::primvar::PrimVar pvar;
   pvar.set_value(val);
   attr.set_var(std::move(pvar));
   *out = Property(std::move(attr), /* custom */ false);
@@ -559,17 +559,17 @@ static bool lookup_geom_typed(const Prim &prim, const std::string &name,
     if (name == "type")
       return fill_attr_from_typed_enum_token(
           c->type, name,
-          [](const GeomBasisCurves::Type &v) { return lightusd::to_string(v); },
+          [](const GeomBasisCurves::Type &v) { return lightusd::legacy::to_string(v); },
           out);
     if (name == "basis")
       return fill_attr_from_typed_enum_token(
           c->basis, name,
-          [](const GeomBasisCurves::Basis &v) { return lightusd::to_string(v); },
+          [](const GeomBasisCurves::Basis &v) { return lightusd::legacy::to_string(v); },
           out);
     if (name == "wrap")
       return fill_attr_from_typed_enum_token(
           c->wrap, name,
-          [](const GeomBasisCurves::Wrap &v) { return lightusd::to_string(v); },
+          [](const GeomBasisCurves::Wrap &v) { return lightusd::legacy::to_string(v); },
           out);
   }
   return false;
@@ -751,7 +751,7 @@ c_lightusd_prim_get_attribute(const CLightUSDPrim *prim, const char *name) {
   //    files where the typed field is populated).
   if (!got) {
     std::string err;
-    if (!lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop,
+    if (!lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop,
                                       &err)) {
       return nullptr;
     }
@@ -767,7 +767,7 @@ c_lightusd_prim_get_relationship(const CLightUSDPrim *prim, const char *name) {
   if (!prim || !name) return nullptr;
   Property prop;
   std::string err;
-  if (!lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
+  if (!lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
     return nullptr;
   }
   if (!prop.is_relationship()) return nullptr;
@@ -792,7 +792,7 @@ int c_lightusd_attribute_get_value(const CLightUSDAttribute *attr,
   if (!attr || !out) return 0;
   const Attribute *a = A(attr);
   if (!a->has_value()) return 0;
-  const lightusd::value::Value &v = a->get_var().value_raw();
+  const lightusd::legacy::value::Value &v = a->get_var().value_raw();
   *out = reinterpret_cast<const CLightUSDValue *>(&v);
   return 1;
 }
@@ -833,7 +833,7 @@ int c_lightusd_value_array_data(const CLightUSDValue *value,
 
 int c_lightusd_value_as_double(const CLightUSDValue *value, double *out) {
   if (!value || !out) return 0;
-  const lightusd::value::Value *v = V(value);
+  const lightusd::legacy::value::Value *v = V(value);
   if (auto r = v->get_value<double>()) { *out = *r; return 1; }
   if (auto r = v->get_value<float>()) { *out = static_cast<double>(*r); return 1; }
   if (auto r = v->get_value<int32_t>()) { *out = static_cast<double>(*r); return 1; }
@@ -843,7 +843,7 @@ int c_lightusd_value_as_double(const CLightUSDValue *value, double *out) {
 
 int c_lightusd_value_as_int64(const CLightUSDValue *value, int64_t *out) {
   if (!value || !out) return 0;
-  const lightusd::value::Value *v = V(value);
+  const lightusd::legacy::value::Value *v = V(value);
   if (auto r = v->get_value<int64_t>()) { *out = *r; return 1; }
   if (auto r = v->get_value<int32_t>()) { *out = *r; return 1; }
   if (auto r = v->get_value<uint32_t>()) { *out = *r; return 1; }
@@ -852,7 +852,7 @@ int c_lightusd_value_as_int64(const CLightUSDValue *value, int64_t *out) {
 
 int c_lightusd_value_as_bool(const CLightUSDValue *value, int *out) {
   if (!value || !out) return 0;
-  const lightusd::value::Value *v = V(value);
+  const lightusd::legacy::value::Value *v = V(value);
   if (auto r = v->get_value<bool>()) { *out = *r ? 1 : 0; return 1; }
   return 0;
 }
@@ -860,10 +860,10 @@ int c_lightusd_value_as_bool(const CLightUSDValue *value, int *out) {
 int c_lightusd_value_get_string(const CLightUSDValue *value,
                                c_lightusd_string_t *out) {
   if (!value || !out) return 0;
-  const lightusd::value::Value *v = V(value);
+  const lightusd::legacy::value::Value *v = V(value);
   if (auto r = v->get_value<std::string>())
     return c_lightusd_string_replace(out, r->c_str());
-  if (auto r = v->get_value<lightusd::value::token>())
+  if (auto r = v->get_value<lightusd::legacy::value::token>())
     return c_lightusd_string_replace(out, r->str().c_str());
   return 0;
 }
@@ -913,7 +913,7 @@ int c_lightusd_stage_visit_prims(const CLightUSDStage *stage,
   if (!stage || !cb) return 0;
   VisitBridge b{cb, userdata, nullptr};
   std::string e;
-  bool ok = lightusd::tydra::VisitPrims(*S(stage), VisitBridgeFn, &b, &e);
+  bool ok = lightusd::legacy::tydra::VisitPrims(*S(stage), VisitBridgeFn, &b, &e);
   if (!ok && err && !e.empty()) c_lightusd_string_replace(err, e.c_str());
   return ok ? 1 : 0;
 }
@@ -925,7 +925,7 @@ int c_lightusd_stage_list_prims_by_type(const CLightUSDStage *stage,
   if (!stage || !cb) return 0;
   VisitBridge b{cb, userdata, type_name};
   std::string e;
-  bool ok = lightusd::tydra::VisitPrims(*S(stage), VisitBridgeFn, &b, &e);
+  bool ok = lightusd::legacy::tydra::VisitPrims(*S(stage), VisitBridgeFn, &b, &e);
   if (!ok && err && !e.empty()) c_lightusd_string_replace(err, e.c_str());
   return ok ? 1 : 0;
 }
@@ -938,7 +938,7 @@ int c_lightusd_prim_set_element_name(CLightUSDPrim *prim, const char *name) {
   std::string s(name);
   // Update both the element_path and the typed prim's `name` field, since
   // the USDA/USDC writers read the name from the typed prim.
-  lightusd::SetPrimElementName(p->get_data(), s);
+  lightusd::legacy::SetPrimElementName(p->get_data(), s);
   p->element_path() = Path(s, "");
   return 1;
 }
@@ -979,8 +979,8 @@ int c_lightusd_attribute_set_value(CLightUSDAttribute *attr,
                                   const CLightUSDValue *value) {
   if (!attr || !value) return 0;
   Attribute *a = Am(attr);
-  const lightusd::value::Value *v = V(value);
-  lightusd::primvar::PrimVar pv;
+  const lightusd::legacy::value::Value *v = V(value);
+  lightusd::legacy::primvar::PrimVar pv;
   pv.set_value(*v);
   a->set_var(std::move(pv));
   // If type_name not yet set, derive from the value.
@@ -1082,12 +1082,12 @@ int c_lightusd_prim_add_attribute(CLightUSDPrim *prim,
 
 CLightUSDValue *c_lightusd_value_new_array_token(uint64_t n,
                                                const char *const *toks) {
-  std::vector<lightusd::value::token> v;
+  std::vector<lightusd::legacy::value::token> v;
   v.reserve(size_t(n));
   for (uint64_t i = 0; i < n; ++i) {
     v.emplace_back(toks && toks[i] ? toks[i] : "");
   }
-  auto *vp = new lightusd::value::Value(std::move(v));
+  auto *vp = new lightusd::legacy::value::Value(std::move(v));
   return reinterpret_cast<CLightUSDValue *>(vp);
 }
 
@@ -1098,7 +1098,7 @@ CLightUSDValue *c_lightusd_value_new_array_string(uint64_t n,
   for (uint64_t i = 0; i < n; ++i) {
     v.emplace_back(strs && strs[i] ? strs[i] : "");
   }
-  auto *vp = new lightusd::value::Value(std::move(v));
+  auto *vp = new lightusd::legacy::value::Value(std::move(v));
   return reinterpret_cast<CLightUSDValue *>(vp);
 }
 
@@ -1111,7 +1111,7 @@ int c_lightusd_prim_apply_api_schema(CLightUSDPrim *prim,
   Prim *p = reinterpret_cast<Prim *>(prim);
   auto &apis = p->metas().get_apiSchemas_mutable();
   // Always use prepend list-edit qualifier (USD canonical).
-  apis.listOpQual = lightusd::ListEditQual::Prepend;
+  apis.listOpQual = lightusd::legacy::ListEditQual::Prepend;
   apis.unknownSchemas.emplace_back(
       std::string(schema_name),
       std::string(instance_name ? instance_name : ""));
@@ -1127,7 +1127,7 @@ int c_lightusd_prim_get_api_schemas(const CLightUSDPrim *prim,
   std::string joined;
   for (const auto &kv : apis.names) {
     if (!joined.empty()) joined += ",";
-    joined += lightusd::to_string(kv.first);
+    joined += lightusd::legacy::to_string(kv.first);
     if (!kv.second.empty()) { joined += ":"; joined += kv.second; }
   }
   for (const auto &kv : apis.unknownSchemas) {
@@ -1150,10 +1150,10 @@ int c_lightusd_prim_meta_set_string(CLightUSDPrim *prim, const char *meta_name,
   std::string val(value);
   auto &m = p->metas();
   if (key == "specifier") {
-    lightusd::Specifier sp;
-    if (val == "def") sp = lightusd::Specifier::Def;
-    else if (val == "over") sp = lightusd::Specifier::Over;
-    else if (val == "class") sp = lightusd::Specifier::Class;
+    lightusd::legacy::Specifier sp;
+    if (val == "def") sp = lightusd::legacy::Specifier::Def;
+    else if (val == "over") sp = lightusd::legacy::Specifier::Over;
+    else if (val == "class") sp = lightusd::legacy::Specifier::Class;
     else return 0;
     p->specifier() = sp;
     /* Also stamp the typed prim's `spec` field so the USDA pprint, which
@@ -1217,14 +1217,14 @@ int c_lightusd_prim_meta_set_string(CLightUSDPrim *prim, const char *meta_name,
 #undef SET_SPEC
   }
   if (key == "kind") {
-    m.set(key, lightusd::value::token(val));
+    m.set(key, lightusd::legacy::value::token(val));
   } else if (key == "sceneName") {
     // pxrUSD's USDZ scene-library extension stores sceneName as
     // `string`. PrimMetas::get_sceneName() looks up via get<std::string>,
     // so storing it as a token here would silently lose the value.
     m.set_sceneName(val);
   } else if (key == "documentation" || key == "comment") {
-    m.set(key, lightusd::value::StringData(val));
+    m.set(key, lightusd::legacy::value::StringData(val));
   } else if (key == "displayName") {
     m.set_displayName(val);
   } else {
@@ -1303,21 +1303,21 @@ int c_lightusd_prim_meta_get_string(const CLightUSDPrim *prim,
 #undef READ_SPEC
     const char *s = "def";
     switch (sp) {
-      case lightusd::Specifier::Def: s = "def"; break;
-      case lightusd::Specifier::Over: s = "over"; break;
-      case lightusd::Specifier::Class: s = "class"; break;
+      case lightusd::legacy::Specifier::Def: s = "def"; break;
+      case lightusd::legacy::Specifier::Over: s = "over"; break;
+      case lightusd::legacy::Specifier::Class: s = "class"; break;
       default: s = "def"; break;
     }
     return c_lightusd_string_replace(out, s);
   }
   if (key == "doc") key = "documentation";  /* alias */
-  if (auto v = m.get<lightusd::value::token>(key)) {
+  if (auto v = m.get<lightusd::legacy::value::token>(key)) {
     return c_lightusd_string_replace(out, v.value().str().c_str());
   }
   if (auto v = m.get<std::string>(key)) {
     return c_lightusd_string_replace(out, v.value().c_str());
   }
-  if (auto v = m.get<lightusd::value::StringData>(key)) {
+  if (auto v = m.get<lightusd::legacy::value::StringData>(key)) {
     return c_lightusd_string_replace(out, v.value().value.c_str());
   }
   return 0;
@@ -1326,113 +1326,113 @@ int c_lightusd_prim_meta_get_string(const CLightUSDPrim *prim,
 /* ---- Double-precision value constructors ---- */
 
 CLightUSDValue *c_lightusd_value_new_double(double v) {
-  auto *p = new lightusd::value::Value(v);
+  auto *p = new lightusd::legacy::value::Value(v);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_double2(c_lightusd_double2_t v) {
-  lightusd::value::double2 d{v.x, v.y};
-  auto *p = new lightusd::value::Value(d);
+  lightusd::legacy::value::double2 d{v.x, v.y};
+  auto *p = new lightusd::legacy::value::Value(d);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_double3(c_lightusd_double3_t v) {
-  lightusd::value::double3 d{v.x, v.y, v.z};
-  auto *p = new lightusd::value::Value(d);
+  lightusd::legacy::value::double3 d{v.x, v.y, v.z};
+  auto *p = new lightusd::legacy::value::Value(d);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_double4(c_lightusd_double4_t v) {
-  lightusd::value::double4 d{v.x, v.y, v.z, v.w};
-  auto *p = new lightusd::value::Value(d);
+  lightusd::legacy::value::double4 d{v.x, v.y, v.z, v.w};
+  auto *p = new lightusd::legacy::value::Value(d);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_array_double(uint64_t n, const double *v) {
   if (!v && n) return nullptr;
   std::vector<double> arr(v, v + n);
-  auto *p = new lightusd::value::Value(arr);
+  auto *p = new lightusd::legacy::value::Value(arr);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_array_double3(uint64_t n,
                                                  const c_lightusd_double3_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::double3> arr(n);
+  std::vector<lightusd::legacy::value::double3> arr(n);
   for (uint64_t i = 0; i < n; ++i) {
-    arr[i] = lightusd::value::double3{v[i].x, v[i].y, v[i].z};
+    arr[i] = lightusd::legacy::value::double3{v[i].x, v[i].y, v[i].z};
   }
-  auto *p = new lightusd::value::Value(arr);
+  auto *p = new lightusd::legacy::value::Value(arr);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 CLightUSDValue *c_lightusd_value_new_matrix4d(const double v[16]) {
   if (!v) return nullptr;
-  lightusd::value::matrix4d m;
+  lightusd::legacy::value::matrix4d m;
   /* matrix4d stores as 4x4 of doubles */
   std::memcpy(&m, v, sizeof(double) * 16);
-  auto *p = new lightusd::value::Value(m);
+  auto *p = new lightusd::legacy::value::Value(m);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 
 CLightUSDValue *c_lightusd_value_new_matrix2d_t(c_lightusd_matrix2d_t v) {
-  lightusd::value::matrix2d m;
+  lightusd::legacy::value::matrix2d m;
   std::memcpy(&m, &v, sizeof(double) * 4);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(m));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(m));
 }
 CLightUSDValue *c_lightusd_value_new_matrix3d_t(c_lightusd_matrix3d_t v) {
-  lightusd::value::matrix3d m;
+  lightusd::legacy::value::matrix3d m;
   std::memcpy(&m, &v, sizeof(double) * 9);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(m));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(m));
 }
 CLightUSDValue *c_lightusd_value_new_matrix4d_t(c_lightusd_matrix4d_t v) {
-  lightusd::value::matrix4d m;
+  lightusd::legacy::value::matrix4d m;
   std::memcpy(&m, &v, sizeof(double) * 16);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(m));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(m));
 }
 
 CLightUSDValue *c_lightusd_value_new_array_double2(
     uint64_t n, const c_lightusd_double2_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::double2> arr(n);
+  std::vector<lightusd::legacy::value::double2> arr(n);
   for (uint64_t i = 0; i < n; ++i) arr[i] = {v[i].x, v[i].y};
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_double4(
     uint64_t n, const c_lightusd_double4_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::double4> arr(n);
+  std::vector<lightusd::legacy::value::double4> arr(n);
   for (uint64_t i = 0; i < n; ++i)
     arr[i] = {v[i].x, v[i].y, v[i].z, v[i].w};
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_matrix2d(
     uint64_t n, const c_lightusd_matrix2d_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::matrix2d> arr(n);
+  std::vector<lightusd::legacy::value::matrix2d> arr(n);
   if (n) std::memcpy(arr.data(), v, sizeof(double) * 4 * n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_matrix3d(
     uint64_t n, const c_lightusd_matrix3d_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::matrix3d> arr(n);
+  std::vector<lightusd::legacy::value::matrix3d> arr(n);
   if (n) std::memcpy(arr.data(), v, sizeof(double) * 9 * n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_matrix4d(
     uint64_t n, const c_lightusd_matrix4d_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::matrix4d> arr(n);
+  std::vector<lightusd::legacy::value::matrix4d> arr(n);
   if (n) std::memcpy(arr.data(), v, sizeof(double) * 16 * n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 
 /* ---- bool ---- */
 CLightUSDValue *c_lightusd_value_new_bool(int v) {
   bool b = (v != 0);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(b));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(b));
 }
 CLightUSDValue *c_lightusd_value_new_array_bool(uint64_t n, const int *v) {
   if (!v && n) return nullptr;
   std::vector<bool> arr;
   arr.reserve(n);
   for (uint64_t i = 0; i < n; ++i) arr.push_back(v[i] != 0);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 
 /* ---- Typed float3/double3 alias scalars + arrays ----
@@ -1445,7 +1445,7 @@ CLightUSDValue *c_lightusd_value_new_array_bool(uint64_t n, const int *v) {
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");      \
     lightusd::value::__cppty x;                                                \
     std::memcpy(&x, &v, sizeof(__cty));                                        \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(x));   \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(x));   \
   }                                                                            \
   CLightUSDValue *c_lightusd_value_new_array_##__name(                           \
       uint64_t n, const __cty *vals) {                                         \
@@ -1453,7 +1453,7 @@ CLightUSDValue *c_lightusd_value_new_array_bool(uint64_t n, const int *v) {
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");      \
     std::vector<lightusd::value::__cppty> arr(n);                              \
     if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));           \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr)); \
   }
 
 TYPED_VEC_NEW(color3f,  color3f,  c_lightusd_color3f_t)
@@ -1468,22 +1468,22 @@ TYPED_VEC_NEW(vector3d, vector3d, c_lightusd_double3_t)
 #undef TYPED_VEC_NEW
 
 c_lightusd_half_t c_lightusd_float_to_half(float f) {
-  return lightusd::value::float_to_half_full(f).value;
+  return lightusd::legacy::value::float_to_half_full(f).value;
 }
 
 /* ---- Half precision scalars ----
  * c_lightusd_half_t is a uint16_t bit pattern. value::half wraps it.
  */
 CLightUSDValue *c_lightusd_value_new_half(c_lightusd_half_t v) {
-  lightusd::value::half h{v};
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(h));
+  lightusd::legacy::value::half h{v};
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(h));
 }
 #define HALF_VEC_NEW(__name, __cppty, __cty)                                 \
   CLightUSDValue *c_lightusd_value_new_##__name(__cty v) {                     \
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");    \
     lightusd::value::__cppty x;                                              \
     std::memcpy(&x, &v, sizeof(__cty));                                      \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(x)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(x)); \
   }                                                                          \
   CLightUSDValue *c_lightusd_value_new_array_##__name(                         \
       uint64_t n, const __cty *vals) {                                       \
@@ -1491,7 +1491,7 @@ CLightUSDValue *c_lightusd_value_new_half(c_lightusd_half_t v) {
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");    \
     std::vector<lightusd::value::__cppty> arr(n);                            \
     if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));         \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr)); \
   }
 
 HALF_VEC_NEW(half2, half2, c_lightusd_half2_t)
@@ -1502,35 +1502,35 @@ HALF_VEC_NEW(half4, half4, c_lightusd_half4_t)
 CLightUSDValue *c_lightusd_value_new_array_half(uint64_t n,
                                               const c_lightusd_half_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::half> arr(n);
-  for (uint64_t i = 0; i < n; ++i) arr[i] = lightusd::value::half{v[i]};
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  std::vector<lightusd::legacy::value::half> arr(n);
+  for (uint64_t i = 0; i < n; ++i) arr[i] = lightusd::legacy::value::half{v[i]};
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 
 /* ---- Wide integers ---- */
 CLightUSDValue *c_lightusd_value_new_uint(uint32_t v) {
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(v));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(v));
 }
 CLightUSDValue *c_lightusd_value_new_uint64(uint64_t v) {
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(v));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(v));
 }
 CLightUSDValue *c_lightusd_value_new_int64(int64_t v) {
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(v));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(v));
 }
 CLightUSDValue *c_lightusd_value_new_array_uint(uint64_t n, const uint32_t *v) {
   if (!v && n) return nullptr;
   std::vector<uint32_t> arr(v, v + n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_uint64(uint64_t n, const uint64_t *v) {
   if (!v && n) return nullptr;
   std::vector<uint64_t> arr(v, v + n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 CLightUSDValue *c_lightusd_value_new_array_int64(uint64_t n, const int64_t *v) {
   if (!v && n) return nullptr;
   std::vector<int64_t> arr(v, v + n);
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 
 /* ---- Quaternions ----
@@ -1542,7 +1542,7 @@ CLightUSDValue *c_lightusd_value_new_array_int64(uint64_t n, const int64_t *v) {
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");    \
     lightusd::value::__cppty x;                                              \
     std::memcpy(&x, &v, sizeof(__cty));                                      \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(x)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(x)); \
   }                                                                          \
   CLightUSDValue *c_lightusd_value_new_array_##__name(                         \
       uint64_t n, const __cty *vals) {                                       \
@@ -1550,7 +1550,7 @@ CLightUSDValue *c_lightusd_value_new_array_int64(uint64_t n, const int64_t *v) {
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");    \
     std::vector<lightusd::value::__cppty> arr(n);                            \
     if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));         \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr)); \
   }
 QUAT_NEW(quath, quath, c_lightusd_quath_t)
 QUAT_NEW(quatf, quatf, c_lightusd_quatf_t)
@@ -1565,7 +1565,7 @@ QUAT_NEW(quatd, quatd, c_lightusd_quatd_t)
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");      \
     lightusd::value::__cppty x;                                                \
     std::memcpy(&x, &v, sizeof(__cty));                                        \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(x));   \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(x));   \
   }                                                                            \
   CLightUSDValue *c_lightusd_value_new_array_##__name(                           \
       uint64_t n, const __cty *vals) {                                         \
@@ -1573,7 +1573,7 @@ QUAT_NEW(quatd, quatd, c_lightusd_quatd_t)
     static_assert(sizeof(lightusd::value::__cppty) == sizeof(__cty), "");      \
     std::vector<lightusd::value::__cppty> arr(n);                              \
     if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));           \
-    return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr)); \
+    return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr)); \
   }
 
 TEXCOORD_NEW(texcoord2f, float2, c_lightusd_float2_t)
@@ -1588,21 +1588,21 @@ TEXCOORD_NEW(texcoord3d, double3, c_lightusd_double3_t)
  */
 CLightUSDValue *c_lightusd_value_new_frame4d(c_lightusd_matrix4d_t v) {
   // Create a frame4d and copy matrix data into its m member
-  lightusd::value::frame4d f;
+  lightusd::legacy::value::frame4d f;
   for (int i = 0; i < 4; ++i) {
     for (int j = 0; j < 4; ++j) {
       f.m[i][j] = v.m[i * 4 + j];
     }
   }
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(f));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(f));
 }
 
 CLightUSDValue *c_lightusd_value_new_array_frame4d(uint64_t n, const c_lightusd_matrix4d_t *v) {
   if (!v && n) return nullptr;
-  std::vector<lightusd::value::frame4d> arr;
+  std::vector<lightusd::legacy::value::frame4d> arr;
   arr.reserve(n);
   for (uint64_t i = 0; i < n; ++i) {
-    lightusd::value::frame4d f;
+    lightusd::legacy::value::frame4d f;
     for (int row = 0; row < 4; ++row) {
       for (int col = 0; col < 4; ++col) {
         f.m[row][col] = v[i].m[row * 4 + col];
@@ -1610,7 +1610,7 @@ CLightUSDValue *c_lightusd_value_new_array_frame4d(uint64_t n, const c_lightusd_
     }
     arr.emplace_back(f);
   }
-  return reinterpret_cast<CLightUSDValue *>(new lightusd::value::Value(arr));
+  return reinterpret_cast<CLightUSDValue *>(new lightusd::legacy::value::Value(arr));
 }
 
 }  /* end extern "C" — templates need C++ linkage */
@@ -1618,26 +1618,26 @@ CLightUSDValue *c_lightusd_value_new_array_frame4d(uint64_t n, const c_lightusd_
 /* ---- Composition arc authoring ---- */
 
 namespace {
-inline lightusd::ListEditQual to_listedit_qual(CLightUSDListEditQual q) {
+inline lightusd::legacy::ListEditQual to_listedit_qual(CLightUSDListEditQual q) {
   switch (q) {
-    case C_LIGHTUSD_LISTEDITQUAL_RESETTOEXPLICIT: return lightusd::ListEditQual::ResetToExplicit;
-    case C_LIGHTUSD_LISTEDITQUAL_APPEND:          return lightusd::ListEditQual::Append;
-    case C_LIGHTUSD_LISTEDITQUAL_ADD:             return lightusd::ListEditQual::Add;
-    case C_LIGHTUSD_LISTEDITQUAL_DELETE:          return lightusd::ListEditQual::Delete;
-    case C_LIGHTUSD_LISTEDITQUAL_PREPEND:         return lightusd::ListEditQual::Prepend;
-    case C_LIGHTUSD_LISTEDITQUAL_ORDER:           return lightusd::ListEditQual::Order;
+    case C_LIGHTUSD_LISTEDITQUAL_RESETTOEXPLICIT: return lightusd::legacy::ListEditQual::ResetToExplicit;
+    case C_LIGHTUSD_LISTEDITQUAL_APPEND:          return lightusd::legacy::ListEditQual::Append;
+    case C_LIGHTUSD_LISTEDITQUAL_ADD:             return lightusd::legacy::ListEditQual::Add;
+    case C_LIGHTUSD_LISTEDITQUAL_DELETE:          return lightusd::legacy::ListEditQual::Delete;
+    case C_LIGHTUSD_LISTEDITQUAL_PREPEND:         return lightusd::legacy::ListEditQual::Prepend;
+    case C_LIGHTUSD_LISTEDITQUAL_ORDER:           return lightusd::legacy::ListEditQual::Order;
   }
-  return lightusd::ListEditQual::ResetToExplicit;
+  return lightusd::legacy::ListEditQual::ResetToExplicit;
 }
 
 template <typename Item>
 void append_listop(
-    nonstd::optional<std::vector<std::pair<lightusd::ListEditQual,
+    nonstd::optional<std::vector<std::pair<lightusd::legacy::ListEditQual,
                                            std::vector<Item>>>> &slot,
-    lightusd::ListEditQual q,
+    lightusd::legacy::ListEditQual q,
     Item item) {
   if (!slot.has_value()) {
-    slot = std::vector<std::pair<lightusd::ListEditQual, std::vector<Item>>>{};
+    slot = std::vector<std::pair<lightusd::legacy::ListEditQual, std::vector<Item>>>{};
   }
   // Find an existing entry with the same qualifier; append in place.
   for (auto &entry : slot.value()) {
@@ -1651,9 +1651,9 @@ void append_listop(
   slot.value().emplace_back(q, std::move(v));
 }
 
-inline lightusd::Path make_optional_path(const char *prim_path) {
-  if (!prim_path || !*prim_path) return lightusd::Path();
-  return lightusd::Path(std::string(prim_path), "");
+inline lightusd::legacy::Path make_optional_path(const char *prim_path) {
+  if (!prim_path || !*prim_path) return lightusd::legacy::Path();
+  return lightusd::legacy::Path(std::string(prim_path), "");
 }
 }  // namespace
 
@@ -1666,10 +1666,10 @@ int c_lightusd_prim_add_reference(CLightUSDPrim *prim,
                                  double offset,
                                  double scale) {
   if (!prim) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Reference ref;
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Reference ref;
   if (asset_path && *asset_path) {
-    ref.asset_path = lightusd::value::AssetPath(std::string(asset_path));
+    ref.asset_path = lightusd::legacy::value::AssetPath(std::string(asset_path));
   }
   ref.prim_path = make_optional_path(prim_path);
   ref.layerOffset._offset = offset;
@@ -1686,10 +1686,10 @@ int c_lightusd_prim_add_payload(CLightUSDPrim *prim,
                                double offset,
                                double scale) {
   if (!prim) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Payload pl;
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Payload pl;
   if (asset_path && *asset_path) {
-    pl.asset_path = lightusd::value::AssetPath(std::string(asset_path));
+    pl.asset_path = lightusd::legacy::value::AssetPath(std::string(asset_path));
   }
   pl.prim_path = make_optional_path(prim_path);
   pl.layerOffset._offset = offset;
@@ -1703,8 +1703,8 @@ int c_lightusd_prim_add_inherit(CLightUSDPrim *prim,
                                CLightUSDListEditQual qualifier,
                                const char *prim_path) {
   if (!prim || !prim_path) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Path path(std::string(prim_path), "");
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Path path(std::string(prim_path), "");
   append_listop(p->metas().inherits, to_listedit_qual(qualifier),
                 std::move(path));
   return 1;
@@ -1714,8 +1714,8 @@ int c_lightusd_prim_add_specialize(CLightUSDPrim *prim,
                                   CLightUSDListEditQual qualifier,
                                   const char *prim_path) {
   if (!prim || !prim_path) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  lightusd::Path path(std::string(prim_path), "");
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  lightusd::legacy::Path path(std::string(prim_path), "");
   append_listop(p->metas().specializes, to_listedit_qual(qualifier),
                 std::move(path));
   return 1;
@@ -1723,22 +1723,22 @@ int c_lightusd_prim_add_specialize(CLightUSDPrim *prim,
 
 int c_lightusd_prim_clear_references(CLightUSDPrim *prim) {
   if (!prim) return 0;
-  reinterpret_cast<lightusd::Prim *>(prim)->metas().references.reset();
+  reinterpret_cast<lightusd::legacy::Prim *>(prim)->metas().references.reset();
   return 1;
 }
 int c_lightusd_prim_clear_payload(CLightUSDPrim *prim) {
   if (!prim) return 0;
-  reinterpret_cast<lightusd::Prim *>(prim)->metas().payload.reset();
+  reinterpret_cast<lightusd::legacy::Prim *>(prim)->metas().payload.reset();
   return 1;
 }
 int c_lightusd_prim_clear_inherits(CLightUSDPrim *prim) {
   if (!prim) return 0;
-  reinterpret_cast<lightusd::Prim *>(prim)->metas().inherits.reset();
+  reinterpret_cast<lightusd::legacy::Prim *>(prim)->metas().inherits.reset();
   return 1;
 }
 int c_lightusd_prim_clear_specializes(CLightUSDPrim *prim) {
   if (!prim) return 0;
-  reinterpret_cast<lightusd::Prim *>(prim)->metas().specializes.reset();
+  reinterpret_cast<lightusd::legacy::Prim *>(prim)->metas().specializes.reset();
   return 1;
 }
 
@@ -1748,7 +1748,7 @@ int c_lightusd_prim_add_variant_set_name(CLightUSDPrim *prim,
                                         CLightUSDListEditQual qualifier,
                                         const char *name) {
   if (!prim || !name) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
   append_listop(p->metas().variantSets, to_listedit_qual(qualifier),
                 std::string(name));
   return 1;
@@ -1756,7 +1756,7 @@ int c_lightusd_prim_add_variant_set_name(CLightUSDPrim *prim,
 
 int c_lightusd_prim_clear_variant_set_names(CLightUSDPrim *prim) {
   if (!prim) return 0;
-  reinterpret_cast<lightusd::Prim *>(prim)->metas().variantSets.reset();
+  reinterpret_cast<lightusd::legacy::Prim *>(prim)->metas().variantSets.reset();
   return 1;
 }
 
@@ -1764,9 +1764,9 @@ int c_lightusd_prim_set_variant_selection(CLightUSDPrim *prim,
                                          const char *variant_set_name,
                                          const char *variant_name) {
   if (!prim || !variant_set_name || !variant_name) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
   if (!p->metas().variants.has_value()) {
-    p->metas().variants = lightusd::VariantSelectionMap{};
+    p->metas().variants = lightusd::legacy::VariantSelectionMap{};
   }
   (*p->metas().variants)[std::string(variant_set_name)] =
       std::string(variant_name);
@@ -1776,7 +1776,7 @@ int c_lightusd_prim_set_variant_selection(CLightUSDPrim *prim,
 int c_lightusd_prim_clear_variant_selection(CLightUSDPrim *prim,
                                            const char *variant_set_name) {
   if (!prim) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
   if (!variant_set_name || !*variant_set_name) {
     p->metas().variants.reset();
     return 1;
@@ -1796,7 +1796,7 @@ int c_lightusd_prim_get_variant_selection_keys(const CLightUSDPrim *prim,
                                               uint64_t cap,
                                               uint64_t *out_count) {
   if (!prim) return 0;
-  const auto *p = reinterpret_cast<const lightusd::Prim *>(prim);
+  const auto *p = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   if (!p->metas().variants.has_value()) {
     if (out_count) *out_count = 0;
     return 1;
@@ -1817,13 +1817,13 @@ int c_lightusd_prim_get_variant_selection_keys(const CLightUSDPrim *prim,
 
 namespace {
 
-lightusd::Variant *get_or_create_variant(lightusd::Prim *p,
+lightusd::legacy::Variant *get_or_create_variant(lightusd::legacy::Prim *p,
                                          const std::string &vs_name,
                                          const std::string &v_name) {
   auto &vsets = p->variantSets();
   auto it = vsets.find(vs_name);
   if (it == vsets.end()) {
-    lightusd::VariantSet vs;
+    lightusd::legacy::VariantSet vs;
     vs.name = vs_name;
     auto inserted = vsets.emplace(vs_name, std::move(vs));
     it = inserted.first;
@@ -1831,7 +1831,7 @@ lightusd::Variant *get_or_create_variant(lightusd::Prim *p,
   auto &vmap = it->second.variantSet;
   auto vit = vmap.find(v_name);
   if (vit == vmap.end()) {
-    auto inserted = vmap.emplace(v_name, lightusd::Variant{});
+    auto inserted = vmap.emplace(v_name, lightusd::legacy::Variant{});
     vit = inserted.first;
   }
   return &vit->second;
@@ -1843,7 +1843,7 @@ int c_lightusd_prim_define_variant(CLightUSDPrim *prim,
                                   const char *variant_set_name,
                                   const char *variant_name) {
   if (!prim || !variant_set_name || !variant_name) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
   return get_or_create_variant(p, variant_set_name, variant_name) ? 1 : 0;
 }
 
@@ -1852,8 +1852,8 @@ int c_lightusd_prim_variant_add_child(CLightUSDPrim *prim,
                                      const char *variant_name,
                                      const CLightUSDPrim *child) {
   if (!prim || !variant_set_name || !variant_name || !child) return 0;
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  const auto *c = reinterpret_cast<const lightusd::Prim *>(child);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  const auto *c = reinterpret_cast<const lightusd::legacy::Prim *>(child);
   if (p == c) return 0;
   auto *v = get_or_create_variant(p, variant_set_name, variant_name);
   if (!v) return 0;
@@ -1870,15 +1870,15 @@ int c_lightusd_prim_variant_add_attribute(CLightUSDPrim *prim,
     if (err) c_lightusd_string_replace(err, "null arg");
     return 0;
   }
-  auto *p = reinterpret_cast<lightusd::Prim *>(prim);
-  const auto *a = reinterpret_cast<const lightusd::Attribute *>(attr);
+  auto *p = reinterpret_cast<lightusd::legacy::Prim *>(prim);
+  const auto *a = reinterpret_cast<const lightusd::legacy::Attribute *>(attr);
   if (a->name().empty()) {
     if (err) c_lightusd_string_replace(err, "attribute name is empty");
     return 0;
   }
   auto *v = get_or_create_variant(p, variant_set_name, variant_name);
   if (!v) return 0;
-  v->properties()[a->name()] = lightusd::Property(*a, /* custom */ false);
+  v->properties()[a->name()] = lightusd::legacy::Property(*a, /* custom */ false);
   return 1;
 }
 
@@ -1887,7 +1887,7 @@ int c_lightusd_prim_get_variant_set_names(const CLightUSDPrim *prim,
                                          uint64_t cap,
                                          uint64_t *out_count) {
   if (!prim) return 0;
-  const auto *p = reinterpret_cast<const lightusd::Prim *>(prim);
+  const auto *p = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   const auto &vsets = p->variantSets();
   if (out_count) *out_count = static_cast<uint64_t>(vsets.size());
   uint64_t i = 0;
@@ -1906,7 +1906,7 @@ int c_lightusd_prim_get_variant_names(const CLightUSDPrim *prim,
                                      uint64_t cap,
                                      uint64_t *out_count) {
   if (!prim || !variant_set_name) return 0;
-  const auto *p = reinterpret_cast<const lightusd::Prim *>(prim);
+  const auto *p = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   const auto &vsets = p->variantSets();
   auto it = vsets.find(std::string(variant_set_name));
   if (it == vsets.end()) {
@@ -1929,7 +1929,7 @@ int c_lightusd_prim_get_variant_selection(const CLightUSDPrim *prim,
                                          const char *variant_set_name,
                                          c_lightusd_string_t *out) {
   if (!prim || !variant_set_name || !out) return 0;
-  const auto *p = reinterpret_cast<const lightusd::Prim *>(prim);
+  const auto *p = reinterpret_cast<const lightusd::legacy::Prim *>(prim);
   if (!p->metas().variants.has_value()) return 0;
   const auto &vmap = p->metas().variants.value();
   auto it = vmap.find(std::string(variant_set_name));
@@ -1941,34 +1941,34 @@ int c_lightusd_prim_get_variant_selection(const CLightUSDPrim *prim,
 /* ---- Stage default-prim convenience ---- */
 int c_lightusd_stage_set_default_prim(CLightUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;
-  auto *s = reinterpret_cast<lightusd::Stage *>(stage);
-  s->metas().defaultPrim = lightusd::value::token(name);
+  auto *s = reinterpret_cast<lightusd::legacy::Stage *>(stage);
+  s->metas().defaultPrim = lightusd::legacy::value::token(name);
   return 1;
 }
 int c_lightusd_stage_get_default_prim(const CLightUSDStage *stage,
                                      c_lightusd_string_t *out_name) {
   if (!stage || !out_name) return 0;
-  const auto *s = reinterpret_cast<const lightusd::Stage *>(stage);
+  const auto *s = reinterpret_cast<const lightusd::legacy::Stage *>(stage);
   return c_lightusd_string_replace(out_name,
                                   s->metas().defaultPrim.str().c_str());
 }
 
 CLightUSDValue *c_lightusd_value_new_asset(const char *asset_path) {
   if (!asset_path) return nullptr;
-  lightusd::value::AssetPath ap{std::string(asset_path)};
-  auto *p = new lightusd::value::Value(ap);
+  lightusd::legacy::value::AssetPath ap{std::string(asset_path)};
+  auto *p = new lightusd::legacy::value::Value(ap);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 
 CLightUSDValue *c_lightusd_value_new_array_asset(uint64_t n,
                                                const char *const *paths) {
   if (n && !paths) return nullptr;
-  std::vector<lightusd::value::AssetPath> arr;
+  std::vector<lightusd::legacy::value::AssetPath> arr;
   arr.reserve(n);
   for (uint64_t i = 0; i < n; ++i) {
     arr.emplace_back(paths[i] ? std::string(paths[i]) : std::string());
   }
-  auto *p = new lightusd::value::Value(arr);
+  auto *p = new lightusd::legacy::value::Value(arr);
   return reinterpret_cast<CLightUSDValue *>(p);
 }
 
@@ -1977,7 +1977,7 @@ CLightUSDValue *c_lightusd_value_new_array_asset(uint64_t n,
 /* Helper: locate or insert a Property attribute in the prim's props map.
  * Returns pointer to the Property entry, or nullptr if the prim type does
  * not expose a writable props map. */
-static lightusd::Property *locate_or_insert_attr_prop(
+static lightusd::legacy::Property *locate_or_insert_attr_prop(
     Prim *p, const std::string &name) {
   using namespace lightusd;
   uint32_t tid = p->get_data().type_id();
@@ -2082,7 +2082,7 @@ int c_lightusd_prim_get_attribute_connections(const CLightUSDPrim *prim,
   bool got = lookup_in_props(*P(prim), std::string(name), &prop);
   if (!got) {
     std::string err;
-    got = lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop,
+    got = lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop,
                                        &err);
   }
   if (!got) return 0;
@@ -2113,10 +2113,10 @@ int c_lightusd_prim_attribute_meta_set_string(CLightUSDPrim *prim,
   else if (k == "doc" || k == "documentation") a.metas().set_doc(v);
   else if (k == "displayGroup") a.metas().set_displayGroup(v);
   else if (k == "interpolation") a.metas().set_interpolation(v);
-  else if (k == "colorSpace") a.metas().set(k, lightusd::value::token(v));
+  else if (k == "colorSpace") a.metas().set(k, lightusd::legacy::value::token(v));
   else if (k == "variability") {
-    if (v == "uniform") a.variability() = lightusd::Variability::Uniform;
-    else if (v == "varying") a.variability() = lightusd::Variability::Varying;
+    if (v == "uniform") a.variability() = lightusd::legacy::Variability::Uniform;
+    else if (v == "varying") a.variability() = lightusd::legacy::Variability::Varying;
     else return 0;
   }
   else a.metas().set(k, v);
@@ -2149,7 +2149,7 @@ int c_lightusd_prim_attribute_meta_get_string(const CLightUSDPrim *prim,
   bool got = lookup_in_props(*P(prim), std::string(attr_name), &prop);
   if (!got) {
     std::string err;
-    got = lightusd::tydra::GetProperty(*P(prim), std::string(attr_name), &prop,
+    got = lightusd::legacy::tydra::GetProperty(*P(prim), std::string(attr_name), &prop,
                                        &err);
   }
   if (!got) return 0;
@@ -2183,9 +2183,9 @@ int c_lightusd_prim_attribute_meta_get_string(const CLightUSDPrim *prim,
   }
   if (auto v = m.get<std::string>(k))
     return c_lightusd_string_replace(out, v.value().c_str());
-  if (auto v = m.get<lightusd::value::token>(k))
+  if (auto v = m.get<lightusd::legacy::value::token>(k))
     return c_lightusd_string_replace(out, v.value().str().c_str());
-  if (auto v = m.get<lightusd::value::StringData>(k))
+  if (auto v = m.get<lightusd::legacy::value::StringData>(k))
     return c_lightusd_string_replace(out, v.value().value.c_str());
   return 0;
 }
@@ -2199,21 +2199,21 @@ int c_lightusd_stage_meta_set_string(CLightUSDStage *stage, const char *key_,
   std::string val(value);
   auto &m = Sm(stage)->metas();
   if (key == "defaultPrim") {
-    m.defaultPrim = lightusd::value::token(val);
+    m.defaultPrim = lightusd::legacy::value::token(val);
     return 1;
   } else if (key == "upAxis") {
-    lightusd::Axis ax = lightusd::Axis::Y;
-    if (val == "X") ax = lightusd::Axis::X;
-    else if (val == "Z") ax = lightusd::Axis::Z;
-    else if (val == "Y") ax = lightusd::Axis::Y;
+    lightusd::legacy::Axis ax = lightusd::legacy::Axis::Y;
+    if (val == "X") ax = lightusd::legacy::Axis::X;
+    else if (val == "Z") ax = lightusd::legacy::Axis::Z;
+    else if (val == "Y") ax = lightusd::legacy::Axis::Y;
     else return 0;
     m.upAxis = ax;
     return 1;
   } else if (key == "doc" || key == "documentation") {
-    m.doc = lightusd::value::StringData(val);
+    m.doc = lightusd::legacy::value::StringData(val);
     return 1;
   } else if (key == "comment") {
-    m.comment = lightusd::value::StringData(val);
+    m.comment = lightusd::legacy::value::StringData(val);
     return 1;
   }
   return 0;
@@ -2231,9 +2231,9 @@ int c_lightusd_stage_meta_get_string(const CLightUSDStage *stage, const char *ke
     if (!m.upAxis.authored()) return 0;
     const char *s = "Y";
     switch (m.upAxis.get_value()) {
-      case lightusd::Axis::X: s = "X"; break;
-      case lightusd::Axis::Y: s = "Y"; break;
-      case lightusd::Axis::Z: s = "Z"; break;
+      case lightusd::legacy::Axis::X: s = "X"; break;
+      case lightusd::legacy::Axis::Y: s = "Y"; break;
+      case lightusd::legacy::Axis::Z: s = "Z"; break;
       default: return 0;
     }
     return c_lightusd_string_replace(out, s);
@@ -2292,13 +2292,13 @@ int c_lightusd_prim_add_relationship(CLightUSDPrim *prim, const char *name,
     return 0;
   }
   Prim *p = reinterpret_cast<Prim *>(prim);
-  lightusd::Relationship rel;
+  lightusd::legacy::Relationship rel;
   if (n_targets == 0 || !target_paths) {
     rel.set_novalue();
   } else if (n_targets == 1) {
-    rel.set(lightusd::Path(std::string(target_paths[0]), ""));
+    rel.set(lightusd::legacy::Path(std::string(target_paths[0]), ""));
   } else {
-    std::vector<lightusd::Path> pv;
+    std::vector<lightusd::legacy::Path> pv;
     pv.reserve(n_targets);
     for (uint64_t i = 0; i < n_targets; ++i) {
       pv.emplace_back(std::string(target_paths[i]), "");
@@ -2380,7 +2380,7 @@ int c_lightusd_prim_get_relationship_targets(const CLightUSDPrim *prim,
   bool got = lookup_in_props(*P(prim), std::string(name), &prop);
   if (!got) {
     std::string err;
-    got = lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop,
+    got = lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop,
                                        &err);
   }
   /* GPrim-derived prims store material:binding in a typed RelationshipProperty
@@ -2501,7 +2501,7 @@ uint64_t c_lightusd_prim_get_attribute_timesample_count(
   Property prop;
   if (!lookup_in_props(*P(prim), std::string(name), &prop)) {
     std::string err;
-    if (!lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
+    if (!lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
       return 0;
     }
   }
@@ -2519,7 +2519,7 @@ int c_lightusd_prim_get_attribute_timesample(const CLightUSDPrim *prim,
   Property prop;
   if (!lookup_in_props(*P(prim), std::string(name), &prop)) {
     std::string err;
-    if (!lightusd::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
+    if (!lightusd::legacy::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
       return 0;
     }
   }
@@ -2531,7 +2531,7 @@ int c_lightusd_prim_get_attribute_timesample(const CLightUSDPrim *prim,
   const auto &samples = ts.get_samples();
   *out_time = samples[size_t(index)].t;
   *out_value = reinterpret_cast<CLightUSDValue *>(
-      new lightusd::value::Value(samples[size_t(index)].value));
+      new lightusd::legacy::value::Value(samples[size_t(index)].value));
   return 1;
 }
 

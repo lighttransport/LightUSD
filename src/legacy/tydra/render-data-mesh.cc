@@ -93,7 +93,7 @@
 
 #include <cstdint>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -430,7 +430,7 @@ bool TryConvertFacevaryingToVertexInt(
   }
 
   // vidx, value
-  lightusd::HashMap<uint32_t, T> vdata;
+  lightusd::legacy::HashMap<uint32_t, T> vdata;
   vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
@@ -1278,7 +1278,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
 
   VertexAttribute vattr;
 
-  const lightusd::Attribute &attr = primvar.get_attribute();
+  const lightusd::legacy::Attribute &attr = primvar.get_attribute();
 
   // Check if primvar has timesamples and report detailed warning
   if (attr.has_timesamples()) {
@@ -1768,7 +1768,7 @@ template <class VertexInput, class VertexOutput, class PackedVert,
 void BuildIndices(const VertexInput &input, VertexOutput &output,
                   std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
 {
-  lightusd::HashMap<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
+  lightusd::legacy::HashMap<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
       vertexToIndexMap;
 
   auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
@@ -2160,7 +2160,7 @@ static bool ReorderVertexVaryingAttributes(
     // Then splat point attributes accordingly.
 
     // org pointIdx -> List of pointIdx in reordered points.
-    lightusd::HashMap<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+    lightusd::legacy::HashMap<uint32_t, std::vector<uint32_t>> pointIdxRemap;
     pointIdxRemap.reserve(num_verts);
 
     for (size_t v = 0; v < num_verts; v++) {
@@ -2738,8 +2738,8 @@ bool RenderSceneConverter::ConvertMesh(
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     // const std::map<std::string, int64_t> &rmaterial_idMap,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
         &blendshapes,
     RenderMesh *dstMesh) {
   //
@@ -2809,7 +2809,7 @@ bool RenderSceneConverter::ConvertMesh(
   RenderMesh dst;
 
   dst.is_rightHanded =
-      (mesh.orientation.get_value() == lightusd::Orientation::RightHanded);
+      (mesh.orientation.get_value() == lightusd::legacy::Orientation::RightHanded);
   dst.doubleSided = mesh.doubleSided.get_value();
 
   //
@@ -3056,7 +3056,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
 
   // key:slotId, value:texcoord data
-  lightusd::HashMap<uint32_t, VertexAttribute> uvAttrs;
+  lightusd::legacy::HashMap<uint32_t, VertexAttribute> uvAttrs;
 
   // UDIM atlas UV remaps for this mesh, keyed by texcoord primvar name.
   // {scale.x, scale.y, offset.x, offset.y}. Populated from combined-UDIM
@@ -3500,7 +3500,7 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       constexpr size_t kMaxSubdivSkinJoints = 256;
-      lightusd::HashMap<int, uint32_t> joint_column;
+      lightusd::legacy::HashMap<int, uint32_t> joint_column;
       joint_column.reserve(std::min<size_t>(jidx.size(), kMaxSubdivSkinJoints));
       for (size_t i = 0; i < jidx.size(); i++) {
         if (jwts[i] == 0.0f) {
@@ -3996,7 +3996,7 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       // Check if normals primvar has timesamples
-      const lightusd::Attribute &normals_attr = pvar.get_attribute();
+      const lightusd::legacy::Attribute &normals_attr = pvar.get_attribute();
       if (normals_attr.has_timesamples()) {
         std::string msg = fmt::format(
             "Geometry primvar 'normals' has timesamples (animated values). "
@@ -5898,4 +5898,5 @@ bool RenderSceneConverter::ComputeDeferredTangents(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

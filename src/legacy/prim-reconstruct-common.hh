@@ -17,7 +17,7 @@
 
 #include "core/property.hh"  // Property (transitively: attribute, relationship, path, prim-enums)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace prim {
 
 /// Set of property names a schema reconstructor has already consumed.
@@ -104,4 +104,5 @@ struct PropertyCount {
 // };
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

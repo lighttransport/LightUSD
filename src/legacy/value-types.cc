@@ -9,7 +9,7 @@
 //
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace value {
 
 bool IsReasonableValueVectorSize(size_t size) {
@@ -304,4 +304,5 @@ half operator/(float a, const half &b) {
 
 
 }  // namespace value
+}  // namespace legacy
 }  // namespace lightusd

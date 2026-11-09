@@ -42,7 +42,7 @@
 #include "core/material-binding.hh" // MaterialBinding (for DEFINE_TYPE_TRAIT)
 #include "core/variant-types.hh"    // VariantSet
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
@@ -552,4 +552,5 @@ struct TypeTraits<UsdUVTexture::SourceColorSpace> {
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

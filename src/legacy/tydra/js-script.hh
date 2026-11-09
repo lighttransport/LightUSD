@@ -18,7 +18,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct LayerMetas;
 class Attribute;
@@ -95,4 +95,5 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer *layer,
                           std::string &err);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

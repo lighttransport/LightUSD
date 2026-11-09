@@ -13,6 +13,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Helper: a tstring_view slice equals an expected literal.
 static bool sv_eq(const tstring_view &v, const char *s) { return v == s; }
 

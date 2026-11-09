@@ -14,7 +14,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 value::quath slerp(const value::quath &_a, const value::quath &_b, const float t) {
   value::quatf a;
@@ -271,4 +271,5 @@ value::point3d geometric_normal(const value::point3d &p0, const value::point3d &
   return vnormalize(n);
 }
 
+}  // namespace legacy
 } // namespace lightusd

@@ -10,7 +10,7 @@
 
 #include "tiny-hashmap.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 /// Lightweight descriptor for an uncompressed array in an mmap'd USDC file.
 /// 24 bytes vs potentially 100+ MB for the actual data.
@@ -83,7 +83,7 @@ class MMapArrayTable {
     return key;
   }
 
-  lightusd::HashMap<std::string, MMapArrayRef> _entries;
+  lightusd::legacy::HashMap<std::string, MMapArrayRef> _entries;
 };
 
 /// Wraps raw mmap pointer for safe typed access.
@@ -118,4 +118,5 @@ class MMapDataSource {
   uint64_t _size{0};
 };
 
+}  // namespace legacy
 }  // namespace lightusd

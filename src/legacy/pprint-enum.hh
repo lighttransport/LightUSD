@@ -22,7 +22,7 @@
 #include "core/extent.hh"            // Extent
 #include "value-types.hh"            // value:: numeric types
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace pprint {
 
@@ -157,8 +157,8 @@ std::string to_string(const std::string &s);
 
 template <typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(level) << "[";
   for (size_t i = 0; i < v.size(); i++) {
     ss << to_string(v[i]);
@@ -172,8 +172,8 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
 
 template <typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent_level) << "ListOp(isExplicit " << op.IsExplicit()
      << ") {\n";
   ss << pprint::Indent(indent_level)
@@ -192,4 +192,5 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   return pp_ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

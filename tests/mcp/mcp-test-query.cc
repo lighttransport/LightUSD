@@ -11,7 +11,7 @@
 #include "tydra/mcp-tools.hh"
 #include "tydra/js-script.hh"
 
-using namespace lightusd::tydra::mcp;
+using namespace lightusd::legacy::tydra::mcp;
 using json = nlohmann::json;
 
 void mcp_tool_list_registration_test(void) {

@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace crate {
 
 enum class OutputFormat {
@@ -51,4 +51,5 @@ struct DumpOptions {
 bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string* err);
 
 }  // namespace crate
+}  // namespace legacy
 }  // namespace lightusd

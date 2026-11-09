@@ -19,15 +19,13 @@
 #include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
 #include "handle-allocator.hh"   // HandleAllocator
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations for mmap zero-copy support
 class MMapArrayTable;
 class MMapDataSource;
 struct StageMMapFileOwner;
-namespace io {
-struct MMapFileHandle;
-}
+// io::MMapFileHandle is shared (io-util.hh); forward-declared in legacy-namespace.hh.
 
 using StageMetas = LayerMetas;
 
@@ -427,13 +425,13 @@ class Stage {
   // cache, avoiding the per-lookup std::string allocation that would result
   // from passing tstring_view as a key to a HashMap<std::string, ...>).
   // See concern #1 in review.md.
-  mutable lightusd::HashMap<Path, const Prim *, lightusd::crate::PathHasher,
-                            lightusd::crate::PathKeyEqual>
+  mutable lightusd::legacy::HashMap<Path, const Prim *, lightusd::legacy::crate::PathHasher,
+                            lightusd::legacy::crate::PathKeyEqual>
       _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
-  mutable lightusd::HashMap<uint64_t, const Prim *> _prim_id_cache;
+  mutable lightusd::legacy::HashMap<uint64_t, const Prim *> _prim_id_cache;
 
   mutable bool _dirty{true}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 
@@ -481,4 +479,5 @@ inline std::string to_string(const Stage &stage, bool relative_path = false) {
   return stage.ExportToString(relative_path);
 }
 
+}  // namespace legacy
 }  // namespace lightusd

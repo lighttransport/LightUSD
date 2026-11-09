@@ -15,7 +15,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -3274,6 +3274,7 @@ bool CrateWriter::ExtractGeomHermiteCurvesProperties(
 }
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd
 
 #if defined(__clang__)

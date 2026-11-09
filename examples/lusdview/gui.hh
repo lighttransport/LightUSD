@@ -561,10 +561,10 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawPrimTree(const lightusd::Prim& prim);
+  bool drawPrimTree(const lightusd::legacy::Prim& prim);
   bool drawNextPrimTree(lightusd_prim prim);
   void drawNextInspector();
-  bool drawNodeTree(const lightusd::tydra::Node& node);
+  bool drawNodeTree(const lightusd::legacy::tydra::Node& node);
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
@@ -679,7 +679,7 @@ class Gui {
     std::string selectedPath;
   };
 
-  const lightusd::Prim* selPrim_{nullptr};
+  const lightusd::legacy::Prim* selPrim_{nullptr};
   lightusd::api::Stage nextStage_;
   std::vector<std::string> nextSkeletonPaths_;
   bool nextSkeletonPathsReady_{false};
@@ -962,7 +962,7 @@ class Gui {
     bool hasColor{false};
     float color[4]{0.0f, 0.0f, 0.0f, 1.0f};
   };
-  const lightusd::Prim* inspectorCachePrim_{nullptr};
+  const lightusd::legacy::Prim* inspectorCachePrim_{nullptr};
   std::string inspectorCachePath_;
   std::string inspectorCacheType_;
   std::string inspectorCacheMeta_;

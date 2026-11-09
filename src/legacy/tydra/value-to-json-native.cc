@@ -4,7 +4,7 @@
 #include <sstream>
 #include <vector>
 #include "common-macros.inc"
-namespace lightusd { namespace tydra { namespace detail {
+namespace lightusd { namespace legacy { namespace tydra { namespace detail {
 // Native minijson fast paths.  These cover the high-frequency scalar and
 // scalar-array values without constructing a temporary nlohmann document.
 // Less common role/compound/container values continue through the legacy
@@ -427,4 +427,5 @@ bool NativeValueToMiniJSON(const value::Value &source, uint32_t depth,
   return true;
 }
 
-} } }
+} } }  // namespace legacy
+}

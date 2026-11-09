@@ -37,7 +37,7 @@
 #include "str-util.hh"  // For dragonbox-based dtos()
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 
@@ -1037,7 +1037,7 @@ static std::string PrimSpecToJSON(const PrimSpec* ps, uint32_t max_depth = 1) {
     return "null";
   }
 
-  return lightusd::tydra::PrimSpecToMiniJSON(*ps, max_depth).dump();
+  return lightusd::legacy::tydra::PrimSpecToMiniJSON(*ps, max_depth).dump();
 }
 
 static JSValue js_getLayerMetas(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
@@ -1076,7 +1076,7 @@ static JSValue js_findPrimSpecByPath(JSContext *ctx, JSValueConst this_val, int 
 
   // Parse the path string into a Path object
   std::string prim_path = std::string(path_str);
-  lightusd::Path path(prim_path, "");
+  lightusd::legacy::Path path(prim_path, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;
@@ -1125,7 +1125,7 @@ static JSValue js_getPrimSpecMetadata(JSContext *ctx, JSValueConst this_val, int
   }
 
   // Parse the path string into a Path object
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;
@@ -1383,4 +1383,5 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, 
 #endif
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

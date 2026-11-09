@@ -16,7 +16,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 //
 // Relationship(typeless property)
@@ -281,4 +281,5 @@ DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 
 }  // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

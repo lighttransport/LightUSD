@@ -388,7 +388,7 @@ C_LIGHTUSD_EXPORT const char *c_lightusd_token_str(const c_lightusd_token_t *tok
  */
 C_LIGHTUSD_EXPORT int c_lightusd_token_free(c_lightusd_token_t *tok);
 
-/*   opaque pointer to `std::vector<lightusd::value::token>`. */
+/*   opaque pointer to `std::vector<lightusd::legacy::value::token>`. */
 typedef struct c_lightusd_token_vector_t c_lightusd_token_vector_t;
 
 /*  New token vector(array) with size zero(empty) */
@@ -532,7 +532,7 @@ C_LIGHTUSD_EXPORT uint32_t c_lightusd_value_type_sizeof(CLightUSDValueType value
 C_LIGHTUSD_EXPORT uint32_t
 c_lightusd_value_type_components(CLightUSDValueType value_type);
 
-/*  opaque pointer to lightusd::value::Value */
+/*  opaque pointer to lightusd::legacy::value::Value */
 typedef struct CLightUSDValue CLightUSDValue;
 
 /* Return value type enum.
@@ -641,13 +641,13 @@ C_LIGHTUSD_EXPORT CLightUSDValue *c_lightusd_value_new_array_float4(
     uint64_t n, const c_lightusd_float4_t *vals);
 /*   TODO: List up other types... */
 
-/* opaque pointer to lightusd::Path */
+/* opaque pointer to lightusd::legacy::Path */
 typedef struct CLightUSDPath CLightUSDPath;
 
-/* opaque pointer to lightusd::Property */
+/* opaque pointer to lightusd::legacy::Property */
 typedef struct CLightUSDProperty CLightUSDProperty;
 
-/* opaque pointer to lightusd::Relationship */
+/* opaque pointer to lightusd::legacy::Relationship */
 typedef struct CLightUSDRelationship CLightUSDRelationship;
 
 CLightUSDRelationship *c_lightusd_relationsip_new(uint32_t n,
@@ -669,7 +669,7 @@ c_lightusd_relationsip_num_targetPaths(const CLightUSDRelationship *rel);
 C_LIGHTUSD_EXPORT int c_lightusd_relationsip_get_targetPath(
     const CLightUSDRelationship *rel, uint32_t i, CLightUSDPath *targetPath);
 
-/*   opaque pointer to lightusd::Attribute */
+/*   opaque pointer to lightusd::legacy::Attribute */
 typedef struct CLightUSDAttribute CLightUSDAttribute;
 
 C_LIGHTUSD_EXPORT int c_lightusd_attribute_connection_set(
@@ -865,7 +865,7 @@ C_LIGHTUSD_EXPORT int c_lightusd_prim_get_child(const CLightUSDPrim *prim,
                                               uint64_t child_index,
                                               const CLightUSDPrim **child_prim);
 
-/* opaque pointer to lightusd::Stage */
+/* opaque pointer to lightusd::legacy::Stage */
 typedef struct CLightUSDStage CLightUSDStage;
 
 C_LIGHTUSD_EXPORT CLightUSDStage *c_lightusd_stage_new();

@@ -18,22 +18,22 @@ int main() {
 </materialx>)";
 
   // Test using pugixml-like API
-  lightusd::mtlx::pugi::xml_document doc;
-  lightusd::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
+  lightusd::legacy::mtlx::pugi::xml_document doc;
+  lightusd::legacy::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
 
   if (!result) {
     std::cerr << "Parse failed: " << result.description() << std::endl;
     return 1;
   }
 
-  lightusd::mtlx::pugi::xml_node root = doc.child("materialx");
+  lightusd::legacy::mtlx::pugi::xml_node root = doc.child("materialx");
   if (!root) {
     std::cerr << "Root not found" << std::endl;
     return 1;
   }
 
   // Test attributes
-  lightusd::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
+  lightusd::legacy::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     std::cerr << "Version attribute not found" << std::endl;
     return 1;
@@ -43,7 +43,7 @@ int main() {
   assert(std::string(ver_attr.as_string()) == "1.38");
 
   // Test child access
-  lightusd::mtlx::pugi::xml_node shader = root.child("standard_surface");
+  lightusd::legacy::mtlx::pugi::xml_node shader = root.child("standard_surface");
   if (!shader) {
     std::cerr << "Shader not found" << std::endl;
     return 1;
@@ -54,7 +54,7 @@ int main() {
 
   // Test iteration
   std::cout << "\nInputs:" << std::endl;
-  for (lightusd::mtlx::pugi::xml_node input : shader) {
+  for (lightusd::legacy::mtlx::pugi::xml_node input : shader) {
     if (std::string(input.name()) == "input") {
       std::cout << "  " << input.attribute("name").as_string()
                 << " = " << input.attribute("value").as_string() << std::endl;
@@ -62,13 +62,13 @@ int main() {
   }
 
   // Test material
-  lightusd::mtlx::pugi::xml_node material = root.child("surfacematerial");
+  lightusd::legacy::mtlx::pugi::xml_node material = root.child("surfacematerial");
   if (!material) {
     std::cerr << "Material not found" << std::endl;
     return 1;
   }
 
-  lightusd::mtlx::pugi::xml_node shaderref = material.child("shaderref");
+  lightusd::legacy::mtlx::pugi::xml_node shaderref = material.child("shaderref");
   if (!shaderref) {
     std::cerr << "Shaderref not found" << std::endl;
     return 1;

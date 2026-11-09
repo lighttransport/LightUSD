@@ -13,6 +13,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // ---------------------------------------------------------------------------
 // CompositeInherits: /Base has "myAttr", /Derived inherits /Base.
 // After composition, /Derived should contain "myAttr" from /Base.
@@ -260,7 +262,7 @@ void composition_variant_test(void) {
     PrimSpec red(Specifier::Def, "", "red");
     {
       Attribute attr;
-      attr.set_value(value::token("red"));
+      attr.set_value(lightusd::legacy::value::token("red"));
       attr.set_type_name("token");
       red.props()["color"] = Property(attr);
     }
@@ -270,7 +272,7 @@ void composition_variant_test(void) {
     PrimSpec green(Specifier::Def, "", "green");
     {
       Attribute attr;
-      attr.set_value(value::token("green"));
+      attr.set_value(lightusd::legacy::value::token("green"));
       attr.set_type_name("token");
       green.props()["color"] = Property(attr);
     }
@@ -300,7 +302,7 @@ void composition_variant_test(void) {
       const Property &p = it->second.props().at("color");
       TEST_CHECK(p.is_attribute());
       if (p.is_attribute()) {
-        auto v = p.get_attribute().get_value<value::token>();
+        auto v = p.get_attribute().get_value<lightusd::legacy::value::token>();
         TEST_CHECK(v.has_value());
         if (v.has_value()) {
           TEST_CHECK(v.value().str() == "green");

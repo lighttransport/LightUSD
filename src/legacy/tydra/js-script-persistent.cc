@@ -44,7 +44,7 @@
 
 #include "mcp-tools-diff.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -98,7 +98,7 @@ static JSValue js_stage_info(JSContext *ctx, JSValueConst this_val,
 
   nlohmann::json info;
   const auto &metas = g_js_stage->metas();
-  info["upAxis"] = lightusd::to_string(metas.upAxis.get_value());
+  info["upAxis"] = lightusd::legacy::to_string(metas.upAxis.get_value());
   info["defaultPrim"] = metas.defaultPrim.str();
   info["metersPerUnit"] = metas.metersPerUnit.get_value();
   info["timeCodesPerSecond"] = metas.timeCodesPerSecond.get_value();
@@ -183,7 +183,7 @@ static JSValue js_prim_list(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -220,7 +220,7 @@ static JSValue js_prim_get(JSContext *ctx, JSValueConst this_val,
   std::string path_str(s);
   JS_FreeCString(ctx, s);
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -307,7 +307,7 @@ static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  lightusd::Path path(path_str, "");
+  lightusd::legacy::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -695,11 +695,12 @@ bool RunJSScript(JSEngineState &engine, const std::string &js_code,
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 #else // !LIGHTUSD_WITH_QJS
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 bool InitJSEngine(JSEngineState &engine, std::string &err) {
@@ -735,6 +736,7 @@ bool RunJSScript(JSEngineState &engine, const std::string &js_code,
 }
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 
 #endif // LIGHTUSD_WITH_QJS

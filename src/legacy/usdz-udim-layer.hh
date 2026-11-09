@@ -3,7 +3,7 @@
 #include "core/prim-spec.hh"
 #include "layer.hh"
 #include "udim-layer.hh"
-namespace lightusd::usdz {
+namespace lightusd { namespace legacy { namespace usdz {
 class LegacyUDIMLayer final : public udim::LayerAccess {
  public:
   explicit LegacyUDIMLayer(Layer& layer) : layer_(layer) {}
@@ -44,4 +44,6 @@ class LegacyUDIMLayer final : public udim::LayerAccess {
   std::string child(const std::string&, PrimSpec);
   Layer& layer_;
 };
-}  // namespace lightusd::usdz
+}  // namespace usdz
+}  // namespace legacy
+}  // namespace lightusd::legacy::usdz

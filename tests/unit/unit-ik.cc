@@ -17,7 +17,10 @@
 #include <cstring>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 // -----------------------------------------------------------------------
 // Helpers: build a simple 3-joint chain (shoulder-elbow-hand) along +Y
@@ -218,7 +221,7 @@ void ik_excessive_chain_rejected_test(void) {
   // Verifies the memory-defense cap added for security hardening.
   constexpr int deep_size = 1500;
   std::vector<int> parent_indices(deep_size);
-  std::vector<value::matrix4d> rest_xforms(deep_size, value::matrix4d::identity());
+  std::vector<lightusd::legacy::value::matrix4d> rest_xforms(deep_size, lightusd::legacy::value::matrix4d::identity());
   parent_indices[0] = -1;  // root
   for (int i = 1; i < deep_size; i++) {
     parent_indices[static_cast<size_t>(i)] = i - 1;

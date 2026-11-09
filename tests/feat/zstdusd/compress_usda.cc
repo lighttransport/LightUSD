@@ -13,7 +13,7 @@
 #include "external/zstd.h"
 
 // Implement the static members
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr uint8_t ZstdCompression::kZstdMagic[4];
 
@@ -72,6 +72,7 @@ size_t ZstdCompression::GetCompressBound(size_t inputSize) {
   return ZSTD_compressBound(inputSize);
 }
 
+}  // namespace legacy
 }  // namespace lightusd
 
 int main(int argc, char** argv) {
@@ -104,7 +105,7 @@ int main(int argc, char** argv) {
   // Compress
   std::vector<uint8_t> compressed;
   std::string err;
-  bool ok = lightusd::ZstdCompression::Compress(
+  bool ok = lightusd::legacy::ZstdCompression::Compress(
       input_data.data(), input_data.size(), &compressed, compression_level, &err);
 
   if (!ok) {

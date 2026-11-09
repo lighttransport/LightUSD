@@ -14,7 +14,7 @@ using OutputStage = lightusd::next::Stage;
 #include "tydra/urdf-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
-using OutputStage = lightusd::Stage;
+using OutputStage = lightusd::legacy::Stage;
 #endif
 #include <cerrno>
 #include <cmath>
@@ -67,7 +67,7 @@ bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputS
 #else
   (void)meshes;
   (void)consume;
-  return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
+  return lightusd::legacy::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
                                                     err);
 #endif
 }
@@ -104,13 +104,13 @@ bool Save(const OutputStage& stage, const std::string& path,
 #else
   std::string warn;
   if (format == "usda")
-    return lightusd::usda::SaveAsUSDA(path, stage, &warn, err);
+    return lightusd::legacy::usda::SaveAsUSDA(path, stage, &warn, err);
   if (format == "usdc")
-    return lightusd::usdc::SaveAsUSDCToFile(path, stage, &warn, err);
+    return lightusd::legacy::usdc::SaveAsUSDCToFile(path, stage, &warn, err);
   std::map<std::string, std::vector<uint8_t>> owned;
   for (const auto& asset : assets)
     if (asset.second) owned[asset.first] = *asset.second;
-  return lightusd::SaveAsUSDZToFile(path, stage, owned, &warn, err);
+  return lightusd::legacy::SaveAsUSDZToFile(path, stage, owned, &warn, err);
 #endif
 }
 }  // namespace

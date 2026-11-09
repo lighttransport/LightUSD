@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Zstd compression utility class.
@@ -85,12 +85,13 @@ class ZstdCompression {
   static constexpr uint8_t kZstdMagic[4] = {0x28, 0xB5, 0x2F, 0xFD};
 };
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // !LIGHTUSD_WITH_ZSTD_COMPRESSION
 
 // Stub implementation when zstd compression is disabled
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class ZstdCompression {
  public:
@@ -113,6 +114,7 @@ class ZstdCompression {
   static constexpr int kDefaultCompressionLevel = 5;
 };
 
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_WITH_ZSTD_COMPRESSION

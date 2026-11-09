@@ -40,7 +40,7 @@
 #include "core/variant-types.hh"    // VariantSet
 #include "xform.hh"                 // Xformable
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 constexpr auto kSphereLight = "SphereLight";
 constexpr auto kCylinderLight = "CylinderLight";
@@ -423,4 +423,5 @@ DEFINE_TYPE_TRAIT(PluginLightFilter, kPluginLightFilter, TYPE_ID_LUX_PLUGIN_LIGH
 
 } // namespace value
 
+}  // namespace legacy
 }  // namespace lightusd

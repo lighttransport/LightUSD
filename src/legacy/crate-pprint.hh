@@ -9,10 +9,11 @@
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const lightusd::crate::Index &i);
+std::ostream &operator<<(std::ostream &os, const lightusd::legacy::crate::Index &i);
 
 } // namespace std
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
+}  // namespace legacy
 } // namespace lightusd

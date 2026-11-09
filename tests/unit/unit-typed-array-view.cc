@@ -13,7 +13,10 @@
 #include <vector>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 void typed_array_view_binary_float_test(void) {
   TimeSamples samples;

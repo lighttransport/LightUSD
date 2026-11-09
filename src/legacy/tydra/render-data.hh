@@ -49,8 +49,8 @@
 ///
 /// The conversion process:
 /// ```cpp
-/// lightusd::tydra::RenderScene renderScene;
-/// lightusd::tydra::RenderSceneConverter converter;
+/// lightusd::legacy::tydra::RenderScene renderScene;
+/// lightusd::legacy::tydra::RenderSceneConverter converter;
 /// bool success = converter.ConvertToRenderScene(stage, &renderScene);
 /// ```
 ///
@@ -83,7 +83,7 @@
 // Extracted headers
 #include "render-data-shader.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // forward decl
 class Stage;
@@ -184,7 +184,7 @@ using DetailedProgressCallback = std::function<bool(const DetailedProgressInfo &
 // Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
 #ifdef TYDRA_USE_CHUNKED_ARRAY
 template<typename T>
-using ChunkedVectorArray = lightusd::ChunkedTypedArray<T>;
+using ChunkedVectorArray = lightusd::legacy::ChunkedTypedArray<T>;
 #else
 template<typename T>
 using ChunkedVectorArray = std::vector<T>;
@@ -2046,6 +2046,7 @@ std::string DumpRenderScene(const RenderScene &scene,
                             const std::string &format = "yaml");
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
 
 // Configs, vertex dedup, TextureImageLoader, RenderSceneConverterEnv,

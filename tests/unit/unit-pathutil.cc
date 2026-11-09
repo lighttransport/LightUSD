@@ -11,6 +11,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void pathutil_test(void) {
   {
     Path basepath("/", "");

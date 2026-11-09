@@ -15,7 +15,7 @@
 #include <mutex>
 #endif
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -768,4 +768,5 @@ size_t Layer::estimate_memory_usage() const {
   return total;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -9,7 +9,7 @@
 #include "common-types.hh"
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Layer;
 class PrimSpec;
@@ -146,4 +146,5 @@ inline size_t EstimateMemorySize(const std::vector<uint32_t>& data) {
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

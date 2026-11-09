@@ -18,6 +18,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void string_pool_intern_test(void) {
   StringPool &pool = StringPool::instance();
 

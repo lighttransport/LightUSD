@@ -16,7 +16,7 @@
 #include "core/prim.hh"
 #include "path-util.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace {
 
 struct FNV1StringHash {
@@ -232,13 +232,13 @@ bool BuildSkelTopology(
   }
 
   // path name <-> index map
-  lightusd::HashMap<std::string, size_t, FNV1StringHash> pathMap;
+  lightusd::legacy::HashMap<std::string, size_t, FNV1StringHash> pathMap;
   pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
     pathMap[paths[i].prim_part()] = i;
   }
 
-  auto GetParentIndex = [](const lightusd::HashMap<std::string, size_t, FNV1StringHash> &_pathMap,
+  auto GetParentIndex = [](const lightusd::legacy::HashMap<std::string, size_t, FNV1StringHash> &_pathMap,
                            const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;
@@ -334,4 +334,5 @@ bool SkelValidateTopology(
   return true;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

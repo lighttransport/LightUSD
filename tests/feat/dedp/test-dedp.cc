@@ -54,10 +54,10 @@ size_t FileSize(const std::string &filename) {
   return static_cast<size_t>(ifs.tellg());
 }
 
-bool LoadStage(const std::string &filename, lightusd::Stage *stage) {
+bool LoadStage(const std::string &filename, lightusd::legacy::Stage *stage) {
   std::string warn;
   std::string err;
-  bool ok = lightusd::LoadUSDFromFile(filename, stage, &warn, &err);
+  bool ok = lightusd::legacy::LoadUSDFromFile(filename, stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "warning while loading " << filename << ": " << warn << "\n";
   }
@@ -67,10 +67,10 @@ bool LoadStage(const std::string &filename, lightusd::Stage *stage) {
   return ok;
 }
 
-bool WriteStageUsdc(const lightusd::Stage &stage, const std::string &filename,
+bool WriteStageUsdc(const lightusd::legacy::Stage &stage, const std::string &filename,
                     bool dedup) {
-  lightusd::experimental::CrateWriter writer(filename);
-  lightusd::experimental::CrateWriter::Options opts;
+  lightusd::legacy::experimental::CrateWriter writer(filename);
+  lightusd::legacy::experimental::CrateWriter::Options opts;
   opts.enable_deduplication = dedup;
   opts.enable_compression = false;
   writer.SetOptions(opts);
@@ -94,15 +94,15 @@ bool WriteStageUsdc(const lightusd::Stage &stage, const std::string &filename,
   return true;
 }
 
-const lightusd::Attribute *FindXformProperty(const lightusd::Stage &stage,
+const lightusd::legacy::Attribute *FindXformProperty(const lightusd::legacy::Stage &stage,
                                              const std::string &name) {
-  const lightusd::Prim *prim = nullptr;
-  if (!stage.find_prim_at_path(lightusd::Path("/DedupRoot", ""), prim) ||
+  const lightusd::legacy::Prim *prim = nullptr;
+  if (!stage.find_prim_at_path(lightusd::legacy::Path("/DedupRoot", ""), prim) ||
       !prim) {
     return nullptr;
   }
 
-  const lightusd::Xform *xform = prim->as<lightusd::Xform>();
+  const lightusd::legacy::Xform *xform = prim->as<lightusd::legacy::Xform>();
   if (!xform) {
     return nullptr;
   }
@@ -118,9 +118,9 @@ bool NearlyEqual(double a, double b) {
   return std::abs(a - b) < 1.0e-12;
 }
 
-bool CheckLoadedDedupScene(const lightusd::Stage &stage,
+bool CheckLoadedDedupScene(const lightusd::legacy::Stage &stage,
                            const std::string &label) {
-  const lightusd::Attribute *scalar = FindXformProperty(stage, "scalarA");
+  const lightusd::legacy::Attribute *scalar = FindXformProperty(stage, "scalarA");
   if (!scalar) {
     std::cerr << label << ": missing scalarA\n";
     return false;
@@ -131,12 +131,12 @@ bool CheckLoadedDedupScene(const lightusd::Stage &stage,
     return false;
   }
 
-  const lightusd::Attribute *vector = FindXformProperty(stage, "vectorA");
+  const lightusd::legacy::Attribute *vector = FindXformProperty(stage, "vectorA");
   if (!vector) {
     std::cerr << label << ": missing vectorA\n";
     return false;
   }
-  auto vector_value = vector->get_value<lightusd::value::double3>();
+  auto vector_value = vector->get_value<lightusd::legacy::value::double3>();
   if (!vector_value || !NearlyEqual(vector_value.value()[0], 1.25) ||
       !NearlyEqual(vector_value.value()[1], 2.5) ||
       !NearlyEqual(vector_value.value()[2], 3.75)) {
@@ -144,14 +144,14 @@ bool CheckLoadedDedupScene(const lightusd::Stage &stage,
     return false;
   }
 
-  const lightusd::Attribute *array =
+  const lightusd::legacy::Attribute *array =
       FindXformProperty(stage, "vectorArrayA");
   if (!array) {
     std::cerr << label << ": missing vectorArrayA\n";
     return false;
   }
   auto array_value =
-      array->get_value<std::vector<lightusd::value::double3>>();
+      array->get_value<std::vector<lightusd::legacy::value::double3>>();
   if (!array_value || array_value.value().size() != 4 ||
       !NearlyEqual(array_value.value()[3][0], 10.0) ||
       !NearlyEqual(array_value.value()[3][1], 11.0) ||
@@ -160,12 +160,12 @@ bool CheckLoadedDedupScene(const lightusd::Stage &stage,
     return false;
   }
 
-  const lightusd::Attribute *anim = FindXformProperty(stage, "animA");
+  const lightusd::legacy::Attribute *anim = FindXformProperty(stage, "animA");
   if (!anim || !anim->has_timesamples()) {
     std::cerr << label << ": missing animA timeSamples\n";
     return false;
   }
-  const lightusd::value::TimeSamples &ts = anim->get_var().ts_raw();
+  const lightusd::legacy::value::TimeSamples &ts = anim->get_var().ts_raw();
   const std::vector<double> &times = ts.get_times();
   if (times.size() != 8 || !NearlyEqual(times.front(), 0.0) ||
       !NearlyEqual(times.back(), 7.0)) {
@@ -173,7 +173,7 @@ bool CheckLoadedDedupScene(const lightusd::Stage &stage,
     return false;
   }
 
-  lightusd::value::double3 sample{};
+  lightusd::legacy::value::double3 sample{};
   if (!ts.get(&sample, 7.0) || !NearlyEqual(sample[0], 7.0) ||
       !NearlyEqual(sample[1], 8.0) || !NearlyEqual(sample[2], 9.0)) {
     std::cerr << label << ": unexpected animA sample value\n";
@@ -184,7 +184,7 @@ bool CheckLoadedDedupScene(const lightusd::Stage &stage,
 }
 
 bool TestLightUsdcWriteDedup() {
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   if (!LoadStage(kUsdaFixture, &stage)) {
     return false;
   }
@@ -233,7 +233,7 @@ bool TestLightUsdcWriteDedup() {
     return false;
   }
 
-  lightusd::Stage reloaded;
+  lightusd::legacy::Stage reloaded;
   const bool reload_ok = LoadStage(dedup_path, &reloaded) &&
                          CheckLoadedDedupScene(reloaded, "LightUSD dedup USDC");
   std::remove(dedup_path.c_str());
@@ -242,7 +242,7 @@ bool TestLightUsdcWriteDedup() {
 }
 
 bool TestOpenUsdUsdcReadDedup() {
-  lightusd::Stage usda_stage;
+  lightusd::legacy::Stage usda_stage;
   if (!LoadStage(kUsdaFixture, &usda_stage)) {
     return false;
   }
@@ -265,7 +265,7 @@ bool TestOpenUsdUsdcReadDedup() {
     return false;
   }
 
-  lightusd::Stage openusd_stage;
+  lightusd::legacy::Stage openusd_stage;
   if (!LoadStage(kOpenUsdUsdcFixture, &openusd_stage)) {
     return false;
   }

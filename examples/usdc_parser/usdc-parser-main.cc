@@ -43,14 +43,14 @@ int main(int argc, char **argv) {
 
     if (arg == "--flatten") {
       do_compose = true;
-    } else if (lightusd::startsWith(arg, "--composition=")) {
-      std::string value_str = lightusd::removePrefix(arg, "--composition=");
+    } else if (lightusd::legacy::startsWith(arg, "--composition=")) {
+      std::string value_str = lightusd::legacy::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
         exit(-1);
       }
 
-      std::vector<std::string> items = lightusd::split(value_str, ",");
+      std::vector<std::string> items = lightusd::legacy::split(value_str, ",");
       comp_features.subLayers = false;
       comp_features.inherits = false;
       comp_features.variantSets = false;
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  if (!lightusd::IsUSDC(filename)) {
+  if (!lightusd::legacy::IsUSDC(filename)) {
     std::cerr << "Input file isn't a USDC file: " << filename << "\n";
     return -1;
   }
@@ -108,8 +108,8 @@ int main(int argc, char **argv) {
     std::cerr << "Failed to open file: " << filename << ":" << err << "\n";
   }
 
-  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  lightusd::usdc::USDCReader reader(&sr);
+  lightusd::legacy::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::legacy::usdc::USDCReader reader(&sr);
 
   //std::cout << "Basedir = " << base_dir << "\n";
   //reader.SetBaseDir(base_dir);
@@ -131,18 +131,18 @@ int main(int argc, char **argv) {
 
   // Composite or Dump
   if (do_compose) {
-    lightusd::Layer root_layer;
+    lightusd::legacy::Layer root_layer;
     bool ret = reader.get_as_layer(&root_layer);
 
     std::cout << "# input\n";
     std::cout << root_layer << "\n";
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     stage.metas() = root_layer.metas();
 
     std::string warn;
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     resolver.set_search_paths({base_dir});
 
     //
@@ -155,10 +155,10 @@ int main(int argc, char **argv) {
     // - [ ] Specializes
     //
 
-    lightusd::Layer src_layer = root_layer;
+    lightusd::legacy::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
-      lightusd::Layer composited_layer;
-      if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::legacy::Layer composited_layer;
+      if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -174,8 +174,8 @@ int main(int argc, char **argv) {
     }
 
     if (comp_features.references) {
-      lightusd::Layer composited_layer;
-      if (!lightusd::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::legacy::Layer composited_layer;
+      if (!lightusd::legacy::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite `references`: " << err << "\n";
         return -1;
       }
@@ -191,8 +191,8 @@ int main(int argc, char **argv) {
     }
 
     if (comp_features.payload) {
-      lightusd::Layer composited_layer;
-      if (!lightusd::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::legacy::Layer composited_layer;
+      if (!lightusd::legacy::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite `payload`: " << err << "\n";
         return -1;
       }
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
 
     // TODO...
   } else {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     bool ret = reader.ReconstructStage(&stage);
     if (!ret) {
 

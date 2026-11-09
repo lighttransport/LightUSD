@@ -81,7 +81,7 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace ascii {
 
@@ -625,7 +625,7 @@ std::string AsciiParser::GetErrorWithHints(bool show_hints) {
   }
 
   // Process errors in reverse order (oldest first) with aggressive deduplication
-  lightusd::HashMap<std::string, int> error_counts;  // Group similar errors by message
+  lightusd::legacy::HashMap<std::string, int> error_counts;  // Group similar errors by message
   for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     error_counts[diag.err]++;
@@ -687,7 +687,7 @@ std::string AsciiParser::GetWarningWithHints(bool show_hints) {
   }
 
   // Process warnings in reverse order (oldest first) with aggressive deduplication
-  lightusd::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
+  lightusd::legacy::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
   for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     warning_counts[diag.err]++;
@@ -1379,7 +1379,7 @@ bool AsciiParser::MaybeArrayEdit() {
   return false;
 }
 
-bool AsciiParser::MaybeListEditQual(lightusd::ListEditQual *qual) {
+bool AsciiParser::MaybeListEditQual(lightusd::legacy::ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;
   }
@@ -1394,25 +1394,25 @@ bool AsciiParser::MaybeListEditQual(lightusd::ListEditQual *qual) {
 
   if (tok == "prepend") {
     DCOUT("`prepend` list edit qualifier.");
-    (*qual) = lightusd::ListEditQual::Prepend;
+    (*qual) = lightusd::legacy::ListEditQual::Prepend;
   } else if (tok == "append") {
     DCOUT("`append` list edit qualifier.");
-    (*qual) = lightusd::ListEditQual::Append;
+    (*qual) = lightusd::legacy::ListEditQual::Append;
   } else if (tok == "add") {
     DCOUT("`add` list edit qualifier.");
-    (*qual) = lightusd::ListEditQual::Add;
+    (*qual) = lightusd::legacy::ListEditQual::Add;
   } else if (tok == "delete") {
     DCOUT("`delete` list edit qualifier.");
-    (*qual) = lightusd::ListEditQual::Delete;
+    (*qual) = lightusd::legacy::ListEditQual::Delete;
   } else if (tok == "order") {
     DCOUT("`order` list edit qualifier.");
-    (*qual) = lightusd::ListEditQual::Order;
+    (*qual) = lightusd::legacy::ListEditQual::Order;
   } else {
     DCOUT("No ListEdit qualifier.");
     // unqualified
     // rewind
     SeekTo(loc);
-    (*qual) = lightusd::ListEditQual::ResetToExplicit;
+    (*qual) = lightusd::legacy::ListEditQual::ResetToExplicit;
   }
 
   if (!SkipWhitespace()) {
@@ -1422,7 +1422,7 @@ bool AsciiParser::MaybeListEditQual(lightusd::ListEditQual *qual) {
   return true;
 }
 
-bool AsciiParser::MaybeVariability(lightusd::Variability *variability,
+bool AsciiParser::MaybeVariability(lightusd::legacy::Variability *variability,
                                    bool *varying_authored) {
   if (!SkipWhitespace()) {
     return false;
@@ -1437,10 +1437,10 @@ bool AsciiParser::MaybeVariability(lightusd::Variability *variability,
   }
 
   if (tok == "uniform") {
-    (*variability) = lightusd::Variability::Uniform;
+    (*variability) = lightusd::legacy::Variability::Uniform;
     (*varying_authored) = false;
   } else if (tok == "varying") {
-    (*variability) = lightusd::Variability::Varying;
+    (*variability) = lightusd::legacy::Variability::Varying;
     (*varying_authored) = true;
   } else {
     (*varying_authored) = false;
@@ -3899,12 +3899,12 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
     return false;
   }
 
-  lightusd::ListEditQual qual{ListEditQual::ResetToExplicit};
+  lightusd::legacy::ListEditQual qual{ListEditQual::ResetToExplicit};
   if (!MaybeListEditQual(&qual)) {
     return false;
   }
 
-  DCOUT("list-edit qual: " << lightusd::to_string(qual));
+  DCOUT("list-edit qual: " << lightusd::legacy::to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return false;
@@ -3965,6 +3965,7 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
 //  ParseVariantSet, ParseBlock, Parse)
 
 }  // namespace ascii
+}  // namespace legacy
 }  // namespace lightusd
 
 #else  // LIGHTUSD_DISABLE_MODULE_USDA_READER

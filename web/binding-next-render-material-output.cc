@@ -11,13 +11,13 @@ namespace {
 using NextRenderMaterial = lightusd::tydra::next::RenderMaterial;
 using NextShaderParam = lightusd::tydra::next::ShaderParam;
 
-static void CopyMaterialParam(lightusd::tydra::ShaderParam<float>& dst,
+static void CopyMaterialParam(lightusd::legacy::tydra::ShaderParam<float>& dst,
                               const NextShaderParam& src) {
   dst.value = src.value.x;
   dst.texture_id = src.texture_id;
 }
 
-static void CopyMaterialParam(lightusd::tydra::ShaderParam<lightusd::tydra::vec3>& dst,
+static void CopyMaterialParam(lightusd::legacy::tydra::ShaderParam<lightusd::legacy::tydra::vec3>& dst,
                               const NextShaderParam& src) {
   dst.value[0] = src.value.x;
   dst.value[1] = src.value.y;
@@ -25,9 +25,9 @@ static void CopyMaterialParam(lightusd::tydra::ShaderParam<lightusd::tydra::vec3
   dst.texture_id = src.texture_id;
 }
 
-static lightusd::tydra::RenderMaterial ToLegacyMaterial(
+static lightusd::legacy::tydra::RenderMaterial ToLegacyMaterial(
     const NextRenderMaterial& src, const lightusd::next::Stage& stage) {
-  lightusd::tydra::RenderMaterial dst;
+  lightusd::legacy::tydra::RenderMaterial dst;
   dst.name = src.name;
   dst.abs_path = src.prim_path;
   const lightusd::next::UsdPrim prim = stage.GetPrimAtPath(src.prim_path);
@@ -41,7 +41,7 @@ static lightusd::tydra::RenderMaterial ToLegacyMaterial(
   dst.materialXConfig.source_uri = src.mtlx_config.source_uri;
 
   if (src.preview_surface) {
-    lightusd::tydra::PreviewSurfaceShader shader;
+    lightusd::legacy::tydra::PreviewSurfaceShader shader;
     shader.useSpecularWorkflow = src.preview_surface->use_specular_workflow;
 #define COPY_PREVIEW_PARAM(field, next_field) \
     CopyMaterialParam(shader.field, src.preview_surface->next_field)
@@ -62,7 +62,7 @@ static lightusd::tydra::RenderMaterial ToLegacyMaterial(
     dst.surfaceShader = std::move(shader);
   }
   if (src.openpbr) {
-    lightusd::tydra::OpenPBRSurfaceShader shader;
+    lightusd::legacy::tydra::OpenPBRSurfaceShader shader;
 #define COPY_OPENPBR_PARAM(field) CopyMaterialParam(shader.field, src.openpbr->field)
 #define COPY_OPENPBR_VEC3(field) CopyMaterialParam(shader.field, src.openpbr->field)
     COPY_OPENPBR_PARAM(base_weight); COPY_OPENPBR_VEC3(base_color);
@@ -109,7 +109,7 @@ static lightusd::tydra::RenderMaterial ToLegacyMaterial(
 }
 
 static std::string LegacyPreviewMaterialJSON(
-    const lightusd::tydra::RenderMaterial& material) {
+    const lightusd::legacy::tydra::RenderMaterial& material) {
   minijson::Value result = minijson::Value::object();
   minijson::Value config = minijson::Value::object();
   config["authored"] = material.materialXConfig.authored;
@@ -154,27 +154,27 @@ static std::string LegacyPreviewMaterialJSON(
   return result.dump();
 }
 
-static lightusd::tydra::RenderScene ToLegacyMaterialScene(
+static lightusd::legacy::tydra::RenderScene ToLegacyMaterialScene(
     const lightusd::tydra::next::RenderScene& src) {
-  lightusd::tydra::RenderScene dst;
+  lightusd::legacy::tydra::RenderScene dst;
   const auto legacy_color_space = [](const std::string& name,
-                                     lightusd::tydra::ColorSpace fallback) {
-    if (name == "sRGB" || name == "srgb") return lightusd::tydra::ColorSpace::sRGB;
-    if (name == "raw" || name == "Raw") return lightusd::tydra::ColorSpace::Raw;
-    if (name == "rec709" || name == "Rec709") return lightusd::tydra::ColorSpace::Rec709;
+                                     lightusd::legacy::tydra::ColorSpace fallback) {
+    if (name == "sRGB" || name == "srgb") return lightusd::legacy::tydra::ColorSpace::sRGB;
+    if (name == "raw" || name == "Raw") return lightusd::legacy::tydra::ColorSpace::Raw;
+    if (name == "rec709" || name == "Rec709") return lightusd::legacy::tydra::ColorSpace::Rec709;
     if (name == "lin_rec709" || name == "lin_rec709_scene")
-      return lightusd::tydra::ColorSpace::Lin_Rec709;
+      return lightusd::legacy::tydra::ColorSpace::Lin_Rec709;
     if (name == "lin_acescg" || name == "acescg")
-      return lightusd::tydra::ColorSpace::Lin_ACEScg;
+      return lightusd::legacy::tydra::ColorSpace::Lin_ACEScg;
     if (name == "lin_rec2020" || name == "rec2020")
-      return lightusd::tydra::ColorSpace::Lin_Rec2020;
+      return lightusd::legacy::tydra::ColorSpace::Lin_Rec2020;
     if (name == "lin_displayp3" || name == "displayp3")
-      return lightusd::tydra::ColorSpace::Lin_DisplayP3;
-    if (name == "srgb_texture") return lightusd::tydra::ColorSpace::sRGB_Texture;
+      return lightusd::legacy::tydra::ColorSpace::Lin_DisplayP3;
+    if (name == "srgb_texture") return lightusd::legacy::tydra::ColorSpace::sRGB_Texture;
     return fallback;
   };
   for (const auto& image : src.images) {
-    lightusd::tydra::TextureImage converted;
+    lightusd::legacy::tydra::TextureImage converted;
     converted.asset_identifier = image.resolved_path;
     converted.width = static_cast<int32_t>(image.width);
     converted.height = static_cast<int32_t>(image.height);
@@ -182,26 +182,26 @@ static lightusd::tydra::RenderScene ToLegacyMaterialScene(
     converted.decoded = image.is_loaded();
     switch (image.color_space) {
       case lightusd::tydra::next::ColorSpace::sRGB:
-        converted.colorSpace = lightusd::tydra::ColorSpace::sRGB; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::sRGB; break;
       case lightusd::tydra::next::ColorSpace::Linear:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Lin_Rec709; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_Rec709; break;
       case lightusd::tydra::next::ColorSpace::Raw:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Raw; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Raw; break;
       case lightusd::tydra::next::ColorSpace::ACEScg:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Lin_ACEScg; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_ACEScg; break;
       case lightusd::tydra::next::ColorSpace::Rec709:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Rec709; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Rec709; break;
       case lightusd::tydra::next::ColorSpace::Rec2020:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Lin_Rec2020; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_Rec2020; break;
       case lightusd::tydra::next::ColorSpace::DisplayP3:
-        converted.colorSpace = lightusd::tydra::ColorSpace::Lin_DisplayP3; break;
-      default: converted.colorSpace = lightusd::tydra::ColorSpace::Unknown; break;
+        converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Lin_DisplayP3; break;
+      default: converted.colorSpace = lightusd::legacy::tydra::ColorSpace::Unknown; break;
     }
     converted.usdColorSpace = converted.colorSpace;
     dst.images.push_back(std::move(converted));
   }
   for (const auto& texture : src.textures) {
-    lightusd::tydra::UVTexture converted;
+    lightusd::legacy::tydra::UVTexture converted;
     converted.texture_image_id = texture.image_id;
     dst.textures.push_back(std::move(converted));
     if (texture.image_id >= 0 &&
@@ -215,11 +215,11 @@ static lightusd::tydra::RenderScene ToLegacyMaterialScene(
   return dst;
 }
 
-static lightusd::tydra::RenderLight ToLegacyLight(
+static lightusd::legacy::tydra::RenderLight ToLegacyLight(
     const lightusd::tydra::next::RenderLight& src,
     const lightusd::tydra::next::RenderScene& scene) {
   using NextType = lightusd::tydra::next::LightType;
-  using Legacy = lightusd::tydra::RenderLight;
+  using Legacy = lightusd::legacy::tydra::RenderLight;
   Legacy dst;
   dst.name = src.name;
   dst.abs_path = src.prim_path;
@@ -471,14 +471,14 @@ int RenderStream::prepareMaterialFormat_(int material_id, uint8_t format) const 
   };
   if (format != 2 && (render_scene_.images.size() >
           (std::numeric_limits<size_t>::max)() /
-              sizeof(lightusd::tydra::TextureImage) ||
+              sizeof(lightusd::legacy::tydra::TextureImage) ||
       render_scene_.textures.size() >
           (std::numeric_limits<size_t>::max)() /
-              sizeof(lightusd::tydra::UVTexture) ||
+              sizeof(lightusd::legacy::tydra::UVTexture) ||
       !add_adapter_bytes(render_scene_.images.size() *
-                         sizeof(lightusd::tydra::TextureImage)) ||
+                         sizeof(lightusd::legacy::tydra::TextureImage)) ||
       !add_adapter_bytes(render_scene_.textures.size() *
-                         sizeof(lightusd::tydra::UVTexture)))) {
+                         sizeof(lightusd::legacy::tydra::UVTexture)))) {
     formatted_material_text_ = "Material serialization adapter size overflow";
     return 0;
   }
@@ -505,7 +505,7 @@ int RenderStream::prepareMaterialFormat_(int material_id, uint8_t format) const 
     formatted_material_text_ = "Serialized material exceeds available memory limit";
     return 0;
   }
-  lightusd::tydra::RenderMaterial legacy_material =
+  lightusd::legacy::tydra::RenderMaterial legacy_material =
       ToLegacyMaterial(material, stage_);
   if (format == 2) {
     formatted_material_text_ = LegacyPreviewMaterialJSON(legacy_material);
@@ -516,11 +516,11 @@ int RenderStream::prepareMaterialFormat_(int material_id, uint8_t format) const 
     formatted_material_status_ = 1;
     return 1;
   }
-  lightusd::tydra::RenderScene legacy_scene = ToLegacyMaterialScene(render_scene_);
-  const lightusd::tydra::SerializationFormat serialization = format == 0
-      ? lightusd::tydra::SerializationFormat::JSON
-      : lightusd::tydra::SerializationFormat::XML;
-  auto serialization_result = lightusd::tydra::serializeMaterial(
+  lightusd::legacy::tydra::RenderScene legacy_scene = ToLegacyMaterialScene(render_scene_);
+  const lightusd::legacy::tydra::SerializationFormat serialization = format == 0
+      ? lightusd::legacy::tydra::SerializationFormat::JSON
+      : lightusd::legacy::tydra::SerializationFormat::XML;
+  auto serialization_result = lightusd::legacy::tydra::serializeMaterial(
       legacy_material, serialization, &legacy_scene);
   if (!serialization_result) {
     formatted_material_text_ = serialization_result.error();
@@ -622,9 +622,9 @@ int RenderStream::lightFormatStatus(int light_id, uint8_t format) const {
   const auto legacy_light = ToLegacyLight(light, render_scene_);
   const auto legacy_scene = ToLegacyMaterialScene(render_scene_);
   const auto serialization = format == 0
-      ? lightusd::tydra::SerializationFormat::JSON
-      : lightusd::tydra::SerializationFormat::XML;
-  auto result = lightusd::tydra::serializeLight(legacy_light, serialization,
+      ? lightusd::legacy::tydra::SerializationFormat::JSON
+      : lightusd::legacy::tydra::SerializationFormat::XML;
+  auto result = lightusd::legacy::tydra::serializeLight(legacy_light, serialization,
                                                  &legacy_scene);
   if (!result) {
     formatted_light_text_ = result.error();

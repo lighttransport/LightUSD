@@ -2,7 +2,7 @@
 // Unit tests for VtArrayEdit (crate ValueRep IsArrayEdit bit, crate >= 0.14.0).
 //
 // The local OpenUSD build only supports crate <= 0.9.0, so cross-tool fixtures
-// for 0.14.0 cannot be generated here; these tests build a value::ArrayEdit
+// for 0.14.0 cannot be generated here; these tests build a lightusd::legacy::value::ArrayEdit
 // programmatically and exercise the Crate write + read round-trip.
 
 #define TEST_NO_MAIN
@@ -21,24 +21,26 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void array_edit_crate_roundtrip_test(void) {
   // Build: int[] edited = edit [ write 123 to [1]; append 234; erase [0] ]
-  value::ArrayEdit ae;
+  lightusd::legacy::value::ArrayEdit ae;
   ae.element_type_id =
       static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT);
-  ae.literals = value::Value(std::vector<int32_t>{123, 234});
+  ae.literals = lightusd::legacy::value::Value(std::vector<int32_t>{123, 234});
   // write literal[0] (=123) to [1]
   ae.ops.push_back(
-      value::ArrayEditPackOpWord(value::ArrayEditOp::WriteLiteral, 1));
+      lightusd::legacy::value::ArrayEditPackOpWord(lightusd::legacy::value::ArrayEditOp::WriteLiteral, 1));
   ae.ops.push_back(0);
   ae.ops.push_back(1);
   // append literal[1] (=234)  -- insert at EndIndex
   ae.ops.push_back(
-      value::ArrayEditPackOpWord(value::ArrayEditOp::InsertLiteral, 1));
+      lightusd::legacy::value::ArrayEditPackOpWord(lightusd::legacy::value::ArrayEditOp::InsertLiteral, 1));
   ae.ops.push_back(1);
-  ae.ops.push_back(value::kArrayEditEndIndex);
+  ae.ops.push_back(lightusd::legacy::value::kArrayEditEndIndex);
   // erase [0]
-  ae.ops.push_back(value::ArrayEditPackOpWord(value::ArrayEditOp::EraseRef, 1));
+  ae.ops.push_back(lightusd::legacy::value::ArrayEditPackOpWord(lightusd::legacy::value::ArrayEditOp::EraseRef, 1));
   ae.ops.push_back(0);
 
   Attribute attr;
@@ -80,8 +82,8 @@ void array_edit_crate_roundtrip_test(void) {
   TEST_CHECK_(it != xf->props.end(), "`edited` property missing after reload");
   if (it == xf->props.end()) return;
 
-  auto got = it->second.get_attribute().get_value<value::ArrayEdit>();
-  TEST_CHECK_(bool(got), "reloaded attr value is not a value::ArrayEdit");
+  auto got = it->second.get_attribute().get_value<lightusd::legacy::value::ArrayEdit>();
+  TEST_CHECK_(bool(got), "reloaded attr value is not a lightusd::legacy::value::ArrayEdit");
   if (!got) return;
 
   TEST_CHECK(got.value().element_type_id == ae.element_type_id);
@@ -99,7 +101,7 @@ void array_edit_crate_roundtrip_test(void) {
 
 void array_edit_identity_test(void) {
   // An identity edit (no ops) is inlined: no out-of-line data, payload 0.
-  value::ArrayEdit ae;
+  lightusd::legacy::value::ArrayEdit ae;
   ae.element_type_id =
       static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT);
   // ops intentionally empty
@@ -141,8 +143,8 @@ void array_edit_identity_test(void) {
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
 
-  auto got = it->second.get_attribute().get_value<value::ArrayEdit>();
-  TEST_CHECK_(bool(got), "reloaded identity attr is not a value::ArrayEdit");
+  auto got = it->second.get_attribute().get_value<lightusd::legacy::value::ArrayEdit>();
+  TEST_CHECK_(bool(got), "reloaded identity attr is not a lightusd::legacy::value::ArrayEdit");
   if (!got) return;
   TEST_CHECK(got.value().is_identity());
   TEST_CHECK(got.value().element_type_id == ae.element_type_id);
@@ -181,8 +183,8 @@ static void CheckParsedEdit(const Stage& stage) {
   auto it = xf->props.find("iattr");
   TEST_CHECK(it != xf->props.end());
   if (it == xf->props.end()) return;
-  auto got = it->second.get_attribute().get_value<value::ArrayEdit>();
-  TEST_CHECK_(bool(got), "iattr is not a value::ArrayEdit");
+  auto got = it->second.get_attribute().get_value<lightusd::legacy::value::ArrayEdit>();
+  TEST_CHECK_(bool(got), "iattr is not a lightusd::legacy::value::ArrayEdit");
   if (!got) return;
 
   // Literals collected in encounter order: 123, 234, 99, 7.
@@ -198,13 +200,13 @@ static void CheckParsedEdit(const Stage& stage) {
 
   // Decode the op stream and check the op sequence.
   const auto& ins = got.value().ops;
-  std::vector<value::ArrayEditOp> ops_seq;
+  std::vector<lightusd::legacy::value::ArrayEditOp> ops_seq;
   size_t i = 0;
   while (i < ins.size()) {
-    value::ArrayEditOp op = value::ArrayEditWordOp(ins[i]);
-    int64_t cnt = value::ArrayEditWordCount(ins[i]);
+    lightusd::legacy::value::ArrayEditOp op = lightusd::legacy::value::ArrayEditWordOp(ins[i]);
+    int64_t cnt = lightusd::legacy::value::ArrayEditWordCount(ins[i]);
     ++i;
-    int arity = value::ArrayEditOpArity(op);
+    int arity = lightusd::legacy::value::ArrayEditOpArity(op);
     for (int64_t c = 0; c < cnt; c++) {
       ops_seq.push_back(op);
       i += static_cast<size_t>(arity);
@@ -212,11 +214,11 @@ static void CheckParsedEdit(const Stage& stage) {
   }
   TEST_CHECK(ops_seq.size() == 5);
   if (ops_seq.size() == 5) {
-    TEST_CHECK(ops_seq[0] == value::ArrayEditOp::WriteLiteral);
-    TEST_CHECK(ops_seq[1] == value::ArrayEditOp::InsertLiteral);  // append
-    TEST_CHECK(ops_seq[2] == value::ArrayEditOp::InsertLiteral);  // prepend
-    TEST_CHECK(ops_seq[3] == value::ArrayEditOp::EraseRef);
-    TEST_CHECK(ops_seq[4] == value::ArrayEditOp::SetSizeFill);
+    TEST_CHECK(ops_seq[0] == lightusd::legacy::value::ArrayEditOp::WriteLiteral);
+    TEST_CHECK(ops_seq[1] == lightusd::legacy::value::ArrayEditOp::InsertLiteral);  // append
+    TEST_CHECK(ops_seq[2] == lightusd::legacy::value::ArrayEditOp::InsertLiteral);  // prepend
+    TEST_CHECK(ops_seq[3] == lightusd::legacy::value::ArrayEditOp::EraseRef);
+    TEST_CHECK(ops_seq[4] == lightusd::legacy::value::ArrayEditOp::SetSizeFill);
   }
 }
 

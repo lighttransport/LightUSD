@@ -13,7 +13,7 @@
 #include "core/xform-op.hh"  // XformOp (Xformable::xformOps); self-contained so
                              // includers need not pre-include it (e.g. via pprinter.hh)
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -257,4 +257,5 @@ struct Xformable {
 };
 
 
+}  // namespace legacy
 } // namespace lightusd

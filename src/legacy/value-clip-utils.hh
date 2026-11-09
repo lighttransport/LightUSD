@@ -17,7 +17,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Result of expanding template clip metadata
 struct ExpandedClipMetadata {
@@ -604,4 +604,5 @@ inline bool DiscoverClipAttributes(
   return false;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

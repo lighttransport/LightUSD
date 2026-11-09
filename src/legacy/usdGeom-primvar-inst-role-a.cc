@@ -19,7 +19,7 @@
 #include "value-pprint.hh"
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 #include "usdGeom-primvar-impl.inc"
 
@@ -39,4 +39,5 @@ APPLY_GEOMPRIVAR_TYPE_ROLE_A(INSTANCIATE_GET_VALUE)
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 #undef INSTANCIATE_GET_VALUE
 
+}  // namespace legacy
 }  // namespace lightusd

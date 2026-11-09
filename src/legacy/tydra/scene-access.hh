@@ -25,8 +25,8 @@
 ///
 /// Usage example:
 /// ```cpp
-/// lightusd::tydra::PathPrimMap<GeomMesh> meshes;
-/// if (lightusd::tydra::ListPrims(stage, meshes)) {
+/// lightusd::legacy::tydra::PathPrimMap<GeomMesh> meshes;
+/// if (lightusd::legacy::tydra::ListPrims(stage, meshes)) {
 ///   for (const auto &pair : meshes) {
 ///     const std::string &path = pair.first;
 ///     const GeomMesh *mesh = pair.second;
@@ -58,7 +58,7 @@
 #include "value-type-macros.inc"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 struct FNV1StringHash {
@@ -100,10 +100,10 @@ using PathShaderMap =
 /// Returns false when unsupported/unimplemented Prim type T is given.
 ///
 template <typename T>
-bool ListPrims(const lightusd::Stage &stage, PathPrimMap<T> &m /* output */);
+bool ListPrims(const lightusd::legacy::Stage &stage, PathPrimMap<T> &m /* output */);
 
 #define EXTERN_LISTPRIMS(__ty)                                 \
-  extern template bool ListPrims(const lightusd::Stage &stage, \
+  extern template bool ListPrims(const lightusd::legacy::Stage &stage, \
                                  PathPrimMap<__ty> &m);
 
 APPLY_FUNC_TO_PRIM_TYPES(EXTERN_LISTPRIMS)
@@ -116,27 +116,27 @@ APPLY_FUNC_TO_PRIM_TYPES(EXTERN_LISTPRIMS)
 /// TODO: User defined shader type("info:id")
 ///
 template <typename T>
-bool ListShaders(const lightusd::Stage &stage,
+bool ListShaders(const lightusd::legacy::Stage &stage,
                  PathShaderMap<T> &m /* output */);
 
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPreviewSurface> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdUVTexture> &m);
 
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_string> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_int> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_float> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_float2> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_float3> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_float4> &m);
-extern template bool ListShaders(const lightusd::Stage &stage,
+extern template bool ListShaders(const lightusd::legacy::Stage &stage,
                                  PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 ///
@@ -148,8 +148,8 @@ extern template bool ListShaders(const lightusd::Stage &stage,
 /// Returns nullptr when the given Path is a root Prim or invalid Path(`err`
 /// will be filled when failed).
 ///
-const Prim *GetParentPrim(const lightusd::Stage &stage,
-                          const lightusd::Path &path, std::string *err);
+const Prim *GetParentPrim(const lightusd::legacy::Stage &stage,
+                          const lightusd::legacy::Path &path, std::string *err);
 
 ///
 /// Visit Stage and invoke callback functions for each Prim.
@@ -180,7 +180,7 @@ typedef bool (*VisitPrimFunction)(const Path &abs_path, const Prim &prim,
 ///
 /// @param[out] err Error message.
 ///
-bool VisitPrims(const lightusd::Stage &stage, VisitPrimFunction visitor_fun,
+bool VisitPrims(const lightusd::legacy::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata = nullptr, std::string *err = nullptr);
 
 ///
@@ -195,7 +195,7 @@ bool VisitPrims(const lightusd::Stage &stage, VisitPrimFunction visitor_fun,
 /// @return true if Property found in given Prim.
 /// @return false if Property is not found in given Prim.
 ///
-bool GetProperty(const lightusd::Prim &prim, const std::string &prop_name,
+bool GetProperty(const lightusd::legacy::Prim &prim, const std::string &prop_name,
                  Property *prop, std::string *err);
 
 ///
@@ -209,7 +209,7 @@ bool GetProperty(const lightusd::Prim &prim, const std::string &prop_name,
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetPropertyNames(const lightusd::Prim &prim,
+bool GetPropertyNames(const lightusd::legacy::Prim &prim,
                       std::vector<std::string> *prop_names, std::string *err);
 
 ///
@@ -223,7 +223,7 @@ bool GetPropertyNames(const lightusd::Prim &prim,
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetAttributeNames(const lightusd::Prim &prim,
+bool GetAttributeNames(const lightusd::legacy::Prim &prim,
                        std::vector<std::string> *attr_names, std::string *err);
 
 ///
@@ -238,7 +238,7 @@ bool GetAttributeNames(const lightusd::Prim &prim,
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetRelationshipNames(const lightusd::Prim &prim,
+bool GetRelationshipNames(const lightusd::legacy::Prim &prim,
                           std::vector<std::string> *rel_names,
                           std::string *err);
 
@@ -255,7 +255,7 @@ bool GetRelationshipNames(const lightusd::Prim &prim,
 /// @return false if Attribute is not found in given Prim, or `attr_name` is a
 /// Relationship.
 ///
-bool GetAttribute(const lightusd::Prim &prim, const std::string &attr_name,
+bool GetAttribute(const lightusd::legacy::Prim &prim, const std::string &attr_name,
                   Attribute *attr, std::string *err);
 
 ///
@@ -266,7 +266,7 @@ bool GetAttribute(const lightusd::Prim &prim, const std::string &attr_name,
 ///
 /// @return true if `attr_name` Attribute exists in the Prim.
 ///
-bool HasAttribute(const lightusd::Prim &prim, const std::string &attr_name);
+bool HasAttribute(const lightusd::legacy::Prim &prim, const std::string &attr_name);
 
 ///
 /// Get Relationship of given Prim by name.
@@ -281,7 +281,7 @@ bool HasAttribute(const lightusd::Prim &prim, const std::string &attr_name);
 /// @return false if Relationship is not found in given Prim, or `rel_name` is a
 /// Attribute.
 ///
-bool GetRelationship(const lightusd::Prim &prim, const std::string &rel_name,
+bool GetRelationship(const lightusd::legacy::Prim &prim, const std::string &rel_name,
                      Relationship *rel, std::string *err);
 
 ///
@@ -292,7 +292,7 @@ bool GetRelationship(const lightusd::Prim &prim, const std::string &rel_name,
 ///
 /// @return true if `rel_name` Relationship exists in the Prim.
 ///
-bool HasRelationship(const lightusd::Prim &prim, const std::string &rel_name);
+bool HasRelationship(const lightusd::legacy::Prim &prim, const std::string &rel_name);
 
 ///
 /// For efficient Xform retrieval from Stage.
@@ -358,10 +358,10 @@ struct XformNode {
 ///
 ///
 bool BuildXformNodeFromStage(
-    const lightusd::Stage &stage, XformNode *root, /* out */
-    const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    const lightusd::legacy::Stage &stage, XformNode *root, /* out */
+    const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 std::string DumpXformNode(const XformNode &root);
 
@@ -381,8 +381,8 @@ std::string DumpXformNode(const XformNode &root);
 ///
 ///
 std::vector<const GeomSubset *> GetGeomSubsets(
-    const lightusd::Stage &stage, const lightusd::Path &prim_path,
-    const lightusd::value::token &familyName,
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Path &prim_path,
+    const lightusd::legacy::value::token &familyName,
     bool prim_must_be_geommesh = true);
 
 ///
@@ -400,15 +400,15 @@ std::vector<const GeomSubset *> GetGeomSubsets(
 /// GeomSubset Prim(with `familyName`) attached to the Prim.
 ///
 std::vector<const GeomSubset *> GetGeomSubsetChildren(
-    const lightusd::Prim &prim, const lightusd::value::token &familyName,
+    const lightusd::legacy::Prim &prim, const lightusd::legacy::value::token &familyName,
     bool prim_must_be_geommesh = true);
 
 //
 // Get BlendShape prims in this GeomMesh Prim
 // (`skel:blendShapes`, `skel:blendShapeTargets`)
 //
-std::vector<std::pair<std::string, const lightusd::BlendShape *>>
-GetBlendShapes(const lightusd::Stage &stage, const lightusd::Prim &prim,
+std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>>
+GetBlendShapes(const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
                 std::string *err = nullptr);
 
 
@@ -716,7 +716,7 @@ bool BuildSkelHierarchy(const Skeleton &skel,
 /// Specifier(primary scene), it is set to false.
 ///
 ///
-bool ListSceneNames(const lightusd::Prim &root,
+bool ListSceneNames(const lightusd::legacy::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames);
 
 //
@@ -903,4 +903,5 @@ bool ExpandConstantInfluencesToVarying(
     std::vector<float> *expandedWeights);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

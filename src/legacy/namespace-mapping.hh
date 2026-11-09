@@ -17,7 +17,7 @@
 
 #include "core/path.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// A namespace mapping is a list of (source_path, target_path) pairs that
@@ -228,4 +228,5 @@ inline std::vector<std::string> ValidateRelocates(
   return errors;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

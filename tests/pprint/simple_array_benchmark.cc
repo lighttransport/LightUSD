@@ -11,6 +11,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Helper to measure time in ms
 double measure_ms(std::function<void()> fn) {
   auto start = std::chrono::high_resolution_clock::now();

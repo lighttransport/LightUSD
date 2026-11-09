@@ -17,28 +17,29 @@
 //
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 // Forward declaration — defined in pprinter.cc
 std::string to_string(const Layer &layer, const uint32_t indent, bool closing_brace);
+}  // namespace legacy
 }
 
 namespace std {
 
 #define DEFINE_OSTREAM_OP(TYPE) \
-  std::ostream &operator<<(std::ostream &ofs, const lightusd::TYPE v) { \
+  std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::TYPE v) { \
     ofs << to_string(v); return ofs; }
 DEFINE_OSTREAM_OP(Visibility)
 DEFINE_OSTREAM_OP(Extent)
 DEFINE_OSTREAM_OP(Interpolation)
 #undef DEFINE_OSTREAM_OP
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Path &v) {
-  ofs << lightusd::pquote(v.full_path_name());
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Path &v) {
+  ofs << lightusd::legacy::pquote(v.full_path_name());
 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::LayerOffset &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::LayerOffset &v) {
   bool print_offset{true};
   bool print_scale{true};
 
@@ -59,19 +60,19 @@ std::ostream &operator<<(std::ostream &ofs, const lightusd::LayerOffset &v) {
   // (space before paren, `;` separator).
   ofs << " (";
   if (print_offset && print_scale) {
-    ofs << "offset = " << lightusd::dtos(v._offset)
-        << "; scale = " << lightusd::dtos(v._scale);
+    ofs << "offset = " << lightusd::legacy::dtos(v._offset)
+        << "; scale = " << lightusd::legacy::dtos(v._scale);
   } else if (print_offset) {
-    ofs << "offset = " << lightusd::dtos(v._offset);
+    ofs << "offset = " << lightusd::legacy::dtos(v._offset);
   } else {  // print_scale
-    ofs << "scale = " << lightusd::dtos(v._scale);
+    ofs << "scale = " << lightusd::legacy::dtos(v._scale);
   }
   ofs << ")";
 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Reference &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Reference &v) {
   // For internal references (no asset path, just prim path), don't output "@@"
   if (!v.asset_path.GetAssetPath().empty()) {
     ofs << v.asset_path;
@@ -91,12 +92,12 @@ std::ostream &operator<<(std::ostream &ofs, const lightusd::Reference &v) {
         std::numeric_limits<double>::epsilon();
     ofs << " (\n";
     if (has_offset) {
-      ofs << "    offset = " << lightusd::dtos(v.layerOffset._offset) << "\n";
+      ofs << "    offset = " << lightusd::legacy::dtos(v.layerOffset._offset) << "\n";
     }
     if (has_scale) {
-      ofs << "    scale = " << lightusd::dtos(v.layerOffset._scale) << "\n";
+      ofs << "    scale = " << lightusd::legacy::dtos(v.layerOffset._scale) << "\n";
     }
-    ofs << lightusd::print_customData(v.customData, "customData",
+    ofs << lightusd::legacy::print_customData(v.customData, "customData",
                                       /* indent */ 1);
     ofs << ")";
   } else {
@@ -106,7 +107,7 @@ std::ostream &operator<<(std::ostream &ofs, const lightusd::Reference &v) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Payload &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Payload &v) {
   if (v.is_none()) {
     ofs << "None";
   } else {
@@ -123,26 +124,26 @@ std::ostream &operator<<(std::ostream &ofs, const lightusd::Payload &v) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::SubLayer &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::SubLayer &v) {
   ofs << v.assetPath << v.layerOffset;
 
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const lightusd::value::StringData &v) {
-   ofs << lightusd::buildEscapedAndQuotedStringForUSDA(v.value);
+                         const lightusd::legacy::value::StringData &v) {
+   ofs << lightusd::legacy::buildEscapedAndQuotedStringForUSDA(v.value);
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Layer &layer) {
-  ofs << lightusd::to_string(layer, 0, true);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Layer &layer) {
+  ofs << lightusd::legacy::to_string(layer, 0, true);
   return ofs;
 }
 
 }  // namespace std
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace pprint {
 
@@ -217,8 +218,8 @@ namespace {
 // Print a single reference listop (e.g., "prepend references = ...")
 std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
                                    const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   auto listEditQual = std::get<0>(ref_op);
   auto vars = std::get<1>(ref_op);
@@ -248,8 +249,8 @@ std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
 // Print all reference listops (supports multiple listops per prim)
 std::string print_references(const prim::ReferenceList &references,
                              const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   for (const auto &ref_op : references) {
     ss << print_reference_listop(ref_op, indent);
   }
@@ -261,8 +262,8 @@ std::string print_references(const prim::ReferenceList &references,
 // Print a single payload listop (e.g., "prepend payload = ...")
 static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
                                         const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   auto listEditQual = std::get<0>(payload_op);
   auto vars = std::get<1>(payload_op);
@@ -291,8 +292,8 @@ static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
 // Print all payload listops (supports multiple listops per prim)
 static std::string print_payload(const prim::PayloadList &payload,
                                  const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   for (const auto &payload_op : payload) {
     ss << print_payload_listop(payload_op, indent);
   }
@@ -303,7 +304,7 @@ static std::string print_payload(const prim::PayloadList &payload,
 // resolved name view). Factored out so the USD-text-format path can emit it
 // FIRST in the metadata block (where usdcat places it) while the default keeps
 // it in lightusd's historical position.
-static void print_apiSchemas_block(::lightusd::pprint::Appender &ss,
+static void print_apiSchemas_block(::lightusd::legacy::pprint::Appender &ss,
                                    const APISchemas &schemas, uint32_t indent) {
   if (schemas.explicitlyEmpty) {
     // Authored as `apiSchemas = None` (explicit empty list). pxrUSD preserves
@@ -386,8 +387,8 @@ static void print_apiSchemas_block(::lightusd::pprint::Appender &ss,
 }
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // usdcat places `apiSchemas` FIRST in the prim-metadata block; lightusd's
   // default emits it later. Under the USD-text-format opt-in, emit it up front.
@@ -565,8 +566,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 }
 
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (meta.has_interpolation()) {
     ss << pprint::Indent(indent)
@@ -695,8 +696,8 @@ std::string print_timesamples(const value::TimeSamples &v,
 
 std::string print_rel_prop(const Property &prop, const std::string &name,
                            uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (!prop.is_relationship()) {
     return pp_ss.str();
@@ -726,8 +727,8 @@ std::string print_rel_prop(const Property &prop, const std::string &name,
 
 std::string print_prop(const Property &prop, const std::string &prop_name,
                        uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (prop.is_relationship()) {
     ss << print_rel_prop(prop, prop_name, indent);
@@ -887,8 +888,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
 
 std::string print_props(const std::map<std::string, Property> &props,
                         uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   for (const auto &item : props) {
     const Property &prop = item.second;
@@ -904,8 +905,8 @@ std::string print_props(const std::map<std::string, Property> &props,
                         std::set<std::string> &tok_table,
                         const std::vector<value::token> &propNames,
                         uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (propNames.size()) {
     for (size_t i = 0; i < propNames.size(); i++) {
@@ -929,8 +930,8 @@ std::string print_props(const std::map<std::string, Property> &props,
 
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
                                const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (xformOps.size()) {
     ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
@@ -958,8 +959,8 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
 
 std::string print_xformOps(const std::vector<XformOp> &xformOps,
                            const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // To prevent printing xformOp attributes multiple times.
   std::set<std::string> printed_vars;
@@ -1043,8 +1044,8 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
     return std::string();
   }
 
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (mb->materialBinding.authored()) {
     ss << print_relationship(mb->materialBinding.relationship(),
@@ -1120,8 +1121,8 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
 // Emit a `.spline = { ... }` value block (AOUSD Core Spec 7.4.2.4).
 std::string print_spline(const primvar::PrimVar::SplineData &sd,
                          const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   auto num = [](const value::Value &v) -> double {
     if (auto d = v.get_value<double>()) return d.value();
@@ -1135,7 +1136,7 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
       case 0: return "none";
       case 1: return "held";
       case 2: return "linear";
-      case 3: return "sloped(" + lightusd::dtos(slope) + ")";
+      case 3: return "sloped(" + lightusd::legacy::dtos(slope) + ")";
       case 4: return "loop repeat";
       case 5: return "loop reset";
       case 6: return "loop oscillate";
@@ -1159,10 +1160,10 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
        << extrapStr(sd.postExtrapolation, sd.postExtrapolationSlope) << ",\n";
   }
   if (sd.hasLoop) {
-    ss << pprint::Indent(ki) << "loop: (" << lightusd::dtos(sd.loopProtoStart)
-       << ", " << lightusd::dtos(sd.loopProtoEnd) << ", " << sd.loopNumPreLoops
+    ss << pprint::Indent(ki) << "loop: (" << lightusd::legacy::dtos(sd.loopProtoStart)
+       << ", " << lightusd::legacy::dtos(sd.loopProtoEnd) << ", " << sd.loopNumPreLoops
        << ", " << sd.loopNumPostLoops << ", "
-       << lightusd::dtos(sd.loopValueOffset) << "),\n";
+       << lightusd::legacy::dtos(sd.loopValueOffset) << "),\n";
   }
 
   // A non-None tangent algorithm is emitted as a trailing keyword inside the
@@ -1177,18 +1178,18 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
 
   auto tangent = [&](double width, double slope, int algo) -> std::string {
     if (hermite) {
-      return "(" + lightusd::dtos(slope) + algoSuffix(algo) + ")";
+      return "(" + lightusd::legacy::dtos(slope) + algoSuffix(algo) + ")";
     }
-    return "(" + lightusd::dtos(width) + ", " + lightusd::dtos(slope) +
+    return "(" + lightusd::legacy::dtos(width) + ", " + lightusd::legacy::dtos(slope) +
            algoSuffix(algo) + ")";
   };
 
   for (const auto &k : sd.knots) {
-    ss << pprint::Indent(ki) << lightusd::dtos(k.time) << ": ";
+    ss << pprint::Indent(ki) << lightusd::legacy::dtos(k.time) << ": ";
     if (k.hasDualValue) {
-      ss << lightusd::dtos(num(k.preValue)) << " & " << lightusd::dtos(num(k.val));
+      ss << lightusd::legacy::dtos(num(k.preValue)) << " & " << lightusd::legacy::dtos(num(k.val));
     } else {
-      ss << lightusd::dtos(num(k.val));
+      ss << lightusd::legacy::dtos(num(k.val));
     }
     // pre-tangent (only when authored, including a non-None algorithm)
     if (k.preTangentWidth != 0.0 || k.preTangentSlope != 0.0 ||
@@ -1216,8 +1217,8 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
 }
 
 std::string print_collection(const Collection *coll, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (!coll) {
     return std::string();
@@ -1273,8 +1274,8 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
 
 std::string print_variantSelectionMap(const VariantSelectionMap &m,
                                       const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   if (m.empty()) {
     return pp_ss.str();
@@ -1293,8 +1294,8 @@ std::string print_variantSelectionMap(const VariantSelectionMap &m,
 std::string print_customData(const CustomDataType &customData,
                              const std::string &dict_name,
                              const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent);
   if (!dict_name.empty()) {
@@ -1325,8 +1326,8 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emi
     return {};
   }
 
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // ss << "TODO: isObject " << meta.is_object() << ", isValue " <<
   // meta.IsValue() << "\n";
@@ -1375,8 +1376,8 @@ namespace prim { std::string print_prim(const Prim &prim, const uint32_t indent)
 
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   for (const auto &variantSet : vslist) {
     if (variantSet.second.variantSet.empty()) {
@@ -1448,8 +1449,8 @@ std::string print_variantSetStmt(
 std::string print_variantSetSpecStmt(
     const std::map<std::string, VariantSetSpec> &vslist,
     const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   // ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
@@ -1520,11 +1521,11 @@ namespace prim {
 std::string print_references(const ReferenceList &references,
                              const uint32_t indent) {
   // Delegate to anonymous namespace implementation
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
   for (const auto &ref_op : references) {
-    ::lightusd::pprint::ScratchRef pp_rs;
-    ::lightusd::pprint::Appender &rs = pp_rs.app();
+    ::lightusd::legacy::pprint::ScratchRef pp_rs;
+    ::lightusd::legacy::pprint::Appender &rs = pp_rs.app();
     auto listEditQual = std::get<0>(ref_op);
     auto vars = std::get<1>(ref_op);
     rs << pprint::Indent(indent);
@@ -1549,13 +1550,13 @@ std::string print_references(const ReferenceList &references,
 
 std::string print_payload(const PayloadList &payload, const uint32_t indent) {
   // Delegate to file-scope implementation
-  return lightusd::print_payload(payload, indent);
+  return lightusd::legacy::print_payload(payload, indent);
 }
 
 std::string print_layeroffset(const LayerOffset &layeroffset,
                               const uint32_t indent) {
-  ::lightusd::pprint::ScratchRef pp_ss;
-  ::lightusd::pprint::Appender &ss = pp_ss.app();
+  ::lightusd::legacy::pprint::ScratchRef pp_ss;
+  ::lightusd::legacy::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent);
 
@@ -1590,4 +1591,5 @@ std::string print_layeroffset(const LayerOffset &layeroffset,
 
 }  // namespace prim
 
+}  // namespace legacy
 }  // namespace lightusd

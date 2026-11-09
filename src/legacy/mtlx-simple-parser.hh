@@ -8,7 +8,7 @@
 #include <map>
 #include <stack>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace mtlx {
 
 // Forward declaration
@@ -54,4 +54,5 @@ private:
 };
 
 } // namespace mtlx
+}  // namespace legacy
 } // namespace lightusd

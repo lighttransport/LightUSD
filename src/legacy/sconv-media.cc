@@ -6,7 +6,7 @@
 #include "sconv-detail.hh"
 #include "usdMedia.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 #define EXTRACT_TYPED(attr, name) do { \
@@ -63,4 +63,5 @@ bool CrateWriter::ExtractSpatialAudioProperties(
 }
 
 }  // namespace experimental
+}  // namespace legacy
 }  // namespace lightusd

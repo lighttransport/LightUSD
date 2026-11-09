@@ -51,7 +51,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -143,7 +143,10 @@ bool AdoptStageBufferForZeroCopy(Stage *stage, std::vector<uint8_t> *data,
 
 // Global flag to control DCOUT output. Defaults to false to suppress flood of output.
 // Set to true via LIGHTUSD_ENABLE_DCOUT environment variable.
+// Declared by the shared core/logger.hh in `lightusd` (not legacy).
+}  // namespace legacy
 bool g_enable_dcout_output = false;
+namespace legacy {
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
@@ -850,10 +853,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  lightusd::StreamReader sr(addr, length, /* swap endian */ false);
-  lightusd::usda::USDAReader reader(&sr);
+  lightusd::legacy::StreamReader sr(addr, length, /* swap endian */ false);
+  lightusd::legacy::usda::USDAReader reader(&sr);
 
-  lightusd::usda::USDAReaderConfig config;
+  lightusd::legacy::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
@@ -1466,10 +1469,10 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  lightusd::StreamReader sr(addr, length, /* swap endian */ false);
-  lightusd::usda::USDAReader reader(&sr);
+  lightusd::legacy::StreamReader sr(addr, length, /* swap endian */ false);
+  lightusd::legacy::usda::USDAReader reader(&sr);
 
-  lightusd::usda::USDAReaderConfig config;
+  lightusd::legacy::usda::USDAReaderConfig config;
   config.max_memory_limit_in_mb = size_t(EffectiveMemoryLimitMb(options));
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.strict_shader_type_check = options.strict_shader_type_check;
@@ -1488,7 +1491,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
   }
 
-  uint32_t load_states = static_cast<uint32_t>(lightusd::LoadState::Toplevel);
+  uint32_t load_states = static_cast<uint32_t>(lightusd::legacy::LoadState::Toplevel);
 
   bool as_primspec = true;
 
@@ -1504,7 +1507,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
-  lightusd::Layer layer;
+  lightusd::legacy::Layer layer;
   bool ret = reader.get_as_layer(&layer);
   if (!ret) {
     if (err) {
@@ -1791,8 +1794,8 @@ int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &sea
   std::string asset_path = asset_name;
 
   // Remove relative path prefix './'
-  if (lightusd::startsWith(asset_path, "./")) {
-    asset_path = lightusd::removePrefix(asset_path, "./");
+  if (lightusd::legacy::startsWith(asset_path, "./")) {
+    asset_path = lightusd::legacy::removePrefix(asset_path, "./");
   }
 
   if (!IsSafeUSDZAssetPath(asset_path)) {
@@ -2352,7 +2355,7 @@ bool SerializeUSDZRootLayer(const Layer &layer, const USDZWriteOptions &options,
       return true;
     }
     case USDZRootLayerFormat::USDA: {
-      const std::string usda_text = lightusd::print_layer(layer, 0);
+      const std::string usda_text = lightusd::legacy::print_layer(layer, 0);
       if (usda_text.empty()) {
         if (err) { (*err) += "USDA serialization produced empty data.\n"; }
         return false;
@@ -2810,4 +2813,5 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   return valid;
 }
 
+}  // namespace legacy
 }  // namespace lightusd

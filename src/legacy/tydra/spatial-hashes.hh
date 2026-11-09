@@ -18,7 +18,7 @@
 
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 namespace spatial {
 
@@ -470,5 +470,6 @@ private:
 
 } // namespace spatial
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd
 

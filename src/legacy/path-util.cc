@@ -6,7 +6,7 @@
 #include "core/path.hh"
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pathutil {
 
 namespace {
@@ -247,4 +247,5 @@ bool ValidatePropName(tstring_view prop_name, std::string *err) {
 }
 
 } // namespace pathutil
+}  // namespace legacy
 } // namespace lightusd

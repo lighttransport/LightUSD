@@ -10,7 +10,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 UUIDGenerator::UUIDGenerator()
     : rd_(), gen_(rd_()), dis_(0, 0xFFFFFFFF) {
@@ -93,4 +93,5 @@ std::string generateUUID() {
     return UUIDGenerator::generateUUID();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

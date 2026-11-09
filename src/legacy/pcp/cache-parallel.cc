@@ -28,7 +28,7 @@
 
 #include "pcp/cache-impl.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace pcp {
 
 nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
@@ -124,6 +124,7 @@ nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
 }
 
 }  // namespace pcp
+}  // namespace legacy
 }  // namespace lightusd
 
 #endif  // LIGHTUSD_ENABLE_THREAD && !__EMSCRIPTEN__

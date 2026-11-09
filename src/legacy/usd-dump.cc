@@ -19,7 +19,7 @@
 #include "usd-to-json.hh"
 #include "core/minijson.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -420,4 +420,5 @@ std::string InspectStage(const Stage &stage, const InspectOptions &opts) {
   return ss.str();
 }
 
+}  // namespace legacy
 }  // namespace lightusd

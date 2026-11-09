@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// High-resolution timing utilities for parser profiling
@@ -160,23 +160,24 @@ class ParserProfiler {
 // on worker threads (pcp parallel build) and from concurrent LoadUSDFromFile
 // calls. When enabled, GetTimer() is internally mutex-guarded.
 #define LIGHTUSD_PROFILE_FUNCTION(parser_name) \
-  lightusd::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
-    lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling \
-      ? lightusd::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, __FUNCTION__)
+  lightusd::legacy::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
+    lightusd::legacy::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? lightusd::legacy::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, __FUNCTION__)
 
 #define LIGHTUSD_PROFILE_SCOPE(parser_name, scope_name) \
-  lightusd::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
-    lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling \
-      ? lightusd::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, scope_name)
+  lightusd::legacy::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
+    lightusd::legacy::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? lightusd::legacy::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, scope_name)
 
 #define LIGHTUSD_PROFILE_START(parser_name, operation) \
-  if (lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
-    lightusd::ParserProfiler::GetInstance().GetTimer(parser_name)->StartTimer(operation); \
+  if (lightusd::legacy::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    lightusd::legacy::ParserProfiler::GetInstance().GetTimer(parser_name)->StartTimer(operation); \
   }
 
 #define LIGHTUSD_PROFILE_END(parser_name, operation) \
-  if (lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
-    lightusd::ParserProfiler::GetInstance().GetTimer(parser_name)->EndTimer(operation); \
+  if (lightusd::legacy::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    lightusd::legacy::ParserProfiler::GetInstance().GetTimer(parser_name)->EndTimer(operation); \
   }
 
+}  // namespace legacy
 }  // namespace lightusd

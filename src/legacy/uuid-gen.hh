@@ -5,7 +5,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Simple UUID Version 4 generator
@@ -41,5 +41,6 @@ class UUIDGenerator {
 ///
 std::string generateUUID();
 
+}  // namespace legacy
 }  // namespace lightusd
 

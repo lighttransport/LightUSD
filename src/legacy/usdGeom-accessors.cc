@@ -27,7 +27,7 @@
 #include "value-pprint.hh"
 #include "core/safe-arithmetic.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // ExpandWithIndices template helpers (GeomMesh::get_normals uses one). Included
 // inside namespace lightusd so its unqualified safe::/value:: references resolve,
@@ -842,4 +842,5 @@ bool GeomSubset::ValidateSubsets(
 
 }
 
+}  // namespace legacy
 }  // namespace lightusd

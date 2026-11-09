@@ -19,7 +19,7 @@
 #include "stage.hh"
 #include "layer.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
@@ -131,4 +131,5 @@ void print_primspecs_parallel(
 #endif  // LIGHTUSD_ENABLE_THREAD
 
 }  // namespace prim
+}  // namespace legacy
 }  // namespace lightusd

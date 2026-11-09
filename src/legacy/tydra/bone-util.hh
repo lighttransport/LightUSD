@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -150,4 +150,5 @@ int FindBoneChainDistance(
     const std::vector<int> &parent_indices);
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

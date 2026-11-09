@@ -39,8 +39,10 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void materialx_139_version_test(void) {
-  mtlx::MaterialXParser parser;
+  lightusd::legacy::mtlx::MaterialXParser parser;
   TEST_CHECK(parser.Parse(
       R"(<materialx version="1.39"><open_pbr_surface name="surface" type="surfaceshader"/></materialx>)"));
   TEST_CHECK(parser.GetVersion() == "1.39");
@@ -223,7 +225,7 @@ def Shader "OpenPBRShader"
           }
           if (openpbr->base_color.authored()) {
             const auto& base_color_anim = openpbr->base_color.get_value();
-            value::color3f color;
+            lightusd::legacy::value::color3f color;
             if (base_color_anim.get_scalar(&color)) {
               TEST_CHECK(math::is_close(color[0], 0.5f));
               TEST_CHECK(math::is_close(color[1], 0.6f));
@@ -444,7 +446,7 @@ void nodegraph_reconstruct_from_layer_test(void) {
   PrimSpec shader(Specifier::Def, "Shader", "ImageNode");
   {
     Attribute attr;
-    attr.set_value(value::token("ND_image_color3"));
+    attr.set_value(lightusd::legacy::value::token("ND_image_color3"));
     attr.set_type_name("token");
     attr.variability() = Variability::Uniform;
     shader.props()["info:id"] = Property(attr, false);
@@ -527,7 +529,7 @@ void materialx_nodegraph_inputs_outputs_test(void) {
   auto transform_it = ng.props().find("inputs:transform");
   TEST_CHECK(transform_it != ng.props().end());
   if (transform_it != ng.props().end() && transform_it->second.is_attribute()) {
-    TEST_CHECK(transform_it->second.get_attribute().type_id() == value::TYPE_ID_MATRIX3F);
+    TEST_CHECK(transform_it->second.get_attribute().type_id() == lightusd::legacy::value::TYPE_ID_MATRIX3F);
   }
   auto weights_it = ng.props().find("inputs:weights");
   TEST_CHECK(weights_it != ng.props().end());
@@ -624,8 +626,8 @@ void materialx_openpbr_extended_inputs_test(void) {
     float base_diffuse_roughness = 0.0f;
     float thin_film_weight = 0.0f;
     bool thin_walled = false;
-    value::normal3f coat_normal;
-    value::vector3f coat_tangent;
+    lightusd::legacy::value::normal3f coat_normal;
+    lightusd::legacy::value::vector3f coat_tangent;
     TEST_CHECK(surface->fuzz_weight.get_value().get_scalar(&fuzz_weight));
     TEST_CHECK(surface->base_diffuse_roughness.get_value().get_scalar(
         &base_diffuse_roughness));
@@ -1017,7 +1019,7 @@ def Shader "Tex"
           TEST_CHECK(tex->uv_set.authored() == true);
           TEST_CHECK(tex->uv_set.get_value() == 2);
           TEST_CHECK(tex->uv_set_name.authored() == true);
-          value::token name_tok;
+          lightusd::legacy::value::token name_tok;
           if (tex->uv_set_name.get_value(&name_tok)) {
             TEST_CHECK(name_tok.str() == "st1");
           }

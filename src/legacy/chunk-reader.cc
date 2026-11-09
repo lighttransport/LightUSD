@@ -10,7 +10,7 @@
 #include <iostream>
 #include <chrono>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ChunkReader::ChunkReader(size_t total_size, const Config& config)
     : config_(config), total_size_(total_size), current_offset_(0),
@@ -910,4 +910,5 @@ bool ChunkReader::IsAnyCacheFull() const {
          (current_preload_size_ >= preload_size_ * config_.chunk_size);
 }
 
+}  // namespace legacy
 } // namespace lightusd

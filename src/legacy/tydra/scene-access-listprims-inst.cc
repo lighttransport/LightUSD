@@ -31,17 +31,18 @@
 #include <unordered_set>
 
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 #include "tydra/scene-access-traverse-impl.inc"
 
 #define LISTPRIMS_INSTANCIATE(__ty) \
-  template bool ListPrims(const lightusd::Stage &stage, PathPrimMap<__ty> &m);
+  template bool ListPrims(const lightusd::legacy::Stage &stage, PathPrimMap<__ty> &m);
 
 APPLY_FUNC_TO_PRIM_TYPES(LISTPRIMS_INSTANCIATE)
 
 #undef LISTPRIMS_INSTANCIATE
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

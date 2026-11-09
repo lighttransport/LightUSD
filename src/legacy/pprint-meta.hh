@@ -23,7 +23,7 @@
 #include "core/model-scope.hh"       // Model, Scope (needed by downstream pprinter.hh)
 #include "value-pprint.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 class Layer;  // Forward declaration for operator<< below
 
@@ -88,17 +88,18 @@ std::string print_layeroffset(const LayerOffset &layeroffset,
 
 }  // namespace prim
 
+}  // namespace legacy
 }  // namespace lightusd
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Visibility v);
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Extent v);
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Interpolation v);
-std::ostream &operator<<(std::ostream &ofs, const lightusd::Layer &layer);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Visibility v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Interpolation v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::legacy::Layer &layer);
 
 // StringData needs proper quoting for USDA output
 std::ostream &operator<<(std::ostream &ofs,
-                         const lightusd::value::StringData &v);
+                         const lightusd::legacy::value::StringData &v);
 
 }  // namespace std

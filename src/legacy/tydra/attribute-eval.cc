@@ -16,7 +16,7 @@
 #include <memory>
 #include <mutex>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // For PUSH_ERROR_AND_RETURN
@@ -602,10 +602,10 @@ static bool ResolveAttrFromClipSet(
 // visited_paths : To prevent circular referencing of attribute connection.
 //
 bool EvaluateAttributeImpl(
-    const lightusd::Stage &stage, const lightusd::Prim &prim,
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
 
   // Iterative connection-following loop (replaces tail recursion)
   const Prim *current_prim = &prim;
@@ -698,10 +698,10 @@ bool EvaluateAttributeImpl(
 }
 
 bool EvaluateAttributeImpl(
-    const lightusd::Stage &stage, const lightusd::Attribute &attr,
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
 
   if (attr.has_connections()) {
     // A connection overrides the authored value (USD). Follow it; fall back to
@@ -774,10 +774,10 @@ bool EvaluateAttributeImpl(
 }  // namespace
 
 bool EvaluateAttribute(
-    const lightusd::Stage &stage, const lightusd::Prim &prim,
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
@@ -795,10 +795,10 @@ bool EvaluateAttributeFromClips(
 }
 
 bool EvaluateAttribute(
-    const lightusd::Stage &stage, const Attribute &attr,
+    const lightusd::legacy::Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, attr, attr_name, value, err,
@@ -807,10 +807,10 @@ bool EvaluateAttribute(
 
 // Layer/PrimSpec version
 bool EvaluateAttribute(
-    const lightusd::Layer &layer, const lightusd::PrimSpec &ps,
+    const lightusd::legacy::Layer &layer, const lightusd::legacy::PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const lightusd::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp) {
   (void)layer;
 
   if (!value) {
@@ -888,4 +888,5 @@ bool EvaluateAttribute(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

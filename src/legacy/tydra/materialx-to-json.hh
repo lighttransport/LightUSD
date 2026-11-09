@@ -15,19 +15,15 @@
 #include "nonstd/expected.hpp"
 #include "value-types.hh"  // For value::float2
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 class Prim;
 class Stage;
 class Path;
 
-namespace mtlx {
-  class MtlxNodeGraph;
-  class MtlxNode;
-  class MtlxInput;
-  class MtlxOutput;
-}
+// mtlx::Mtlx{NodeGraph,Node,Input,Output} are shared (core/mtlx-dom.hh);
+// forward-declared in legacy-namespace.hh.
 
 namespace tydra {
 
@@ -203,4 +199,5 @@ std::string SpectralEmissionToJson(const SpectralEmission &data);
 std::string Vec2ArrayToJsonArray(const std::vector<value::float2> &vec);
 
 } // namespace tydra
+}  // namespace legacy
 } // namespace lightusd

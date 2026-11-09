@@ -2,7 +2,7 @@
 #pragma once
 #include "udim-bake.hh"
 #include "usdz-convert.hh"
-namespace lightusd {
+namespace lightusd { namespace legacy {
 class Layer;
 namespace usdz {
 udim::Options UDIMOptions(const UsdzConvertOptions&);
@@ -11,4 +11,5 @@ bool BakeUDIMInLayer(const UsdzConvertOptions&, Layer*, const udim::Fetch&,
                      std::map<std::string, std::vector<uint8_t>>* assets,
                      UsdzConvertStats*, std::string* error);
 }  // namespace usdz
+}  // namespace legacy
 }  // namespace lightusd

@@ -10,7 +10,7 @@
 #include "core/prim.hh"       // Prim class (transitively: prim-enums, prim-metas, path)
 #include "core/prim-spec.hh"  // PrimSpec, ReferenceList, PayloadList, LayerOffset
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 // Forward declarations
 template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
@@ -61,4 +61,5 @@ inline std::string to_string(const PrimSpec &primspec) {
   return prim::print_primspec(primspec);
 }
 
+}  // namespace legacy
 } // namespace lightusd

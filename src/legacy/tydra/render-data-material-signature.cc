@@ -16,7 +16,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -334,4 +334,5 @@ bool RenderSceneConverter::GetOrCreateDefaultMaterial(
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

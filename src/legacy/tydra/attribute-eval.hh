@@ -23,7 +23,7 @@
 ///
 /// Usage:
 /// ```cpp
-/// lightusd::tydra::TerminalAttributeValue result;
+/// lightusd::legacy::tydra::TerminalAttributeValue result;
 /// if (EvaluateAttribute(stage, prim_path, "points", 1.0, &result)) {
 ///   if (result.has_value()) {
 ///     // Use resolved value...
@@ -49,7 +49,7 @@
 #include "prim-type-macros.inc"
 #include "tiny-format.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 ///
@@ -222,19 +222,19 @@ inline bool ResolveSingleConnectionTargetPath(const std::vector<Path> &paths,
 /// - Other error happens.
 ///
 bool EvaluateAttribute(
-    const lightusd::Stage &stage, const lightusd::Prim &prim,
+    const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 // Layer/PrimSpec version
 bool EvaluateAttribute(
-    const lightusd::Layer &layer, const lightusd::PrimSpec &ps,
+    const lightusd::legacy::Layer &layer, const lightusd::legacy::PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 ///
 /// Evaluate Attribute and retrieve terminal Attribute value.
@@ -255,18 +255,18 @@ bool EvaluateAttribute(
 /// @param[in] tinterp (optional) Interpolation type for timeSamples value
 ///
 bool EvaluateAttribute(
-    const lightusd::Stage &stage, const Attribute &attr,
+    const lightusd::legacy::Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 bool EvaluateAttributeFromClips(
-    const lightusd::Prim &prim,
+    const lightusd::legacy::Prim &prim,
     const std::string &attr_name,
     TerminalAttributeValue *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 
 
@@ -275,7 +275,7 @@ bool EvaluateAttributeFromClips(
 //
 template<typename T>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttribute<T> &attr,
     const std::string &attr_name,
     T *value,
@@ -284,45 +284,45 @@ bool EvaluateTypedAttribute(
 
 // NOTE: std::string uses the specialization, so no extern template.
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAttribute(const lightusd::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+extern template bool EvaluateTypedAttribute(const lightusd::legacy::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
-template<> bool EvaluateTypedAttribute(const lightusd::Stage &stage, const TypedAttribute<std::string> &attr, const std::string &attr_name, std::string *value, std::string *err);
+template<> bool EvaluateTypedAttribute(const lightusd::legacy::Stage &stage, const TypedAttribute<std::string> &attr, const std::string &attr_name, std::string *value, std::string *err);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttribute<Animatable<T>> &attr,
     const std::string &attr_name,
     T *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAnimatableAttribute(const lightusd::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+extern template bool EvaluateTypedAnimatableAttribute(const lightusd::legacy::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
-template<> bool EvaluateTypedAnimatableAttribute(const lightusd::Stage &stage, const TypedAttribute<Animatable<std::string>> &attr, const std::string &attr_name, std::string *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+template<> bool EvaluateTypedAnimatableAttribute(const lightusd::legacy::Stage &stage, const TypedAttribute<Animatable<std::string>> &attr, const std::string &attr_name, std::string *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttributeWithFallback<T> &attr,
     const std::string &attr_name,
     T *value,
     std::string *err);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAttribute(const lightusd::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+extern template bool EvaluateTypedAttribute(const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 template<> bool EvaluateTypedAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttributeWithFallback<std::string> &attr,
     const std::string &attr_name,
     std::string *value,
@@ -332,26 +332,27 @@ template<> bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &attr_name,
     T *value,
-    std::string *err, const double t = lightusd::value::TimeCode::Default(),
-    const lightusd::value::TimeSampleInterpolationType tinterp =
-        lightusd::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = lightusd::legacy::value::TimeCode::Default(),
+    const lightusd::legacy::value::TimeSampleInterpolationType tinterp =
+        lightusd::legacy::value::TimeSampleInterpolationType::Linear);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAnimatableAttribute(const lightusd::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+extern template bool EvaluateTypedAnimatableAttribute(const lightusd::legacy::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 template<> bool EvaluateTypedAnimatableAttribute(
-    const lightusd::Stage &stage,
+    const lightusd::legacy::Stage &stage,
     const TypedAttributeWithFallback<Animatable<std::string>> &attr,
     const std::string &attr_name,
     std::string *value,
-    std::string *err, const double t, const lightusd::value::TimeSampleInterpolationType tinterp);
+    std::string *err, const double t, const lightusd::legacy::value::TimeSampleInterpolationType tinterp);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

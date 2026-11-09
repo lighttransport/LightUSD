@@ -11,7 +11,7 @@
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(GeomMesh enums), etc.
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace experimental {
 
 namespace sconv_detail {
@@ -248,4 +248,5 @@ bool CrateWriter::ExtractAnimatableDefault(
 
 
 } // namespace experimental
+}  // namespace legacy
 } // namespace lightusd

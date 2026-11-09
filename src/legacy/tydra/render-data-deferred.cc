@@ -19,7 +19,7 @@
 #include "tydra/render-data-internal.hh"
 #include "tydra/task-arena.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -260,4 +260,5 @@ bool RenderSceneConverter::ConvertDeferredMeshes(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

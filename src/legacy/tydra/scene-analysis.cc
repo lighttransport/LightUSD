@@ -10,7 +10,7 @@
 
 #include "../common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 namespace {
@@ -63,4 +63,5 @@ bool ComputePrimSpecBound(const PrimSpec &ps, const bool use_extent, Extent &bbo
 }
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

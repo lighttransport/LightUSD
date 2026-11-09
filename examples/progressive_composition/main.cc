@@ -23,16 +23,16 @@ struct CompositionFeatures {
   bool specializes{true};
 };
 
-static void CollectMeshPaths(const lightusd::Prim& root,
+static void CollectMeshPaths(const lightusd::legacy::Prim& root,
                              std::vector<std::string>* paths) {
   struct Frame {
-    const lightusd::Prim* prim;
+    const lightusd::legacy::Prim* prim;
     size_t child_index;
     size_t parent_path_length;
   };
   std::vector<Frame> stack;
   std::string path = "/" + root.local_path().full_path_name();
-  if (root.is<lightusd::GeomMesh>()) paths->push_back(path);
+  if (root.is<lightusd::legacy::GeomMesh>()) paths->push_back(path);
   if (!root.children().empty()) stack.push_back({&root, 0, 0});
   while (!stack.empty()) {
     Frame& frame = stack.back();
@@ -41,11 +41,11 @@ static void CollectMeshPaths(const lightusd::Prim& root,
       stack.pop_back();
       continue;
     }
-    const lightusd::Prim& child = frame.prim->children()[frame.child_index++];
+    const lightusd::legacy::Prim& child = frame.prim->children()[frame.child_index++];
     const size_t current_path_length = path.size();
     path += "/";
     path += child.local_path().full_path_name();
-    if (child.is<lightusd::GeomMesh>()) paths->push_back(path);
+    if (child.is<lightusd::legacy::GeomMesh>()) paths->push_back(path);
     if (!child.children().empty()) {
       stack.push_back({&child, 0, current_path_length});
     } else {
@@ -113,14 +113,14 @@ int main(int argc, char **argv) {
       load_only = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
-    } else if (lightusd::startsWith(arg, "--composition=")) {
-      std::string value_str = lightusd::removePrefix(arg, "--composition=");
+    } else if (lightusd::legacy::startsWith(arg, "--composition=")) {
+      std::string value_str = lightusd::legacy::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
         exit(-1);
       }
 
-      std::vector<std::string> items = lightusd::split(value_str, ",");
+      std::vector<std::string> items = lightusd::legacy::split(value_str, ",");
       comp_features.subLayers = false;
       comp_features.inherits = false;
       comp_features.variantSets = false;
@@ -173,13 +173,13 @@ int main(int argc, char **argv) {
     }
 
     // TODO: flatten for USDZ
-    if (lightusd::IsUSDZ(filepath)) {
+    if (lightusd::legacy::IsUSDZ(filepath)) {
 
       std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
-      lightusd::Stage stage;
+      lightusd::legacy::Stage stage;
 
-      bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      bool ret = lightusd::legacy::LoadUSDZFromFile(filepath, &stage, &warn, &err);
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
       }
@@ -198,8 +198,8 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
 
-    lightusd::Layer root_layer;
-    bool ret = lightusd::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
+    lightusd::legacy::Layer root_layer;
+    bool ret = lightusd::legacy::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
       std::cout << "WARN: " << warn << "\n";
     }
@@ -213,12 +213,12 @@ int main(int argc, char **argv) {
     std::cout << "# input\n";
     std::cout << root_layer << "\n";
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     stage.metas() = root_layer.metas();
 
     std::string warn;
 
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
@@ -232,18 +232,18 @@ int main(int argc, char **argv) {
     // - [ ] Specializes
     //
 
-    lightusd::Layer src_layer = root_layer;
+    lightusd::legacy::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
 
       // NOTE: subLayers are resolved recursively.
 
-      std::vector<std::string> subLayerAssetPaths = lightusd::ExtractSublayerAssetPaths(src_layer);
+      std::vector<std::string> subLayerAssetPaths = lightusd::legacy::ExtractSublayerAssetPaths(src_layer);
       for (size_t i = 0; i < subLayerAssetPaths.size(); i++) {
           std::cout << "subLayer asset path: " << subLayerAssetPaths[i] << "\n";
       }
 
-      lightusd::Layer composited_layer;
-      if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::legacy::Layer composited_layer;
+      if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -269,8 +269,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
@@ -292,8 +292,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
@@ -315,8 +315,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `inherits`: " << err << "\n";
             return -1;
           }
@@ -337,7 +337,7 @@ int main(int argc, char **argv) {
         // and payloads are resolved (see ShouldDeferVariantComposition).
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
-        } else if (lightusd::ShouldDeferVariantComposition(
+        } else if (lightusd::legacy::ShouldDeferVariantComposition(
                        src_layer, comp_features.references,
                        comp_features.payload)) {
           std::cout << "# iter " << i
@@ -346,8 +346,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          lightusd::Layer composited_layer;
-          if (!lightusd::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
+          lightusd::legacy::Layer composited_layer;
+          if (!lightusd::legacy::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `variantSet`: " << err << "\n";
             return -1;
           }
@@ -378,16 +378,16 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
-      lightusd::Dictionary dict;
-      if (!lightusd::ExtractVariants(src_layer, &dict, &err)) {
+      lightusd::legacy::Dictionary dict;
+      if (!lightusd::legacy::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << lightusd::to_string(dict) << "\n";
+        std::cout << "== Variants info ==\n" << lightusd::legacy::to_string(dict) << "\n";
       }
 
     }
 
-    lightusd::Stage comp_stage;
+    lightusd::legacy::Stage comp_stage;
     ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
@@ -400,7 +400,7 @@ int main(int argc, char **argv) {
     std::cout << comp_stage.ExportToString() << "\n";
 
     std::vector<std::string> mesh_paths;
-    for (const lightusd::Prim& root : comp_stage.root_prims()) {
+    for (const lightusd::legacy::Prim& root : comp_stage.root_prims()) {
       CollectMeshPaths(root, &mesh_paths);
     }
     std::sort(mesh_paths.begin(), mesh_paths.end());
@@ -408,12 +408,12 @@ int main(int argc, char **argv) {
 
   } else {
 
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
 
-    lightusd::USDLoadOptions options;
+    lightusd::legacy::USDLoadOptions options;
 
     // auto detect format.
-    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+    bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -435,11 +435,11 @@ int main(int argc, char **argv) {
     std::cout << s << "\n";
 
     if (has_extract_variants) {
-      lightusd::Dictionary dict;
-      if (!lightusd::ExtractVariants(stage, &dict, &err)) {
+      lightusd::legacy::Dictionary dict;
+      if (!lightusd::legacy::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << lightusd::to_string(dict) << "\n";
+        std::cout << "== Variants info ==\n" << lightusd::legacy::to_string(dict) << "\n";
       }
 
     }

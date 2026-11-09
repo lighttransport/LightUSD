@@ -13,6 +13,9 @@
 
 
 using namespace lightusd;
+
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd_test;
 
 void handle_allocator_test(void) {

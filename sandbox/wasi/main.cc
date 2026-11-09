@@ -26,13 +26,13 @@ static std::string str_tolower(std::string s) {
 }
 
 bool LoadModelFromString(const std::vector<uint8_t> &content,
-                         const std::string &filename, lightusd::Stage *stage) {
+                         const std::string &filename, lightusd::legacy::Stage *stage) {
   std::string ext = str_tolower(GetFileExtension(filename));
 
   std::string warn;
   std::string err;
 
-  bool ret = lightusd::LoadUSDFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
   }
@@ -87,11 +87,11 @@ int main(int argc, char **argv) {
   if (argc > 1) {
     std::string filename = argv[1];
 #if 1
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
     {
       std::string warn;
       std::string err;
-      bool ret = lightusd::LoadUSDFromFile(filename, &stage, &warn, &err);
+      bool ret = lightusd::legacy::LoadUSDFromFile(filename, &stage, &warn, &err);
 
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     //  std::cerr << "File is empty or failed to read: " << filename << "\n";
     //}
 
-    //lightusd::Stage stage;
+    //lightusd::legacy::Stage stage;
     //bool ret = LoadModelFromString(content, filename, &stage);
     //if (!ret) {
     //  std::cerr << "Load failed.\n";

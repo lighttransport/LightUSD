@@ -11,7 +11,7 @@
 
 #include "common-macros.inc"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 std::string to_string(const MaterialBindingStrength strength) {
   switch (strength) {
@@ -142,6 +142,7 @@ namespace {
 } // namespace
 
 
+}  // namespace legacy
 } // namespace lightusd
 
 

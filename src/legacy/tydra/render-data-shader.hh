@@ -19,7 +19,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // GLSL like data types
@@ -439,4 +439,5 @@ struct RenderMaterial {
 };
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

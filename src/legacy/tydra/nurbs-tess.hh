@@ -16,8 +16,8 @@
 ///
 /// Usage:
 /// ```cpp
-/// lightusd::tydra::NurbsTesselator tesselator;
-/// lightusd::tydra::RenderMesh mesh;
+/// lightusd::legacy::tydra::NurbsTesselator tesselator;
+/// lightusd::legacy::tydra::RenderMesh mesh;
 /// bool success = tesselator.tesselate(nurbs_surface, 32, 32, mesh);
 /// ```
 ///
@@ -25,7 +25,7 @@
 
 #include "render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace tydra {
 
@@ -56,4 +56,5 @@ public:
 
 } // namespace tydra
 
+}  // namespace legacy
 } // namespace lightusd

@@ -10,7 +10,7 @@
 
 #include "tydra/render-data.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Memory usage estimation implementations
@@ -244,4 +244,5 @@ size_t RenderScene::estimate_memory_usage() const {
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

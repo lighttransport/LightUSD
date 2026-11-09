@@ -185,7 +185,7 @@ template <class FVec, class TVec>
 void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
                           const lightusd::next::Stage *stage,
                           const std::unordered_map<std::string, float> *blend_weights,
-                          const matrix4d &world, lightusd::Purpose purpose,
+                          const matrix4d &world, lightusd::legacy::Purpose purpose,
                           uint32_t purpose_mask, double time,
                           const Vec3 &base_color, int32_t tex_id,
                           int32_t normal_tex_id, float roughness, float metallic,
@@ -664,7 +664,7 @@ void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
   matrix4d inverse_normal_world;
   const bool invertible_normal_world =
       have_normal_attribute &&
-      lightusd::inverse(world, inverse_normal_world, 1.0e-12);
+      lightusd::legacy::inverse(world, inverse_normal_world, 1.0e-12);
   auto norm_at = [&](size_t fv, int32_t pi, const Vec3& geom) -> Vec3 {
     if (!have_normal_attribute || !invertible_normal_world || pi < 0)
       return geom;
@@ -2655,7 +2655,7 @@ static inline void EmitPlacementNext(std::vector<MeshJobNext> *jobs,
                                      const RtInstanceSink *sink, size_t *emitted,
                                      const lightusd::next::UsdPrim &prim,
                                      const matrix4d &world,
-                                     lightusd::Purpose purpose) {
+                                     lightusd::legacy::Purpose purpose) {
   if (sink) {
     (*sink)(prim, world, purpose);
     if (emitted) ++*emitted;
@@ -2680,7 +2680,7 @@ static inline size_t EmittedCountNext(const std::vector<MeshJobNext> *jobs,
 static void ExpandPointInstancerJobsNext(
     const lightusd::next::Stage &stage,
     const lightusd::next::UsdPrim &instancer, const matrix4d &instancer_world,
-    lightusd::Purpose purpose, double time,
+    lightusd::legacy::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
     const RtInstanceSink *sink, size_t *emitted, size_t max_jobs);
 // Native (scenegraph instanceable) instance: place the prototype's geometry at the
@@ -2688,7 +2688,7 @@ static void ExpandPointInstancerJobsNext(
 static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
-                                         lightusd::Purpose purpose, double time,
+                                         lightusd::legacy::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *jobs,
                                          const RtInstanceSink *sink,
                                          size_t *emitted);
@@ -2696,14 +2696,14 @@ static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
 // expanding any nested instancers. Shared by both expanders above.
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
-                                         lightusd::Purpose purpose, double time,
+                                         lightusd::legacy::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out, bool include_curves = false);
 // Shared body behind the public vector collector and the streaming placement
 // collector.
 static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
                                    const lightusd::next::UsdPrim &prim,
                                    const matrix4d &parent_world,
-                                   lightusd::Purpose inherited_purpose, double time,
+                                   lightusd::legacy::Purpose inherited_purpose, double time,
                                    const std::vector<std::string> &mask,
                                    std::vector<MeshJobNext> *jobs,
                                    const RtInstanceSink *sink, size_t *emitted,
@@ -2712,7 +2712,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
 static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
                                    const lightusd::next::UsdPrim &prim,
                                    const matrix4d &parent_world,
-                                   lightusd::Purpose inherited_purpose, double time,
+                                   lightusd::legacy::Purpose inherited_purpose, double time,
                                    const std::vector<std::string> &mask,
                                    std::vector<MeshJobNext> *jobs,
                                    const RtInstanceSink *sink, size_t *emitted,
@@ -2734,15 +2734,15 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
   const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  lightusd::Purpose purpose = inherited_purpose;
+  lightusd::legacy::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (auto t = pv->as_token()) {
       if (*t == "render") {
-        purpose = lightusd::Purpose::Render;
+        purpose = lightusd::legacy::Purpose::Render;
       } else if (*t == "proxy") {
-        purpose = lightusd::Purpose::Proxy;
+        purpose = lightusd::legacy::Purpose::Proxy;
       } else if (*t == "guide") {
-        purpose = lightusd::Purpose::Guide;
+        purpose = lightusd::legacy::Purpose::Guide;
       }
       // "default"/unknown: keep the inherited purpose.
     }
@@ -2789,7 +2789,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
 void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
                                 const lightusd::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
-                                lightusd::Purpose inherited_purpose, double time,
+                                lightusd::legacy::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
                                 bool expand_instancers, size_t max_jobs) {
@@ -2801,7 +2801,7 @@ void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
 size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
                                        const lightusd::next::UsdPrim &prim,
                                        const matrix4d &parent_world,
-                                       lightusd::Purpose inherited_purpose,
+                                       lightusd::legacy::Purpose inherited_purpose,
                                        double time,
                                        const std::vector<std::string> &mask,
                                        const RtInstanceSink &sink,
@@ -2824,7 +2824,7 @@ size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
 static void ExpandPointInstancerJobsNext(
     const lightusd::next::Stage &stage,
     const lightusd::next::UsdPrim &instancer, const matrix4d &instancer_world,
-    lightusd::Purpose purpose, double time,
+    lightusd::legacy::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
     const RtInstanceSink *sink, size_t *emitted, size_t max_jobs) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
@@ -2906,7 +2906,7 @@ static void ExpandPointInstancerJobsNext(
 // flatten path renders instancers nested inside a prototype.
 static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
                                          const lightusd::next::UsdPrim &proto,
-                                         lightusd::Purpose purpose, double time,
+                                         lightusd::legacy::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out, bool include_curves) {
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
@@ -2921,7 +2921,7 @@ static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
   }
   if (include_curves) {
     const RtInstanceSink collect = [&](const lightusd::next::UsdPrim& prim,
-        const matrix4d& world, lightusd::Purpose p) {
+        const matrix4d& world, lightusd::legacy::Purpose p) {
       MeshJobNext job;job.prim=prim;job.world=world;job.purpose=p;out->push_back(std::move(job));
     };
     for (const auto& child : proto.GetChildren())
@@ -2944,7 +2944,7 @@ static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
 static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
-                                         lightusd::Purpose purpose, double time,
+                                         lightusd::legacy::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *jobs,
                                          const RtInstanceSink *sink,
                                          size_t *emitted) {
@@ -3201,7 +3201,7 @@ static void CollectVolumesNext(const lightusd::next::Stage &stage,
             continue;
           }
           world_field = Mat4FromArray(field_world);
-          if (!lightusd::inverse(world_field, inverse_field, 1.0e-12)) {
+          if (!lightusd::legacy::inverse(world_field, inverse_field, 1.0e-12)) {
             std::cerr << "WARN: volume '" << prim.GetPath().str()
                       << "': singular field transform\n";
             continue;
@@ -3317,7 +3317,7 @@ static void CollectVolumesNext(const lightusd::next::Stage &stage,
       // (sphere traced by the integrator), anything else is fog.
       vd.level_set = resolved.level_set;
       matrix4d invw;
-      if (!lightusd::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
+      if (!lightusd::legacy::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
       vd.background = grid.background;
       ResolveVolumeMaterialNext(stage, prim, &vd);
@@ -3453,7 +3453,7 @@ bool FindNextCameraFrame(const lightusd::next::Stage &stage,
 // perspective camera on the depth axis so the bbox fits the horizontal FOV,
 // front-on for Y-up and rotated for Z-up. Writes the aperture-derived image
 // height (width / aspect) to `out_height`.
-CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::Axis up_axis,
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::legacy::Axis up_axis,
                                 int width, int *out_height) {
   constexpr float kPi = 3.14159265358979323846f;
   const float focal = 50.0f, hap = 20.955f, vap = 15.2908f;
@@ -3477,12 +3477,12 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::Axis up_axis,
   // Plane corner (half-extents in the focal plane) and the depth half-extent.
   float plane_x, plane_y, depth;
   Vec3 pos_dir, up_vec, fwd;
-  if (up_axis == lightusd::Axis::Z) {
+  if (up_axis == lightusd::legacy::Axis::Z) {
     plane_x = dim.x * 0.5f; plane_y = dim.z * 0.5f; depth = dim.y * 0.5f;
     pos_dir = Vec3{0.0f, -1.0f, 0.0f};  // back up along -Y
     fwd = Vec3{0.0f, 1.0f, 0.0f};
     up_vec = Vec3{0.0f, 0.0f, 1.0f};
-  } else if (up_axis == lightusd::Axis::X) {
+  } else if (up_axis == lightusd::legacy::Axis::X) {
     plane_x = dim.y * 0.5f; plane_y = dim.z * 0.5f; depth = dim.x * 0.5f;
     pos_dir = Vec3{-1.0f, 0.0f, 0.0f};
     fwd = Vec3{1.0f, 0.0f, 0.0f};
@@ -3511,16 +3511,16 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::Axis up_axis,
     }
   }
   // The axis the default view above already looks down.
-  const int view_axis = (up_axis == lightusd::Axis::Z)   ? 1
-                        : (up_axis == lightusd::Axis::X) ? 0
+  const int view_axis = (up_axis == lightusd::legacy::Axis::Z)   ? 1
+                        : (up_axis == lightusd::legacy::Axis::X) ? 0
                                                          : 2;
   if (flat >= 0 && flat != view_axis) {
     auto unit = [](int a) {
       return Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f,
                   a == 2 ? 1.0f : 0.0f};
     };
-    const int up_idx = (up_axis == lightusd::Axis::Z)   ? 2
-                       : (up_axis == lightusd::Axis::X) ? 0
+    const int up_idx = (up_axis == lightusd::legacy::Axis::Z)   ? 2
+                       : (up_axis == lightusd::legacy::Axis::X) ? 0
                                                         : 1;
     pos_dir = unit(flat);          // stand off on the + side of the plane...
     fwd = Mul(unit(flat), -1.0f);  // ...and look back down at it
@@ -3702,14 +3702,14 @@ bool ReadCurvePointViewNext(
 // Read a curve prim's `points` into a point3f vector for legacy callers that
 // need an owning representation. The main chunked path consumes the view above
 // directly and avoids this conversion copy.
-std::vector<lightusd::value::point3f> ReadCurvePointsNext(
+std::vector<lightusd::legacy::value::point3f> ReadCurvePointsNext(
     const lightusd::next::UsdPrim &prim, double time,
     const lightusd::next::ValueClipStageLoader &clip_loader) {
   CurvePointViewNext source;
   if (!ReadCurvePointViewNext(prim, time, clip_loader, &source)) return {};
   const float *pf = source.view.begin();
   const size_t pn = source.view.size();
-  std::vector<lightusd::value::point3f> pts(pn / 3);
+  std::vector<lightusd::legacy::value::point3f> pts(pn / 3);
   for (size_t i = 0; i < pts.size(); ++i)
     pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
   return pts;
@@ -4169,7 +4169,7 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
           continue;
         const Vec3 c = TransformPoint(world, Vec3{pp[i * 3], pp[i * 3 + 1],
                                                    pp[i * 3 + 2]});
-        lightusd::value::quatf q;
+        lightusd::legacy::value::quatf q;
         q.real = 1.0f;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
         const size_t orientation_index = qv.size() == 4 ? 0 : i * 4;
@@ -4177,9 +4177,9 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
           q.real = qq[orientation_index]; q.imag[0] = qq[orientation_index + 1];
           q.imag[1] = qq[orientation_index + 2]; q.imag[2] = qq[orientation_index + 3];
         }
-        const lightusd::value::matrix3d r = lightusd::to_matrix3x3(q);
-        const lightusd::value::matrix4d r4 = lightusd::to_matrix(
-            r, lightusd::value::double3{0.0, 0.0, 0.0});
+        const lightusd::legacy::value::matrix3d r = lightusd::legacy::to_matrix3x3(q);
+        const lightusd::legacy::value::matrix4d r4 = lightusd::legacy::to_matrix(
+            r, lightusd::legacy::value::double3{0.0, 0.0, 0.0});
         const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
         const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
         const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
@@ -4275,18 +4275,18 @@ bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk) {
 // per-axis scale and translation.
 matrix4d InstanceTRS(const float *pos, const float *quat_wxyz,
                      const float *scale3) {
-  lightusd::value::quatf q;
+  lightusd::legacy::value::quatf q;
   q.real = quat_wxyz[0];
   q.imag[0] = quat_wxyz[1];
   q.imag[1] = quat_wxyz[2];
   q.imag[2] = quat_wxyz[3];
   // 3x3 rotation in the same convention as the rest of the xform stack.
-  lightusd::value::matrix3d rot = lightusd::to_matrix3x3(q);
+  lightusd::legacy::value::matrix3d rot = lightusd::legacy::to_matrix3x3(q);
   // p * S * R with S diagonal scales row i of R by scale[i].
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= double(scale3[i]);
-  lightusd::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
-  return lightusd::to_matrix(rot, t);  // translation into row 3
+  lightusd::legacy::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
+  return lightusd::legacy::to_matrix(rot, t);  // translation into row 3
 }
 
 // Recursively collect curve prims under `prim`, accumulating world transforms in
@@ -4294,7 +4294,7 @@ matrix4d InstanceTRS(const float *pos, const float *quat_wxyz,
 // PointInstancer prototype's curves (relative to the prototype root).
 void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
                           const matrix4d &parent_world,
-                          lightusd::Purpose inherited_purpose, double time,
+                          lightusd::legacy::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   // visibility="invisible" prunes the prim and its subtree (parity with the
@@ -4309,12 +4309,12 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
   const matrix4d local = Mat4FromArray(dmat);
   const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
-  lightusd::Purpose purpose = inherited_purpose;
+  lightusd::legacy::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (auto t = pv->as_token()) {
-      if (*t == "render") purpose = lightusd::Purpose::Render;
-      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
-      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::legacy::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::legacy::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::legacy::Purpose::Guide;
     }
   }
   // Nested instancers under a prototype are NOT baked into its curve BLAS -- their
@@ -4341,7 +4341,7 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
 // prototype root (root at identity, replaced by the instance transform).
 void CollectProtoCurves(const lightusd::next::Stage &stage,
                         const std::string &proto_path,
-                        lightusd::Purpose start_purpose, double time,
+                        lightusd::legacy::Purpose start_purpose, double time,
                         std::vector<CurveJobNext> *out) {
   lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
@@ -4361,7 +4361,7 @@ void CollectProtoCurves(const lightusd::next::Stage &stage,
 // curve_inst->protos, or -1 if curve_inst is null or the prototype has no curves.
 int32_t ReserveCurveProto(const lightusd::next::Stage &stage,
                           const std::string &proto_path,
-                          lightusd::Purpose purpose, double time,
+                          lightusd::legacy::Purpose purpose, double time,
                           CurveProtoCollect *curve_inst) {
   if (!curve_inst) return -1;
   const std::string key =
@@ -4391,7 +4391,7 @@ int32_t ReserveCurveProto(const lightusd::next::Stage &stage,
 void CollectPointInstancer(const lightusd::next::Stage &stage,
                            const lightusd::next::UsdPrim &instancer,
                            const matrix4d &instancer_world,
-                           lightusd::Purpose purpose, double time,
+                           lightusd::legacy::Purpose purpose, double time,
                            const std::vector<std::string> &mask,
                            std::vector<InstanceRT> *instances,
                            std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -4507,7 +4507,7 @@ void CollectPointInstancer(const lightusd::next::Stage &stage,
 void CollectSceneSplit(const lightusd::next::Stage &stage,
                        const lightusd::next::UsdPrim &prim,
                        const matrix4d &parent_world,
-                       lightusd::Purpose inherited_purpose, double time,
+                       lightusd::legacy::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
                        std::vector<MeshJobNext> *base_jobs,
                        std::vector<InstanceRT> *instances,
@@ -4530,12 +4530,12 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
   const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  lightusd::Purpose purpose = inherited_purpose;
+  lightusd::legacy::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (auto t = pv->as_token()) {
-      if (*t == "render") purpose = lightusd::Purpose::Render;
-      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
-      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::legacy::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::legacy::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::legacy::Purpose::Guide;
     }
   }
 
@@ -4630,7 +4630,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
 // CollectSceneSplit; base meshes are left to CollectProtoJobs.
 void CollectProtoMeshNestingRec(
     const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
-    const matrix4d &parent_world, lightusd::Purpose inherited_purpose, double time,
+    const matrix4d &parent_world, lightusd::legacy::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
     std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -4644,12 +4644,12 @@ void CollectProtoMeshNestingRec(
   const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  lightusd::Purpose purpose = inherited_purpose;
+  lightusd::legacy::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (auto t = pv->as_token()) {
-      if (*t == "render") purpose = lightusd::Purpose::Render;
-      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
-      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::legacy::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::legacy::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::legacy::Purpose::Guide;
     }
   }
 
@@ -4710,7 +4710,7 @@ void CollectProtoMeshNestingRec(
 // matching CollectProtoJobs). Appends prototype-local placements to `nested`.
 void CollectProtoMeshNesting(
     const lightusd::next::Stage &stage, const std::string &proto_path,
-    lightusd::Purpose purpose, double time, const std::vector<std::string> &mask,
+    lightusd::legacy::Purpose purpose, double time, const std::vector<std::string> &mask,
     std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
     std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
@@ -4750,7 +4750,7 @@ void CollectPrototypePaths(const lightusd::next::UsdPrim &prim,
 // later by the TLAS.
 void CollectProtoJobs(const lightusd::next::Stage &stage,
                       const std::string &proto_path,
-                      lightusd::Purpose start_purpose, double time,
+                      lightusd::legacy::Purpose start_purpose, double time,
                       std::vector<MeshJobNext> *jobs) {
   lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
@@ -4777,7 +4777,7 @@ void CollectProtoJobs(const lightusd::next::Stage &stage,
 // XGen case; per-instance flat/ribbon curves are not separated). Returns false
 // only on a LightRT build failure.
 bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
-                    const std::string &proto_path, lightusd::Purpose purpose,
+                    const std::string &proto_path, lightusd::legacy::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
                     Blas *out, Bounds *local, const Options &opt,
@@ -4961,7 +4961,7 @@ bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
 // implementation avoids retaining the complete transformed prototype while
 // LightRT builds its sub-BLASes.
 bool BuildCurveBlas(const lightusd::next::Stage &stage,
-                    const std::string &proto_path, lightusd::Purpose purpose,
+                    const std::string &proto_path, lightusd::legacy::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const lightusd::next::ValueClipStageLoader &clip_loader,
                     Blas *out, Bounds *local, const Options &opt,
@@ -5414,7 +5414,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   lightusd::tydra::next::CollectPrototypePaths(ctx.stage, &proto_holders);
   for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
-                      lightusd::Purpose::Default, time, opt.mask, &base_jobs,
+                      lightusd::legacy::Purpose::Default, time, opt.mask, &base_jobs,
                       &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
                       &ctx.stats, &proto_holders);
   }
@@ -5570,7 +5570,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<std::vector<CurveInstanceRT>> proto_nested_curves;
   for (size_t i = 0; i < protos.size(); ++i) {
     const std::string ppath = protos[i].path;
-    const lightusd::Purpose ppurpose = protos[i].purpose;
+    const lightusd::legacy::Purpose ppurpose = protos[i].purpose;
     std::vector<MeshJobNext> jobs;
     std::vector<InstanceRT> nested;
     std::vector<CurveInstanceRT> nested_curves;

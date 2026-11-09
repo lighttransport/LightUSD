@@ -34,7 +34,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 ///
 /// Abstract class for asset(e.g. file, memory, uri, ...)
@@ -488,4 +488,5 @@ struct FileFormatHandler
 };
 
 
+}  // namespace legacy
 }  // namespace lightusd

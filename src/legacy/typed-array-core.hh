@@ -25,7 +25,7 @@
 // into every value-system TU (~130 of them). DCOUT comes from common-macros.inc;
 // direct TraceManager users include logger.hh themselves.
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 template <typename T>
 class TypedArray {
@@ -866,4 +866,5 @@ inline TypedArray<T> DuplicateTypedArray(const TypedArray<T>& source) {
   return TypedArray<T>(source.data(), source.size());
 }
 
+}  // namespace legacy
 }  // namespace lightusd

@@ -14,6 +14,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Test helper to check if deduplication is working
 template<typename T>
 bool test_typed_array_dedup() {

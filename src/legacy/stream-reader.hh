@@ -37,7 +37,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <limits>
 #include <memory>
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 namespace {
 
@@ -402,4 +402,5 @@ class StreamReader {
   mutable uint64_t idx_;
 };
 
+}  // namespace legacy
 } // namespace lightusd

@@ -13,7 +13,7 @@
 #include "primvar.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 
 struct XformOp {
   enum class OpType {
@@ -174,4 +174,5 @@ struct XformOp {
   std::vector<Path> _connections;  // Connection targets for this xformOp
 };
 
+}  // namespace legacy
 }  // namespace lightusd

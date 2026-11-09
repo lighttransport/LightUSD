@@ -15,7 +15,7 @@
 #include "tydra/render-data.hh"
 #include "tydra/shader-network.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 bool RenderSceneConverter::ResolveBlendShapeAnimationTargets() {
@@ -308,4 +308,5 @@ bool RenderSceneConverter::EmitComplete(const RenderScene &scene) {
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd

@@ -13,6 +13,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void layer_create_empty_test(void) {
   Layer layer;
   TEST_CHECK(layer.primspecs().empty());
@@ -179,7 +181,7 @@ void layer_check_unresolved_refs_test(void) {
     PrimSpec ps(Specifier::Def, "Xform", "Ref");
 
     Reference ref;
-    ref.asset_path = value::AssetPath("other.usda");
+    ref.asset_path = lightusd::legacy::value::AssetPath("other.usda");
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::ResetToExplicit, {ref}});
     ps.metas().references = refs;
@@ -205,7 +207,7 @@ void layer_check_unresolved_refs_test(void) {
     PrimSpec child(Specifier::Def, "Xform", "Child");
 
     Reference ref;
-    ref.asset_path = value::AssetPath("other.usda");
+    ref.asset_path = lightusd::legacy::value::AssetPath("other.usda");
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::ResetToExplicit, {ref}});
     child.metas().references = refs;
@@ -224,7 +226,7 @@ void layer_check_unresolved_payload_test(void) {
     PrimSpec ps(Specifier::Def, "Xform", "PL");
 
     Payload pl;
-    pl.asset_path = value::AssetPath("payload.usda");
+    pl.asset_path = lightusd::legacy::value::AssetPath("payload.usda");
     std::vector<std::pair<ListEditQual, std::vector<Payload>>> payloads;
     payloads.push_back({ListEditQual::ResetToExplicit, {pl}});
     ps.metas().payload = payloads;
@@ -351,7 +353,7 @@ void layer_metas_test(void) {
   TEST_CHECK(layer.name() == "TestLayer");
 
   // Set layer metas
-  layer.metas().defaultPrim = value::token("Root");
+  layer.metas().defaultPrim = lightusd::legacy::value::token("Root");
   TEST_CHECK(layer.metas().defaultPrim.str() == "Root");
 
   // Set upAxis

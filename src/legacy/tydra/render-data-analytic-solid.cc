@@ -15,7 +15,7 @@
 #include "usdGeom.hh"
 #include "value-types.hh"
 
-namespace lightusd {
+namespace lightusd { namespace legacy {
 namespace tydra {
 
 // Copy authored displayColor / displayOpacity primvars from an analytic Gprim
@@ -38,8 +38,8 @@ bool RenderSceneConverter::ConvertCylinder(
     const GeomCylinder &cylinder, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 1.0;
@@ -104,8 +104,8 @@ bool RenderSceneConverter::ConvertCone(
     const GeomCone &cone, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 1.0;
@@ -169,8 +169,8 @@ bool RenderSceneConverter::ConvertCapsule(
     const GeomCapsule &capsule, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 0.5;
@@ -235,8 +235,8 @@ bool RenderSceneConverter::ConvertPlane(
     const GeomPlane &plane, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const lightusd::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::legacy::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::legacy::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double width = 1.0;
@@ -294,4 +294,5 @@ bool RenderSceneConverter::ConvertPlane(
 
 
 }  // namespace tydra
+}  // namespace legacy
 }  // namespace lightusd
