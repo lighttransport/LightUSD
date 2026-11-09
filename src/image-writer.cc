@@ -75,6 +75,7 @@
 #include "str-util.hh"
 
 #include <climits>
+#include <cstring>  // std::memcpy
 #include <limits>
 
 namespace lightusd {

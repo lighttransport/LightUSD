@@ -20,6 +20,7 @@
 
 #include "core/prim-enums.hh"  // Axis
 #include "image-writer.hh"     // image::PngEncoder
+#include "lightusd.hh"         // Stage, USDLoadOptions
 #include "udim-bake.hh"
 
 namespace lightusd {

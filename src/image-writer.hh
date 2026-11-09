@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "nonstd/expected.hpp"
-#include "lightusd.hh"
+#include "image-types.hh"  // Image (no full lightusd.hh needed)
 
 namespace lightusd {
 namespace image {

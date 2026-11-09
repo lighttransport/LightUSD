@@ -10,6 +10,7 @@
 #include "imageio/png-stream.hh"
 #include "tydra/texture-util.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
