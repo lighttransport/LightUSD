@@ -433,7 +433,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     binding-core-render-mesh.cc
     binding-core-render-material-key.cc
     binding-core-render-material.cc
-    ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
+    material-serializer.cc
     binding-core-render-merge.cc
     binding-core-render-material-output.cc)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
@@ -503,15 +503,6 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   target_link_libraries(lightusd_core_wasm PRIVATE
     tydra lightusd_c lightusd_core)
   target_include_directories(lightusd_core_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
-  # TEMPORARY (next->core refactor): binding-core-render-material-output.cc
-  # still serializes materials through the legacy tydra/material-serializer
-  # (src/legacy/tydra). Appended after src/ so core/shared headers always win.
-  # Removed once the serializer is ported to core RenderMaterial.
-  target_include_directories(lightusd_core_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
-  set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
-    ${PROJECT_SOURCE_DIR}/binding-core-render-material-output.cc
-    PROPERTIES COMPILE_FLAGS "-include ${PROJECT_SOURCE_DIR}/../src/legacy/legacy-namespace.hh")
   target_compile_features(lightusd_core_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_core_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/feature-runtime.js"
