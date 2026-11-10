@@ -19,13 +19,13 @@ env:
 
 jobs:
 
-  # Build with the experimental `next` (pcp large-scene) backend enabled.
+  # Core build + tests on macOS.
   # src/ is gated behind LIGHTUSD_LEGACY_USE_CORE_PCP and is not built
   # by the default macOS job, so this variant keeps it from bit-rotting.
-  build-next-macos:
+  build-core-macos:
 
     runs-on: macos-latest
-    name: Build for macOS (next backend)
+    name: Build for macOS (core)
 
     steps:
       - name: Checkout
@@ -33,23 +33,21 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.24
         with:
-          key: macos-legacy-with-next
+          key: macos-core
           max-size: 500M
       - name: CmakeAndBuild
         run: |
-            cmake -B build_next -S . \
-              -DLIGHTUSD_NATIVE_PRODUCT=legacy \
+            cmake -B build_core -S . \
               -DCMAKE_BUILD_TYPE=Release \
-              -DLIGHTUSD_LEGACY_USE_CORE_PCP=On \
               -DLIGHTUSD_WITH_TYDRA=On \
               -DLIGHTUSD_BUILD_TOOLS=On \
               -DLIGHTUSD_BUILD_EXAMPLES=On \
               -DLIGHTUSD_BUILD_TESTS=On
-            cmake --build build_next -j $(sysctl -n hw.ncpu)
+            cmake --build build_core -j $(sysctl -n hw.ncpu)
       - name: Ctest
-        run: cd build_next && ctest --output-on-failure
+        run: cd build_core && ctest --output-on-failure
 
-  # Native macOS viewer example: Swift UI + Metal renderer over the next C API.
+  # Native macOS viewer example: Swift UI + Metal renderer over the core C API.
   # The headless smoke test compiles the MSL at runtime and skips itself (77) on
   # a runner without a Metal device.
   build-lmetalview-macos:
@@ -68,7 +66,6 @@ jobs:
         run: |
             cmake -B build_lmv -S . -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
-              -DLIGHTUSD_NATIVE_PRODUCT=next \
               -DLIGHTUSD_BUILD_EXAMPLES=ON \
               -DLIGHTUSD_BUILD_LMETALVIEW=ON \
               -DLIGHTUSD_BUILD_TESTS=ON
@@ -81,7 +78,7 @@ jobs:
 
   # Legacy AddressSanitizer build (scripts/bootstrap-cmake-macos.sh) plus the
   # OpenUSD interop check. Disabled: it was added for debugging and is no
-  # longer required; the next-backend job above covers the macOS build.
+  # longer required; the core job above covers the macOS build.
   # build-macos:
   #
   #   runs-on: macos-latest

@@ -4,7 +4,7 @@
 // LightUSD Next - Unified Header
 //
 // This header provides the main entry point for the "next" architecture.
-// Select LIGHTUSD_NATIVE_PRODUCT=next in the root CMake project.
+// Built by default from the root CMake project (or `cmake -S src`).
 //
 // Key differences from the original architecture:
 // - Minimal template usage for faster compilation

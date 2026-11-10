@@ -47,19 +47,19 @@ jobs:
           ## with the C++ bindings I have in the repo?
           #./emsdk install 3.1.51
           #./emsdk activate 3.1.51
-      # The npm package ships the next product only: lightusd_core[_64] plus
+      # The npm package ships the core product: lightusd[_64] plus
       # its feature modules (geometry, raytrace, validator, exr) and the MCP
       # server module. Keep this list in sync with web/npm/build-wasm.sh and
       # web/npm/scripts/stage-package.mjs.
-      - name: Build WASM (next + mcp, wasm32 + wasm64)
+      - name: Build WASM (core + mcp, wasm32 + wasm64)
         run: |
           source ./emsdk/emsdk_env.sh
           build() {
             emcmake cmake -S web -B "web/$1" -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel "${@:2}"
             cmake --build "web/$1" --parallel
           }
-          build cmake-build-next    -DLIGHTUSD_WASM_PRODUCT=next
-          build cmake-build-next64  -DLIGHTUSD_WASM_PRODUCT=next -DLIGHTUSD_WASM64=1
+          build cmake-build-core    -DLIGHTUSD_WASM_PRODUCT=core
+          build cmake-build-core64  -DLIGHTUSD_WASM_PRODUCT=core -DLIGHTUSD_WASM64=1
           build cmake-build-mcp     -DLIGHTUSD_WASM_PRODUCT=mcp
           build cmake-build-mcp64   -DLIGHTUSD_WASM_PRODUCT=mcp -DLIGHTUSD_WASM64=1
 
@@ -78,7 +78,7 @@ jobs:
         run: |
           npm run validate
 
-      # Loads the tests/usda corpus through the staged package (next backend).
+      # Loads the tests/usda corpus through the staged package.
       - name: Test npm package
         working-directory: ${{ github.workspace }}/web/npm
         run: |

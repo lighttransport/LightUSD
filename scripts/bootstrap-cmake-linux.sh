@@ -15,12 +15,10 @@ CXX=clang++
 if [ -n "${CC}" ] && [ -n "${CXX}" ]; then
   cd ${builddir} && CC=${CC} CXX=${CXX} cmake -G Ninja \
     -DCMAKE_VERBOSE_MAKEFILE=1 \
-    -DLIGHTUSD_NATIVE_PRODUCT=legacy \
     ..
 else
   cd ${builddir} && cmake -G Ninja \
     -DCMAKE_VERBOSE_MAKEFILE=1 \
-    -DLIGHTUSD_NATIVE_PRODUCT=legacy \
     ..
 fi
 

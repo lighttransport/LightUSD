@@ -11,5 +11,4 @@ mkdir ${builddir}
 cd ${builddir} && CXX=clang++.exe CC=clang.exe cmake \
   -G "MinGW Makefiles" \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..

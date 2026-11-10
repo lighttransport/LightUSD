@@ -636,7 +636,7 @@ endif()
 # assert(), which is compiled out under NDEBUG.
 option(LIGHTUSD_BUILD_TESTS "Build tests for stable LightUSD Next" OFF)
 # `lusdcat` is the next-backed CLI (formerly `next_usdcat`). It is a tool, not
-# a test, so the default `LIGHTUSD_NATIVE_PRODUCT=next` root build ships it
+# a test, so the default root build ships it
 # without requiring test registration. Default ON for native standalone builds;
 # WASM/WASI builds have no command line to drive so they skip it.
 if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
@@ -1236,10 +1236,8 @@ if(LIGHTUSD_BUILD_LD3D12VIEW AND LIGHTUSD_WITH_TYDRA AND WIN32)
     add_subdirectory(../examples/ld3d12view ld3d12view_example)
 endif()
 
-# Native MJCF -> USD converter on the next converter and writers (the same
-# source builds against legacy tydra in the legacy product).
-if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA AND
-   NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+# Native MJCF -> USD converter on the core converter and writers.
+if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
     add_executable(urdf-to-usd
         ../examples/urdf-to-usd/main.cc)
     target_include_directories(urdf-to-usd PRIVATE
@@ -1260,7 +1258,7 @@ endif()
 option(LIGHTUSD_WITH_MCP_SERVER "Build the LightUSD MCP server library and stdio executable" OFF)
 # Legacy product trees include src/next for their own tools and keep the
 # legacy MCP server; the next server is built for the next product only.
-if(LIGHTUSD_WITH_MCP_SERVER AND NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+if(LIGHTUSD_WITH_MCP_SERVER)
     add_library(lightusd_mcp STATIC
         mcp/mcp-server.cc
         mcp/mcp-tool-schemas.cc

@@ -14,11 +14,8 @@ on:
 
 jobs:
 
-  # Windows(x64) + Visual Studio 2026 build with the experimental `next`
-  # (pcp large-scene) backend enabled. src/ is gated behind
-  # LIGHTUSD_LEGACY_USE_CORE_PCP and is not built by the default Windows
-  # job, so this variant keeps it from bit-rotting on MSVC.
-  build-windows-next:
+  # Windows(x64) + Visual Studio 2026: core build + tests.
+  build-windows-core:
 
     runs-on: windows-latest
     name: Build for Windows(x64, MSVC, next backend)
@@ -29,11 +26,11 @@ jobs:
       - name: Configure
         # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
-        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_LEGACY_USE_CORE_PCP=On -DLIGHTUSD_NATIVE_PRODUCT=legacy
+        run: cmake -S . -B build_core -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off
       - name: Build
-        run: cmake --build build_next --config Release --parallel
+        run: cmake --build build_core --config Release --parallel
       - name: Test
-        run: ctest --test-dir build_next -C Release --output-on-failure
+        run: ctest --test-dir build_core -C Release --output-on-failure
 
   # Native Direct3D 12 viewer example (examples/ld3d12view): a lightui window
   # with a C++/HLSL renderer over the lmetalview core, `next` product only. The
@@ -51,7 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Configure
-        run: cmake -S . -B build_d3d12 -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON -DLIGHTUSD_BUILD_TESTS=ON
+        run: cmake -S . -B build_d3d12 -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON -DLIGHTUSD_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build_d3d12 --config Release --parallel --target ld3d12view lmetalview_core_test
       - name: Test

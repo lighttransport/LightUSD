@@ -12,6 +12,5 @@ cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DPYTHON_EXECUTABLE=${PYTHON_EXE} \
   -DLIGHTUSD_WITH_BLENDER_ADDON=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

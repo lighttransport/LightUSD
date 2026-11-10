@@ -201,7 +201,6 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_mcp -S . \
-          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_MCP_SERVER=On \
           -DLIGHTUSD_WITH_QJS=On \
@@ -214,10 +213,8 @@ jobs:
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
-  # Default product: the root configure builds the next implementation
-  # (LIGHTUSD_NATIVE_PRODUCT defaults to next). The legacy jobs pin
-  # -DLIGHTUSD_NATIVE_PRODUCT=legacy explicitly.
-  build-next-product:
+  # Core: the root configure builds the core library, tools and tests.
+  build-core:
 
     runs-on: ubuntu-latest
 
@@ -226,27 +223,27 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2.24
       with:
-        key: linux-next-product
+        key: linux-core
         max-size: 500M
     - name: configure
       run: |
-        CXX=clang++ CC=clang cmake -B build_next_product -S . -G Ninja \
+        CXX=clang++ CC=clang cmake -B build_core -S . -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_WITH_MCP_SERVER=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_next_product -j $(nproc)
+      run: cmake --build build_core -j $(nproc)
     - name: tests
-      run: cd build_next_product && ctest --output-on-failure
+      run: cd build_core && ctest --output-on-failure
 
   # Fuzz the installed C ABI (src/c-api/lightusd-c.h) -- the boundary the
   # JavaScript/WASM, Python and engine bindings call. The C++-internal fuzzers
   # do not cover it. Bounded smoke run; a crash fails the job and uploads the
   # reproducer. ASan/UBSan come from LIGHTUSD_BUILD_FUZZERS; hardening is
   # disabled so nothing masks or conflicts with the sanitizer output.
-  next-fuzz-cabi:
+  core-fuzz-cabi:
 
     runs-on: ubuntu-latest
 
@@ -260,7 +257,6 @@ jobs:
     - name: configure (clang + sanitizers)
       run: |
         CXX=clang++ CC=clang cmake -B build_fuzz -S . -G Ninja \
-          -DLIGHTUSD_NATIVE_PRODUCT=next \
           -DLIGHTUSD_BUILD_FUZZERS=On \
           -DLIGHTUSD_HARDENING=Off \
           -DLIGHTUSD_WITH_TYDRA=Off \
@@ -285,11 +281,11 @@ jobs:
         name: cabi-fuzz-artifacts
         path: /tmp/cabi-artifacts
 
-  # Sanitizer sweep over the whole next test tree. The C ABI fuzzer job above
-  # only exercises the FFI surface; this runs every next ctest (parser, crate,
+  # Sanitizer sweep over the whole core test tree. The C ABI fuzzer job above
+  # only exercises the FFI surface; this runs every core ctest (parser, crate,
   # pcp, composition, validation, tydra) under AddressSanitizer and
   # UndefinedBehaviorSanitizer. Hardening is off so nothing masks ASan/UBSan.
-  next-asan-ubsan:
+  core-asan-ubsan:
 
     runs-on: ubuntu-latest
 
@@ -298,12 +294,11 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2.24
       with:
-        key: linux-next-asan-ubsan
+        key: linux-core-asan-ubsan
         max-size: 500M
     - name: configure (clang, ASan + UBSan)
       run: |
         CXX=clang++ CC=clang cmake -B build_asan -S . -G Ninja \
-          -DLIGHTUSD_NATIVE_PRODUCT=next \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON \
           -DLIGHTUSD_HARDENING=Off \
@@ -318,11 +313,11 @@ jobs:
         ASAN_OPTIONS=abort_on_error=1 \
         ctest --output-on-failure
 
-  # Verify the shipped next artifacts carry the release hardening set
+  # Verify the shipped core artifacts carry the release hardening set
   # (LIGHTUSD_HARDENING defaults ON). The assertions are the executable
   # specification of the option: if a flag silently stops being applied, this
   # job fails rather than leaving the mitigation quietly missing.
-  next-hardening:
+  core-hardening:
 
     runs-on: ubuntu-latest
 
@@ -336,7 +331,6 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_hardening -S . -G Ninja \
-          -DLIGHTUSD_NATIVE_PRODUCT=next \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=Off \
           -DLIGHTUSD_BUILD_TESTS=On
@@ -361,9 +355,8 @@ jobs:
         readelf -dW "$LIB" | grep -q BIND_NOW
 
 
-  # Build and run the lusdview unit tests (no GPU required). These compiled
-  # unit tests validate lighting, texture, material, geometry, and camera
-  # extraction. The viewer itself is not built by the target list below.
+  # Build and run the lusdview unit tests (no GPU required): LightRT bridge,
+  # MaterialX evaluation and camera navigation. The viewer itself is not built by the target list below.
   build-lusdview-hermetic:
 
     runs-on: ubuntu-latest
@@ -383,7 +376,6 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_lusdview -S . -G Ninja \
-          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -392,24 +384,19 @@ jobs:
     - name: build tests
       run: |
         cmake --build build_lusdview -j $(nproc) \
-          --target lusdview_lighting_test \
           --target lusdview_lightrt_bridge_test \
-          --target lusdview_openpbr_material_test \
-          --target lusdview_texture_pipeline_test \
           --target lusdview_lightrt_mtlx_eval_test \
           --target lusdview_lightrt_mtlx_graph_connection_test \
           --target lusdview_lightrt_mtlx_graph_evaluation_test \
-          --target lusdview_geometry_primvar_test \
           --target lusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav|lusdview-vk-oit-validation"
+        cd build_lusdview && ctest --output-on-failure -R "lusdview_lightrt_bridge|lusdview_lightrt_mtlx|lusdview_camera_nav|lusdview-vk-oit-validation"
 
-  # Build with the experimental `next` (pcp large-scene) backend enabled.
-  # The default build and the rest of CI do NOT compile src/ — it is gated
-  # behind LIGHTUSD_LEGACY_USE_CORE_PCP — so this variant exists to keep the
-  # next/ library + examples from silently bit-rotting against core API changes.
-  build-next:
+  # The legacy implementation (src/legacy) is compiled but not tested: build
+  # core + legacy (libraries, tools, examples, legacy test binaries) so it
+  # cannot bit-rot; legacy registers no CTest cases.
+  legacy-build:
 
     runs-on: ubuntu-latest
 
@@ -418,26 +405,23 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2.24
       with:
-        key: linux-legacy-with-next
+        key: linux-legacy-build
         max-size: 500M
     - name: configure
       run: |
-        CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
-          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
+        CXX=clang++ CC=clang cmake -B build_legacy -S . -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
-          -DLIGHTUSD_LEGACY_USE_CORE_PCP=On \
+          -DLIGHTUSD_BUILD_LEGACY=On \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_TOOLS=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make
-      run: cmake --build build_next -j $(nproc)
-    - name: tests
-      run: cd build_next && ctest --output-on-failure
+      run: cmake --build build_legacy -j $(nproc)
 
-  # AOUSD Core supplemental conformance (next + Python).
+  # AOUSD Core supplemental conformance (core + Python).
   # Fetches the pinned supplemental corpus (scripts/fetch-aousd-supplemental.sh)
-  # and runs both the C++ next_aousd_* ctests and the Python
+  # and runs both the C++ core aousd ctests and the Python
   # test_aousd_supplemental.py suite. Corpus is not vendored; fetch is cached
   # in ~/.cache/lightusd.
   build-aousd:
@@ -460,19 +444,19 @@ jobs:
         ln -sf "$SUITE_ROOT" ./aousd-supplemental
         ls -la "$SUITE_ROOT" | head -n 20
         echo "AOUSD supplemental at $SUITE_ROOT"
-    - name: configure next with supplemental
+    - name: configure core with supplemental
       run: |
         echo "AOUSD_CORE_SUPPLEMENTAL_ROOT=$AOUSD_CORE_SUPPLEMENTAL_ROOT"
-        CXX=clang++ CC=clang cmake -S src -B build_next_aousd -G Ninja \
+        CXX=clang++ CC=clang cmake -S src -B build_core_aousd -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_BUILD_TESTS=On \
           -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \
           -DLIGHTUSD_ENABLE_THREAD=On \
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-    - name: make next
-      run: cmake --build build_next_aousd -j $(nproc)
+    - name: make core
+      run: cmake --build build_core_aousd -j $(nproc)
     - name: ctest aousd
-      run: ctest --test-dir build_next_aousd -R "aousd" --output-on-failure
+      run: ctest --test-dir build_core_aousd -R "aousd" --output-on-failure
     - name: Python aousd binding
       run: |
         python3 -m pip install -e . --no-build-isolation

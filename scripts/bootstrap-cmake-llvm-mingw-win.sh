@@ -14,6 +14,5 @@ cd ${builddir} && cmake \
   -DCMAKE_TOOLCHAIN_FILE=${curdir}/cmake/llvm-mingw-win64.cmake \
   -G "Ninja" \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

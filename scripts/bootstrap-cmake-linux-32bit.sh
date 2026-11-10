@@ -22,7 +22,6 @@ cd ${builddir} && CC=gcc CXX=g++ cmake \
   -DSANITIZE_ADDRESS=1 \
   -DLIGHTUSD_NO_WERROR=On \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 
 # Debug at -O1 (assertions stay on): ASan's recommended level, and -O0 made
