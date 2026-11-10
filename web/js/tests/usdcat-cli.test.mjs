@@ -88,7 +88,7 @@ await testAsync('buildInput: folder picks root + collects siblings', () => withT
   assert.equal(rootName, 'main.usda'); // shallow non-usdz root
 }));
 
-const glueUrl = new URL('../src/lightusd/lightusd.js', import.meta.url).href;
+const glueUrl = new URL('../src/lightusd/lightusd_legacy.js', import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
 
 await testAsync('runUsdcat: flatten inlines referenced prim (USDA)', () => withTempDir((dir) => {

@@ -53,7 +53,6 @@
     "test:corpus": "vite-node cli/corpus-parse-test.js --max-fail 0",
     "dump-materialx": "vite-node cli/dump-materialx-cli.js",
     "dump-mtlx-node": "vite-node cli/dump-mtlx-node.js",
-    "test:materialx-json-regression": "vite-node tests/materialx-json-regression.js",
     "optimize-mtlx-node": "vite-node cli/optimize-mtlx-node.js",
     "dump-lights": "vite-node cli/dump-usdlux-cli.js",
     "test:usdlux": "node cli/test-usdlux-parsing.js",

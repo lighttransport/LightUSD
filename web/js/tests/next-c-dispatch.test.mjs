@@ -6,8 +6,8 @@ const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 // Legacy returns size_t asset counts/sizes as Numbers on wasm32 and BigInts on memory64.
 const cacheSize = value => wasm64 ? BigInt(value) : value;
 const {default: createModule} = await import(wasm64
-  ? '../src/lightusd/lightusd_next_64.js'
-  : '../src/lightusd/lightusd_next.js');
+  ? '../src/lightusd/lightusd_64.js'
+  : '../src/lightusd/lightusd.js');
 const module = await createModule();
 const validator = await module.loadFeature('validator');
 const exr = await module.loadFeature('exr');
@@ -15,9 +15,9 @@ const encode = text => new TextEncoder().encode(text);
 const assertAggregateHeadroomRejectsBeforeBuild = (stream, aggregateMethod,
   itemMethod, itemCount) => {
   assert.ok(itemCount > 0, `${aggregateMethod} fixture must contain records`);
-  const remaining = module._lightusd_next_render_remaining_memory_bytes;
+  const remaining = module._lightusd_wasm_render_remaining_memory_bytes;
   let built = 0;
-  module._lightusd_next_render_remaining_memory_bytes = () => 0;
+  module._lightusd_wasm_render_remaining_memory_bytes = () => 0;
   Object.defineProperty(stream, itemMethod, {
     configurable: true, value: () => { ++built; return {}; }
   });
@@ -25,7 +25,7 @@ const assertAggregateHeadroomRejectsBeforeBuild = (stream, aggregateMethod,
     assert.throws(() => stream[aggregateMethod](), /aggregate exceeds remaining memory limit/);
     assert.equal(built, 0, `${aggregateMethod} must preflight before building records`);
   } finally {
-    module._lightusd_next_render_remaining_memory_bytes = remaining;
+    module._lightusd_wasm_render_remaining_memory_bytes = remaining;
     delete stream[itemMethod];
   }
 };
@@ -34,15 +34,15 @@ assert.deepEqual(Object.getOwnPropertyNames(module.LayerDocument.prototype)
   .filter(name => name !== 'constructor').sort(),
 JSON.parse(fs.readFileSync(new URL('./next-layer-document-api-inventory.json', import.meta.url), 'utf8')));
 const authoredLayer = encode('#usda 1.0\n\ndef Xform "Root" {\n custom string label = "hi" (displayName = "Label")\n}\n');
-const authoredLayerPtr = module['_lightusd_next_alloc'](authoredLayer.length);
+const authoredLayerPtr = module['_lightusd_wasm_alloc'](authoredLayer.length);
 assert.ok(authoredLayerPtr);
 module.HEAPU8.set(authoredLayer, Number(authoredLayerPtr));
 const authoredLayerHeapView = module.HEAPU8.subarray(
   Number(authoredLayerPtr), Number(authoredLayerPtr) + authoredLayer.length);
-const originalNextAlloc = module['_lightusd_next_alloc'];
-const originalNextFree = module['_lightusd_next_free'];
+const originalNextAlloc = module['_lightusd_wasm_alloc'];
+const originalNextFree = module['_lightusd_wasm_free'];
 let layerLoadGrewMemory = false;
-module['_lightusd_next_alloc'] = size => {
+module['_lightusd_wasm_alloc'] = size => {
   if (!layerLoadGrewMemory) {
     const oldBuffer = module.HEAPU8.buffer;
     const pressure = originalNextAlloc(module.HEAPU8.byteLength);
@@ -53,11 +53,11 @@ module['_lightusd_next_alloc'] = size => {
 };
 let layerLoad;
 try { layerLoad = layerDocument.load(authoredLayerHeapView); }
-finally { module['_lightusd_next_alloc'] = originalNextAlloc; }
+finally { module['_lightusd_wasm_alloc'] = originalNextAlloc; }
 assert.equal(layerLoadGrewMemory, true,
   'heap-backed LayerDocument input must survive memory growth before staging');
 assert.deepEqual(layerLoad, {success: true, primCount: 1});
-module['_lightusd_next_free'](authoredLayerPtr);
+module['_lightusd_wasm_free'](authoredLayerPtr);
 assert.equal(layerDocument.loaded(), true);
 const layerJSON = layerDocument.exportJSON();
 assert.equal(layerJSON.success, true, layerJSON.error);
@@ -243,15 +243,15 @@ assert.deepEqual(layerDocument.setAttribute('/Root/Added', 'wide', 'uint64', 900
 assert.throws(() => layerDocument.setAttribute('/Root/Added', 'bad', 'int', [1.5]), /out of range/);
 assert.throws(() => layerDocument.setAttribute('/Root/Added', 'badHalf', 'half', 65520), /out of range/);
 assert.equal(layerDocument.primCount(), 2);
-const nextAlloc = module['_lightusd_next_alloc'];
+const nextAlloc = module['_lightusd_wasm_alloc'];
 let exportStagingAllocations = 0;
-module['_lightusd_next_alloc'] = size => {
+module['_lightusd_wasm_alloc'] = size => {
   ++exportStagingAllocations;
   return nextAlloc(size);
 };
 let editedLayer;
 try { editedLayer = layerDocument.exportUSDA(); }
-finally { module['_lightusd_next_alloc'] = nextAlloc; }
+finally { module['_lightusd_wasm_alloc'] = nextAlloc; }
 assert.equal(exportStagingAllocations, 0,
   'USDA export copies directly from the retained C output into JS ownership');
 assert.equal(editedLayer.success, true, editedLayer.error);
@@ -313,15 +313,15 @@ try {
   assert.match(roundTrippedLayer.text, /half roughness = 0\.25/);
   assert.match(roundTrippedLayer.text, /color3h tint = \(0\.25, 0\.5, 0\.75\)/);
   assert.match(roundTrippedLayer.text, /half\[\] weights = \[0\.25, 0\.5\]/);
-  const allocationBeforeUSDCExport = module['_lightusd_next_alloc'];
+  const allocationBeforeUSDCExport = module['_lightusd_wasm_alloc'];
   let usdcExportStagingAllocations = 0;
-  module['_lightusd_next_alloc'] = size => {
+  module['_lightusd_wasm_alloc'] = size => {
     ++usdcExportStagingAllocations;
     return allocationBeforeUSDCExport(size);
   };
   let binaryLayer;
   try { binaryLayer = reloadLayer.exportUSDC(); }
-  finally { module['_lightusd_next_alloc'] = allocationBeforeUSDCExport; }
+  finally { module['_lightusd_wasm_alloc'] = allocationBeforeUSDCExport; }
   assert.equal(usdcExportStagingAllocations, 0,
     'USDC export copies directly from retained C bytes without WASM staging allocation');
   assert.equal(binaryLayer.success, true, binaryLayer.error);
@@ -410,7 +410,7 @@ assert.equal(nextAssets.getAssetHash('named.bin'),
   'a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222');
 assert.equal(nextAssets.verifyAssetHash('named.bin', nextAssets.getAssetHash('named.bin')), true);
 assert.equal(nextAssets.verifyAssetHash('named.bin', 'wrong-hash'), false);
-const rawAssetPointer = module['_lightusd_next_alloc'](5);
+const rawAssetPointer = module['_lightusd_wasm_alloc'](5);
 assert.ok(rawAssetPointer);
 module.HEAPU8.set([99, 4, 5, 6, 99], Number(rawAssetPointer));
 const rawAssetSubview = typeof rawAssetPointer === 'bigint' ? rawAssetPointer + 1n : rawAssetPointer + 1;
@@ -420,17 +420,17 @@ assert.equal(nextAssets.getAssetCount(), cacheSize(3));
 assert.deepEqual(Array.from(nextAssets.readMemoryAsset('raw-pointer.bin')), [4, 5, 6]);
 assert.throws(() => nextAssets.setAssetFromRawPointer('bad-pointer', module.HEAPU8.byteLength - 1, 3),
   /outside WASM heap/);
-module['_lightusd_next_free'](rawAssetPointer);
+module['_lightusd_wasm_free'](rawAssetPointer);
 assert.equal(nextAssets.deleteAsset('raw-pointer.bin'), true);
-const rawGuardHandle = module['_lightusd_next_create'](5) >>> 0;
+const rawGuardHandle = module['_lightusd_wasm_create'](5) >>> 0;
 assert.ok(rawGuardHandle);
 const invalidRawHeapPointer = typeof rawAssetPointer === 'bigint'
   ? BigInt(module.HEAPU8.byteLength - 1) : module.HEAPU8.byteLength - 1;
-assert.equal(module['_lightusd_next_asset_store_set_raw'](
+assert.equal(module['_lightusd_wasm_asset_store_set_raw'](
   rawGuardHandle, typeof invalidRawHeapPointer === 'bigint' ? 0n : 0,
   0, invalidRawHeapPointer, 4), -1,
   'the C entry rejects a heap span that crosses the current memory boundary');
-module['_lightusd_next_destroy'](rawGuardHandle);
+module['_lightusd_wasm_destroy'](rawGuardHandle);
 assert.equal(nextAssets.registerMemoryAsset('named.bin', new Uint8Array([3, 4])), 'named.bin');
 const replacedUuid = nextAssets.getAssetUUID('named.bin');
 assert.notEqual(replacedUuid, namedUuid);
@@ -581,7 +581,7 @@ assert.equal(subdiv.refineStream(quad, quadCounts, quadIndices, quadUV,
     batches.push({numVertices, numFaces, batchIndex});
   }), '');
 assert.ok(batches.length > 0);
-const subdivInput = module._lightusd_next_alloc(quad.byteLength);
+const subdivInput = module._lightusd_wasm_alloc(quad.byteLength);
 try {
   const heapQuad = new Float32Array(module.HEAPU8.buffer, Number(subdivInput), quad.length);
   heapQuad.set(quad);
@@ -594,7 +594,7 @@ try {
       ++untexturedBatches;
     }), '');
   assert.ok(untexturedBatches > 0);
-} finally { module._lightusd_next_free(subdivInput); }
+} finally { module._lightusd_wasm_free(subdivInput); }
 assert.match(subdiv.refineStream(new Float32Array([0]), quadCounts,
   quadIndices, null, null, 0, 0, 0, 1, 1, 0, 0, false, () => {}),
   /points length must be a multiple of 3/);
@@ -616,14 +616,14 @@ assert.throws(() => flatten.begin(null, 'root.usda', true), /expected byte view/
 assert.throws(() => flatten.provideLayer('dep.usda', null), /expected byte view/);
 assert.throws(() => flatten.setVariantOverride('lod'), /wrong argument count/);
 const flattenRoot = encode('#usda 1.0\ndef Xform "Root" {}\n');
-const flattenPtr = module._lightusd_next_alloc(flattenRoot.length + 2);
+const flattenPtr = module._lightusd_wasm_alloc(flattenRoot.length + 2);
 try {
   module.HEAPU8.set(flattenRoot, Number(flattenPtr) + 1);
   assert.deepEqual(flatten.begin(module.HEAPU8.subarray(
     Number(flattenPtr) + 1, Number(flattenPtr) + 1 + flattenRoot.length),
     'root.usda', true), {success: true, status: 'ready'});
 } finally {
-  module._lightusd_next_free(flattenPtr);
+  module._lightusd_wasm_free(flattenPtr);
 }
 assert.deepEqual(flatten.setVariantOverride('lod', 'high'), {success: true});
 const dependency = encode('x#usda 1.0\ndef Xform "Dep" {}\ny').subarray(1, -1);
@@ -704,11 +704,11 @@ assert.equal(compositionFailure.compositionErrorCount,
   compositionFailure.compositionErrors.length);
 diagnosticFlatten.end();
 diagnosticFlatten.delete();
-const staleFlatten = module._lightusd_next_create(3) >>> 0;
+const staleFlatten = module._lightusd_wasm_create(3) >>> 0;
 assert.ok(staleFlatten);
-assert.equal(module._lightusd_next_flatten_end(staleFlatten), 0);
-module._lightusd_next_destroy(staleFlatten);
-assert.equal(module._lightusd_next_flatten_end(staleFlatten), -1);
+assert.equal(module._lightusd_wasm_flatten_end(staleFlatten), 0);
+module._lightusd_wasm_destroy(staleFlatten);
+assert.equal(module._lightusd_wasm_flatten_end(staleFlatten), -1);
 const streamed = new module.NextFlattenSession();
 assert.deepEqual(streamed.step(null),
   {success: false, error: 'session not started (call begin first)'});
@@ -731,88 +731,88 @@ assert.throws(() => streamed.step(() => { throw new Error('chunk failure'); }),
   /chunk failure/);
 streamed.end();
 streamed.delete();
-assert.equal(module._lightusd_next_create(0), 0);
-assert.equal(module._lightusd_next_create(99), 0);
-const stale = module._lightusd_next_create(4) >>> 0;
+assert.equal(module._lightusd_wasm_create(0), 0);
+assert.equal(module._lightusd_wasm_create(99), 0);
+const stale = module._lightusd_wasm_create(4) >>> 0;
 assert.ok(stale);
-assert.equal(module._lightusd_next_render_count(stale, 0), 0);
-assert.equal(module._lightusd_next_render_count(stale, 10), 0);
-assert.equal(module._lightusd_next_render_count(stale, 255), -1);
-assert.equal(module._lightusd_next_render_set_flag(stale, 0, 1), 0);
-assert.equal(module._lightusd_next_render_set_flag(stale, 255, 1), -1);
-assert.equal(module._lightusd_next_render_control(stale, 0), 0);
-assert.equal(module._lightusd_next_render_control(stale, 255), -1);
+assert.equal(module._lightusd_wasm_render_count(stale, 0), 0);
+assert.equal(module._lightusd_wasm_render_count(stale, 10), 0);
+assert.equal(module._lightusd_wasm_render_count(stale, 255), -1);
+assert.equal(module._lightusd_wasm_render_set_flag(stale, 0, 1), 0);
+assert.equal(module._lightusd_wasm_render_set_flag(stale, 255, 1), -1);
+assert.equal(module._lightusd_wasm_render_control(stale, 0), 0);
+assert.equal(module._lightusd_wasm_render_control(stale, 255), -1);
 const emptyTextSettings = () => {
   try {
-    assert.equal(module._lightusd_next_render_set_text(stale, 1, 0, 0), 0);
-    return module._lightusd_next_render_set_variant_override(stale, 0, 0, 0, 0);
+    assert.equal(module._lightusd_wasm_render_set_text(stale, 1, 0, 0), 0);
+    return module._lightusd_wasm_render_set_variant_override(stale, 0, 0, 0, 0);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    assert.equal(module._lightusd_next_render_set_text(stale, 1, 0n, 0), 0);
-    return module._lightusd_next_render_set_variant_override(stale, 0n, 0, 0n, 0);
+    assert.equal(module._lightusd_wasm_render_set_text(stale, 1, 0n, 0), 0);
+    return module._lightusd_wasm_render_set_variant_override(stale, 0n, 0, 0n, 0);
   }
 };
 assert.equal(emptyTextSettings(), 0);
-assert.equal(module._lightusd_next_call, undefined);
-assert.equal(module._lightusd_next_render_variant_set_count(stale), 0);
-assert.equal(module._lightusd_next_render_variant_name_count(stale, 0), -1);
+assert.equal(module._lightusd_wasm_call, undefined);
+assert.equal(module._lightusd_wasm_render_variant_set_count(stale), 0);
+assert.equal(module._lightusd_wasm_render_variant_name_count(stale, 0), -1);
 const provideEmptyAsset = () => {
-  try { return module._lightusd_next_render_provide_asset(stale, 0, 0, 0, 0); }
+  try { return module._lightusd_wasm_render_provide_asset(stale, 0, 0, 0, 0); }
   catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return module._lightusd_next_render_provide_asset(stale, 0n, 0, 0n, 0);
+    return module._lightusd_wasm_render_provide_asset(stale, 0n, 0, 0n, 0);
   }
 };
 assert.equal(provideEmptyAsset(), 0);
 const removeEmptyAsset = () => {
-  try { return module._lightusd_next_render_remove_asset(stale, 0, 0); }
+  try { return module._lightusd_wasm_render_remove_asset(stale, 0, 0); }
   catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return module._lightusd_next_render_remove_asset(stale, 0n, 0);
+    return module._lightusd_wasm_render_remove_asset(stale, 0n, 0);
   }
 };
 assert.equal(removeEmptyAsset(), -1);
 const invalidVariantString = () => {
-  try { return module._lightusd_next_render_variant_string(stale, 0, 0, 0, 0, 0); }
+  try { return module._lightusd_wasm_render_variant_string(stale, 0, 0, 0, 0, 0); }
   catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return module._lightusd_next_render_variant_string(stale, 0, 0, 0, 0n, 0);
+    return module._lightusd_wasm_render_variant_string(stale, 0, 0, 0, 0n, 0);
   }
 };
 assert.equal(invalidVariantString(), -1);
 const nullPointer = () => {
-  try { return module._lightusd_next_render_error(stale, 0, 0); }
+  try { return module._lightusd_wasm_render_error(stale, 0, 0); }
   catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return module._lightusd_next_render_error(stale, 0n, 0);
+    return module._lightusd_wasm_render_error(stale, 0n, 0);
   }
 };
 assert.equal(nullPointer(), 0);
-module._lightusd_next_destroy(stale);
+module._lightusd_wasm_destroy(stale);
 // Reuse and then retire a generation slot. An old handle stays invalid.
 for (let i = 0; i < 4200; ++i) {
-  const handle = module._lightusd_next_create(4) >>> 0;
+  const handle = module._lightusd_wasm_create(4) >>> 0;
   assert.ok(handle);
-  assert.equal(module._lightusd_next_render_count(stale, 0), -1);
-  assert.equal(module._lightusd_next_converter_export(handle, 0), -1); // wrong class
-  module._lightusd_next_destroy(handle);
+  assert.equal(module._lightusd_wasm_render_count(stale, 0), -1);
+  assert.equal(module._lightusd_wasm_converter_export(handle, 0), -1); // wrong class
+  module._lightusd_wasm_destroy(handle);
 }
-module._lightusd_next_destroy(stale); // stale disposal is harmless
-assert.equal(module._lightusd_next_render_count(stale, 0), -1);
-assert.equal(module._lightusd_next_render_set_flag(stale, 0, 1), -1);
-assert.equal(module._lightusd_next_render_control(stale, 0), -1);
-assert.equal(module._lightusd_next_render_variant_set_count(stale), -1);
-assert.equal(module._lightusd_next_render_set_provided_asset_byte_limit(stale, 1), -1);
-assert.equal(module._lightusd_next_render_provided_asset_byte_limit(stale), -1);
-assert.equal(module._lightusd_next_render_variant_name_count(stale, 0), -1);
+module._lightusd_wasm_destroy(stale); // stale disposal is harmless
+assert.equal(module._lightusd_wasm_render_count(stale, 0), -1);
+assert.equal(module._lightusd_wasm_render_set_flag(stale, 0, 1), -1);
+assert.equal(module._lightusd_wasm_render_control(stale, 0), -1);
+assert.equal(module._lightusd_wasm_render_variant_set_count(stale), -1);
+assert.equal(module._lightusd_wasm_render_set_provided_asset_byte_limit(stale, 1), -1);
+assert.equal(module._lightusd_wasm_render_provided_asset_byte_limit(stale), -1);
+assert.equal(module._lightusd_wasm_render_variant_name_count(stale, 0), -1);
 assert.equal(invalidVariantString(), -1);
 assert.equal(provideEmptyAsset(), -1);
 assert.equal(removeEmptyAsset(), -1);
 const staleBegin = () => {
-  try { return module._lightusd_next_render_begin(stale, 0, 0); }
+  try { return module._lightusd_wasm_render_begin(stale, 0, 0); }
   catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return module._lightusd_next_render_begin(stale, 0n, 0);
+    return module._lightusd_wasm_render_begin(stale, 0n, 0);
   }
 };
 assert.equal(staleBegin(), -1);
@@ -863,51 +863,51 @@ try {
   assert.equal(allImages.length, imageStream.numImages());
   assert.deepEqual(allImages[0], imageRecord);
   assert.throws(() => imageStream.getAllImages(1), /wrong argument count/);
-  const imageFieldForMetadataProbe = module._lightusd_next_render_image_field;
-  const resourceNameForMetadataProbe = module._lightusd_next_render_resource_name;
-  const resourcePathForMetadataProbe = module._lightusd_next_render_resource_path;
+  const imageFieldForMetadataProbe = module._lightusd_wasm_render_image_field;
+  const resourceNameForMetadataProbe = module._lightusd_wasm_render_resource_name;
+  const resourcePathForMetadataProbe = module._lightusd_wasm_render_resource_path;
   try {
-    module._lightusd_next_render_resource_name = (...args) => {
+    module._lightusd_wasm_render_resource_name = (...args) => {
       if (args[3] === 0 || args[3] === 0n) return 0x10000000;
       throw new Error('image metadata preflight must not copy names');
     };
-    module._lightusd_next_render_resource_path = (...args) => {
+    module._lightusd_wasm_render_resource_path = (...args) => {
       if (args[3] === 0 || args[3] === 0n) return 0;
       throw new Error('image metadata preflight must not copy paths');
     };
-    module._lightusd_next_render_image_field = () => {
+    module._lightusd_wasm_render_image_field = () => {
       throw new Error('image metadata budget must reject before image field queries');
     };
     assert.throws(() => imageStream.getAllImages(),
       /aggregate image metadata exceeds 512 MiB/);
   } finally {
-    module._lightusd_next_render_image_field = imageFieldForMetadataProbe;
-    module._lightusd_next_render_resource_name = resourceNameForMetadataProbe;
-    module._lightusd_next_render_resource_path = resourcePathForMetadataProbe;
+    module._lightusd_wasm_render_image_field = imageFieldForMetadataProbe;
+    module._lightusd_wasm_render_resource_name = resourceNameForMetadataProbe;
+    module._lightusd_wasm_render_resource_path = resourcePathForMetadataProbe;
   }
-  const aggregateImageFieldExport = module._lightusd_next_render_image_field;
+  const aggregateImageFieldExport = module._lightusd_wasm_render_image_field;
   try {
-    module._lightusd_next_render_image_field = (handle, id, field) =>
+    module._lightusd_wasm_render_image_field = (handle, id, field) =>
       field === 4 ? 1 : field === 7 ? 0x20000001 : aggregateImageFieldExport(handle, id, field);
     assert.throws(() => imageStream.getAllImages(), /aggregate image data exceeds 512 MiB/);
   } finally {
-    module._lightusd_next_render_image_field = aggregateImageFieldExport;
+    module._lightusd_wasm_render_image_field = aggregateImageFieldExport;
   }
-  const imageFieldForMemoryProbe = module._lightusd_next_render_image_field;
-  const imageDataForMemoryProbe = module._lightusd_next_render_image_data;
-  const remainingForImageProbe = module._lightusd_next_render_remaining_memory_bytes;
+  const imageFieldForMemoryProbe = module._lightusd_wasm_render_image_field;
+  const imageDataForMemoryProbe = module._lightusd_wasm_render_image_data;
+  const remainingForImageProbe = module._lightusd_wasm_render_remaining_memory_bytes;
   let imagePayloadCopies = 0;
   try {
-    module._lightusd_next_render_image_field = (handle, id, field) =>
+    module._lightusd_wasm_render_image_field = (handle, id, field) =>
       field === 4 ? 1 : field === 7 ? 4 : imageFieldForMemoryProbe(handle, id, field);
-    module._lightusd_next_render_remaining_memory_bytes = () => 0;
+    module._lightusd_wasm_render_remaining_memory_bytes = () => 0;
     Object.defineProperty(imageStream, 'resourceNameBuffer', {
       value: () => new Uint8Array(0), configurable: true
     });
     Object.defineProperty(imageStream, 'resourcePathBuffer', {
       value: () => new Uint8Array(0), configurable: true
     });
-    module._lightusd_next_render_image_data = (...args) => {
+    module._lightusd_wasm_render_image_data = (...args) => {
       ++imagePayloadCopies;
       return imageDataForMemoryProbe(...args);
     };
@@ -918,9 +918,9 @@ try {
     assert.equal(imagePayloadCopies, 0,
       'aggregate image copy must preflight remaining memory before accessing pixel data');
   } finally {
-    module._lightusd_next_render_image_field = imageFieldForMemoryProbe;
-    module._lightusd_next_render_image_data = imageDataForMemoryProbe;
-    module._lightusd_next_render_remaining_memory_bytes = remainingForImageProbe;
+    module._lightusd_wasm_render_image_field = imageFieldForMemoryProbe;
+    module._lightusd_wasm_render_image_data = imageDataForMemoryProbe;
+    module._lightusd_wasm_render_remaining_memory_bytes = remainingForImageProbe;
     delete imageStream.resourceNameBuffer;
     delete imageStream.resourcePathBuffer;
   }
@@ -947,18 +947,18 @@ try {
   assert.equal(textureRecord.sourceToDisplayLinear.length, 9);
   assert.ok(textureRecord.sourceToDisplayLinear.every(Number.isFinite));
   assert.equal(textureRecord.sourceColorSpace, imageStream.textureString(0, 1));
-  const remainingMemoryQuery = module._lightusd_next_render_remaining_memory_bytes;
-  const imageStreamAlloc = module._lightusd_next_alloc;
+  const remainingMemoryQuery = module._lightusd_wasm_render_remaining_memory_bytes;
+  const imageStreamAlloc = module._lightusd_wasm_alloc;
   let stringAllocations = 0;
   try {
-    module._lightusd_next_render_remaining_memory_bytes = () => 0;
-    module._lightusd_next_alloc = size => { ++stringAllocations; return imageStreamAlloc(size); };
+    module._lightusd_wasm_render_remaining_memory_bytes = () => 0;
+    module._lightusd_wasm_alloc = size => { ++stringAllocations; return imageStreamAlloc(size); };
     assert.throws(() => imageStream.textureString(0, 1), /remaining memory limit/);
     assert.equal(stringAllocations, 0,
       'string copies must respect remaining-memory limits before allocation');
   } finally {
-    module._lightusd_next_render_remaining_memory_bytes = remainingMemoryQuery;
-    module._lightusd_next_alloc = imageStreamAlloc;
+    module._lightusd_wasm_render_remaining_memory_bytes = remainingMemoryQuery;
+    module._lightusd_wasm_alloc = imageStreamAlloc;
   }
   assert.throws(() => imageStream.textureString(0, 3), /string kind 0\.\.2/);
   assert.ok(textureRecord.imageId >= 0);
@@ -975,23 +975,23 @@ try {
   assert.deepEqual(imageStream.getTextureRecord(99999), {});
   assert.throws(() => imageStream.getTextureRecord(), /one integer texture id/);
   assert.throws(() => imageStream.getAllTextures(1), /wrong argument count/);
-  const udimCountExport = module._lightusd_next_render_udim_tile_count;
-  const udimTotalExport = module._lightusd_next_render_udim_count;
-  const udimTilesExport = module._lightusd_next_render_udim_tiles;
-  const udimStringExport = module._lightusd_next_render_udim_string;
+  const udimCountExport = module._lightusd_wasm_render_udim_tile_count;
+  const udimTotalExport = module._lightusd_wasm_render_udim_count;
+  const udimTilesExport = module._lightusd_wasm_render_udim_tiles;
+  const udimStringExport = module._lightusd_wasm_render_udim_string;
   const udimStrings = ['Tex', '/World/Mat/Tex', 'Texture', 'skin.<UDIM>.png'];
   const udimRecords = new Int32Array([1001, 0, 0, 1, 1011, 0, 1, 2]);
   try {
-    module._lightusd_next_render_udim_tile_count = (_handle, id) => id === 0 ? 2 : -1;
-    module._lightusd_next_render_udim_count = () => 1;
-    module._lightusd_next_render_udim_tiles = (_handle, id, ptr, cap) => {
+    module._lightusd_wasm_render_udim_tile_count = (_handle, id) => id === 0 ? 2 : -1;
+    module._lightusd_wasm_render_udim_count = () => 1;
+    module._lightusd_wasm_render_udim_tiles = (_handle, id, ptr, cap) => {
       if (id !== 0) return -1;
       const bytes = new Uint8Array(udimRecords.buffer);
       if (!ptr || cap < bytes.length) return bytes.length;
       module.HEAPU8.set(bytes, Number(ptr));
       return bytes.length;
     };
-    module._lightusd_next_render_udim_string = (_handle, id, kind, ptr, cap) => {
+    module._lightusd_wasm_render_udim_string = (_handle, id, kind, ptr, cap) => {
       if (id !== 0 || kind < 0 || kind > 3) return -1;
       const bytes = new TextEncoder().encode(udimStrings[kind]);
       if (!ptr || cap < bytes.length) return bytes.length;
@@ -1012,10 +1012,10 @@ try {
       ['absPath', 'assetIdentifier', 'displayName', 'primName', 'tiles']);
     assert.deepEqual(imageStream.getUDIMTexture(99), {});
 } finally {
-    module._lightusd_next_render_udim_tile_count = udimCountExport;
-    module._lightusd_next_render_udim_count = udimTotalExport;
-    module._lightusd_next_render_udim_tiles = udimTilesExport;
-    module._lightusd_next_render_udim_string = udimStringExport;
+    module._lightusd_wasm_render_udim_tile_count = udimCountExport;
+    module._lightusd_wasm_render_udim_count = udimTotalExport;
+    module._lightusd_wasm_render_udim_tiles = udimTilesExport;
+    module._lightusd_wasm_render_udim_string = udimStringExport;
   }
   assert.ok(imageStream.numMaterials() > 0);
   const materialRecord = imageStream.getMaterialRecord(0);
@@ -1057,24 +1057,24 @@ try {
   assert.throws(() => imageStream.getMaterial(), /one integer material id/);
   assert.throws(() => imageStream.getMaterialWithFormat(0), /integer material id and format string/);
   assert.throws(() => imageStream.getMaterialWithFormat(0, {}), /integer material id and format string/);
-  const materialFormatCopy = module._lightusd_next_render_material_format_string;
-  const materialAlloc = module._lightusd_next_alloc;
+  const materialFormatCopy = module._lightusd_wasm_render_material_format_string;
+  const materialAlloc = module._lightusd_wasm_alloc;
   let materialCopyAllocated = false;
   try {
-    module._lightusd_next_render_material_format_string = () => 0x20000001;
-    module._lightusd_next_alloc = size => {
+    module._lightusd_wasm_render_material_format_string = () => 0x20000001;
+    module._lightusd_wasm_alloc = size => {
       materialCopyAllocated = true;
       return materialAlloc(size);
     };
     assert.throws(() => imageStream.getMaterial(0), /string exceeds 512 MiB limit/);
     assert.equal(materialCopyAllocated, false);
   } finally {
-    module._lightusd_next_render_material_format_string = materialFormatCopy;
-    module._lightusd_next_alloc = materialAlloc;
+    module._lightusd_wasm_render_material_format_string = materialFormatCopy;
+    module._lightusd_wasm_alloc = materialAlloc;
   }
   // Complete the pending size-query/copy pair and release the C-side cache.
   assert.equal(imageStream.getMaterial(0).format, 'json');
-  const imageFieldExport = module._lightusd_next_render_image_field;
+  const imageFieldExport = module._lightusd_wasm_render_image_field;
   let imageBufferCopies = 0;
   try {
     Object.defineProperty(imageStream, 'textureLoaded', {
@@ -1083,14 +1083,14 @@ try {
     Object.defineProperty(imageStream, 'textureImageBuffer', {
       configurable: true, value: () => { ++imageBufferCopies; return new Uint8Array(0); }
     });
-    module._lightusd_next_render_image_field = () => 0x20000001;
+    module._lightusd_wasm_render_image_field = () => 0x20000001;
     assert.throws(() => imageStream.getTextureRecord(0), /exceeds 512 MiB limit/);
     assert.throws(() => imageStream.getAllTextures(), /exceeds 512 MiB limit/);
     assert.equal(imageBufferCopies, 0,
       'oversized texture payloads must be rejected before allocating a copy');
-    const resourceNameQuery = module._lightusd_next_render_resource_name;
+    const resourceNameQuery = module._lightusd_wasm_render_resource_name;
     try {
-      module._lightusd_next_render_resource_name = (handle, kind, id, ptr, cap) =>
+      module._lightusd_wasm_render_resource_name = (handle, kind, id, ptr, cap) =>
         kind === 3 && id === 0 && (ptr === 0 || ptr === 0n) && cap === 0
           ? 0x10000000
           : resourceNameQuery(handle, kind, id, ptr, cap);
@@ -1099,13 +1099,13 @@ try {
       assert.equal(imageBufferCopies, 0,
         'oversized texture metadata must be rejected before image copies');
     } finally {
-      module._lightusd_next_render_resource_name = resourceNameQuery;
+      module._lightusd_wasm_render_resource_name = resourceNameQuery;
     }
-    const remainingTextureMemory = module._lightusd_next_render_remaining_memory_bytes;
+    const remainingTextureMemory = module._lightusd_wasm_render_remaining_memory_bytes;
     let textureRecordsBuilt = 0;
     try {
-      module._lightusd_next_render_image_field = imageFieldExport;
-      module._lightusd_next_render_remaining_memory_bytes = () => 0;
+      module._lightusd_wasm_render_image_field = imageFieldExport;
+      module._lightusd_wasm_render_remaining_memory_bytes = () => 0;
       Object.defineProperty(imageStream, 'getTextureRecord', {
         configurable: true,
         value: () => { ++textureRecordsBuilt; return {}; }
@@ -1114,11 +1114,11 @@ try {
       assert.equal(textureRecordsBuilt, 0,
         'aggregate texture budget must reject before constructing texture records');
     } finally {
-      module._lightusd_next_render_remaining_memory_bytes = remainingTextureMemory;
+      module._lightusd_wasm_render_remaining_memory_bytes = remainingTextureMemory;
       delete imageStream.getTextureRecord;
     }
   } finally {
-    module._lightusd_next_render_image_field = imageFieldExport;
+    module._lightusd_wasm_render_image_field = imageFieldExport;
     delete imageStream.textureLoaded;
     delete imageStream.textureImageBuffer;
   }
@@ -1277,15 +1277,15 @@ try {
   const diagnosticLoad = diagnosticStream.begin(encode(diagnosticFixture));
   assert.equal(diagnosticLoad.success, true,
     diagnosticLoad.error || diagnosticStream.error());
-  const diagnosticStringExport = module._lightusd_next_render_material_diagnostic_string;
+  const diagnosticStringExport = module._lightusd_wasm_render_material_diagnostic_string;
   try {
-    module._lightusd_next_render_material_diagnostic_string = () => 0x10000000;
+    module._lightusd_wasm_render_material_diagnostic_string = () => 0x10000000;
     assert.throws(() => diagnosticStream.getMaterialRecord(0),
       /aggregate returned data exceeds 512 MiB/);
     assert.throws(() => diagnosticStream.getAllMaterials(),
       /aggregate returned data exceeds 512 MiB/);
   } finally {
-    module._lightusd_next_render_material_diagnostic_string = diagnosticStringExport;
+    module._lightusd_wasm_render_material_diagnostic_string = diagnosticStringExport;
   }
   const diagnosedMaterial = diagnosticStream.getAllMaterials()
     .find(material => material.diagnostics.length > 0);
@@ -1297,35 +1297,35 @@ try {
   assert.deepEqual(diagnosticStream.getMaterialDiagnostics(diagnosedMaterial.id),
     diagnosedMaterial.diagnostics);
   {
-    const countQuery = module._lightusd_next_render_material_diagnostic_count;
-    const allocate = module._lightusd_next_alloc;
+    const countQuery = module._lightusd_wasm_render_material_diagnostic_count;
+    const allocate = module._lightusd_wasm_alloc;
     let allocations = 0;
-    module._lightusd_next_render_material_diagnostic_count = () => 65537;
-    module._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+    module._lightusd_wasm_render_material_diagnostic_count = () => 65537;
+    module._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
     try {
       assert.throws(() => diagnosticStream.getMaterialDiagnostics(diagnosedMaterial.id),
         /excessive diagnostic count/);
       assert.equal(allocations, 0,
         'diagnostic count is bounded before allocating strings');
     } finally {
-      module._lightusd_next_render_material_diagnostic_count = countQuery;
-      module._lightusd_next_alloc = allocate;
+      module._lightusd_wasm_render_material_diagnostic_count = countQuery;
+      module._lightusd_wasm_alloc = allocate;
     }
   }
   {
-    const stringQuery = module._lightusd_next_render_material_diagnostic_string;
-    const allocate = module._lightusd_next_alloc;
+    const stringQuery = module._lightusd_wasm_render_material_diagnostic_string;
+    const allocate = module._lightusd_wasm_alloc;
     let allocations = 0;
-    module._lightusd_next_render_material_diagnostic_string = () => 0x10000001;
-    module._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+    module._lightusd_wasm_render_material_diagnostic_string = () => 0x10000001;
+    module._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
     try {
       assert.throws(() => diagnosticStream.getMaterialDiagnostics(diagnosedMaterial.id),
         /aggregate exceeds 512 MiB limit/);
       assert.equal(allocations, 0,
         'diagnostic string aggregate is bounded before allocating payloads');
     } finally {
-      module._lightusd_next_render_material_diagnostic_string = stringQuery;
-      module._lightusd_next_alloc = allocate;
+      module._lightusd_wasm_render_material_diagnostic_string = stringQuery;
+      module._lightusd_wasm_alloc = allocate;
     }
   }
   assert.deepEqual(diagnosticStream.getMaterialDiagnostics(99999), []);
@@ -1512,9 +1512,9 @@ for (let channels = 1; channels <= 4; ++channels) {
   assert.deepEqual(Array.from(encoded.subarray(8, 8 + channels)), Array.from(pixels));
   assert.equal(entries.has(338), channels === 2 || channels === 4);
 }
-const originalImageAlloc = module._lightusd_next_alloc;
+const originalImageAlloc = module._lightusd_wasm_alloc;
 const imageAllocSizes = [];
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   imageAllocSizes.push(Number(size));
   return originalImageAlloc(size);
 };
@@ -1522,7 +1522,7 @@ let encodedExr;
 try {
   encodedExr = stream.encodeImageNative(new Uint8Array([255, 64, 0]), 1, 1, 3, 'exr');
 } finally {
-  module._lightusd_next_alloc = originalImageAlloc;
+  module._lightusd_wasm_alloc = originalImageAlloc;
 }
 assert.deepEqual(imageAllocSizes, [], 'EXR uses its independent module allocator');
 assert.ok(encodedExr instanceof Uint8Array && encodedExr.length > 32);
@@ -1597,8 +1597,8 @@ assert.equal(stream.maxInputBytes(), 512 * 1024 * 1024);
 stream.setMaxInputBytes(2);
 assert.equal(stream.maxInputBytes(), 2);
 let stagedInputAllocations = 0;
-const streamAlloc = module._lightusd_next_alloc;
-module._lightusd_next_alloc = size => {
+const streamAlloc = module._lightusd_wasm_alloc;
+module._lightusd_wasm_alloc = size => {
   if (size === 3) ++stagedInputAllocations;
   return streamAlloc(size);
 };
@@ -1607,14 +1607,14 @@ try {
   assert.equal(rejected.success, false);
   assert.match(rejected.error, /configured byte limit/);
   assert.equal(stagedInputAllocations, 0, 'input over the limit is rejected before WASM staging');
-} finally { module._lightusd_next_alloc = streamAlloc; }
+} finally { module._lightusd_wasm_alloc = streamAlloc; }
 assert.throws(() => stream.setMaxInputBytes(0), /from 1 through 1 GiB/);
 assert.throws(() => stream.maxInputBytes(1), /wrong argument count/);
 stream.setMaxInputBytes(512 * 1024 * 1024);
 stream.setMaxMemoryLimitMB(1);
 const overResidentInput = new Uint8Array(1024 * 1024 + 1);
 let residentInputStagingAllocations = 0;
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   if (size === overResidentInput.byteLength) ++residentInputStagingAllocations;
   return streamAlloc(size);
 };
@@ -1629,10 +1629,10 @@ try {
   assert.match(asyncRejected.error, /resident memory/);
   assert.equal(residentInputStagingAllocations, 0,
     'async resident-memory preflight rejects before WASM staging');
-} finally { module._lightusd_next_alloc = streamAlloc; }
+} finally { module._lightusd_wasm_alloc = streamAlloc; }
 stream.setMaxMemoryLimitMB(1024);
 assert.equal(stream.getMaxMemoryLimitMB(), 1024);
-assert.equal(typeof module._lightusd_next_render_remaining_memory_bytes, 'function');
+assert.equal(typeof module._lightusd_wasm_render_remaining_memory_bytes, 'function');
 stream.setMaxMemoryLimitMB(1);
 assert.equal(stream.getMaxMemoryLimitMB(), 1);
 assert.equal(stream.maxInputBytes(), 512 * 1024 * 1024,
@@ -1982,20 +1982,20 @@ const heapGrowthStore = new module.NextAssetStore();
 const heapGrowthStream = new module.RenderStream();
 heapGrowthStream.setAssetStore(heapGrowthStore);
 const heapGrowthInput = encode('#usda 1.0\ndef Xform "HeapBacked" {}');
-const heapGrowthPtr = module._lightusd_next_alloc(heapGrowthInput.byteLength);
+const heapGrowthPtr = module._lightusd_wasm_alloc(heapGrowthInput.byteLength);
 assert.ok(heapGrowthPtr);
 module.HEAPU8.set(heapGrowthInput, Number(heapGrowthPtr));
 const heapGrowthView = new Uint8Array(module.HEAPU8.buffer,
   Number(heapGrowthPtr), heapGrowthInput.byteLength);
 const priorHeapBuffer = module.HEAPU8.buffer;
-const importStoreExport = module._lightusd_next_render_import_asset_store;
+const importStoreExport = module._lightusd_wasm_render_import_asset_store;
 let forcedHeapGrowth = false;
-module._lightusd_next_render_import_asset_store = (...args) => {
+module._lightusd_wasm_render_import_asset_store = (...args) => {
   const status = importStoreExport(...args);
   if (!forcedHeapGrowth) {
-    const growthPtr = module._lightusd_next_alloc(module.HEAPU8.byteLength);
+    const growthPtr = module._lightusd_wasm_alloc(module.HEAPU8.byteLength);
     assert.ok(growthPtr, 'heap pressure allocation succeeds');
-    module._lightusd_next_free(growthPtr);
+    module._lightusd_wasm_free(growthPtr);
     forcedHeapGrowth = module.HEAPU8.buffer !== priorHeapBuffer;
   }
   return status;
@@ -2007,8 +2007,8 @@ try {
   assert.equal(loadedAfterGrowth.nodeCount, 1,
     'the root view is rebound by heap offset after memory growth');
 } finally {
-  module._lightusd_next_render_import_asset_store = importStoreExport;
-  module._lightusd_next_free(heapGrowthPtr);
+  module._lightusd_wasm_render_import_asset_store = importStoreExport;
+  module._lightusd_wasm_free(heapGrowthPtr);
   heapGrowthStream.delete();
   heapGrowthStore.delete();
 }
@@ -2193,15 +2193,15 @@ assert.equal(stream.getStats().providedAssetBytes, 3);
 assert.deepEqual(stream.getProvidedAsset('clip.usda'), new Uint8Array([10, 20, 30]));
 assetBytes.fill(77);
 assert.deepEqual(stream.getProvidedAsset('./clip.usda'), new Uint8Array([10, 20, 30]));
-const assetPtr = module._lightusd_next_alloc(2);
+const assetPtr = module._lightusd_wasm_alloc(2);
 try {
   module.HEAPU8.set([40, 50], Number(assetPtr));
   const heapView = module.HEAPU8.subarray(Number(assetPtr), Number(assetPtr) + 2);
-  const alloc = module._lightusd_next_alloc;
+  const alloc = module._lightusd_wasm_alloc;
   let assetAllocSize = 0;
-  module._lightusd_next_alloc = size => { assetAllocSize = size; return alloc(size); };
+  module._lightusd_wasm_alloc = size => { assetAllocSize = size; return alloc(size); };
   try { stream.provideAsset('./heap.usda', heapView); }
-  finally { module._lightusd_next_alloc = alloc; }
+  finally { module._lightusd_wasm_alloc = alloc; }
   assert.equal(assetAllocSize, new TextEncoder().encode('./heap.usda').length,
     'heap-backed asset input only allocates a name buffer');
   assert.equal(stream.getStats().providedAssetBytes, 5);
@@ -2209,23 +2209,23 @@ try {
   assert.throws(() => stream.provideAsset('extra', new Uint8Array([1])), /asset rejected/);
   assert.throws(() => stream.provideAsset('clip.usda', new Uint8Array([1, 2, 3, 4])), /asset rejected/);
   assert.deepEqual(stream.providedAssetNames(), ['clip.usda', 'heap.usda']);
-  const assetCountQuery = module._lightusd_next_render_provided_asset_count;
-  const allocate = module._lightusd_next_alloc;
+  const assetCountQuery = module._lightusd_wasm_render_provided_asset_count;
+  const allocate = module._lightusd_wasm_alloc;
   let aggregateAllocations = 0;
-  module._lightusd_next_render_provided_asset_count = () => 65537;
-  module._lightusd_next_alloc = size => { ++aggregateAllocations; return allocate(size); };
+  module._lightusd_wasm_render_provided_asset_count = () => 65537;
+  module._lightusd_wasm_alloc = size => { ++aggregateAllocations; return allocate(size); };
   try {
     assert.throws(() => stream.providedAssetNames(), /excessive asset count/);
     assert.equal(aggregateAllocations, 0,
       'providedAssetNames rejects excessive counts before allocating records');
   } finally {
-    module._lightusd_next_render_provided_asset_count = assetCountQuery;
-    module._lightusd_next_alloc = allocate;
+    module._lightusd_wasm_render_provided_asset_count = assetCountQuery;
+    module._lightusd_wasm_alloc = allocate;
   }
   assert.throws(() => stream.setProvidedAssetByteLimit(22), /below current asset use/);
   assert.equal(stream.providedAssetByteLimit(), 23);
 } finally {
-  module._lightusd_next_free(assetPtr);
+  module._lightusd_wasm_free(assetPtr);
 }
 assert.deepEqual(stream.getProvidedAsset('./heap.usda'), new Uint8Array([40, 50]));
 assert.throws(() => stream.getProvidedAsset('missing.usda'), /asset not found/);
@@ -2521,8 +2521,8 @@ assert.equal(stream.nodeChildCount(0), stream.getNode(0).children.length);
 assert.equal(stream.nodeChildCount(99999), -1);
 // The JS buffer boundary must copy both byte and float payloads and reject a
 // native short copy after the size query, on either WASM pointer width.
-const imageBufferExport = module._lightusd_next_render_texture_buffer;
-const samplingBufferExport = module._lightusd_next_render_texture_sampling_buffer;
+const imageBufferExport = module._lightusd_wasm_render_texture_buffer;
+const samplingBufferExport = module._lightusd_wasm_render_texture_sampling_buffer;
 const fakeImage = new Uint8Array([1, 2, 3, 4]);
 const fakeSampling = new Float32Array([0.25, 0.5, 1]);
 const fakeSamplingBytes = new Uint8Array(fakeSampling.buffer);
@@ -2534,13 +2534,13 @@ const fakeBufferExport = bytes => (_handle, _id, ptr, cap) => {
   return bytes.length;
 };
 try {
-  module._lightusd_next_render_texture_buffer = fakeBufferExport(fakeImage);
-  module._lightusd_next_render_texture_sampling_buffer =
+  module._lightusd_wasm_render_texture_buffer = fakeBufferExport(fakeImage);
+  module._lightusd_wasm_render_texture_sampling_buffer =
     fakeBufferExport(fakeSamplingBytes);
   assert.deepEqual(Array.from(stream.textureImageBuffer(0)), Array.from(fakeImage));
   assert.deepEqual(Array.from(stream.textureSamplingBuffer(0)),
     Array.from(fakeSampling));
-  module._lightusd_next_render_texture_buffer = (_handle, _id, ptr, cap) => {
+  module._lightusd_wasm_render_texture_buffer = (_handle, _id, ptr, cap) => {
     if (!ptr || !cap) return fakeImage.length;
     return fakeImage.length - 1;
   };
@@ -2548,8 +2548,8 @@ try {
   assert.deepEqual(Array.from(stream.textureSamplingBuffer(0)),
     Array.from(fakeSampling));
 } finally {
-  module._lightusd_next_render_texture_buffer = imageBufferExport;
-  module._lightusd_next_render_texture_sampling_buffer = samplingBufferExport;
+  module._lightusd_wasm_render_texture_buffer = imageBufferExport;
+  module._lightusd_wasm_render_texture_sampling_buffer = samplingBufferExport;
 }
 assert.equal(meshLoad.nodes, meshLoad.nodeCount);
 assert.equal(meshLoad.points, meshLoad.pointsCount);
@@ -2557,7 +2557,7 @@ assert.equal(meshLoad.pointInstanceDraws, meshLoad.pointInstanceDrawCount);
 assert.equal(stream.getStats().nativeInputBytes, encode(meshUsd).length);
 assert.equal(stream.beginOwned(meshUsd).success, true);
 const meshBytes = encode(meshUsd);
-const beginPtr = module._lightusd_next_alloc(meshBytes.length + 2);
+const beginPtr = module._lightusd_wasm_alloc(meshBytes.length + 2);
 try {
   module.HEAPU8.set(meshBytes, Number(beginPtr) + 1);
   const heapLoad = stream.begin(module.HEAPU8.subarray(
@@ -2565,7 +2565,7 @@ try {
   assert.equal(heapLoad.success, true, heapLoad.error || stream.error());
   assert.equal(heapLoad.meshCount, 1);
 } finally {
-  module._lightusd_next_free(beginPtr);
+  module._lightusd_wasm_free(beginPtr);
 }
 assert.equal(typeof stream.sceneName(), 'string');
 assert.equal(typeof stream.sceneDefaultPrim(), 'string');
@@ -2625,61 +2625,61 @@ assert.equal(stream.meshHasBounds(0), 1);
 assert.equal(stream.meshSkeletonId(0), -1);
 assert.equal(stream.getMeshSubsetOutput(0), null);
 {
-  const subsetQuery = module._lightusd_next_render_mesh_subset_output;
-  const allocate = module._lightusd_next_alloc;
+  const subsetQuery = module._lightusd_wasm_render_mesh_subset_output;
+  const allocate = module._lightusd_wasm_alloc;
   let allocations = 0;
-  module._lightusd_next_render_mesh_subset_output = () => 0x10000001;
-  module._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+  module._lightusd_wasm_render_mesh_subset_output = () => 0x10000001;
+  module._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
   try {
     assert.throws(() => stream.getMeshSubsetOutput(0), /512 MiB aggregate limit/);
     assert.equal(allocations, 0,
       'subset payload size is bounded before the WASM allocation');
   } finally {
-    module._lightusd_next_render_mesh_subset_output = subsetQuery;
-    module._lightusd_next_alloc = allocate;
+    module._lightusd_wasm_render_mesh_subset_output = subsetQuery;
+    module._lightusd_wasm_alloc = allocate;
   }
 }
 assert.throws(() => stream.getMeshSubsetOutput(99), /invalid mesh id/);
 assert.equal(stream.getMeshBlendShapes(0), undefined);
 assert.throws(() => stream.getMeshBlendShapes(99), /invalid mesh id/);
 {
-  const countQuery = module._lightusd_next_render_mesh_blend_shape_count;
-  const allocate = module._lightusd_next_alloc;
+  const countQuery = module._lightusd_wasm_render_mesh_blend_shape_count;
+  const allocate = module._lightusd_wasm_alloc;
   let allocations = 0;
-  module._lightusd_next_render_mesh_blend_shape_count = () => 65537;
-  module._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+  module._lightusd_wasm_render_mesh_blend_shape_count = () => 65537;
+  module._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
   try {
     assert.throws(() => stream.getMeshBlendShapes(0), /excessive shape count/);
     assert.equal(allocations, 0,
       'blend shape count is bounded before allocating payloads');
   } finally {
-    module._lightusd_next_render_mesh_blend_shape_count = countQuery;
-    module._lightusd_next_alloc = allocate;
+    module._lightusd_wasm_render_mesh_blend_shape_count = countQuery;
+    module._lightusd_wasm_alloc = allocate;
   }
 }
 {
-  const countQuery = module._lightusd_next_render_mesh_blend_shape_count;
-  const nameQuery = module._lightusd_next_render_mesh_blend_shape_name;
-  const offsetQuery = module._lightusd_next_render_mesh_blend_shape_offsets;
-  const allocate = module._lightusd_next_alloc;
+  const countQuery = module._lightusd_wasm_render_mesh_blend_shape_count;
+  const nameQuery = module._lightusd_wasm_render_mesh_blend_shape_name;
+  const offsetQuery = module._lightusd_wasm_render_mesh_blend_shape_offsets;
+  const allocate = module._lightusd_wasm_alloc;
   let allocations = 0;
-  module._lightusd_next_render_mesh_blend_shape_count = () => 1;
-  module._lightusd_next_render_mesh_blend_shape_name = () => 4;
-  module._lightusd_next_render_mesh_blend_shape_offsets = (_handle, _mesh, _shape,
+  module._lightusd_wasm_render_mesh_blend_shape_count = () => 1;
+  module._lightusd_wasm_render_mesh_blend_shape_name = () => 4;
+  module._lightusd_wasm_render_mesh_blend_shape_offsets = (_handle, _mesh, _shape,
     _between, kind) => kind === 0 ? 0x0b000000 : 0;
   Object.defineProperty(stream, 'meshBlendShapeInfo', {
     configurable: true, value: () => ({weight: 1, inbetweenCount: 0, flags: 0})
   });
-  module._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+  module._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
   try {
     assert.throws(() => stream.getMeshBlendShapes(0), /aggregate exceeds 512 MiB limit/);
     assert.equal(allocations, 0,
       'combined blend-shape offsets are bounded before payload allocation');
   } finally {
-    module._lightusd_next_render_mesh_blend_shape_count = countQuery;
-    module._lightusd_next_render_mesh_blend_shape_name = nameQuery;
-    module._lightusd_next_render_mesh_blend_shape_offsets = offsetQuery;
-    module._lightusd_next_alloc = allocate;
+    module._lightusd_wasm_render_mesh_blend_shape_count = countQuery;
+    module._lightusd_wasm_render_mesh_blend_shape_name = nameQuery;
+    module._lightusd_wasm_render_mesh_blend_shape_offsets = offsetQuery;
+    module._lightusd_wasm_alloc = allocate;
     delete stream.meshBlendShapeInfo;
   }
 }
@@ -2710,27 +2710,27 @@ def Mesh "M" {
   assert.equal(meshPrimvars.primvars.heat.elementSize, 2);
   assert.deepEqual(meshPrimvars.primvars.heat.value.value,
     [[50, 60], [10, 20], [30, 40]]);
-  const primvarNameExport = module._lightusd_next_render_mesh_primvar_name;
+  const primvarNameExport = module._lightusd_wasm_render_mesh_primvar_name;
   try {
-    module._lightusd_next_render_mesh_primvar_name = (...args) => {
+    module._lightusd_wasm_render_mesh_primvar_name = (...args) => {
       if (args[3] === 0 || args[3] === 0n) return 0x10000000;
       throw new Error('primvar name preflight must reject before copying the name');
     };
     assert.throws(() => primvarStream.getMeshPrimvarsJSON(0),
       /aggregate primvar names exceed 512 MiB/);
   } finally {
-    module._lightusd_next_render_mesh_primvar_name = primvarNameExport;
+    module._lightusd_wasm_render_mesh_primvar_name = primvarNameExport;
   }
-  const primvarBufferExport = module._lightusd_next_render_mesh_primvar_buffer;
+  const primvarBufferExport = module._lightusd_wasm_render_mesh_primvar_buffer;
   try {
-    module._lightusd_next_render_mesh_primvar_buffer = (...args) => {
+    module._lightusd_wasm_render_mesh_primvar_buffer = (...args) => {
       if (args[4] === 0 || args[4] === 0n) return 0x20000004;
       throw new Error('primvar JSON must reject oversized aggregate before payload copy');
     };
     assert.throws(() => primvarStream.getMeshPrimvarsJSON(0),
       /aggregate primvar data exceeds 512 MiB/);
   } finally {
-    module._lightusd_next_render_mesh_primvar_buffer = primvarBufferExport;
+    module._lightusd_wasm_render_mesh_primvar_buffer = primvarBufferExport;
   }
   assert.deepEqual(JSON.parse(primvarStream.getMeshPrimvarsJSON(99999)),
     {version: 1, primvars: {}, error: 'invalid mesh id'});
@@ -2757,21 +2757,21 @@ assert.deepEqual(Array.from(new Float32Array(module.HEAPU8.buffer,
 Array.from(ownedMeshCopy.points));
 assert.deepEqual(stream.getMeshCopy(99999), {error: 'invalid mesh index'});
 assert.throws(() => stream.getMeshCopy(), /one integer mesh id/);
-const meshBufferExportForCopy = module._lightusd_next_render_mesh_buffer;
+const meshBufferExportForCopy = module._lightusd_wasm_render_mesh_buffer;
 try {
-  module._lightusd_next_render_mesh_buffer = (handle, meshId, kind, out, cap) => {
+  module._lightusd_wasm_render_mesh_buffer = (handle, meshId, kind, out, cap) => {
     if (kind === 0 && (out === 0 || out === 0n)) return 512 * 1024 * 1024 + 4;
     throw new Error('getMeshCopy must preflight the aggregate before copying');
   };
   assert.throws(() => stream.getMeshCopy(0), /aggregate payload exceeds 512 MiB/);
 } finally {
-  module._lightusd_next_render_mesh_buffer = meshBufferExportForCopy;
+  module._lightusd_wasm_render_mesh_buffer = meshBufferExportForCopy;
 }
-const remainingMemoryExportForMeshCopy = module._lightusd_next_render_remaining_memory_bytes;
+const remainingMemoryExportForMeshCopy = module._lightusd_wasm_render_remaining_memory_bytes;
 let meshCopyPayloadCopies = 0;
 try {
-  module._lightusd_next_render_remaining_memory_bytes = () => 0;
-  module._lightusd_next_render_mesh_buffer = (...args) => {
+  module._lightusd_wasm_render_remaining_memory_bytes = () => 0;
+  module._lightusd_wasm_render_mesh_buffer = (...args) => {
     if (args[3] !== 0 && args[3] !== 0n && args[4] > 0) ++meshCopyPayloadCopies;
     return meshBufferExportForCopy(...args);
   };
@@ -2779,8 +2779,8 @@ try {
   assert.equal(meshCopyPayloadCopies, 0,
     'getMeshCopy must reject the remaining-memory budget before copying any stream');
 } finally {
-  module._lightusd_next_render_mesh_buffer = meshBufferExportForCopy;
-  module._lightusd_next_render_remaining_memory_bytes = remainingMemoryExportForMeshCopy;
+  module._lightusd_wasm_render_mesh_buffer = meshBufferExportForCopy;
+  module._lightusd_wasm_render_remaining_memory_bytes = remainingMemoryExportForMeshCopy;
 }
 stream.end();
 const curvesLoad = stream.begin(new Uint8Array(fs.readFileSync(
@@ -2855,16 +2855,16 @@ assert.equal(animationInfos[0].duration, animationInfos[0].endTime,
 assert.equal(animationInfos[0].sourceType, 'SkelAnimation');
 assert.equal(animationInfos[0].numClipAssetPaths,
   animationInfos[0].clipAssetPaths.length);
-const animationInfoNameQuery = module._lightusd_next_render_resource_name;
+const animationInfoNameQuery = module._lightusd_wasm_render_resource_name;
 try {
-  module._lightusd_next_render_resource_name = (handle, kind, id, ptr, cap) =>
+  module._lightusd_wasm_render_resource_name = (handle, kind, id, ptr, cap) =>
     kind === 8 && id === 0 && (ptr === 0 || ptr === 0n) && cap === 0
       ? 0x10000000
       : animationInfoNameQuery(handle, kind, id, ptr, cap);
   assert.throws(() => stream.getAnimationInfo(0), /512 MiB/);
   assert.throws(() => stream.getAllAnimationInfos(), /512 MiB/);
 } finally {
-  module._lightusd_next_render_resource_name = animationInfoNameQuery;
+  module._lightusd_wasm_render_resource_name = animationInfoNameQuery;
 }
 assert.throws(() => stream.animationClipAssetPath(0, 0), /invalid animation or asset id/);
 assert.equal(typeof stream.skeletonJointName(0, 0), 'string');
@@ -2895,15 +2895,15 @@ assert.deepEqual(stream.getAllSkeletons(), Array.from(
 assertAggregateHeadroomRejectsBeforeBuild(stream, 'getAllSkeletons',
   'getSkeleton', stream.skeletonCount());
 assert.throws(() => stream.getAllSkeletons(0), /wrong argument count/);
-const skeletonBufferBudgetExport = module._lightusd_next_render_skeleton_joint_buffer;
+const skeletonBufferBudgetExport = module._lightusd_wasm_render_skeleton_joint_buffer;
 try {
-  module._lightusd_next_render_skeleton_joint_buffer =
+  module._lightusd_wasm_render_skeleton_joint_buffer =
     (handle, skeletonId, kind) => kind === 0 ? 0x0d000000 : 0;
   assert.throws(() => stream.getSkeleton(0), /aggregate returned data exceeds 512 MiB/);
   assert.throws(() => stream.getSkeletonJointsFlat(0), /aggregate returned data exceeds 512 MiB/);
   assert.throws(() => stream.getAllSkeletons(), /aggregate returned data exceeds 512 MiB/);
 } finally {
-  module._lightusd_next_render_skeleton_joint_buffer = skeletonBufferBudgetExport;
+  module._lightusd_wasm_render_skeleton_joint_buffer = skeletonBufferBudgetExport;
 }
 assert.equal(skeleton.jointCount, stream.skeletonField(0, 0));
 assert.equal(skeleton.rootJoint, stream.skeletonField(0, 1));
@@ -2930,19 +2930,19 @@ assert.equal(stream.animationKeyframeTimesBuffer(0, 0).length, 5);
 assert.equal(stream.animationKeyframeValuesBuffer(0, 0).length, 20);
 assertAggregateHeadroomRejectsBeforeBuild(stream, 'getAllAnimations',
   'getAnimation', stream.numAnimations());
-const animationBufferExport = module._lightusd_next_render_animation_channel_buffer;
+const animationBufferExport = module._lightusd_wasm_render_animation_channel_buffer;
 try {
-  module._lightusd_next_render_animation_channel_buffer = () => 5;
+  module._lightusd_wasm_render_animation_channel_buffer = () => 5;
   assert.throws(() => stream.animationKeyframeTimesBuffer(0, 0),
     /invalid buffer size/);
 } finally {
-  module._lightusd_next_render_animation_channel_buffer = animationBufferExport;
+  module._lightusd_wasm_render_animation_channel_buffer = animationBufferExport;
 }
 assert.equal(stream.animationKeyframeTimesBuffer(0, 0).length, 5);
-const animationBufferBudgetExport = module._lightusd_next_render_animation_channel_buffer;
+const animationBufferBudgetExport = module._lightusd_wasm_render_animation_channel_buffer;
 let animationBudgetQueries = 0;
 try {
-  module._lightusd_next_render_animation_channel_buffer =
+  module._lightusd_wasm_render_animation_channel_buffer =
     (handle, animationId, channelId, kind) => {
       ++animationBudgetQueries;
       return kind === 1 ? 0x08100000 : 0;
@@ -2952,14 +2952,14 @@ try {
   assert.ok(animationBudgetQueries > 0,
     'animation aggregates are preflighted from C buffer sizes before copying');
 } finally {
-  module._lightusd_next_render_animation_channel_buffer = animationBufferBudgetExport;
+  module._lightusd_wasm_render_animation_channel_buffer = animationBufferBudgetExport;
 }
-const animationNameBudgetExport = module._lightusd_next_render_resource_name;
+const animationNameBudgetExport = module._lightusd_wasm_render_resource_name;
 try {
-  module._lightusd_next_render_resource_name = () => 0x10000000;
+  module._lightusd_wasm_render_resource_name = () => 0x10000000;
   assert.throws(() => stream.getAnimation(0), /aggregate returned data exceeds 512 MiB/);
 } finally {
-  module._lightusd_next_render_resource_name = animationNameBudgetExport;
+  module._lightusd_wasm_render_resource_name = animationNameBudgetExport;
 }
 assert.equal(stream.animationKeyframeTimesBuffer(0, 0).length, 5);
 stream.end();
@@ -3088,12 +3088,12 @@ assert.deepEqual(new Float32Array(module.HEAPU8.buffer,
   tangentView.tangents.ptr, tangentView.tangents.length), aggregateTangents);
 assert.equal(stream.meshHasTangents(0), 1);
 assert.deepEqual(stream.meshTangentsBuffer(0), aggregateTangents);
-const meshBufferExport = module._lightusd_next_render_mesh_buffer;
-const boundedMeshAlloc = module._lightusd_next_alloc;
+const meshBufferExport = module._lightusd_wasm_render_mesh_buffer;
+const boundedMeshAlloc = module._lightusd_wasm_alloc;
 let oversizedMeshAllocations = 0;
 try {
-  module._lightusd_next_render_mesh_buffer = () => 0x20000004;
-  module._lightusd_next_alloc = size => {
+  module._lightusd_wasm_render_mesh_buffer = () => 0x20000004;
+  module._lightusd_wasm_alloc = size => {
     ++oversizedMeshAllocations;
     return boundedMeshAlloc(size);
   };
@@ -3101,8 +3101,8 @@ try {
   assert.equal(oversizedMeshAllocations, 0,
     'oversized typed render buffers are rejected before allocating a copy');
 } finally {
-  module._lightusd_next_render_mesh_buffer = meshBufferExport;
-  module._lightusd_next_alloc = boundedMeshAlloc;
+  module._lightusd_wasm_render_mesh_buffer = meshBufferExport;
+  module._lightusd_wasm_alloc = boundedMeshAlloc;
 }
 stream.end();
 stream.setComputeTangents(false);
@@ -3133,11 +3133,11 @@ const firstRootTree = stream.getRootNode(0);
 assert.equal(firstRootTree.index, stream.rootNodeId(0));
 assert.deepEqual(stream.getDefaultRootNode(), firstRootTree);
 assert.ok(Array.isArray(firstRootTree.children));
-const rootNameQuery = module._lightusd_next_render_resource_name;
+const rootNameQuery = module._lightusd_wasm_render_resource_name;
 const getNodeMethod = stream.getNode;
 let hierarchyMaterializations = 0;
 try {
-  module._lightusd_next_render_resource_name = (handle, kind, id, ptr, cap) =>
+  module._lightusd_wasm_render_resource_name = (handle, kind, id, ptr, cap) =>
     kind === 0 && id === firstRootTree.index && (ptr === 0 || ptr === 0n) && cap === 0
       ? 0x10000000
       : rootNameQuery(handle, kind, id, ptr, cap);
@@ -3151,7 +3151,7 @@ try {
   assert.throws(() => stream.getNode(firstRootTree.index), /node payload exceeds 512 MiB/);
 } finally {
   delete stream.getNode;
-  module._lightusd_next_render_resource_name = rootNameQuery;
+  module._lightusd_wasm_render_resource_name = rootNameQuery;
 }
 assert.throws(() => stream.getDefaultRootNode(0), /wrong argument count/);
 assert.throws(() => stream.getRootNode(0.5), /integer root index/);
@@ -3170,8 +3170,8 @@ assert.equal(typeof light.shapingIesFile, 'string');
 assert.ok(Array.isArray(light.lightLinkTargets));
 assert.ok(Array.isArray(light.lightLinkMeshIndices));
 assert.equal(typeof light.radius, 'number');
-const lightStringQuery = module['_lightusd_next_render_light_string'];
-module['_lightusd_next_render_light_string'] = function(handle, id, kind, item, out, cap) {
+const lightStringQuery = module['_lightusd_wasm_render_light_string'];
+module['_lightusd_wasm_render_light_string'] = function(handle, id, kind, item, out, cap) {
   if (id === 0 && kind === 0 && out === 0 && cap === 0) return 0x10000000;
   return lightStringQuery(handle, id, kind, item, out, cap);
 };
@@ -3179,48 +3179,48 @@ try {
   assert.throws(() => stream.getLight(0), /512 MiB/);
   assert.throws(() => stream.getAllLights(), /512 MiB/);
 } finally {
-  module['_lightusd_next_render_light_string'] = lightStringQuery;
+  module['_lightusd_wasm_render_light_string'] = lightStringQuery;
 }
-const lightResourceNameQuery = module._lightusd_next_render_resource_name;
+const lightResourceNameQuery = module._lightusd_wasm_render_resource_name;
 try {
-  module._lightusd_next_render_resource_name = (handle, kind, id, ptr, cap) =>
+  module._lightusd_wasm_render_resource_name = (handle, kind, id, ptr, cap) =>
     kind === 5 && id === 0 && (ptr === 0 || ptr === 0n) && cap === 0
       ? 0x10000000
       : lightResourceNameQuery(handle, kind, id, ptr, cap);
   assert.throws(() => stream.getLight(0), /returned payload exceeds 512 MiB/);
   assert.throws(() => stream.getAllLights(), /returned data exceeds 512 MiB/);
 } finally {
-  module._lightusd_next_render_resource_name = lightResourceNameQuery;
+  module._lightusd_wasm_render_resource_name = lightResourceNameQuery;
 }
-const lightInfoQuery = module._lightusd_next_render_light_info_get;
-const lightMeshIdsQuery = module._lightusd_next_render_light_mesh_ids;
-const lightResourcePathQuery = module._lightusd_next_render_resource_path;
+const lightInfoQuery = module._lightusd_wasm_render_light_info_get;
+const lightMeshIdsQuery = module._lightusd_wasm_render_light_mesh_ids;
+const lightResourcePathQuery = module._lightusd_wasm_render_resource_path;
 try {
   Object.defineProperty(stream, 'lightCount', {value: () => 2, configurable: true});
-  module._lightusd_next_render_light_info_get = (handle, id, ptr) =>
+  module._lightusd_wasm_render_light_info_get = (handle, id, ptr) =>
     lightInfoQuery(handle, 0, ptr);
-  module._lightusd_next_render_light_mesh_ids = (handle, id, kind, out, cap) =>
+  module._lightusd_wasm_render_light_mesh_ids = (handle, id, kind, out, cap) =>
     lightMeshIdsQuery(handle, 0, kind, out, cap);
-  module._lightusd_next_render_resource_name = (handle, kind, id, out, cap) =>
+  module._lightusd_wasm_render_resource_name = (handle, kind, id, out, cap) =>
     kind === 5 && id < 2
       ? lightResourceNameQuery(handle, kind, 0, out, cap)
       : lightResourceNameQuery(handle, kind, id, out, cap);
-  module._lightusd_next_render_resource_path = (handle, kind, id, out, cap) =>
+  module._lightusd_wasm_render_resource_path = (handle, kind, id, out, cap) =>
     kind === 5 && id < 2
       ? lightResourcePathQuery(handle, kind, 0, out, cap)
       : lightResourcePathQuery(handle, kind, id, out, cap);
-  module._lightusd_next_render_light_string = (handle, id, kind, item, out, cap) =>
+  module._lightusd_wasm_render_light_string = (handle, id, kind, item, out, cap) =>
     id < 2 && kind === 0 && (out === 0 || out === 0n) && cap === 0
       ? 0x08000000
       : lightStringQuery(handle, id, kind, item, out, cap);
   assert.throws(() => stream.getAllLights(), /aggregate returned data exceeds 512 MiB/);
 } finally {
   delete stream.lightCount;
-  module._lightusd_next_render_light_info_get = lightInfoQuery;
-  module._lightusd_next_render_light_mesh_ids = lightMeshIdsQuery;
-  module._lightusd_next_render_resource_name = lightResourceNameQuery;
-  module._lightusd_next_render_resource_path = lightResourcePathQuery;
-  module._lightusd_next_render_light_string = lightStringQuery;
+  module._lightusd_wasm_render_light_info_get = lightInfoQuery;
+  module._lightusd_wasm_render_light_mesh_ids = lightMeshIdsQuery;
+  module._lightusd_wasm_render_resource_name = lightResourceNameQuery;
+  module._lightusd_wasm_render_resource_path = lightResourcePathQuery;
+  module._lightusd_wasm_render_light_string = lightStringQuery;
 }
 assert.equal(stream.lightField(0, 2), 1000);
 assert.equal(stream.lightTransformBuffer(0).length, 16);
@@ -3290,16 +3290,16 @@ assert.equal(stream.materialClearcoatRoughnessScaled(0), 9999);
 assert.deepEqual(Array.from(stream.materialRoughnessBuffer(0)), [0.25, 0, 0, 0]);
 assert.equal(stream.materialRoughnessTextureId(0), -1);
 assert.equal(stream.materialBaseColorBuffer(0).length, 4);
-const materialBufferExport = module._lightusd_next_render_material_param_buffer;
+const materialBufferExport = module._lightusd_wasm_render_material_param_buffer;
 try {
-  module._lightusd_next_render_material_param_buffer =
+  module._lightusd_wasm_render_material_param_buffer =
     (_handle, _materialId, _param, ptr, cap) => {
       if (!ptr || !cap) return 4;
       return 0;
     };
   assert.throws(() => stream.materialRoughnessBuffer(0), /copy failed/);
 } finally {
-  module._lightusd_next_render_material_param_buffer = materialBufferExport;
+  module._lightusd_wasm_render_material_param_buffer = materialBufferExport;
 }
 assert.deepEqual(Array.from(stream.materialRoughnessBuffer(0)), [0.25, 0, 0, 0]);
 stream.end();
@@ -3458,13 +3458,13 @@ assert.equal(rewriteUSDC.success, true, rewriteUSDC.error);
 assert.equal(rewriteUSDC.rootName, 'root.usdc');
 assert.equal(new TextDecoder().decode(rewriteUSDC.data.subarray(0, 8)), 'PXR-USDC');
 assert.ok(rewriteUSDC.tokenCount > 0);
-const rewritePtr = module._lightusd_next_alloc(rewriteInput.length + 2);
+const rewritePtr = module._lightusd_wasm_alloc(rewriteInput.length + 2);
 try {
   module.HEAPU8.set(rewriteInput, Number(rewritePtr) + 1);
   const heapInput = module.HEAPU8.subarray(Number(rewritePtr) + 1,
     Number(rewritePtr) + 1 + rewriteInput.length);
   assert.equal(converter.rewriteRoot(heapInput, 'scene.usda', {}).success, true);
-} finally { module._lightusd_next_free(rewritePtr); }
+} finally { module._lightusd_wasm_free(rewritePtr); }
 assert.throws(() => converter.rewriteRoot(rewriteInput, 'scene.usda',
   {maxMemory: -1}), /invalid maxMemory/);
 assert.deepEqual(converter.rewriteRoot(encode('bad'), 'bad.usda', {}),
@@ -3475,16 +3475,16 @@ assert.equal(converter.maxAssetBytes(), 512 * 1024 * 1024);
 assert.deepEqual(converter.setMaxAssetBytes(16), {success: true});
 assert.equal(converter.setAsset('extra.txt', encode('payload')), true);
 assert.equal(converter.assetBytes(), 7);
-const converterAlloc = module._lightusd_next_alloc;
+const converterAlloc = module._lightusd_wasm_alloc;
 const converterAllocationSizes = [];
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   converterAllocationSizes.push(Number(size));
   return converterAlloc(size);
 };
 let overLimitAssetAccepted;
 try {
   overLimitAssetAccepted = converter.setAsset('other.txt', new Uint8Array(10));
-} finally { module._lightusd_next_alloc = converterAlloc; }
+} finally { module._lightusd_wasm_alloc = converterAlloc; }
 assert.equal(overLimitAssetAccepted, false,
   'converter packaged assets share one aggregate byte limit');
 assert.deepEqual(converterAllocationSizes, [9],
@@ -3503,21 +3503,21 @@ module.HEAPU8.set(converterHeapPayload, Number(converterHeapPtr));
 const converterHeapView = new Uint8Array(module.HEAPU8.buffer,
   Number(converterHeapPtr), converterHeapPayload.length);
 assert.equal(converter.setAsset('heap.bin', converterHeapView), true);
-module._lightusd_next_free(converterHeapPtr);
+module._lightusd_wasm_free(converterHeapPtr);
 assert.equal(converter.assetBytes(), 11);
 assert.equal(converter.retainedPayloadBytes(), encode(text).length + 11,
   'root input and packaged assets share retained-payload accounting');
 assert.equal(converter.setMaxRetainedPayloadBytes(converter.retainedPayloadBytes()).success, true);
-const rootPreflightAlloc = module._lightusd_next_alloc;
+const rootPreflightAlloc = module._lightusd_wasm_alloc;
 const rootPreflightAllocations = [];
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   rootPreflightAllocations.push(Number(size));
   return rootPreflightAlloc(size);
 };
 let overBudgetRootAccepted;
 try {
   overBudgetRootAccepted = converter.loadFromBinary(encode(text + ' '), 'scene.usda');
-} finally { module._lightusd_next_alloc = rootPreflightAlloc; }
+} finally { module._lightusd_wasm_alloc = rootPreflightAlloc; }
 assert.equal(overBudgetRootAccepted, false,
   'root replacement is rejected against aggregate root/asset payload usage');
 assert.deepEqual(rootPreflightAllocations, [],
@@ -3536,9 +3536,9 @@ assert.deepEqual(converter.setMaxAssetBytes(6), {
 assert.match(converter.error(), /below retained payload bytes/);
 const retainedBeforeMesh = converter.retainedPayloadBytes();
 assert.equal(converter.setMaxRetainedPayloadBytes(retainedBeforeMesh).success, true);
-const meshBudgetAlloc = module._lightusd_next_alloc;
+const meshBudgetAlloc = module._lightusd_wasm_alloc;
 const meshBudgetAllocations = [];
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   meshBudgetAllocations.push(Number(size));
   return meshBudgetAlloc(size);
 };
@@ -3546,7 +3546,7 @@ let aggregateMeshAccepted;
 try {
   aggregateMeshAccepted = converter.setCollisionMesh('aggregate-block', triangle,
     null, null, new Uint32Array([0, 1, 2]));
-} finally { module._lightusd_next_alloc = meshBudgetAlloc; }
+} finally { module._lightusd_wasm_alloc = meshBudgetAlloc; }
 assert.equal(aggregateMeshAccepted, false,
   'mesh payload is charged against the root and asset aggregate');
 assert.deepEqual(meshBudgetAllocations, [15],
@@ -3557,15 +3557,15 @@ assert.equal(converter.setCollisionMesh('aggregate-block', triangle,
 assert.equal(converter.retainedPayloadBytes(), retainedBeforeMesh + 48);
 assert.match(converter.exportAsUSDA(), /^#usda 1\.0/);
 assert.equal(new TextDecoder().decode(converter.exportAsUSDC().subarray(0, 8)), 'PXR-USDC');
-const exportAllocation = module._lightusd_next_alloc;
+const exportAllocation = module._lightusd_wasm_alloc;
 const exportAllocations = [];
-module._lightusd_next_alloc = size => {
+module._lightusd_wasm_alloc = size => {
   exportAllocations.push(Number(size));
   return exportAllocation(size);
 };
 let ownedUSDZ;
 try { ownedUSDZ = converter.exportAsUSDZ(); }
-finally { module._lightusd_next_alloc = exportAllocation; }
+finally { module._lightusd_wasm_alloc = exportAllocation; }
 assert.deepEqual(exportAllocations, [],
   'converter export copies directly from its retained C++ vector into the owned JS result');
 assert.deepEqual(Array.from(ownedUSDZ.subarray(0, 4)), [80, 75, 3, 4]);
@@ -3596,7 +3596,7 @@ for (const options of ['{}', '{bad', '{"groups":[]}',
 const validationInput = encode(`x${text}y`).subarray(1, -1);
 assert.equal(JSON.parse(validator.validateFromBinary(
   validationInput, 'scene.usda', '{}')).parse_ok, true);
-const validationPtr = module._lightusd_next_alloc(validationInput.length + 2);
+const validationPtr = module._lightusd_wasm_alloc(validationInput.length + 2);
 try {
   module.HEAPU8.set(validationInput, Number(validationPtr) + 1);
   const heapInput = module.HEAPU8.subarray(
@@ -3604,7 +3604,7 @@ try {
   assert.equal(JSON.parse(validator.validateFromBinary(
     heapInput, 'scene.usda', '{}')).parse_ok, true);
 } finally {
-  module._lightusd_next_free(validationPtr);
+  module._lightusd_wasm_free(validationPtr);
 }
 assert.throws(() => validator.validateFromBinary(null, 'scene.usda', '{}'),
   /expected byte view/);
@@ -3665,13 +3665,13 @@ assert.throws(() => exportLimitConverter.exportAsUSDZWithOptions({rootLayerForma
 exportLimitConverter.delete();
 converter.delete();
 assert.throws(() => converter.exportAsUSDA(), /Invalid LightUSD receiver/);
-const staleConverter = module._lightusd_next_create(1) >>> 0;
+const staleConverter = module._lightusd_wasm_create(1) >>> 0;
 assert.ok(staleConverter);
-assert.equal(module._lightusd_next_converter_set_bytes(
+assert.equal(module._lightusd_wasm_converter_set_bytes(
   staleConverter, 0, wasm64 ? 0n : 0, 0, wasm64 ? 0n : 0, 0x40000001), -1,
   'the C entry rejects converter inputs above 1 GiB before reading the supplied pointer');
-module._lightusd_next_destroy(staleConverter);
-assert.equal(module._lightusd_next_converter_export(staleConverter, 0), -1);
+module._lightusd_wasm_destroy(staleConverter);
+assert.equal(module._lightusd_wasm_converter_export(staleConverter, 0), -1);
 const loadProgressStream = new module.RenderStream();
 assert.equal(loadProgressStream.ok(), false);
 assert.equal(loadProgressStream.warn(), loadProgressStream.warning());

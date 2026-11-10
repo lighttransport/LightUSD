@@ -15,12 +15,12 @@ const REQUIRED_STAGED_FILES = [
   'LICENSE',
   'README.md',
   'package.json',
-  'lightusd_next.js',
-  'lightusd_next.wasm',
-  'lightusd_next.wasm.zst',
-  'lightusd_next_64.js',
-  'lightusd_next_64.wasm',
-  'lightusd_next_64.wasm.zst',
+  'lightusd.js',
+  'lightusd.wasm',
+  'lightusd.wasm.zst',
+  'lightusd_64.js',
+  'lightusd_64.wasm',
+  'lightusd_64.wasm.zst',
   'lightusd_geometry.js',
   'lightusd_geometry.wasm',
   'lightusd_geometry.wasm.zst',
@@ -125,16 +125,16 @@ assert.equal(typeof pkg.OpenPBRTSL, 'object');
 assert.equal(pkg.LightUSDLoader, DeepLoader);
 assert.equal(LightUSDWorkerLoaderDefault, LightUSDWorkerLoader);
 assert.equal(require.resolve('lightusd/LightUSDLoader.js').endsWith('LightUSDLoader.js'), true);
-assert.equal(require.resolve('lightusd/lightusd_next.wasm').endsWith('lightusd_next.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd_next.wasm.zst').endsWith('lightusd_next.wasm.zst'), true);
-assert.equal(require.resolve('lightusd/lightusd_next_64.wasm').endsWith('lightusd_next_64.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd_next_64.wasm.zst').endsWith('lightusd_next_64.wasm.zst'), true);
+assert.equal(require.resolve('lightusd/lightusd.wasm').endsWith('lightusd.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd.wasm.zst').endsWith('lightusd.wasm.zst'), true);
+assert.equal(require.resolve('lightusd/lightusd_64.wasm').endsWith('lightusd_64.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd_64.wasm.zst').endsWith('lightusd_64.wasm.zst'), true);
 
-// Instantiate the lean next-only modules (wasm32 + wasm64) and check the
-// C API surface and independently linked features used by the next-first loader.
-for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
-  const factory = (await import(nextModule)).default;
-  assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
+// Instantiate the core modules (wasm32 + wasm64) and check the C API surface
+// and the independently linked features used by the loader.
+for (const coreModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
+  const factory = (await import(coreModule)).default;
+  assert.equal(typeof factory, 'function', coreModule + ' default export is a module factory');
   const instance = await factory();
   for (const name of ['geometry', 'raytrace', 'validator', 'exr']) {
     const feature = await instance.loadFeature(name);
@@ -142,17 +142,20 @@ for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_6
     assert.deepEqual(feature.featureInfo, instance.featureInfo);
   }
   for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
-    assert.equal(typeof instance[api], 'function', nextModule + ' exposes ' + api);
+    assert.equal(typeof instance[api], 'function', coreModule + ' exposes ' + api);
   }
 }
 
-// The legacy lightusd[_64] module is no longer published.
-for (const legacyModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
+// The legacy and combined modules are never published.
+for (const legacyModule of ['lightusd/lightusd_legacy.js', 'lightusd/lightusd_legacy_64.js',
+                            'lightusd/lightusd_combined.js',
+                            // Pre-1.1 name of the core module; no shim is shipped.
+                            'lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
   await assert.rejects(import(legacyModule), legacyModule + ' must not be published');
 }
 
-// The default loader runs on the next module and a requested legacy backend
-// falls back to it.
+// The loader runs on the core module; a requested legacy backend is ignored
+// with a warning.
 for (const useMemory64 of [false, true]) {
   for (const backend of ['next', 'legacy']) {
     const loader = new pkg.LightUSDLoader();

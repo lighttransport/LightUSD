@@ -197,7 +197,7 @@ async function createBackendThreeMaterials() {
   const legacy = await loadWasm(() => import(/* @vite-ignore */
     new URL('./src/lightusd/lightusd.js', import.meta.url).href));
   const next = await loadWasm(() => import(/* @vite-ignore */
-    new URL('./src/lightusd/lightusd_next.js', import.meta.url).href), {
+    new URL('./src/lightusd/lightusd.js', import.meta.url).href), {
     locateFile: (file) => new URL('./src/lightusd/' + file,
       import.meta.url).href
   });

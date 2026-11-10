@@ -1743,72 +1743,25 @@ class LightUSDLoader extends Loader {
             if (getParam("memory64") == "true") {
               use_memory64 = true;
             }
-            // backend=next selects the next-only WASM module so the page runs
-            // on the full next RenderStream surface (the legacy module's
-            // RenderStream is a reduced legacy shim). `wasm=` stays the
-            // explicit override in both directions.
-            const wasmParam = getParam("wasm");
-            // An explicit caller selection must win over the page query. This
-            // lets demos switch backends at runtime without a stale
-            // `backend=next` URL forcing every newly-created loader to use the
-            // next-only module.
-            const queryBackend = getParam("backend");
-            if (wasmParam || getParam("nextWasm") === "true") {
-                console.warn('[LightUSDLoader] wasm/nextWasm URL aliases are deprecated; use backend: \'next\' or \'legacy\'.');
+            // The published module is the core build (lightusd[_64].js). The
+            // legacy module is no longer shipped; `backend: 'legacy'` and the
+            // historical `wasm=` / `nextWasm=` query switches are ignored.
+            if (options.backend === 'legacy' || getParam("backend") === 'legacy' ||
+                getParam("wasm") === 'legacy') {
+                console.warn('[LightUSDLoader] The legacy backend was removed; using the core module.');
             }
-            const requestedBackend = options.backend || queryBackend ||
-                (wasmParam === 'legacy' ? 'legacy' : this.backend_);
-            if (!options.backend && !queryBackend && wasmParam === 'legacy') {
-                this.backend_ = 'legacy';
-            }
-            const backendWantsNext = requestedBackend === 'next';
-            const use_next_only_wasm = wasmParam === "legacy"
-                ? false
-                : (options.backend === 'legacy' || queryBackend === 'legacy'
-                    ? false
-                    : (options.useNextOnlyWasm === true ||
-                       wasmParam === "next" ||
-                       getParam("nextWasm") === "true" ||
-                       backendWantsNext));
-
-
-            let initLightUSDNative = null;
-
-            // The legacy module (lightusd[_64].js) is not part of the npm
-            // package; it exists only in source-tree builds. When it is
-            // requested but absent, fall back to the next module (same
-            // memory64 choice) instead of failing.
-            // Module paths are built via URL so Vite's static import analysis
-            // does not fail when an optional module is absent.
-            let use_next_only_wasm_resolved = use_next_only_wasm;
-            if (!use_next_only_wasm_resolved) {
-                try {
-                    const legacyUrl = new URL(use_memory64 ? './lightusd_64.js' : './lightusd.js',
-                        import.meta.url).href;
-                    const module = await import(/* @vite-ignore */ legacyUrl);
-                    initLightUSDNative = module.default;
-                    this.nextOnlyNative_ = false;
-                } catch (e) {
-                    console.warn('[LightUSDLoader] Legacy WASM module is not available; using the next module (backend: \'next\').');
-                    use_next_only_wasm_resolved = true;
-                    this.backend_ = 'next';
-                }
-            }
-            if (use_next_only_wasm_resolved) {
-                const nextUrl = new URL(use_memory64 ? './lightusd_next_64.js' : './lightusd_next.js',
-                    import.meta.url).href;
-                const module = await import(/* @vite-ignore */ nextUrl);
-                initLightUSDNative = module.default;
-                this.nextOnlyNative_ = true;
-            }
+            this.backend_ = 'next';
+            const coreUrl = new URL(use_memory64 ? './lightusd_64.js' : './lightusd.js',
+                import.meta.url).href;
+            const initLightUSDNative = (await import(/* @vite-ignore */ coreUrl)).default;
+            this.nextOnlyNative_ = true;
 
             let wasmBinary = null;
 
             if (this.useZstdCompressedWasm_) {
                 // Load and decompress zstd compressed WASM
-                const compressedName = use_next_only_wasm_resolved
-                    ? (use_memory64 ? 'lightusd_next_64.wasm.zst' : 'lightusd_next.wasm.zst')
-                    : (use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_);
+                const compressedName =
+                    use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_;
                 wasmBinary = await this.decompressZstdWasm(compressedName);
 
             }
@@ -2227,134 +2180,20 @@ class LightUSDLoader extends Loader {
             _onError(new Error('LightUSDLoader: Native module is not initialized.'));
         }
 
-        let backend = options.backend || this.backend_ || 'next';
-        if (this.nextOnlyNative_ && backend !== 'next' && backend !== 'auto') {
-            // The published package ships the next module only.
-            if (!this.warnedLegacyBackend_) {
-                console.warn('[LightUSDLoader] backend=' + backend + ' is not available in this build; using backend=next.');
-                this.warnedLegacyBackend_ = true;
-            }
-            backend = 'next';
+        // Every scene loads through the core module; `backend` values other
+        // than 'next' (legacy/auto) are accepted for compatibility and ignored.
+        const backend = options.backend || this.backend_ || 'next';
+        if (backend !== 'next' && !this.warnedLegacyBackend_) {
+            console.warn('[LightUSDLoader] backend=' + backend + ' is not available; using the core module.');
+            this.warnedLegacyBackend_ = true;
         }
-        if (backend === 'next' || backend === 'auto') {
-            NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
-                .then(onLoad)
-                .catch((error) => {
-                    if (backend === 'auto') {
-                        const legacyOptions = {
-                            ...options,
-                            backend: 'legacy'
-                        };
-                        this.parse(binary, filePath, (usd) => {
-                            usd.__backend = 'legacy';
-                            usd.__backendFallbackReason = error?.message || String(error);
-                            onLoad(usd);
-                        }, onError, legacyOptions);
-                    } else {
-                        this._logFailedUSDInput(binary, filePath, error?.message || String(error));
-                        _onError(error instanceof Error ? error : new Error(String(error)));
-                    }
-                });
-            return;
-        }
-
-        const usd = new this.native_.LightUSDLoaderNative();
-        usd.__backend = 'legacy';
-
-        // Set memory limit before loading if specified (otherwise use native default)
-        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-        if (memoryLimit !== undefined) {
-            usd.setMaxMemoryLimitMB(memoryLimit);
-        }
-
-        this._applySkinningLoadOptions(usd);
-        this._applyConversionLoadOptions(usd, options);
-
-        // Decode referenced texture images inside the native loader. For a USDZ
-        // this pulls the bytes from the package and decodes them, so the
-        // RenderScene image carries pixels (bufferId >= 0) instead of only a
-        // URI the JS layer would have to fetch over HTTP.
-        if (options.loadTextureInNative && typeof usd.setLoadTextureInNative === 'function') {
-            usd.setLoadTextureInNative(true);
-        }
-
-        const debugMemory = options.debugMemory !== undefined ? !!options.debugMemory : this.debugMemory_;
-        const debugCallback = options.onLightUSDDebug || null;
-        let restoreDebugCallback = () => {};
-        if (debugMemory || debugCallback) {
-            const previousDebugCallback = this.native_.onLightUSDDebug;
-            this.native_.onLightUSDDebug = this._makeDebugMemoryCallback(debugCallback, debugMemory);
-            restoreDebugCallback = () => {
-                this.native_.onLightUSDDebug = previousDebugCallback;
-            };
-        }
-        const tydraProgressCallback = options.onTydraProgress || null;
-        let restoreTydraProgressCallback = () => {};
-        if (tydraProgressCallback) {
-            const previousTydraProgressCallback = this.native_.onTydraProgress;
-            this.native_.onTydraProgress = tydraProgressCallback;
-            restoreTydraProgressCallback = () => {
-                this.native_.onTydraProgress = previousTydraProgressCallback;
-            };
-        }
-        const restoreCallbacks = () => {
-            restoreDebugCallback();
-            restoreTydraProgressCallback();
-        };
-
-        let ok;
-        try {
-            const useVariantLayerPath = !!options.variantSelection ||
-                typeof options.onVariants === 'function';
-
-            if (useVariantLayerPath) {
-                this._logNativeMemory(usd, 'before-loadAsLayerFromBinary', debugMemory);
-                ok = usd.loadAsLayerFromBinary(binary, filePath);
-                this._logNativeMemory(usd, 'after-loadAsLayerFromBinary', debugMemory);
-
-                if (ok && typeof options.onVariants === 'function' &&
-                    typeof usd.extractVariants === 'function') {
-                    options.onVariants(usd.extractVariants());
-                }
-
-                if (ok && options.variantSelection) {
-                    const selection = options.variantSelection;
-                    ok = usd.applyVariantSelection(
-                        selection.primPath,
-                        selection.variantSet,
-                        selection.variantName
-                    );
-                } else if (ok && usd.hasVariants && usd.hasVariants()) {
-                    ok = usd.composeVariants();
-                }
-
-                if (ok) {
-                    ok = usd.layerToRenderScene();
-                }
-                this._logNativeMemory(usd, 'after-layerToRenderScene', debugMemory);
-            } else {
-                this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
-                ok = usd.loadFromBinary(binary, filePath);
-                this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
-            }
-        } catch (e) {
-            // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
-            this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);
-            restoreCallbacks();
-            this._logFailedUSDInput(binary, filePath, e instanceof Error ? e.message : String(e));
-            _onError(e instanceof Error ? e : new Error(String(e)));
-            return;
-        }
-        if (!ok) {
-            this._logNativeMemory(usd, 'loadFromBinary-failed', debugMemory);
-            restoreCallbacks();
-            this._logFailedUSDInput(binary, filePath, usd.error());
-            const fileInfo = filePath ? ` (file: ${filePath})` : '';
-            _onError(new Error(`LightUSDLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
-        } else {
-            restoreCallbacks();
-            onLoad(usd);
-        }
+        NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
+            .then(onLoad)
+            .catch((error) => {
+                this._logFailedUSDInput(binary, filePath, error?.message || String(error));
+                _onError(error instanceof Error ? error : new Error(String(error)));
+            });
+        return;
     }
 
     /**

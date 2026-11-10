@@ -2,12 +2,10 @@
 Build driver for the lightusd PyPI wheel.
 
 Flow:
-  1. Invoke CMake on the standalone `src` project (next-core), building
-     the next core, Tydra, asset importer, C API and native validation libraries.
-     The legacy lightusd core is NOT built or linked into the Python wheel
-     (v1.0.0 next + tydra-next only, npm preview tag). Native
-     (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
-     LIGHTUSD_WASM_PRODUCT=legacy/next/combined) still build the legacy path.
+  1. Invoke CMake on the standalone `src` project (the core), building the
+     core, Tydra, asset importer, C API and native validation libraries.
+     src/legacy (compile-only, `-DLIGHTUSD_BUILD_LEGACY=ON` in the root
+     project) is never built or linked into the wheel.
   2. Compile the `src/python/py-*.c` sources into the `lightusd._core`
      extension, linking those static archives.
 

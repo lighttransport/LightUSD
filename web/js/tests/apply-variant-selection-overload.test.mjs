@@ -31,8 +31,8 @@ const glueUrl = process.env.LIGHTUSD_COMBINED_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_COMBINED_MODULE)).href
   : new URL(defaultGlue, import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                        : '../src/lightusd/lightusd_next.js';
+const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                        : '../src/lightusd/lightusd.js';
 const nextRuntime = await loadWasm(() => import(nextGlue));
 
 await testAsync('combined LightUSDLoaderNative methods match the checked API inventory', () => {

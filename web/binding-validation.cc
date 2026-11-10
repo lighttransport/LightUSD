@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "binding-next-api.h"
+#include "binding-core-api.h"
 #include "validation/usd-validation.hh"
 #include "crate/crate-reader.hh"
 #include "load-usd.hh"
 #include "core/minijson.hh"
 #include <cstdlib>
 #include <cstring>
-namespace lightusd { namespace web_next {
+namespace lightusd { namespace web_core {
 namespace tn = lightusd;
 namespace {
 

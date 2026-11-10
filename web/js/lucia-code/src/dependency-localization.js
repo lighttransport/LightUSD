@@ -57,7 +57,7 @@ export async function localizeProjectDependencies(source, assets, pathMap, resol
     let text, document;
     try {
       if (binary) {
-        const module = await import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory());
+        const module = await import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory());
         document = new module.LayerDocument();
         const result = document.load(asset.bytes);
         if (!result.success) throw new LuciaError('LUCIA_DEPENDENCY_LAYER', result.error);

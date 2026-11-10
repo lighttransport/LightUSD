@@ -1,6 +1,6 @@
 # Next-only WASM32 build: next-core + tydra-next module
 # (-DLIGHTUSD_WASM_PRODUCT=next), no legacy loader. Output:
-# js/src/lightusd/lightusd_next.js/.wasm.
+# js/src/lightusd/lightusd.js/.wasm.
 # Build with: `ninja -C build_next_only` (or `cmake --build build_next_only`).
 rm -rf build_next_only
 mkdir build_next_only

@@ -18,8 +18,19 @@ lightusd_apply_deprecated_core_options()
 # directory-level include paths (src/legacy) so legacy headers can never
 # shadow core/shared ones (e.g. core/path-expression.hh).
 set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
-# Also drop the legacy forced include of src/legacy/legacy-namespace.hh.
-set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "")
+# Also drop the legacy forced include of src/legacy/legacy-namespace.hh, but
+# keep every other inherited option (e.g. the WASM -sMEMORY64 / -Oz / SIMD
+# flags the web project sets before adding this directory).
+get_property(_lightusd_inherited_options DIRECTORY PROPERTY COMPILE_OPTIONS)
+set(_lightusd_core_options)
+foreach(_opt IN LISTS _lightusd_inherited_options)
+  if(NOT _opt MATCHES "legacy-namespace\\.hh")
+    list(APPEND _lightusd_core_options "${_opt}")
+  endif()
+endforeach()
+set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${_lightusd_core_options}")
+unset(_lightusd_inherited_options)
+unset(_lightusd_core_options)
 
 # ---------------------------------------------------------------------------
 # Release hardening for the shipped native artifacts.

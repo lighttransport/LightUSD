@@ -8,7 +8,7 @@ import { snapshotHealthInput } from '../src/health-analysis.js';
 
 test('typed property flags preserve schema and custom attributes on WASM32 and WASM64', async () => {
   for (const suffix of ['', '_64']) {
-    const { default: factory } = await import(`../../src/lightusd/lightusd_next${suffix}.js`);
+    const { default: factory } = await import(`../../src/lightusd/lightusd${suffix}.js`);
     const module = await factory(), document = new module.LayerDocument();
     try {
       assert.equal(document.load(new TextEncoder().encode('#usda 1.0\ndef Xform "P" {}')).success, true);

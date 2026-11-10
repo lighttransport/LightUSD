@@ -6,7 +6,7 @@ import {loadWasm} from '../src/usdzconvert.js';
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 const combined = process.env.LIGHTUSD_UDIM_COMBINED === '1';
-const glue = process.env.LIGHTUSD_UDIM_GLUE || (combined ? (wasm64 ? '../src/lightusd/lightusd_combined_64.js' : '../src/lightusd/lightusd_combined.js') : wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js');
+const glue = process.env.LIGHTUSD_UDIM_GLUE || (combined ? (wasm64 ? '../src/lightusd/lightusd_combined_64.js' : '../src/lightusd/lightusd_combined.js') : wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js');
 const dir = new URL('.', new URL(glue, import.meta.url));
 const native = await loadWasm(() => import(glue), {locateFile: file => new URL(file, dir).href});
 function solid(r, g, b, a = 255) {

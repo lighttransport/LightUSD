@@ -19,7 +19,7 @@ const combinedUrl = process.env.LIGHTUSD_COMBINED_MODULE
                    : '../src/lightusd/lightusd_combined.js', import.meta.url).href;
 const legacyModule = await loadWasm(() => import(combinedUrl));
 const {default: createNext} = await import(new URL(
-  wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
+  wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js',
   import.meta.url));
 const nextModule = await createNext();
 
@@ -127,7 +127,7 @@ try {
 
   // Raw heap pointers address each product's own WASM memory.
   const rawLegacy = legacyModule._lightusd_combined_alloc(4);
-  const rawNext = nextModule._lightusd_next_alloc(4);
+  const rawNext = nextModule._lightusd_wasm_alloc(4);
   try {
     legacyModule.HEAPU8.set([1, 2, 3, 4], Number(rawLegacy));
     nextModule.HEAPU8.set([1, 2, 3, 4], Number(rawNext));
@@ -135,7 +135,7 @@ try {
     same('setAssetFromRawPointer', loader, store, ['raw.bin', rawLegacy, 4], ['raw.bin', rawNext, 4]);
   } finally {
     legacyModule._lightusd_combined_free(rawLegacy);
-    nextModule._lightusd_next_free(rawNext);
+    nextModule._lightusd_wasm_free(rawNext);
   }
   same('getAsset', loader, store, ['raw.bin']);
 

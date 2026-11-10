@@ -20,7 +20,7 @@ const combinedUrl = process.env.LIGHTUSD_COMBINED_MODULE
                    : '../src/lightusd/lightusd_combined.js', import.meta.url).href;
 const legacyModule = await loadWasm(() => import(combinedUrl));
 const {default: createNext} = await import(new URL(
-  wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
+  wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js',
   import.meta.url));
 const nextModule = await createNext();
 const encode = text => new TextEncoder().encode(text);

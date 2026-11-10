@@ -47,7 +47,7 @@ prune android
 prune ios
 prune tests/usdc
 prune tests/feat
-prune tests/unit
+prune tests/legacy/unit
 prune tests/fuzzer
 prune tests/core
 prune tests/tydra
@@ -79,7 +79,6 @@ recursive-include tools/lusdpreview *.cc *.hh *.h
 recursive-include cmake *.cmake
 
 # Legacy sources are never part of the Python package.
-prune src/legacy
 
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__
@@ -123,3 +122,6 @@ include src/unicode-xid-c.c
 include src/external/zmij/zmij.cc
 recursive-include cmake *.cmake *.in
 recursive-include src *.cmake
+
+# Last, so no earlier include pattern re-adds legacy files.
+prune src/legacy

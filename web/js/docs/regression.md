@@ -210,12 +210,12 @@ To exercise an isolated measurement build without replacing generated app
 files, run from `web/js` (use an absolute module path):
 
 ```sh
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/refactor-next/artifacts/lightusd_next.js" \
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/refactor-next/artifacts/lightusd.js" \
   NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
   node tests/run-regression.mjs --profile node
 ```
 
-For memory64, set `LIGHTUSD_WASM64=1` and select `lightusd_next_64.js` from its
+For memory64, set `LIGHTUSD_WASM64=1` and select `lightusd_64.js` from its
 build directory. The override always loads the matching `.wasm`, even if a
 test supplies `locateFile` for the application's normal artifacts. This is a
 Node-only testing helper, not a production loader or a substitute for the
@@ -272,7 +272,7 @@ that writes elsewhere (for example a CMake cache with
 `LIGHTUSD_WASM_OUTPUT_DIRECTORY` pointing at its own `artifacts/` directory)
 leaves stale modules behind and the parity suites fail against the old glue
 instead of the current source. After such a build, copy the generated
-`lightusd_next.*`, `lightusd_combined.*`, `lightusd_next_64.*` and the
+`lightusd_next.*`, `lightusd_combined.*`, `lightusd_wasm_64.*` and the
 `lightusd_{exr,validator,geometry,raytrace}[_64].*` feature modules into
 `web/js/src/lightusd/`, or re-run the preparation script above.
 
@@ -411,10 +411,10 @@ coverage, supplied dependencies, and narrow-screen layout. It runs in the
 browser profile and accepts `LIGHTUSD_NEXT_MODULE` to test an isolated build:
 
 ```sh
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd_next.js" \
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
   NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
   node tests/next-checker.test.mjs
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd_next.js" \
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
   node tests/validation-browser.test.mjs
 ```
 
@@ -426,7 +426,7 @@ for build options and the browser API. Legacy validation parity remains covered
 separately by `next-validation-parity.test.mjs`.
 ## Independent next feature modules
 
-Build `lightusd_next_distribution` to produce the main next module plus geometry,
+Build `lightusd_wasm_distribution` to produce the main next module plus geometry,
 raytrace, validator and EXR, for each required pointer width. These are separate
 WASM heaps. Feature consumers use `await module.loadFeature(name)` and call the
 returned object. See [the packaging documentation](../../npm/README.md) for the

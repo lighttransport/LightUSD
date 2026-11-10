@@ -60,7 +60,7 @@ const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 const glue = wasm64 ? '../src/lightusd/lightusd_combined_64.js'
                     : '../src/lightusd/lightusd_combined.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
+const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
 const nextNative = await loadWasm(
   () => import(new URL(nextGlue, import.meta.url).href),
   { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).href }

@@ -19,7 +19,7 @@ const browser = await puppeteer.launch({headless: true,
 try {
   for (const app of ['js', 'demo']) {
     const alias = process.env.LIGHTUSD_MODULE ? [{
-      find: /^\.\/src\/lightusd\/lightusd_next\.(js|wasm)(\?url)?$/,
+      find: /^\.\/src\/lightusd\/lightusd\.(js|wasm)(\?url)?$/,
       replacement: path.resolve(process.env.LIGHTUSD_MODULE).replace(/\.js$/, '') + '.$1$2'
     }] : [];
     const config = {configFile: false, root: path.join(web, app), base: './',

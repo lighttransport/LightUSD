@@ -7,7 +7,7 @@ self.onmessage = async ({data}) => {
   if (!['inspect','bake'].includes(data.type)) return;
   let converter;
   try {
-    nativePromise ||= import('../../src/lightusd/lightusd_next.js').then(({default:factory}) => factory());
+    nativePromise ||= import('../../src/lightusd/lightusd.js').then(({default:factory}) => factory());
     const native = await nativePromise;
     converter = new native.NextUSDZConverterNative();
     const budget = Math.min(data.options.udimMemoryBudgetBytes, 1024 * 1024 * 1024);

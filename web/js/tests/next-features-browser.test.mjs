@@ -25,7 +25,7 @@ try {
   for (const bits of [32,64]) {
     const results = await page.evaluate(async bits => {
       const {checkFeatures} = await import('/tests/next-features-contract.mjs');
-      const {default: factory} = await import(`/src/lightusd/lightusd_next${bits === 64 ? '_64' : ''}.js`);
+      const {default: factory} = await import(`/src/lightusd/lightusd${bits === 64 ? '_64' : ''}.js`);
       const main = await checkFeatures(factory);
       const worker = new Worker('/tests/next-features-worker.mjs',{type:'module'});
       try {

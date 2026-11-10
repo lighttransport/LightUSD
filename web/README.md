@@ -29,12 +29,12 @@ produces separate legacy and next products:
 | Variant | CMake option | Module (`js/src/lightusd/`) | Contents | .wasm (MinSizeRel) |
 |---|---|---|---|---|
 | **legacy (deprecated)** | `-DLIGHTUSD_WASM_PRODUCT=legacy` | `lightusd.js/.wasm` | Compatibility loader and legacy Tydra RenderScene conversion; retained in CI | varies by toolchain |
-| **next** | `-DLIGHTUSD_WASM_PRODUCT=next` | `lightusd_next.js/.wasm` | next-core + Tydra-next (USDA/USDC/USDZ parse, composition, render extraction, streaming) | varies by toolchain |
+| **next** | `-DLIGHTUSD_WASM_PRODUCT=next` | `lightusd.js/.wasm` | next-core + Tydra-next (USDA/USDC/USDZ parse, composition, render extraction, streaming) | varies by toolchain |
 | **combined** (compatibility-only) | `-DLIGHTUSD_WASM_PRODUCT=combined` | `lightusd_combined.js/.wasm` | Both APIs in one module for transition testing; not the published default | varies by toolchain |
 
 Each variant emits a distinctly-named module, so builds never clobber each
 other's output. `LIGHTUSD_WASM64=ON` combines with any variant and appends
-`_64` to the module name (`lightusd_64`, `lightusd_next_64`, or
+`_64` to the module name (`lightusd_64`, `lightusd_wasm_64`, or
 `lightusd_combined_64`).
 
 - **next** (`src/next/`) is the default AOUSD-aligned core (parser, crate,
@@ -55,7 +55,7 @@ $ cmake --build web/build_ninja
 ### Next product
 
 ```bash
-# next -> js/src/lightusd/lightusd_next.js/.wasm
+# next -> js/src/lightusd/lightusd.js/.wasm
 $ emcmake cmake -S web -B web/cmake-build-next -G Ninja \
     -DLIGHTUSD_WASM_PRODUCT=next -DCMAKE_BUILD_TYPE=MinSizeRel
 $ cmake --build web/cmake-build-next
@@ -109,7 +109,7 @@ WASM32, Ninja, and `CMAKE_BUILD_TYPE=MinSizeRel`:
 | Variant | `.wasm` | `zstd -19` |
 |---|---:|---:|
 | legacy (`lightusd.wasm`) | 6,551,876 bytes (6.25 MiB) | 1,321,824 bytes (1,290.84 KiB) |
-| next (`lightusd_next.wasm`) | 1,671,646 bytes (1.59 MiB) | 557,584 bytes (544.52 KiB) |
+| next (`lightusd.wasm`) | 1,671,646 bytes (1.59 MiB) | 557,584 bytes (544.52 KiB) |
 
 ### zstd compression
 

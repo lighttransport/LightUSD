@@ -5,7 +5,7 @@ let modulePromise;
 const isIterableBuffer = (value) => value != null && Number.isSafeInteger(value.length) && value.length >= 0 && typeof value[Symbol.iterator] === 'function';
 
 async function getModule() {
-  modulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory());
+  modulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory());
   return modulePromise;
 }
 

@@ -9,7 +9,7 @@ import {join} from 'node:path';
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 const {default: createNext} = await import(new URL(
-  wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
+  wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js',
   import.meta.url));
 const Module = await createNext();
 

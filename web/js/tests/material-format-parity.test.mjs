@@ -12,8 +12,8 @@ const combinedUrl = process.env.LIGHTUSD_COMBINED_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_COMBINED_MODULE)).href
   : new URL(combinedDefault, import.meta.url).href;
 const legacyModule = await loadWasm(() => import(combinedUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                        : '../src/lightusd/lightusd_next.js';
+const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                        : '../src/lightusd/lightusd.js';
 const {default: createNextModule} = await import(new URL(nextGlue, import.meta.url));
 const nextModule = await createNextModule();
 

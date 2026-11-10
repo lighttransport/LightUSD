@@ -165,10 +165,10 @@ PARALLEL_JOBS=8 ./build-wasm.sh
 
 After `build-wasm.sh`, the following files should exist in `web/js/src/lightusd/`:
 
-- `lightusd_next.js`
-- `lightusd_next.wasm`
-- `lightusd_next_64.js`
-- `lightusd_next_64.wasm`
+- `lightusd.js`
+- `lightusd.wasm`
+- `lightusd_64.js`
+- `lightusd_64.wasm`
 - `lightusd_mcp.js`, `lightusd_mcp.wasm` and the `_64` variants
 
 The `lightusd_next*` modules are the lean next-core + Tydra-next builds used

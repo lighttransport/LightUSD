@@ -40,13 +40,13 @@ configure_build "${LEGACY_BUILD_DIR}" lightusd_combined \
   -DLIGHTUSD_WASM_PRODUCT=combined \
   -DLIGHTUSD_WASM_DEMODEV=OFF \
   -DLIGHTUSD_WASM64=OFF
-configure_build "${NEXT_BUILD_DIR}" lightusd_next_distribution \
+configure_build "${NEXT_BUILD_DIR}" lightusd_wasm_distribution \
   -DLIGHTUSD_NATIVE_PRODUCT=next \
   -DLIGHTUSD_WASM_PRODUCT=next \
   -DLIGHTUSD_WASM_DEMODEV=OFF \
   -DLIGHTUSD_WASM64=OFF
 
-for artifact in lightusd_combined.js lightusd_combined.wasm lightusd_next.js lightusd_next.wasm lightusd_validator.js lightusd_validator.wasm lightusd_exr.js lightusd_exr.wasm; do
+for artifact in lightusd_combined.js lightusd_combined.wasm lightusd.js lightusd.wasm lightusd_validator.js lightusd_validator.wasm lightusd_exr.js lightusd_exr.wasm; do
   if [[ ! -f "${WEB_DIR}/js/src/lightusd/${artifact}" ]]; then
     echo "error: local LightUSD build did not produce ${artifact}." >&2
     exit 1

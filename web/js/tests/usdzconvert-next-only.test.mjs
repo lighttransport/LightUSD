@@ -1,7 +1,7 @@
 // Smoke test for usdzconvert with the next-core + tydra-next only WASM module.
 //
 // Runs on the default wasm32 next glue; set LIGHTUSD_WASM64=1 to use
-// lightusd_next_64.js.
+// lightusd_64.js.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -422,8 +422,8 @@ async function testAsync(name, fn) {
 }
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                    : '../src/lightusd/lightusd_next.js';
+const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                    : '../src/lightusd/lightusd.js';
 const glueUrl = new URL(glue, import.meta.url).href;
 const wasmDir = new URL('../src/lightusd/', import.meta.url);
 const native = await loadWasm(() => import(glueUrl), {
@@ -1421,7 +1421,7 @@ def Xform "Second" (
     let merged = null;
     for (let i = 0; i < stream.meshCount(); ++i) {
       const candidate = stream.getMesh(i);
-      if (candidate.primPath?.includes('__lightusd_next_merged')) {
+      if (candidate.primPath?.includes('__lightusd_wasm_merged')) {
         merged = candidate;
         break;
       }
@@ -1499,7 +1499,7 @@ await testAsync('next merge keeps inferred alpha billboards double-sided', async
     let mergedAlpha = null;
     for (let i = 0; i < stream.meshCount(); ++i) {
       const candidate = stream.getMesh(i);
-      if (candidate?.primPath?.startsWith('/__lightusd_next_merged/') &&
+      if (candidate?.primPath?.startsWith('/__lightusd_wasm_merged/') &&
           candidate?.material?.textureMetadata?.opacity?.path) {
         mergedAlpha = candidate;
         break;
@@ -1724,8 +1724,8 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
   const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
   const native = loader.native_;
-  const dispatch = native._lightusd_next_call;
-  native._lightusd_next_call = (...args) => {
+  const dispatch = native._lightusd_wasm_call;
+  native._lightusd_wasm_call = (...args) => {
     if (args[1] === 56) throw new Error('node used aggregate emval dispatch');
     return dispatch(...args);
   };
@@ -1735,7 +1735,7 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       loader.parse(usdz, `${label}.usdz`, resolve, reject, { backend: 'next' });
     });
   } finally {
-    native._lightusd_next_call = dispatch;
+    native._lightusd_wasm_call = dispatch;
   }
   try {
     assert.equal(adapter.__backend, 'next', `${label}: expected next adapter`);

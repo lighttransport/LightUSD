@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
+const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
 const gluePath = path.resolve(__dirname, glue);
 if (!fs.existsSync(gluePath)) {
   console.log(`skip - ${glue} not built (run web build)`);

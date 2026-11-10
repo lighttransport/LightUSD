@@ -10,7 +10,7 @@ function copyLocalWasmProducts(sourceDir) {
     async writeBundle(output) {
       const assetsDir = path.join(output.dir || path.resolve(__dirname, 'dist'), 'assets');
       await mkdir(assetsDir, { recursive: true });
-      for (const filename of ['lightusd.js', 'lightusd.wasm', 'lightusd_next.js', 'lightusd_next.wasm']) {
+      for (const filename of ['lightusd.js', 'lightusd.wasm', 'lightusd.js', 'lightusd.wasm']) {
         await copyFile(path.join(sourceDir, filename), path.join(assetsDir, filename));
       }
     },

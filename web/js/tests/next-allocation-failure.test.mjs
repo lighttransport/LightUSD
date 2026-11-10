@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Allocation-failure gate for the next-only WASM module. Every JS wrapper
-// stages inputs/outputs through _lightusd_next_alloc; this test fails the
+// stages inputs/outputs through _lightusd_wasm_alloc; this test fails the
 // k-th allocation of each operation (for every k the operation performs) and
 // requires that the call:
 //   - reports the failure as a JS Error or a failure result (never a WASM
@@ -16,7 +16,7 @@ import zlib from 'node:zlib';
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 const {default: createNext} = await import(new URL(
-  wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
+  wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js',
   import.meta.url));
 const M = await createNext();
 await M.loadFeature('validator');
@@ -25,11 +25,11 @@ const encode = text => new TextEncoder().encode(text);
 const fixture = name => new Uint8Array(fs.readFileSync(new URL(`../../../${name}`, import.meta.url)));
 
 // ---------------------------------------------------------------- injector
-const realAlloc = M._lightusd_next_alloc;
-const realFree = M._lightusd_next_free;
+const realAlloc = M._lightusd_wasm_alloc;
+const realFree = M._lightusd_wasm_free;
 const key = ptr => String(ptr);
 const injector = {armed: false, failAt: 0, count: 0, live: new Set(), injected: 0};
-M._lightusd_next_alloc = size => {
+M._lightusd_wasm_alloc = size => {
   if (injector.armed && ++injector.count === injector.failAt) {
     ++injector.injected;
     return typeof realAlloc(0) === 'bigint' ? 0n : 0;  // probe keeps pointer width
@@ -38,7 +38,7 @@ M._lightusd_next_alloc = size => {
   if (injector.armed && ptr) injector.live.add(key(ptr));
   return ptr;
 };
-M._lightusd_next_free = ptr => {
+M._lightusd_wasm_free = ptr => {
   injector.live.delete(key(ptr));
   return realFree(ptr);
 };

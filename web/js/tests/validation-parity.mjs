@@ -12,7 +12,7 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const lusdcat = process.env.LUSDCAT_PATH || path.join(repoRoot, 'build', 'lusdcat');
 const wasmDir = process.env.LIGHTUSD_WASM_DIR ||
   path.join(repoRoot, 'web', 'js', 'src', 'lightusd');
-const wasmEntry = path.join(wasmDir, 'lightusd.js');
+const wasmEntry = path.join(wasmDir, 'lightusd_legacy.js');
 
 const cases = [
   'tests/usda/validation/valid/clean.usda',

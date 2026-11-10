@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const {default: factory} = await import(wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js');
+const {default: factory} = await import(wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js');
 const module = await factory();
 const validator = await module.loadFeature('validator');
 const exr = await module.loadFeature('exr');
@@ -134,11 +134,11 @@ try {
     check(name, bytes);
     check(name, bytes, {profile: 'strict'}, ['--profile', 'strict']);
   }
-  const heap = module._lightusd_next_alloc(encode(clean).length);
+  const heap = module._lightusd_wasm_alloc(encode(clean).length);
   try {
     module.HEAPU8.set(encode(clean), Number(heap));
     assert.equal(validator.checkUSD(module.HEAPU8.subarray(Number(heap), Number(heap) + encode(clean).length), 'heap.usda').valid, true);
-  } finally { module._lightusd_next_free(heap); }
+  } finally { module._lightusd_wasm_free(heap); }
 } finally { store.delete(); fs.rmSync(directory, {recursive: true, force: true}); }
 assert.throws(() => validator.checkUSD(encode(clean), 'dead.usda', {}, store), TypeError);
 console.log(`ok - WASM lusdchecker profiles, coverage, manifests, assets, samples, variants, containers, SARIF; ${compared} native reports matched (${wasm64 ? 'wasm64' : 'wasm32'})`);

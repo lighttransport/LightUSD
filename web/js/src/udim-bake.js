@@ -57,8 +57,8 @@ export function discoverUDIMTiles(keys, pattern, baseDir = '', maxTiles = 100) {
   return result;
 }
 function wasmBytes(native, bytes, call, extra = 0) {
-  const alloc = native._lightusd_next_alloc || native._lightusd_combined_alloc || native._lightusd_udim_alloc || native._malloc;
-  const free = native._lightusd_next_free || native._lightusd_combined_free || native._lightusd_udim_free || native._free;
+  const alloc = native._lightusd_wasm_alloc || native._lightusd_combined_alloc || native._lightusd_udim_alloc || native._malloc;
+  const free = native._lightusd_wasm_free || native._lightusd_combined_free || native._lightusd_udim_free || native._free;
   if (typeof alloc !== 'function' || typeof free !== 'function') throw new Error('WASM allocator unavailable');
   const source = bytes.buffer === native.HEAPU8.buffer ? bytes.slice() : bytes;
   const outputOffset = (source.byteLength + 7) - (source.byteLength + 7) % 8;

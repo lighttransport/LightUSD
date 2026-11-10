@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {PNG} from 'pngjs';
 import {LuciaCommandStack,sessionCommand,estimateHistoryBytes} from '../src/command-stack.js';
-import factory from '../../src/lightusd/lightusd_next.js';
+import factory from '../../src/lightusd/lightusd.js';
 import {bakeUDIMAtlas} from '../../src/udim-bake.js';
 if(!globalThis.CustomEvent)globalThis.CustomEvent=class extends Event{};
 

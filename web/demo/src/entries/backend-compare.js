@@ -145,7 +145,7 @@ async function loadScene(url, label) {
   } catch (e) {
     $id('next-stats').textContent = `Next backend unavailable: ${e.message}`;
     $id('next-loading').style.background = '#f08a8a';
-    $id('diff-panel').innerHTML = `<div style="color:var(--dim);padding:20px 0;font-size:.82rem">Next backend not available in this build. The next WASM module (lightusd_next.wasm) may not be present.</div>`;
+    $id('diff-panel').innerHTML = `<div style="color:var(--dim);padding:20px 0;font-size:.82rem">Next backend not available in this build. The next WASM module (lightusd.wasm) may not be present.</div>`;
     $id('next-stats').style.color = '#f08a8a';
     fitBoth();
     return;

@@ -127,7 +127,7 @@ step described by the exporter documentation.
 
 1. `prepare-local-lightusd.sh` configures two CMake builds:
    - `web/build_ninja/` — legacy WASM (`lightusd.wasm` + `lightusd.js`)
-   - `web/build_next_ninja/` — next WASM (`lightusd_next.wasm` + `lightusd_next.js`)
+   - `web/build_next_ninja/` — next WASM (`lightusd.wasm` + `lightusd.js`)
 2. Build artifacts are copied to `web/js/src/lightusd/`
 3. Vite serves JS modules from `web/js/src/lightusd/` via the `lightusd` alias
 4. Hot-reload is available for JS changes; WASM changes require re-running

@@ -8,15 +8,16 @@
 import { NextRenderSceneAdapter } from './LightUSDLoader.js';
 
 let lightusd = null;
-let lightusdLegacy = null;
 let lightusdNext = null;
 let lightusdBackend = '';
 let loader = null;
 
-// next is the default product; the legacy module is used only when a
-// caller asks for it explicitly.
+// The worker always runs on the core module; the legacy backend was removed.
 function wantsNextBackend(options = {}) {
-    return options.backend !== 'legacy' && options.wasm !== 'legacy';
+    if (options.backend === 'legacy' || options.wasm === 'legacy') {
+        console.warn('[LightUSDWorker] The legacy backend was removed; using the core module.');
+    }
+    return true;
 }
 
 function postNextProgress(info = {}) {
@@ -38,16 +39,10 @@ async function init(options = {}) {
         lightusdBackend = 'next';
         return true;
     }
-    if (!nextBackend && lightusdLegacy) {
-        lightusd = lightusdLegacy;
-        lightusdBackend = 'legacy';
-        return true;
-    }
-
     try {
         if (nextBackend) {
             const useMemory64 = options.useMemory64 === true;
-            const moduleUrl = new URL(useMemory64 ? './lightusd_next_64.js' : './lightusd_next.js',
+            const moduleUrl = new URL(useMemory64 ? './lightusd_64.js' : './lightusd.js',
                 import.meta.url).href;
             const module = await import(/* @vite-ignore */ moduleUrl);
             lightusdNext = await module.default();
@@ -56,42 +51,7 @@ async function init(options = {}) {
             return true;
         }
 
-        // Loaded on demand so next-only deployments need no legacy module.
-        const {default: createLightUSD} = await import('./lightusd.js');
-        lightusdLegacy = await createLightUSD();
-        lightusd = lightusdLegacy;
-        lightusdBackend = 'legacy';
-
-        // Set up Tydra progress callback on Module
-        lightusdLegacy.onTydraProgress = (info) => {
-            self.postMessage({
-                type: 'tydra_progress',
-                meshCurrent: info.meshCurrent,
-                meshTotal: info.meshTotal,
-                stage: info.stage,
-                meshName: info.meshName,
-                progress: info.progress
-            });
-        };
-
-        lightusdLegacy.onTydraComplete = (info) => {
-            self.postMessage({
-                type: 'tydra_complete',
-                meshCount: info.meshCount,
-                materialCount: info.materialCount,
-                textureCount: info.textureCount,
-                animationCount: info.animationCount || info.animations || 0,
-                nodeCount: info.nodeCount || 0,
-                lightCount: info.lightCount || 0,
-                cameraCount: info.cameraCount || 0,
-                pointInstancerCount: info.pointInstancerCount || 0,
-                pointInstanceDrawCount: info.pointInstanceDrawCount || 0,
-                skeletonCount: info.skeletonCount || 0,
-                unsupportedRenderableCount: info.unsupportedRenderableCount || 0
-            });
-        };
-
-        return true;
+        return false;
     } catch (e) {
         self.postMessage({ type: 'error', error: `Failed to init WASM: ${e.message}` });
         return false;
@@ -123,39 +83,6 @@ async function loadFromBinary(binary, filename, options = {}) {
             }, transferables);
             return;
         }
-
-        loader = new lightusd.LightUSDLoaderNative();
-
-        // Apply options
-        if (options.maxMemoryLimitMB) {
-            loader.setMaxMemoryLimitMB(options.maxMemoryLimitMB);
-        }
-
-        self.postMessage({ type: 'progress', phase: 'parsing', progress: 0.1 });
-
-        // Load the USD file
-        const success = loader.loadFromBinary(binary, filename);
-
-        if (!success) {
-            self.postMessage({ type: 'error', error: 'Failed to parse USD file' });
-            return;
-        }
-
-        self.postMessage({ type: 'progress', phase: 'extracting', progress: 0.8 });
-
-        // Extract scene data to send back to main thread
-        const sceneData = extractSceneData(loader);
-
-        self.postMessage({ type: 'progress', phase: 'complete', progress: 1.0 });
-
-        // Send the extracted data back
-        // Use transferable arrays for efficiency
-        const transferables = collectTransferables(sceneData);
-
-        self.postMessage({
-            type: 'complete',
-            data: sceneData
-        }, transferables);
 
     } catch (e) {
         self.postMessage({ type: 'error', error: e.message });

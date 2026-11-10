@@ -44,11 +44,11 @@ import {
 // CLI runs with plain `node`. Honors LIGHTUSD_WASM64=1 like usdzconvert.js.
 function selectWasmGlue() {
   if (process.env.LIGHTUSD_WASM64 === '1') {
-    const url64 = new URL('../src/lightusd/lightusd_64.js', import.meta.url);
+    const url64 = new URL('../src/lightusd/lightusd_legacy_64.js', import.meta.url);
     if (fs.existsSync(url64)) return url64.href;
-    console.error('[usdcat] LIGHTUSD_WASM64=1 but lightusd_64.js not found; using wasm32.');
+    console.error('[usdcat] LIGHTUSD_WASM64=1 but lightusd_legacy_64.js not found; using wasm32.');
   }
-  return new URL('../src/lightusd/lightusd.js', import.meta.url).href;
+  return new URL('../src/lightusd/lightusd_legacy.js', import.meta.url).href;
 }
 
 function printUsage() {

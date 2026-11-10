@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import createLightUSD from '../src/lightusd/lightusd.js';
+import createLightUSD from '../src/lightusd/lightusd_legacy.js';
 
 const lightusd = await createLightUSD();
 assert.equal(typeof lightusd.compressTextureToUni, 'function');

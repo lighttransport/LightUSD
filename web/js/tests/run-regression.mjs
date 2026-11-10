@@ -54,16 +54,12 @@ const NODE_TESTS = [
   ['next volume query contract', 'tests/next-volume-query-contract.test.mjs'],
   ['next MCP server module', 'tests/next-mcp-server.test.mjs'],
   ['variant selection overloads', 'tests/apply-variant-selection-overload.test.mjs'],
-  ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],
   ['loader fast materials', 'tests/loader-utils-fast-materials.mjs'],
   ['typed array ownership', 'tests/typed-array-ownership.test.mjs'],
   ['texture compression loader', 'tests/loader-utils-texture-compression.mjs'],
   ['Basis/KTX2 loader', 'tests/loader-utils-basis-ktx2.mjs'],
-  ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],
   ['LightRT BVH occlusion WASM ABI', 'tests/lightrt-wasm.mjs'],
-  ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
-  ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
   ['Lucia UDIM workflow', 'lucia-code/tests/udim-workflow.test.mjs'],
   ['Lucia scene activity gate', 'lucia-code/tests/activity-gate.test.mjs'],
   ['Lucia source deltas and asset snapshots', 'lucia-code/tests/source-delta.test.mjs'],
@@ -73,12 +69,21 @@ const NODE_TESTS = [
   ['Lucia validation failures', 'lucia-code/tests/validation.test.mjs'],
   ['texture memory budget', 'tests/texture-memory-budget.test.mjs'],
   ['UDIM baking', 'tests/udim-bake.test.mjs'],
-  ['MaterialX JSON regression', 'tests/materialx-json-regression.js'],
   ['USD skeleton animation', 'tests/usdskel-animation-test.js'],
 ];
 
-const OPTIONAL_NODE_TESTS = [
+// Tests of the legacy WASM module (lightusd_legacy[_64].js, compile-only and
+// not published): run with --profile legacy after building
+// LIGHTUSD_WASM_PRODUCT=legacy.
+const LEGACY_NODE_TESTS = [
+  ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
+  ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],
+  ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
+  ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
   ['validation parity', 'tests/validation-parity.mjs'],
+];
+
+const OPTIONAL_NODE_TESTS = [
   ['memory64 capability', 'tests/memory64-test.js'],
 ];
 
@@ -90,7 +95,7 @@ Usage:
   node tests/run-regression.mjs [options]
 
 Options:
-  --profile <full|node|physics|browser>  Gate profile (default: full)
+  --profile <full|node|physics|browser|legacy>  Gate profile (default: full)
   --menagerie <dir>                     Menagerie checkout
   --out <dir>                           Generated output directory
   --software                            Force software browser rendering
@@ -332,6 +337,12 @@ async function main() {
   if (opts.profile === 'node' || opts.profile === 'full') await runNodeTests(results);
   if (opts.profile === 'physics' || opts.profile === 'full') await runPhysics(results, opts);
   if (opts.profile === 'browser' || opts.profile === 'full') await runBrowserTests(results, opts);
+  if (opts.profile === 'legacy') {
+    for (const [label, relative] of LEGACY_NODE_TESTS) {
+      if (!exists(relative)) continue;
+      results.push(await run(label, NODE, [relative], {}));
+    }
+  }
 
   const failed = results.filter((result) => !result.ok);
   const summary = {

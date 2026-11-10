@@ -20,14 +20,14 @@ const readmePath = path.resolve(packageRoot, 'README.md');
 const licensePath = path.resolve(repoRoot, 'LICENSE');
 const manifestPath = path.resolve(packageRoot, 'package.json');
 
-// The package ships the next product only (plus its independently linked
-// feature modules and the MCP server). The legacy lightusd[_64] module is not
-// built or published.
+// The package ships the core product (lightusd[_64]) plus its independently
+// linked feature modules and the MCP server. The legacy module is never
+// published.
 const REQUIRED_SOURCE_FILES = [
-  'lightusd_next.js',
-  'lightusd_next.wasm',
-  'lightusd_next_64.js',
-  'lightusd_next_64.wasm',
+  'lightusd.js',
+  'lightusd.wasm',
+  'lightusd_64.js',
+  'lightusd_64.wasm',
   'lightusd_geometry.js',
   'lightusd_geometry.wasm',
   'lightusd_geometry_64.js',
@@ -78,10 +78,10 @@ function ensureFileExists(filePath) {
   }
 }
 
-// Source-tree-only WASM glue that must never be published: the legacy module
-// and the legacy+next combined test module. A developer checkout may still
-// contain them from local legacy/combined builds.
-const UNPUBLISHED_MODULE = /^lightusd(_64|_combined|_combined_64)?\.(js|wasm)$/;
+// Source-tree-only WASM glue that must never be published: the compile-only
+// legacy module and the legacy+core combined test module. A developer checkout
+// may still contain them from local legacy/combined builds.
+const UNPUBLISHED_MODULE = /^lightusd_(legacy|combined|next)(_64)?\.(js|wasm)$/;
 
 function listSourceFiles(dir, extension) {
   return fs.readdirSync(dir)

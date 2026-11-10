@@ -148,7 +148,7 @@ async function ensureWasm() {
   // next::Layer with the same options/result contract).
   const params = new URLSearchParams(window.location.search);
   const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-  const glue = useNext ? './src/lightusd/lightusd_next.js' : './src/lightusd/lightusd.js';
+  const glue = useNext ? './src/lightusd/lightusd.js' : './src/lightusd/lightusd.js';
   native = await loadWasm(() => import(/* @vite-ignore */ new URL(glue, import.meta.url).href));
   setStatus('');
   return native;

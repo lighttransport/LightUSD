@@ -21,30 +21,33 @@ option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires rec
 option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR decoding and encoding in next-only WASM" ON)
 option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
 option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
-# next is the default product; legacy and combined remain available for a
-# transition period.
-set(LIGHTUSD_WASM_PRODUCT "next" CACHE STRING
-    "WASM product to build: next, legacy, or combined (combined is compatibility-only)")
-set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined mcp)
+# core is the published product. legacy and combined are compile-only (built
+# in CI, never published); mcp is the MCP server module.
+set(LIGHTUSD_WASM_PRODUCT "core" CACHE STRING
+    "WASM product to build: core, legacy, combined (compile-only), or mcp")
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS core legacy combined mcp)
 
-# Keep the historical switches as compatibility aliases for existing build
-# scripts. New callers should select the product explicitly.
-option(LIGHTUSD_WASM_NEXT_ONLY "Deprecated alias for LIGHTUSD_WASM_PRODUCT=next" OFF)
+# Historical switches/names kept as deprecated aliases for build scripts.
+option(LIGHTUSD_WASM_NEXT_ONLY "Deprecated alias for LIGHTUSD_WASM_PRODUCT=core" OFF)
 option(LIGHTUSD_WASM_LEGACY_ONLY "Deprecated alias for LIGHTUSD_WASM_PRODUCT=legacy" OFF)
 if (LIGHTUSD_WASM_NEXT_ONLY)
-  set(LIGHTUSD_WASM_PRODUCT "next")
-  message(DEPRECATION "LIGHTUSD_WASM_NEXT_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=next")
+  set(LIGHTUSD_WASM_PRODUCT "core")
+  message(DEPRECATION "LIGHTUSD_WASM_NEXT_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=core")
 elseif (LIGHTUSD_WASM_LEGACY_ONLY)
   set(LIGHTUSD_WASM_PRODUCT "legacy")
   message(DEPRECATION "LIGHTUSD_WASM_LEGACY_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=legacy")
 endif()
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
+  set(LIGHTUSD_WASM_PRODUCT "core")
+  message(DEPRECATION "LIGHTUSD_WASM_PRODUCT=next is deprecated; use core (output lightusd[_64].js)")
+endif()
 
 if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
-    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "next" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "core" AND
     NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined" AND
     NOT LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   message(FATAL_ERROR
-    "LIGHTUSD_WASM_PRODUCT must be next, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
+    "LIGHTUSD_WASM_PRODUCT must be core, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
 endif()
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
     LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
@@ -52,7 +55,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
   set(LIGHTUSD_BUILD_LEGACY ON CACHE BOOL
       "Legacy implementation required by the selected WASM product" FORCE)
   message(DEPRECATION
-    "The legacy WASM product is deprecated; use LIGHTUSD_WASM_PRODUCT=next for new integrations. Legacy and combined builds remain available for compatibility and CI.")
+    "The legacy WASM product is compile-only and not published; use LIGHTUSD_WASM_PRODUCT=core.")
 endif()
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
@@ -61,11 +64,11 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   else()
     set(BUILD_TARGET "lightusd_mcp")
   endif()
-elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   if (LIGHTUSD_WASM64)
-    set(BUILD_TARGET "lightusd_next_64")
+    set(BUILD_TARGET "lightusd_64")
   else()
-    set(BUILD_TARGET "lightusd_next")
+    set(BUILD_TARGET "lightusd")
   endif()
 elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   if (LIGHTUSD_WASM64)
@@ -74,9 +77,9 @@ elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
     set(BUILD_TARGET "lightusd_combined")
   endif()
 elseif (LIGHTUSD_WASM64)
-  set(BUILD_TARGET "lightusd_64")
+  set(BUILD_TARGET "lightusd_legacy_64")
 else()
-  set(BUILD_TARGET "lightusd")
+  set(BUILD_TARGET "lightusd_legacy")
 endif()
 
 project(${BUILD_TARGET} CXX C)
@@ -142,9 +145,9 @@ if (BUILD_TESTING AND LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS AND
   set(LIGHTUSD_OPENPBR_VISUAL_DIFF
       "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
   set(LIGHTUSD_WASM_JS
-      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.js")
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.js")
   set(LIGHTUSD_WASM_BINARY
-      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.wasm")
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.wasm")
   if (LIGHTUSD_NODE_EXECUTABLE AND EXISTS "${LIGHTUSD_OPENPBR_VISUAL_DIFF}" AND
       EXISTS "${LIGHTUSD_WASM_JS}" AND EXISTS "${LIGHTUSD_WASM_BINARY}")
     add_test(
@@ -183,9 +186,9 @@ if (BUILD_TESTING AND LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS AND
   set(LIGHTUSD_COLORSPACE_PIXEL_TEST
       "${PROJECT_SOURCE_DIR}/js/tests/colorspace-render-batch.mjs")
   set(LIGHTUSD_LEGACY_WASM_JS
-      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.js")
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_legacy.js")
   set(LIGHTUSD_LEGACY_WASM_BINARY
-      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.wasm")
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_legacy.wasm")
   if (LIGHTUSD_NODE_EXECUTABLE AND
       EXISTS "${LIGHTUSD_COLORSPACE_BACKEND_TEST}" AND
       EXISTS "${LIGHTUSD_LEGACY_WASM_JS}" AND
@@ -345,7 +348,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
   set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
   set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_core_build EXCLUDE_FROM_ALL)
 
   add_executable(lightusd_mcp_wasm binding-mcp.cc)
   target_link_libraries(lightusd_mcp_wasm PRIVATE lightusd_mcp)
@@ -389,7 +392,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   return()
 endif()
 
-if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
   set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
   set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
@@ -397,45 +400,45 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL
       "Do not build a shared C API in WASM" FORCE)
 
-  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_next_build EXCLUDE_FROM_ALL)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_core_build EXCLUDE_FROM_ALL)
 
-  add_executable(lightusd_next_wasm binding-udim.cc binding-next-udim.cc
+  add_executable(lightusd_core_wasm binding-udim.cc binding-core-udim.cc
     ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer-geometry.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-bake.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
-    binding-next.cc binding-next-scene.cc
-    binding-next-layer.cc
-    binding-next-layer-json-import.cc
-    binding-next-layer-json-export.cc
-    binding-next-layer-json-values.cc
-    binding-next-layer-inspect.cc
-    binding-next-api.cc
-    binding-next-image.cc
-    binding-next-assets.cc
-    binding-next-util.cc
-    binding-next-render-lifecycle.cc
-    binding-next-render-query-geometry.cc
-    binding-next-render-query-scene.cc
-    binding-next-render-query-volume.cc
-    binding-next-render-query-shading.cc
-    binding-next-render-query-animation.cc
-    binding-next-render-assets.cc
+    binding-core.cc binding-core-scene.cc
+    binding-core-layer.cc
+    binding-core-layer-json-import.cc
+    binding-core-layer-json-export.cc
+    binding-core-layer-json-values.cc
+    binding-core-layer-inspect.cc
+    binding-core-api.cc
+    binding-core-image.cc
+    binding-core-assets.cc
+    binding-core-util.cc
+    binding-core-render-lifecycle.cc
+    binding-core-render-query-geometry.cc
+    binding-core-render-query-scene.cc
+    binding-core-render-query-volume.cc
+    binding-core-render-query-shading.cc
+    binding-core-render-query-animation.cc
+    binding-core-render-assets.cc
     ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
-    binding-next-render-primvars.cc
-    binding-next-render-outputs.cc
-    binding-next-render-mesh-helpers.cc
-    binding-next-render-mesh.cc
-    binding-next-render-material-key.cc
-    binding-next-render-material.cc
+    binding-core-render-primvars.cc
+    binding-core-render-outputs.cc
+    binding-core-render-mesh-helpers.cc
+    binding-core-render-mesh.cc
+    binding-core-render-material-key.cc
+    binding-core-render-material.cc
     ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
-    binding-next-render-merge.cc
-    binding-next-render-material-output.cc)
+    binding-core-render-merge.cc
+    binding-core-render-material-output.cc)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
     COMPILE_DEFINITIONS "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
-  target_sources(lightusd_next_wasm PRIVATE binding-exr-bridge.cc)
+  target_sources(lightusd_core_wasm PRIVATE binding-exr-bridge.cc)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
     COMPILE_DEFINITIONS "LIGHTUSD_EXR_EXTERNAL=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-loader.cc PROPERTIES
@@ -461,13 +464,13 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   target_compile_options(lightusd_validator_wasm PRIVATE -fno-exceptions -fno-rtti)
 
   # Distribution build includes optional artifacts without linking them into core.
-  add_custom_target(lightusd_next_distribution ALL
-    DEPENDS lightusd_next_wasm lightusd_validator_wasm)
+  add_custom_target(lightusd_core_distribution ALL
+    DEPENDS lightusd_core_wasm lightusd_validator_wasm)
   if(TARGET lightusd_exr_wasm)
-    add_dependencies(lightusd_next_distribution lightusd_exr_wasm)
+    add_dependencies(lightusd_core_distribution lightusd_exr_wasm)
   endif()
 
-  target_sources(lightusd_next_wasm PRIVATE ../src/sha256.cc binding-feature.c)
+  target_sources(lightusd_core_wasm PRIVATE ../src/sha256.cc binding-feature.c)
   add_executable(lightusd_geometry_wasm EXCLUDE_FROM_ALL
     binding-geometry.cc meshopt-wasm.cc binding-feature.c
     $<TARGET_OBJECTS:lightusd_subdiv_objects>
@@ -495,32 +498,32 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     target_compile_definitions(lightusd_${feature}_wasm PRIVATE LIGHTUSD_TYPED_BINDINGS=1)
     target_compile_options(lightusd_${feature}_wasm PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions> $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
-    add_dependencies(lightusd_next_distribution lightusd_${feature}_wasm)
+    add_dependencies(lightusd_core_distribution lightusd_${feature}_wasm)
   endforeach()
-  target_link_libraries(lightusd_next_wasm PRIVATE
-    tydra_next lightusd_c lightusd_next)
-  target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
-  # TEMPORARY (next->core refactor): binding-next-render-material-output.cc
+  target_link_libraries(lightusd_core_wasm PRIVATE
+    tydra lightusd_c lightusd_core)
+  target_include_directories(lightusd_core_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
+  # TEMPORARY (next->core refactor): binding-core-render-material-output.cc
   # still serializes materials through the legacy tydra/material-serializer
   # (src/legacy/tydra). Appended after src/ so core/shared headers always win.
   # Removed once the serializer is ported to core RenderMaterial.
-  target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
+  target_include_directories(lightusd_core_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/legacy")
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/../src/legacy/tydra/material-serializer.cc
-    ${PROJECT_SOURCE_DIR}/binding-next-render-material-output.cc
+    ${PROJECT_SOURCE_DIR}/binding-core-render-material-output.cc
     PROPERTIES COMPILE_FLAGS "-include ${PROJECT_SOURCE_DIR}/../src/legacy/legacy-namespace.hh")
-  target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
-  set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
+  target_compile_features(lightusd_core_wasm PRIVATE cxx_std_17)
+  set_property(TARGET lightusd_core_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/feature-runtime.js"
-    "${PROJECT_SOURCE_DIR}/next-api.js")
-  target_compile_options(lightusd_next_wasm
+    "${PROJECT_SOURCE_DIR}/core-api.js")
+  target_compile_options(lightusd_core_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-  target_compile_definitions(lightusd_next_wasm
+  target_compile_definitions(lightusd_core_wasm
                              PRIVATE JSON_NOEXCEPTION=1
                                      LIGHTUSD_CXX_EXCEPTIONS=0
                                      LIGHTUSD_TYPED_BINDINGS=1)
   if (LIGHTUSD_WASM64)
-    target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
+    target_compile_definitions(lightusd_core_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
   endif()
 
   if (LIGHTUSD_WASM_DEMODEV)
@@ -577,10 +580,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   # INCOMING_MODULE_JS_API, so pin the default list plus wasmBinary.
   string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
   string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS
-    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
+    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/core-api.js\"")
 
   set_target_properties(
-      lightusd_next_wasm
+      lightusd_core_wasm
       PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
@@ -590,7 +593,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     if(LIGHTUSD_WASM64)
       string(APPEND feature_output "_64")
     endif()
-    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
+    string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
       feature_flags "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
     set_target_properties(lightusd_${feature}_wasm PROPERTIES OUTPUT_NAME ${feature_output}
       SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${feature_flags}")
@@ -608,7 +611,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     string(APPEND VALIDATOR_OUTPUT "_64")
   endif()
   # Independent memory and exports: no dynamic-linking retention in scene core.
-  string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+  string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js"
                  "${PROJECT_SOURCE_DIR}/validator-api.js"
                  VALIDATOR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
   set_target_properties(lightusd_validator_wasm PROPERTIES
@@ -619,7 +622,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     "${PROJECT_SOURCE_DIR}/validator-api.js")
   if(TARGET lightusd_exr_wasm)
     string(REPLACE "validator" "exr" EXR_OUTPUT "${VALIDATOR_OUTPUT}")
-    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+    string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js"
                    "${PROJECT_SOURCE_DIR}/exr-api.js"
                    EXR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
     set_target_properties(lightusd_exr_wasm PROPERTIES
@@ -711,7 +714,7 @@ endif()
 # Pass through compile definitions for feature flags
 target_sources(${BUILD_TARGET} PRIVATE binding-udim.cc)
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
-  target_sources(${BUILD_TARGET} PRIVATE binding-next-udim.cc)
+  target_sources(${BUILD_TARGET} PRIVATE binding-core-udim.cc)
 endif()
 
 if (LIGHTUSD_WITH_EXR)

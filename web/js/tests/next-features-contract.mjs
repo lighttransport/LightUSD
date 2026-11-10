@@ -39,7 +39,7 @@ export async function checkFeatures(factory) {
   for (const feature of features)
     check(JSON.stringify(feature.featureInfo) === JSON.stringify(core.featureInfo), 'matching layouts');
   const points = new Float32Array([0,0,0, 1,0,0, 1,1,0, 0,1,0]);
-  const ptr = core._lightusd_next_alloc(points.byteLength);
+  const ptr = core._lightusd_wasm_alloc(points.byteLength);
   try {
     const source = new Float32Array(core.HEAPU8.buffer, Number(ptr), points.length);
     source.set(points);
@@ -70,7 +70,7 @@ export async function checkFeatures(factory) {
       check(hits.triangle[0] === 0 && Math.abs(hits.distance[0] - 1) < 1e-5, 'ray hit');
       check(hits.triangle.buffer !== raytrace.HEAPU8.buffer, 'owned ray result');
     } finally { tracer.delete(); }
-  } finally { core._lightusd_next_free(ptr); }
+  } finally { core._lightusd_wasm_free(ptr); }
   check(validator.checkUSD(new TextEncoder().encode('#usda 1.0\ndef Xform "World" {}'),
     'scene.usda').valid, 'validator transfer');
   const encoded = exr.encode(new Uint8Array([255,0,0,255]),1,1,4);

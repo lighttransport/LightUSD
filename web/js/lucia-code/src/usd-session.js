@@ -410,7 +410,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async init() {
-    const factory = (await import('../../src/lightusd/lightusd.js')).default;
+    const factory = (await import('../../src/lightusd/lightusd_legacy.js')).default;
     this.module = await factory();
     this.author = new this.module.LightUSDLoaderNative();
     this.render = new this.module.LightUSDLoaderNative();
@@ -516,7 +516,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async nativeAttributeEdits(edits, summary) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     const checked = result => { if (!result.success) throw new LuciaError('LUCIA_NATIVE_ATTRIBUTE', result.error || 'Native attribute edit failed.'); return result; };
     try {
@@ -541,7 +541,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async compactPropertyHistory(before, after) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       const read = source => {
@@ -568,7 +568,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async restorePropertyHistory(delta, direction) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) throw new LuciaError('LUCIA_HISTORY', document.error());
@@ -722,7 +722,7 @@ export class LuciaUsdSession extends EventTarget {
     const interpolation = normalizeInterpolationToken(attribute.interpolation, 'vertex');
     if (!['constant', 'uniform', 'vertex', 'varying', 'faceVarying'].includes(interpolation))
       throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Mesh primvars require constant, uniform, vertex, varying or faceVarying interpolation.');
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     let vertexCount, counts, corners;
     try {
@@ -958,7 +958,7 @@ export class LuciaUsdSession extends EventTarget {
   // Authored, untimed mesh points and topology. Animated or missing points
   // yield null so callers can refuse instead of silently dropping samples.
   async getAuthoredMesh(path) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       const loaded = document.load(encoder.encode(this.usda));
@@ -989,7 +989,7 @@ export class LuciaUsdSession extends EventTarget {
   async getViewportOverrides() {
     const hasInstancers = /\bPointInstancer\b/.test(this.usda), hasInvisible = /\bvisibility\s*=\s*"invisible"/.test(this.usda);
     if (!hasInstancers && !hasInvisible) return { instancers: [], invisible: [] };
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) return { instancers: [], invisible: [] };
@@ -1027,7 +1027,7 @@ export class LuciaUsdSession extends EventTarget {
   // constant; unauthored interpolation means constant). A topology rewrite
   // must drop them or the mesh is left with mismatched primvar arrays.
   async topologyPrimvarRemovals(sourcePath, targetPath = sourcePath) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) return [];

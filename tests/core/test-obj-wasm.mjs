@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Run against an isolated next-only WASM build: node this-file path/to/lightusd_next.js native-import.usda
+// Run against an isolated next-only WASM build: node this-file path/to/lightusd.js native-import.usda
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';

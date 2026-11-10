@@ -79,8 +79,8 @@ function driveSession(handle, layerMap) {
 }
 
 await testAsync('next-only module composes USDA root + USDA dependency', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });
@@ -114,19 +114,19 @@ await testAsync('next-only module composes USDA root + USDA dependency', async (
     assert.ok(Array.isArray(report.issues));
     assert.equal(report.issues.length, 0,
       'a clean composition exposes an empty typed issue list');
-    const compositionQuery = native._lightusd_next_render_composition_record;
-    const allocate = native._lightusd_next_alloc;
+    const compositionQuery = native._lightusd_wasm_render_composition_record;
+    const allocate = native._lightusd_wasm_alloc;
     let allocations = 0;
-    native._lightusd_next_render_composition_record = (_handle, field) =>
+    native._lightusd_wasm_render_composition_record = (_handle, field) =>
       field === 0 ? 65537 : 0;
-    native._lightusd_next_alloc = size => { ++allocations; return allocate(size); };
+    native._lightusd_wasm_alloc = size => { ++allocations; return allocate(size); };
     try {
       assert.throws(() => directStream.compositionReport(), /excessive record count/);
       assert.equal(allocations, 0,
         'composition record counts are bounded before allocating strings');
     } finally {
-      native._lightusd_next_render_composition_record = compositionQuery;
-      native._lightusd_next_alloc = allocate;
+      native._lightusd_wasm_render_composition_record = compositionQuery;
+      native._lightusd_wasm_alloc = allocate;
     }
   } finally {
     directStream.end();
@@ -165,8 +165,8 @@ await testAsync('next-only module composes USDA root + USDA dependency', async (
 });
 
 await testAsync('next flatten reports dependencies loaded before another layer request', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href,
   });
@@ -205,8 +205,8 @@ def Xform "Root" { }
 });
 
 await testAsync('next flatten session authors and composes a new sublayer', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -251,8 +251,8 @@ def Mesh "ChildMesh" {
 });
 
 await testAsync('next flatten session authors prim composition arcs', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -321,8 +321,8 @@ def Xform "Asset" {
 });
 
 await testAsync('next flatten session applies reference delete list-ops', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -360,8 +360,8 @@ def Xform "Site" (references = @base.usda@</Base>) {}
 
 
 await testAsync('next flatten session reorders references from a weaker layer', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -420,8 +420,8 @@ def Xform "${target}" {
 
 
 await testAsync('next flatten session remaps asset-valued properties within its input budget', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -591,8 +591,8 @@ def Xform "Root" (
 `;
 
 await testAsync('next-only flatten session applies typed variant override', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });
@@ -619,8 +619,8 @@ await testAsync('next-only flatten session applies typed variant override', asyn
 });
 
 await testAsync('scoped variant override applies inside a referenced dependency', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });
@@ -650,8 +650,8 @@ await testAsync('scoped variant override applies inside a referenced dependency'
 });
 
 await testAsync('next-only RenderStream applies variant selections', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });
@@ -689,8 +689,8 @@ await testAsync('next-only RenderStream applies variant selections', async () =>
 });
 
 await testAsync('next-only lodVariantCount reports the largest LOD option set', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: file => new URL(file, wasmDir).href
   });
@@ -738,8 +738,8 @@ if (process.env.LIGHTUSD_ONLY !== '1') await testAsync(
 });
 
 await testAsync('next-only module usddiff diffs USDA layers', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });
@@ -778,7 +778,7 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
   assert.equal(jsonOnly.hasDiffs, false);
   assert.equal(Object.hasOwn(jsonOnly, 'text'), false);
   assert.equal(typeof jsonOnly.json, 'string');
-  const heapPtr = native._lightusd_next_alloc(padded.length + 2);
+  const heapPtr = native._lightusd_wasm_alloc(padded.length + 2);
   try {
     native.HEAPU8.set(padded, Number(heapPtr) + 1);
     const heapInput = native.HEAPU8.subarray(
@@ -790,7 +790,7 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
     assert.equal(heapResult.hasDiffs, false);
     assert.equal(Object.hasOwn(heapResult, 'json'), false);
   } finally {
-    native._lightusd_next_free(heapPtr);
+    native._lightusd_wasm_free(heapPtr);
   }
   const invalid = native.usddiff({
     left: {data: encode('not USD'), name: 'broken.usda'},
@@ -801,8 +801,8 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
 });
 
 await testAsync('next-only module validates USD from binary', async () => {
-  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                      : '../src/lightusd/lightusd_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                      : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).href,
   });

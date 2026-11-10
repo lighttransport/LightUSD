@@ -6,16 +6,16 @@ import {pathToFileURL} from 'node:url';
 const moduleUrl = process.env.LIGHTUSD_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_MODULE))
   : new URL(process.env.LIGHTUSD_WASM64 === '1'
-      ? '../src/lightusd/lightusd_next_64.js'
-      : '../src/lightusd/lightusd_next.js', import.meta.url);
+      ? '../src/lightusd/lightusd_64.js'
+      : '../src/lightusd/lightusd.js', import.meta.url);
 const {default: createModule} = await import(moduleUrl);
 const m = await createModule({print(){}, printErr(){}});
-m._lightusd_next_render_mesh_copy_scope(0,-1,0);
-m._lightusd_next_render_remaining_memory_bytes(0);
-const scope=m._lightusd_next_render_mesh_copy_scope;
-const remaining=m._lightusd_next_render_remaining_memory_bytes;
+m._lightusd_wasm_render_mesh_copy_scope(0,-1,0);
+m._lightusd_wasm_render_remaining_memory_bytes(0);
+const scope=m._lightusd_wasm_render_mesh_copy_scope;
+const remaining=m._lightusd_wasm_render_remaining_memory_bytes;
 let handle=0;
-m._lightusd_next_render_mesh_copy_scope=(h,id,b)=>{handle=h;return scope(h,id,b);};
+m._lightusd_wasm_render_mesh_copy_scope=(h,id,b)=>{handle=h;return scope(h,id,b);};
 const s=new m.RenderStream();
 s.setMaxMemoryLimitMB(512);
 const fixture = '#usda 1.0\ndef Mesh "Triangle" {\n' +
@@ -58,10 +58,10 @@ assert(afterExport < initial);
 // Force real linear-memory growth while a scope and owned output are alive.
 // Request one whole current heap so the allocator cannot satisfy it in-place.
 const oldHeap = m.HEAPU8.buffer;
-const pressure = m._lightusd_next_alloc(m.HEAPU8.byteLength);
+const pressure = m._lightusd_wasm_alloc(m.HEAPU8.byteLength);
 assert(pressure);
 assert.notEqual(m.HEAPU8.buffer, oldHeap);
-m._lightusd_next_free(pressure);
+m._lightusd_wasm_free(pressure);
 assert.equal(exactCold('heap growth'), afterExport);
 assert.deepEqual(Array.from(owned.points), pointsBefore);
 assert.equal(scope(handle,0,0),0);

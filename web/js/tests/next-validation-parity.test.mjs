@@ -12,8 +12,8 @@ const combinedUrl = process.env.LIGHTUSD_COMBINED_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_COMBINED_MODULE)).href
   : new URL(combinedDefault, import.meta.url).href;
 const legacyModule = await loadWasm(() => import(combinedUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
-                        : '../src/lightusd/lightusd_next.js';
+const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+                        : '../src/lightusd/lightusd.js';
 const {default: createNextModule} = await import(new URL(nextGlue, import.meta.url));
 const nextModule = await createNextModule();
 const validator = await nextModule.loadFeature('validator');
@@ -78,9 +78,9 @@ try {
   legacy.reset();
   assert.equal(legacy.loadAsLayerFromBinary(cleanBytes, 'clean.usda'), true, legacy.error());
   assert.equal(nextLayer.load(cleanBytes).success, true, nextLayer.error());
-  const alloc = nextModule._lightusd_next_alloc;
+  const alloc = nextModule._lightusd_wasm_alloc;
   const validationAllocations = [];
-  nextModule._lightusd_next_alloc = size => {
+  nextModule._lightusd_wasm_alloc = size => {
     validationAllocations.push(Number(size));
     return alloc(size);
   };
@@ -88,7 +88,7 @@ try {
   try {
     nextLoadedResult = JSON.parse(nextLayer.validateLoadedLayer(options));
   } finally {
-    nextModule._lightusd_next_alloc = alloc;
+    nextModule._lightusd_wasm_alloc = alloc;
   }
   assert.deepEqual(validationAllocations, [],
     'loaded-layer validation transfers the retained USDA directly to the validator heap');

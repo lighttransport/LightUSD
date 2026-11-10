@@ -13080,7 +13080,7 @@ class RenderStream {
     if (!acc || acc->source_count == 0) return;
     acc->mesh.merged = true;
     acc->mesh.name = "merged_material_" + std::to_string(acc->mesh.material_id);
-    acc->mesh.prim_path = "/__lightusd_next_merged/" + acc->mesh.name + "_" +
+    acc->mesh.prim_path = "/__lightusd_wasm_merged/" + acc->mesh.name + "_" +
                           std::to_string(outputs_.size());
     outputs_.push_back(std::move(acc->mesh));
     stats_.merge_group_count++;
