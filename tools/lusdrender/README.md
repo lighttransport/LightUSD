@@ -1,8 +1,10 @@
 # lusdrender
 
-CPU preview ray-tracer for USD scenes (LightRT BVH + the `next` lazy USDC
-loader). Renders large, reference- and instance-composed scenes directly, within
-a bounded memory budget.
+CPU preview ray-tracer for USD scenes (LightRT BVH + the core lazy loader).
+Renders large, reference- and instance-composed scenes directly, within a
+bounded memory budget. Every input format (USDA/USDC/USDZ) takes the same core
+path; `-subdiv N` refines authored subdivision surfaces on it. `-legacyLoad` is
+accepted with a warning and ignored.
 
 ## Quick start
 
@@ -40,7 +42,7 @@ Common flags:
 
 | flag | meaning |
 |------|---------|
-| `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
+| `-rtPreview` | ray-traced preview (the default for every CPU render; kept for compatibility) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/lusdrender.md`](../../doc/lusdrender.md) for status + testing |
 | `-vkDevice N` | Select a Vulkan physical-device index for explicit multi-GPU validation (`-1`/omitted means automatic selection) |
 | `-cuda` / `-hip` | Headless RT using the GUI-free lusdview core, including packed MaterialX/OpenPBR preview shading |
@@ -49,9 +51,9 @@ Common flags:
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
-| `-mask <prim,...>` | restrict to these prim subtrees; with the `next` loader, defer payloads that cannot intersect the selected subtrees |
+| `-mask <prim,...>` | restrict to these prim subtrees; defer payloads that cannot intersect the selected subtrees |
 
-When `-mask` is used with the default `next` loader, payloads whose authored
+When `-mask` is used with the core loader, payloads whose authored
 prim path is outside (and does not contain) the requested subtree are left
 deferred during composition. This keeps a per-element render from first
 materializing the whole payload set; a selected payload may still contain its

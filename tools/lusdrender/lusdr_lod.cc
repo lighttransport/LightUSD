@@ -138,7 +138,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   std::vector<MeshJobNext> jobs;
   for (const auto &root : stage.GetRootPrims()) {
     CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                               lightusd::legacy::Purpose::Default, time, opt->mask,
+                               lusdr::Purpose::Default, time, opt->mask,
                                &jobs);
   }
 

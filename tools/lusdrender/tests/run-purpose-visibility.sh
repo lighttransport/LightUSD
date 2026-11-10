@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
 #
-# Regression test: purpose filtering, visibility="invisible", and constant
-# opacity must be honored on the LEGACY (plain .usda) path, and visibility on
-# the next (-rtPreview) path.
-#
-# The tydra RenderScene carries neither purpose nor visibility, so the legacy
-# shaded path drew guide/proxy geometry unconditionally (-purpose/-showGuide/...
-# were no-ops) and rendered visibility="invisible" prims; it also dropped
-# constant inputs:opacity (rendered fully opaque). The next path ignored
-# visibility. Fixed by BuildLegacyPurposeVisibility (+ TriInfo.purpose_bit
-# stamping), MaterialOpacity/MaterialOpacityThreshold, and visibility pruning in
-# the next collectors.
-#
-# Exit codes: 0 = pass, 1 = fail, 77 = skip.
-set -uo pipefail
-SKIP=77
+# Regression test: purpose filtering (-showGuide / -purpose), visibility =
+# "invisible" pruning, and constant inputs:opacity on the CPU path.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -49,6 +36,11 @@ def Xform "World" {
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0,1,2]
         point3f[] points = [(-4,-1,0),(-2,-1,0),(-3,1,0)]
+    }
+    def Camera "Cam" {
+        float focalLength = 15
+        double3 xformOp:translate = (0, 0, 14)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
     }
 }
 USDA
@@ -85,16 +77,18 @@ PY
 }
 
 R="$LUSDRENDER"
-COMMON=(-w 192 -height 96 -samples 1 -autoframe)
+# A fixed camera: -autoframe frames only the visible geometry, so the lit-pixel
+# comparison below must not depend on which purposes are shown.
+COMMON=(-w 192 -height 96 -samples 1 -camera /World/Cam)
 
-# 1. Legacy path: default hides guide, -showGuide adds it, invisible never shows.
-"$R" "$TMP/scene.usda" "$TMP/def.png"   "${COMMON[@]}"            >/dev/null 2>&1 || fail "legacy render failed"
-"$R" "$TMP/scene.usda" "$TMP/guide.png" "${COMMON[@]}" -showGuide >/dev/null 2>&1 || fail "legacy -showGuide failed"
+# 1. Default hides guide, -showGuide adds it, invisible never shows.
+"$R" "$TMP/scene.usda" "$TMP/def.png"   "${COMMON[@]}"            >/dev/null 2>&1 || fail "render failed"
+"$R" "$TMP/scene.usda" "$TMP/guide.png" "${COMMON[@]}" -showGuide >/dev/null 2>&1 || fail "-showGuide failed"
 d=$(lit "$TMP/def.png"); g=$(lit "$TMP/guide.png")
 [ "$g" -gt $((d + d / 2)) ] \
-  || fail "legacy purpose filtering inert: default=$d lit px, -showGuide=$g (guide should add a triangle)"
+  || fail "purpose filtering inert: default=$d lit px, -showGuide=$g (guide should add a triangle)"
 
-# 2. Legacy path: -purpose guide shows ONLY the guide triangle.
+# 2. -purpose guide shows ONLY the guide triangle.
 "$R" "$TMP/scene.usda" "$TMP/gonly.png" "${COMMON[@]}" -purpose guide >/dev/null 2>&1 || fail "-purpose guide failed"
 go=$(lit "$TMP/gonly.png")
 [ "$go" -gt 0 ] && [ "$go" -lt "$g" ] \
@@ -105,7 +99,7 @@ tris=$("$R" "$TMP/scene.usda" "$TMP/next.png" -rtPreview -w 32 -height 32 -sampl
 [ "$tris" = "2" ] \
   || fail "next path collected $tris triangles; expected 2 (invisible pruned, guide kept-but-tagged)"
 
-# 4. Legacy path: constant inputs:opacity renders differently from opaque.
+# 4. Constant inputs:opacity renders differently from opaque.
 cat > "$TMP/op.usda" <<'USDA'
 #usda 1.0
 (defaultPrim = "World" upAxis = "Y")
@@ -130,7 +124,7 @@ sed 's/inputs:opacity = 0.15/inputs:opacity = 1.0/' "$TMP/op.usda" > "$TMP/opq.u
 "$R" "$TMP/op.usda"  "$TMP/op.png"  -w 64 -height 64 -samples 2 -autoframe >/dev/null 2>&1 || fail "opacity render failed"
 "$R" "$TMP/opq.usda" "$TMP/opq.png" -w 64 -height 64 -samples 2 -autoframe >/dev/null 2>&1 || fail "opaque render failed"
 cmp -s "$TMP/op.png" "$TMP/opq.png" \
-  && fail "legacy constant inputs:opacity is dropped (0.15 renders identical to 1.0)"
+  && fail "constant inputs:opacity is dropped (0.15 renders identical to 1.0)"
 
-echo "PASS: purpose/visibility/constant-opacity honored (legacy + next)"
+echo "PASS: purpose/visibility/constant-opacity honored"
 exit 0

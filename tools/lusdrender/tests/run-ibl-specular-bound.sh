@@ -84,6 +84,11 @@ def mean(path):
             a=line[i-nch] if i>=nch else 0; bb=prev[i]
             if f==1: line[i]=(line[i]+a)&0xff
             elif f==2: line[i]=(line[i]+bb)&0xff
+            elif f==3: line[i]=(line[i]+((a+bb)>>1))&0xff
+            elif f==4:
+                c=prev[i-nch] if i>=nch else 0
+                p_=a+bb-c; pa,pb,pc=abs(p_-a),abs(p_-bb),abs(p_-c)
+                line[i]=(line[i]+(a if (pa<=pb and pa<=pc) else (bb if pb<=pc else c)))&0xff
         prev=line
         for i in range(0,stride,nch): s+=line[i]+line[i+1]+line[i+2]; n+=1
     return s/max(n,1)

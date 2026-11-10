@@ -2,17 +2,112 @@
 // lusdrender — embedded QuickJS scripting + MCP server (stdio / HTTP). Compiles
 // to nothing unless LIGHTUSD_WITH_QJS is defined.
 #ifdef LIGHTUSD_WITH_QJS
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "tydra/js-script.hh"
 extern "C" {
 #include "external/quickjs-ng/quickjs.h"
 }
 #include "lusdr_context.hh"
 
 namespace lusdr {
+
+// Persistent QuickJS engine (runtime + context + console -> stderr).
+namespace jsengine {
+
+struct JSEngineState {
+  JSRuntime *runtime{nullptr};
+  JSContext *context{nullptr};
+  bool initialized{false};
+};
+
+static JSValue ConsoleLog(JSContext *ctx, JSValueConst, int argc,
+                          JSValueConst *argv, int, JSValueConst *) {
+  std::string line;
+  for (int i = 0; i < argc; i++) {
+    if (const char *s = JS_ToCString(ctx, argv[i])) {
+      if (i) line += ' ';
+      line += s;
+      JS_FreeCString(ctx, s);
+    }
+  }
+  std::fprintf(stderr, "%s\n", line.c_str());
+  return JS_UNDEFINED;
+}
+
+bool InitJSEngine(JSEngineState &engine, std::string &err) {
+  if (engine.initialized) return true;
+  JSRuntime *rt = JS_NewRuntime();
+  if (!rt) {
+    err = "Failed to create JavaScript runtime";
+    return false;
+  }
+  JS_SetMemoryLimit(rt, 256 * 1024 * 1024);
+  JS_SetMaxStackSize(rt, 64 * 1024 * 1024);
+  JSContext *ctx = JS_NewContext(rt);
+  if (!ctx) {
+    err = "Failed to create JavaScript context";
+    JS_FreeRuntime(rt);
+    return false;
+  }
+  // console.* writes to stderr so the stdio MCP transport stays clean.
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue console = JS_NewObject(ctx);
+  for (const char *name : {"log", "info", "warn", "error"})
+    JS_SetPropertyStr(ctx, console, name,
+                      JS_NewCFunctionData(ctx, ConsoleLog, 1, 0, 0, nullptr));
+  JS_SetPropertyStr(ctx, global, "console", console);
+  JS_FreeValue(ctx, global);
+  engine.runtime = rt;
+  engine.context = ctx;
+  engine.initialized = true;
+  return true;
+}
+
+bool DestroyJSEngine(JSEngineState &engine) {
+  if (!engine.initialized) return true;
+  if (engine.context) JS_FreeContext(engine.context);
+  if (engine.runtime) JS_FreeRuntime(engine.runtime);
+  engine = JSEngineState();
+  return true;
+}
+
+// Evaluate `code`; the result is serialized through JSON.stringify.
+bool RunJSScript(JSEngineState &engine, const std::string &code,
+                 nlohmann::json &ret, std::string &err) {
+  if (!engine.initialized) {
+    err = "JS engine not initialized";
+    return false;
+  }
+  JSContext *ctx = engine.context;
+  JSValue result = JS_Eval(ctx, code.c_str(), code.length(), "<eval>",
+                           JS_EVAL_TYPE_GLOBAL);
+  if (JS_IsException(result)) {
+    JSValue exception = JS_GetException(ctx);
+    const char *msg = JS_ToCString(ctx, exception);
+    err = std::string("JavaScript error: ") + (msg ? msg : "unknown");
+    if (msg) JS_FreeCString(ctx, msg);
+    JS_FreeValue(ctx, exception);
+    ret = nullptr;
+    return false;
+  }
+  ret = nullptr;
+  JSValue text = JS_JSONStringify(ctx, result, JS_UNDEFINED, JS_UNDEFINED);
+  if (!JS_IsException(text)) {
+    if (const char *str = JS_ToCString(ctx, text)) {
+      ret = nlohmann::json::parse(str, nullptr, false);
+      if (ret.is_discarded()) ret = nullptr;
+      JS_FreeCString(ctx, str);
+    }
+  }
+  JS_FreeValue(ctx, text);
+  JS_FreeValue(ctx, result);
+  return true;
+}
+
+}  // namespace jsengine
 
 namespace qjs {
 
@@ -213,7 +308,7 @@ void RegFn(JSContext *ctx, JSValue obj, const char *name, JSCFunctionData *fn,
                     JS_NewCFunctionData(ctx, fn, len, 0, 0, nullptr));
 }
 
-void RegisterLusdrenderModule(lightusd::legacy::tydra::JSEngineState &engine,
+void RegisterLusdrenderModule(jsengine::JSEngineState &engine,
                               RenderContext *rc) {
   JSContext *ctx = static_cast<JSContext *>(engine.context);
   g_render_ctx = rc;
@@ -258,29 +353,29 @@ int RunJSScriptMode(const Options &opt, const std::string &script_path) {
     return EXIT_FAILURE;
   }
 
-  lightusd::legacy::tydra::JSEngineState engine;
+  jsengine::JSEngineState engine;
   std::string err;
-  if (!lightusd::legacy::tydra::InitJSEngine(engine, err)) {
+  if (!jsengine::InitJSEngine(engine, err)) {
     std::cerr << "JS engine init failed: " << err << "\n";
     return EXIT_FAILURE;
   }
   qjs::RegisterLusdrenderModule(engine, &ctx);
 
   nlohmann::json ret;
-  const bool ok = lightusd::legacy::tydra::RunJSScript(engine, code, ret, err);
+  const bool ok = jsengine::RunJSScript(engine, code, ret, err);
   if (!ok) {
     std::cerr << "JS error: " << err << "\n";
   } else if (!ret.is_null()) {
     std::cerr << "JS result: " << ret.dump() << "\n";
   }
-  lightusd::legacy::tydra::DestroyJSEngine(engine);
+  jsengine::DestroyJSEngine(engine);
   qjs::g_render_ctx = nullptr;
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 // Build a lusdrender.* JS expression from an MCP tool call and evaluate it
 // against the persistent engine, returning the JSON result.
-bool McpCallTool(lightusd::legacy::tydra::JSEngineState &engine, const std::string &name,
+bool McpCallTool(jsengine::JSEngineState &engine, const std::string &name,
                  const nlohmann::json &args, nlohmann::json &out,
                  std::string &err) {
   auto num = [&](const char *k, double d) -> double {
@@ -343,7 +438,7 @@ bool McpCallTool(lightusd::legacy::tydra::JSEngineState &engine, const std::stri
     err = "unknown tool: " + name;
     return false;
   }
-  if (!lightusd::legacy::tydra::RunJSScript(engine, code, out, err)) {
+  if (!jsengine::RunJSScript(engine, code, out, err)) {
     return false;  // err set
   }
   return true;
@@ -401,9 +496,9 @@ int RunMCPMode(const Options &opt) {
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
   if (opt.stats) PrintRTStats(ctx);
 
-  lightusd::legacy::tydra::JSEngineState engine;
+  jsengine::JSEngineState engine;
   std::string err;
-  if (!lightusd::legacy::tydra::InitJSEngine(engine, err)) {
+  if (!jsengine::InitJSEngine(engine, err)) {
     std::cerr << "JS engine init failed: " << err << "\n";
     return EXIT_FAILURE;
   }
@@ -464,7 +559,7 @@ int RunMCPMode(const Options &opt) {
     // notifications (no id) other than the above are ignored.
   }
 
-  lightusd::legacy::tydra::DestroyJSEngine(engine);
+  jsengine::DestroyJSEngine(engine);
   qjs::g_render_ctx = nullptr;
   return EXIT_SUCCESS;
 }

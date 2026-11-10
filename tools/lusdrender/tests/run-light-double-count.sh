@@ -145,8 +145,8 @@ render() {  # $1 = scene, $2 = out, $3 = shading, $4 = DOUBLE_COUNT, $5.. = flag
 render "$TMP/furnace.usda"   "$TMP/furnace_bsdf.png"   lightrt-bsdf 0 -rtPreview || exit 1
 render "$TMP/furnace.usda"   "$TMP/furnace_double.png" lightrt-bsdf 1 -rtPreview || exit 1
 render "$TMP/furnace.usda"   "$TMP/furnace_legacy.png" legacy       0 -rtPreview || exit 1
-render "$TMP/meshlight.usda" "$TMP/mesh_bsdf.png"      lightrt-bsdf 0 -legacyLoad || exit 1
-render "$TMP/meshlight.usda" "$TMP/mesh_double.png"    lightrt-bsdf 1 -legacyLoad || exit 1
+render "$TMP/meshlight.usda" "$TMP/mesh_bsdf.png"      lightrt-bsdf 0 || exit 1
+render "$TMP/meshlight.usda" "$TMP/mesh_double.png"    lightrt-bsdf 1 || exit 1
 render "$TMP/meshlight.usda" "$TMP/mesh_next.png"      lightrt-bsdf 0 -rtPreview -stats || exit 1
 
 # The next loader must register the emissive mesh as an analytic light too, not

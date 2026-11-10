@@ -6,8 +6,9 @@
 #   -fitScale abc          used std::stof -> uncaught std::invalid_argument -> SIGABRT.
 #   -w / -samples <huge>   were accepted up to INT_MAX; the framebuffer/sample
 #                          loop had no other guard, so they were an OOM/hang.
-#   -frames on the non-next path (plain .usda, no -rtPreview) was silently
-#                          ignored: one image named literally with the #### token.
+#   -frames on a plain .usda (no -rtPreview) was silently ignored: one image
+#                          named literally with the #### token. It now renders
+#                          every frame (all CPU renders use the core path).
 #
 # Exit codes: 0 = pass, 1 = fail, 77 = skip.
 set -uo pipefail
@@ -102,10 +103,11 @@ expect_clean_failure "--pt-samples 2000000000" "$TMP/tri.usda" "$TMP/x.png" \
     -cuda --path-trace --pt-samples 2000000000
 expect_clean_failure "--path-trace without a supported backend" \
     "$TMP/tri.usda" "$TMP/x.png" --path-trace
-expect_clean_failure "-frames on the non-next path" \
-    "$TMP/tri.usda" "$TMP/f.####.png" -frames 1:3 -w 16 -height 16
-grep -qi "frames" "$TMP/log" \
-  || fail "-frames rejection did not mention -frames: $(tail -1 "$TMP/log")"
+# -frames works on every CPU render (all inputs use the core path).
+"$LUSDRENDER" "$TMP/tri.usda" "$TMP/f.####.png" -frames 1:3 -w 16 -height 16 \
+    >"$TMP/log" 2>&1 || fail "-frames on a plain .usda failed: $(tail -1 "$TMP/log")"
+[ -s "$TMP/f.0001.png" ] && [ -s "$TMP/f.0003.png" ] \
+  || fail "-frames 1:3 did not write per-frame images"
 
 # Sane inputs must still work, including the largest 32-bit array-count cap.
 run_timeout 60 "$LUSDRENDER" "$TMP/tri.usda" "$TMP/ok.png" -w 16 -height 16 \

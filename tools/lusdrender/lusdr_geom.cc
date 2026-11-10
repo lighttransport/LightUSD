@@ -9,26 +9,7 @@
 
 namespace lusdr {
 
-bool BuildNodeMatrixMap(const Node &node,
-                        std::unordered_map<std::string, matrix4d> *map) {
-  if (!map) return false;
-  if (!node.abs_path.empty()) {
-    (*map)[node.abs_path] = node.global_matrix;
-  }
-  for (const Node &child : node.children) {
-    BuildNodeMatrixMap(child, map);
-  }
-  return true;
-}
 
-std::unordered_map<std::string, matrix4d> BuildNodeMatrixMap(
-    const RenderScene &scene) {
-  std::unordered_map<std::string, matrix4d> map;
-  for (const Node &root : scene.nodes) {
-    BuildNodeMatrixMap(root, &map);
-  }
-  return map;
-}
 
 matrix4d MatrixForPath(const std::unordered_map<std::string, matrix4d> &map,
                        const std::string &path) {
@@ -46,22 +27,22 @@ Vec3 TransformNormal(const matrix4d &inv_world, const Vec3 &n) {
             inv_world.m[2][2] * double(n.z))});
 }
 
-int AxisIndex(lightusd::legacy::Axis axis) {
+int AxisIndex(lusdr::Axis axis) {
   switch (axis) {
-    case lightusd::legacy::Axis::X: return 0;
-    case lightusd::legacy::Axis::Y: return 1;
-    case lightusd::legacy::Axis::Z: return 2;
-    case lightusd::legacy::Axis::Invalid: break;
+    case lusdr::Axis::X: return 0;
+    case lusdr::Axis::Y: return 1;
+    case lusdr::Axis::Z: return 2;
+    case lusdr::Axis::Invalid: break;
   }
   return 2;
 }
 
-Vec3 AxisVec(lightusd::legacy::Axis axis) {
+Vec3 AxisVec(lusdr::Axis axis) {
   switch (axis) {
-    case lightusd::legacy::Axis::X: return Vec3{1.0f, 0.0f, 0.0f};
-    case lightusd::legacy::Axis::Y: return Vec3{0.0f, 1.0f, 0.0f};
-    case lightusd::legacy::Axis::Z: return Vec3{0.0f, 0.0f, 1.0f};
-    case lightusd::legacy::Axis::Invalid: break;
+    case lusdr::Axis::X: return Vec3{1.0f, 0.0f, 0.0f};
+    case lusdr::Axis::Y: return Vec3{0.0f, 1.0f, 0.0f};
+    case lusdr::Axis::Z: return Vec3{0.0f, 0.0f, 1.0f};
+    case lusdr::Axis::Invalid: break;
   }
   return Vec3{0.0f, 0.0f, 1.0f};
 }
@@ -305,7 +286,7 @@ void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b) {
   if (!b) return;
   for (const VolumeData &vd : vols) {
     matrix4d world;
-    if (!lightusd::legacy::inverse(vd.inv_world, world, 1.0e-12))
+    if (!lusdr::inverse(vd.inv_world, world, 1.0e-12))
       world = matrix4d::identity();
     for (int c = 0; c < 8; c++) {
       Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
@@ -323,11 +304,11 @@ void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b) {
   }
 }
 
-// USD upAxis token -> lightusd::legacy::Axis (default Y). Shared by both loaders.
-lightusd::legacy::Axis GetUpAxis(const std::string &up) {
-  if (up == "X") return lightusd::legacy::Axis::X;
-  if (up == "Z") return lightusd::legacy::Axis::Z;
-  return lightusd::legacy::Axis::Y;
+// USD upAxis token -> lusdr::Axis (default Y). Shared by both loaders.
+lusdr::Axis GetUpAxis(const std::string &up) {
+  if (up == "X") return lusdr::Axis::X;
+  if (up == "Z") return lusdr::Axis::Z;
+  return lusdr::Axis::Y;
 }
 
 }  // namespace lusdr

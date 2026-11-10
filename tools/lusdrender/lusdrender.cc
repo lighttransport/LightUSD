@@ -41,19 +41,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "asset-resolution.hh"
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "io-util.hh"
-#include "mmap-array-ref.hh"
-#include "lightusd.hh"
 #include "tsd/tinysubdiv.hh"
-#include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
 #include "usdVol.hh"  // OpenVDB (.vdb) loader for the `next` volume path
-#include "usdGeom.hh"
-#include "value-types.hh"
-#include "xform.hh"
 
 // Experimental `next` lazy loader: fast, low-memory USDC parse used as the
 // default backend for the RT preview path. tydra_next provides bit-exact
@@ -332,14 +325,14 @@ void CollectGpuPointsRec(
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
       const size_t orientation_index = orientations.size() == 4 ? 0 : i * 4;
       if (have_orientations && orientation_index + 3 < orientations.size()) {
-        lightusd::legacy::value::quatf q;
+        lusdr::value::quatf q;
         q.real = orientations[orientation_index + 0];
         q.imag[0] = orientations[orientation_index + 1];
         q.imag[1] = orientations[orientation_index + 2];
         q.imag[2] = orientations[orientation_index + 3];
-        const lightusd::legacy::value::matrix3d r = lightusd::legacy::to_matrix3x3(q);
-        const lightusd::legacy::value::matrix4d r4 =
-            lightusd::legacy::to_matrix(r, lightusd::legacy::value::double3{0.0, 0.0, 0.0});
+        const lusdr::value::matrix3d r = lusdr::to_matrix3x3(q);
+        const lusdr::value::matrix4d r4 =
+            lusdr::to_matrix(r, lusdr::value::double3{0.0, 0.0, 0.0});
         normal = TransformVector(world, TransformVector(
             r4, Vec3{0.0f, 0.0f, 1.0f}));
         major_axis = TransformVector(world, TransformVector(
@@ -631,7 +624,7 @@ static void ApplyLargeSceneProfile(Options *opt) {
 // starts at opt.height (<=0 = derive).
 static CameraFrame ResolveGpuCameraInst(const lightusd::Stage &stage,
                                         const Options &opt, const Bounds &bounds,
-                                        lightusd::legacy::Axis usdUp, int *out_height) {
+                                        lusdr::Axis usdUp, int *out_height) {
   const int cam_width = opt.width > 0 ? opt.width : 960;
   CameraFrame camera;
   Options auto_opt = opt;
@@ -651,13 +644,13 @@ static CameraFrame ResolveGpuCameraInst(const lightusd::Stage &stage,
       std::cerr << "WARN: camera not found: " << opt.camera
                 << ". Using auto-fit.\n";
       if (*out_height <= 0) *out_height = 540;
-      camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+      camera = MakeCameraFrame(auto_opt, bounds, *out_height, usdUp);
     }
   } else if (opt.autoframe) {
     camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, out_height);
   } else {
     if (*out_height <= 0) *out_height = 540;
-    camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+    camera = MakeCameraFrame(auto_opt, bounds, *out_height, usdUp);
   }
   return camera;
 }
@@ -1212,7 +1205,7 @@ static int TryRunInstancedVk(const lightusd::Stage &stage,
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
   // memory per placement instead of a ~392 B MeshJobNext.
   auto place = [&](const lightusd::UsdPrim &prim, const matrix4d &world,
-                   lightusd::legacy::Purpose purpose) {
+                   lusdr::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
     const std::string key = prim.GetPath().str();
     auto it = proto_id.find(key);
@@ -1265,7 +1258,7 @@ static int TryRunInstancedVk(const lightusd::Stage &stage,
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted > budget) break;
     emitted += CollectRTInstancePlacementsNext(
-        stage, root, matrix4d::identity(), lightusd::legacy::Purpose::Default,
+        stage, root, matrix4d::identity(), lusdr::Purpose::Default,
         opt.timecode, opt.mask, place, budget + 1 - emitted);
   }
   if (invalid_prototype) return -1;
@@ -1300,9 +1293,9 @@ static int TryRunInstancedVk(const lightusd::Stage &stage,
     if (up == "Z") up_axis = 2.0;
     else if (up == "X") up_axis = 0.0;
   }
-  lightusd::legacy::Axis usdUp = (up_axis == 2.0)   ? lightusd::legacy::Axis::Z
-                         : (up_axis == 0.0) ? lightusd::legacy::Axis::X
-                                            : lightusd::legacy::Axis::Y;
+  lusdr::Axis usdUp = (up_axis == 2.0)   ? lusdr::Axis::Z
+                         : (up_axis == 0.0) ? lusdr::Axis::X
+                                            : lusdr::Axis::Y;
   int out_height = opt.height;
   CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
 
@@ -1588,7 +1581,6 @@ int main(int argc, char **argv) {
     }
     opt.rt_preview = true;
     opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::ScenePreviewKind::Volume;
-    opt.legacy_load = false;
     opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /
                        double(uint64_t(1) << 30);
     opt.texture_budget_mb = 32;
@@ -1606,6 +1598,7 @@ int main(int argc, char **argv) {
     }
   }
   SetIblBackendEnvmap(opt.ibl_envmap);
+  SetPreviewSubdivisionLevel(opt.subdivision_level);
   // The application explicitly opts into host memory observations.
   opt.host_services = lightusd::CreateNativeHostServices();
   ApplyLargeSceneProfile(&opt);
@@ -1681,17 +1674,8 @@ int main(int argc, char **argv) {
     PrepareLodStream(&opt, &lod_wrapper);
   }
 
-  // Use the `next` streaming CPU path when requested, and by default for USDC
-  // where mmap-backed arrays provide the largest memory win. Ordinary USDA/USDZ
-  // stays on the schema-rich converter for direct lights/primitives and uniform
-  // subdivision until those paths have full streaming parity.
-  const std::string lower_input = LowerAscii(opt.input);
-  const bool default_next_usdc =
-      lower_input.size() >= 5 &&
-      lower_input.compare(lower_input.size() - 5, 5, ".usdc") == 0;
-  if (!opt.legacy_load && opt.subdivision_level == 0 &&
-      (opt.rt_preview || default_next_usdc) && !opt.vulkan && !opt.use_d3d &&
-      !opt.hip && !opt.cuda) {
+  // Every CPU render uses the core streaming path.
+  if (!opt.vulkan && !opt.use_d3d && !opt.hip && !opt.cuda) {
     return RunRTPreviewNext(opt);
   }
 
@@ -1699,7 +1683,7 @@ int main(int argc, char **argv) {
   // prim-id sidecar map, while the vkr data path writes numeric AOVs. Depth and
   // the two normal channels are the supported vkr diagnostics.
   const bool gpu_data_aov = opt.aov_explicit && opt.vulkan &&
-      !opt.path_trace && !opt.legacy_load &&
+      !opt.path_trace &&
       opt.subdivision_level == 0 && opt.samples == 1 &&
       (opt.aov == CaptureAov::Depth || opt.aov == CaptureAov::GeometricNormal ||
        opt.aov == CaptureAov::ShadingNormal);
@@ -1806,7 +1790,7 @@ int main(int argc, char **argv) {
         // scene-wide transient peak on top of the final GPU chunk stream.
         std::vector<MeshJobNext> mesh_jobs;
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   lightusd::legacy::Purpose::Default, opt.timecode,
+                                   lusdr::Purpose::Default, opt.timecode,
                                    opt.mask, &mesh_jobs,
                                    /*expand_instancers=*/true);
 
@@ -1940,7 +1924,7 @@ int main(int argc, char **argv) {
         geo.uvs1.assign(have_uvs1 ? (split ? 0 : size_t(nv) * 2) : 0u,
                         0.0f);
         matrix4d inverse_world;
-        const bool invertible = lightusd::legacy::inverse(job.world, inverse_world, 1.0e-12);
+        const bool invertible = lusdr::inverse(job.world, inverse_world, 1.0e-12);
         std::map<std::array<size_t, 4>, uint32_t> corners;
         auto emit = [&](size_t corner, size_t face) {
           const int32_t point = index_values[corner];
@@ -2268,7 +2252,7 @@ int main(int argc, char **argv) {
       gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
         CollectCurvesNextRec(root, matrix4d::identity(),
-                             lightusd::legacy::Purpose::Default, opt.timecode,
+                             lusdr::Purpose::Default, opt.timecode,
                              &gpu_curve_jobs);
       }
       if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
@@ -2329,9 +2313,9 @@ int main(int argc, char **argv) {
       if (up == "Z") up_axis = 2.0;
       else if (up == "X") up_axis = 0.0;
     }
-    lightusd::legacy::Axis usdUp = (up_axis == 2.0) ? lightusd::legacy::Axis::Z
-                           : (up_axis == 0.0) ? lightusd::legacy::Axis::X
-                           : lightusd::legacy::Axis::Y;
+    lusdr::Axis usdUp = (up_axis == 2.0) ? lusdr::Axis::Z
+                           : (up_axis == 0.0) ? lusdr::Axis::X
+                           : lusdr::Axis::Y;
 
     Bounds bounds = gpu_flat_bounds;
     for (const auto &g : geos) {
@@ -2369,13 +2353,13 @@ int main(int argc, char **argv) {
         std::cerr << "WARN: camera not found: " << opt.camera
                   << ". Using auto-fit.\n";
         if (out_height <= 0) out_height = 540;
-        camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+        camera = MakeCameraFrame(auto_opt, bounds, out_height, usdUp);
       }
     } else if (opt.autoframe) {
       camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, &out_height);
     } else {
       if (out_height <= 0) out_height = 540;
-      camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+      camera = MakeCameraFrame(auto_opt, bounds, out_height, usdUp);
     }
 
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
@@ -2601,374 +2585,6 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  lightusd::legacy::Stage stage;
-  std::string warn;
-  std::string err;
-  lightusd::legacy::USDLoadOptions load_options;
-  load_options.mmap_zero_copy = opt.rt_preview;
-  load_options.max_memory_limit_in_mb = opt.rt_preview ? 65536 : 16384;
-  load_options.load_assets = !opt.rt_preview;
-  if (opt.progress) {
-    load_options.progress_callback = LoadProgress;
-  }
-  const auto load_t0 = std::chrono::steady_clock::now();
-  // Composes references / payloads / sublayers / inherits / variants; plain
-  // LoadUSDFromFile expands no arcs, so anything they contribute (a Material in a
-  // referenced look layer, payload-gated geometry) was missing from the render.
-  if (!LoadStageComposedLegacy(opt.input, load_options, &stage, &warn, &err)) {
-    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
-    std::cerr << "Failed to load USD: " << err << "\n";
-    return EXIT_FAILURE;
-  }
-  const auto load_t1 = std::chrono::steady_clock::now();
-  const double load_seconds =
-      std::chrono::duration<double>(load_t1 - load_t0).count();
-  if (!warn.empty()) {
-    std::cerr << "WARN: " << warn << "\n";
-  }
-
-  if (opt.rt_preview) {
-    if (lightusd::legacy::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
-      std::cerr << "RT preview requires mmap zero-copy metadata for USDC input. "
-                << "Write flattened USDC without --compress-float-arrays.\n";
-      return EXIT_FAILURE;
-    }
-
-    std::vector<float> vertices;
-    std::vector<TriInfo> tris;
-    Bounds bounds;
-    RTPreviewStats rt_stats;
-    std::string rt_err;
-    if (!BuildRTPreviewScene(stage, opt, &vertices, &tris, &bounds, &rt_stats,
-                             &rt_err)) {
-      if (opt.stats) {
-        std::cerr << "rt preview: 1\n";
-        std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
-        std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
-        std::cerr << "rt mmap point meshes: "
-                  << rt_stats.meshes_with_mmap_points << "\n";
-        std::cerr << "rt owned point meshes: "
-                  << rt_stats.meshes_with_owned_points << "\n";
-        std::cerr << "rt mmap deferred bytes: "
-                  << rt_stats.mmap_deferred_bytes << "\n";
-        std::cerr << "rt copied point bytes: " << rt_stats.copied_point_bytes
-                  << "\n";
-        std::cerr << "rt copied topology bytes: "
-                  << rt_stats.copied_topology_bytes << "\n";
-        std::cerr << "rt purpose default triangles: "
-                  << rt_stats.purpose_default_triangles << "\n";
-        std::cerr << "rt purpose render triangles: "
-                  << rt_stats.purpose_render_triangles << "\n";
-        std::cerr << "rt purpose proxy triangles: "
-                  << rt_stats.purpose_proxy_triangles << "\n";
-        std::cerr << "rt purpose guide triangles: "
-                  << rt_stats.purpose_guide_triangles << "\n";
-      }
-      std::cerr << rt_err << "\n";
-      return EXIT_FAILURE;
-    }
-    if (tris.empty()) {
-      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
-      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
-                 ? EXIT_SUCCESS
-                 : EXIT_FAILURE;
-    }
-
-    lrt_tri_build_options build_opts;
-    std::memset(&build_opts, 0, sizeof(build_opts));
-    build_opts.quality = opt.quality;
-    build_opts.layout = LRT_TRI_LAYOUT_AUTO;
-    build_opts.max_leaf_size = 0;
-    build_opts.num_threads = WorkerThreadCount(opt.threads);
-
-    const auto bvh_t0 = std::chrono::steady_clock::now();
-    lrt_result lrt_err = LRT_RESULT_OK;
-    lrt_tri_scene *lrt_scene =
-        lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
-    const auto bvh_t1 = std::chrono::steady_clock::now();
-    if (!lrt_scene) {
-      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-      return EXIT_FAILURE;
-    }
-
-    int height = opt.height > 0 ? opt.height : 540;
-    RenderScene empty_render_scene;
-    CameraFrame camera;
-    if (!FindStageCameraFrame(stage, opt.camera, opt.timecode, &camera)) {
-      if (!opt.camera.empty()) {
-        std::cerr << "WARN: Camera not found: " << opt.camera
-                  << ". Using auto-fit camera.\n";
-      }
-      Options auto_opt = opt;
-      auto_opt.camera.clear();
-      camera = MakeCameraFrame(empty_render_scene, auto_opt, bounds, height,
-                               stage.metas().upAxis.get_value());
-    }
-    DirectScene direct_scene;
-    LightCache light_cache;
-    IblCache ibl_cache;
-
-    if (opt.stats) {
-      lrt_tri_stats st;
-      std::memset(&st, 0, sizeof(st));
-      lrt_tri_scene_stats(lrt_scene, &st);
-      double bvh_seconds =
-          std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
-      std::cerr << "rt preview: 1\n";
-      std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
-      std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
-      std::cerr << "rt mmap point meshes: "
-                << rt_stats.meshes_with_mmap_points << "\n";
-      std::cerr << "rt owned point meshes: "
-                << rt_stats.meshes_with_owned_points << "\n";
-      std::cerr << "rt mmap deferred bytes: "
-                << rt_stats.mmap_deferred_bytes << "\n";
-      std::cerr << "rt copied point bytes: " << rt_stats.copied_point_bytes
-                << "\n";
-      std::cerr << "rt copied topology bytes: "
-                << rt_stats.copied_topology_bytes << "\n";
-      std::cerr << "rt purpose default triangles: "
-                << rt_stats.purpose_default_triangles << "\n";
-      std::cerr << "rt purpose render triangles: "
-                << rt_stats.purpose_render_triangles << "\n";
-      std::cerr << "rt purpose proxy triangles: "
-                << rt_stats.purpose_proxy_triangles << "\n";
-      std::cerr << "rt purpose guide triangles: "
-                << rt_stats.purpose_guide_triangles << "\n";
-      std::cerr << "rt packed triangle bytes: "
-                << rt_stats.packed_triangle_bytes << "\n";
-      std::cerr << "load seconds: " << load_seconds << "\n";
-      std::cerr << "rt triangle stream seconds: " << rt_stats.build_seconds
-                << "\n";
-      std::cerr << "rt bvh build seconds: " << bvh_seconds << "\n";
-      std::cerr << "triangles: " << tris.size() << "\n";
-      std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
-      std::cerr << "bvh nodes: " << st.node_count << ", leaves: "
-                << st.leaf_count << ", memory: " << st.memory_bytes
-                << " bytes\n";
-    }
-
-    const auto render_t0 = std::chrono::steady_clock::now();
-    std::vector<FlatTri> flat_tris;
-    std::vector<TriMat> flat_mats;
-    SplitTriInfos(tris, &flat_tris, &flat_mats);
-    lightusd::Image img =
-        RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
-                    nullptr, camera, opt, height);
-    const auto render_t1 = std::chrono::steady_clock::now();
-    if (opt.stats) {
-      std::cerr << "render seconds: "
-                << std::chrono::duration<double>(render_t1 - render_t0).count()
-                << "\n";
-    }
-    lrt_tri_scene_free(lrt_scene);
-
-    lightusd::image::WriteOption wopt;
-    wopt.format = lightusd::image::WriteImageFormat::Autodetect;
-    auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
-    if (!ret) {
-      std::cerr << "Failed to write image: " << ret.error() << "\n";
-      return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
-  }
-
-  lightusd::legacy::tydra::RenderScene render_scene;
-  lightusd::legacy::tydra::RenderSceneConverter converter;
-  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
-  env.timecode = opt.timecode;
-  env.mesh_config.triangulate = !opt.direct_prims;
-  env.mesh_config.subdivision_level = opt.subdivision_level;
-  env.mesh_config.build_vertex_indices = !opt.direct_prims;
-  env.mesh_config.compute_tangents_and_binormals = false;
-  env.scene_config.load_texture_assets = true;
-  // The next path's volume density budget, applied while decoding: an
-  // oversized grid is box-filtered instead of decoded in full first.
-  env.scene_config.volume_max_voxels =
-      std::max<size_t>(size_t(64) << 20,
-                       std::min<size_t>(size_t(512) << 20, MemBudget::Get().Cap() / 16)) /
-      sizeof(float);
-  env.set_search_paths({lightusd::io::GetBaseDir(opt.input)});
-  if (opt.no_assetresolver) {
-    SetupNullAssetResolution(&env.asset_resolver);
-  }
-  if (!converter.ConvertToRenderScene(env, &render_scene)) {
-    std::cerr << "Failed to convert USD Stage to RenderScene:\n"
-              << converter.GetError() << "\n";
-    return EXIT_FAILURE;
-  }
-  std::string converter_warn = converter.GetWarning();
-  if (!converter_warn.empty()) {
-    std::cerr << "WARN: " << converter_warn << "\n";
-  }
-
-  std::vector<float> vertices;
-  std::vector<TriInfo> tris;
-  Bounds bounds;
-  DirectScene direct_scene;
-  LightCache light_cache;
-  if (opt.direct_prims) {
-    std::string direct_err;
-    if (!BuildDirectScene(stage, render_scene, opt, &vertices, &tris, &bounds,
-                          &direct_scene, &direct_err)) {
-      std::cerr << direct_err << "\n";
-      return EXIT_FAILURE;
-    }
-  }
-  // Decode the materials' UsdUVTextures (tydra already resolved them) and bind
-  // them per triangle. Without this the legacy path flattens every material to a
-  // constant base color, so .usda/.usdz — which do not route to the `next` path —
-  // render untextured.
-  std::vector<lusdr::Texture> legacy_textures;
-  const std::vector<LegacyMaterialTex> legacy_mat_tex =
-      BuildLegacyTextures(render_scene, &legacy_textures);
-  std::vector<float> tri_uvs;
-  // Second UV set, allocated lazily by AddMeshTriangles only when a textured
-  // lane references a different primvar than the material's first UV set.
-  std::vector<float> tri_uvs1;
-  const bool want_uvs = !legacy_textures.empty();
-  if (want_uvs) {
-    // tri_uvs must stay parallel to `tris`; any triangles the direct-primitive
-    // builder already emitted carry no UVs (and no texture), so pad them.
-    tri_uvs.assign(tris.size() * 6, 0.0f);
-  }
-  // Inherited purpose + visibility from the source Stage (the tydra
-  // RenderScene carries neither): guide/proxy filtering (-purpose et al.) and
-  // visibility="invisible" now apply on the legacy path like the next path.
-  PurposeVisibilityMap purpose_vis;
-  BuildLegacyPurposeVisibility(stage, &purpose_vis);
-  CollectAllGeometry(render_scene, &vertices, &tris, &bounds,
-                     opt.direct_prims ? &direct_scene.direct_paths : nullptr,
-                     &light_cache, want_uvs ? &tri_uvs : nullptr,
-                     want_uvs ? &tri_uvs1 : nullptr,
-                     want_uvs ? &legacy_mat_tex : nullptr, &purpose_vis);
-    const bool has_direct = direct_scene.spheres ||
-                          direct_scene.has_round_curves() ||
-                          direct_scene.has_flat_curves() || direct_scene.points ||
-                          direct_scene.bez_curves || direct_scene.has_ellipses() ||
-                          direct_scene.tets ||
-                          !direct_scene.shapes.empty();
-
-  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Built here so a
-  // volume-only scene still renders and contributes to camera-framing bounds.
-  std::vector<VolumeData> volumes = BuildVolumes(render_scene);
-  ExpandBoundsByVolume(volumes, &bounds);
-
-  if (tris.empty() && !has_direct && volumes.empty()) {
-    std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
-    return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
-               ? EXIT_SUCCESS
-               : EXIT_FAILURE;
-  }
-
-  lrt_tri_build_options build_opts;
-  std::memset(&build_opts, 0, sizeof(build_opts));
-  build_opts.quality = opt.quality;
-  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
-  build_opts.max_leaf_size = 0;
-  build_opts.num_threads = WorkerThreadCount(opt.threads);
-
-  lrt_result lrt_err = LRT_RESULT_OK;
-  lrt_tri_scene *lrt_scene = nullptr;
-  if (!tris.empty()) {
-    lrt_scene = lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
-    if (!lrt_scene) {
-      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-      return EXIT_FAILURE;
-    }
-  }
-
-  int height = opt.height;
-  if (height <= 0) {
-    height = 540;
-    const Node *cam_node = FindCameraNode(render_scene, opt.camera);
-    if (cam_node) {
-      const RenderCamera &cam = render_scene.cameras[size_t(cam_node->id)];
-      if (cam.verticalAspectRatio > 0.0f) {
-        double dh = double(opt.width) * double(cam.verticalAspectRatio);
-        if (!std::isfinite(dh)) dh = 540.0;
-        height = std::max(1, int(std::lround(std::min(32768.0, dh))));
-      }
-    }
-  }
-
-  lightusd::legacy::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
-  CameraFrame camera = MakeCameraFrame(render_scene, opt, bounds, height,
-                                       up_axis);
-  CollectLights(render_scene, &light_cache);
-  IblCache ibl_cache;
-  BuildIblCache(render_scene, light_cache, &ibl_cache);
-
-  if (opt.stats) {
-    lrt_tri_stats st;
-    std::memset(&st, 0, sizeof(st));
-    if (lrt_scene) lrt_tri_scene_stats(lrt_scene, &st);
-    std::cerr << "triangles: " << tris.size() << "\n";
-    std::cerr << "direct spheres: " << direct_scene.sphere_info.size() << "\n";
-    std::cerr << "direct round curve segments: "
-              << direct_scene.round_curve_info.size() << "\n";
-    std::cerr << "direct flat curve segments: "
-              << direct_scene.flat_curve_info.size() << "\n";
-    std::cerr << "direct Hermite/Bezier curve segments: "
-              << direct_scene.bez_curve_info.size() << "\n";
-    std::cerr << "direct points: " << direct_scene.point_info.size() << "\n";
-    std::cerr << "direct tetrahedra: " << direct_scene.tet_prims.size()
-              << "\n";
-    std::cerr << "direct analytic shapes: " << direct_scene.shapes.size()
-              << "\n";
-    std::cerr << "subdivision level: " << opt.subdivision_level << "\n";
-    std::cerr << "lights: " << light_cache.finite.size() << "\n";
-    std::cerr << "mesh light triangles: " << light_cache.mesh.size() << "\n";
-    std::cerr << "domelight: " << (light_cache.has_dome ? 1 : 0) << "\n";
-    std::cerr << "light sampling finite cdf entries: "
-              << light_cache.finite_cdf.size() << "\n";
-    std::cerr << "light sampling mesh cdf entries: "
-              << light_cache.mesh_cdf.size() << "\n";
-    std::cerr << "light sampling env cdf entries: "
-              << light_cache.env_cdf.size() << "\n";
-    std::cerr << "ibl envmap: " << (ibl_cache.valid ? 1 : 0) << "\n";
-    std::cerr << "ibl diffuse size: "
-              << (ibl_cache.diffuse.width * ibl_cache.diffuse.height) << "\n";
-    std::cerr << "ibl prefilter levels: " << ibl_cache.prefiltered.size()
-              << "\n";
-    std::cerr << "ibl brdf lut size: "
-              << (ibl_cache.brdf_size * ibl_cache.brdf_size) << "\n";
-    if (lrt_scene) std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
-    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
-              << ", memory: " << st.memory_bytes << " bytes\n";
-    std::cerr << "load seconds: " << load_seconds << "\n";
-  }
-
-  if (opt.stats) {
-    std::cerr << "volumes: " << volumes.size() << "\n";
-  }
-
-  const auto render_t0 = std::chrono::steady_clock::now();
-  std::vector<FlatTri> flat_tris;
-  std::vector<TriMat> flat_mats;
-  SplitTriInfos(tris, &flat_tris, &flat_mats);
-  lightusd::Image img =
-      RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
-                  ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
-                  legacy_textures.empty() ? nullptr : &legacy_textures,
-                  tri_uvs.empty() ? nullptr : &tri_uvs,
-                  tri_uvs1.empty() ? nullptr : &tri_uvs1, /*tlas*/ nullptr,
-                  /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
-                  /*tri_normals*/ nullptr, &volumes);
-  const auto render_t1 = std::chrono::steady_clock::now();
-  if (opt.stats) {
-    std::cerr << "render seconds: "
-              << std::chrono::duration<double>(render_t1 - render_t0).count()
-              << "\n";
-  }
-  if (lrt_scene) lrt_tri_scene_free(lrt_scene);
-
-  lightusd::image::WriteOption wopt;
-  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
-  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
-  if (!ret) {
-    std::cerr << "Failed to write image: " << ret.error() << "\n";
-    return EXIT_FAILURE;
-  }
-  return EXIT_SUCCESS;
+  // Every CPU render runs on the core streaming path.
+  return RunRTPreviewNext(opt);
 }

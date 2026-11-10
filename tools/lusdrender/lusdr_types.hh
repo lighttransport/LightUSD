@@ -15,10 +15,9 @@
 
 #include "lusdr_math.hh"
 #include "core/color-transform.hh"
-#include "lightusd.hh"
-#include "value-types.hh"
-#include "xform.hh"
-#include "mmap-array-ref.hh"
+#include "lusdr_value.hh"
+#include "image-types.hh"
+#include <iostream>
 #include "tydra/render-data.hh"
 #include "prim/path.hh"
 #include "schema/geom-mesh.hh"
@@ -34,16 +33,9 @@ extern "C" {
 
 namespace lusdr {
 
-using lightusd::legacy::value::color3f;
-using lightusd::legacy::value::float3;
-using lightusd::legacy::value::matrix4d;
-using lightusd::legacy::tydra::Node;
-using lightusd::legacy::tydra::NodeType;
-using lightusd::legacy::tydra::RenderCamera;
-using lightusd::legacy::tydra::RenderLight;
-using lightusd::legacy::tydra::RenderMaterial;
-using lightusd::legacy::tydra::RenderMesh;
-using lightusd::legacy::tydra::RenderScene;
+using lusdr::value::color3f;
+using lusdr::value::float3;
+using lusdr::value::matrix4d;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
@@ -662,7 +654,7 @@ struct Options {
   Vec3 view_dir{0.0f, 0.0f, 0.0f};
   bool has_view_dir{false};
   uint32_t purpose_mask{kPurposeDefaultMask};
-  double timecode{lightusd::legacy::value::TimeCode::Default()};
+  double timecode{lusdr::value::TimeCode::Default()};
   int samples{1};
   Vec3 bg{0.0f, 0.0f, 0.0f};
   float ambient{0.05f};
@@ -688,7 +680,6 @@ struct Options {
   bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
   bool scene_preview_albedo{false};
-  bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool diagnostic_emission{false}; // unlit channel wrapper, sRGB without tone map
   MaterialDiagnostic diagnostic_material{MaterialDiagnostic::None};
   bool smooth{false};       // interpolate authored normals (smooth shading)
@@ -816,7 +807,7 @@ struct DirectShape {
   matrix4d inv_world{matrix4d::identity()};
   double radius{1.0};
   double height{2.0};
-  lightusd::legacy::Axis axis{lightusd::legacy::Axis::Z};
+  lusdr::Axis axis{lusdr::Axis::Z};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
 };
@@ -960,13 +951,6 @@ struct BorrowedArrayView {
   size_t count{0};
   bool mmap{false};
   std::vector<T> owned;
-};
-
-struct MeshJob {
-  const lightusd::legacy::GeomMesh *mesh{nullptr};
-  matrix4d world{matrix4d::identity()};
-  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
-  std::string prim_path;
 };
 
 struct PurposeFilter {
@@ -1131,7 +1115,7 @@ struct ResolvedMat;
 struct MeshJobNext {
   lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
   // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
   // material-bound per GeomSubset becomes one job per bound subset + a
   // remainder job.
@@ -1271,14 +1255,14 @@ struct ResolvedMat {
 
 struct ProtoBuildReq {
   std::string path;
-  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
 struct CurveJobNext {
   lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::legacy::Purpose purpose{lightusd::legacy::Purpose::Default};
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
 };
 
 // One placement of a curve prototype's curve BLAS (deduped curve geometry stored

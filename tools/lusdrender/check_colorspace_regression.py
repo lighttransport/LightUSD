@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render/pixel regression for next-first and legacy color management.
+"""Render/pixel regression for color management on the core CPU path.
 
 The fixture authors channel-distinct sRGB (0.25, 0.5, 0.75), selects AP1 as the
 rendering working space, and expects both loader paths to reach the same display
@@ -123,7 +123,6 @@ def main():
 
     cases = [
         ("next", ["-rtPreview"]),
-        ("legacy", ["-legacyLoad"]),
     ]
     results = []
     for backend, backend_args in cases:
@@ -341,10 +340,6 @@ def main():
         result["maxDelta"] = delta
         if delta > args.tolerance:
             failures.append(result["backend"])
-    parity_delta = max(abs(a - b) for a, b in
-                       zip(results[0]["pixel"], results[1]["pixel"]))
-    if parity_delta > args.tolerance:
-        failures.append("next-legacy-parity")
     # Byte-level thresholds are deliberately well below the observed deltas;
     # they reject a bypassed transfer/gamut transform without depending on one
     # backend's different auto-frame footprint or lighting estimator.
@@ -385,13 +380,6 @@ def main():
         if negative["maxDelta"] < 4:
             failures.append(
                 f'{result["backend"]}-materialx-config-negative-control')
-    if len(materialx_results) == len(cases):
-        materialx_backend_delta = max(
-            abs(a - b) for a, b in zip(
-                materialx_results[0]["configuredPixel"],
-                materialx_results[1]["configuredPixel"]))
-        if materialx_backend_delta > args.tolerance:
-            failures.append("materialx-config-next-legacy-parity")
     for result in materialx_texture_results:
         parity = result["comparisons"]["config-vs-explicit-ap1"]
         if parity["maxDelta"] > args.tolerance:
@@ -403,7 +391,7 @@ def main():
                 f'{result["backend"]}-materialx-texture-negative-control')
     report = {"pass": not failures, "source": "srgb_rec709_scene",
               "working": "lin_ap1_scene", "tolerance": args.tolerance,
-              "parityMaxDelta": parity_delta, "failures": failures,
+              "failures": failures,
               "results": results, "textureResults": texture_results,
               "materialXResults": materialx_results,
               "materialXTextureResults": materialx_texture_results}

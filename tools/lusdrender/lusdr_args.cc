@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <string>
 
-#include "asset-resolution.hh"
 #include "tsd/tinysubdiv.hh"
 #include "lusdr_context.hh"
 
@@ -229,7 +228,6 @@ void PrintUsage(const char *prog) {
       << "                         Resolve a Vulkan large-scene preset over existing\n"
       << "                         backend/LOD/memory knobs. Explicit CLI flags win;\n"
       << "                         texture resize/compression flags are unchanged.\n"
-      << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
       << "  -materialResolver legacy|tydra-next|compare\n"
       << "                         Next-loader material resolver. tydra-next is\n"
       << "                         the default; legacy is the compatibility path;\n"
@@ -665,7 +663,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->backend_explicit = true;
     }
     OPT_MATCH(a == "-legacyLoad" || a == "--legacyLoad") {
-      opt->legacy_load = true;
+      std::cerr << "WARN: -legacyLoad was removed; every input uses the core loader.\n";
     }
     OPT_MATCH(a == "-materialResolver" || a == "--materialResolver") {
       const char *v = need_value(a.c_str());
@@ -1212,15 +1210,5 @@ int NullARRead(const char *, uint64_t, uint8_t *, uint64_t *, std::string *,
   return -1;
 }
 
-void SetupNullAssetResolution(lightusd::legacy::AssetResolutionResolver *resolver) {
-  if (!resolver) return;
-  lightusd::legacy::AssetResolutionHandler handler;
-  handler.resolve_fun = NullARResolve;
-  handler.size_fun = NullARSize;
-  handler.read_fun = NullARRead;
-  handler.write_fun = nullptr;
-  handler.userdata = nullptr;
-  resolver->register_wildcard_asset_resolution_handler(handler);
-}
 
 }  // namespace lusdr

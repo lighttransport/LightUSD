@@ -49,7 +49,7 @@ struct RenderContext {
   DirectScene direct;             // empty for the next path
   LightCache lights;              // empty -> camera-headlight fallback
   IblCache ibl;                   // image-based lighting (--env / DomeLight)
-  lightusd::legacy::Axis up_axis{lightusd::legacy::Axis::Y};
+  lusdr::Axis up_axis{lusdr::Axis::Y};
   CameraFrame camera;
   std::vector<BackPlateImage> backplates;
   Options opt;  // mutable render parameters (width/height/ambient/bg/...)
@@ -88,24 +88,11 @@ void PrintUsage(const char *prog);
 
 bool ParseArgs(int argc, char **argv, Options *opt);
 
-void SetupNullAssetResolution(lightusd::legacy::AssetResolutionResolver *resolver);
 
-Vec3 MaterialColor(const RenderScene &scene, const RenderMesh &mesh,
-                   int material_id);
 
-Vec3 MaterialEmission(const RenderScene &scene, int material_id);
 
-float MaterialRoughness(const RenderScene &scene, int material_id);
 
-float MaterialMetallic(const RenderScene &scene, int material_id);
-// Constant opacity (surface opacity x constant displayOpacity) and the
-// UsdPreviewSurface alpha-cutout threshold; see lusdr_material.cc.
-float MaterialOpacity(const RenderScene &scene, const RenderMesh &mesh,
-                      int material_id);
-float MaterialOpacityThreshold(const RenderScene &scene, int material_id);
 
-Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
-                       int material_id, float total_area);
 
 // ---- lusdr_lighting.cc ----
 void AppendPowerCdf(std::vector<PreviewLight> *lights, std::vector<float> *cdf);
@@ -118,8 +105,6 @@ Vec3 SampleEnvNearest(const EnvImage &img, float u, float v);
 
 Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir);
 
-bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
-                             EnvImage *out);
 
 // Resample a light-probe environment (UsdLux texture:format "mirroredBall" = 2
 // or "angular" = 3, the RenderLight::DomeTextureFormat values) into the latlong
@@ -148,8 +133,6 @@ bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl);
 // (opt-in; no-op when built without LUSDR_WITH_TEXTOOLS).
 void SetIblBackendEnvmap(bool enabled);
 
-bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
-                   IblCache *ibl);
 
 bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
                           EnvImage *out);
@@ -164,38 +147,26 @@ Vec3 SampleIblMip(const std::vector<EnvImage> &mips, const Vec3 &dir,
 void SampleBrdfLut(const IblCache &ibl, float ndotv, float roughness, float *a,
                    float *b);
 
-float RectArea(const RenderLight &light);
 
-float DiskArea(const RenderLight &light);
 
-float SphereArea(const RenderLight &light);
 
-float CylinderArea(const RenderLight &light);
 
-Vec3 LightColor(const RenderLight &light);
 
-void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
-                    LightCache *cache);
 
-void CollectLights(const RenderScene &scene, LightCache *cache);
 
 // ---- lusdr_geom.cc ----
 void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b);
-lightusd::legacy::Axis GetUpAxis(const std::string &up);
-bool BuildNodeMatrixMap(const Node &node,
-                        std::unordered_map<std::string, matrix4d> *map);
+lusdr::Axis GetUpAxis(const std::string &up);
 
-std::unordered_map<std::string, matrix4d> BuildNodeMatrixMap(
-    const RenderScene &scene);
 
 matrix4d MatrixForPath(const std::unordered_map<std::string, matrix4d> &map,
                        const std::string &path);
 
 Vec3 TransformNormal(const matrix4d &inv_world, const Vec3 &n);
 
-int AxisIndex(lightusd::legacy::Axis axis);
+int AxisIndex(lusdr::Axis axis);
 
-Vec3 AxisVec(lightusd::legacy::Axis axis);
+Vec3 AxisVec(lusdr::Axis axis);
 
 float Coord(const Vec3 &v, int axis);
 
@@ -306,7 +277,6 @@ uint8_t ToSRGB8(float linear);
 void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
              Vec3 *org, Vec3 *dir);
 
-std::vector<VolumeData> BuildVolumes(const RenderScene &scene);
 
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg);
@@ -415,11 +385,16 @@ bool RunCudaSharedRT(const Options &opt,
 // ---- lusdr_next.cc (next loader + driver) ----
 unsigned WorkerThreadCount(int requested);
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
-CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
-                            const Bounds &bounds, int height,
-                            lightusd::legacy::Axis up_axis);
 matrix4d Mat4FromArray(const double d[16]);
-uint32_t PurposeBit(lightusd::legacy::Purpose purpose);
+// -subdiv level for the CPU / GPU mesh streams (lusdr_next.cc).
+void SetPreviewSubdivisionLevel(int level);
+int PreviewSubdivisionLevel();
+
+// Auto-fit camera framing `bounds` (lusdr_scene.cc).
+CameraFrame MakeCameraFrame(const Options &opt, const Bounds &bounds,
+                            int height, lusdr::Axis up_axis);
+
+uint32_t PurposeBit(lusdr::Purpose purpose);
 
 std::vector<float> ReadFloatArrayLazy(const lightusd::UsdPrim &prim,
                                       const char *name, double time);
@@ -514,7 +489,7 @@ bool SceneGeometryAnimated(const lightusd::Stage &stage,
 void CollectRTPreviewMeshesNext(const lightusd::Stage &stage,
                                 const lightusd::UsdPrim &prim,
                                 const matrix4d &parent_world,
-                                lightusd::legacy::Purpose inherited_purpose, double time,
+                                lusdr::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
                                 bool expand_instancers = false,
@@ -529,7 +504,7 @@ void CollectRTPreviewMeshesNext(const lightusd::Stage &stage,
 // less RAM. See CollectRTInstancePlacementsNext.
 using RtInstanceSink = std::function<void(const lightusd::UsdPrim & /*prim*/,
                                           const matrix4d & /*world*/,
-                                          lightusd::legacy::Purpose /*purpose*/)>;
+                                          lusdr::Purpose /*purpose*/)>;
 
 // Streaming counterpart of CollectRTPreviewMeshesNext(expand_instancers=true):
 // traverses `prim`, expands PointInstancer / native instances, and delivers each
@@ -539,7 +514,7 @@ using RtInstanceSink = std::function<void(const lightusd::UsdPrim & /*prim*/,
 size_t CollectRTInstancePlacementsNext(const lightusd::Stage &stage,
                                        const lightusd::UsdPrim &prim,
                                        const matrix4d &parent_world,
-                                       lightusd::legacy::Purpose inherited_purpose,
+                                       lusdr::Purpose inherited_purpose,
                                        double time,
                                        const std::vector<std::string> &mask,
                                        const RtInstanceSink &sink,
@@ -558,12 +533,12 @@ bool FindNextCameraFrame(const lightusd::Stage &stage,
                          const std::string &query, double time,
                          CameraFrame *frame, float *aspect);
 
-CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::legacy::Axis up_axis,
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lusdr::Axis up_axis,
                                 int width, int *out_height);
 
 bool IsCurvePrimNext(const lightusd::UsdPrim &prim);
 
-std::vector<lightusd::legacy::value::point3f> ReadCurvePointsNext(
+std::vector<lusdr::value::point3f> ReadCurvePointsNext(
     const lightusd::UsdPrim &prim, double time,
     const lightusd::ValueClipStageLoader &clip_loader);
 
@@ -589,23 +564,23 @@ matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
 
 void CollectCurvesNextRec(const lightusd::UsdPrim &prim,
                           const matrix4d &parent_world,
-                          lightusd::legacy::Purpose inherited_purpose, double time,
+                          lusdr::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out);
 
 void CollectProtoCurves(const lightusd::Stage &stage,
                         const std::string &proto_path,
-                        lightusd::legacy::Purpose start_purpose, double time,
+                        lusdr::Purpose start_purpose, double time,
                         std::vector<CurveJobNext> *out);
 
 int32_t ReserveCurveProto(const lightusd::Stage &stage,
                           const std::string &proto_path,
-                          lightusd::legacy::Purpose purpose, double time,
+                          lusdr::Purpose purpose, double time,
                           CurveProtoCollect *curve_inst);
 
 void CollectPointInstancer(const lightusd::Stage &stage,
                            const lightusd::UsdPrim &instancer,
                            const matrix4d &instancer_world,
-                           lightusd::legacy::Purpose purpose, double time,
+                           lusdr::Purpose purpose, double time,
                            const std::vector<std::string> &mask,
                            std::vector<InstanceRT> *instances,
                            std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -621,7 +596,7 @@ void CollectPointInstancer(const lightusd::Stage &stage,
 void CollectSceneSplit(const lightusd::Stage &stage,
                        const lightusd::UsdPrim &prim,
                        const matrix4d &parent_world,
-                       lightusd::legacy::Purpose inherited_purpose, double time,
+                       lusdr::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
                        std::vector<MeshJobNext> *base_jobs,
                        std::vector<InstanceRT> *instances,
@@ -633,7 +608,7 @@ void CollectSceneSplit(const lightusd::Stage &stage,
 
 void CollectProtoMeshNestingRec(
     const lightusd::Stage &stage, const lightusd::UsdPrim &prim,
-    const matrix4d &parent_world, lightusd::legacy::Purpose inherited_purpose, double time,
+    const matrix4d &parent_world, lusdr::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
     std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -643,7 +618,7 @@ void CollectProtoMeshNestingRec(
 
 void CollectProtoMeshNesting(
     const lightusd::Stage &stage, const std::string &proto_path,
-    lightusd::legacy::Purpose purpose, double time, const std::vector<std::string> &mask,
+    lusdr::Purpose purpose, double time, const std::vector<std::string> &mask,
     std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
     std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
@@ -655,7 +630,7 @@ void CollectPrototypePaths(const lightusd::UsdPrim &prim,
 
 void CollectProtoJobs(const lightusd::Stage &stage,
                       const std::string &proto_path,
-                      lightusd::legacy::Purpose start_purpose, double time,
+                      lusdr::Purpose start_purpose, double time,
                       std::vector<MeshJobNext> *jobs);
 
 inline size_t EstimateTrisForJob(const lightusd::UsdPrim &prim,
@@ -705,7 +680,7 @@ size_t QueryDeviceLocalVRAMBytes();
 bool PrepareLodStream(Options *opt, std::string *generated_wrapper);
 
 // ---- shared helpers (defined in lusdrender.cc) ----
-void AppendLinearCurveStrands(const std::vector<lightusd::legacy::value::point3f> &points,
+void AppendLinearCurveStrands(const std::vector<lusdr::value::point3f> &points,
                               const std::vector<int> &counts,
                               const std::vector<float> &widths,
                               const matrix4d &world,
@@ -743,19 +718,7 @@ inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
 // ---- lusdr_legacy.cc (legacy loader + shared utils) ----
 
-// Load `path` into `stage` WITH composition (sublayers / references / payloads /
-// inherits / variants / specializes composed to a fixed point).
-// `lightusd::legacy::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
-// anything contributed by a reference or payload — a Material in a look layer,
-// payload-gated geometry — was simply absent from the legacy render. Falls back to
-// the direct parser for .usdz and for layers with no arcs (which keeps zero-copy
-// USDC storage and the schemas LayerToStage does not carry).
-bool LoadStageComposedLegacy(const std::string &path,
-                             const lightusd::legacy::USDLoadOptions &load_options,
-                             lightusd::legacy::Stage *stage, std::string *warn,
-                             std::string *err);
 
-std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
 
 // Textures bound by one legacy RenderMaterial, as indices into the `Texture`
 // table filled by BuildLegacyTextures. -1 = not textured.
@@ -777,95 +740,24 @@ struct LegacyMaterialTex {
   std::array<std::string, kUvLaneCount> uv_names;
 };
 
-// Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
-// return the per-material bindings, indexed by RenderScene material id. The
-// legacy path previously ignored these entirely, so .usda/.usdz rendered with a
-// flat constant base color.
-std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
-                                                   std::vector<Texture> *out);
 
 // Absolute prim path -> inherited purpose bit; 0 = visibility="invisible"
 // (subtree pruned). Built by BuildLegacyPurposeVisibility.
 using PurposeVisibilityMap = std::unordered_map<std::string, uint32_t>;
-void BuildLegacyPurposeVisibility(const lightusd::legacy::Stage &stage,
-                                  PurposeVisibilityMap *out);
 
-// `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
-// per-corner UVs, parallel to *tris, as the integrator expects. Textures are
-// bound per triangle from `mat_tex` (null = untextured, the old behavior).
-// `pv` (when non-null) stamps each mesh's inherited purpose bit and prunes
-// invisible meshes.
-void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
-                      const matrix4d &world, std::vector<float> *vertices,
-                      std::vector<TriInfo> *tris, Bounds *bounds,
-                      LightCache *lights = nullptr,
-                      std::vector<float> *tri_uvs = nullptr,
-                      std::vector<float> *tri_uvs1 = nullptr,
-                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
-                      const PurposeVisibilityMap *pv = nullptr);
 
-void CollectGeometry(const RenderScene &scene, const Node &node,
-                     std::vector<float> *vertices, std::vector<TriInfo> *tris,
-                     Bounds *bounds,
-                     const std::unordered_set<std::string> *skip_paths,
-                     LightCache *lights,
-                     std::vector<float> *tri_uvs = nullptr,
-                     std::vector<float> *tri_uvs1 = nullptr,
-                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
-                     const PurposeVisibilityMap *pv = nullptr);
 
-void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
-                        std::vector<TriInfo> *tris, Bounds *bounds,
-                        const std::unordered_set<std::string> *skip_paths,
-                        LightCache *lights,
-                        std::vector<float> *tri_uvs = nullptr,
-                        std::vector<float> *tri_uvs1 = nullptr,
-                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
-                        const PurposeVisibilityMap *pv = nullptr);
 
-matrix4d LocalMatrixOrIdentity(const lightusd::legacy::Xformable *xformable, double time,
-                               bool *reset);
 
-lightusd::legacy::Purpose ResolvePurpose(const lightusd::legacy::Prim &prim,
-                                 lightusd::legacy::Purpose inherited);
 
-bool AddRTPreviewMesh(const lightusd::legacy::Stage &stage, const std::string &prim_path,
-                      const lightusd::legacy::GeomMesh &mesh, const matrix4d &world,
-                      double time, lightusd::legacy::Purpose purpose,
-                      uint32_t purpose_mask,
-                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
-                      Bounds *bounds, RTPreviewStats *stats);
 
-void CollectRTPreviewMeshes(const lightusd::legacy::Prim &prim,
-                            const matrix4d &parent_world, double time,
-                            lightusd::legacy::Purpose inherited_purpose,
-                            std::vector<MeshJob> *jobs);
 
-bool BuildRTPreviewScene(const lightusd::legacy::Stage &stage, const Options &opt,
-                         std::vector<float> *vertices,
-                         std::vector<TriInfo> *tris, Bounds *bounds,
-                         RTPreviewStats *stats, std::string *err);
 
-bool MatchPrimNameOrPath(const lightusd::legacy::Prim &prim, const std::string &query);
 
-bool CameraFrameFromGeomCamera(const lightusd::legacy::Stage &stage,
-                               const lightusd::legacy::GeomCamera &cam,
-                               const matrix4d &world, double time,
-                               CameraFrame *frame);
 
-bool FindStageCameraFrameRecursive(const lightusd::legacy::Stage &stage,
-                                   const lightusd::legacy::Prim &prim,
-                                   const std::string &query,
-                                   const matrix4d &parent_world, double time,
-                                   CameraFrame *frame);
 
-bool FindStageCameraFrame(const lightusd::legacy::Stage &stage, const std::string &query,
-                          double time, CameraFrame *frame);
 
-bool EvalAxis(const lightusd::legacy::TypedAttributeWithFallback<lightusd::legacy::Axis> &attr,
-              lightusd::legacy::Axis *out);
 
-std::string PrimPathString(const lightusd::legacy::Prim &prim);
 
 float ApproxScale(const matrix4d &m);
 
@@ -880,49 +772,20 @@ void AddDirectTriangle(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
 void AddDirectCube(double size, const matrix4d &world, std::vector<float> *vertices,
                    std::vector<TriInfo> *tris, Bounds *bounds);
 
-void AddDirectPlane(double width, double length, lightusd::legacy::Axis axis,
+void AddDirectPlane(double width, double length, lusdr::Axis axis,
                     const matrix4d &world, std::vector<float> *vertices,
                     std::vector<TriInfo> *tris, Bounds *bounds);
 
 double BSplineBasis(int i, int degree, double u, const std::vector<double> &knots);
 
-Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::legacy::value::point3f> &points,
+Vec3 EvalNurbsPatchPoint(const std::vector<lusdr::value::point3f> &points,
                          const std::vector<double> &weights, int u_count,
                          int v_count, int u_order, int v_order,
                          const std::vector<double> &u_knots,
                          const std::vector<double> &v_knots, double u, double v);
 
-void AddNurbsPatchTriangles(const lightusd::legacy::Stage &stage,
-                            const lightusd::legacy::GeomNurbsPatch &patch,
-                            const matrix4d &world, double time,
-                            std::vector<float> *vertices,
-                            std::vector<TriInfo> *tris, Bounds *bounds);
 
-void TraverseDirectPrims(const lightusd::legacy::Stage &stage, const lightusd::legacy::Prim &prim,
-                         const std::unordered_map<std::string, matrix4d> &matrices,
-                         double time, DirectScene *direct,
-                         std::vector<float> *vertices, std::vector<TriInfo> *tris,
-                         Bounds *bounds, std::vector<float> *sphere_data,
-                         std::vector<float> *round_points,
-                         std::vector<float> *round_radii,
-                         std::vector<uint32_t> *round_first,
-                         std::vector<uint32_t> *round_count,
-                         std::vector<float> *flat_points,
-                         std::vector<float> *flat_radii,
-                         std::vector<uint32_t> *flat_first,
-                         std::vector<uint32_t> *flat_count,
-                         std::vector<float> *point_centers,
-                         std::vector<float> *point_radii,
-                         std::vector<float> *bez_cps,
-                         std::vector<float> *tet_aabbs);
 
-bool BuildDirectScene(const lightusd::legacy::Stage &stage, const RenderScene &render_scene,
-                      const Options &opt, std::vector<float> *vertices,
-                      std::vector<TriInfo> *tris, Bounds *bounds,
-                      DirectScene *direct, std::string *err);
 
-bool FindCameraNode(const RenderScene &scene, const Node &node,
-                    const std::string &query, const Node **node_out);
-const Node *FindCameraNode(const RenderScene &scene, const std::string &query);
 
 }  // namespace lusdr
