@@ -12,7 +12,7 @@
 #
 # Covers:
 #   - lusdcat       (examples/lusdcat, the native flatten driver)
-#   - lusdzconvert  (tools/lusdzconvert -> src/usdz-convert.cc flatten loop)
+#   - lusdzconvert  (tools/lusdzconvert -> src/usdz/usdz-converter.cc flatten loop)
 #
 # Usage: run-variant-chain.sh <lusdcat> <project-source-dir> [lusdzconvert]
 
@@ -65,7 +65,7 @@ else
   echo "SKIP: lusdcat not found at ${LUSDCAT}"
 fi
 
-# --- lusdzconvert (src/usdz-convert.cc flatten path) ---
+# --- lusdzconvert (src/usdz/usdz-converter.cc flatten path) ---
 if [ -n "${LUSDZCONVERT}" ] && [ -x "${LUSDZCONVERT}" ]; then
   OUT="${WORK}/lusdzconvert.usda"
   if "${LUSDZCONVERT}" "${MAIN}" "${OUT}" --outputFormat usda >/dev/null 2>&1; then

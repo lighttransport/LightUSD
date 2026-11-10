@@ -24,22 +24,20 @@ Capabilities:
 ## Build
 
 ```bash
-cmake -S . -B build_ninja/legacy-convert -G Ninja \
-      -DLIGHTUSD_NATIVE_PRODUCT=legacy \
-      -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON \
-      -DLIGHTUSD_WITH_FPNGE=ON -DLIGHTUSD_FPNGE_SIMD=avx2
-cmake --build build_ninja/legacy-convert --target lusdzconvert -j16
-# binary: build_ninja/legacy-convert/tools/lusdzconvert/lusdzconvert
+cmake -S . -B build -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON
+make -C build -j16 lusdzconvert
+# binary: build/lusdzconvert
 ```
 
-The native converter currently uses the legacy API and requires the explicit
-product selection above. The default next product supports the JavaScript
-`usdzconvert` path through the next WASM module.
-
-`LIGHTUSD_FPNGE_SIMD` selects the fpnge code path at compile time:
-`avx2` (default), `sse41`, `sse2`, or `scalar`. fpnge upstream requires SSE4.1
-minimum, so `sse2` and `scalar` do not compile fpnge and PNG encoding falls back
-to `fpng`.
+The converter is `src/usdz/usdz-converter.{hh,cc}` on the core library.
+`-optimizeMaterials`, `-optimizeGeometry`/`-optimizeMeshes` (other than `off`)
+and `--bake-udim` (other than `off`) are implemented by the JavaScript
+converter only (`web/js/cli/usdzconvert.js`); the native tool rejects them with
+an error. Their tuning flags are still accepted. Textures are processed
+serially (`-numThreads` and `--texture-memory-budget` are accepted and ignored).
+With `-noFlatten` the root layer and its resolved dependency layers inside the
+input directory are packaged unchanged; texture processing applies to
+flattened USDZ output only.
 
 ## Usage
 

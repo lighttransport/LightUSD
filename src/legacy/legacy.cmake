@@ -2139,7 +2139,7 @@ endif()
 # Tools
 if(LIGHTUSD_BUILD_TOOLS)
   # tools/lusddumpcrate is a core tool, added by the root CMakeLists.txt.
-  add_subdirectory(tools/lusdzconvert)
+  # tools/lusdzconvert is a core tool, added by the root CMakeLists.txt.
   # tools/lusdchecker is a core tool, added by the root CMakeLists.txt.
   # tools/lusddeps is a core tool, added by the root CMakeLists.txt.
   # lusddiff uses the Tydra diff-and-compare API.

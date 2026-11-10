@@ -4059,3 +4059,5 @@ pre-existing core behavior, not a port regression):
 | USDA parser | `varying rel` is rejected (legacy accepted it) | `tests/usda/rel-001.usda` |
 | lusdcat | no `--explain` opinion tracer (legacy `examples/lusdcat` only); `run-workflow-tools.py` skips those checks | `workflow_tools` |
 | usd_to_gltf | legacy-only example; `run-workflow-tools.py` skips the glTF checks without it | `workflow_tools` |
+| lusdzconvert | `-optimizeMaterials`, `-optimizeGeometry` and `--bake-udim` are JS-converter only (`web/js/cli/usdzconvert.js`); the native tool rejects them, and `core_lusdzconvert_regression` no longer checks material dedupe | `tests/run-lusdzconvert-regression.sh` |
+| lusdzconvert | core builds have no `LIGHTUSD_WITH_TEXTOOLS`, so `.ktx2` textures are not collected/transcoded (legacy transcoded them to JPEG/PNG) | `models/ktx2-uni-plane.usda` |

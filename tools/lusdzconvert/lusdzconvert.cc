@@ -23,14 +23,60 @@
 #include <unistd.h>
 #endif
 
-#include "arg-parser.hh"
+#include <map>
 #include "str-util.hh"
 #include "io-util.hh"
-#include "usdz-convert.hh"
+#include "usdz/usdz-converter.hh"
 
 using namespace lightusd;
 
-using namespace lightusd::legacy;  // NOLINT
+// Minimal option parser: "-name" flags, optionally followed by one value.
+class ArgParser {
+ public:
+  void add_option(const std::string &name, bool has_value,
+                  const std::string & /*help*/ = "") {
+    opts_[name] = Opt{has_value, false, std::string()};
+  }
+  bool parse(int argc, char **argv) {
+    pos_.clear();
+    for (int i = 1; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg.empty() || arg[0] != '-') {
+        pos_.push_back(arg);
+        continue;
+      }
+      auto it = opts_.find(arg);
+      if (it == opts_.end()) return false;
+      it->second.set = true;
+      if (it->second.has_value) {
+        if (i + 1 >= argc) return false;
+        it->second.value = argv[++i];
+      }
+    }
+    return true;
+  }
+  bool is_set(const std::string &name) const {
+    auto it = opts_.find(name);
+    return it != opts_.end() && it->second.set;
+  }
+  bool get(const std::string &name, std::string &value) const {
+    auto it = opts_.find(name);
+    if (it == opts_.end() || !it->second.set || !it->second.has_value)
+      return false;
+    value = it->second.value;
+    return true;
+  }
+  const std::vector<std::string> &positional() const { return pos_; }
+
+ private:
+  struct Opt {
+    bool has_value;
+    bool set;
+    std::string value;
+  };
+  std::map<std::string, Opt> opts_;
+  std::vector<std::string> pos_;
+};
 
 namespace {
 
@@ -429,7 +475,7 @@ bool ParseChannelSrc(const std::string &s, usdz::RepackChannel *rc) {
   return true;
 }
 
-int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
+int RunRepack(const ArgParser &parser, image::PngEncoder enc) {
   std::string outImg;
   parser.get("-repack", outImg);
 
@@ -510,7 +556,6 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
 }  // namespace
 
 int main(int argc, char **argv) {
-  using namespace lightusd::legacy::argparser;
 
   ArgParser parser;
   parser.add_option("-h", false, "Show help");
@@ -645,7 +690,7 @@ int main(int argc, char **argv) {
     std::cerr << "ERROR: " << input_err << "\n";
     return 1;
   }
-  opts.inputs.push_back(root_input);
+  opts.input = root_input;
 
   if (pos.size() >= 2) {
     opts.output = pos[1];
@@ -676,9 +721,9 @@ int main(int argc, char **argv) {
     std::string a;
     parser.get("-upAxis", a);
     a = to_lower(a);
-    if (a == "x") opts.upAxis = Axis::X;
-    else if (a == "y") opts.upAxis = Axis::Y;
-    else if (a == "z") opts.upAxis = Axis::Z;
+    if (a == "x") opts.upAxis = usdz::UpAxis::X;
+    else if (a == "y") opts.upAxis = usdz::UpAxis::Y;
+    else if (a == "z") opts.upAxis = usdz::UpAxis::Z;
     else {
       std::cerr << "ERROR: -upAxis must be X, Y, or Z (got '" << a << "').\n";
       return 1;
@@ -734,8 +779,8 @@ int main(int argc, char **argv) {
   }
   if (parser.is_set("--bake-udim")) {
     std::string mode; parser.get("--bake-udim", mode);
-    if (mode == "grid") opts.udim_bake = udim::BakeMode::Grid;
-    else if (mode == "dense") opts.udim_bake = udim::BakeMode::Dense;
+    if (mode == "grid") opts.udim_bake = usdz::UDIMBakeMode::Grid;
+    else if (mode == "dense") opts.udim_bake = usdz::UDIMBakeMode::Dense;
     else if (mode != "off") { std::cerr << "ERROR: --bake-udim must be off, grid, or dense.\n"; return 1; }
   }
   for (const char* flag : {"--udim-max-tiles", "--udim-max-atlas-size", "--udim-dense-padding", "--udim-subdivision-level"}) {
@@ -755,7 +800,7 @@ int main(int argc, char **argv) {
   }
   if (parser.is_set("--udim-cross-tile")) {
     std::string policy; parser.get("--udim-cross-tile", policy);
-    if (policy == "split") opts.udim_cross_tile = udim::CrossTilePolicy::Split;
+    if (policy == "split") opts.udim_cross_tile_split = true;
     else if (policy != "reject") { std::cerr << "ERROR: --udim-cross-tile must be reject or split.\n"; return 1; }
   }
   if (parser.is_set("-optimizeMaterials")) {
@@ -945,29 +990,6 @@ int main(int argc, char **argv) {
               << stats.num_unused_textures_included;
   }
   std::cout << "\n";
-  if (opts.material_optimization != usdz::MaterialOptimizationMode::Off) {
-    std::cout << "  materials: " << stats.num_materials_before << " -> "
-              << stats.num_materials_after
-              << ", deduped: " << stats.num_materials_deduped
-              << ", preview-converted: "
-              << stats.num_materials_preview_converted
-              << ", skipped: " << stats.num_materials_skipped
-              << ", atlas materials: "
-              << stats.num_material_atlas_materials
-              << ", atlas textures: "
-              << stats.num_material_atlas_textures << "\n";
-  }
-  if (opts.geometry_optimization != usdz::GeometryOptimizationMode::Off) {
-    std::cout << "  meshes: " << stats.num_meshes_before << " -> "
-              << stats.num_meshes_after
-              << ", eligible: " << stats.num_meshes_eligible
-              << ", merged: " << stats.num_meshes_merged
-              << ", aggregates: " << stats.num_mesh_aggregates
-              << ", skipped: " << stats.num_meshes_skipped
-              << ", faces merged: " << stats.num_faces_merged
-              << ", points merged: " << stats.num_points_merged << "\n";
-  }
-
   // Optionally run pxrUSD usdcat to produce a reference file for comparison.
   // usdcat's --usdFormat flag requires a .usd extension on the output file.
   if (!pxr_usdcat_path.empty()) {
